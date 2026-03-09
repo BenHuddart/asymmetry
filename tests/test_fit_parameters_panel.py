@@ -11,6 +11,7 @@ import pytest
 pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QMessageBox  # type: ignore
 
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, _FitRow
 
 
@@ -58,16 +59,19 @@ def test_gle_columns_for_param(panel: FitParametersPanel) -> None:
 def test_write_gle_data_file_contains_column_map_and_sorted_rows(
     panel: FitParametersPanel, tmp_path: Path
 ) -> None:
+    panel._global_params = ParameterSet([Parameter("Lambda", value=0.5)])
+
     out = tmp_path / "fit_parameters.dat"
     panel._write_gle_data_file(out)
     text = out.read_text(encoding="utf-8")
 
     assert "! Column map:" in text
+    assert "!   Lambda (μs⁻¹) = 0.5" in text
     assert "!   c 1 = B_field(G)" in text
-    assert "!   c 2 = A0" in text
-    assert "!   c 3 = err_A0" in text
-    assert "!   c 4 = Lambda" in text
-    assert "!   c 5 = err_Lambda" in text
+    assert "!   c 2 = A0 (%)" in text
+    assert "!   c 3 = err_A0 (%)" in text
+    assert "!   c 4 = Lambda (μs⁻¹)" in text
+    assert "!   c 5 = err_Lambda (μs⁻¹)" in text
 
     data_lines = [ln for ln in text.splitlines() if ln and not ln.startswith("!")]
     assert len(data_lines) == 2
@@ -75,6 +79,23 @@ def test_write_gle_data_file_contains_column_map_and_sorted_rows(
     # Rows should be sorted by inferred x-axis (field): 100 before 200.
     assert float(data_lines[0].split()[0]) == pytest.approx(100.0)
     assert float(data_lines[1].split()[0]) == pytest.approx(200.0)
+
+
+def test_export_csv_headers_include_units(
+    panel: FitParametersPanel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    panel._refresh_table()
+    out = tmp_path / "fit_parameters.csv"
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.fit_parameters_panel.QFileDialog.getSaveFileName",
+        lambda *_a, **_k: (str(out), "CSV files (*.csv)"),
+    )
+
+    panel._export_csv()
+
+    first_line = out.read_text(encoding="utf-8").splitlines()[0]
+    assert first_line == "Run,B (G),T (K),A0 (%),err_A0 (%),Lambda (μs⁻¹),err_Lambda (μs⁻¹)"
 
 
 class _FakeAxis:

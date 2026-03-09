@@ -103,6 +103,22 @@ def _format_x_label_gle(x_key: str) -> str:
         return "Run Number"
 
 
+def _format_export_param_header(name: str) -> str:
+    """Return an export-friendly parameter label with units when available."""
+    unit = _PARAM_UNITS.get(name)
+    if unit:
+        return f"{name} ({unit})"
+    return name
+
+
+def _format_export_error_header(name: str) -> str:
+    """Return an export-friendly uncertainty label with units when available."""
+    unit = _PARAM_UNITS.get(name)
+    if unit:
+        return f"err_{name} ({unit})"
+    return f"err_{name}"
+
+
 def _gle_series_color(index: int) -> str:
     """Return a deterministic color for GLE multi-series plots."""
     primary = ["black", "blue", "red"]
@@ -711,10 +727,10 @@ class FitParametersPanel(QWidget):
         if not path:
             return
 
-        headers = [
-            self._table.horizontalHeaderItem(col).text()
-            for col in range(self._table.columnCount())
-        ]
+        headers = ["Run", "B (G)", "T (K)"]
+        for name in self._varying_params:
+            headers.append(_format_export_param_header(name))
+            headers.append(_format_export_error_header(name))
 
         with open(path, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.writer(csvfile)
@@ -763,7 +779,8 @@ class FitParametersPanel(QWidget):
             if self._global_params is not None:
                 f.write("! Global Fitting Parameters (shared across all datasets):\n")
                 for param in self._global_params:
-                    f.write(f"!   {param.name} = {param.value:.6g}\n")
+                    label = _format_export_param_header(param.name)
+                    f.write(f"!   {label} = {param.value:.6g}\n")
             f.write("!\n")
 
             x_label = {
@@ -774,8 +791,8 @@ class FitParametersPanel(QWidget):
 
             headers = [x_label]
             for name in self._varying_params:
-                headers.append(name)
-                headers.append(f"err_{name}")
+                headers.append(_format_export_param_header(name))
+                headers.append(_format_export_error_header(name))
 
             f.write("! Column map:\n")
             for col_idx, name in enumerate(headers, start=1):
