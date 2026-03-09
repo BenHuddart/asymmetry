@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asymmetry"
+version = "0.1.0"
+description = "A Python library for muon-spin spectroscopy (μSR) data analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Asymmetry Contributors" },
+]
+keywords = ["muon", "musr", "spectroscopy", "physics", "data-analysis"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Physics",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+    "numpy>=1.24,<2.3",  # <2.3 for numba compatibility (used by iminuit)
+    "iminuit>=2.0",
+]
+
+[project.optional-dependencies]
+gui = [
+    "PySide6>=6.5",
+    "matplotlib>=3.7",
+]
+hdf5 = ["h5py>=3.8"]
+root = ["uproot>=5.0"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1",
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=2.0",
+]
+all = ["asymmetry[gui,hdf5,root,dev]"]
+
+[project.scripts]
+asymmetry = "asymmetry.cli:main"
+
+[project.gui-scripts]
+asymmetry-gui = "asymmetry.gui.app:main"
+
+[project.urls]
+Homepage = "https://github.com/asymmetry-musr/asymmetry"
+Documentation = "https://asymmetry-musr.readthedocs.io"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+asymmetry = ["resources/*.png"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/asymmetry/core/fitting/models.py" = ["N803"]  # Physics parameter names (A0, Lambda, Delta)
