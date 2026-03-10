@@ -90,7 +90,8 @@ Average multiple datasets with proper error propagation:
    # Error propagation: σ_avg = √(Σσ²) / N
    avg_error = np.sqrt(np.sum([e**2 for e in errors], axis=0)) / len(datasets)
 
-The GUI provides a "Co-add Selected" button that handles this automatically.
+The GUI provides automatic co-adding via the context menu: select 2+ datasets,
+right-click, and choose "Co-add Selected" to combine them with proper error propagation.
 
 Windowing for Fourier Analysis
 -------------------------------

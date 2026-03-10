@@ -46,3 +46,21 @@ class TestMainWindowBasic:
         size = mainwindow.size()
         assert size.width() > 0
         assert size.height() > 0
+
+    def test_on_fit_shows_fit_dock(self, mainwindow: MainWindow) -> None:
+        """Fit action should unhide the fit dock if it starts hidden."""
+        assert mainwindow._dock_fit.isHidden()
+        mainwindow._on_fit()
+        assert not mainwindow._dock_fit.isHidden()
+
+    def test_on_fourier_shows_fourier_dock(self, mainwindow: MainWindow) -> None:
+        """Fourier action should unhide the Fourier dock if it starts hidden."""
+        assert mainwindow._dock_fourier.isHidden()
+        mainwindow._on_fourier()
+        assert not mainwindow._dock_fourier.isHidden()
+
+    def test_on_fit_parameters_shows_params_dock(self, mainwindow: MainWindow) -> None:
+        """Fit Parameters action should unhide the dock if it starts hidden."""
+        assert mainwindow._dock_fit_parameters.isHidden()
+        mainwindow._on_fit_parameters()
+        assert not mainwindow._dock_fit_parameters.isHidden()

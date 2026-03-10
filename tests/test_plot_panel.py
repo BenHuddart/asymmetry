@@ -68,6 +68,29 @@ class TestPlotPanel:
         # Panel should handle multiple datasets
         assert panel._canvas is not None
 
+    def test_bunching_only_changes_plotted_representation(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """Bunching should preserve the source dataset and create a fit-ready copy."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        original_time = sample_dataset.time.copy()
+        original_asymmetry = sample_dataset.asymmetry.copy()
+        original_error = sample_dataset.error.copy()
+
+        panel._bunch_factor.setValue(5)
+        panel.plot_dataset(sample_dataset)
+        analysis_dataset = panel.get_analysis_dataset(sample_dataset)
+
+        assert panel._current_dataset is sample_dataset
+        assert analysis_dataset is not None
+        assert analysis_dataset is not sample_dataset
+        assert len(analysis_dataset.time) < len(sample_dataset.time)
+        np.testing.assert_array_equal(sample_dataset.time, original_time)
+        np.testing.assert_array_equal(sample_dataset.asymmetry, original_asymmetry)
+        np.testing.assert_array_equal(sample_dataset.error, original_error)
+
     def test_clear_plot(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test clearing the plot."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:

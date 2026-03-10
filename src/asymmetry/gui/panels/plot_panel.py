@@ -2,10 +2,16 @@
 
 Displays time-domain asymmetry with error bars and optional fit overlay,
 similar to WiMDA's main plot area.
+
+The bunch-factor control rebins the displayed data and also defines the
+dataset passed to fitting in the GUI. The original MuonDataset is preserved,
+so changing the bunch factor after fitting only changes the plotted data while
+the existing fit curve remains overlaid.
 """
 
 from __future__ import annotations
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
@@ -21,7 +27,16 @@ from asymmetry.core.transform.rebin import rebin
 
 
 class PlotPanel(QWidget):
-    """Matplotlib canvas for time- and frequency-domain plots."""
+    """Matplotlib canvas for time- and frequency-domain plots.
+
+    Notes
+    -----
+    The bunch factor controls both the plotted representation and the dataset
+    prepared for fitting in the GUI. The stored source dataset remains
+    unchanged, and any rebinned fit dataset is produced as a temporary copy.
+    """
+
+    bunch_factor_changed = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -130,24 +145,53 @@ class PlotPanel(QWidget):
         self._bunch_factor.valueChanged.connect(self._on_bunch_changed)
         self._limit_toolbar.addWidget(self._bunch_factor, 1, 1)
 
+    def get_analysis_dataset(self, dataset: MuonDataset | None) -> MuonDataset | None:
+        """Return the dataset that should be used for plotting and fitting.
+
+        When the bunch factor is 1, the original dataset is returned. For a
+        larger bunch factor, a rebinned MuonDataset copy is returned with the
+        same metadata and run association.
+        """
+        if dataset is None:
+            return None
+
+        bunch_factor = self._bunch_factor.value()
+        if bunch_factor <= 1:
+            return dataset
+
+        time, asymmetry, error = rebin(
+            dataset.time,
+            dataset.asymmetry,
+            dataset.error,
+            bunch_factor,
+        )
+        return MuonDataset(
+            time=time,
+            asymmetry=asymmetry,
+            error=error,
+            metadata=dict(dataset.metadata),
+            run=dataset.run,
+        )
+
     def plot_dataset(self, dataset: MuonDataset) -> None:
+        """Plot a dataset, optionally rebinned according to the bunch factor.
+
+        The input dataset is stored unchanged as the current dataset. If the
+        bunch factor is greater than 1, temporary rebinned arrays are created
+        for plotting. The source dataset itself is never mutated.
+        """
         if not self._has_mpl:
             return
 
         # Store the original dataset
         self._current_dataset = dataset
 
-        # Apply bunching if factor > 1
-        bunch_factor = self._bunch_factor.value()
-        if bunch_factor > 1:
-            time, asymmetry, error = rebin(
-                dataset.time,
-                dataset.asymmetry,
-                dataset.error,
-                bunch_factor,
-            )
-        else:
-            time, asymmetry, error = dataset.time, dataset.asymmetry, dataset.error
+        analysis_dataset = self.get_analysis_dataset(dataset)
+        if analysis_dataset is None:
+            return
+        time = analysis_dataset.time
+        asymmetry = analysis_dataset.asymmetry
+        error = analysis_dataset.error
 
         self._ax.clear()
         self._ax.errorbar(
@@ -220,9 +264,10 @@ class PlotPanel(QWidget):
         self._canvas.draw()
 
     def _on_bunch_changed(self) -> None:
-        """Handle bunch factor changes by re-plotting the current dataset."""
+        """Re-plot and refresh fit inputs when the bunch factor changes."""
         if self._current_dataset is not None:
             self.plot_dataset(self._current_dataset)
+        self.bunch_factor_changed.emit(self._bunch_factor.value())
 
     def plot_fit(self, t_fit, y_fit, label: str = "Fit") -> None:
         """Overlay a fit curve on the current plot.
@@ -289,3 +334,113 @@ class PlotPanel(QWidget):
         self._fit_curves = {}
         if self._current_dataset is not None:
             self.plot_dataset(self._current_dataset)
+
+    # ── project state helpers ──────────────────────────────────────────
+
+    def get_state(self) -> dict:
+        """Return a serialisable snapshot of the plot panel state.
+
+        This captures the bunch factor, axis limits, the currently displayed
+        run number, and any stored fit curves.  Fit curve arrays are
+        serialised as plain Python lists for JSON compatibility.
+
+        Returns
+        -------
+        dict
+            Plot state suitable for inclusion in a project file.
+        """
+        state: dict = {
+            "current_run_number": (
+                self._current_dataset.run_number
+                if self._current_dataset is not None
+                else None
+            ),
+            "bunch_factor": self._bunch_factor.value() if self._has_mpl else 1,
+            "x_min": self._x_min.value() if self._has_mpl else 0.0,
+            "x_max": self._x_max.value() if self._has_mpl else 10.0,
+            "y_min": self._y_min.value() if self._has_mpl else -30.0,
+            "y_max": self._y_max.value() if self._has_mpl else 30.0,
+            "fit_curve": None,
+            "fit_curves": {},
+        }
+
+        if self._has_mpl:
+            if self._fit_curve is not None:
+                t_fit, y_fit, label = self._fit_curve
+                state["fit_curve"] = {
+                    "t": list(t_fit),
+                    "y": list(y_fit),
+                    "label": label,
+                }
+            for run_number, (t_fit, y_fit, label) in self._fit_curves.items():
+                state["fit_curves"][str(run_number)] = {
+                    "t": list(t_fit),
+                    "y": list(y_fit),
+                    "label": label,
+                }
+
+        return state
+
+    def restore_state(
+        self,
+        state: dict,
+        dataset: "MuonDataset | None" = None,
+    ) -> None:
+        """Restore plot panel state from a saved dict.
+
+        Parameters
+        ----------
+        state : dict
+            Plot state as returned by :meth:`get_state`.
+        dataset : MuonDataset, optional
+            Dataset to re-plot after restoring limits.  If *None* no plot is
+            drawn, but all other state (limits, bunch factor, fit curves) is
+            still applied.
+        """
+        if not self._has_mpl:
+            return
+
+        import numpy as np
+
+        # Restore bunch factor without triggering bunch_factor_changed signal.
+        self._bunch_factor.blockSignals(True)
+        self._bunch_factor.setValue(state.get("bunch_factor", 1))
+        self._bunch_factor.blockSignals(False)
+
+        # Restore axis limit spinboxes (will be applied after optional re-plot).
+        for spin, key, default in (
+            (self._x_min, "x_min", 0.0),
+            (self._x_max, "x_max", 10.0),
+            (self._y_min, "y_min", -30.0),
+            (self._y_max, "y_max", 30.0),
+        ):
+            spin.blockSignals(True)
+            spin.setValue(state.get(key, default))
+            spin.blockSignals(False)
+
+        # Restore fit curves.
+        self._fit_curve = None
+        self._fit_curves = {}
+
+        fit_curve_data = state.get("fit_curve")
+        if fit_curve_data:
+            self._fit_curve = (
+                np.array(fit_curve_data["t"]),
+                np.array(fit_curve_data["y"]),
+                fit_curve_data.get("label", "Fit"),
+            )
+
+        for run_str, curve_data in state.get("fit_curves", {}).items():
+            self._fit_curves[int(run_str)] = (
+                np.array(curve_data["t"]),
+                np.array(curve_data["y"]),
+                curve_data.get("label", "Global Fit"),
+            )
+
+        # Re-plot the current dataset if one was provided.
+        if dataset is not None:
+            self._current_dataset = dataset
+            self.plot_dataset(dataset)
+
+        # Always apply the restored limits.
+        self._apply_limits()

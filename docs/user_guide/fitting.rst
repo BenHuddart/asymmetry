@@ -3,6 +3,13 @@ Fitting
 
 Fit models to your μSR data using the integrated iminuit framework.
 
+When fitting through the GUI, the plot panel's current bunch factor is applied
+before the dataset is handed to the fitter. In other words, if the plot is
+showing a rebinned dataset, the next GUI fit will use that rebinned dataset.
+If you want to fit the full-resolution data and only simplify the view
+afterwards, run the fit with ``Bunch = 1`` and then increase the bunch factor;
+the fit curve remains overlaid on the plot.
+
 Basic Fitting Workflow
 -----------------------
 

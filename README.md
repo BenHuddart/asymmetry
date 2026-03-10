@@ -18,8 +18,9 @@ management.
 
 - **Data I/O** — Load WiMDA (`.wim`) files with automatic asymmetry calculation
   and metadata extraction (temperature, field, title, comments).
-- **Data browser** — Sortable, filterable run table with Excel-style column
-  filters, text search, and multi-selection for co-adding or global fitting.
+- **Data browser** — Sortable run table with Excel-style column filters and
+  multi-selection for co-adding or global fitting. Right-click for context
+  menu actions: co-add selected runs, separate combined datasets, or delete.
 - **Interactive plotting** — Matplotlib-based plot panel with adjustable axis
   limits, bunch factor for noise reduction, and error-bar display.
 - **Single-dataset fitting** — Fit built-in μSR models (exponential, Gaussian,

@@ -51,3 +51,23 @@ class FourierPanel(QWidget):
         layout.addWidget(self._status_label)
 
         layout.addStretch()
+
+    # ── project state helpers ──────────────────────────────────────────
+
+    def get_state(self) -> dict:
+        """Return a serialisable snapshot of the Fourier panel settings."""
+        return {
+            "window": self._window_combo.currentText(),
+            "padding": self._padding_spin.value(),
+            "display": self._display_combo.currentText(),
+        }
+
+    def restore_state(self, state: dict) -> None:
+        """Restore Fourier panel settings from a saved dict."""
+        idx = self._window_combo.findText(state.get("window", "none"))
+        if idx >= 0:
+            self._window_combo.setCurrentIndex(idx)
+        self._padding_spin.setValue(state.get("padding", 1))
+        idx = self._display_combo.findText(state.get("display", "Real"))
+        if idx >= 0:
+            self._display_combo.setCurrentIndex(idx)

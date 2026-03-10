@@ -49,6 +49,13 @@ _PARAM_UNITS = {
     "phase": "rad",
 }
 
+_MODEL_NAME_ALIASES = {
+    "Exponential": "ExponentialRelaxation",
+    "Gaussian": "GaussianRelaxation",
+    "Stretched Exponential": "StretchedExponential",
+    "StaticGKT": "StaticGKT_ZF",
+}
+
 
 def _format_param_label(name: str) -> str:
     """Return a display label with Greek symbols and units where applicable."""
@@ -57,6 +64,15 @@ def _format_param_label(name: str) -> str:
     if unit:
         return f"{symbol} ({unit})"
     return symbol
+
+
+def _resolve_model_name(name: str) -> str:
+    """Map legacy/friendly model names to canonical MODELS keys."""
+    if name in MODELS:
+        return name
+    if name in _MODEL_NAME_ALIASES:
+        return _MODEL_NAME_ALIASES[name]
+    return name
 
 
 class GlobalFitWorker(QObject):
@@ -174,7 +190,7 @@ class SingleFitTab(QWidget):
         if MODELS:
             self._on_model_changed(self._model_combo.currentText())
 
-    def set_dataset(self, dataset: MuonDataset) -> None:
+    def set_dataset(self, dataset: MuonDataset | None) -> None:
         """Set the current dataset to fit."""
         self._current_dataset = dataset
         self._fit_btn.setEnabled(dataset is not None)
@@ -323,6 +339,92 @@ class SingleFitTab(QWidget):
             self.fit_completed.emit(result, (t_fit, y_fit))
         else:
             self._result_label.setText(f"<b>Fit failed:</b> {result.message}")
+
+    # ── project state helpers ──────────────────────────────────────────
+
+    def get_state(self) -> dict:
+        """Return a serialisable snapshot of the single-fit tab state."""
+        params = []
+        for i in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(i, 0)
+            param_name = (
+                name_item.data(Qt.ItemDataRole.UserRole)
+                if name_item
+                else f"param_{i}"
+            )
+            if not isinstance(param_name, str):
+                param_name = name_item.text() if name_item else f"param_{i}"
+
+            value_item = self._param_table.item(i, 1)
+            try:
+                value = float(value_item.text()) if value_item else 0.0
+            except ValueError:
+                value = 0.0
+
+            fix_widget = self._param_table.cellWidget(i, 2)
+            fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
+            fixed = fix_checkbox.isChecked() if fix_checkbox else False
+
+            min_item = self._param_table.item(i, 3)
+            max_item = self._param_table.item(i, 4)
+            params.append({
+                "name": param_name,
+                "value": value,
+                "fixed": fixed,
+                "min": min_item.text() if min_item else "-inf",
+                "max": max_item.text() if max_item else "inf",
+            })
+
+        return {
+            "model_name": self._model_combo.currentText(),
+            "parameters": params,
+            "result_html": self._result_label.text(),
+        }
+
+    def restore_state(self, state: dict) -> None:
+        """Restore single-fit tab state from a saved dict."""
+        model_name = _resolve_model_name(
+            str(state.get("model_name") or state.get("model") or "")
+        )
+        idx = self._model_combo.findText(model_name)
+        if idx >= 0:
+            self._model_combo.setCurrentIndex(idx)
+
+        params_data = {p["name"]: p for p in state.get("parameters", [])}
+        for i in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(i, 0)
+            param_name = (
+                name_item.data(Qt.ItemDataRole.UserRole)
+                if name_item
+                else None
+            )
+            if not isinstance(param_name, str) and name_item:
+                param_name = name_item.text()
+            if param_name not in params_data:
+                continue
+
+            p_data = params_data[param_name]
+
+            value_item = self._param_table.item(i, 1)
+            if value_item:
+                value_item.setText(str(p_data.get("value", 0.0)))
+
+            fix_widget = self._param_table.cellWidget(i, 2)
+            fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
+            if fix_checkbox:
+                fix_checkbox.setChecked(bool(p_data.get("fixed", False)))
+
+            min_item = self._param_table.item(i, 3)
+            if min_item:
+                min_item.setText(str(p_data.get("min", "-inf")))
+
+            max_item = self._param_table.item(i, 4)
+            if max_item:
+                max_item.setText(str(p_data.get("max", "inf")))
+
+        result_html = state.get("result_html")
+        if isinstance(result_html, str) and result_html:
+            self._result_label.setText(result_html)
 
 
 class GlobalFitTab(QWidget):
@@ -671,6 +773,93 @@ class GlobalFitTab(QWidget):
             self._fit_worker.deleteLater()
             self._fit_worker = None
 
+    # ── project state helpers ──────────────────────────────────────────
+
+    def get_state(self) -> dict:
+        """Return a serialisable snapshot of the global-fit tab state."""
+        params = []
+        for i in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(i, 0)
+            param_name = (
+                name_item.data(Qt.ItemDataRole.UserRole)
+                if name_item
+                else f"param_{i}"
+            )
+            if not isinstance(param_name, str) and name_item:
+                param_name = name_item.text()
+
+            value_item = self._param_table.item(i, 1)
+            try:
+                value = float(value_item.text()) if value_item else 0.0
+            except ValueError:
+                value = 0.0
+
+            type_combo = self._param_table.cellWidget(i, 2)
+            type_text = (
+                type_combo.currentText()
+                if isinstance(type_combo, QComboBox)
+                else "Local"
+            )
+
+            bounds_item = self._param_table.item(i, 3)
+            bounds_text = bounds_item.text() if bounds_item else "-inf, inf"
+
+            params.append({
+                "name": param_name,
+                "value": value,
+                "type": type_text,
+                "bounds": bounds_text,
+            })
+
+        return {
+            "model_name": self._model_combo.currentText(),
+            "parameters": params,
+            "result_html": self._result_text.toHtml(),
+        }
+
+    def restore_state(self, state: dict) -> None:
+        """Restore global-fit tab state from a saved dict."""
+        model_name = _resolve_model_name(
+            str(state.get("model_name") or state.get("model") or "")
+        )
+        idx = self._model_combo.findText(model_name)
+        if idx >= 0:
+            self._model_combo.setCurrentIndex(idx)
+
+        params_data = {p["name"]: p for p in state.get("parameters", [])}
+        for i in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(i, 0)
+            param_name = (
+                name_item.data(Qt.ItemDataRole.UserRole)
+                if name_item
+                else None
+            )
+            if not isinstance(param_name, str) and name_item:
+                param_name = name_item.text()
+            if param_name not in params_data:
+                continue
+
+            p_data = params_data[param_name]
+
+            value_item = self._param_table.item(i, 1)
+            if value_item:
+                value_item.setText(str(p_data.get("value", 0.0)))
+
+            type_combo = self._param_table.cellWidget(i, 2)
+            if isinstance(type_combo, QComboBox):
+                type_value = str(p_data.get("type") or p_data.get("classification") or "Local")
+                idx = type_combo.findText(type_value)
+                if idx >= 0:
+                    type_combo.setCurrentIndex(idx)
+
+            bounds_item = self._param_table.item(i, 3)
+            if bounds_item:
+                bounds_item.setText(p_data.get("bounds", "-inf, inf"))
+
+        result_html = state.get("result_html")
+        if isinstance(result_html, str) and result_html:
+            self._result_text.setHtml(result_html)
+
 
 class FitPanel(QWidget):
     """Fit setup and results panel with tabbed interface.
@@ -716,10 +905,38 @@ class FitPanel(QWidget):
 
         layout.addWidget(self._tabs)
 
-    def set_dataset(self, dataset: MuonDataset) -> None:
+    def set_dataset(self, dataset: MuonDataset | None) -> None:
         """Set the current dataset for single fitting tab."""
         self._single_tab.set_dataset(dataset)
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting tab."""
         self._global_tab.set_datasets(datasets)
+
+    # ── project state helpers ──────────────────────────────────────────
+
+    def get_single_state(self) -> dict:
+        """Return serialisable state of the single-fit tab."""
+        return self._single_tab.get_state()
+
+    def restore_single_state(self, state: dict) -> None:
+        """Restore single-fit tab state from a saved dict."""
+        self._single_tab.restore_state(state)
+
+    def get_global_state(self) -> dict:
+        """Return serialisable state of the global-fit tab."""
+        return self._global_tab.get_state()
+
+    def restore_global_state(self, state: dict) -> None:
+        """Restore global-fit tab state from a saved dict."""
+        self._global_tab.restore_state(state)
+
+    def get_ui_state(self) -> dict:
+        """Return serialisable UI state for the fit panel container."""
+        return {"active_tab_index": int(self._tabs.currentIndex())}
+
+    def restore_ui_state(self, state: dict) -> None:
+        """Restore serialisable UI state for the fit panel container."""
+        index = state.get("active_tab_index")
+        if isinstance(index, int) and 0 <= index < self._tabs.count():
+            self._tabs.setCurrentIndex(index)

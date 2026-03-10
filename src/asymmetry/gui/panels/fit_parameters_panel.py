@@ -244,6 +244,119 @@ class FitParametersPanel(QWidget):
         layout.addWidget(plot_group)
         self._update_x_axis_auto_hint()
 
+    def clear(self) -> None:
+        """Clear all fit results and reset the panel to its empty state."""
+        self._rows = []
+        self._varying_params = []
+        self._global_params = None
+        self._show_table_btn.setEnabled(False)
+        self._y_combo.clear()
+        try:
+            self._refresh_plot()
+        except Exception:
+            pass
+
+    def get_state(self) -> dict:
+        """Return a serialisable snapshot of fitted-parameter results UI state."""
+        rows = [
+            {
+                "run_number": int(row.run_number),
+                "field": float(row.field),
+                "temperature": float(row.temperature),
+                "values": {k: float(v) for k, v in row.values.items()},
+                "errors": {k: float(v) for k, v in row.errors.items()},
+            }
+            for row in self._rows
+        ]
+
+        selected_y_params: list[str] = []
+        for i in range(self._y_combo.count()):
+            item = self._y_combo.item(i)
+            if item is not None and item.isSelected():
+                selected_y_params.append(str(item.data(Qt.ItemDataRole.UserRole)))
+
+        return {
+            "rows": rows,
+            "varying_params": list(self._varying_params),
+            "inferred_x_key": self._inferred_x_key,
+            "x_axis": self._x_combo.currentText(),
+            "selected_y_params": selected_y_params,
+            "log_x": bool(self._log_x_check.isChecked()),
+            "log_y": bool(self._log_y_check.isChecked()),
+            "plot_mode": self._plot_mode_combo.currentText(),
+        }
+
+    def restore_state(self, state: dict) -> None:
+        """Restore fitted-parameter results UI state from a saved dict."""
+        rows_data = state.get("rows", [])
+        restored_rows: list[_FitRow] = []
+        if isinstance(rows_data, list):
+            for entry in rows_data:
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    restored_rows.append(
+                        _FitRow(
+                            run_number=int(entry.get("run_number", 0)),
+                            field=float(entry.get("field", 0.0)),
+                            temperature=float(entry.get("temperature", 0.0)),
+                            values={
+                                str(k): float(v)
+                                for k, v in dict(entry.get("values", {})).items()
+                            },
+                            errors={
+                                str(k): float(v)
+                                for k, v in dict(entry.get("errors", {})).items()
+                            },
+                        )
+                    )
+                except Exception:
+                    continue
+
+        self._rows = restored_rows
+        self._global_params = None
+        self._show_table_btn.setEnabled(bool(self._rows))
+        self._export_csv_btn.setEnabled(bool(self._rows))
+        self._export_gle_btn.setEnabled(bool(self._rows))
+        self._gle_format_combo.setEnabled(bool(self._rows))
+
+        varying = state.get("varying_params", [])
+        if isinstance(varying, list) and all(isinstance(v, str) for v in varying):
+            self._varying_params = list(varying)
+        else:
+            self._varying_params = self._detect_varying_parameters(self._rows)
+
+        inferred_x = state.get("inferred_x_key", "field")
+        self._inferred_x_key = inferred_x if inferred_x in {"field", "temperature", "run"} else "field"
+
+        self._rebuild_y_parameter_combo()
+
+        selected_y = set(state.get("selected_y_params", []))
+        if selected_y:
+            for i in range(self._y_combo.count()):
+                item = self._y_combo.item(i)
+                if item is not None:
+                    pname = str(item.data(Qt.ItemDataRole.UserRole))
+                    item.setSelected(pname in selected_y)
+
+        x_axis = state.get("x_axis")
+        if isinstance(x_axis, str):
+            idx = self._x_combo.findText(x_axis)
+            if idx >= 0:
+                self._x_combo.setCurrentIndex(idx)
+
+        self._log_x_check.setChecked(bool(state.get("log_x", False)))
+        self._log_y_check.setChecked(bool(state.get("log_y", False)))
+
+        plot_mode = state.get("plot_mode")
+        if isinstance(plot_mode, str):
+            idx = self._plot_mode_combo.findText(plot_mode)
+            if idx >= 0:
+                self._plot_mode_combo.setCurrentIndex(idx)
+
+        self._update_x_axis_auto_hint()
+        self._refresh_views()
+
     def set_fit_results(
         self,
         results_dict: dict[int, tuple[FitResult, tuple[np.ndarray, np.ndarray]]],

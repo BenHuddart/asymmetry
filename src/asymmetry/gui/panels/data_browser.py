@@ -8,12 +8,14 @@ plotting and analysis.
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QEvent, QItemSelectionModel, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QDialog,
     QHBoxLayout,
     QHeaderView,
+    QMenu,
     QPushButton,
     QScrollArea,
     QTableWidget,
@@ -170,7 +172,13 @@ class DataBrowserPanel(QWidget):
     * **Excel-style filtering**: Right-click column headers to open filter dialog
       with checkboxes for all unique values in that column
     * **Multi-selection**: Ctrl+Click and Shift+Click for range selection
-    * **Co-adding**: Average multiple selected datasets with proper error propagation
+    * **Context menu actions**: Right-click rows to access options:
+      
+      - **Co-add Selected**: Average multiple datasets (appears for 2+ selected)
+      - **Separate Combined**: Break apart a combined dataset (appears for combined entries)
+      - **Remove Entry(ies)**: Delete selected dataset(s) (always available)
+    
+    * **Delete key**: Press Delete/Backspace to remove selected datasets
 
     Signals
     -------
@@ -232,6 +240,12 @@ class DataBrowserPanel(QWidget):
         self._table.horizontalHeader().setSectionsClickable(False)
         self._table.horizontalHeader().viewport().installEventFilter(self)
         self._table.viewport().installEventFilter(self)
+        self._table.installEventFilter(self)
+        # Enable context menus on the table
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.viewport().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._show_table_context_menu)
+        self._table.viewport().customContextMenuRequested.connect(self._show_table_context_menu)
         # Removed: self._table.cellClicked.connect(self._on_cell_clicked)
         # Using itemSelectionChanged instead to avoid interfering with multi-selection
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
@@ -239,26 +253,8 @@ class DataBrowserPanel(QWidget):
 
         layout.addWidget(self._table)
 
-        # Co-add controls
-        self._create_coadd_controls()
-        layout.addLayout(self._coadd_layout)
-
         # Set minimum width very small to allow shrinking, but default is user-resizable
         self.setMinimumWidth(250)
-
-    def _create_coadd_controls(self) -> None:
-        """Create co-add controls."""
-        self._coadd_layout = QHBoxLayout()
-
-        coadd_btn = QPushButton("Co-add Selected")
-        coadd_btn.clicked.connect(self._coadd_selected)
-        self._coadd_layout.addWidget(coadd_btn)
-
-        separate_btn = QPushButton("Separate Combined")
-        separate_btn.clicked.connect(self._separate_combined)
-        self._coadd_layout.addWidget(separate_btn)
-
-        self._coadd_layout.addStretch()
 
     def add_dataset(self, dataset: MuonDataset) -> None:
         rn = dataset.run_number
@@ -290,6 +286,60 @@ class DataBrowserPanel(QWidget):
                 header.resizeSection(col, min_width)
             elif size > maximums[col]:
                 header.resizeSection(col, maximums[col])
+
+    def _insert_table_row_at(self, dataset: MuonDataset, row: int) -> None:
+        """Insert a row at the given position for the given dataset."""
+        rn = dataset.run_number
+        meta = dataset.metadata
+
+        # Get title from metadata (for combined datasets, this already contains
+        # the shared title if applicable, or a generic "Combined N runs" label)
+        title = meta.get("title", "")
+
+        # Display run numbers as "3077 + 3076" for combined datasets
+        run_display = str(rn)
+        if rn in self._combined_datasets:
+            run_display = " + ".join(map(str, self._combined_datasets[rn]))
+
+        self._table.insertRow(row)
+        self._updating_table = True
+
+        # Column 0: Run number (display composite label for combined entries)
+        if rn in self._combined_datasets:
+            item = QTableWidgetItem(run_display)
+        else:
+            item = NumericTableWidgetItem(rn)
+        item.setData(Qt.ItemDataRole.UserRole, rn)
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self._table.setItem(row, 0, item)
+
+        # Column 1: Title (text)
+        title_item = QTableWidgetItem(title)
+        title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self._table.setItem(row, 1, title_item)
+
+        # Column 2: Temperature (numeric)
+        temp = float(meta.get('temperature', 0))
+        temp_item = NumericTableWidgetItem(f"{temp:.2f}")
+        temp_item.setFlags(temp_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self._table.setItem(row, 2, temp_item)
+
+        # Column 3: Field (numeric)
+        field = float(meta.get('field', 0))
+        field_item = NumericTableWidgetItem(f"{field:.1f}")
+        # Field is editable to support manual correction.
+        field_item.setFlags(field_item.flags() | Qt.ItemFlag.ItemIsEditable)
+        self._table.setItem(row, 3, field_item)
+
+        # Column 4: Comment (read-only)
+        comment = str(meta.get("comment", ""))
+        comment_item = QTableWidgetItem(comment)
+        comment_item.setFlags(comment_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self._table.setItem(row, 4, comment_item)
+        self._updating_table = False
+
+        # Maintain current sort order after inserting
+        self._sort_table()
 
     def _add_table_row(self, dataset: MuonDataset) -> None:
         """Add a row to the table for the given dataset."""
@@ -391,6 +441,104 @@ class DataBrowserPanel(QWidget):
                 self._table.removeRow(row)
                 return
 
+    def _get_selected_run_numbers(self) -> list[int]:
+        """Return selected run numbers in table order, excluding hidden rows."""
+        selection_model = self._table.selectionModel()
+        if selection_model is None:
+            return []
+
+        run_numbers = []
+        for idx in selection_model.selectedRows():
+            row = idx.row()
+            if self._table.isRowHidden(row):
+                continue
+
+            item = self._table.item(row, 0)
+            if item is None:
+                continue
+
+            run_number = item.data(Qt.ItemDataRole.UserRole)
+            if run_number in self._datasets:
+                run_numbers.append(run_number)
+
+        return run_numbers
+
+    def _remove_run_number(self, run_number: int) -> None:
+        """Remove a dataset and any combined-dataset bookkeeping for its row."""
+        self._datasets.pop(run_number, None)
+        self._combined_datasets.pop(run_number, None)
+        self._combined_source_datasets.pop(run_number, None)
+        self._remove_row_for_run_number(run_number)
+
+    def _remove_selected_entries(self) -> None:
+        """Remove all currently selected entries from the browser."""
+        run_numbers = self._get_selected_run_numbers()
+        if not run_numbers:
+            return
+
+        for run_number in run_numbers:
+            self._remove_run_number(run_number)
+
+        self._apply_row_visibility()
+        self._on_selection_changed()
+
+    def _create_table_context_menu(self) -> QMenu | None:
+        """Create the row context menu for the current table selection."""
+        run_numbers = self._get_selected_run_numbers()
+        if not run_numbers:
+            return None
+
+        menu = QMenu(self)
+        
+        # Separate run numbers into regular and combined
+        regular_runs = [rn for rn in run_numbers if rn not in self._combined_datasets]
+        combined_runs = [rn for rn in run_numbers if rn in self._combined_datasets]
+        
+        # Co-add option: show if 2+ regular datasets selected (and no combined datasets)
+        if len(regular_runs) >= 2 and not combined_runs:
+            menu.addAction("Co-add Selected", self._coadd_selected)
+        
+        # Separate option: show if any combined datasets selected
+        if combined_runs:
+            menu.addAction("Separate Combined", self._separate_combined)
+        
+        # Separator before delete option
+        if regular_runs or combined_runs:
+            menu.addSeparator()
+        
+        # Delete option
+        label = "Remove Entry" if len(run_numbers) == 1 else "Remove Selected Entries"
+        menu.addAction(label, self._remove_selected_entries)
+        
+        return menu
+
+    def _show_table_context_menu(self, position: QPoint) -> None:
+        """Show a context menu for the row under the cursor."""
+        # Handle position from both table and viewport signals
+        # If position comes from viewport, get absolute viewport position
+        # If from table, map from table to viewport
+        sender = self.sender()
+        if sender is self._table:
+            viewport_pos = position
+        else:
+            viewport_pos = position
+
+        item = self._table.itemAt(viewport_pos)
+        if item is None:
+            return
+
+        row = item.row()
+        selected_rows = {idx.row() for idx in self._table.selectedIndexes()}
+        if row not in selected_rows:
+            self._table.selectRow(row)
+
+        menu = self._create_table_context_menu()
+        if menu is None:
+            return
+
+        global_pos = self._table.viewport().mapToGlobal(viewport_pos)
+        menu.popup(global_pos)
+
     # ------------------------------------------------------------------
     # Event filter – handles header clicks for sorting & filtering
     # ------------------------------------------------------------------
@@ -406,6 +554,14 @@ class DataBrowserPanel(QWidget):
         modal filter dialog and causing subsequent left-clicks to hang.
         """
         header = self._table.horizontalHeader()
+
+        if watched is self._table and event.type() == QEvent.Type.KeyPress:
+            if (
+                event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace)
+                and self._table.state() != QAbstractItemView.State.EditingState
+            ):
+                self._remove_selected_entries()
+                return True
 
         # Custom selection behavior for table rows:
         # Shift+Click adds just the clicked row to selection instead of a range.
@@ -549,6 +705,9 @@ class DataBrowserPanel(QWidget):
         if len(datasets_to_combine) < 2:
             return
 
+        # Remember the minimum row position to insert at
+        insert_row = min(selected_rows)
+
         # Perform co-add
         combined_dataset = self._coadd_datasets(datasets_to_combine, run_numbers)
 
@@ -567,8 +726,8 @@ class DataBrowserPanel(QWidget):
             self._datasets.pop(rn, None)
             self._remove_row_for_run_number(rn)
 
-        # Add to table
-        self._add_table_row(combined_dataset)
+        # Insert at the original position
+        self._insert_table_row_at(combined_dataset, insert_row)
 
     def _coadd_datasets(
         self,
@@ -633,27 +792,34 @@ class DataBrowserPanel(QWidget):
         """Separate selected combined datasets back to originals."""
         selected_rows = set(item.row() for item in self._table.selectedItems())
 
-        selected_combined_runs: list[int] = []
-        for row in sorted(selected_rows, reverse=True):
+        # Collect combined run numbers and their row positions
+        combined_items: list[tuple[int, int, int]] = []  # (rn, row, position in selected_rows)
+        for row in sorted(selected_rows):
             item = self._table.item(row, 0)
             if not item:
                 continue
             rn = item.data(Qt.ItemDataRole.UserRole)
             if rn in self._combined_datasets:
-                selected_combined_runs.append(rn)
+                combined_items.append((rn, row, len(combined_items)))
 
-        for rn in selected_combined_runs:
-            # Restore source datasets first.
-            for dataset in self._combined_source_datasets.get(rn, []):
-                source_rn = dataset.run_number
-                self._datasets[source_rn] = dataset
-                self._add_table_row(dataset)
-
-            # Remove the combined dataset
+        # Process in reverse order to avoid row index shifting issues
+        for rn, orig_row, _ in reversed(combined_items):
+            # Insert source datasets at the position of the combined dataset
+            insert_row = orig_row
+            source_datasets = self._combined_source_datasets.get(rn, [])
+            
+            # Remove the combined dataset first
             self._datasets.pop(rn, None)
             self._combined_datasets.pop(rn, None)
             self._combined_source_datasets.pop(rn, None)
             self._remove_row_for_run_number(rn)
+
+            # Restore source datasets at the original position
+            for dataset in source_datasets:
+                source_rn = dataset.run_number
+                self._datasets[source_rn] = dataset
+                self._insert_table_row_at(dataset, insert_row)
+                insert_row += 1
 
         self._sort_table()
 
@@ -671,22 +837,10 @@ class DataBrowserPanel(QWidget):
             in table order.
         """
         selected = []
-        # Use selection model to get all selected rows (more reliable than selectedItems)
-        selection_model = self._table.selectionModel()
-
-        if selection_model:
-            selected_indices = selection_model.selectedRows()
-            for idx in selected_indices:
-                row = idx.row()
-                # Ignore filtered-out rows that may remain selected internally.
-                if self._table.isRowHidden(row):
-                    continue
-                item = self._table.item(row, 0)
-                if item:
-                    run_number = item.data(Qt.ItemDataRole.UserRole)
-                    dataset = self._datasets.get(run_number)
-                    if dataset:
-                        selected.append(dataset)
+        for run_number in self._get_selected_run_numbers():
+            dataset = self._datasets.get(run_number)
+            if dataset is not None:
+                selected.append(dataset)
 
         return selected
 
@@ -702,3 +856,134 @@ class DataBrowserPanel(QWidget):
         # (for plotting that dataset). If multiple, user is doing global fit.
         if len(selected) == 1:
             self.dataset_selected.emit(selected[0].run_number)
+
+    # ── project state helpers ──────────────────────────────────────────
+
+    def clear(self) -> None:
+        """Remove all datasets and reset the browser to an empty state."""
+        self._datasets.clear()
+        self._combined_datasets.clear()
+        self._combined_source_datasets.clear()
+        self._next_combined_id = -1
+        self._column_filters.clear()
+        self._current_sort_column = -1
+        self._current_sort_order = Qt.SortOrder.AscendingOrder
+        self._table.setRowCount(0)
+
+    def add_combined_dataset(self, source_run_numbers: list[int]) -> int | None:
+        """Recreate a combined dataset programmatically from existing source runs.
+
+        Parameters
+        ----------
+        source_run_numbers : list[int]
+            Run numbers that should be co-added.  All must already be present
+            in the browser.
+
+        Returns
+        -------
+        int or None
+            The new combined run-number ID, or ``None`` if any source dataset
+            was not found.
+        """
+        datasets_to_combine = []
+        for rn in source_run_numbers:
+            ds = self._datasets.get(rn)
+            if ds is None:
+                return None
+            datasets_to_combine.append(ds)
+
+        if len(datasets_to_combine) < 2:
+            return None
+
+        combined_dataset = self._coadd_datasets(datasets_to_combine, source_run_numbers)
+        combined_rn = self._next_combined_id
+        self._next_combined_id -= 1
+
+        self._datasets[combined_rn] = combined_dataset
+        self._combined_datasets[combined_rn] = source_run_numbers
+        self._combined_source_datasets[combined_rn] = [
+            self._datasets[rn] for rn in source_run_numbers if rn in self._datasets
+        ]
+
+        for rn in source_run_numbers:
+            self._datasets.pop(rn, None)
+            self._remove_row_for_run_number(rn)
+
+        self._add_table_row(combined_dataset)
+        return combined_rn
+
+    def get_state(self) -> dict:
+        """Return a serialisable snapshot of the browser's UI state.
+
+        This captures sort order, active column filters, and the set of
+        selected run numbers.  Dataset contents are managed separately by the
+        ``MainWindow`` project controller, so this does not include the actual
+        dataset arrays.
+
+        Returns
+        -------
+        dict
+            Browser state suitable for inclusion in a project file.
+        """
+        filters = {
+            str(col): sorted(values)
+            for col, values in self._column_filters.items()
+        }
+        return {
+            "sort_column": self._current_sort_column,
+            "sort_order": (
+                "ascending"
+                if self._current_sort_order == Qt.SortOrder.AscendingOrder
+                else "descending"
+            ),
+            "filters": filters,
+            "selected_run_numbers": self._get_selected_run_numbers(),
+        }
+
+    def restore_state(self, state: dict) -> None:
+        """Restore browser UI state (sort/filter/selection) from a saved dict.
+
+        Must be called *after* all datasets have already been added to the
+        browser via :meth:`add_dataset` or :meth:`add_combined_dataset`.
+
+        Parameters
+        ----------
+        state : dict
+            Browser state as returned by :meth:`get_state`.
+        """
+        # Restore sort
+        sort_col = state.get("sort_column", -1)
+        sort_order_str = state.get("sort_order", "ascending")
+        if sort_col >= 0:
+            self._current_sort_column = sort_col
+            self._current_sort_order = (
+                Qt.SortOrder.AscendingOrder
+                if sort_order_str == "ascending"
+                else Qt.SortOrder.DescendingOrder
+            )
+            self._sort_table()
+
+        # Restore column filters
+        self._column_filters = {}
+        for col_str, values in state.get("filters", {}).items():
+            self._column_filters[int(col_str)] = set(values)
+        self._apply_row_visibility()
+
+        # Restore row selection
+        selected_runs = set(state.get("selected_run_numbers", []))
+        if not selected_runs:
+            return
+
+        selection_model = self._table.selectionModel()
+        if selection_model is None:
+            return
+        self._table.clearSelection()
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, 0)
+            if item and item.data(Qt.ItemDataRole.UserRole) in selected_runs:
+                idx = self._table.model().index(row, 0)
+                selection_model.select(
+                    idx,
+                    QItemSelectionModel.SelectionFlag.Select
+                    | QItemSelectionModel.SelectionFlag.Rows,
+                )

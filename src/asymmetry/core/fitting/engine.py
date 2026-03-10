@@ -66,7 +66,9 @@ class FitEngine:
         Parameters
         ----------
         dataset : MuonDataset
-            The data to fit.
+            The data to fit. The engine uses the dataset object's ``time``,
+            ``asymmetry``, and ``error`` arrays as provided, optionally clipped
+            only by ``t_min``/``t_max``.
         model_fn : callable
             ``f(t, **params) -> array``.
         parameters : ParameterSet

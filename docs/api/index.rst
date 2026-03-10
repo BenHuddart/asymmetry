@@ -7,6 +7,7 @@ Complete API documentation for all Asymmetry modules.
    :maxdepth: 2
 
    core
+   project
    gui
    io
    fitting

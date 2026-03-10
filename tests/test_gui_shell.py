@@ -25,6 +25,10 @@ class _DummySignal:
     def connect(self, callback):
         self._callbacks.append(callback)
 
+    def emit(self, *args, **kwargs):
+        for callback in self._callbacks:
+            callback(*args, **kwargs)
+
 
 class _StubDataBrowser(QWidget):
     def __init__(self):
@@ -48,11 +52,15 @@ class _StubFitPanel(QWidget):
         super().__init__()
         self.fit_completed = _DummySignal()
         self.global_fit_completed = _DummySignal()
+        self.last_dataset = None
+        self.last_datasets = None
 
-    def set_datasets(self, _datasets):
+    def set_datasets(self, datasets):
+        self.last_datasets = datasets
         return
 
-    def set_dataset(self, _dataset):
+    def set_dataset(self, dataset):
+        self.last_dataset = dataset
         return
 
 
@@ -61,14 +69,33 @@ class _StubPlotPanel(QWidget):
         super().__init__()
         self._fit_curve = None
         self._fit_curves = {}
+        self.bunch_factor_changed = _DummySignal()
+        self.factor = 1
+        self.last_plotted_dataset = None
 
-    def plot_dataset(self, _dataset):
+    def plot_dataset(self, dataset):
+        self.last_plotted_dataset = dataset
         return
 
     def plot_fit(self, *_args, **_kwargs):
         return
 
     def set_global_fits(self, _curves):
+        return
+
+    def get_analysis_dataset(self, dataset):
+        if dataset is None or self.factor <= 1:
+            return dataset
+        return MuonDataset(
+            time=dataset.time[::self.factor],
+            asymmetry=dataset.asymmetry[::self.factor],
+            error=dataset.error[::self.factor],
+            metadata={**dataset.metadata, "analysis_factor": self.factor},
+            run=dataset.run,
+        )
+
+    def clear(self):
+        self.last_plotted_dataset = None
         return
 
 
@@ -121,10 +148,17 @@ def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplicat
     )
     window._data_browser.add_dataset(ds)
     window._on_dataset_selected(42)
+    assert window._fit_panel.last_dataset is ds
 
     choice = window._maybe_apply_comment_field(ds, "dummy.wim", apply_to_all=True)
     assert choice == "yes_to_all"
     assert ds.metadata["field"] == pytest.approx(150.0)
+
+    window._plot_panel.factor = 2
+    window._plot_panel.bunch_factor_changed.emit(2)
+    assert window._fit_panel.last_dataset is not ds
+    assert window._fit_panel.last_dataset.metadata["analysis_factor"] == 2
+    assert all(d.metadata["analysis_factor"] == 2 for d in window._fit_panel.last_datasets)
 
     results_dict = {
         42: (

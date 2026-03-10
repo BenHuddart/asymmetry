@@ -87,6 +87,46 @@ def test_single_fit_success_emits_and_updates_table(
     assert len(emitted["curve"][0]) == 500
 
 
+def test_single_fit_uses_dataset_object_it_was_given(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    rebinned = MuonDataset(
+        time=dataset.time[::4],
+        asymmetry=dataset.asymmetry[::4],
+        error=dataset.error[::4],
+        metadata=dict(dataset.metadata),
+    )
+
+    tab = SingleFitTab()
+    tab.set_dataset(rebinned)
+
+    model_name = tab._model_combo.currentText()
+    model = MODELS[model_name]
+
+    captured = {}
+
+    def _fit(captured_dataset, model_fn, parameters):
+        captured["dataset"] = captured_dataset
+        captured["model_fn"] = model_fn
+        captured["n_points"] = len(captured_dataset.time)
+        return FitResult(
+            success=True,
+            chi_squared=1.0,
+            reduced_chi_squared=0.1,
+            parameters=ParameterSet(
+                [Parameter(name=p, value=float(i + 1)) for i, p in enumerate(model.param_names)]
+            ),
+            uncertainties={p: 0.01 for p in model.param_names},
+        )
+
+    tab._fit_engine = SimpleNamespace(fit=_fit)
+
+    tab._run_fit()
+
+    assert captured["dataset"] is rebinned
+    assert captured["n_points"] == len(rebinned.time)
+
+
 def test_global_tab_set_datasets_states(qapp: QApplication, dataset: MuonDataset) -> None:
     tab = GlobalFitTab()
 

@@ -78,16 +78,6 @@ Features:
 * Clear filters by right-clicking and selecting all values again
 * Works seamlessly with sorting
 
-**Search Filter**
-~~~~~~~~~~~~~~~~~
-
-Use the search filter at the top for quick text-based filtering:
-
-1. Select a column from the dropdown (or "All" for global search)
-2. Type filter text (case-insensitive, partial matches work)
-3. Matching rows are shown, others hidden
-4. Click "Clear" to reset the filter
-
 Multi-Selection
 ~~~~~~~~~~~~~~~
 
@@ -100,15 +90,26 @@ Viewing Data
 
 Click any dataset row to plot it in the main panel.
 
+Context Menu
+~~~~~~~~~~~~
+
+Right-click any dataset row to access options:
+
+* **Co-add Selected** (appears when 2+ datasets selected): Combine selected datasets into one averaged dataset
+* **Separate Combined** (appears when a combined dataset is selected): Break apart a combined dataset back into its source datasets
+* **Remove Entry** or **Remove Selected Entries**: Delete the selected dataset(s)
+
+These options appear contextually based on your current selection.
+
 Co-adding Datasets
 ~~~~~~~~~~~~~~~~~~
 
 To average multiple datasets:
 
 1. Select 2 or more datasets (Ctrl+Click or Shift+Click)
-2. Click "Co-add Selected"
-3. A new combined dataset appears with negative run number
-4. Title shows: ``[Combined: run1, run2, ...]``
+2. Right-click any selected row and choose "Co-add Selected"
+3. A new combined dataset appears at the position of the first selected dataset
+4. Display shows run numbers combined: ``3077 + 3076``
 
 The co-added dataset:
 
@@ -122,9 +123,21 @@ Separating Combined Data
 
 To remove a co-added dataset:
 
-1. Select the combined dataset (has negative run number)
-2. Click "Separate Combined"
-3. The combined entry is removed (originals remain)
+1. Select the combined dataset (display shows combined run numbers)
+2. Right-click and choose "Separate Combined"
+3. The combined entry is replaced by its source datasets at the same position
+4. Original datasets are restored
+
+Deleting Datasets
+~~~~~~~~~~~~~~~~~
+
+To remove a dataset from the browser:
+
+1. Select one or more datasets
+2. Right-click and choose "Remove Entry" or "Remove Selected Entries"
+3. Alternatively, press the **Delete** key
+
+This removes the dataset(s) from the browser; they can be reloaded via **File → Open**.
 
 Plot Panel Controls
 -------------------
@@ -151,9 +164,15 @@ Reduce noise by combining adjacent points:
 
 1. Set "Bunch: factor" spinbox to desired value (1 = no bunching)
 2. Plot updates automatically
-3. Original data is preserved; bunching is only for display/analysis
+3. Future fits use the rebinned dataset currently shown in the plot
 
 Example: factor=10 reduces 1000 points to 100 points with smaller error bars.
+
+The original loaded dataset is still preserved internally, but in the GUI the
+bunch factor now determines the dataset sent to both single-run and global
+fitting. If you want to fit the full unbinned data, run the fit with
+``Bunch = 1`` first and then increase the bunch factor afterwards for viewing.
+The existing fit overlay remains on the plot when you change the bunch factor.
 
 Fitting Panel
 -------------
@@ -182,6 +201,9 @@ The "Single" tab fits one model to the currently selected dataset:
    * **Min/Max**: Set bounds (leave empty for no bounds)
 
 4. **Click "Run Fit"** to execute the fitting
+
+   The fit uses the dataset currently shown in the plot panel. If the bunch
+   factor is greater than 1, the fit runs on that rebinned dataset.
 
 5. **Review results:**
    
@@ -212,6 +234,9 @@ per-dataset parameters:
 5. **Leave per-dataset parameters unchecked**: These vary independently for each
    dataset (e.g., ``lambda``, ``sigma``)
 6. **Click "Run Global Fit"**
+
+   Global fitting follows the same rule: the current bunch factor is applied
+   to each selected dataset before they are passed to the global fitter.
 
 After a global fit completes:
 
@@ -324,3 +349,74 @@ Tips and Tricks
 * Co-add replicate measurements to improve statistics
 * Bunch data before Fourier analysis to reduce computation time
 * Right-click on plot to save figure (via matplotlib toolbar)
+
+Saving and Reopening Projects
+------------------------------
+
+A *project file* (``.asymp``) saves the complete state of your analysis
+session.  You can close Asymmetry and resume exactly where you left off, or
+maintain several independent analyses side-by-side.
+
+Creating and saving
+~~~~~~~~~~~~~~~~~~~~
+
+* **File → New Project** clears the current session after asking for
+   confirmation.  Any unsaved changes are discarded.
+* **File → Save Project** (``Ctrl+S``) saves to the current project file.
+   If no project file is open yet, you will be prompted to choose a location.
+* **File → Save Project As…** always asks for a new filename.
+
+Opening a project
+~~~~~~~~~~~~~~~~~~
+
+* **File → Open Project…** opens a file dialog so you can locate an
+   ``.asymp`` file.
+* **File → Recent Projects** lists up to the 10 most recently opened projects
+   for one-click access.
+
+On open, every source ``.wim`` file referenced by the project is reloaded
+from disk.  Asymmetry tries paths in this order:
+
+1. The absolute path stored in the project file
+2. A path relative to the ``.asymp`` file itself (useful when the whole
+   analysis folder is moved together)
+3. If files are still missing, a dialog offers to **locate a directory** —
+   choose the folder where the data files now live, and Asymmetry will match
+   each missing file by filename
+
+This means you can move an entire analysis folder, or just redirect to a
+new data location, without losing your session state.
+
+If a source file cannot be found even after the search, Asymmetry logs a
+warning and skips that dataset — the rest of the session is restored normally.
+
+What is saved
+~~~~~~~~~~~~~
+
+* All loaded datasets (stored as file paths, not raw arrays)
+* Co-added ("combined") dataset groups
+* Data Browser sort column, sort order, column filters, and selected row
+* Plot axis limits and bunch factor
+* Most-recently-displayed fit overlay curve(s)
+* Single-fit and global-fit model selection, parameter values, fixed/free
+   flags, and bounds
+* Fit results text (χ², χ²ᵣ, best-fit values with uncertainties)
+* Active fit panel tab (Single or Global)
+* Fitted Parameters panel rows, axis settings, and plot mode
+* Fourier window type, padding factor, and display mode (amplitude / power)
+
+What is **not** saved
+~~~~~~~~~~~~~~~~~~~~~
+
+* Raw data arrays (always reloaded from the original files)
+* Fourier transform output arrays
+* Log panel messages
+
+Schema versioning
+~~~~~~~~~~~~~~~~~
+
+The ``.asymp`` format uses an integer *schema version* that is independent of
+the Asymmetry package version.  Project files from older releases will be
+migrated automatically when opened in a newer release.  If a project file
+requires a schema version that the installed Asymmetry version does not
+understand, an error dialog is shown and the file is not loaded.
