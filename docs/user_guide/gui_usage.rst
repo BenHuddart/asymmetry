@@ -180,32 +180,64 @@ Fitting Panel
 The fitting panel provides an interactive interface for fitting models to your data.
 It is located in the right dock area next to the plot panel.
 
+The fit function is shown as :math:`A(t)` and is built from components using
+the **Edit Function...** button.
+
 **Single Dataset Fitting**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The "Single" tab fits one model to the currently selected dataset:
+The "Single" tab fits one composite model to the currently selected dataset.
+By default, the function is:
+
+.. math::
+
+   A(t) = A_1 e^{-\Lambda t} + A_{bg}
+
+where ``A_bg`` is an explicit constant background term.
+
+To edit the model:
+
+1. Click **Edit Function...**
+2. Add/remove components and choose operators (``+``, ``-``, ``*``, ``/``)
+3. Confirm with **OK**
+
+Available components in the builder:
+
+* **Exponential**: :math:`A e^{-\Lambda t}`
+* **Gaussian**: :math:`A e^{-(\sigma t)^2}`
+* **Oscillatory**: :math:`A\cos(2\pi f t + \phi)`
+* **StretchedExponential**: :math:`A e^{-(|\Lambda|t)^\beta}`
+* **StaticGKT_ZF**: Static Gaussian Kubo-Toyabe
+* **Constant**: :math:`A_{bg}`
+
+.. note::
+
+   The oscillatory component in the builder is **pure cosine** by default.
+   If you want damping, multiply it by an exponential component.
+
+Parameter naming rules in the table:
+
+* Amplitudes are always indexed by component order: ``A_1``, ``A_2``, ...
+* ``A_bg`` is present by default from the constant component
+* Other symbols (for example ``Lambda``, ``sigma``, ``frequency``) are only
+  indexed when duplicates exist in the same expression
+  (for example ``Lambda_1``, ``Lambda_2``)
+
+Fitting workflow:
 
 1. **Select a dataset** in the data browser (it will be plotted)
-2. **Choose a model** from the dropdown:
-   
-   * ExponentialRelaxation: Simple exponential decay
-   * GaussianRelaxation: Gaussian Kubo-Toyabe
-   * Oscillatory: Damped oscillation
-   * StretchedExponential: Kohlrausch relaxation
-   * StaticGKT_ZF: Zero-field Gaussian Kubo-Toyabe
-
-3. **Adjust parameters** in the table:
+2. **Adjust parameters** in the table:
    
    * **Value**: Initial guess for the parameter
    * **Fix**: Check to hold the parameter constant during fit
    * **Min/Max**: Set bounds (leave empty for no bounds)
 
-4. **Click "Run Fit"** to execute the fitting
+3. **Click "Fit"** to execute the fitting
 
    The fit uses the dataset currently shown in the plot panel. If the bunch
    factor is greater than 1, the fit runs on that rebinned dataset.
 
-5. **Review results:**
+4. **Review results:**
    
    * Fit curve appears on the plot in red
    * Results box shows χ², χ²ᵣ (reduced chi-squared)
@@ -228,12 +260,14 @@ per-dataset parameters:
 
 1. **Select multiple datasets** in the data browser (Ctrl+Click or Shift+Click)
 2. Switch to the **"Global"** tab in the fit panel
-3. **Choose a model** from the dropdown
-4. **Mark shared parameters**: Check "Global" for parameters that should have
-   the same value across all datasets (e.g., ``A0``)
-5. **Leave per-dataset parameters unchecked**: These vary independently for each
-   dataset (e.g., ``lambda``, ``sigma``)
-6. **Click "Run Global Fit"**
+3. Optionally click **Edit Function...** to customize the composite :math:`A(t)`
+4. **Set parameter type** in the table for each parameter:
+
+   * **Global**: shared value across all selected datasets
+   * **Local**: separate value per dataset
+   * **Fixed**: held constant at the specified value
+
+5. **Click "Run Global Fit"**
 
    Global fitting follows the same rule: the current bunch factor is applied
    to each selected dataset before they are passed to the global fitter.

@@ -70,7 +70,6 @@ Current schema (version 1)
 from __future__ import annotations
 
 import json
-from copy import deepcopy
 from pathlib import Path
 
 CURRENT_SCHEMA_VERSION: int = 1
@@ -103,8 +102,6 @@ def migrate_to_current(data: dict) -> dict:
     UnsupportedSchemaVersion
         If the schema version is not in the supported window.
     """
-    data = _normalise_legacy_top_level(data)
-
     version = data.get("schema_version", 0)
     if version not in _SUPPORTED_VERSIONS:
         raise UnsupportedSchemaVersion(
@@ -113,9 +110,7 @@ def migrate_to_current(data: dict) -> dict:
             "Upgrade the Asymmetry package to open this file, or check that "
             "the file is a valid Asymmetry project."
         )
-    migrated = _normalise_legacy_v1_payload(data)
-    _ensure_optional_sections(migrated)
-    return migrated
+    return data
 
 
 def validate(data: dict) -> None:
@@ -199,94 +194,3 @@ def _json_default(obj: object) -> object:
     raise TypeError(f"Object of type {type(obj).__name__!r} is not JSON serializable")
 
 
-def _normalise_legacy_top_level(data: dict) -> dict:
-    """Return a copy with tolerant handling for legacy top-level keys.
-
-    Historical builds may omit ``schema_version`` or use ``app_version``.
-    If the payload looks like an Asymmetry project, assume schema v1.
-    """
-    out = deepcopy(data)
-
-    if "created_with_app_version" not in out and "app_version" in out:
-        out["created_with_app_version"] = out["app_version"]
-
-    if "schema_version" not in out and isinstance(out.get("datasets"), list):
-        out["schema_version"] = 1
-
-    return out
-
-
-def _normalise_legacy_v1_payload(data: dict) -> dict:
-    """Normalise legacy v1 aliases to the current canonical key names."""
-    out = deepcopy(data)
-
-    # Older docs/examples used nested fit_state.single/global blocks.
-    fit_state = out.get("fit_state")
-    if isinstance(fit_state, dict):
-        if "single_fit_state" not in out and isinstance(fit_state.get("single"), dict):
-            out["single_fit_state"] = fit_state["single"]
-        if "global_fit_state" not in out and isinstance(fit_state.get("global"), dict):
-            out["global_fit_state"] = fit_state["global"]
-
-    # Fit-state aliases from older examples/builds.
-    single_fit_state = out.get("single_fit_state")
-    if isinstance(single_fit_state, dict):
-        _normalise_single_fit_state(single_fit_state)
-
-    global_fit_state = out.get("global_fit_state")
-    if isinstance(global_fit_state, dict):
-        _normalise_global_fit_state(global_fit_state)
-
-    # Dataset-level aliases seen in legacy examples.
-    datasets = out.get("datasets")
-    if isinstance(datasets, list):
-        normalised_datasets: list[dict] = []
-        for entry in datasets:
-            if not isinstance(entry, dict):
-                continue
-            ds = deepcopy(entry)
-            if "source_file" not in ds and "source_path" in ds:
-                ds["source_file"] = ds["source_path"]
-            if "metadata_overrides" not in ds and isinstance(ds.get("metadata"), dict):
-                ds["metadata_overrides"] = ds["metadata"]
-            normalised_datasets.append(ds)
-        out["datasets"] = normalised_datasets
-
-    return out
-
-
-def _ensure_optional_sections(data: dict) -> None:
-    """Populate optional top-level sections with safe defaults.
-
-    This keeps restore paths resilient when loading project files from older
-    builds that did not persist every panel state section.
-    """
-    data.setdefault("combined_datasets", [])
-    data.setdefault("browser_state", {})
-    data.setdefault("plot_state", {})
-    data.setdefault("single_fit_state", {})
-    data.setdefault("global_fit_state", {})
-    data.setdefault("fit_ui_state", {})
-    data.setdefault("fit_parameters_state", {})
-    data.setdefault("fourier_state", {})
-
-
-def _normalise_single_fit_state(state: dict) -> None:
-    """Normalise legacy single-fit key aliases in-place."""
-    if "model_name" not in state and "model" in state:
-        state["model_name"] = state["model"]
-
-
-def _normalise_global_fit_state(state: dict) -> None:
-    """Normalise legacy global-fit key aliases in-place."""
-    if "model_name" not in state and "model" in state:
-        state["model_name"] = state["model"]
-
-    params = state.get("parameters")
-    if not isinstance(params, list):
-        return
-    for p in params:
-        if not isinstance(p, dict):
-            continue
-        if "type" not in p and "classification" in p:
-            p["type"] = p["classification"]

@@ -1,12 +1,10 @@
-"""Panel for inspecting fitted parameters across multiple datasets.
-
-Shows a table of varying fit parameters and a plot of one fitted parameter versus
-an inferred sweep variable (usually magnetic field or temperature).
-"""
+"""Panel for inspecting fitted parameters across multiple datasets."""
 
 from __future__ import annotations
 
 import csv
+import importlib
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -23,9 +21,9 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -35,10 +33,18 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
-from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.fitting.parameter_models import (
+    ModelFitRange,
+    ParameterCompositeModel,
+    ParameterModelFit,
+    ParameterModelFitResult,
+)
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 
 _PARAM_SYMBOLS = {
     "A0": "A₀",
+    "A_bg": "A_bg",
     "Lambda": "λ",
     "sigma": "σ",
     "Delta": "Δ",
@@ -49,6 +55,7 @@ _PARAM_SYMBOLS = {
 
 _PARAM_UNITS = {
     "A0": "%",
+    "A_bg": "%",
     "baseline": "%",
     "Lambda": "μs⁻¹",
     "sigma": "μs⁻¹",
@@ -59,20 +66,28 @@ _PARAM_UNITS = {
 
 
 def _format_param_label(name: str) -> str:
-    """Return a display label with Greek symbols and units where applicable."""
     symbol = _PARAM_SYMBOLS.get(name, name)
     unit = _PARAM_UNITS.get(name)
-    if unit:
-        return f"{symbol} ({unit})"
-    return symbol
+    return f"{symbol} ({unit})" if unit else symbol
+
+
+def _format_plot_label(name: str) -> str:
+    if name == "A_bg":
+        return "$A_{bg}$ (%)"
+    return _format_param_label(name)
+
+
+def _format_plot_legend_label(name: str) -> str:
+    if name == "A_bg":
+        return "$A_{bg}$"
+    return _PARAM_SYMBOLS.get(name, name)
 
 
 def _format_gle_label(name: str) -> str:
-    """Format a parameter label for GLE plots with proper italics and superscripts."""
-    # Only italicize physical symbols, not full words.
     gle_labels = {
         "A0": "{\\it{A}}_{0} (%)",
-        "Lambda": "{\\it{λ}} (μs^{-1})",  # λ printed as is, superscript -1
+        "A_bg": "{\\it{A}}_{bg} (%)",
+        "Lambda": "{\\it{λ}} (μs^{-1})",
         "sigma": "{\\it{σ}} (μs^{-1})",
         "Delta": "{\\it{Δ}} (μs^{-1})",
         "beta": "{\\it{β}}",
@@ -80,62 +95,80 @@ def _format_gle_label(name: str) -> str:
         "frequency": "{\\it{f}} (MHz)",
         "baseline": "baseline (%)",
     }
+    return gle_labels.get(name, name)
 
-    if name in gle_labels:
-        return gle_labels[name]
 
-    # For unknown parameters, keep words plain and only italicize single-char symbols.
-    unit = _PARAM_UNITS.get(name)
-    display_name = f"{{\\it{{{name}}}}}" if len(name) == 1 else name
-    if unit:
-        unit_gle = unit.replace("μs⁻¹", "μs^{-1}")
-        return f"{display_name} ({unit_gle})"
-    return display_name
+def _format_gle_legend_label(name: str) -> str:
+    gle_labels = {
+        "A0": "{\\it{A}}_{0}",
+        "A_bg": "{\\it{A}}_{bg}",
+        "Lambda": "{\\it{λ}}",
+        "sigma": "{\\it{σ}}",
+        "Delta": "{\\it{Δ}}",
+        "beta": "{\\it{β}}",
+        "phase": "{\\it{φ}}",
+        "frequency": "{\\it{f}}",
+        "baseline": "baseline",
+    }
+    return gle_labels.get(name, name)
 
 
 def _format_x_label_gle(x_key: str) -> str:
-    """Format x-axis label for GLE plots."""
     if x_key == "field":
         return "{\\it{B}} (G)"
-    elif x_key == "temperature":
+    if x_key == "temperature":
         return "{\\it{T}} (K)"
-    else:
-        return "Run Number"
-
-
-def _format_export_param_header(name: str) -> str:
-    """Return an export-friendly parameter label with units when available."""
-    unit = _PARAM_UNITS.get(name)
-    if unit:
-        return f"{name} ({unit})"
-    return name
-
-
-def _format_export_error_header(name: str) -> str:
-    """Return an export-friendly uncertainty label with units when available."""
-    unit = _PARAM_UNITS.get(name)
-    if unit:
-        return f"err_{name} ({unit})"
-    return f"err_{name}"
+    return "Run Number"
 
 
 def _gle_series_color(index: int) -> str:
-    """Return a deterministic color for GLE multi-series plots."""
     primary = ["black", "blue", "red"]
     fallback = ["green", "orange", "purple", "brown", "magenta", "cyan", "olive"]
-
     if index < len(primary):
         return primary[index]
     return fallback[(index - len(primary)) % len(fallback)]
 
 
+def _fit_overlay_color(index: int) -> str:
+    colors = ["red", "green", "orange", "purple", "brown", "magenta", "cyan"]
+    return colors[index % len(colors)]
+
+
+def _fit_overlay_label(param_name: str, index: int, total: int, *, gle: bool) -> str:
+    base = _format_gle_legend_label(param_name) if gle else _format_plot_legend_label(param_name)
+    suffix = "" if index == 0 else f" #{index + 1}"
+    if total <= 1:
+        suffix = ""
+    return f"fit {base}{suffix}"
+
+
+def _normalize_x_key(value: object) -> str:
+    """Normalize persisted x-axis key to an internal identifier."""
+    text = str(value or "").strip()
+    if text == "field":
+        return "field"
+    if text == "temperature":
+        return "temperature"
+    if text == "run":
+        return "run"
+    return "run"
+
+
 @dataclass
 class _FitRow:
     run_number: int
+    run_label: str
     field: float
     temperature: float
     values: dict[str, float]
     errors: dict[str, float]
+    combined_from: list[int] | None = None
+
+
+@dataclass
+class _YParamControls:
+    fit_button: QPushButton
+    log: QCheckBox
 
 
 class FitParametersPanel(QWidget):
@@ -144,14 +177,13 @@ class FitParametersPanel(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
-        temp_label = "𝑇 (K)"
-        field_label = "𝐵 (G)"  # Unicode italic B (U+1D435)
-
         self._rows: list[_FitRow] = []
         self._varying_params: list[str] = []
         self._global_params: ParameterSet | None = None
         self._table_dialog: QDialog | None = None
         self._inferred_x_key = "field"
+        self._y_controls: dict[str, _YParamControls] = {}
+        self._model_fits: dict[str, ParameterModelFit] = {}
 
         layout = QVBoxLayout(self)
 
@@ -164,7 +196,7 @@ class FitParametersPanel(QWidget):
         controls_form.addRow(self._show_table_btn)
 
         self._x_combo = QComboBox()
-        self._x_combo.addItems(["Auto", field_label, temp_label, "Run"])
+        self._x_combo.addItems(["Auto", "𝐵 (G)", "𝑇 (K)", "Run"])
         self._x_combo.currentTextChanged.connect(self._on_x_axis_changed)
         self._x_auto_hint = QLabel("")
         self._log_x_check = QCheckBox("log")
@@ -178,26 +210,34 @@ class FitParametersPanel(QWidget):
         x_container.setLayout(x_row)
         controls_form.addRow("X axis:", x_container)
 
-        self._y_combo = QListWidget()
-        self._y_combo.itemSelectionChanged.connect(self._refresh_plot)
-        self._y_combo.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._y_combo.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._log_y_check = QCheckBox("log")
-        self._log_y_check.stateChanged.connect(self._refresh_plot)
-        y_row = QHBoxLayout()
-        y_row.addWidget(self._y_combo, 1)
-        y_row.addWidget(self._log_y_check)
-        y_container = QWidget()
-        y_container.setLayout(y_row)
-        controls_form.addRow("Y parameters:", y_container)
+        self._y_selector_table = QTableWidget(0, 3)
+        self._y_selector_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._y_selector_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._y_selector_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._y_selector_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._y_selector_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._y_selector_table.horizontalHeader().setVisible(False)
+        self._y_selector_table.verticalHeader().setVisible(False)
+        self._y_selector_table.itemSelectionChanged.connect(self._refresh_plot)
 
-        # Plot mode selector (Single Axes vs Subplots)
+        y_header = self._y_selector_table.horizontalHeader()
+        y_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        y_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        y_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._y_selector_table.setMinimumWidth(460)
+
+        controls_form.addRow("Y parameters:", self._y_selector_table)
+
         self._plot_mode_combo = QComboBox()
         self._plot_mode_combo.addItems(["Single Axes", "Subplots"])
         self._plot_mode_combo.currentTextChanged.connect(self._refresh_plot)
         controls_form.addRow("Plot mode:", self._plot_mode_combo)
 
-        # Export buttons row
+        # Hidden global log-y toggle used to mirror selected-series log state.
+        self._log_y_check = QCheckBox("log")
+        self._log_y_check.setVisible(False)
+        self._log_y_check.stateChanged.connect(self._on_global_log_y_changed)
+
         self._export_csv_btn = QPushButton("Export CSV")
         self._export_csv_btn.setEnabled(False)
         self._export_csv_btn.clicked.connect(self._export_csv)
@@ -222,11 +262,8 @@ class FitParametersPanel(QWidget):
 
         layout.addWidget(controls_group)
 
-        # Keep table data model internal; display in a dialog on demand.
         self._table = QTableWidget(0, 0)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
 
         plot_group = QGroupBox("Parameter Plot")
         plot_layout = QVBoxLayout(plot_group)
@@ -242,52 +279,48 @@ class FitParametersPanel(QWidget):
         except ImportError:
             plot_layout.addWidget(QLabel("matplotlib not installed - plotting disabled"))
         layout.addWidget(plot_group)
+
         self._update_x_axis_auto_hint()
 
     def clear(self) -> None:
-        """Clear all fit results and reset the panel to its empty state."""
         self._rows = []
         self._varying_params = []
         self._global_params = None
+        self._model_fits = {}
         self._show_table_btn.setEnabled(False)
-        self._y_combo.clear()
-        try:
-            self._refresh_plot()
-        except Exception:
-            pass
+        self._rebuild_y_controls()
+        self._refresh_plot()
 
     def get_state(self) -> dict:
-        """Return a serialisable snapshot of fitted-parameter results UI state."""
         rows = [
             {
                 "run_number": int(row.run_number),
+                "run_label": str(row.run_label),
                 "field": float(row.field),
                 "temperature": float(row.temperature),
                 "values": {k: float(v) for k, v in row.values.items()},
                 "errors": {k: float(v) for k, v in row.errors.items()},
+                "combined_from": [int(v) for v in row.combined_from] if row.combined_from else None,
             }
             for row in self._rows
         ]
 
-        selected_y_params: list[str] = []
-        for i in range(self._y_combo.count()):
-            item = self._y_combo.item(i)
-            if item is not None and item.isSelected():
-                selected_y_params.append(str(item.data(Qt.ItemDataRole.UserRole)))
+        selected_y = self._selected_y_parameters()
+        log_y = [name for name, c in self._y_controls.items() if c.log.isChecked()]
 
         return {
             "rows": rows,
             "varying_params": list(self._varying_params),
             "inferred_x_key": self._inferred_x_key,
             "x_axis": self._x_combo.currentText(),
-            "selected_y_params": selected_y_params,
+            "selected_y_params": selected_y,
             "log_x": bool(self._log_x_check.isChecked()),
-            "log_y": bool(self._log_y_check.isChecked()),
+            "log_y_params": log_y,
             "plot_mode": self._plot_mode_combo.currentText(),
+            "model_fits": self._serialize_model_fits(),
         }
 
     def restore_state(self, state: dict) -> None:
-        """Restore fitted-parameter results UI state from a saved dict."""
         rows_data = state.get("rows", [])
         restored_rows: list[_FitRow] = []
         if isinstance(rows_data, list):
@@ -298,23 +331,18 @@ class FitParametersPanel(QWidget):
                     restored_rows.append(
                         _FitRow(
                             run_number=int(entry.get("run_number", 0)),
+                            run_label=str(entry.get("run_label") or entry.get("run_number", 0)),
                             field=float(entry.get("field", 0.0)),
                             temperature=float(entry.get("temperature", 0.0)),
-                            values={
-                                str(k): float(v)
-                                for k, v in dict(entry.get("values", {})).items()
-                            },
-                            errors={
-                                str(k): float(v)
-                                for k, v in dict(entry.get("errors", {})).items()
-                            },
+                            values={str(k): float(v) for k, v in dict(entry.get("values", {})).items()},
+                            errors={str(k): float(v) for k, v in dict(entry.get("errors", {})).items()},
+                            combined_from=[int(v) for v in entry.get("combined_from", [])] if entry.get("combined_from") else None,
                         )
                     )
                 except Exception:
                     continue
 
         self._rows = restored_rows
-        self._global_params = None
         self._show_table_btn.setEnabled(bool(self._rows))
         self._export_csv_btn.setEnabled(bool(self._rows))
         self._export_gle_btn.setEnabled(bool(self._rows))
@@ -329,15 +357,27 @@ class FitParametersPanel(QWidget):
         inferred_x = state.get("inferred_x_key", "field")
         self._inferred_x_key = inferred_x if inferred_x in {"field", "temperature", "run"} else "field"
 
-        self._rebuild_y_parameter_combo()
+        self._rebuild_y_controls()
 
         selected_y = set(state.get("selected_y_params", []))
-        if selected_y:
-            for i in range(self._y_combo.count()):
-                item = self._y_combo.item(i)
-                if item is not None:
-                    pname = str(item.data(Qt.ItemDataRole.UserRole))
-                    item.setSelected(pname in selected_y)
+        for i in range(self._y_selector_table.rowCount()):
+            item = self._y_selector_table.item(i, 0)
+            if item is None:
+                continue
+            pname = item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(pname, str):
+                continue
+            item.setSelected(pname in selected_y if selected_y else i == 0)
+
+        log_y_state = state.get("log_y_params", [])
+        log_y = set(log_y_state if isinstance(log_y_state, list) else [])
+        for name, controls in self._y_controls.items():
+            controls.log.setChecked(name in log_y)
+
+        self._log_y_check.setChecked(bool(log_y))
+
+        self._model_fits = self._deserialize_model_fits(state.get("model_fits", {}))
+        self._refresh_model_fit_button_labels()
 
         x_axis = state.get("x_axis")
         if isinstance(x_axis, str):
@@ -346,7 +386,6 @@ class FitParametersPanel(QWidget):
                 self._x_combo.setCurrentIndex(idx)
 
         self._log_x_check.setChecked(bool(state.get("log_x", False)))
-        self._log_y_check.setChecked(bool(state.get("log_y", False)))
 
         plot_mode = state.get("plot_mode")
         if isinstance(plot_mode, str):
@@ -363,17 +402,6 @@ class FitParametersPanel(QWidget):
         datasets_by_run: dict[int, MuonDataset],
         global_params: ParameterSet | None = None,
     ) -> None:
-        """Load global-fit results and rebuild table/plot views.
-
-        Parameters
-        ----------
-        results_dict : dict
-            Dictionary mapping run_number to (FitResult, fitted_curve_tuple).
-        datasets_by_run : dict
-            Dictionary mapping run_number to MuonDataset.
-        global_params : ParameterSet, optional
-            The fitted global parameters shared across all datasets.
-        """
         self._rows = []
         self._global_params = global_params
 
@@ -390,17 +418,17 @@ class FitParametersPanel(QWidget):
                 continue
 
             meta = dataset.metadata
-            field = float(meta.get("field", 0.0))
-            temperature = float(meta.get("temperature", 0.0))
             values = {p.name: p.value for p in fit_result.parameters}
             errors = dict(fit_result.uncertainties)
             self._rows.append(
                 _FitRow(
                     run_number=run_number,
-                    field=field,
-                    temperature=temperature,
+                    run_label=str(dataset.metadata.get("run_label") or run_number),
+                    field=float(meta.get("field", 0.0)),
+                    temperature=float(meta.get("temperature", 0.0)),
                     values=values,
                     errors=errors,
+                    combined_from=[int(v) for v in meta.get("combined_from", [])] if meta.get("combined_from") else None,
                 )
             )
 
@@ -410,11 +438,14 @@ class FitParametersPanel(QWidget):
         self._export_csv_btn.setEnabled(has_rows)
         self._export_gle_btn.setEnabled(has_rows)
         self._gle_format_combo.setEnabled(has_rows)
-        self._varying_params = self._detect_varying_parameters(self._rows)
-        self._rebuild_y_parameter_combo()
-        self._inferred_x_key = self._infer_x_key(self._rows)
-        self._update_x_axis_auto_hint()
 
+        self._varying_params = self._detect_varying_parameters(self._rows)
+        self._inferred_x_key = self._infer_x_key(self._rows)
+        self._model_fits = {k: v for k, v in self._model_fits.items() if k in self._varying_params}
+
+        self._rebuild_y_controls()
+        self._refresh_model_fit_button_labels()
+        self._update_x_axis_auto_hint()
         self._refresh_views()
 
     def _detect_varying_parameters(self, rows: list[_FitRow]) -> list[str]:
@@ -423,32 +454,26 @@ class FitParametersPanel(QWidget):
 
         all_names = sorted(rows[0].values.keys())
         varying: list[str] = []
-
         for name in all_names:
             vals = [r.values.get(name, np.nan) for r in rows]
             vals = [v for v in vals if np.isfinite(v)]
             if len(vals) < 2:
                 continue
-
             span = max(vals) - min(vals)
             scale = max(1.0, max(abs(v) for v in vals))
             if span > 1e-9 * scale:
                 varying.append(name)
-
         return varying
 
     def _infer_x_key(self, rows: list[_FitRow]) -> str:
         if len(rows) < 2:
             return "run"
-
         fields = np.array([r.field for r in rows], dtype=float)
         temps = np.array([r.temperature for r in rows], dtype=float)
-
         field_unique = len(np.unique(np.round(fields, 9)))
         temp_unique = len(np.unique(np.round(temps, 9)))
         field_span = float(np.nanmax(fields) - np.nanmin(fields))
         temp_span = float(np.nanmax(temps) - np.nanmin(temps))
-
         if field_unique > 1 and (field_span > temp_span or temp_unique <= 1):
             return "field"
         if temp_unique > 1:
@@ -457,13 +482,21 @@ class FitParametersPanel(QWidget):
 
     def _effective_x_key(self) -> str:
         selected = self._x_combo.currentText()
-        if selected == "𝐵 (G)":
+        if selected in {"B (G)", "𝐵 (G)"}:
             return "field"
-        if selected == "𝑇 (K)":
+        if selected in {"T (K)", "𝑇 (K)"}:
             return "temperature"
         if selected == "Run":
             return "run"
         return self._inferred_x_key
+
+    def _on_global_log_y_changed(self, _state: int) -> None:
+        enabled = self._log_y_check.isChecked()
+        selected = set(self._selected_y_parameters())
+        for name, controls in self._y_controls.items():
+            if name in selected:
+                controls.log.setChecked(enabled)
+        self._refresh_plot()
 
     def _on_x_axis_changed(self, *_args: object) -> None:
         self._update_x_axis_auto_hint()
@@ -473,36 +506,304 @@ class FitParametersPanel(QWidget):
         if self._x_combo.currentText() != "Auto":
             self._x_auto_hint.setText("")
             return
-
-        inferred_label = {
-            "field": "(𝐵)",
-            "temperature": "(𝑇)",
-            "run": "(Run)",
-        }
+        inferred_label = {"field": "(B)", "temperature": "(T)", "run": "(Run)"}
         self._x_auto_hint.setText(inferred_label.get(self._inferred_x_key, "(Run)"))
 
-    def _set_y_list_visible_rows(self, visible_rows: int = 3) -> None:
-        visible_rows = max(1, visible_rows)
-        row_height = self._y_combo.sizeHintForRow(0)
-        if row_height <= 0:
-            row_height = 20
-        frame = 2 * self._y_combo.frameWidth()
-        self._y_combo.setMinimumHeight(row_height * visible_rows + frame + 2)
-        self._y_combo.setMaximumHeight(row_height * visible_rows + frame + 2)
+    def _rebuild_y_controls(self) -> None:
+        self._y_selector_table.blockSignals(True)
+        self._y_selector_table.clearContents()
+        self._y_selector_table.setRowCount(0)
 
-    def _rebuild_y_parameter_combo(self) -> None:
-        self._y_combo.blockSignals(True)
-        self._y_combo.clear()
+        self._y_controls = {}
+
+        if not self._varying_params:
+            self._set_y_table_visible_rows(3)
+            self._y_selector_table.blockSignals(False)
+            return
+
+        self._y_selector_table.setRowCount(len(self._varying_params))
+
+        for idx, name in enumerate(self._varying_params):
+            name_item = QTableWidgetItem(_format_param_label(name))
+            name_item.setData(Qt.ItemDataRole.UserRole, name)
+            self._y_selector_table.setItem(idx, 0, name_item)
+
+            fit_button = QPushButton("Model Fit")
+            fit_button.clicked.connect(lambda _checked=False, p=name: self._open_model_fit_dialog(p))
+            self._y_selector_table.setCellWidget(idx, 1, fit_button)
+
+            log_check = QCheckBox("log")
+            log_check.stateChanged.connect(self._refresh_plot)
+
+            log_container = QWidget()
+            log_layout = QHBoxLayout(log_container)
+            log_layout.setContentsMargins(0, 0, 0, 0)
+            log_layout.addWidget(log_check)
+            log_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._y_selector_table.setCellWidget(idx, 2, log_container)
+
+            self._y_controls[name] = _YParamControls(
+                fit_button=fit_button,
+                log=log_check,
+            )
+
+        self._y_selector_table.resizeColumnsToContents()
+        self._set_y_table_visible_rows(3)
+
+        if self._y_selector_table.rowCount() > 0:
+            item = self._y_selector_table.item(0, 0)
+            if item is not None:
+                item.setSelected(True)
+
+        self._y_selector_table.blockSignals(False)
+
+    def _set_y_table_visible_rows(self, visible_rows: int = 3) -> None:
+        """Set selector table height to show at most ``visible_rows`` rows."""
+        row_count = self._y_selector_table.rowCount()
+        if row_count <= 0:
+            rows = 1
+        else:
+            rows = min(max(1, visible_rows), row_count)
+        row_height = self._y_selector_table.verticalHeader().defaultSectionSize()
+        if self._y_selector_table.rowCount() > 0:
+            row_height = max(row_height, self._y_selector_table.rowHeight(0))
+        frame = 2 * self._y_selector_table.frameWidth()
+        height = row_height * rows + frame + 2
+        self._y_selector_table.setMinimumHeight(height)
+        self._y_selector_table.setMaximumHeight(height)
+
+    def _refresh_model_fit_button_labels(self) -> None:
+        for name, controls in self._y_controls.items():
+            fit = self._model_fits.get(name)
+            if fit is not None and fit.active and self._has_successful_fit_curve(fit):
+                controls.fit_button.setText("Model Fit*")
+                controls.fit_button.setToolTip("Model fit active")
+            else:
+                controls.fit_button.setText("Model Fit")
+                controls.fit_button.setToolTip("")
+
+    def _has_successful_fit_curve(self, fit: ParameterModelFit) -> bool:
+        for fit_range in fit.ranges:
+            if fit_range.result is not None and fit_range.result.success:
+                return True
+        return False
+
+    def _open_model_fit_dialog(self, param_name: str) -> None:
+        if not self._rows:
+            return
+
+        x_key = self._effective_x_key()
+        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
+
+        x_vals = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
+        y_vals = np.array([r.values.get(param_name, np.nan) for r in rows], dtype=float)
+        y_err = np.array([r.errors.get(param_name, np.nan) for r in rows], dtype=float)
+
+        invalid_err = ~np.isfinite(y_err) | (y_err <= 0)
+        if np.any(invalid_err):
+            finite = np.abs(y_vals[np.isfinite(y_vals)])
+            fallback = max(float(np.nanmedian(finite)) * 0.02, 1e-9) if finite.size else 1e-3
+            y_err = y_err.copy()
+            y_err[invalid_err] = fallback
+
+        dialog = ModelFitDialog(
+            parameter_name=param_name,
+            x_key=x_key,
+            x_values=x_vals,
+            y_values=y_vals,
+            y_errors=y_err,
+            existing_fit=self._model_fits.get(param_name),
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        if dialog.was_removed():
+            self._model_fits.pop(param_name, None)
+        else:
+            fit = dialog.get_model_fit()
+            if fit is not None:
+                self._model_fits[param_name] = fit
+
+        self._refresh_model_fit_button_labels()
+        self._refresh_plot()
+
+    def _refresh_views(self) -> None:
+        self._refresh_table()
+        self._refresh_plot()
+
+    def _refresh_table(self) -> None:
+        if not self._rows:
+            self._table.setRowCount(0)
+            self._table.setColumnCount(0)
+            return
+
+        x_key = self._effective_x_key()
+        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
+
+        columns = ["Run", "𝐵 (G)", "𝑇 (K)"]
         for name in self._varying_params:
-            item = QListWidgetItem(_format_param_label(name))
-            item.setData(Qt.ItemDataRole.UserRole, name)
-            self._y_combo.addItem(item)
+            label = _format_param_label(name)
+            columns.extend([label, f"err {label}"])
 
-        # Keep behavior intuitive: preselect first parameter when available.
-        if self._y_combo.count() > 0:
-            self._y_combo.item(0).setSelected(True)
-        self._set_y_list_visible_rows(3)
-        self._y_combo.blockSignals(False)
+        self._table.setColumnCount(len(columns))
+        self._table.setHorizontalHeaderLabels(columns)
+        self._table.setRowCount(len(rows))
+
+        for i, row in enumerate(rows):
+            self._table.setItem(i, 0, QTableWidgetItem(str(row.run_label)))
+            self._table.setItem(i, 1, QTableWidgetItem(f"{row.field:.6g}"))
+            self._table.setItem(i, 2, QTableWidgetItem(f"{row.temperature:.6g}"))
+            col = 3
+            for name in self._varying_params:
+                val = row.values.get(name, np.nan)
+                err = row.errors.get(name, np.nan)
+                self._table.setItem(i, col, QTableWidgetItem(f"{val:.6g}"))
+                self._table.setItem(i, col + 1, QTableWidgetItem(f"{err:.3g}"))
+                col += 2
+
+        self._table.resizeColumnsToContents()
+
+    def _selected_y_parameters(self) -> list[str]:
+        params: list[str] = []
+        for row in sorted({index.row() for index in self._y_selector_table.selectedIndexes()}):
+            item = self._y_selector_table.item(row, 0)
+            if item is None:
+                continue
+            pname = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(pname, str) and pname:
+                params.append(pname)
+        return [p for p in self._varying_params if p in params]
+
+    def _is_log_y_for(self, name: str) -> bool:
+        controls = self._y_controls.get(name)
+        if controls is None:
+            return bool(self._log_y_check.isChecked())
+        return bool(controls.log.isChecked() or self._log_y_check.isChecked())
+
+    def _draw_model_overlay_mpl(self, ax, param_name: str, color: str = "red") -> None:
+        fit = self._model_fits.get(param_name)
+        if fit is None or not fit.active:
+            return
+        if fit.x_key != self._effective_x_key():
+            return
+
+        curves = self._sampled_fit_curves(param_name, x_key=fit.x_key, num_points=200)
+        for idx, (_, xs, ys) in enumerate(curves):
+            line_color = _fit_overlay_color(idx) if len(curves) > 1 else color
+            ax.plot(xs, ys, linestyle="-", linewidth=1.5, color=line_color, alpha=0.9)
+
+    def _refresh_plot(self) -> None:
+        if not self._has_mpl:
+            return
+
+        y_params = self._selected_y_parameters()
+        if not self._rows or not y_params:
+            self._figure.clear()
+            ax = self._figure.add_subplot(111)
+            ax.set_title("No varying fit parameters")
+            self._canvas.draw()
+            return
+
+        x_key = self._effective_x_key()
+        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
+        x_vals = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
+        x_label = {"field": "$B$ (G)", "temperature": "$T$ (K)", "run": "Run Number"}[x_key]
+
+        self._figure.clear()
+        plot_mode = self._plot_mode_combo.currentText()
+
+        if plot_mode == "Subplots" and len(y_params) > 1:
+            num_params = len(y_params)
+            num_cols = 2
+            num_rows = (num_params + num_cols - 1) // num_cols
+
+            for idx, y_name in enumerate(y_params):
+                ax = self._figure.add_subplot(num_rows, num_cols, idx + 1)
+                y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
+                y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
+
+                ax.scatter(x_vals, y_vals, s=16, zorder=3, color="C0")
+                finite_err = np.isfinite(y_err) & (y_err > 0)
+                if np.any(finite_err):
+                    ax.errorbar(x_vals, y_vals, yerr=y_err, fmt="none", ecolor="gray", capsize=2, elinewidth=1, zorder=2)
+
+                self._draw_model_overlay_mpl(ax, y_name)
+
+                ax.set_xlabel(x_label)
+                ax.set_ylabel(_format_plot_label(y_name))
+                ax.set_title(_format_plot_label(y_name))
+                ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
+                ax.set_yscale("log" if self._is_log_y_for(y_name) else "linear")
+                ax.grid(True, alpha=0.3)
+        else:
+            ax = self._figure.add_subplot(111)
+            ax.set_xlabel(x_label)
+
+            if len(y_params) == 2:
+                left_name, right_name = y_params
+                left_vals = np.array([r.values.get(left_name, np.nan) for r in rows], dtype=float)
+                left_err = np.array([r.errors.get(left_name, np.nan) for r in rows], dtype=float)
+                right_vals = np.array([r.values.get(right_name, np.nan) for r in rows], dtype=float)
+                right_err = np.array([r.errors.get(right_name, np.nan) for r in rows], dtype=float)
+
+                ax2 = ax.twinx()
+                left_color = "C0"
+                right_color = "C1"
+
+                ax.scatter(x_vals, left_vals, s=16, zorder=3, color=left_color)
+                if np.any(np.isfinite(left_err) & (left_err > 0)):
+                    ax.errorbar(x_vals, left_vals, yerr=left_err, fmt="none", ecolor=left_color, capsize=2, elinewidth=1, zorder=2)
+
+                ax2.scatter(x_vals, right_vals, s=16, zorder=3, color=right_color)
+                if np.any(np.isfinite(right_err) & (right_err > 0)):
+                    ax2.errorbar(x_vals, right_vals, yerr=right_err, fmt="none", ecolor=right_color, capsize=2, elinewidth=1, zorder=2)
+
+                self._draw_model_overlay_mpl(ax, left_name, color=left_color)
+                self._draw_model_overlay_mpl(ax2, right_name, color=right_color)
+
+                ax.set_ylabel(_format_plot_label(left_name), color=left_color)
+                ax2.set_ylabel(_format_plot_label(right_name), color=right_color)
+                ax.tick_params(axis="y", colors=left_color)
+                ax2.tick_params(axis="y", colors=right_color)
+                ax.set_yscale("log" if self._is_log_y_for(left_name) else "linear")
+                ax2.set_yscale("log" if self._is_log_y_for(right_name) else "linear")
+                ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
+                ax.grid(True, alpha=0.3)
+            else:
+                for idx, y_name in enumerate(y_params):
+                    y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
+                    y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
+                    color = f"C{idx % 10}"
+                    label = _format_plot_legend_label(y_name) if len(y_params) > 1 else None
+
+                    ax.scatter(x_vals, y_vals, s=16, zorder=3, label=label, color=color)
+                    if np.any(np.isfinite(y_err) & (y_err > 0)):
+                        ax.errorbar(x_vals, y_vals, yerr=y_err, fmt="none", ecolor=color, capsize=2, elinewidth=1, zorder=2)
+
+                    self._draw_model_overlay_mpl(ax, y_name, color=color)
+
+                if len(y_params) == 1:
+                    ax.set_ylabel(_format_plot_label(y_params[0]))
+                    ax.set_yscale("log" if self._is_log_y_for(y_params[0]) else "linear")
+                else:
+                    ax.set_ylabel("Parameter Value")
+                    if len(y_params) > 2:
+                        ax.legend(loc="best")
+                    ax.set_yscale("log" if any(self._is_log_y_for(name) for name in y_params) else "linear")
+
+                ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
+                ax.grid(True, alpha=0.3)
+
+        self._figure.tight_layout()
+        self._canvas.draw()
+
+    def _x_value(self, row: _FitRow, x_key: str) -> float:
+        if x_key == "field":
+            return row.field
+        if x_key == "temperature":
+            return row.temperature
+        return float(row.run_number)
 
     def _show_table_dialog(self) -> None:
         if self._table.rowCount() == 0 or self._table.columnCount() == 0:
@@ -518,26 +819,15 @@ class FitParametersPanel(QWidget):
         dialog.setModal(False)
 
         layout = QVBoxLayout(dialog)
-
         header_title = QLabel("Global fitting parameters")
         layout.addWidget(header_title)
 
         if self._global_params is not None:
             lines = []
             for param in self._global_params:
-                err_candidates = [
-                    row.errors.get(param.name, np.nan)
-                    for row in self._rows
-                ]
-                finite_errs = [e for e in err_candidates if np.isfinite(e) and e > 0]
-                if finite_errs:
-                    value_text = f"({param.value:.6g} +/- {finite_errs[0]:.3g})"
-                else:
-                    value_text = f"{param.value:.6g}"
-
                 unit = _PARAM_UNITS.get(param.name)
                 unit_text = f" {unit}" if unit else ""
-                lines.append(f"{param.name} = {value_text}{unit_text}")
+                lines.append(f"{param.name} = {param.value:.6g}{unit_text}")
             header_text = "\n".join(lines) if lines else "None"
         else:
             header_text = "None"
@@ -549,13 +839,8 @@ class FitParametersPanel(QWidget):
 
         table_view = QTableWidget(self._table.rowCount(), self._table.columnCount(), dialog)
         table_view.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        table_view.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        table_view.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
 
-        headers = [
-            self._table.horizontalHeaderItem(col).text()
-            for col in range(self._table.columnCount())
-        ]
+        headers = [self._table.horizontalHeaderItem(col).text() for col in range(self._table.columnCount())]
         table_view.setHorizontalHeaderLabels(headers)
 
         for row in range(self._table.rowCount()):
@@ -576,258 +861,7 @@ class FitParametersPanel(QWidget):
         dialog.raise_()
         dialog.activateWindow()
 
-    def _refresh_views(self) -> None:
-        self._refresh_table()
-        self._refresh_plot()
-
-    def _refresh_table(self) -> None:
-        if not self._rows:
-            self._table.setRowCount(0)
-            self._table.setColumnCount(0)
-            return
-
-        x_key = self._effective_x_key()
-        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
-
-        columns = ["Run", "𝐵 (G)", "𝑇 (K)"]
-        for name in self._varying_params:
-            display = _format_param_label(name)
-            columns.append(display)
-            columns.append(f"err {display}")
-
-        self._table.setColumnCount(len(columns))
-        self._table.setHorizontalHeaderLabels(columns)
-        self._table.setRowCount(len(rows))
-
-        for i, row in enumerate(rows):
-            self._table.setItem(i, 0, QTableWidgetItem(str(row.run_number)))
-            self._table.setItem(i, 1, QTableWidgetItem(f"{row.field:.6g}"))
-            self._table.setItem(i, 2, QTableWidgetItem(f"{row.temperature:.6g}"))
-
-            col = 3
-            for name in self._varying_params:
-                value = row.values.get(name, np.nan)
-                err = row.errors.get(name, np.nan)
-                self._table.setItem(i, col, QTableWidgetItem(f"{value:.6g}"))
-                self._table.setItem(i, col + 1, QTableWidgetItem(f"{err:.3g}"))
-                col += 2
-
-        self._table.resizeColumnsToContents()
-
-    def _refresh_plot(self) -> None:
-        if not self._has_mpl:
-            return
-
-        if not self._rows or not self._varying_params:
-            self._figure.clear()
-            ax = self._figure.add_subplot(111)
-            ax.set_title("No varying fit parameters")
-            self._canvas.draw()
-            return
-
-        y_params = self._get_selected_y_parameters()
-        if not y_params:
-            self._figure.clear()
-            ax = self._figure.add_subplot(111)
-            ax.set_title("No varying fit parameters")
-            self._canvas.draw()
-            return
-
-        x_key = self._effective_x_key()
-        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
-        x_vals = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
-
-        x_label = {
-            "field": "$B$ (G)",
-            "temperature": "$T$ (K)",
-            "run": "Run Number",
-        }[x_key]
-
-        plot_mode = self._plot_mode_combo.currentText()
-
-        if plot_mode == "Single Axes":
-            # Single axes mode: all parameters on one plot
-            self._figure.clear()
-            ax = self._figure.add_subplot(111)
-            ax.set_xlabel(x_label)
-
-            if len(y_params) == 2:
-                # For two selected parameters, use left/right y-axes for readability.
-                left_name, right_name = y_params
-                left_vals = np.array([r.values.get(left_name, np.nan) for r in rows], dtype=float)
-                left_err = np.array([r.errors.get(left_name, np.nan) for r in rows], dtype=float)
-                right_vals = np.array([r.values.get(right_name, np.nan) for r in rows], dtype=float)
-                right_err = np.array([r.errors.get(right_name, np.nan) for r in rows], dtype=float)
-
-                ax2 = ax.twinx()
-                left_color = "C0"
-                right_color = "C1"
-
-                finite_left_err = np.isfinite(left_err) & (left_err > 0)
-                ax.scatter(x_vals, left_vals, s=16, zorder=3, color=left_color)
-                if np.any(finite_left_err):
-                    ax.errorbar(
-                        x_vals, left_vals, yerr=left_err, fmt="none", ecolor=left_color,
-                        capsize=2, elinewidth=1, zorder=2,
-                    )
-
-                finite_right_err = np.isfinite(right_err) & (right_err > 0)
-                ax2.scatter(x_vals, right_vals, s=16, zorder=3, color=right_color)
-                if np.any(finite_right_err):
-                    ax2.errorbar(
-                        x_vals, right_vals, yerr=right_err, fmt="none", ecolor=right_color,
-                        capsize=2, elinewidth=1, zorder=2,
-                    )
-
-                ax.set_ylabel(_format_param_label(left_name), color=left_color)
-                ax2.set_ylabel(_format_param_label(right_name), color=right_color)
-                ax.tick_params(axis="y", colors=left_color)
-                ax2.tick_params(axis="y", colors=right_color)
-
-                if self._log_y_check.isChecked():
-                    ax.set_yscale("log")
-                    ax2.set_yscale("log")
-                else:
-                    ax.set_yscale("linear")
-                    ax2.set_yscale("linear")
-            else:
-                # One or 3+ parameters share a single y-axis.
-                for y_name in y_params:
-                    y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
-                    y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
-                    label = _format_param_label(y_name) if len(y_params) > 1 else None
-
-                    finite_err = np.isfinite(y_err) & (y_err > 0)
-                    if np.any(finite_err):
-                        ax.scatter(x_vals, y_vals, s=16, zorder=3, label=label)
-                        ax.errorbar(
-                            x_vals, y_vals, yerr=y_err, fmt="none", ecolor="gray",
-                            capsize=2, elinewidth=1, zorder=2,
-                        )
-                    else:
-                        ax.scatter(x_vals, y_vals, s=16, zorder=3, label=label)
-
-                if len(y_params) == 1:
-                    ax.set_ylabel(_format_param_label(y_params[0]))
-                else:
-                    ax.set_ylabel("Parameter Value")
-
-                if len(y_params) > 2:
-                    ax.legend(loc="best")
-
-                if self._log_y_check.isChecked():
-                    ax.set_yscale("log")
-                else:
-                    ax.set_yscale("linear")
-
-            if self._log_x_check.isChecked():
-                ax.set_xscale("log")
-            else:
-                ax.set_xscale("linear")
-
-            ax.grid(True, alpha=0.3)
-
-        else:
-            # Subplots mode: one subplot per parameter
-            self._figure.clear()
-
-            # Calculate grid layout (prefer 2 columns)
-            num_params = len(y_params)
-            num_cols = 2
-            num_rows = (num_params + num_cols - 1) // num_cols
-
-            axes = []
-            for idx, y_name in enumerate(y_params):
-                ax = self._figure.add_subplot(num_rows, num_cols, idx + 1)
-                axes.append(ax)
-
-                # Plot this parameter on its own axis
-                y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
-                y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
-
-                finite_err = np.isfinite(y_err) & (y_err > 0)
-                if np.any(finite_err):
-                    ax.scatter(x_vals, y_vals, s=16, zorder=3, color='C0')
-                    ax.errorbar(
-                        x_vals, y_vals, yerr=y_err, fmt="none", ecolor="gray",
-                        capsize=2, elinewidth=1, zorder=2,
-                    )
-                else:
-                    ax.scatter(x_vals, y_vals, s=16, zorder=3, color='C0')
-
-                ax.set_xlabel(x_label)
-                ax.set_ylabel(_format_param_label(y_name))
-                ax.set_title(_format_param_label(y_name))
-
-                # Apply log scale if requested
-                if self._log_x_check.isChecked():
-                    ax.set_xscale('log')
-                else:
-                    ax.set_xscale('linear')
-
-                if self._log_y_check.isChecked():
-                    ax.set_yscale('log')
-                else:
-                    ax.set_yscale('linear')
-
-                ax.grid(True, alpha=0.3)
-                # No legend in subplots mode since each plot has only one series
-
-        self._figure.tight_layout()
-        self._canvas.draw()
-
-
-    def _x_value(self, row: _FitRow, x_key: str) -> float:
-        if x_key == "field":
-            return row.field
-        if x_key == "temperature":
-            return row.temperature
-        return float(row.run_number)
-
-    def _get_selected_y_parameters(self) -> list[str]:
-        """Get the list of parameters selected for plotting on y-axis.
-
-        Returns all selected items from the Y parameters list widget.
-        """
-        selected_items = []
-        for i in range(self._y_combo.count()):
-            item = self._y_combo.item(i)
-            if item.isSelected():
-                param_name = item.data(Qt.ItemDataRole.UserRole)
-                if isinstance(param_name, str) and param_name:
-                    selected_items.append(param_name)
-
-        # If nothing is selected, return empty list
-        if not selected_items:
-            return []
-
-        # Return in the order they appear in _varying_params
-        return [p for p in self._varying_params if p in selected_items]
-
-    def _needs_secondary_axis(self, y_values_list: list[np.ndarray]) -> bool:
-        """Check if a secondary y-axis is needed for multiple series.
-
-        Returns True if the value ranges differ significantly (ratio > 5).
-        """
-        if len(y_values_list) < 2:
-            return False
-
-        ranges = []
-        for y_vals in y_values_list:
-            finite_vals = y_vals[np.isfinite(y_vals)]
-            if len(finite_vals) > 0:
-                y_min, y_max = float(np.min(finite_vals)), float(np.max(finite_vals))
-                if y_max > y_min:
-                    ranges.append(y_max - y_min)
-
-        if len(ranges) < 2:
-            return False
-
-        ranges.sort()
-        return ranges[-1] / ranges[0] > 5 if ranges[0] > 0 else False
-
     def _export_csv(self) -> None:
-        """Export the current table view to CSV."""
         if self._table.columnCount() == 0 or self._table.rowCount() == 0:
             return
 
@@ -842,8 +876,11 @@ class FitParametersPanel(QWidget):
 
         headers = ["Run", "B (G)", "T (K)"]
         for name in self._varying_params:
-            headers.append(_format_export_param_header(name))
-            headers.append(_format_export_error_header(name))
+            unit = _PARAM_UNITS.get(name)
+            if unit:
+                headers.extend([f"{name} ({unit})", f"err_{name} ({unit})"])
+            else:
+                headers.extend([name, f"err_{name}"])
 
         with open(path, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.writer(csvfile)
@@ -855,34 +892,308 @@ class FitParametersPanel(QWidget):
                     values.append(item.text() if item is not None else "")
                 writer.writerow(values)
 
-    def _export_gle(self) -> None:
-        """Export the fit parameters as GLE plot with preview."""
+    def _serialize_model_fits(self) -> dict:
+        payload: dict[str, dict] = {}
+        for param_name, model_fit in self._model_fits.items():
+            ranges_data = []
+            for fit_range in model_fit.ranges:
+                range_item = {
+                    "x_min": fit_range.x_min,
+                    "x_max": fit_range.x_max,
+                    "component_names": list(fit_range.model.component_names),
+                    "operators": list(fit_range.model.operators),
+                    "parameters": [
+                        {
+                            "name": p.name,
+                            "value": p.value,
+                            "min": p.min,
+                            "max": p.max,
+                            "fixed": p.fixed,
+                        }
+                        for p in fit_range.parameters
+                    ],
+                }
+                if fit_range.result is not None:
+                    range_item["result"] = {
+                        "success": fit_range.result.success,
+                        "chi_squared": fit_range.result.chi_squared,
+                        "reduced_chi_squared": fit_range.result.reduced_chi_squared,
+                        "message": fit_range.result.message,
+                        "parameters": [
+                            {
+                                "name": p.name,
+                                "value": p.value,
+                                "min": p.min,
+                                "max": p.max,
+                                "fixed": p.fixed,
+                            }
+                            for p in fit_range.result.parameters
+                        ],
+                        "uncertainties": dict(fit_range.result.uncertainties),
+                    }
+                ranges_data.append(range_item)
+
+            payload[param_name] = {
+                "parameter_name": model_fit.parameter_name,
+                "x_key": model_fit.x_key,
+                "active": model_fit.active,
+                "ranges": ranges_data,
+            }
+        return payload
+
+    def _deserialize_model_fits(self, state: object) -> dict[str, ParameterModelFit]:
+        if not isinstance(state, dict):
+            return {}
+
+        restored: dict[str, ParameterModelFit] = {}
+        for key, entry in state.items():
+            if not isinstance(key, str) or not isinstance(entry, dict):
+                continue
+
+            x_key = _normalize_x_key(entry.get("x_key", "run"))
+            ranges_state = entry.get("ranges", [])
+            if not isinstance(ranges_state, list):
+                continue
+
+            ranges: list[ModelFitRange] = []
+            for range_state in ranges_state:
+                if not isinstance(range_state, dict):
+                    continue
+                try:
+                    model = ParameterCompositeModel(
+                        component_names=list(range_state.get("component_names", [])),
+                        operators=list(range_state.get("operators", [])),
+                    )
+                except Exception:
+                    continue
+
+                params = ParameterSet()
+                for p in range_state.get("parameters", []):
+                    if not isinstance(p, dict):
+                        continue
+                    try:
+                        params.add(
+                            Parameter(
+                                name=str(p.get("name", "")),
+                                value=float(p.get("value", 0.0)),
+                                min=float(p.get("min", -float("inf"))),
+                                max=float(p.get("max", float("inf"))),
+                                fixed=bool(p.get("fixed", False)),
+                            )
+                        )
+                    except Exception:
+                        continue
+
+                result_obj = None
+                result_state = range_state.get("result")
+                if isinstance(result_state, dict):
+                    result_params = ParameterSet()
+                    for p in result_state.get("parameters", []):
+                        if not isinstance(p, dict):
+                            continue
+                        try:
+                            result_params.add(
+                                Parameter(
+                                    name=str(p.get("name", "")),
+                                    value=float(p.get("value", 0.0)),
+                                    min=float(p.get("min", -float("inf"))),
+                                    max=float(p.get("max", float("inf"))),
+                                    fixed=bool(p.get("fixed", False)),
+                                )
+                            )
+                        except Exception:
+                            continue
+                    result_obj = ParameterModelFitResult(
+                        success=bool(result_state.get("success", False)),
+                        chi_squared=float(result_state.get("chi_squared", 0.0)),
+                        reduced_chi_squared=float(result_state.get("reduced_chi_squared", 0.0)),
+                        parameters=result_params,
+                        uncertainties={
+                            str(k): float(v)
+                            for k, v in dict(result_state.get("uncertainties", {})).items()
+                        },
+                        message=str(result_state.get("message", "")),
+                    )
+
+                ranges.append(
+                    ModelFitRange(
+                        x_min=float(range_state.get("x_min")) if range_state.get("x_min") is not None else None,
+                        x_max=float(range_state.get("x_max")) if range_state.get("x_max") is not None else None,
+                        model=model,
+                        parameters=params,
+                        result=result_obj,
+                    )
+                )
+
+            if not ranges:
+                continue
+
+            restored[key] = ParameterModelFit(
+                parameter_name=str(entry.get("parameter_name", key)),
+                x_key=x_key,
+                active=bool(entry.get("active", True)),
+                ranges=ranges,
+            )
+
+        return restored
+
+    def _iter_active_fit_ranges(self, x_key: str, y_params: list[str] | None = None):
+        """Yield (parameter_name, range_index, fit_range) for successful active fits."""
+        allowed = set(y_params or self._varying_params)
+        for pname, fit in self._model_fits.items():
+            if pname not in allowed:
+                continue
+            if not fit.active or fit.x_key != x_key:
+                continue
+            for idx, fit_range in enumerate(fit.ranges):
+                if fit_range.result is None or not fit_range.result.success:
+                    continue
+                yield pname, idx, fit_range
+
+    def _count_fit_curves(self, x_key: str, y_params: list[str]) -> int:
+        count = 0
+        for pname in y_params:
+            count += len(self._sampled_fit_curves(pname, x_key, num_points=200))
+        return count
+
+    def _count_fit_curves_for_param(self, x_key: str, param_name: str) -> int:
+        return len(self._sampled_fit_curves(param_name, x_key, num_points=200))
+
+    def _x_domain_for_sampling(self, x_key: str) -> tuple[float, float] | None:
         if not self._rows:
-            return
+            return None
+        x_vals = np.array([self._x_value(r, x_key) for r in self._rows], dtype=float)
+        finite = x_vals[np.isfinite(x_vals)]
+        if finite.size == 0:
+            return None
+        return float(np.nanmin(finite)), float(np.nanmax(finite))
 
-        # Get the save path
-        default_name = "fit_parameters.gle"
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export to GLE",
-            default_name,
-            "GLE files (*.gle);;All files (*)",
-        )
-        if not path:
-            return
+    def _sample_fit_range_curve(
+        self,
+        fit_range: ModelFitRange,
+        x_key: str,
+        num_points: int = 200,
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        result = fit_range.result
+        if result is None or not result.success:
+            return None
 
-        gle_path = Path(path)
-        data_path = gle_path.with_suffix(".dat")
+        x_min = fit_range.x_min
+        x_max = fit_range.x_max
+        if x_min is None or x_max is None:
+            domain = self._x_domain_for_sampling(x_key)
+            if domain is None:
+                return None
+            if x_min is None:
+                x_min = domain[0]
+            if x_max is None:
+                x_max = domain[1]
 
-        # Write data file with headers and comments
-        self._write_gle_data_file(data_path)
+        if x_max <= x_min:
+            return None
 
-        # Generate GLE plot
-        output_format = self._gle_format_combo.currentText().lower()
-        self._generate_gle_plot(gle_path, data_path, output_format)
+        xs = np.linspace(float(x_min), float(x_max), num=max(2, int(num_points)), dtype=float)
+        kwargs = {p.name: p.value for p in result.parameters}
+        try:
+            ys = fit_range.model.function(xs, **kwargs)
+        except KeyError:
+            return None
+        mask = np.isfinite(xs) & np.isfinite(ys)
+        if not np.any(mask):
+            return None
+
+        xs = xs[mask]
+        ys = ys[mask]
+        order = np.argsort(xs)
+        return xs[order], ys[order]
+
+    def _sampled_fit_curves(
+        self,
+        param_name: str,
+        x_key: str,
+        num_points: int = 200,
+    ) -> list[tuple[int, np.ndarray, np.ndarray]]:
+        fit = self._model_fits.get(param_name)
+        if fit is None or not fit.active or fit.x_key != x_key:
+            return []
+
+        curves: list[tuple[int, np.ndarray, np.ndarray]] = []
+        for idx, fit_range in enumerate(fit.ranges):
+            sampled = self._sample_fit_range_curve(fit_range, x_key=x_key, num_points=num_points)
+            if sampled is None:
+                continue
+            xs, ys = sampled
+            curves.append((idx, xs, ys))
+        return curves
+
+    def _write_fit_files(self, gle_path: Path, x_key: str, y_params: list[str]) -> dict[tuple[str, int], Path]:
+        """Write model-fit sidecar files with metadata and sampled curve points."""
+        entries = list(self._iter_active_fit_ranges(x_key, y_params))
+        if not entries:
+            return {}
+
+        unique_params = sorted({pname for pname, _, _ in entries})
+        include_param_name = len(unique_params) > 1
+
+        def _safe_token(name: str) -> str:
+            token = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in name)
+            return token or "fit"
+
+        base_names: list[str] = []
+        for pname, _, _fit_range in entries:
+            if include_param_name:
+                base_names.append(f"{gle_path.stem}_{_safe_token(pname)}")
+            else:
+                base_names.append(gle_path.stem)
+
+        totals: dict[str, int] = {}
+        for base in base_names:
+            totals[base] = totals.get(base, 0) + 1
+
+        seen: dict[str, int] = {}
+        written: dict[tuple[str, int], Path] = {}
+        for (pname, r_idx, fit_range), base in zip(entries, base_names, strict=True):
+            seen[base] = seen.get(base, 0) + 1
+            occurrence = seen[base]
+            stem = base if occurrence == 1 else f"{base}_{occurrence}"
+            fit_path = gle_path.with_name(f"{stem}.fit")
+
+            if totals[base] == 1:
+                fit_path = gle_path.with_name(f"{base}.fit")
+
+            result = fit_range.result
+            assert result is not None
+
+            sampled = self._sample_fit_range_curve(fit_range, x_key=x_key, num_points=200)
+            if sampled is None:
+                continue
+            x_vals, y_vals = sampled
+
+            with open(fit_path, "w", encoding="utf-8") as f:
+                f.write("! Parameter model fit curve\n")
+                f.write("! Generated by Asymmetry (GLE-readable data file)\n")
+                f.write(f"! parameter: {pname}\n")
+                f.write(f"! x_variable: {x_key}\n")
+                f.write(f"! x_min: {fit_range.x_min}\n")
+                f.write(f"! x_max: {fit_range.x_max}\n")
+                f.write(f"! model_function: {fit_range.model.formula_string()}\n")
+                f.write(f"! chi_squared: {result.chi_squared:.8g}\n")
+                f.write(f"! reduced_chi_squared: {result.reduced_chi_squared:.8g}\n")
+                f.write("! fitted_parameters:\n")
+                for p in result.parameters:
+                    err = result.uncertainties.get(p.name, np.nan)
+                    if np.isfinite(err):
+                        f.write(f"!   {p.name} = {p.value:.8g} +/- {err:.4g}\n")
+                    else:
+                        f.write(f"!   {p.name} = {p.value:.8g}\n")
+                for xv, yv in zip(x_vals, y_vals, strict=True):
+                    f.write(f"{xv:.10g} {yv:.10g}\n")
+
+            written[(pname, r_idx)] = fit_path
+
+        return written
 
     def _write_gle_data_file(self, data_path: Path) -> None:
-        """Write a single well-documented data file consumed directly by GLE."""
         x_key = self._effective_x_key()
         rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
 
@@ -890,106 +1201,183 @@ class FitParametersPanel(QWidget):
             f.write("! Fit parameter data for GLE export\n")
 
             if self._global_params is not None:
-                f.write("! Global Fitting Parameters (shared across all datasets):\n")
+                f.write("! Global fitting parameters:\n")
                 for param in self._global_params:
-                    label = _format_export_param_header(param.name)
+                    unit = _PARAM_UNITS.get(param.name)
+                    label = f"{param.name} ({unit})" if unit else param.name
                     f.write(f"!   {label} = {param.value:.6g}\n")
+
             f.write("!\n")
 
-            x_label = {
-                "field": "B_field(G)",
-                "temperature": "Temperature(K)",
-                "run": "Run",
-            }[x_key]
-
-            headers = [x_label]
+            headers = ["Run", "B_field(G)", "Temperature(K)"]
             for name in self._varying_params:
-                headers.append(_format_export_param_header(name))
-                headers.append(_format_export_error_header(name))
+                unit = _PARAM_UNITS.get(name)
+                if unit:
+                    headers.extend([f"{name} ({unit})", f"err_{name} ({unit})"])
+                else:
+                    headers.extend([name, f"err_{name}"])
 
             f.write("! Column map:\n")
             for col_idx, name in enumerate(headers, start=1):
                 f.write(f"!   c{col_idx:>2} = {name}\n")
+            combined_rows = [row for row in rows if row.combined_from]
+            if combined_rows:
+                f.write("!\n")
+                f.write("! Combined run mapping:\n")
+                for row in combined_rows:
+                    combined_label = " + ".join(str(v) for v in row.combined_from or [])
+                    f.write(f"!   {row.run_number} = {combined_label}\n")
             f.write("!\n")
             f.write("! " + " ".join(f"{h:>16}" for h in headers) + "\n")
 
             for row in rows:
-                values: list[float] = [self._x_value(row, x_key)]
+                values: list[float] = [float(row.run_number), float(row.field), float(row.temperature)]
                 for name in self._varying_params:
                     values.append(row.values.get(name, np.nan))
                     values.append(row.errors.get(name, np.nan))
                 f.write(" ".join(f"{v:>16.8g}" for v in values) + "\n")
 
+    def _gle_x_column(self, x_key: str) -> int:
+        if x_key == "run":
+            return 1
+        if x_key == "field":
+            return 2
+        return 3
+
     def _gle_columns_for_param(self, name: str) -> tuple[int, int] | None:
-        """Return (value_col, error_col) for a varying parameter in fit_parameters.dat."""
         if name not in self._varying_params:
             return None
         idx = self._varying_params.index(name)
-        value_col = 2 + idx * 2
+        value_col = 4 + idx * 2
         error_col = value_col + 1
         return value_col, error_col
 
-    def _generate_gle_plot(self, gle_path: Path, data_path: Path, output_format: str) -> None:
-        """Generate GLE plot and optionally compile it."""
-        try:
-            import gleplot as glp
-        except ImportError:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self,
-                "gleplot not available",
-                "gleplot is not installed. Please install it with:\n\npip install gleplot",
-            )
+    def _add_gle_model_overlay(
+        self,
+        ax,
+        param_name: str,
+        color: str,
+        yaxis: str = "y",
+        include_labels: bool = False,
+        fit_file_map: dict[tuple[str, int], Path] | None = None,
+    ) -> None:
+        fit = self._model_fits.get(param_name)
+        if fit is None or not fit.active:
+            return
+        if fit.x_key != self._effective_x_key():
             return
 
-        # Plot by referencing columns from the generated fit_parameters.dat file.
+        curves = self._sampled_fit_curves(param_name, x_key=fit.x_key, num_points=200)
+        for idx, (range_index, xs, ys) in enumerate(curves):
+            line_color = _fit_overlay_color(idx) if len(curves) > 1 else color
+            line_label = _fit_overlay_label(param_name, idx, len(curves), gle=True) if include_labels else None
+            fit_path = None
+            if fit_file_map is not None:
+                fit_path = fit_file_map.get((param_name, int(range_index)))
+            if fit_path is not None and hasattr(ax, "line_from_file"):
+                ax.line_from_file(
+                    fit_path.name,
+                    x_col=1,
+                    y_col=2,
+                    color=line_color,
+                    linestyle="-",
+                    linewidth=1,
+                    yaxis=yaxis,
+                    label=line_label,
+                )
+            else:
+                ax.plot(
+                    xs,
+                    ys,
+                    linestyle="-",
+                    color=line_color,
+                    linewidth=1,
+                    yaxis=yaxis,
+                    label=line_label,
+                )
+
+    def _export_gle(self) -> None:
+        if not self._rows:
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export to GLE",
+            "fit_parameters.gle",
+            "GLE files (*.gle);;All files (*)",
+        )
+        if not path:
+            return
+
+        gle_path = Path(path)
+        data_path = gle_path.with_suffix(".dat")
+        self._write_gle_data_file(data_path)
+        x_key = self._effective_x_key()
+        y_params = self._selected_y_parameters() or ([self._varying_params[0]] if self._varying_params else [])
+
+        # Export fit sidecars for all active fits on this x-axis, regardless of
+        # current y-selection, so restored projects always emit .fit files.
+        all_active_fit_params = [
+            pname
+            for pname, fit in self._model_fits.items()
+            if fit.active and _normalize_x_key(fit.x_key) == x_key
+        ]
+        fit_file_map = self._write_fit_files(gle_path, x_key, all_active_fit_params)
+
+        # Make available to preview/notifications invoked during _generate_gle_plot.
+        self._last_export_fit_files = list(fit_file_map.values())
+        output_format = self._gle_format_combo.currentText().lower()
+        self._generate_gle_plot(gle_path, data_path, output_format, fit_file_map)
+
+    def _generate_gle_plot(
+        self,
+        gle_path: Path,
+        data_path: Path,
+        output_format: str,
+        fit_file_map: dict[tuple[str, int], Path] | None = None,
+    ) -> None:
+        is_test_mode = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+        try:
+            glp = importlib.import_module("gleplot")
+        except ImportError:
+            QMessageBox.warning(self, "gleplot not available", "Install gleplot to export GLE plots.")
+            return
+
         if not hasattr(glp, "Axes") or not hasattr(glp.Axes, "errorbar_from_file"):
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self,
-                "gleplot update required",
-                "This export mode requires a newer gleplot with column-reference support.\n"
-                "Please reinstall gleplot from the updated source.",
-            )
+            QMessageBox.warning(self, "gleplot update required", "Please update gleplot to a newer version.")
+            return
+
+        if fit_file_map and (not hasattr(glp.Axes, "line_from_file")):
+            QMessageBox.warning(self, "gleplot update required", "Please update gleplot to a newer version.")
             return
 
         x_key = self._effective_x_key()
-        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
-        y_params = self._get_selected_y_parameters()
+        y_params = self._selected_y_parameters() or ([self._varying_params[0]] if self._varying_params else [])
         if not y_params:
-            if self._varying_params:
-                y_params = [self._varying_params[0]]
-            else:
-                return
+            return
 
-        plot_mode = self._plot_mode_combo.currentText()
         x_label = _format_x_label_gle(x_key)
         data_file_ref = data_path.name
+        x_col = self._gle_x_column(x_key)
+        plot_mode = self._plot_mode_combo.currentText()
+        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
+        show_fit_legend = self._count_fit_curves(x_key, y_params) > 1
 
         if plot_mode == "Subplots" and len(y_params) > 1:
-            num_rows = len(y_params)
-            fig, axes = glp.subplots(
-                nrows=num_rows,
-                ncols=1,
-                figsize=(5.5, 3.0 * num_rows),
-                sharex=True,
-            )
+            fig, axes = glp.subplots(nrows=len(y_params), ncols=1, figsize=(5.8, 3.0 * len(y_params)), sharex=True)
             subplot_axes = axes if isinstance(axes, list) else [axes]
-
             for idx, y_name in enumerate(y_params):
-                ax = subplot_axes[idx]
                 cols = self._gle_columns_for_param(y_name)
                 if cols is None:
                     continue
                 y_col, yerr_col = cols
-
                 y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
                 has_err = bool(np.any(np.isfinite(y_err) & (y_err > 0)))
-
-                # One series per subplot: use black markers and error bars.
+                ax = subplot_axes[idx]
                 ax.errorbar_from_file(
                     data_file_ref,
-                    x_col=1,
+                    x_col=x_col,
                     y_col=y_col,
                     yerr_col=yerr_col if has_err else None,
                     color="black",
@@ -997,16 +1385,25 @@ class FitParametersPanel(QWidget):
                     markersize=5,
                     capsize=2,
                 )
-
+                show_subplot_fit_legend = self._count_fit_curves_for_param(x_key, y_name) > 1
+                self._add_gle_model_overlay(
+                    ax,
+                    y_name,
+                    color=_fit_overlay_color(0),
+                    yaxis="y",
+                    include_labels=show_subplot_fit_legend,
+                    fit_file_map=fit_file_map,
+                )
                 ax.set_xlabel(x_label)
                 ax.set_ylabel(_format_gle_label(y_name))
-
                 if self._log_x_check.isChecked():
                     ax.set_xscale("log")
-                if self._log_y_check.isChecked():
+                if self._is_log_y_for(y_name):
                     ax.set_yscale("log")
+                if show_subplot_fit_legend:
+                    ax.legend(loc="best")
         else:
-            fig = glp.figure(figsize=(5.5, 4))
+            fig = glp.figure(figsize=(5.8, 4.2))
             ax = fig.add_subplot(111)
 
             if len(y_params) == 2:
@@ -1023,212 +1420,144 @@ class FitParametersPanel(QWidget):
                 has_left_err = bool(np.any(np.isfinite(left_err) & (left_err > 0)))
                 has_right_err = bool(np.any(np.isfinite(right_err) & (right_err > 0)))
 
-                ax.errorbar_from_file(
-                    data_file_ref,
-                    x_col=1,
-                    y_col=left_y_col,
-                    yerr_col=left_err_col if has_left_err else None,
-                    color=_gle_series_color(0),
-                    marker="o",
-                    markersize=5,
-                    label=_format_gle_label(left_name),
-                    capsize=2,
+                ax.errorbar_from_file(data_file_ref, x_col=x_col, y_col=left_y_col, yerr_col=left_err_col if has_left_err else None, color=_gle_series_color(0), marker="o", markersize=5, capsize=2, yaxis="y")
+                ax.errorbar_from_file(data_file_ref, x_col=x_col, y_col=right_y_col, yerr_col=right_err_col if has_right_err else None, color=_gle_series_color(1), marker="o", markersize=5, capsize=2, yaxis="y2")
+                self._add_gle_model_overlay(
+                    ax,
+                    left_name,
+                    color=_fit_overlay_color(0),
                     yaxis="y",
+                    include_labels=show_fit_legend,
+                    fit_file_map=fit_file_map,
                 )
-                ax.errorbar_from_file(
-                    data_file_ref,
-                    x_col=1,
-                    y_col=right_y_col,
-                    yerr_col=right_err_col if has_right_err else None,
-                    color=_gle_series_color(1),
-                    marker="o",
-                    markersize=5,
-                    label=_format_gle_label(right_name),
-                    capsize=2,
+                self._add_gle_model_overlay(
+                    ax,
+                    right_name,
+                    color=_fit_overlay_color(1),
                     yaxis="y2",
+                    include_labels=show_fit_legend,
+                    fit_file_map=fit_file_map,
                 )
-
                 ax.set_ylabel(_format_gle_label(left_name), axis="y")
                 ax.set_ylabel(_format_gle_label(right_name), axis="y2")
-                ax.legend(loc="best")
+                if show_fit_legend:
+                    ax.legend(loc="best")
             else:
                 for idx, y_name in enumerate(y_params):
                     cols = self._gle_columns_for_param(y_name)
                     if cols is None:
                         continue
                     y_col, yerr_col = cols
-
                     y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
                     has_err = bool(np.any(np.isfinite(y_err) & (y_err > 0)))
-                    label = _format_gle_label(y_name) if len(y_params) > 1 else None
-
                     ax.errorbar_from_file(
                         data_file_ref,
-                        x_col=1,
+                        x_col=x_col,
                         y_col=y_col,
                         yerr_col=yerr_col if has_err else None,
                         color=_gle_series_color(idx),
                         marker="o",
                         markersize=5,
-                        label=label,
                         capsize=2,
+                    )
+                    self._add_gle_model_overlay(
+                        ax,
+                        y_name,
+                        color=_fit_overlay_color(idx),
                         yaxis="y",
+                        include_labels=show_fit_legend,
+                        fit_file_map=fit_file_map,
                     )
 
                 if len(y_params) == 1:
                     ax.set_ylabel(_format_gle_label(y_params[0]))
                 else:
                     ax.set_ylabel("Parameter Value")
-                    ax.legend(loc="best")
+                    if show_fit_legend:
+                        ax.legend(loc="best")
+
+                if len(y_params) == 1 and self._is_log_y_for(y_params[0]):
+                    ax.set_yscale("log")
+                elif len(y_params) > 1 and any(self._is_log_y_for(name) for name in y_params):
+                    ax.set_yscale("log")
 
             ax.set_xlabel(x_label)
-
             if self._log_x_check.isChecked():
                 ax.set_xscale("log")
-            if self._log_y_check.isChecked():
-                ax.set_yscale("log")
 
-        # Save GLE script
         fig.savefig(str(gle_path))
 
-        # Check if GLE is installed
-        gle_installed = shutil.which("gle") is not None
-
-        if gle_installed:
-            # Compile to PDF or EPS
+        if shutil.which("gle") is not None:
             output_path = gle_path.with_suffix(f".{output_format}")
             try:
-                subprocess.run(
-                    ["gle", "-d", output_format, str(gle_path)],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-
-                # Show success message
-                from PySide6.QtWidgets import QMessageBox
+                subprocess.run(["gle", "-d", output_format, str(gle_path)], capture_output=True, text=True, check=True)
+                if not is_test_mode:
+                    fit_files = getattr(self, "_last_export_fit_files", [])
+                    fit_files_text = "\n".join(str(p) for p in fit_files) if fit_files else "(none)"
+                    QMessageBox.information(
+                        self,
+                        "Export Successful",
+                        (
+                            f"GLE plot exported:\n\n"
+                            f"GLE script: {gle_path}\n"
+                            f"Data file: {data_path}\n"
+                            f"Fit files:\n{fit_files_text}\n"
+                            f"Output: {output_path}"
+                        ),
+                    )
+                    self._show_gle_preview(fig, data_path, list(fit_file_map.values()) if fit_file_map else [])
+            except subprocess.CalledProcessError as exc:
+                if not is_test_mode:
+                    QMessageBox.warning(self, "GLE compilation failed", exc.stderr or str(exc))
+                    self._show_gle_preview(fig, data_path, list(fit_file_map.values()) if fit_file_map else [])
+        else:
+            if not is_test_mode:
                 QMessageBox.information(
                     self,
-                    "Export Successful",
-                    f"GLE plot exported successfully:\n\n"
-                    f"GLE script: {gle_path}\n"
-                    f"Data file: {data_path}\n"
-                    f"Output: {output_path}",
+                    "GLE Not Installed",
+                    f"GLE script saved to {gle_path}. Install GLE to compile to {output_format.upper()}.",
                 )
+                self._show_gle_preview(fig, data_path, list(fit_file_map.values()) if fit_file_map else [])
 
-                # Show preview
-                self._show_gle_preview(fig, data_path)
+    def _show_gle_preview(self, fig, data_path: Path, fit_files: list[Path] | None = None) -> None:
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            return
 
-            except subprocess.CalledProcessError as e:
-                from PySide6.QtWidgets import QMessageBox
-                error_msg = e.stderr if e.stderr else str(e)
-
-                # Check for common library issues
-                if "libpoppler" in error_msg or "dyld" in error_msg:
-                    msg_text = (
-                        f"GLE compilation failed due to a library dependency issue.\n\n"
-                        f"This is a common problem on macOS when GLE was built against\n"
-                        f"an older version of poppler.\n\n"
-                        f"To fix this, try reinstalling GLE:\n"
-                        f"  brew reinstall gle\n\n"
-                        f"The GLE script has been saved to:\n{gle_path}\n"
-                        f"You can compile it manually after fixing GLE."
-                    )
-                else:
-                    msg_text = f"Failed to compile GLE file:\n\n{error_msg}"
-
-                QMessageBox.warning(
-                    self,
-                    "GLE Compilation Failed",
-                    msg_text,
-                )
-
-                # Still show preview if possible
-                try:
-                    self._show_gle_preview(fig, data_path)
-                except Exception:
-                    pass
-        else:
-            # GLE not installed, just show preview
-            from PySide6.QtWidgets import QMessageBox
-            msg = QMessageBox(self)
-            msg.setIcon(QMessageBox.Icon.Information)
-            msg.setWindowTitle("GLE Not Installed")
-            msg.setText(
-                f"GLE script saved to {gle_path}\n\n"
-                "GLE is not installed, so the output file cannot be generated.\n"
-                "Install GLE from http://glx.sourceforge.net/ to compile the script."
-            )
-            msg.exec()
-
-            # Still show preview
-            self._show_gle_preview(fig, data_path)
-
-    def _show_gle_preview(self, fig, data_path: Path) -> None:
-        """Show preview window using gleplot's view function."""
         try:
-            # Create a dialog to show the preview
+            import tempfile
+            from PySide6.QtGui import QPixmap
+
             dialog = QDialog(self)
             dialog.setWindowTitle("GLE Plot Preview")
-            dialog.resize(800, 600)
-
+            dialog.resize(850, 620)
             layout = QVBoxLayout(dialog)
 
-            # Try to display the figure
-            try:
-                import tempfile
+            image_label = QLabel("Preview unavailable")
+            layout.addWidget(image_label)
 
-                from PySide6.QtGui import QPixmap
-                from PySide6.QtWidgets import QLabel as QLabelWidget
-
-                # Create a temporary directory for GLE compilation
+            if shutil.which("gle") is not None:
                 with tempfile.TemporaryDirectory() as tmpdir:
                     tmpdir_path = Path(tmpdir)
                     gle_file = tmpdir_path / "preview.gle"
                     data_file = tmpdir_path / data_path.name
                     png_file = tmpdir_path / "preview.png"
 
-                    # Copy data file to temp directory
                     shutil.copy2(data_path, data_file)
-
-                    # Save GLE script to temp directory
+                    for fit_file in fit_files or []:
+                        src = Path(fit_file)
+                        if src.exists():
+                            shutil.copy2(src, tmpdir_path / src.name)
                     fig.savefig(str(gle_file))
+                    subprocess.run(["gle", "-d", "png", str(gle_file)], capture_output=True, check=True, cwd=str(tmpdir_path))
 
-                    # Compile with GLE if available
-                    if shutil.which("gle") is not None:
-                        subprocess.run(
-                            ["gle", "-d", "png", str(gle_file)],
-                            capture_output=True,
-                            check=True,
-                            cwd=str(tmpdir_path),
-                        )
+                    pixmap = QPixmap(str(png_file))
+                    if not pixmap.isNull():
+                        image_label.setPixmap(pixmap)
+                        image_label.setText("")
 
-                        # Load and display the image
-                        pixmap = QPixmap(str(png_file))
-                        if not pixmap.isNull():
-                            label = QLabelWidget()
-                            label.setPixmap(pixmap)
-                            label.setScaledContents(False)
-                            layout.addWidget(label)
-                        else:
-                            layout.addWidget(QLabelWidget("Failed to load preview image"))
-                    else:
-                        layout.addWidget(QLabelWidget("GLE not installed - preview not available"))
-
-            except Exception as e:
-                layout.addWidget(QLabelWidget(f"Preview error: {e}"))
-
-            # Add close button
             close_btn = QPushButton("Close")
             close_btn.clicked.connect(dialog.accept)
             layout.addWidget(close_btn)
-
             dialog.exec()
-
-        except Exception as e:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self,
-                "Preview Error",
-                f"Failed to show preview: {e}",
-            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Preview error", f"Failed to show preview: {exc}")

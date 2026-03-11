@@ -47,6 +47,7 @@ asymmetry/
 │   ├── fitting/        # Fitting engine
 │   │   ├── __init__.py
 │   │   ├── engine.py         # Fit driver: single-run & global
+│   │   ├── composite.py      # Composite A(t) builder primitives
 │   │   ├── models.py         # Built-in μSR fit functions
 │   │   ├── parameters.py     # Parameter objects with bounds & linking
 │   │   ├── minimizers.py     # Minimizer backends (scipy, lmfit, iminuit)
@@ -69,6 +70,7 @@ asymmetry/
 │   │   ├── data_browser.py   # Run browser / logbook view
 │   │   ├── plot_panel.py     # Interactive plotting canvas
 │   │   ├── fit_panel.py      # Fit setup and results
+│   │   ├── fit_function_builder.py  # Composite fit-function dialog
 │   │   ├── fourier_panel.py  # Fourier analysis controls
 │   │   └── log_panel.py      # Message / command log
 │   ├── dialogs/              # Modal dialogs

@@ -15,6 +15,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
+    QInputDialog,
     QLabel,
     QPushButton,
     QSpinBox,
@@ -37,6 +38,7 @@ class PlotPanel(QWidget):
     """
 
     bunch_factor_changed = Signal(int)
+    fit_range_changed = Signal(float, float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -53,6 +55,15 @@ class PlotPanel(QWidget):
             self._ax.set_xlabel("Time (μs)")
             self._ax.set_ylabel("Asymmetry (%)")
 
+            # Fit-range interaction state.
+            self._fit_x_min: float | None = None
+            self._fit_x_max: float | None = None
+            self._fit_span_artist = None
+            self._fit_min_handle = None
+            self._fit_max_handle = None
+            self._active_fit_handle: str | None = None
+            self._drag_started = False
+
             # Add plot limit controls toolbar
             self._create_limit_controls()
             layout.addLayout(self._limit_toolbar)
@@ -66,6 +77,10 @@ class PlotPanel(QWidget):
             # Store fit curve data to persist across redraws
             self._fit_curve = None  # (t_fit, y_fit, label) for single fits
             self._fit_curves = {}   # {run_number: (t_fit, y_fit, label)} for global fits
+
+            self._canvas.mpl_connect("button_press_event", self._on_canvas_button_press)
+            self._canvas.mpl_connect("motion_notify_event", self._on_canvas_motion_notify)
+            self._canvas.mpl_connect("button_release_event", self._on_canvas_button_release)
         except ImportError:
             from PySide6.QtWidgets import QLabel
 
@@ -173,6 +188,26 @@ class PlotPanel(QWidget):
             run=dataset.run,
         )
 
+    def get_fit_dataset(self, dataset: MuonDataset | None) -> MuonDataset | None:
+        """Return *dataset* restricted to the currently selected fit range."""
+        if dataset is None:
+            return None
+
+        t_min, t_max = self.get_fit_range()
+        if t_min is None or t_max is None:
+            return dataset
+        return dataset.time_range(t_min, t_max)
+
+    def get_fit_range(self) -> tuple[float | None, float | None]:
+        """Return the active fit range as (x_min, x_max)."""
+        if self._fit_x_min is None or self._fit_x_max is None:
+            return None, None
+        return float(self._fit_x_min), float(self._fit_x_max)
+
+    def set_fit_range(self, x_min: float, x_max: float) -> None:
+        """Set fit range limits and refresh visual handles."""
+        self._set_fit_range(x_min, x_max, emit_signal=True, redraw=True)
+
     def plot_dataset(self, dataset: MuonDataset) -> None:
         """Plot a dataset, optionally rebinned according to the bunch factor.
 
@@ -200,7 +235,7 @@ class PlotPanel(QWidget):
             yerr=error,
             fmt=".",
             markersize=3,
-            label=f"Run {dataset.run_number}",
+            label=f"Run {dataset.run_label}",
         )
         self._ax.set_xlabel("Time (μs)")
         self._ax.set_ylabel("Asymmetry (%)")
@@ -232,6 +267,20 @@ class PlotPanel(QWidget):
         self._y_min.setValue(y_min - y_padding)
         self._y_max.setValue(y_max + y_padding)
 
+        data_x_min = float(time.min())
+        data_x_max = float(time.max())
+        if self._fit_x_min is None or self._fit_x_max is None:
+            self._fit_x_min = data_x_min
+            self._fit_x_max = data_x_max
+        else:
+            self._fit_x_min = min(max(self._fit_x_min, data_x_min), data_x_max)
+            self._fit_x_max = min(max(self._fit_x_max, data_x_min), data_x_max)
+            if self._fit_x_min >= self._fit_x_max:
+                self._fit_x_min = data_x_min
+                self._fit_x_max = data_x_max
+
+        self._draw_fit_range_artists()
+
         # Apply the limits
         self._apply_limits()
 
@@ -242,6 +291,7 @@ class PlotPanel(QWidget):
 
         self._ax.set_xlim(self._x_min.value(), self._x_max.value())
         self._ax.set_ylim(self._y_min.value(), self._y_max.value())
+        self._draw_fit_range_artists()
         self._canvas.draw()
 
     def _auto_limits(self) -> None:
@@ -261,6 +311,7 @@ class PlotPanel(QWidget):
         self._y_min.setValue(y_lim[0])
         self._y_max.setValue(y_lim[1])
 
+        self._draw_fit_range_artists()
         self._canvas.draw()
 
     def _on_bunch_changed(self) -> None:
@@ -268,6 +319,178 @@ class PlotPanel(QWidget):
         if self._current_dataset is not None:
             self.plot_dataset(self._current_dataset)
         self.bunch_factor_changed.emit(self._bunch_factor.value())
+
+    def _set_fit_range(
+        self,
+        x_min: float,
+        x_max: float,
+        *,
+        emit_signal: bool,
+        redraw: bool,
+    ) -> None:
+        """Set fit range with ordering, clamping, and optional signaling."""
+        lo = float(min(x_min, x_max))
+        hi = float(max(x_min, x_max))
+
+        if self._current_dataset is not None:
+            analysis_dataset = self.get_analysis_dataset(self._current_dataset)
+            if analysis_dataset is not None and analysis_dataset.n_points > 0:
+                data_x_min = float(analysis_dataset.time.min())
+                data_x_max = float(analysis_dataset.time.max())
+                lo = min(max(lo, data_x_min), data_x_max)
+                hi = min(max(hi, data_x_min), data_x_max)
+
+                if lo >= hi:
+                    step = max((data_x_max - data_x_min) * 0.001, 1e-6)
+                    if lo >= data_x_max:
+                        lo = max(data_x_min, data_x_max - step)
+                        hi = data_x_max
+                    else:
+                        hi = min(data_x_max, lo + step)
+
+        self._fit_x_min = lo
+        self._fit_x_max = hi
+
+        if redraw:
+            self._draw_fit_range_artists()
+            self._canvas.draw_idle()
+
+        if emit_signal:
+            self.fit_range_changed.emit(self._fit_x_min, self._fit_x_max)
+
+    def _draw_fit_range_artists(self) -> None:
+        """Draw highlight and edge handles for the selected fit range."""
+        if not self._has_mpl:
+            return
+
+        if self._fit_span_artist is not None:
+            try:
+                self._fit_span_artist.remove()
+            except NotImplementedError:
+                pass
+            self._fit_span_artist = None
+        if self._fit_min_handle is not None:
+            try:
+                self._fit_min_handle.remove()
+            except NotImplementedError:
+                pass
+            self._fit_min_handle = None
+        if self._fit_max_handle is not None:
+            try:
+                self._fit_max_handle.remove()
+            except NotImplementedError:
+                pass
+            self._fit_max_handle = None
+
+        if self._fit_x_min is None or self._fit_x_max is None:
+            return
+
+        self._fit_span_artist = self._ax.axvspan(
+            self._fit_x_min,
+            self._fit_x_max,
+            color="gold",
+            alpha=0.18,
+            zorder=1,
+        )
+        self._fit_min_handle = self._ax.axvline(
+            self._fit_x_min,
+            color="darkorange",
+            linestyle="--",
+            linewidth=1.5,
+            zorder=4,
+        )
+        self._fit_max_handle = self._ax.axvline(
+            self._fit_x_max,
+            color="darkorange",
+            linestyle="--",
+            linewidth=1.5,
+            zorder=4,
+        )
+
+    def _detect_handle_hit(self, event) -> str | None:
+        """Return which fit handle (min/max) was clicked, if any."""
+        if (
+            self._fit_x_min is None
+            or self._fit_x_max is None
+            or event.inaxes != self._ax
+            or event.x is None
+            or event.y is None
+        ):
+            return None
+
+        min_px = self._ax.transData.transform((self._fit_x_min, 0.0))[0]
+        max_px = self._ax.transData.transform((self._fit_x_max, 0.0))[0]
+        tolerance_px = 8.0
+
+        if abs(event.x - min_px) <= tolerance_px:
+            return "min"
+        if abs(event.x - max_px) <= tolerance_px:
+            return "max"
+        return None
+
+    def _on_canvas_button_press(self, event) -> None:
+        """Capture left-clicks on fit-range handles for drag/edit."""
+        if not self._has_mpl or event.button != 1:
+            return
+
+        handle = self._detect_handle_hit(event)
+        if handle is None:
+            return
+
+        self._active_fit_handle = handle
+        self._drag_started = False
+
+    def _on_canvas_motion_notify(self, event) -> None:
+        """Drag the active fit-range handle while the mouse moves."""
+        if (
+            self._active_fit_handle is None
+            or event.inaxes != self._ax
+            or event.xdata is None
+        ):
+            return
+
+        self._drag_started = True
+        if self._active_fit_handle == "min":
+            self._set_fit_range(event.xdata, self._fit_x_max, emit_signal=True, redraw=True)
+        else:
+            self._set_fit_range(self._fit_x_min, event.xdata, emit_signal=True, redraw=True)
+
+    def _on_canvas_button_release(self, event) -> None:
+        """End drag and open numeric editor on click without drag."""
+        if self._active_fit_handle is None:
+            return
+
+        handle = self._active_fit_handle
+        was_drag = self._drag_started
+
+        self._active_fit_handle = None
+        self._drag_started = False
+
+        if not was_drag and event.button == 1:
+            self._prompt_handle_value_edit(handle)
+
+    def _prompt_handle_value_edit(self, handle: str) -> None:
+        """Prompt for an exact fit-handle x-value."""
+        if self._fit_x_min is None or self._fit_x_max is None:
+            return
+
+        current = self._fit_x_min if handle == "min" else self._fit_x_max
+        value, ok = QInputDialog.getDouble(
+            self,
+            "Set Fit Range",
+            "Fit x-value (μs):",
+            float(current),
+            -1e6,
+            1e6,
+            6,
+        )
+        if not ok:
+            return
+
+        if handle == "min":
+            self._set_fit_range(value, self._fit_x_max, emit_signal=True, redraw=True)
+        else:
+            self._set_fit_range(self._fit_x_min, value, emit_signal=True, redraw=True)
 
     def plot_fit(self, t_fit, y_fit, label: str = "Fit") -> None:
         """Overlay a fit curve on the current plot.
@@ -324,6 +547,11 @@ class PlotPanel(QWidget):
             self._current_dataset = None
             self._fit_curve = None
             self._fit_curves = {}
+            self._fit_x_min = None
+            self._fit_x_max = None
+            self._fit_span_artist = None
+            self._fit_min_handle = None
+            self._fit_max_handle = None
 
     def clear_fit(self) -> None:
         """Clear all fit curves and redraw the plot."""
@@ -362,6 +590,8 @@ class PlotPanel(QWidget):
             "y_max": self._y_max.value() if self._has_mpl else 30.0,
             "fit_curve": None,
             "fit_curves": {},
+            "fit_x_min": self._fit_x_min,
+            "fit_x_max": self._fit_x_max,
         }
 
         if self._has_mpl:
@@ -418,6 +648,12 @@ class PlotPanel(QWidget):
             spin.setValue(state.get(key, default))
             spin.blockSignals(False)
 
+        fit_x_min = state.get("fit_x_min")
+        fit_x_max = state.get("fit_x_max")
+        if fit_x_min is not None and fit_x_max is not None:
+            self._fit_x_min = float(fit_x_min)
+            self._fit_x_max = float(fit_x_max)
+
         # Restore fit curves.
         self._fit_curve = None
         self._fit_curves = {}
@@ -441,6 +677,14 @@ class PlotPanel(QWidget):
         if dataset is not None:
             self._current_dataset = dataset
             self.plot_dataset(dataset)
+
+        if fit_x_min is not None and fit_x_max is not None:
+            self._set_fit_range(
+                float(fit_x_min),
+                float(fit_x_max),
+                emit_signal=False,
+                redraw=True,
+            )
 
         # Always apply the restored limits.
         self._apply_limits()

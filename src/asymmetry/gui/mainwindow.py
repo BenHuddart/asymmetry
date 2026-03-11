@@ -249,6 +249,7 @@ class MainWindow(QMainWindow):
         self._data_browser.dataset_selected.connect(self._on_dataset_selected)
         self._data_browser.selection_changed.connect(self._update_selected_datasets)
         self._plot_panel.bunch_factor_changed.connect(self._on_bunch_factor_changed)
+        self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
 
@@ -447,18 +448,22 @@ class MainWindow(QMainWindow):
             # Clear any previous fit curve when switching datasets
             self._plot_panel._fit_curve = None
             self._plot_panel.plot_dataset(dataset)
-            self._fit_panel.set_dataset(self._plot_panel.get_analysis_dataset(dataset))
-            self._log_panel.log(f"Selected run {run_number}")
-            self.statusBar().showMessage(f"Viewing run {run_number}")
+            self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
+            self._log_panel.log(f"Selected run {dataset.run_label}")
+            self.statusBar().showMessage(f"Viewing run {dataset.run_label}")
 
     def _on_bunch_factor_changed(self, _factor: int) -> None:
         """Refresh fit inputs so fitting follows the current bunch factor."""
         if self._current_dataset is not None:
             current_run = self._current_dataset.run_number
             if self._data_browser.get_dataset(current_run) is not None:
-                self._fit_panel.set_dataset(
-                    self._plot_panel.get_analysis_dataset(self._current_dataset)
-                )
+                self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
+        self._update_selected_datasets()
+
+    def _on_fit_range_changed(self, _x_min: float, _x_max: float) -> None:
+        """Refresh fit inputs when the selected fit x-range changes."""
+        if self._current_dataset is not None:
+            self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
         self._update_selected_datasets()
 
     def _on_fit_completed(self, fit_result, fitted_curve) -> None:
@@ -543,11 +548,16 @@ class MainWindow(QMainWindow):
         analysis_datasets = [
             dataset
             for dataset in (
-                self._plot_panel.get_analysis_dataset(ds) for ds in selected
+                self._get_fit_dataset(ds) for ds in selected
             )
             if dataset is not None
         ]
         self._fit_panel.set_datasets(analysis_datasets)
+
+    def _get_fit_dataset(self, dataset):
+        """Return analysis dataset restricted to the active fit range."""
+        analysis_dataset = self._plot_panel.get_analysis_dataset(dataset)
+        return self._plot_panel.get_fit_dataset(analysis_dataset)
 
     # ── project save / open ────────────────────────────────────────────
 
@@ -855,9 +865,7 @@ class MainWindow(QMainWindow):
 
         # Propagate current dataset to fit panel.
         if current_dataset is not None:
-            self._fit_panel.set_dataset(
-                self._plot_panel.get_analysis_dataset(current_dataset)
-            )
+            self._fit_panel.set_dataset(self._get_fit_dataset(current_dataset))
         self._update_selected_datasets()
 
         # ── restore fit panel states (after dataset propagation) ──────

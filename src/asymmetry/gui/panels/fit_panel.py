@@ -6,6 +6,8 @@ parameters, run the fit, and inspect results.
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
@@ -22,14 +24,18 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QSizePolicy,
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 
 _PARAM_SYMBOLS = {
+    "A": "A",
     "A0": "A₀",
     "Lambda": "λ",
     "sigma": "σ",
@@ -40,7 +46,9 @@ _PARAM_SYMBOLS = {
 }
 
 _PARAM_UNITS = {
+    "A": "%",
     "A0": "%",
+    "A_bg": "%",
     "baseline": "%",
     "Lambda": "μs⁻¹",
     "sigma": "μs⁻¹",
@@ -49,30 +57,31 @@ _PARAM_UNITS = {
     "phase": "rad",
 }
 
-_MODEL_NAME_ALIASES = {
-    "Exponential": "ExponentialRelaxation",
-    "Gaussian": "GaussianRelaxation",
-    "Stretched Exponential": "StretchedExponential",
-    "StaticGKT": "StaticGKT_ZF",
-}
-
 
 def _format_param_label(name: str) -> str:
     """Return a display label with Greek symbols and units where applicable."""
-    symbol = _PARAM_SYMBOLS.get(name, name)
-    unit = _PARAM_UNITS.get(name)
+    base_name = name
+    suffix = ""
+    match = re.match(r"^(.+)_([0-9]+)$", name)
+    if match:
+        base_name = match.group(1)
+        suffix = f"_{match.group(2)}"
+
+    symbol = _PARAM_SYMBOLS.get(base_name, base_name) + suffix
+    unit = _PARAM_UNITS.get(base_name)
     if unit:
         return f"{symbol} ({unit})"
     return symbol
 
 
-def _resolve_model_name(name: str) -> str:
-    """Map legacy/friendly model names to canonical MODELS keys."""
-    if name in MODELS:
-        return name
-    if name in _MODEL_NAME_ALIASES:
-        return _MODEL_NAME_ALIASES[name]
-    return name
+def _configure_formula_label(label: QLabel) -> None:
+    """Configure formula labels to wrap without clipping."""
+    label.setWordWrap(True)
+    label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
+    line_height = label.fontMetrics().lineSpacing()
+    label.setMinimumHeight(line_height * 2 + 8)
 
 
 class GlobalFitWorker(QObject):
@@ -141,14 +150,17 @@ class SingleFitTab(QWidget):
 
         self._current_dataset: MuonDataset | None = None
         self._fit_engine = FitEngine()
+        self._composite_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
 
         # Model selection
         model_group = QGroupBox("Model")
         model_layout = QFormLayout(model_group)
-        self._model_combo = QComboBox()
-        self._model_combo.addItems(sorted(MODELS.keys()))
-        self._model_combo.currentTextChanged.connect(self._on_model_changed)
-        model_layout.addRow("Function:", self._model_combo)
+        self._formula_label = QLabel()
+        _configure_formula_label(self._formula_label)
+        self._edit_model_btn = QPushButton("Edit Function...")
+        self._edit_model_btn.clicked.connect(self._edit_function)
+        model_layout.addRow("A(t):", self._formula_label)
+        model_layout.addRow("", self._edit_model_btn)
         layout.addWidget(model_group)
 
         # Parameter table
@@ -186,20 +198,17 @@ class SingleFitTab(QWidget):
 
         layout.addStretch()
 
-        # Populate initial model
-        if MODELS:
-            self._on_model_changed(self._model_combo.currentText())
+        self._set_composite_model(self._composite_model)
 
     def set_dataset(self, dataset: MuonDataset | None) -> None:
         """Set the current dataset to fit."""
         self._current_dataset = dataset
         self._fit_btn.setEnabled(dataset is not None)
 
-    def _on_model_changed(self, name: str) -> None:
-        """Update parameter table when model changes."""
-        model = MODELS.get(name)
-        if not model:
-            return
+    def _set_composite_model(self, model: CompositeModel) -> None:
+        """Set the active composite model and rebuild the parameter table."""
+        self._composite_model = model
+        self._formula_label.setText(model.formula_string())
 
         self._param_table.setRowCount(len(model.param_names))
         for i, pname in enumerate(model.param_names):
@@ -230,9 +239,17 @@ class SingleFitTab(QWidget):
             max_item = QTableWidgetItem("inf")
             self._param_table.setItem(i, 4, max_item)
 
+    def _edit_function(self) -> None:
+        """Launch the fit-function builder dialog."""
+        dialog = FitFunctionBuilderDialog(self, initial_model=self._composite_model)
+        if dialog.exec():
+            new_model = dialog.get_composite_model()
+            if new_model is not None:
+                self._set_composite_model(new_model)
+
     def _reset_parameters(self) -> None:
         """Reset parameters to model defaults."""
-        self._on_model_changed(self._model_combo.currentText())
+        self._set_composite_model(self._composite_model)
 
     def _run_fit(self) -> None:
         """Execute the fit."""
@@ -240,10 +257,8 @@ class SingleFitTab(QWidget):
             self._result_label.setText("ERROR: No dataset selected")
             return
 
-        model_name = self._model_combo.currentText()
-        model = MODELS.get(model_name)
-        if not model:
-            self._result_label.setText(f"ERROR: Model '{model_name}' not found")
+        if self._composite_model is None:
+            self._result_label.setText("ERROR: No function defined")
             return
 
         # Build parameter set from table
@@ -295,7 +310,7 @@ class SingleFitTab(QWidget):
         try:
             result = self._fit_engine.fit(
                 self._current_dataset,
-                model.function,
+                self._composite_model.function,
                 parameters,
             )
         except Exception as e:
@@ -334,7 +349,7 @@ class SingleFitTab(QWidget):
                 500,
             )
             param_dict = {p.name: p.value for p in result.parameters}
-            y_fit = model.function(t_fit, **param_dict)
+            y_fit = self._composite_model.function(t_fit, **param_dict)
 
             self.fit_completed.emit(result, (t_fit, y_fit))
         else:
@@ -376,19 +391,20 @@ class SingleFitTab(QWidget):
             })
 
         return {
-            "model_name": self._model_combo.currentText(),
+            "model_name": "Composite",
+            "composite_model": self._composite_model.to_dict(),
             "parameters": params,
             "result_html": self._result_label.text(),
         }
 
     def restore_state(self, state: dict) -> None:
         """Restore single-fit tab state from a saved dict."""
-        model_name = _resolve_model_name(
-            str(state.get("model_name") or state.get("model") or "")
-        )
-        idx = self._model_combo.findText(model_name)
-        if idx >= 0:
-            self._model_combo.setCurrentIndex(idx)
+        composite_data = state.get("composite_model")
+        if isinstance(composite_data, dict):
+            try:
+                self._set_composite_model(CompositeModel.from_dict(composite_data))
+            except ValueError:
+                self._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
 
         params_data = {p["name"]: p for p in state.get("parameters", [])}
         for i in range(self._param_table.rowCount()):
@@ -449,14 +465,17 @@ class GlobalFitTab(QWidget):
 
         self._fit_engine = FitEngine()
         self._datasets = []  # Will be set by parent
+        self._composite_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
 
         # Model selection
         model_group = QGroupBox("Model")
         model_layout = QFormLayout(model_group)
-        self._model_combo = QComboBox()
-        self._model_combo.addItems(sorted(MODELS.keys()))
-        self._model_combo.currentTextChanged.connect(self._on_model_changed)
-        model_layout.addRow("Function:", self._model_combo)
+        self._formula_label = QLabel()
+        _configure_formula_label(self._formula_label)
+        self._edit_model_btn = QPushButton("Edit Function...")
+        self._edit_model_btn.clicked.connect(self._edit_function)
+        model_layout.addRow("A(t):", self._formula_label)
+        model_layout.addRow("", self._edit_model_btn)
         layout.addWidget(model_group)
 
         # Parameter classification table
@@ -507,9 +526,7 @@ class GlobalFitTab(QWidget):
         self._fit_thread: QThread | None = None
         self._fit_worker: GlobalFitWorker | None = None
 
-        # Initialize with first model
-        if MODELS:
-            self._on_model_changed(self._model_combo.currentText())
+        self._set_composite_model(self._composite_model)
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting."""
@@ -532,11 +549,10 @@ class GlobalFitTab(QWidget):
                 "Configure parameters and click Run Global Fit."
             )
 
-    def _on_model_changed(self, name: str) -> None:
-        """Update parameter table when model changes."""
-        model = MODELS.get(name)
-        if not model:
-            return
+    def _set_composite_model(self, model: CompositeModel) -> None:
+        """Set the active composite model and rebuild classification rows."""
+        self._composite_model = model
+        self._formula_label.setText(model.formula_string())
 
         self._param_table.setRowCount(len(model.param_names))
         for i, pname in enumerate(model.param_names):
@@ -561,17 +577,24 @@ class GlobalFitTab(QWidget):
             bounds_item = QTableWidgetItem("-inf, inf")
             self._param_table.setItem(i, 3, bounds_item)
 
+    def _edit_function(self) -> None:
+        """Launch the fit-function builder dialog."""
+        dialog = FitFunctionBuilderDialog(self, initial_model=self._composite_model)
+        if dialog.exec():
+            new_model = dialog.get_composite_model()
+            if new_model is not None:
+                self._set_composite_model(new_model)
+
     def _run_global_fit(self) -> None:
         """Execute global fit on all datasets."""
         if len(self._datasets) < 2:
             self._result_text.setText("Error: Need at least 2 datasets for global fitting")
             return
 
-        model_name = self._model_combo.currentText()
-        model = MODELS.get(model_name)
-        if not model:
-            self._result_text.setText(f"Error: Model '{model_name}' not found")
+        if self._composite_model is None:
+            self._result_text.setText("Error: No function defined")
             return
+        model = self._composite_model
 
         # Parse parameter classification
         global_params = []
@@ -681,7 +704,7 @@ class GlobalFitTab(QWidget):
         self._fit_worker = GlobalFitWorker(
             self._fit_engine,
             self._datasets,
-            model.function,
+            self._composite_model.function,
             global_params,
             local_params,
             initial_params,
@@ -689,7 +712,7 @@ class GlobalFitTab(QWidget):
         self._fit_worker.moveToThread(self._fit_thread)
 
         # Store model for later use in callbacks
-        self._current_model = model
+        self._current_model = self._composite_model
         self._current_global_params = global_params
 
         # Connect signals
@@ -754,9 +777,11 @@ class GlobalFitTab(QWidget):
             self.global_fit_completed.emit(results_with_curves, fitted_global)
         else:
             failed = [run for run, r in results_dict.items() if not r.success]
+            run_label_by_number = {ds.run_number: ds.run_label for ds in self._datasets}
+            failed_labels = [run_label_by_number.get(run, str(run)) for run in failed]
             self._result_text.setText(
                 f"<b>Global fit failed</b><br>"
-                f"Failed datasets: {failed}"
+                f"Failed datasets: {failed_labels}"
             )
 
     def _on_fit_error(self, error_msg: str) -> None:
@@ -812,19 +837,20 @@ class GlobalFitTab(QWidget):
             })
 
         return {
-            "model_name": self._model_combo.currentText(),
+            "model_name": "Composite",
+            "composite_model": self._composite_model.to_dict(),
             "parameters": params,
             "result_html": self._result_text.toHtml(),
         }
 
     def restore_state(self, state: dict) -> None:
         """Restore global-fit tab state from a saved dict."""
-        model_name = _resolve_model_name(
-            str(state.get("model_name") or state.get("model") or "")
-        )
-        idx = self._model_combo.findText(model_name)
-        if idx >= 0:
-            self._model_combo.setCurrentIndex(idx)
+        composite_data = state.get("composite_model")
+        if isinstance(composite_data, dict):
+            try:
+                self._set_composite_model(CompositeModel.from_dict(composite_data))
+            except ValueError:
+                self._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
 
         params_data = {p["name"]: p for p in state.get("parameters", [])}
         for i in range(self._param_table.rowCount()):
@@ -847,7 +873,7 @@ class GlobalFitTab(QWidget):
 
             type_combo = self._param_table.cellWidget(i, 2)
             if isinstance(type_combo, QComboBox):
-                type_value = str(p_data.get("type") or p_data.get("classification") or "Local")
+                type_value = str(p_data.get("type") or "Local")
                 idx = type_combo.findText(type_value)
                 if idx >= 0:
                     type_combo.setCurrentIndex(idx)

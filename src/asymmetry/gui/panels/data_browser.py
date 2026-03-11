@@ -8,7 +8,7 @@ plotting and analysis.
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QPoint, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -207,6 +207,7 @@ class DataBrowserPanel(QWidget):
         self._column_filters: dict[int, set[str]] = {}  # column_index -> set of selected values
         self._current_sort_column: int = -1
         self._current_sort_order: Qt.SortOrder = Qt.SortOrder.AscendingOrder
+        self._selection_anchor_row: int | None = None
         self._updating_table = False
 
         layout = QVBoxLayout(self)
@@ -564,28 +565,60 @@ class DataBrowserPanel(QWidget):
                 return True
 
         # Custom selection behavior for table rows:
-        # Shift+Click adds just the clicked row to selection instead of a range.
+        # Shift+Click selects the full range from the anchor row, matching
+        # standard file-browser behavior.
         if watched is self._table.viewport():
             if (
                 event.type() == QEvent.Type.MouseButtonPress
                 and event.button() == Qt.MouseButton.LeftButton
-                and bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
             ):
                 row = self._table.rowAt(event.position().toPoint().y())
                 if row >= 0:
+                    modifiers = event.modifiers()
                     index = self._table.model().index(row, 0)
                     selection_model = self._table.selectionModel()
-                    if selection_model is not None:
-                        selection_model.select(
-                            index,
-                            QItemSelectionModel.SelectionFlag.Select
-                            | QItemSelectionModel.SelectionFlag.Rows,
-                        )
-                        selection_model.setCurrentIndex(
-                            index,
-                            QItemSelectionModel.SelectionFlag.NoUpdate,
-                        )
-                        return True
+
+                    if bool(modifiers & Qt.KeyboardModifier.ShiftModifier):
+                        anchor_row = self._selection_anchor_row
+                        if anchor_row is None:
+                            anchor_row = self._table.currentRow()
+                        if anchor_row < 0:
+                            anchor_row = row
+
+                        if selection_model is not None:
+                            top_row = min(anchor_row, row)
+                            bottom_row = max(anchor_row, row)
+                            top_left = self._table.model().index(top_row, 0)
+                            bottom_right = self._table.model().index(
+                                bottom_row,
+                                self._table.columnCount() - 1,
+                            )
+                            selection = QItemSelection(top_left, bottom_right)
+                            add_to_selection = bool(
+                                modifiers
+                                & (
+                                    Qt.KeyboardModifier.ControlModifier
+                                    | Qt.KeyboardModifier.MetaModifier
+                                )
+                            )
+                            flags = QItemSelectionModel.SelectionFlag.Rows
+                            if add_to_selection:
+                                flags |= QItemSelectionModel.SelectionFlag.Select
+                            else:
+                                flags |= QItemSelectionModel.SelectionFlag.ClearAndSelect
+                            selection_model.select(selection, flags)
+                            selection_model.setCurrentIndex(
+                                index,
+                                QItemSelectionModel.SelectionFlag.NoUpdate,
+                            )
+                            return True
+                    else:
+                        self._selection_anchor_row = row
+                        if selection_model is not None:
+                            selection_model.setCurrentIndex(
+                                index,
+                                QItemSelectionModel.SelectionFlag.NoUpdate,
+                            )
 
         if watched is header.viewport():
             if event.type() == QEvent.Type.MouseButtonRelease:

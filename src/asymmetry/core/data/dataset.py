@@ -126,6 +126,21 @@ class MuonDataset:
     def run_number(self) -> int:
         return self.run.run_number if self.run else self.metadata.get("run_number", 0)
 
+    @property
+    def run_label(self) -> str:
+        """Return a user-facing run label.
+
+        For co-added datasets this prefers ``metadata['run_label']`` (for
+        example ``"3039 + 3040"``) so UI text does not display internal
+        negative combined IDs.
+        """
+        label = self.metadata.get("run_label")
+        if label is not None:
+            text = str(label).strip()
+            if text:
+                return text
+        return str(self.run_number)
+
     def time_range(self, t_min: float | None = None, t_max: float | None = None) -> MuonDataset:
         """Return a copy restricted to [t_min, t_max]."""
         mask = np.ones(self.n_points, dtype=bool)

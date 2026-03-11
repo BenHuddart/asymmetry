@@ -70,6 +70,7 @@ class _StubPlotPanel(QWidget):
         self._fit_curve = None
         self._fit_curves = {}
         self.bunch_factor_changed = _DummySignal()
+        self.fit_range_changed = _DummySignal()
         self.factor = 1
         self.last_plotted_dataset = None
 
@@ -93,6 +94,9 @@ class _StubPlotPanel(QWidget):
             metadata={**dataset.metadata, "analysis_factor": self.factor},
             run=dataset.run,
         )
+
+    def get_fit_dataset(self, dataset):
+        return dataset
 
     def clear(self):
         self.last_plotted_dataset = None

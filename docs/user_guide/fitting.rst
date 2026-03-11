@@ -52,7 +52,7 @@ Available Models
 The following built-in models are available in the MODELS registry:
 
 ExponentialRelaxation
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~
 
 Simple exponential relaxation:
 
@@ -353,3 +353,292 @@ Tips for Good Fits
 3. **Check residuals**: Should be randomly distributed around zero
 4. **Compare models**: Use chi-squared and AIC/BIC for model selection
 5. **Validate uncertainties**: Bootstrap if parameter errors seem too small
+
+Parameter Model Fitting
+-----------------------
+
+Once you have run fits across a series of runs (e.g., a field sweep or
+temperature scan), the extracted parameters can themselves be fitted as a
+function of the scan variable using the **Parameter Model Fitting** framework.
+This is exposed in the GUI via the **Fitted Parameters** panel and is also
+fully scriptable.
+
+Available basis functions
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The registry ``PARAMETER_MODEL_COMPONENTS`` contains the following basis
+functions, organised by the scan variable they are designed for.
+
+Common (field, temperature, or run number)
+``````````````````````````````````````````
+
+``Constant``
+   :math:`f(x) = c`
+
+   Parameters: ``c``
+
+``Linear``
+   :math:`f(x) = m x + b`
+
+   Parameters: ``m``, ``b``
+
+``PowerLaw``
+   :math:`f(x) = a |x|^n + c`
+
+   Parameters: ``a``, ``n``, ``c``
+
+``ExponentialDecay``
+   :math:`f(x) = a \exp(-x/\tau) + c`
+
+   Parameters: ``a``, ``tau``, ``c``
+
+Temperature-specific
+````````````````````
+
+``Arrhenius``
+   :math:`f(T) = a \exp\!\left(-\frac{E_a}{k_B T}\right)`
+
+   Parameters: ``a``, ``Ea`` (activation energy in meV)
+
+``CriticalDivergence``
+   :math:`f(T) = a |T - T_c|^{-\nu} + c`
+
+   Parameters: ``a``, ``Tc``, ``nu``, ``c``
+
+Field-specific
+``````````````
+
+``Redfield``
+   :math:`f(B) = \dfrac{a}{1 + (B/B_0)^2} + c`
+
+   Parameters: ``a``, ``B0``, ``c``
+
+``Lorentzian``
+   Identical to ``Redfield``. Provided as an alias for convenience.
+
+   Parameters: ``a``, ``B0``, ``c``
+
+Querying available components
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   from asymmetry.core.fitting.parameter_models import component_names_for_x
+
+   print(component_names_for_x("field"))        # includes Redfield, Lorentzian
+   print(component_names_for_x("temperature"))  # includes Arrhenius, CriticalDivergence
+   print(component_names_for_x("run"))          # common components only
+
+Building a composite parameter model
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:class:`~asymmetry.core.fitting.parameter_models.ParameterCompositeModel`
+accepts a list of component names and optional operators (``+``, ``-``,
+``*``, ``/``) to combine them.  Operator precedence follows normal arithmetic
+rules: ``*`` and ``/`` are evaluated before ``+`` and ``-``.
+
+.. code-block:: python
+
+   from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+
+   # Single component
+   model = ParameterCompositeModel(["Constant"])
+   print(model.param_names)    # ['c']
+   print(model.formula_string())
+
+   # Additive model: Linear + Constant (redundant here, but demonstrates API)
+   model = ParameterCompositeModel(["Linear", "Constant"], operators=["+"])
+   print(model.formula_string())
+
+   # Lorentzian peak on a linear background
+   model = ParameterCompositeModel(["Redfield", "Linear"], operators=["+"])
+   print(model.param_names)
+   print(model.formula_string())
+
+When the same basis function is used more than once, parameter names are
+disambiguated automatically by appending ``_1``, ``_2``, etc.
+
+.. code-block:: python
+
+   model = ParameterCompositeModel(["Redfield", "Redfield"], operators=["+"])
+   print(model.param_names)  # ['a_1', 'B0_1', 'c_1', 'a_2', 'B0_2', 'c_2']
+
+Fitting extracted parameters
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use :func:`~asymmetry.core.fitting.parameter_models.fit_parameter_model` to
+fit parameter-vs-x data retrieved from a series of :class:`~asymmetry.core.fitting.engine.FitResult` objects.
+
+.. code-block:: python
+
+   import numpy as np
+   from asymmetry.core.fitting.parameter_models import (
+       ParameterCompositeModel,
+       fit_parameter_model,
+   )
+   from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+   # Suppose these come from a temperature series of μSR fits
+   temperatures = np.array([5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 300.0])
+   lambda_values = np.array([0.12, 0.14, 0.18, 0.30, 0.52, 0.88, 1.40])
+   lambda_errors = np.array([0.01, 0.01, 0.01, 0.02, 0.02, 0.03, 0.04])
+
+   # Fit an Arrhenius model
+   model = ParameterCompositeModel(["Arrhenius"])
+   params = ParameterSet([
+       Parameter("a", value=2.0, min=0.0),
+       Parameter("Ea", value=10.0, min=0.0),
+   ])
+
+   result = fit_parameter_model(temperatures, lambda_values, lambda_errors, model, params)
+
+   if result.success:
+       print(f"χ²ᵣ = {result.reduced_chi_squared:.3f}")
+       for p in result.parameters:
+           err = result.uncertainties.get(p.name, 0.0)
+           print(f"  {p.name} = {p.value:.4f} ± {err:.4f}")
+
+The optional ``x_min`` / ``x_max`` keyword arguments restrict which data
+points are included in the fit:
+
+.. code-block:: python
+
+   result = fit_parameter_model(
+       temperatures, lambda_values, lambda_errors, model, params,
+       x_min=50.0, x_max=300.0,
+   )
+
+Generating smooth fit curves
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+After a successful fit, use
+:func:`~asymmetry.core.fitting.parameter_models.evaluate_parameter_model_fit`
+to produce a densely sampled curve for plotting.
+
+.. code-block:: python
+
+   import numpy as np
+   import matplotlib.pyplot as plt
+   from asymmetry.core.fitting.parameter_models import (
+       ModelFitRange,
+       ParameterModelFit,
+       evaluate_parameter_model_fit,
+   )
+
+   fit = ParameterModelFit(
+       parameter_name="Lambda",
+       x_key="temperature",
+       ranges=[
+           ModelFitRange(
+               x_min=float(temperatures.min()),
+               x_max=float(temperatures.max()),
+               model=model,
+               parameters=params,
+               result=result,
+           )
+       ],
+       active=True,
+   )
+
+   curves = evaluate_parameter_model_fit(fit, num_points=300)
+
+   plt.errorbar(temperatures, lambda_values, yerr=lambda_errors, fmt="o", label="Data")
+   for curve in curves:
+       plt.plot(curve.x, curve.y, "r-", label="Arrhenius fit")
+   plt.xlabel("Temperature (K)")
+   plt.ylabel("λ (μs⁻¹)")
+   plt.legend()
+   plt.show()
+
+GUI workflow
+~~~~~~~~~~~~~
+
+In the **Fitted Parameters** panel:
+
+1. Run single or global fits across your dataset series.
+2. Select a parameter row in the table to open the model-fit toolbar.
+3. Choose an x-variable (field or temperature) and add one or more basis
+   functions using the **Add Component** button.
+4. Set initial parameter values and click **Fit**.
+5. The fitted curve is overlaid on the parameter-vs-x plot automatically.
+6. Use **Export CSV** to save the fit results alongside the raw parameter
+   values for further analysis.
+
+GUI Composite Function Builder
+-------------------------------
+
+As of the current GUI workflow, fitting functions are edited as composite
+expressions for :math:`A(t)` using a component builder.
+
+In the GUI fit panel (Single and Global tabs), click **Edit Function...** to
+build a composite function for :math:`A(t)`.
+
+Default function
+~~~~~~~~~~~~~~~~
+
+New fit tabs start with:
+
+.. math::
+
+   A(t) = A_1 e^{-\Lambda t} + A_{bg}
+
+where ``A_bg`` is an explicit constant background component.
+
+Component list
+~~~~~~~~~~~~~~
+
+The builder supports these basis components:
+
+* ``Exponential``: :math:`A e^{-\Lambda t}`
+* ``Gaussian``: :math:`A e^{-(\sigma t)^2}`
+* ``Oscillatory``: :math:`A\cos(2\pi f t + \phi)`
+* ``StretchedExponential``: :math:`A e^{-(|\Lambda|t)^\beta}`
+* ``StaticGKT_ZF``
+* ``Constant``: :math:`A_{bg}`
+
+Use ``+``, ``-``, ``*``, ``/`` operators to combine components.
+
+.. note::
+
+   In the builder, oscillatory is pure cosine by default. To include damping,
+   multiply by an exponential component.
+
+Parameter naming rules
+~~~~~~~~~~~~~~~~~~~~~~
+
+Composite-parameter names are generated automatically:
+
+* Amplitudes are always indexed by component order: ``A_1``, ``A_2``, ...
+* ``A_bg`` is used for a unique constant background term
+* Non-amplitude symbols are only indexed when duplicates are present in the
+  same expression (for example ``Lambda`` vs ``Lambda_1`` and ``Lambda_2``)
+
+This keeps names readable while guaranteeing uniqueness.
+
+Programmatic Composite Models
+------------------------------
+
+You can also build the same composite models directly from Python:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting.composite import CompositeModel
+   from asymmetry.core.fitting.engine import FitEngine
+   from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+   model = CompositeModel(["Exponential", "Oscillatory", "Constant"], operators=["+", "*"])
+
+   params = ParameterSet([
+       Parameter("A_1", 25.0),
+       Parameter("Lambda", 0.5),
+       Parameter("A_2", 10.0),
+       Parameter("frequency", 1.0),
+       Parameter("phase", 0.0),
+       Parameter("A_bg", 0.0),
+   ])
+
+   engine = FitEngine()
+   result = engine.fit(dataset, model.function, params)
+
+   print(model.formula_string())
+   print(result.reduced_chi_squared)

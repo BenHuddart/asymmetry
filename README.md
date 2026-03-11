@@ -23,9 +23,14 @@ management.
   menu actions: co-add selected runs, separate combined datasets, or delete.
 - **Interactive plotting** — Matplotlib-based plot panel with adjustable axis
   limits, bunch factor for noise reduction, and error-bar display.
-- **Single-dataset fitting** — Fit built-in μSR models (exponential, Gaussian,
-  stretched exponential, oscillatory, static Gaussian Kubo–Toyabe) using
-  [iminuit](https://scikit-hep.org/iminuit/) with parameter bounds and fixing.
+- **Single-dataset fitting** — Build composite `A(t)` models from
+  μSR components (exponential, Gaussian, oscillatory, stretched exponential,
+  static Gaussian Kubo-Toyabe, constant background) with ``+``, ``-``, ``*``,
+  ``/`` operators, then fit with
+  [iminuit](https://scikit-hep.org/iminuit/) using parameter bounds and fixing.
+- **Default explicit background** — New fits start with
+  ``A(t) = Exponential + A_bg`` so constant background is always visible and
+  editable from the start.
 - **Global (simultaneous) fitting** — Fit multiple datasets at once with shared
   and per-dataset parameters. Suited for temperature or field series analysis.
 - **Fitted-parameter trends** — After a global fit, inspect how varying

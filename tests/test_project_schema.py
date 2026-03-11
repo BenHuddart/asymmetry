@@ -78,11 +78,6 @@ class TestSchemaMigration:
         with pytest.raises(UnsupportedSchemaVersion):
             migrate_to_current(state)
 
-    def test_missing_version_with_project_shape_defaults_to_v1(self):
-        state = {"datasets": []}
-        migrated = migrate_to_current(state)
-        assert migrated["schema_version"] == 1
-
     def test_missing_version_without_project_shape_raises(self):
         state = {"not_a_project": True}
         with pytest.raises(UnsupportedSchemaVersion):
@@ -103,50 +98,6 @@ class TestSchemaMigration:
         """Future-proofing: unknown fields must not break validation."""
         state = {"schema_version": 1, "datasets": [], "future_field": "keep me"}
         validate(state)  # must not raise
-
-    def test_legacy_aliases_are_normalised(self):
-        state = {
-            "datasets": [
-                {
-                    "run_number": 1234,
-                    "source_path": "/tmp/run1234.wim",
-                    "metadata": {"field": 50.0},
-                }
-            ],
-            "fit_state": {
-                "single": {"model": "Exponential", "parameters": []},
-                "global": {
-                    "model": "Exponential",
-                    "parameters": [{"name": "A0", "classification": "Global"}],
-                },
-            },
-            "app_version": "0.1.0",
-        }
-
-        migrated = migrate_to_current(state)
-
-        assert migrated["created_with_app_version"] == "0.1.0"
-        ds = migrated["datasets"][0]
-        assert ds["source_file"] == "/tmp/run1234.wim"
-        assert ds["metadata_overrides"]["field"] == pytest.approx(50.0)
-        assert "single_fit_state" in migrated
-        assert "global_fit_state" in migrated
-        assert migrated["single_fit_state"]["model_name"] == "Exponential"
-        assert migrated["global_fit_state"]["model_name"] == "Exponential"
-        assert migrated["global_fit_state"]["parameters"][0]["type"] == "Global"
-
-    def test_missing_optional_sections_are_defaulted(self):
-        state = {"schema_version": 1, "datasets": []}
-        migrated = migrate_to_current(state)
-
-        assert migrated["combined_datasets"] == []
-        assert migrated["browser_state"] == {}
-        assert migrated["plot_state"] == {}
-        assert migrated["single_fit_state"] == {}
-        assert migrated["global_fit_state"] == {}
-        assert migrated["fit_ui_state"] == {}
-        assert migrated["fit_parameters_state"] == {}
-        assert migrated["fourier_state"] == {}
 
     def test_current_schema_version_constant(self):
         assert CURRENT_SCHEMA_VERSION == 1
@@ -196,31 +147,6 @@ class TestProjectIO:
         path.write_text(json.dumps(bad_state), encoding="utf-8")
         with pytest.raises(ValueError, match="missing required keys"):
             load_project(path)
-
-    def test_load_legacy_payload_with_alias_keys(self, tmp_path):
-        legacy = {
-            "app_version": "0.1.0",
-            "datasets": [
-                {
-                    "run_number": 42,
-                    "source_path": "/data/run42.wim",
-                    "metadata": {"field": 150.0},
-                }
-            ],
-            "fit_state": {
-                "single": {"model_name": "ExponentialRelaxation", "parameters": []},
-                "global": {"model_name": "ExponentialRelaxation", "parameters": []},
-            },
-        }
-        path = tmp_path / "legacy.asymp"
-        path.write_text(json.dumps(legacy), encoding="utf-8")
-
-        loaded = load_project(path)
-
-        assert loaded["schema_version"] == 1
-        assert loaded["created_with_app_version"] == "0.1.0"
-        assert loaded["datasets"][0]["source_file"] == "/data/run42.wim"
-        assert loaded["datasets"][0]["metadata_overrides"]["field"] == pytest.approx(150.0)
 
     def test_load_missing_file_raises_oserror(self, tmp_path):
         with pytest.raises(OSError):
@@ -458,25 +384,16 @@ class TestFitPanelState:
 
     def test_single_restore_state_sets_model(self, qapp):
         from asymmetry.gui.panels.fit_panel import SingleFitTab
-        from asymmetry.core.fitting.models import MODELS
+        from asymmetry.core.fitting.composite import CompositeModel
 
         tab = SingleFitTab()
-        model_names = sorted(MODELS.keys())
-        if len(model_names) < 2:
-            pytest.skip("Need at least 2 models")
-
-        target = model_names[-1]  # pick last alphabetically
-        state = {"model_name": target, "parameters": []}
+        state = {
+            "model_name": "Composite",
+            "composite_model": CompositeModel(["Gaussian", "Constant"], operators=["+"]).to_dict(),
+            "parameters": [],
+        }
         tab.restore_state(state)
-        assert tab._model_combo.currentText() == target
-
-    def test_single_restore_accepts_legacy_model_alias(self, qapp):
-        from asymmetry.gui.panels.fit_panel import SingleFitTab
-
-        tab = SingleFitTab()
-        state = {"model": "Exponential", "parameters": []}
-        tab.restore_state(state)
-        assert tab._model_combo.currentText() == "ExponentialRelaxation"
+        assert tab._composite_model.component_names == ["Gaussian", "Constant"]
 
     def test_fit_panel_get_single_state_delegates(self, qapp):
         from asymmetry.gui.panels.fit_panel import FitPanel
@@ -513,24 +430,6 @@ class TestFitPanelState:
         assert "Saved Single Fit" in panel2._single_tab._result_label.text()
         assert "Saved Global Fit" in panel2._global_tab._result_text.toPlainText()
         assert panel2._tabs.currentIndex() == 1
-
-    def test_global_restore_accepts_legacy_classification_key(self, qapp):
-        from asymmetry.gui.panels.fit_panel import GlobalFitTab
-
-        tab = GlobalFitTab()
-        state = {
-            "model": "Exponential",
-            "parameters": [
-                {"name": "A0", "value": 10.0, "classification": "Global", "bounds": "-inf, inf"}
-            ],
-        }
-        tab.restore_state(state)
-
-        assert tab._model_combo.currentText() == "ExponentialRelaxation"
-        type_combo = tab._param_table.cellWidget(0, 2)
-        assert type_combo is not None
-        assert type_combo.currentText() == "Global"
-
 
 # ── MainWindow project orchestration (headless) ────────────────────────────────
 
@@ -651,7 +550,7 @@ class TestFitParametersPanelState:
             "x_axis": "Auto",
             "selected_y_params": ["Lambda"],
             "log_x": False,
-            "log_y": True,
+            "log_y_params": ["Lambda"],
             "plot_mode": "Subplots",
         }
 
@@ -660,7 +559,7 @@ class TestFitParametersPanelState:
 
         assert len(out["rows"]) == 2
         assert out["plot_mode"] == "Subplots"
-        assert out["log_y"] is True
+        assert "Lambda" in out["log_y_params"]
         assert "Lambda" in out["selected_y_params"]
 
 

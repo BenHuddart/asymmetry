@@ -42,6 +42,19 @@ def _dataset(run_number: int, t_shift: float = 0.0) -> MuonDataset:
     )
 
 
+def _click_row(panel: DataBrowserPanel, row: int, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier) -> None:
+    item = panel._table.item(row, 0)
+    assert item is not None
+    rect = panel._table.visualItemRect(item)
+    assert rect.isValid()
+    QTest.mouseClick(
+        panel._table.viewport(),
+        Qt.MouseButton.LeftButton,
+        modifiers,
+        rect.center(),
+    )
+
+
 def test_add_select_and_get_selected_datasets(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     d1 = _dataset(1)
@@ -260,3 +273,35 @@ def test_separate_inserts_at_combined_dataset_position(qapp: QApplication) -> No
     assert row_0_item.data(Qt.ItemDataRole.UserRole) in [71, 72]
     assert row_1_item.data(Qt.ItemDataRole.UserRole) in [71, 72]
     assert row_2_item.data(Qt.ItemDataRole.UserRole) == 73
+
+
+def test_shift_click_selects_full_range_from_anchor(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for run_number in range(81, 86):
+        panel.add_dataset(_dataset(run_number))
+
+    panel.show()
+    qapp.processEvents()
+
+    _click_row(panel, 1)
+    _click_row(panel, 4, Qt.KeyboardModifier.ShiftModifier)
+
+    selected = panel.get_selected_datasets()
+    assert [dataset.run_number for dataset in selected] == [82, 83, 84, 85]
+
+
+def test_shift_click_uses_latest_plain_click_as_anchor(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for run_number in range(91, 96):
+        panel.add_dataset(_dataset(run_number))
+
+    panel.show()
+    qapp.processEvents()
+
+    _click_row(panel, 0)
+    _click_row(panel, 2, Qt.KeyboardModifier.ShiftModifier)
+    _click_row(panel, 4)
+    _click_row(panel, 2, Qt.KeyboardModifier.ShiftModifier)
+
+    selected = panel.get_selected_datasets()
+    assert [dataset.run_number for dataset in selected] == [93, 94, 95]

@@ -112,3 +112,52 @@ class TestPlotPanel:
             panel.set_yscale("log")
         # No error should occur
         assert True
+
+    def test_fit_range_defaults_to_data_extent(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """Fit range should initialize to the currently plotted x-range."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        x_min, x_max = panel.get_fit_range()
+        assert x_min == pytest.approx(float(sample_dataset.time.min()))
+        assert x_max == pytest.approx(float(sample_dataset.time.max()))
+
+    def test_get_fit_dataset_applies_selected_range(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """Only points inside the selected fit range should be returned."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        panel.set_fit_range(2.0, 4.0)
+
+        fit_ds = panel.get_fit_dataset(sample_dataset)
+        assert fit_ds is not None
+        assert np.all(fit_ds.time >= 2.0)
+        assert np.all(fit_ds.time <= 4.0)
+        assert len(fit_ds.time) < len(sample_dataset.time)
+
+    def test_plot_uses_run_label_for_combined_dataset(self, panel: PlotPanel) -> None:
+        """Combined datasets should show user-facing run labels, not internal -1 IDs."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0, 10, 100)
+        a = 0.2 * np.exp(-0.5 * t)
+        e = np.full_like(t, 0.01)
+        combined = MuonDataset(
+            time=t,
+            asymmetry=a,
+            error=e,
+            metadata={"run_number": -1, "run_label": "3039 + 3040"},
+        )
+
+        panel.plot_dataset(combined)
+        legend = panel._ax.get_legend()
+        assert legend is not None
+        labels = [text.get_text() for text in legend.get_texts()]
+        assert "Run 3039 + 3040" in labels

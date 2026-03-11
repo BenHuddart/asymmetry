@@ -14,8 +14,8 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QComboBox
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
-from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_panel import GlobalFitTab, SingleFitTab
 
@@ -60,8 +60,7 @@ def test_single_fit_success_emits_and_updates_table(
     tab = SingleFitTab()
     tab.set_dataset(dataset)
 
-    model_name = tab._model_combo.currentText()
-    model = MODELS[model_name]
+    model = tab._composite_model
 
     fitted = ParameterSet(
         [Parameter(name=p, value=float(i + 1)) for i, p in enumerate(model.param_names)]
@@ -100,8 +99,7 @@ def test_single_fit_uses_dataset_object_it_was_given(
     tab = SingleFitTab()
     tab.set_dataset(rebinned)
 
-    model_name = tab._model_combo.currentText()
-    model = MODELS[model_name]
+    model = tab._composite_model
 
     captured = {}
 
@@ -171,7 +169,7 @@ def test_global_fit_finished_success_emits(qapp: QApplication, dataset: MuonData
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
     tab._datasets = [dataset, d2]
 
-    model = MODELS[tab._model_combo.currentText()]
+    model = tab._composite_model
     tab._current_model = model
     tab._current_global_params = [model.param_names[0]]
 
@@ -196,7 +194,7 @@ def test_global_fit_finished_success_emits(qapp: QApplication, dataset: MuonData
 
 def test_global_fit_finished_failure_lists_failed_runs(qapp: QApplication, dataset: MuonDataset) -> None:
     tab = GlobalFitTab()
-    tab._current_model = MODELS[tab._model_combo.currentText()]
+    tab._current_model = tab._composite_model
     tab._current_global_params = []
     fail = FitResult(success=False, message="x")
 
@@ -221,3 +219,27 @@ def test_global_fit_parses_type_combo_defaults(qapp: QApplication) -> None:
     assert c0.currentText() == "Global"
     if isinstance(c1, QComboBox):
         assert c1.currentText() == "Local"
+
+
+def test_single_tab_default_model_includes_background(qapp: QApplication) -> None:
+    tab = SingleFitTab()
+    assert tab._composite_model.component_names == ["Exponential", "Constant"]
+    assert "A_bg" in tab._composite_model.param_names
+
+
+def test_global_tab_default_model_includes_background(qapp: QApplication) -> None:
+    tab = GlobalFitTab()
+    assert tab._composite_model.component_names == ["Exponential", "Constant"]
+    assert "A_bg" in tab._composite_model.param_names
+
+
+def test_single_edit_function_updates_parameter_rows(qapp: QApplication) -> None:
+    tab = SingleFitTab()
+    tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
+    assert tab._param_table.rowCount() == 3
+
+
+def test_global_edit_function_updates_parameter_rows(qapp: QApplication) -> None:
+    tab = GlobalFitTab()
+    tab._set_composite_model(CompositeModel(["Gaussian", "Constant"], operators=["+"]))
+    assert tab._param_table.rowCount() == 3
