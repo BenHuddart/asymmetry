@@ -156,25 +156,29 @@ def test_critical_divergence_far_from_tc() -> None:
 
 def test_redfield_peak_at_zero() -> None:
     x = np.array([0.0, 50.0, 100.0, 200.0])
-    result = _redfield(x, a=1.0, B0=100.0, c=0.0)
+    result = _redfield(x, D=20.0, nu=10.0, m=2.0)
     assert result[0] == max(result)
 
 
-def test_redfield_half_at_b0() -> None:
-    # At x=B0, result = a/(1+1) = a/2
-    result = _redfield(np.array([100.0]), a=2.0, B0=100.0, c=0.0)
-    np.testing.assert_allclose(result, [1.0], rtol=1e-10)
+def test_redfield_with_m2_is_half_at_omega_equals_nu() -> None:
+    # At omega_mu == nu and m=2, dynamic term is halved.
+    from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+
+    nu = 10.0
+    b_half = nu / (MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA)
+    result = _redfield(np.array([b_half]), D=2.0, nu=nu, m=2.0)
+    # D=2 => prefactor (D^2/4)*(2/nu) = 2/nu = 0.2, then halved -> 0.1
+    np.testing.assert_allclose(result, [0.1], rtol=1e-10)
 
 
-def test_lorentzian_equals_redfield() -> None:
+def test_lorentzian_peak_at_zero() -> None:
     x = np.linspace(0.0, 500.0, 20)
-    r = _redfield(x, a=3.0, B0=150.0, c=0.5)
     lo = _lorentzian(x, a=3.0, B0=150.0, c=0.5)
-    np.testing.assert_array_equal(r, lo)
+    assert lo[0] == np.max(lo)
 
 
-def test_redfield_safe_with_near_zero_b0() -> None:
-    result = _redfield(np.array([1.0, 2.0]), a=1.0, B0=0.0, c=0.0)
+def test_redfield_safe_with_near_zero_nu() -> None:
+    result = _redfield(np.array([1.0, 2.0]), D=1.0, nu=0.0, m=2.0)
     assert np.all(np.isfinite(result))
 
 
@@ -316,6 +320,48 @@ def test_composite_function_division_by_near_zero_produces_nan() -> None:
     x = np.array([1.0])
     result = model.function(x, c_1=1.0, c_2=0.0)
     assert not np.isfinite(result[0])
+
+
+def test_parameter_composite_additive_component_indices() -> None:
+    model = ParameterCompositeModel(
+        ["Redfield", "Lambda_bg", "Lorentzian", "Constant"],
+        operators=["+", "*", "+"],
+    )
+    assert model.additive_component_indices() == [0, 1, 3]
+
+
+def test_parameter_composite_evaluate_components_returns_named_curves() -> None:
+    x = np.linspace(10.0, 500.0, 30)
+    model = ParameterCompositeModel(["Redfield", "Lambda_bg"], operators=["+"])
+
+    curves = model.evaluate_components(x, D=10.0, nu=8.0, m=2.0, lambda_BG=0.05)
+
+    assert [name for name, _vals in curves] == ["Redfield", "Lambda_bg"]
+    assert all(vals.shape == x.shape for _name, vals in curves)
+    assert np.all(np.isfinite(curves[0][1]))
+    assert np.allclose(curves[1][1], 0.05)
+
+
+def test_parameter_composite_evaluate_components_additive_only() -> None:
+    x = np.linspace(10.0, 500.0, 30)
+    model = ParameterCompositeModel(
+        ["DiffusionLF_2D", "Lambda_bg", "Lorentzian"],
+        operators=["+", "*"],
+    )
+
+    curves = model.evaluate_components(
+        x,
+        additive_only=True,
+        A=0.8,
+        D_2D=2.0,
+        D_perp=0.0,
+        lambda_BG=0.03,
+        a=1.0,
+        B0=120.0,
+        c=0.0,
+    )
+
+    assert [name for name, _vals in curves] == ["DiffusionLF_2D", "Lambda_bg"]
 
 
 # ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import re
 
 import numpy as np
 from PySide6.QtCore import Qt
@@ -35,6 +36,122 @@ from asymmetry.core.fitting.parameter_models import (
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 _OPERATOR_OPTIONS = ["+", "-", "*", "/"]
+
+_Y_PARAM_UNITS = {
+    "A": "%",
+    "A0": "%",
+    "A_bg": "%",
+    "baseline": "%",
+    "Lambda": "us^-1",
+    "sigma": "us^-1",
+    "Delta": "us^-1",
+    "frequency": "MHz",
+    "phase": "rad",
+}
+
+_PARAM_UNITS = {
+    "a": None,
+    "b": None,
+    "c": None,
+    "A": "MHz",
+    "D": "MHz",
+    "nu": "MHz",
+    "m": None,
+    "tau": "(x units)",
+    "B0": "G",
+    "Tc": "K",
+    "Ea": "meV",
+    "C": "MHz",  # legacy alias used in older saved model-fit states
+    "D_2D": "us^-1",
+    "D_nD": "us^-1",
+    "D_perp": "us^-1",
+    "lambda_BG": "us^-1",
+    "lambda_0D": "us^-1",
+}
+
+_NON_NEGATIVE_PARAMS = {"D", "D_2D", "D_nD", "D_perp", "lambda_BG", "lambda_0D"}
+_STRICTLY_POSITIVE_PARAMS = {"tau", "B0", "nu", "m"}
+_POSITIVE_EPS = 1e-12
+
+
+def _base_param_name(name: str) -> str:
+    match = re.match(r"^(.+)_\d+$", name)
+    return match.group(1) if match else name
+
+
+def _x_unit(x_key: str) -> str | None:
+    if x_key == "field":
+        return "G"
+    if x_key == "temperature":
+        return "K"
+    if x_key == "run":
+        return "run"
+    return None
+
+
+def _y_unit(parameter_name: str) -> str | None:
+    return _Y_PARAM_UNITS.get(_base_param_name(parameter_name))
+
+
+def _format_param_label(name: str, x_key: str, parameter_name: str) -> str:
+    """Return display label with units for range-parameter table."""
+    base = _base_param_name(name)
+    y_unit = _y_unit(parameter_name)
+    x_unit = _x_unit(x_key)
+
+    if base == "tau":
+        unit = x_unit or "(x units)"
+    elif base == "m":
+        if y_unit and x_unit:
+            unit = f"{y_unit} / {x_unit}"
+        elif y_unit:
+            unit = f"{y_unit} / x"
+        else:
+            unit = "(y units / x unit)"
+    elif base in {"a", "b", "c"}:
+        unit = y_unit or "(y units)"
+    else:
+        unit = _PARAM_UNITS.get(base)
+
+    return f"{name} [{unit}]" if unit else name
+
+
+def _normalize_parameter_limits(
+    name: str,
+    value: float,
+    p_min: float,
+    p_max: float,
+) -> tuple[float, float, float, list[str]]:
+    """Normalize start/min/max based on model-domain expectations."""
+    notes: list[str] = []
+    base = _base_param_name(name)
+
+    if p_min > p_max:
+        p_min, p_max = p_max, p_min
+        notes.append(f"{name}: swapped min/max")
+
+    if base in _NON_NEGATIVE_PARAMS:
+        if p_min < 0.0:
+            p_min = 0.0
+            notes.append(f"{name}: min clamped to 0")
+        if p_max < p_min:
+            p_max = p_min + 1.0
+            notes.append(f"{name}: max raised above min")
+
+    if base in _STRICTLY_POSITIVE_PARAMS:
+        if p_min < _POSITIVE_EPS:
+            p_min = _POSITIVE_EPS
+            notes.append(f"{name}: min clamped to >0")
+        if p_max < p_min:
+            p_max = p_min * 10.0
+            notes.append(f"{name}: max raised above positive min")
+
+    clamped_value = min(max(value, p_min), p_max)
+    if clamped_value != value:
+        value = clamped_value
+        notes.append(f"{name}: start value clamped to bounds")
+
+    return value, p_min, p_max, notes
 
 
 def _in_test_mode() -> bool:
@@ -334,8 +451,12 @@ class ModelFitDialog(QDialog):
                 default_val = y_mean
             elif pname in {"m", "a"}:
                 default_val = y_span if y_span > 0 else default_val
-            elif pname.startswith("B0") or pname.startswith("tau"):
+            elif pname.startswith("B0") or pname.startswith("tau") or pname.startswith("nu"):
                 default_val = max(1e-6, (x_max - x_min) / 2.0)
+            elif pname.startswith("D_2D"):
+                default_val = max(1e-6, default_val)
+            elif pname.startswith("D"):
+                default_val = max(1e-6, default_val)
             params.add(Parameter(name=pname, value=float(default_val)))
 
         return ModelFitRange(x_min=x_min, x_max=x_max, model=model, parameters=params)
@@ -506,7 +627,7 @@ class ModelFitDialog(QDialog):
         if idx < 0 or idx >= len(self._fit.ranges):
             return
 
-        self._commit_param_table()
+        self._commit_param_table(notify_adjustments=True)
         fit_range = self._fit.ranges[idx]
 
         if fit_range.x_max is not None and fit_range.x_min is not None and fit_range.x_max <= fit_range.x_min:
@@ -581,7 +702,12 @@ class ModelFitDialog(QDialog):
         self._param_table.setRowCount(0)
         for row, param in enumerate(fit_range.parameters):
             self._param_table.insertRow(row)
-            self._param_table.setItem(row, 0, QTableWidgetItem(param.name))
+            name_item = QTableWidgetItem(
+                _format_param_label(param.name, self._x_key, self._parameter_name)
+            )
+            name_item.setData(Qt.ItemDataRole.UserRole, param.name)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._param_table.setItem(row, 0, name_item)
             self._param_table.setItem(row, 1, QTableWidgetItem(f"{param.value:.8g}"))
             self._param_table.setItem(row, 2, QTableWidgetItem(f"{param.min:.8g}"))
             self._param_table.setItem(row, 3, QTableWidgetItem(f"{param.max:.8g}"))
@@ -616,12 +742,14 @@ class ModelFitDialog(QDialog):
             '<span style="color:#1f6feb;">Fitting not yet run for selected range</span>'
         )
 
-    def _commit_param_table(self) -> None:
+    def _commit_param_table(self, *, notify_adjustments: bool = False) -> None:
         if self._active_range_idx is None:
             return
 
         fit_range = self._fit.ranges[self._active_range_idx]
         new_params = ParameterSet()
+        adjustments: list[str] = []
+        self._param_table.blockSignals(True)
         for row in range(self._param_table.rowCount()):
             name_item = self._param_table.item(row, 0)
             value_item = self._param_table.item(row, 1)
@@ -632,7 +760,11 @@ class ModelFitDialog(QDialog):
             if name_item is None or value_item is None:
                 continue
 
-            name = name_item.text().strip()
+            name_data = name_item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(name_data, str) and name_data.strip():
+                name = name_data.strip()
+            else:
+                name = name_item.text().strip()
             if not name:
                 continue
 
@@ -651,6 +783,16 @@ class ModelFitDialog(QDialog):
             except (TypeError, ValueError):
                 p_max = float("inf")
 
+            value, p_min, p_max, notes = _normalize_parameter_limits(name, value, p_min, p_max)
+            adjustments.extend(notes)
+
+            if value_item is not None:
+                value_item.setText(f"{value:.8g}")
+            if min_item is not None:
+                min_item.setText(f"{p_min:.8g}")
+            if max_item is not None:
+                max_item.setText(f"{p_max:.8g}")
+
             fixed = False
             if fixed_widget is not None and fixed_widget.layout() is not None and fixed_widget.layout().count() > 0:
                 inner = fixed_widget.layout().itemAt(0).widget()
@@ -659,7 +801,16 @@ class ModelFitDialog(QDialog):
 
             new_params.add(Parameter(name=name, value=value, min=p_min, max=p_max, fixed=fixed))
 
+        self._param_table.blockSignals(False)
         fit_range.parameters = new_params
+
+        if adjustments:
+            self._range_hint_label.setText(
+                "Adjusted parameter values to satisfy model-domain requirements "
+                "(e.g. positive tau/B0/nu and non-negative diffusion rates)."
+            )
+            if notify_adjustments:
+                _show_info(self, "Parameter limits adjusted", "; ".join(dict.fromkeys(adjustments)))
 
     def _on_remove_fit(self) -> None:
         self._removed = True

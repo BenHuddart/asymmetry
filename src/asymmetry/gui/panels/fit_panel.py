@@ -133,8 +133,10 @@ class SingleFitTab(QWidget):
     Attributes
     ----------
     fit_completed : Signal
-        Emitted with (FitResult, tuple) when fit finishes successfully.
-        The tuple contains (t_fit, y_fit) arrays for plotting the fit curve.
+        Emitted with (FitResult, tuple, list) when fit finishes successfully.
+        The tuple contains (t_fit, y_fit) arrays for plotting the fit curve,
+        and the list contains per-component additive curves as
+        (component_name, y_component).
 
     Methods
     -------
@@ -142,7 +144,7 @@ class SingleFitTab(QWidget):
         Set the current dataset to fit.
     """
 
-    fit_completed = Signal(object, object)  # (FitResult, fitted_curve)
+    fit_completed = Signal(object, object, object)  # (FitResult, fitted_curve, component_curves)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -351,7 +353,12 @@ class SingleFitTab(QWidget):
             param_dict = {p.name: p.value for p in result.parameters}
             y_fit = self._composite_model.function(t_fit, **param_dict)
 
-            self.fit_completed.emit(result, (t_fit, y_fit))
+            component_curves = self._composite_model.evaluate_components(
+                t_fit,
+                additive_only=True,
+                **param_dict,
+            )
+            self.fit_completed.emit(result, (t_fit, y_fit), component_curves)
         else:
             self._result_label.setText(f"<b>Fit failed:</b> {result.message}")
 
@@ -771,7 +778,16 @@ class GlobalFitTab(QWidget):
                 t_fit = np.linspace(ds.time.min(), ds.time.max(), 500)
                 param_dict = {p.name: p.value for p in result.parameters}
                 y_fit = model.function(t_fit, **param_dict)
-                results_with_curves[ds.run_number] = (result, (t_fit, y_fit))
+                component_curves = model.evaluate_components(
+                    t_fit,
+                    additive_only=True,
+                    **param_dict,
+                )
+                results_with_curves[ds.run_number] = (
+                    result,
+                    (t_fit, y_fit),
+                    component_curves,
+                )
 
             # Emit signal with all results
             self.global_fit_completed.emit(results_with_curves, fitted_global)
@@ -895,7 +911,7 @@ class FitPanel(QWidget):
     Attributes
     ----------
     fit_completed : Signal
-        Emitted with (FitResult, tuple) for single fits.
+        Emitted with (FitResult, tuple, list) for single fits.
     global_fit_completed : Signal
         Emitted with (results_dict, global_params) for global fits.
 
@@ -907,7 +923,7 @@ class FitPanel(QWidget):
         Set the datasets for global fitting tab.
     """
 
-    fit_completed = Signal(object, object)  # (FitResult, fitted_curve)
+    fit_completed = Signal(object, object, object)  # (FitResult, fitted_curve, component_curves)
     # Keep payload generic to preserve Python dict key/value types end-to-end.
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
 

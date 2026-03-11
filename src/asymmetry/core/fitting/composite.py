@@ -185,12 +185,7 @@ class CompositeModel:
 
         values: list[NDArray[np.float64]] = []
         for component, mapping in zip(self.components, self._param_mappings, strict=True):
-            component_kwargs: dict[str, float] = {}
-            for pname in component.param_names:
-                unique_name = mapping[pname]
-                if unique_name not in kwargs:
-                    raise KeyError(f"Missing composite parameter '{unique_name}'")
-                component_kwargs[pname] = float(kwargs[unique_name])
+            component_kwargs = self._extract_component_kwargs(component, mapping, kwargs)
             values.append(np.asarray(component.function(t_arr, **component_kwargs), dtype=float))
 
         if not values:
@@ -219,6 +214,73 @@ class CompositeModel:
             else:
                 result = result - rhs
         return result
+
+    def _extract_component_kwargs(
+        self,
+        component: ComponentDefinition,
+        mapping: dict[str, str],
+        kwargs: dict[str, float],
+    ) -> dict[str, float]:
+        component_kwargs: dict[str, float] = {}
+        for pname in component.param_names:
+            unique_name = mapping[pname]
+            if unique_name not in kwargs:
+                raise KeyError(f"Missing composite parameter '{unique_name}'")
+            component_kwargs[pname] = float(kwargs[unique_name])
+        return component_kwargs
+
+    def additive_component_indices(self) -> list[int]:
+        """Return component indices that contribute in additive (+) form.
+
+        This includes the first component and any component joined with a
+        ``+`` operator. Components joined with ``-``, ``*``, or ``/`` are
+        excluded because their visual contribution is not an additive area.
+        """
+        if not self.components:
+            return []
+
+        indices = [0]
+        for idx, op in enumerate(self.operators, start=1):
+            if op == "+":
+                indices.append(idx)
+        return indices
+
+    def evaluate_components(
+        self,
+        t: NDArray,
+        *,
+        additive_only: bool = False,
+        **kwargs: float,
+    ) -> list[tuple[str, NDArray[np.float64]]]:
+        """Evaluate individual component curves.
+
+        Parameters
+        ----------
+        t : array-like
+            Time points where components are evaluated.
+        additive_only : bool, optional
+            If True, only return additive components (first component and
+            components joined with ``+`` operators).
+        **kwargs : float
+            Composite-model parameters using unique parameter names.
+        """
+        t_arr = np.asarray(t, dtype=float)
+        curves: list[tuple[str, NDArray[np.float64]]] = []
+
+        if additive_only:
+            include = set(self.additive_component_indices())
+        else:
+            include = set(range(len(self.components)))
+
+        for idx, (component, mapping) in enumerate(
+            zip(self.components, self._param_mappings, strict=True)
+        ):
+            if idx not in include:
+                continue
+            component_kwargs = self._extract_component_kwargs(component, mapping, kwargs)
+            y_vals = np.asarray(component.function(t_arr, **component_kwargs), dtype=float)
+            curves.append((self.component_names[idx], y_vals))
+        return curves
 
     def formula_string(self) -> str:
         """Return a symbolic formula preview string."""

@@ -11,12 +11,19 @@ the existing fit curve remains overlaid.
 
 from __future__ import annotations
 
+import importlib
+import shutil
+import subprocess
+from pathlib import Path
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
+    QFileDialog,
     QGridLayout,
     QInputDialog,
     QLabel,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -77,6 +84,15 @@ class PlotPanel(QWidget):
             # Store fit curve data to persist across redraws
             self._fit_curve = None  # (t_fit, y_fit, label) for single fits
             self._fit_curves = {}   # {run_number: (t_fit, y_fit, label)} for global fits
+
+            # Per-fit additive component curves for shading.
+            self._fit_components = None  # list[(name, y_component)] for single fit
+            self._fit_components_by_run = {}  # {run_number: list[(name, y_component)]}
+
+            # Interactive plot labels (text annotations).
+            self._annotations: list[dict] = []
+            self._active_annotation_idx: int | None = None
+            self._annotation_drag_started = False
 
             self._canvas.mpl_connect("button_press_event", self._on_canvas_button_press)
             self._canvas.mpl_connect("motion_notify_event", self._on_canvas_motion_notify)
@@ -159,6 +175,11 @@ class PlotPanel(QWidget):
         self._bunch_factor.setMaximumWidth(60)
         self._bunch_factor.valueChanged.connect(self._on_bunch_changed)
         self._limit_toolbar.addWidget(self._bunch_factor, 1, 1)
+
+        self._add_label_btn = QPushButton("Add Label")
+        self._add_label_btn.setCheckable(True)
+        self._add_label_btn.setMaximumWidth(90)
+        self._limit_toolbar.addWidget(self._add_label_btn, 1, 2)
 
     def get_analysis_dataset(self, dataset: MuonDataset | None) -> MuonDataset | None:
         """Return the dataset that should be used for plotting and fitting.
@@ -251,6 +272,8 @@ class PlotPanel(QWidget):
             t_fit, y_fit, fit_label = fit_to_plot
             self._ax.plot(t_fit, y_fit, 'r-', linewidth=2, label=fit_label)
 
+        self._draw_annotations()
+
         self._ax.legend()
 
         # Set default limits based on data range (including error bars)
@@ -290,9 +313,23 @@ class PlotPanel(QWidget):
             return
 
         self._ax.set_xlim(self._x_min.value(), self._x_max.value())
+
         self._ax.set_ylim(self._y_min.value(), self._y_max.value())
         self._draw_fit_range_artists()
         self._canvas.draw()
+
+    def _draw_annotations(self) -> None:
+        """Recreate annotation artists on the active axis."""
+        for ann in self._annotations:
+            artist = self._ax.text(
+                ann["x"],
+                ann["y"],
+                ann["text"],
+                fontsize=9,
+                bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.85},
+                zorder=5,
+            )
+            ann["artist"] = artist
 
     def _auto_limits(self) -> None:
         """Auto-scale the plot to fit all data."""
@@ -428,46 +465,134 @@ class PlotPanel(QWidget):
             return "max"
         return None
 
+    def _detect_annotation_hit(self, event) -> int | None:
+        """Return annotation index hit by the mouse event, if any."""
+        if event.inaxes != self._ax:
+            return None
+        for idx, ann in enumerate(self._annotations):
+            artist = ann.get("artist")
+            if artist is None:
+                continue
+            contains, _ = artist.contains(event)
+            if contains:
+                return idx
+        return None
+
+    def _add_annotation_at_event(self, event) -> None:
+        """Prompt for label text and place an annotation at the click location."""
+        if event.inaxes != self._ax or event.xdata is None or event.ydata is None:
+            return
+
+        text, ok = QInputDialog.getText(self, "Add Label", "Label text:")
+        if not ok or not text.strip():
+            return
+
+        annotation = {
+            "x": float(event.xdata),
+            "y": float(event.ydata),
+            "text": text.strip(),
+            "artist": None,
+        }
+        self._annotations.append(annotation)
+        self._add_label_btn.setChecked(False)
+        if self._current_dataset is not None:
+            self.plot_dataset(self._current_dataset)
+
+    def _edit_annotation(self, idx: int) -> None:
+        """Edit an existing annotation label."""
+        current = self._annotations[idx]["text"]
+        text, ok = QInputDialog.getText(self, "Edit Label", "Label text:", text=current)
+        if not ok or not text.strip():
+            return
+        self._annotations[idx]["text"] = text.strip()
+        if self._current_dataset is not None:
+            self.plot_dataset(self._current_dataset)
+
+    def _delete_annotation(self, idx: int) -> None:
+        """Delete an annotation by index."""
+        self._annotations.pop(idx)
+        if self._current_dataset is not None:
+            self.plot_dataset(self._current_dataset)
+
     def _on_canvas_button_press(self, event) -> None:
         """Capture left-clicks on fit-range handles for drag/edit."""
-        if not self._has_mpl or event.button != 1:
+        if not self._has_mpl:
+            return
+
+        if event.button == 3:
+            ann_idx = self._detect_annotation_hit(event)
+            if ann_idx is not None:
+                self._delete_annotation(ann_idx)
+            return
+
+        if event.button != 1:
+            return
+
+        if self._add_label_btn.isChecked():
+            self._add_annotation_at_event(event)
             return
 
         handle = self._detect_handle_hit(event)
-        if handle is None:
+        if handle is not None:
+            self._active_fit_handle = handle
+            self._drag_started = False
             return
 
-        self._active_fit_handle = handle
-        self._drag_started = False
+        ann_idx = self._detect_annotation_hit(event)
+        if ann_idx is not None:
+            self._active_annotation_idx = ann_idx
+            self._annotation_drag_started = False
 
     def _on_canvas_motion_notify(self, event) -> None:
         """Drag the active fit-range handle while the mouse moves."""
         if (
-            self._active_fit_handle is None
-            or event.inaxes != self._ax
-            or event.xdata is None
+            self._active_fit_handle is not None
+            and event.inaxes == self._ax
+            and event.xdata is not None
         ):
-            return
+            self._drag_started = True
+            if self._active_fit_handle == "min":
+                self._set_fit_range(event.xdata, self._fit_x_max, emit_signal=True, redraw=True)
+            else:
+                self._set_fit_range(self._fit_x_min, event.xdata, emit_signal=True, redraw=True)
 
-        self._drag_started = True
-        if self._active_fit_handle == "min":
-            self._set_fit_range(event.xdata, self._fit_x_max, emit_signal=True, redraw=True)
-        else:
-            self._set_fit_range(self._fit_x_min, event.xdata, emit_signal=True, redraw=True)
+        if (
+            self._active_annotation_idx is not None
+            and event.inaxes == self._ax
+            and event.xdata is not None
+            and event.ydata is not None
+        ):
+            self._annotation_drag_started = True
+            ann = self._annotations[self._active_annotation_idx]
+            ann["x"] = float(event.xdata)
+            ann["y"] = float(event.ydata)
+            artist = ann.get("artist")
+            if artist is not None:
+                artist.set_position((ann["x"], ann["y"]))
+                self._canvas.draw_idle()
 
     def _on_canvas_button_release(self, event) -> None:
         """End drag and open numeric editor on click without drag."""
-        if self._active_fit_handle is None:
+        if self._active_fit_handle is not None:
+            handle = self._active_fit_handle
+            was_drag = self._drag_started
+
+            self._active_fit_handle = None
+            self._drag_started = False
+
+            if not was_drag and event.button == 1:
+                self._prompt_handle_value_edit(handle)
+
+        if self._active_annotation_idx is None:
             return
 
-        handle = self._active_fit_handle
-        was_drag = self._drag_started
+        ann_idx = self._active_annotation_idx
+        was_ann_drag = self._annotation_drag_started
+        self._active_annotation_idx = None
+        self._annotation_drag_started = False
 
-        self._active_fit_handle = None
-        self._drag_started = False
-
-        if not was_drag and event.button == 1:
-            self._prompt_handle_value_edit(handle)
+        if not was_ann_drag and event.button == 1 and getattr(event, "dblclick", False):
+            self._edit_annotation(ann_idx)
 
     def _prompt_handle_value_edit(self, handle: str) -> None:
         """Prompt for an exact fit-handle x-value."""
@@ -492,7 +617,13 @@ class PlotPanel(QWidget):
         else:
             self._set_fit_range(self._fit_x_min, value, emit_signal=True, redraw=True)
 
-    def plot_fit(self, t_fit, y_fit, label: str = "Fit") -> None:
+    def plot_fit(
+        self,
+        t_fit,
+        y_fit,
+        label: str = "Fit",
+        component_curves: list[tuple[str, object]] | None = None,
+    ) -> None:
         """Overlay a fit curve on the current plot.
 
         The fit curve will be retained even when bunching or limits change.
@@ -513,11 +644,16 @@ class PlotPanel(QWidget):
         self._fit_curve = (t_fit, y_fit, label)
         # Clear global fits when doing a single fit
         self._fit_curves = {}
+        self._fit_components_by_run = {}
 
-        # Plot the fit curve
-        self._ax.plot(t_fit, y_fit, 'r-', linewidth=2, label=label)
-        self._ax.legend()
-        self._canvas.draw()
+        self._fit_components = list(component_curves or [])
+
+        if self._current_dataset is not None:
+            self.plot_dataset(self._current_dataset)
+        else:
+            self._ax.plot(t_fit, y_fit, 'r-', linewidth=2, label=label)
+            self._ax.legend()
+            self._canvas.draw()
 
     def set_global_fits(self, fit_curves_dict: dict) -> None:
         """Set fit curves from global fitting.
@@ -525,15 +661,25 @@ class PlotPanel(QWidget):
         Parameters
         ----------
         fit_curves_dict : dict
-            Dictionary mapping run_number -> (t_fit, y_fit, label).
+            Dictionary mapping run_number -> (t_fit, y_fit, label, component_curves).
         """
         if not self._has_mpl:
             return
 
         # Store all fit curves
-        self._fit_curves = fit_curves_dict
+        self._fit_curves = {}
+        self._fit_components_by_run = {}
+        for run_number, payload in fit_curves_dict.items():
+            if len(payload) == 4:
+                t_fit, y_fit, label, component_curves = payload
+            else:
+                t_fit, y_fit, label = payload
+                component_curves = []
+            self._fit_curves[run_number] = (t_fit, y_fit, label)
+            self._fit_components_by_run[run_number] = list(component_curves or [])
         # Clear single fit curve
         self._fit_curve = None
+        self._fit_components = None
 
         # Redraw current dataset with its fit
         if self._current_dataset is not None:
@@ -547,6 +693,11 @@ class PlotPanel(QWidget):
             self._current_dataset = None
             self._fit_curve = None
             self._fit_curves = {}
+            self._fit_components = None
+            self._fit_components_by_run = {}
+            self._annotations = []
+            self._active_annotation_idx = None
+            self._annotation_drag_started = False
             self._fit_x_min = None
             self._fit_x_max = None
             self._fit_span_artist = None
@@ -560,8 +711,148 @@ class PlotPanel(QWidget):
 
         self._fit_curve = None
         self._fit_curves = {}
+        self._fit_components = None
+        self._fit_components_by_run = {}
         if self._current_dataset is not None:
             self.plot_dataset(self._current_dataset)
+
+    def get_current_plot_export_data(self) -> dict | None:
+        """Return current fit/components/annotation payload for export."""
+        if self._current_dataset is None:
+            return None
+
+        analysis_dataset = self.get_analysis_dataset(self._current_dataset)
+        if analysis_dataset is None:
+            return None
+
+        fit_data = None
+        component_data = None
+        run_number = self._current_dataset.run_number
+        if self._fit_curve is not None:
+            fit_data = self._fit_curve
+            component_data = self._fit_components or []
+        elif run_number in self._fit_curves:
+            fit_data = self._fit_curves[run_number]
+            component_data = self._fit_components_by_run.get(run_number, [])
+
+        if fit_data is None:
+            return None
+
+        t_fit, y_fit, fit_label = fit_data
+        return {
+            "run_number": run_number,
+            "data": {
+                "t": analysis_dataset.time,
+                "y": analysis_dataset.asymmetry,
+                "err": analysis_dataset.error,
+            },
+            "fit": {"t": t_fit, "y": y_fit, "label": fit_label},
+            "components": [
+                {"name": name, "y": y_vals} for name, y_vals in (component_data or [])
+            ],
+            "annotations": [
+                {"x": ann["x"], "y": ann["y"], "text": ann["text"]}
+                for ann in self._annotations
+            ],
+        }
+
+    def export_current_plot(self) -> None:
+        """Export current main-plot view as GLE (with optional compiled output)."""
+        payload = self.get_current_plot_export_data()
+        if not payload:
+            QMessageBox.warning(self, "Export unavailable", "No fitted curve is available to export.")
+            return
+
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export Current Plot",
+            "current_plot.gle",
+            "GLE files (*.gle);;PDF files (*.pdf);;EPS files (*.eps)",
+        )
+        if not path:
+            return
+
+        target = Path(path)
+        suffix = target.suffix.lower()
+        if "PDF" in selected_filter and suffix not in {".pdf", ".gle", ".eps"}:
+            target = target.with_suffix(".pdf")
+            suffix = ".pdf"
+        elif "EPS" in selected_filter and suffix not in {".eps", ".gle", ".pdf"}:
+            target = target.with_suffix(".eps")
+            suffix = ".eps"
+        elif suffix not in {".gle", ".pdf", ".eps"}:
+            target = target.with_suffix(".gle")
+            suffix = ".gle"
+
+        try:
+            glp = importlib.import_module("gleplot")
+        except ImportError:
+            QMessageBox.warning(self, "gleplot not available", "Install gleplot to export GLE plots.")
+            return
+
+        data = payload.get("data") or {}
+        fit = payload.get("fit") or {}
+        annotations = payload.get("annotations") or []
+        t_data = data.get("t")
+        y_data = data.get("y")
+        y_err = data.get("err")
+        t_fit = fit.get("t")
+        y_fit = fit.get("y")
+
+        fig = glp.figure(figsize=(6.0, 4.2))
+        ax = fig.add_subplot(111)
+
+        if t_data is not None and y_data is not None:
+            has_err = y_err is not None
+            ax.errorbar(
+                t_data,
+                y_data,
+                yerr=y_err if has_err else None,
+                fmt='none',
+                marker='o',
+                color='black',
+                markersize=4,
+                capsize=2,
+                label=f"Run {payload.get('run_number', '')}",
+            )
+
+        if t_fit is not None and y_fit is not None:
+            ax.plot(t_fit, y_fit, color='red', linewidth=1.6, label=fit.get("label", "Fit"))
+
+        for ann in annotations:
+            try:
+                x = float(ann.get("x", 0.0))
+                y = float(ann.get("y", 0.0))
+            except (TypeError, ValueError):
+                continue
+            text = str(ann.get("text", "")).strip()
+            if text:
+                ax.text(x, y, text, color='black', ha='left')
+
+        ax.set_xlabel("Time (μs)")
+        ax.set_ylabel("Asymmetry (%)")
+        ax.legend(loc="best")
+
+        gle_path = target if suffix == ".gle" else target.with_suffix(".gle")
+        fig.savefig(str(gle_path))
+
+        if suffix in {".pdf", ".eps"}:
+            if shutil.which("gle") is None:
+                QMessageBox.information(
+                    self,
+                    "GLE Not Installed",
+                    f"GLE script saved to {gle_path}. Install GLE to compile to {suffix[1:].upper()}.",
+                )
+                return
+            fmt = "pdf" if suffix == ".pdf" else "eps"
+            try:
+                subprocess.run(["gle", "-d", fmt, str(gle_path)], capture_output=True, text=True, check=True)
+                QMessageBox.information(self, "Export Successful", f"Plot exported:\n\n{gle_path}\n{target}")
+            except subprocess.CalledProcessError as exc:
+                QMessageBox.warning(self, "GLE compilation failed", exc.stderr or str(exc))
+            return
+
+        QMessageBox.information(self, "Export Successful", f"GLE plot exported:\n\n{gle_path}")
 
     # ── project state helpers ──────────────────────────────────────────
 
@@ -590,6 +881,9 @@ class PlotPanel(QWidget):
             "y_max": self._y_max.value() if self._has_mpl else 30.0,
             "fit_curve": None,
             "fit_curves": {},
+            "fit_components": None,
+            "fit_components_by_run": {},
+            "annotations": [],
             "fit_x_min": self._fit_x_min,
             "fit_x_max": self._fit_x_max,
         }
@@ -608,6 +902,20 @@ class PlotPanel(QWidget):
                     "y": list(y_fit),
                     "label": label,
                 }
+            if self._fit_components is not None:
+                state["fit_components"] = [
+                    {"name": name, "y": list(y_vals)}
+                    for name, y_vals in self._fit_components
+                ]
+            for run_number, curves in self._fit_components_by_run.items():
+                state["fit_components_by_run"][str(run_number)] = [
+                    {"name": name, "y": list(y_vals)}
+                    for name, y_vals in curves
+                ]
+            state["annotations"] = [
+                {"x": ann["x"], "y": ann["y"], "text": ann["text"]}
+                for ann in self._annotations
+            ]
 
         return state
 
@@ -657,6 +965,8 @@ class PlotPanel(QWidget):
         # Restore fit curves.
         self._fit_curve = None
         self._fit_curves = {}
+        self._fit_components = None
+        self._fit_components_by_run = {}
 
         fit_curve_data = state.get("fit_curve")
         if fit_curve_data:
@@ -672,6 +982,39 @@ class PlotPanel(QWidget):
                 np.array(curve_data["y"]),
                 curve_data.get("label", "Global Fit"),
             )
+
+        fit_components = state.get("fit_components")
+        if isinstance(fit_components, list):
+            self._fit_components = [
+                (entry.get("name", "Component"), np.array(entry.get("y", []), dtype=float))
+                for entry in fit_components
+                if isinstance(entry, dict)
+            ]
+
+        for run_str, entries in state.get("fit_components_by_run", {}).items():
+            if not isinstance(entries, list):
+                continue
+            self._fit_components_by_run[int(run_str)] = [
+                (entry.get("name", "Component"), np.array(entry.get("y", []), dtype=float))
+                for entry in entries
+                if isinstance(entry, dict)
+            ]
+
+        self._annotations = []
+        for ann in state.get("annotations", []):
+            if not isinstance(ann, dict):
+                continue
+            try:
+                self._annotations.append(
+                    {
+                        "x": float(ann.get("x", 0.0)),
+                        "y": float(ann.get("y", 0.0)),
+                        "text": str(ann.get("text", "")),
+                        "artist": None,
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
 
         # Re-plot the current dataset if one was provided.
         if dataset is not None:

@@ -334,16 +334,111 @@ Bootstrap resampling for error estimation:
 
    n_bootstrap = 100
    bootstrap_results = []
-   
+
    for i in range(n_bootstrap):
        # Resample data
        resampled_data = data + np.random.randn(len(data)) * error
-       
+
        # Fit
        result = engine.fit(model, time, resampled_data, error, params)
        bootstrap_results.append(result)
-   
+
    # Analyze distribution of parameters
+
+Diffusive LF Relaxation (Field-Series Model)
+--------------------------------------------
+
+For field-dependent relaxation-rate analysis, the parameter-model workflow now
+includes diffusion-based LF components:
+
+- ``DiffusionLF_1D``
+- ``DiffusionLF_2D``
+- ``DiffusionLF_3D``
+
+These models fit :math:`\lambda(B_{LF})` directly (not time-domain asymmetry).
+
+Model equations
+~~~~~~~~~~~~~~~
+
+Following Phys. Rev. B 106, L060401 (2022):
+
+.. math::
+
+   \lambda_{2D}(B_{LF}) = \frac{A^2}{4} J(\omega_e),
+   \quad \omega_e = \gamma_e B_{LF}
+
+.. math::
+
+   \lambda_{0D}(B_{LF}) = \frac{D^2}{4}\,\frac{2/\nu}{1 + (\omega_\mu/\nu)^m},
+   \quad \omega_\mu = \gamma_\mu B_{LF}
+
+and the total fitted field dependence is represented as
+
+.. math::
+
+   \lambda(B_{LF}) = \lambda_{2D}(B_{LF}) + \lambda_{0D}(B_{LF}) + \lambda_{BG}
+
+In the parameter-model builder, these are represented as separate basis
+functions: ``DiffusionLF_*`` (dynamic diffusion term), ``Redfield`` (0D
+dynamic term), and ``Lambda_bg`` (constant background).
+
+The autocorrelation for n-dimensional diffusion follows Pratt,
+J. Phys.: Conf. Ser. 2462 012038 (2023):
+
+.. math::
+
+   S_{nD}(t) = [e^{-2D_{nD}t} I_0(2D_{nD}t)]^n
+   [e^{-2D_{\perp}t} I_0(2D_{\perp}t)]^{3-n},\quad n\in\{1,2,3\}
+
+The implementation uses the one-sided cosine-transform convention:
+
+.. math::
+
+   J(\omega) = 2\int_0^{\infty} S_{nD}(t)\cos(\omega t)\,dt
+
+Units and parameters
+~~~~~~~~~~~~~~~~~~~~
+
+- ``B_LF``: Gauss (G)
+- ``A``: MHz (numerically equivalent to :math:`\mu s^{-1}`)
+- ``D_2D``: :math:`\mu s^{-1}`
+- ``D_perp``: :math:`\mu s^{-1}`
+- ``D`` (Redfield amplitude): MHz
+- ``nu`` (Redfield fluctuation rate): MHz
+- ``m`` (Redfield exponent): dimensionless
+- ``lambda_BG`` (``Lambda_bg`` component): :math:`\mu s^{-1}`
+
+Notes on model choice
+~~~~~~~~~~~~~~~~~~~~~
+
+- Use ``DiffusionLF_2D`` for quasi-2D diffusion.
+- Use ``DiffusionLF_1D`` or ``DiffusionLF_3D`` when dimensionality is clear
+  from physical context.
+- ``D_perp`` enables anisotropic slow diffusion; for isotropic cases you can
+  keep ``D_perp = 0`` (or fix it in the fit).
+- ``lambda_BG`` adds a field-independent contribution.
+
+Example usage
+~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   import numpy as np
+   from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
+
+   b_lf = np.linspace(10.0, 3000.0, 60)  # Gauss
+   model = PARAMETER_MODEL_COMPONENTS["DiffusionLF_2D"]
+
+   lam_dyn = model.function(
+       b_lf,
+       A=0.8,
+       D_2D=2.0,
+       D_perp=0.0,
+   )
+
+   lam = lam_dyn + 0.05  # Add Lambda_bg contribution separately
+
+   print(lam[:5])
 
 Tips for Good Fits
 ------------------
@@ -409,12 +504,22 @@ Field-specific
 ``````````````
 
 ``Redfield``
-   :math:`f(B) = \dfrac{a}{1 + (B/B_0)^2} + c`
+   :math:`f(B) = \dfrac{D^2}{4}\,\dfrac{2/\nu}{1 + (\omega_\mu/\nu)^m}`
+   with :math:`\omega_\mu = \gamma_\mu B`.
 
-   Parameters: ``a``, ``B0``, ``c``
+   Parameters: ``D``, ``nu``, ``m``
+
+``Lambda_bg``
+   Constant background term,
+   :math:`f(B) = \lambda_{BG}`.
+
+   Parameters: ``lambda_BG``
 
 ``Lorentzian``
-   Identical to ``Redfield``. Provided as an alias for convenience.
+   Simple empirical Lorentzian line-shape,
+   :math:`f(B)=\dfrac{a}{1+(B/B_0)^2}+c`.
+   This is retained for convenience and is distinct from the paper-form
+   ``Redfield`` term above.
 
    Parameters: ``a``, ``B0``, ``c``
 
@@ -425,7 +530,7 @@ Querying available components
 
    from asymmetry.core.fitting.parameter_models import component_names_for_x
 
-   print(component_names_for_x("field"))        # includes Redfield, Lorentzian
+   print(component_names_for_x("field"))        # includes Redfield, Lambda_bg, Lorentzian
    print(component_names_for_x("temperature"))  # includes Arrhenius, CriticalDivergence
    print(component_names_for_x("run"))          # common components only
 
@@ -450,7 +555,7 @@ rules: ``*`` and ``/`` are evaluated before ``+`` and ``-``.
    model = ParameterCompositeModel(["Linear", "Constant"], operators=["+"])
    print(model.formula_string())
 
-   # Lorentzian peak on a linear background
+   # Redfield dynamic term on a linear background
    model = ParameterCompositeModel(["Redfield", "Linear"], operators=["+"])
    print(model.param_names)
    print(model.formula_string())
@@ -460,8 +565,41 @@ disambiguated automatically by appending ``_1``, ``_2``, etc.
 
 .. code-block:: python
 
-   model = ParameterCompositeModel(["Redfield", "Redfield"], operators=["+"])
-   print(model.param_names)  # ['a_1', 'B0_1', 'c_1', 'a_2', 'B0_2', 'c_2']
+   model = ParameterCompositeModel(["Redfield", "Redfield", "Lambda_bg"], operators=["+", "+"])
+   print(model.param_names)  # ['D_1', 'nu_1', 'm_1', 'D_2', 'nu_2', 'm_2', 'lambda_BG']
+
+Inspecting additive components
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For diagnostics and plotting, you can evaluate each basis component
+individually from a fitted parameter set:
+
+.. code-block:: python
+
+   import numpy as np
+   from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+
+   x = np.linspace(10.0, 3000.0, 100)
+   model = ParameterCompositeModel(["DiffusionLF_2D", "Lambda_bg", "Lorentzian"], operators=["+", "*"])
+
+   params = {
+       "A": 0.8,
+       "D_2D": 2.0,
+       "D_perp": 0.0,
+       "lambda_BG": 0.05,
+       "a": 1.0,
+       "B0": 200.0,
+       "c": 0.0,
+   }
+
+   all_components = model.evaluate_components(x, **params)
+   additive_only = model.evaluate_components(x, additive_only=True, **params)
+
+   print(model.additive_component_indices())
+   print([name for name, _curve in additive_only])
+
+``additive_only=True`` includes the first term and any term connected with
+``+``. Terms connected with ``-``, ``*``, or ``/`` are excluded.
 
 Fitting extracted parameters
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

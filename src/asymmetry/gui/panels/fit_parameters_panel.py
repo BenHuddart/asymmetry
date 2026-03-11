@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -142,6 +143,13 @@ def _fit_overlay_label(param_name: str, index: int, total: int, *, gle: bool) ->
     return f"fit {base}{suffix}"
 
 
+def _safe_data_name(value: object) -> str:
+    """Build a filesystem-safe stem for generated GLE data files."""
+    text = "".join(ch.lower() if str(ch).isalnum() else "_" for ch in str(value))
+    text = "_".join(part for part in text.split("_") if part)
+    return text or "series"
+
+
 def _normalize_x_key(value: object) -> str:
     """Normalize persisted x-axis key to an internal identifier."""
     text = str(value or "").strip()
@@ -184,6 +192,10 @@ class FitParametersPanel(QWidget):
         self._inferred_x_key = "field"
         self._y_controls: dict[str, _YParamControls] = {}
         self._model_fits: dict[str, ParameterModelFit] = {}
+        self._plot_annotations: list[dict[str, object]] = []
+        self._axes_tag_map: dict[int, str] = {}
+        self._active_annotation_idx: int | None = None
+        self._annotation_drag_started = False
 
         layout = QVBoxLayout(self)
 
@@ -233,6 +245,23 @@ class FitParametersPanel(QWidget):
         self._plot_mode_combo.currentTextChanged.connect(self._refresh_plot)
         controls_form.addRow("Plot mode:", self._plot_mode_combo)
 
+        self._show_components_check = QCheckBox("Show components")
+        self._show_components_check.setChecked(False)
+        self._show_components_check.stateChanged.connect(self._on_show_components_changed)
+        controls_form.addRow("Model components:", self._show_components_check)
+
+        labels_row = QHBoxLayout()
+        self._add_label_btn = QPushButton("Add Label")
+        self._add_label_btn.setCheckable(True)
+        self._clear_labels_btn = QPushButton("Clear Labels")
+        self._clear_labels_btn.clicked.connect(self._clear_plot_labels)
+        labels_row.addWidget(self._add_label_btn)
+        labels_row.addWidget(self._clear_labels_btn)
+        labels_row.addStretch()
+        labels_container = QWidget()
+        labels_container.setLayout(labels_row)
+        controls_form.addRow("Plot labels:", labels_container)
+
         # Hidden global log-y toggle used to mirror selected-series log state.
         self._log_y_check = QCheckBox("log")
         self._log_y_check.setVisible(False)
@@ -276,6 +305,9 @@ class FitParametersPanel(QWidget):
             self._canvas = FigureCanvasQTAgg(self._figure)
             plot_layout.addWidget(self._canvas)
             self._has_mpl = True
+            self._canvas.mpl_connect("button_press_event", self._on_plot_button_press)
+            self._canvas.mpl_connect("motion_notify_event", self._on_plot_motion)
+            self._canvas.mpl_connect("button_release_event", self._on_plot_button_release)
         except ImportError:
             plot_layout.addWidget(QLabel("matplotlib not installed - plotting disabled"))
         layout.addWidget(plot_group)
@@ -316,7 +348,17 @@ class FitParametersPanel(QWidget):
             "selected_y_params": selected_y,
             "log_x": bool(self._log_x_check.isChecked()),
             "log_y_params": log_y,
+            "show_components": bool(self._show_components_check.isChecked()),
             "plot_mode": self._plot_mode_combo.currentText(),
+            "plot_annotations": [
+                {
+                    "x": float(ann.get("x", 0.0)),
+                    "y": float(ann.get("y", 0.0)),
+                    "text": str(ann.get("text", "")),
+                    "axis_tag": str(ann.get("axis_tag", "main")),
+                }
+                for ann in self._plot_annotations
+            ],
             "model_fits": self._serialize_model_fits(),
         }
 
@@ -375,6 +417,28 @@ class FitParametersPanel(QWidget):
             controls.log.setChecked(name in log_y)
 
         self._log_y_check.setChecked(bool(log_y))
+
+        self._show_components_check.setChecked(bool(state.get("show_components", False)))
+
+        ann_state = state.get("plot_annotations", [])
+        restored_annotations: list[dict[str, object]] = []
+        if isinstance(ann_state, list):
+            for entry in ann_state:
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    restored_annotations.append(
+                        {
+                            "x": float(entry.get("x", 0.0)),
+                            "y": float(entry.get("y", 0.0)),
+                            "text": str(entry.get("text", "")),
+                            "axis_tag": str(entry.get("axis_tag", "main")),
+                            "artist": None,
+                        }
+                    )
+                except Exception:
+                    continue
+        self._plot_annotations = restored_annotations
 
         self._model_fits = self._deserialize_model_fits(state.get("model_fits", {}))
         self._refresh_model_fit_button_labels()
@@ -492,11 +556,155 @@ class FitParametersPanel(QWidget):
 
     def _on_global_log_y_changed(self, _state: int) -> None:
         enabled = self._log_y_check.isChecked()
+        if enabled and self._show_components_check.isChecked():
+            self._log_y_check.setChecked(False)
+            enabled = False
         selected = set(self._selected_y_parameters())
         for name, controls in self._y_controls.items():
             if name in selected:
                 controls.log.setChecked(enabled)
         self._refresh_plot()
+
+    def _on_show_components_changed(self, _state: int) -> None:
+        """Enable/disable component shading for parameter-model overlays."""
+        show_components = self._show_components_check.isChecked()
+        if show_components:
+            self._log_y_check.blockSignals(True)
+            self._log_y_check.setChecked(False)
+            self._log_y_check.blockSignals(False)
+            for controls in self._y_controls.values():
+                controls.log.blockSignals(True)
+                controls.log.setChecked(False)
+                controls.log.blockSignals(False)
+
+        for controls in self._y_controls.values():
+            controls.log.setEnabled(not show_components)
+
+        self._refresh_plot()
+
+    def _clear_plot_labels(self) -> None:
+        """Remove all user-placed labels from the parameter plot."""
+        self._plot_annotations = []
+        self._active_annotation_idx = None
+        self._annotation_drag_started = False
+        self._refresh_plot()
+
+    def _on_plot_button_press(self, event) -> None:
+        """Handle click interactions for parameter-plot labels."""
+        if not self._has_mpl:
+            return
+
+        if event.button == 3:
+            idx = self._detect_annotation_hit(event)
+            if idx is not None:
+                self._plot_annotations.pop(idx)
+                self._refresh_plot()
+            return
+
+        if event.button != 1:
+            return
+
+        if self._add_label_btn.isChecked():
+            self._add_annotation_at_event(event)
+            return
+
+        idx = self._detect_annotation_hit(event)
+        if idx is not None:
+            self._active_annotation_idx = idx
+            self._annotation_drag_started = False
+
+    def _on_plot_motion(self, event) -> None:
+        """Drag labels on the parameter plot."""
+        if (
+            self._active_annotation_idx is None
+            or event.inaxes is None
+            or event.xdata is None
+            or event.ydata is None
+        ):
+            return
+
+        ann = self._plot_annotations[self._active_annotation_idx]
+        axis_tag = str(ann.get("axis_tag", "main"))
+        current_tag = self._axes_tag_map.get(id(event.inaxes), "main")
+        if axis_tag != current_tag:
+            return
+
+        ann["x"] = float(event.xdata)
+        ann["y"] = float(event.ydata)
+        self._annotation_drag_started = True
+        artist = ann.get("artist")
+        if artist is not None:
+            artist.set_position((ann["x"], ann["y"]))
+            self._canvas.draw_idle()
+
+    def _on_plot_button_release(self, event) -> None:
+        """Finish drag, edit label on double click."""
+        if self._active_annotation_idx is None:
+            return
+
+        idx = self._active_annotation_idx
+        was_drag = self._annotation_drag_started
+        self._active_annotation_idx = None
+        self._annotation_drag_started = False
+
+        if not was_drag and event.button == 1 and getattr(event, "dblclick", False):
+            current = str(self._plot_annotations[idx].get("text", ""))
+            text, ok = QInputDialog.getText(self, "Edit Label", "Label text:", text=current)
+            if ok and text.strip():
+                self._plot_annotations[idx]["text"] = text.strip()
+                self._refresh_plot()
+
+    def _detect_annotation_hit(self, event) -> int | None:
+        """Return annotation index under cursor, if any."""
+        if event.inaxes is None:
+            return None
+        for idx, ann in enumerate(self._plot_annotations):
+            artist = ann.get("artist")
+            if artist is None:
+                continue
+            contains, _ = artist.contains(event)
+            if contains:
+                return idx
+        return None
+
+    def _add_annotation_at_event(self, event) -> None:
+        """Prompt for text and place annotation at click location."""
+        if event.inaxes is None or event.xdata is None or event.ydata is None:
+            return
+        text, ok = QInputDialog.getText(self, "Add Label", "Label text:")
+        if not ok or not text.strip():
+            return
+
+        axis_tag = self._axes_tag_map.get(id(event.inaxes), "main")
+        self._plot_annotations.append(
+            {
+                "x": float(event.xdata),
+                "y": float(event.ydata),
+                "text": text.strip(),
+                "axis_tag": axis_tag,
+                "artist": None,
+            }
+        )
+        self._add_label_btn.setChecked(False)
+        self._refresh_plot()
+
+    def _draw_plot_annotations(self, axes_by_tag: dict[str, object]) -> None:
+        """Draw stored annotations on currently visible parameter axes."""
+        for ann in self._plot_annotations:
+            axis_tag = str(ann.get("axis_tag", "main"))
+            ax = axes_by_tag.get(axis_tag)
+            if ax is None:
+                ann["artist"] = None
+                continue
+            artist = ax.text(
+                float(ann.get("x", 0.0)),
+                float(ann.get("y", 0.0)),
+                str(ann.get("text", "")),
+                fontsize=10,
+                bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.85},
+                zorder=6,
+            )
+            ann["artist"] = artist
 
     def _on_x_axis_changed(self, *_args: object) -> None:
         self._update_x_axis_auto_hint()
@@ -688,20 +896,83 @@ class FitParametersPanel(QWidget):
         if fit.x_key != self._effective_x_key():
             return
 
+        show_components = self._show_components_check.isChecked()
+        component_colors = ["#8ecae6", "#90be6d", "#f4a261", "#e5989b", "#bdb2ff", "#ffd166"]
+
         curves = self._sampled_fit_curves(param_name, x_key=fit.x_key, num_points=200)
-        for idx, (_, xs, ys) in enumerate(curves):
+        for idx, (range_index, xs, ys) in enumerate(curves):
             line_color = _fit_overlay_color(idx) if len(curves) > 1 else color
-            ax.plot(xs, ys, linestyle="-", linewidth=1.5, color=line_color, alpha=0.9)
+
+            if show_components and range_index < len(fit.ranges):
+                fit_range = fit.ranges[range_index]
+                result = fit_range.result
+                if result is not None and result.success:
+                    kwargs = {p.name: p.value for p in result.parameters}
+                    components = fit_range.model.evaluate_components(xs, additive_only=True, **kwargs)
+                    ordered_components = self._ordered_components_for_stacking(components)
+                    cumulative = np.zeros_like(xs, dtype=float)
+                    for cidx, (_cname, comp_y) in enumerate(ordered_components):
+                        fill_color = component_colors[cidx % len(component_colors)]
+                        comp_fill = np.maximum(np.asarray(comp_y, dtype=float), 0.0)
+                        lower = cumulative
+                        upper = cumulative + comp_fill
+                        ax.fill_between(xs, lower, upper, color=fill_color, alpha=0.3, zorder=1)
+                        ax.plot(xs, upper, linestyle="--", linewidth=0.8, color=fill_color, alpha=0.9, zorder=2)
+                        cumulative = upper
+
+            ax.plot(xs, ys, linestyle="-", linewidth=1.5, color=line_color, alpha=0.9, zorder=3)
+
+    def _ordered_components_for_stacking(
+        self,
+        components: list[tuple[str, np.ndarray]],
+    ) -> list[tuple[str, np.ndarray]]:
+        """Return a stable bottom-to-top stacking order for additive components.
+
+        Heuristic:
+        1. Put background-like components (bg/constant) at the bottom.
+        2. For remaining components, place smoother/lower-variance traces lower.
+        3. Break ties by mean magnitude (smaller first).
+        """
+        if not components:
+            return []
+
+        def _priority(name: str) -> int:
+            lname = name.lower()
+            if "bg" in lname or "background" in lname or "constant" in lname:
+                return 0
+            return 1
+
+        scored: list[tuple[int, float, float, int, tuple[str, np.ndarray]]] = []
+        for idx, item in enumerate(components):
+            name, values = item
+            arr = np.maximum(np.asarray(values, dtype=float), 0.0)
+            finite = arr[np.isfinite(arr)]
+            if finite.size == 0:
+                mean_val = 0.0
+                variability = 0.0
+            else:
+                mean_val = float(np.mean(finite))
+                variability = float(np.std(finite) / max(mean_val, 1e-12))
+            scored.append((_priority(name), variability, mean_val, idx, item))
+
+        scored.sort(key=lambda t: (t[0], t[1], t[2], t[3]))
+        return [item for *_meta, item in scored]
 
     def _refresh_plot(self) -> None:
         if not self._has_mpl:
             return
+
+        self._axes_tag_map = {}
+        axes_by_tag: dict[str, object] = {}
 
         y_params = self._selected_y_parameters()
         if not self._rows or not y_params:
             self._figure.clear()
             ax = self._figure.add_subplot(111)
             ax.set_title("No varying fit parameters")
+            self._axes_tag_map[id(ax)] = "main"
+            axes_by_tag["main"] = ax
+            self._draw_plot_annotations(axes_by_tag)
             self._canvas.draw()
             return
 
@@ -720,25 +991,33 @@ class FitParametersPanel(QWidget):
 
             for idx, y_name in enumerate(y_params):
                 ax = self._figure.add_subplot(num_rows, num_cols, idx + 1)
+                self._axes_tag_map[id(ax)] = y_name
+                axes_by_tag[y_name] = ax
                 y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
                 y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
 
-                ax.scatter(x_vals, y_vals, s=16, zorder=3, color="C0")
+                self._draw_model_overlay_mpl(ax, y_name)
+
+                ax.scatter(x_vals, y_vals, s=16, zorder=6, color="C0")
                 finite_err = np.isfinite(y_err) & (y_err > 0)
                 if np.any(finite_err):
-                    ax.errorbar(x_vals, y_vals, yerr=y_err, fmt="none", ecolor="gray", capsize=2, elinewidth=1, zorder=2)
-
-                self._draw_model_overlay_mpl(ax, y_name)
+                    ax.errorbar(x_vals, y_vals, yerr=y_err, fmt="none", ecolor="gray", capsize=2, elinewidth=1, zorder=5)
 
                 ax.set_xlabel(x_label)
                 ax.set_ylabel(_format_plot_label(y_name))
                 ax.set_title(_format_plot_label(y_name))
                 ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
-                ax.set_yscale("log" if self._is_log_y_for(y_name) else "linear")
+                if self._show_components_check.isChecked():
+                    ax.set_yscale("linear")
+                    ax.set_ylim(bottom=0.0)
+                else:
+                    ax.set_yscale("log" if self._is_log_y_for(y_name) else "linear")
                 ax.grid(True, alpha=0.3)
         else:
             ax = self._figure.add_subplot(111)
             ax.set_xlabel(x_label)
+            self._axes_tag_map[id(ax)] = "main"
+            axes_by_tag["main"] = ax
 
             if len(y_params) == 2:
                 left_name, right_name = y_params
@@ -748,52 +1027,73 @@ class FitParametersPanel(QWidget):
                 right_err = np.array([r.errors.get(right_name, np.nan) for r in rows], dtype=float)
 
                 ax2 = ax.twinx()
+                self._axes_tag_map[id(ax)] = left_name
+                self._axes_tag_map[id(ax2)] = right_name
+                axes_by_tag[left_name] = ax
+                axes_by_tag[right_name] = ax2
                 left_color = "C0"
                 right_color = "C1"
 
-                ax.scatter(x_vals, left_vals, s=16, zorder=3, color=left_color)
-                if np.any(np.isfinite(left_err) & (left_err > 0)):
-                    ax.errorbar(x_vals, left_vals, yerr=left_err, fmt="none", ecolor=left_color, capsize=2, elinewidth=1, zorder=2)
-
-                ax2.scatter(x_vals, right_vals, s=16, zorder=3, color=right_color)
-                if np.any(np.isfinite(right_err) & (right_err > 0)):
-                    ax2.errorbar(x_vals, right_vals, yerr=right_err, fmt="none", ecolor=right_color, capsize=2, elinewidth=1, zorder=2)
-
                 self._draw_model_overlay_mpl(ax, left_name, color=left_color)
                 self._draw_model_overlay_mpl(ax2, right_name, color=right_color)
+
+                ax.scatter(x_vals, left_vals, s=16, zorder=6, color=left_color)
+                if np.any(np.isfinite(left_err) & (left_err > 0)):
+                    ax.errorbar(x_vals, left_vals, yerr=left_err, fmt="none", ecolor=left_color, capsize=2, elinewidth=1, zorder=5)
+
+                ax2.scatter(x_vals, right_vals, s=16, zorder=6, color=right_color)
+                if np.any(np.isfinite(right_err) & (right_err > 0)):
+                    ax2.errorbar(x_vals, right_vals, yerr=right_err, fmt="none", ecolor=right_color, capsize=2, elinewidth=1, zorder=5)
 
                 ax.set_ylabel(_format_plot_label(left_name), color=left_color)
                 ax2.set_ylabel(_format_plot_label(right_name), color=right_color)
                 ax.tick_params(axis="y", colors=left_color)
                 ax2.tick_params(axis="y", colors=right_color)
-                ax.set_yscale("log" if self._is_log_y_for(left_name) else "linear")
-                ax2.set_yscale("log" if self._is_log_y_for(right_name) else "linear")
+                if self._show_components_check.isChecked():
+                    ax.set_yscale("linear")
+                    ax2.set_yscale("linear")
+                    ax.set_ylim(bottom=0.0)
+                    ax2.set_ylim(bottom=0.0)
+                else:
+                    ax.set_yscale("log" if self._is_log_y_for(left_name) else "linear")
+                    ax2.set_yscale("log" if self._is_log_y_for(right_name) else "linear")
                 ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
                 ax.grid(True, alpha=0.3)
             else:
+                axes_by_tag["main"] = ax
                 for idx, y_name in enumerate(y_params):
                     y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
                     y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
                     color = f"C{idx % 10}"
                     label = _format_plot_legend_label(y_name) if len(y_params) > 1 else None
 
-                    ax.scatter(x_vals, y_vals, s=16, zorder=3, label=label, color=color)
-                    if np.any(np.isfinite(y_err) & (y_err > 0)):
-                        ax.errorbar(x_vals, y_vals, yerr=y_err, fmt="none", ecolor=color, capsize=2, elinewidth=1, zorder=2)
-
                     self._draw_model_overlay_mpl(ax, y_name, color=color)
+
+                    ax.scatter(x_vals, y_vals, s=16, zorder=6, label=label, color=color)
+                    if np.any(np.isfinite(y_err) & (y_err > 0)):
+                        ax.errorbar(x_vals, y_vals, yerr=y_err, fmt="none", ecolor=color, capsize=2, elinewidth=1, zorder=5)
 
                 if len(y_params) == 1:
                     ax.set_ylabel(_format_plot_label(y_params[0]))
-                    ax.set_yscale("log" if self._is_log_y_for(y_params[0]) else "linear")
+                    if self._show_components_check.isChecked():
+                        ax.set_yscale("linear")
+                        ax.set_ylim(bottom=0.0)
+                    else:
+                        ax.set_yscale("log" if self._is_log_y_for(y_params[0]) else "linear")
                 else:
                     ax.set_ylabel("Parameter Value")
                     if len(y_params) > 2:
                         ax.legend(loc="best")
-                    ax.set_yscale("log" if any(self._is_log_y_for(name) for name in y_params) else "linear")
+                    if self._show_components_check.isChecked():
+                        ax.set_yscale("linear")
+                        ax.set_ylim(bottom=0.0)
+                    else:
+                        ax.set_yscale("log" if any(self._is_log_y_for(name) for name in y_params) else "linear")
 
                 ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
                 ax.grid(True, alpha=0.3)
+
+        self._draw_plot_annotations(axes_by_tag)
 
         self._figure.tight_layout()
         self._canvas.draw()
@@ -959,22 +1259,34 @@ class FitParametersPanel(QWidget):
             for range_state in ranges_state:
                 if not isinstance(range_state, dict):
                     continue
+                component_names = list(range_state.get("component_names", []))
+                operators = list(range_state.get("operators", []))
                 try:
                     model = ParameterCompositeModel(
-                        component_names=list(range_state.get("component_names", [])),
-                        operators=list(range_state.get("operators", [])),
+                        component_names=component_names,
+                        operators=operators,
                     )
                 except Exception:
                     continue
+
+                # Backward compatibility: older serialized diffusion models used
+                # C instead of A for the diffusion coupling parameter.
+                uses_diffusion_component = any(
+                    name in {"DiffusionLF_1D", "DiffusionLF_2D", "DiffusionLF_3D"}
+                    for name in component_names
+                )
 
                 params = ParameterSet()
                 for p in range_state.get("parameters", []):
                     if not isinstance(p, dict):
                         continue
                     try:
+                        pname = str(p.get("name", ""))
+                        if uses_diffusion_component and pname == "C":
+                            pname = "A"
                         params.add(
                             Parameter(
-                                name=str(p.get("name", "")),
+                                name=pname,
                                 value=float(p.get("value", 0.0)),
                                 min=float(p.get("min", -float("inf"))),
                                 max=float(p.get("max", float("inf"))),
@@ -992,9 +1304,12 @@ class FitParametersPanel(QWidget):
                         if not isinstance(p, dict):
                             continue
                         try:
+                            pname = str(p.get("name", ""))
+                            if uses_diffusion_component and pname == "C":
+                                pname = "A"
                             result_params.add(
                                 Parameter(
-                                    name=str(p.get("name", "")),
+                                    name=pname,
                                     value=float(p.get("value", 0.0)),
                                     min=float(p.get("min", -float("inf"))),
                                     max=float(p.get("max", float("inf"))),
@@ -1267,10 +1582,48 @@ class FitParametersPanel(QWidget):
         if fit.x_key != self._effective_x_key():
             return
 
+        show_components = self._show_components_check.isChecked()
+        component_colors = ["lightblue", "lightgreen", "pink", "lightgray", "cyan", "yellow"]
+
         curves = self._sampled_fit_curves(param_name, x_key=fit.x_key, num_points=200)
         for idx, (range_index, xs, ys) in enumerate(curves):
             line_color = _fit_overlay_color(idx) if len(curves) > 1 else color
             line_label = _fit_overlay_label(param_name, idx, len(curves), gle=True) if include_labels else None
+            base_name = f"{_safe_data_name(param_name)}_range_{int(range_index)}"
+
+            if show_components and range_index < len(fit.ranges):
+                fit_range = fit.ranges[range_index]
+                result = fit_range.result
+                if result is not None and result.success:
+                    kwargs = {p.name: p.value for p in result.parameters}
+                    components = fit_range.model.evaluate_components(xs, additive_only=True, **kwargs)
+                    ordered_components = self._ordered_components_for_stacking(components)
+                    cumulative = np.zeros_like(xs, dtype=float)
+                    for cidx, (_cname, comp_y) in enumerate(ordered_components):
+                        cname = _safe_data_name(_cname)
+                        fill_color = component_colors[cidx % len(component_colors)]
+                        comp_fill = np.maximum(np.asarray(comp_y, dtype=float), 0.0)
+                        lower = cumulative
+                        upper = cumulative + comp_fill
+                        ax.fill_between(
+                            xs,
+                            lower,
+                            upper,
+                            color=fill_color,
+                            alpha=0.3,
+                            data_name=f"component_{base_name}_{cname}_fill",
+                        )
+                        ax.plot(
+                            xs,
+                            upper,
+                            linestyle="--",
+                            color=fill_color,
+                            linewidth=1,
+                            yaxis=yaxis,
+                            data_name=f"component_{base_name}_{cname}_edge",
+                        )
+                        cumulative = upper
+
             fit_path = None
             if fit_file_map is not None:
                 fit_path = fit_file_map.get((param_name, int(range_index)))
@@ -1294,7 +1647,23 @@ class FitParametersPanel(QWidget):
                     linewidth=1,
                     yaxis=yaxis,
                     label=line_label,
+                    data_name=f"model_{base_name}",
                 )
+
+    def _add_gle_annotations(self, ax, axis_tag: str) -> None:
+        """Add user plot annotations to a specific exported axis."""
+        for ann in self._plot_annotations:
+            if str(ann.get("axis_tag", "main")) != axis_tag:
+                continue
+            text = str(ann.get("text", "")).strip()
+            if not text:
+                continue
+            try:
+                x = float(ann.get("x", 0.0))
+                y = float(ann.get("y", 0.0))
+            except (TypeError, ValueError):
+                continue
+            ax.text(x, y, text, color="black", ha="left")
 
     def _export_gle(self) -> None:
         if not self._rows:
@@ -1375,6 +1744,15 @@ class FitParametersPanel(QWidget):
                 y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
                 has_err = bool(np.any(np.isfinite(y_err) & (y_err > 0)))
                 ax = subplot_axes[idx]
+                show_subplot_fit_legend = self._count_fit_curves_for_param(x_key, y_name) > 1
+                self._add_gle_model_overlay(
+                    ax,
+                    y_name,
+                    color=_fit_overlay_color(0),
+                    yaxis="y",
+                    include_labels=show_subplot_fit_legend,
+                    fit_file_map=fit_file_map,
+                )
                 ax.errorbar_from_file(
                     data_file_ref,
                     x_col=x_col,
@@ -1385,21 +1763,15 @@ class FitParametersPanel(QWidget):
                     markersize=5,
                     capsize=2,
                 )
-                show_subplot_fit_legend = self._count_fit_curves_for_param(x_key, y_name) > 1
-                self._add_gle_model_overlay(
-                    ax,
-                    y_name,
-                    color=_fit_overlay_color(0),
-                    yaxis="y",
-                    include_labels=show_subplot_fit_legend,
-                    fit_file_map=fit_file_map,
-                )
                 ax.set_xlabel(x_label)
                 ax.set_ylabel(_format_gle_label(y_name))
                 if self._log_x_check.isChecked():
                     ax.set_xscale("log")
-                if self._is_log_y_for(y_name):
+                if not self._show_components_check.isChecked() and self._is_log_y_for(y_name):
                     ax.set_yscale("log")
+                if self._show_components_check.isChecked():
+                    ax.set_ylim(0.0, None)
+                self._add_gle_annotations(ax, y_name)
                 if show_subplot_fit_legend:
                     ax.legend(loc="best")
         else:
@@ -1420,8 +1792,6 @@ class FitParametersPanel(QWidget):
                 has_left_err = bool(np.any(np.isfinite(left_err) & (left_err > 0)))
                 has_right_err = bool(np.any(np.isfinite(right_err) & (right_err > 0)))
 
-                ax.errorbar_from_file(data_file_ref, x_col=x_col, y_col=left_y_col, yerr_col=left_err_col if has_left_err else None, color=_gle_series_color(0), marker="o", markersize=5, capsize=2, yaxis="y")
-                ax.errorbar_from_file(data_file_ref, x_col=x_col, y_col=right_y_col, yerr_col=right_err_col if has_right_err else None, color=_gle_series_color(1), marker="o", markersize=5, capsize=2, yaxis="y2")
                 self._add_gle_model_overlay(
                     ax,
                     left_name,
@@ -1438,8 +1808,15 @@ class FitParametersPanel(QWidget):
                     include_labels=show_fit_legend,
                     fit_file_map=fit_file_map,
                 )
+                ax.errorbar_from_file(data_file_ref, x_col=x_col, y_col=left_y_col, yerr_col=left_err_col if has_left_err else None, color=_gle_series_color(0), marker="o", markersize=5, capsize=2, yaxis="y")
+                ax.errorbar_from_file(data_file_ref, x_col=x_col, y_col=right_y_col, yerr_col=right_err_col if has_right_err else None, color=_gle_series_color(1), marker="o", markersize=5, capsize=2, yaxis="y2")
                 ax.set_ylabel(_format_gle_label(left_name), axis="y")
                 ax.set_ylabel(_format_gle_label(right_name), axis="y2")
+                if self._show_components_check.isChecked():
+                    ax.set_ylim(0.0, None, axis="y")
+                    ax.set_ylim(0.0, None, axis="y2")
+                self._add_gle_annotations(ax, left_name)
+                self._add_gle_annotations(ax, right_name)
                 if show_fit_legend:
                     ax.legend(loc="best")
             else:
@@ -1450,6 +1827,14 @@ class FitParametersPanel(QWidget):
                     y_col, yerr_col = cols
                     y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
                     has_err = bool(np.any(np.isfinite(y_err) & (y_err > 0)))
+                    self._add_gle_model_overlay(
+                        ax,
+                        y_name,
+                        color=_fit_overlay_color(idx),
+                        yaxis="y",
+                        include_labels=show_fit_legend,
+                        fit_file_map=fit_file_map,
+                    )
                     ax.errorbar_from_file(
                         data_file_ref,
                         x_col=x_col,
@@ -1460,14 +1845,6 @@ class FitParametersPanel(QWidget):
                         markersize=5,
                         capsize=2,
                     )
-                    self._add_gle_model_overlay(
-                        ax,
-                        y_name,
-                        color=_fit_overlay_color(idx),
-                        yaxis="y",
-                        include_labels=show_fit_legend,
-                        fit_file_map=fit_file_map,
-                    )
 
                 if len(y_params) == 1:
                     ax.set_ylabel(_format_gle_label(y_params[0]))
@@ -1476,10 +1853,14 @@ class FitParametersPanel(QWidget):
                     if show_fit_legend:
                         ax.legend(loc="best")
 
-                if len(y_params) == 1 and self._is_log_y_for(y_params[0]):
+                if self._show_components_check.isChecked():
+                    ax.set_ylim(0.0, None)
+                elif len(y_params) == 1 and self._is_log_y_for(y_params[0]):
                     ax.set_yscale("log")
                 elif len(y_params) > 1 and any(self._is_log_y_for(name) for name in y_params):
                     ax.set_yscale("log")
+
+                self._add_gle_annotations(ax, "main")
 
             ax.set_xlabel(x_label)
             if self._log_x_check.isChecked():

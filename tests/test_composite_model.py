@@ -77,3 +77,52 @@ def test_to_model_definition_callable() -> None:
 
     out = definition.function(t, A_bg=0.4)
     assert np.allclose(out, np.full_like(t, 0.4))
+
+
+def test_additive_component_indices_excludes_non_additive_terms() -> None:
+    model = CompositeModel(
+        ["Exponential", "Constant", "Gaussian", "Constant"],
+        operators=["+", "*", "+"],
+    )
+    assert model.additive_component_indices() == [0, 1, 3]
+
+
+def test_evaluate_components_returns_named_component_curves() -> None:
+    t = np.linspace(0.0, 2.0, 25)
+    model = CompositeModel(
+        ["Exponential", "Constant", "Gaussian"],
+        operators=["+", "*"],
+    )
+
+    curves = model.evaluate_components(
+        t,
+        A_1=1.2,
+        Lambda=0.3,
+        A_bg=0.1,
+        A_3=0.8,
+        sigma=0.4,
+    )
+
+    assert [name for name, _vals in curves] == ["Exponential", "Constant", "Gaussian"]
+    assert all(vals.shape == t.shape for _name, vals in curves)
+
+
+def test_evaluate_components_additive_only_filters_multiplicative_terms() -> None:
+    t = np.linspace(0.0, 2.0, 25)
+    model = CompositeModel(
+        ["Exponential", "Constant", "Gaussian", "Constant"],
+        operators=["+", "*", "+"],
+    )
+
+    curves = model.evaluate_components(
+        t,
+        additive_only=True,
+        A_1=1.0,
+        Lambda=0.2,
+        A_bg_2=0.15,
+        A_3=0.9,
+        sigma=0.5,
+        A_bg_4=0.03,
+    )
+
+    assert [name for name, _vals in curves] == ["Exponential", "Constant", "Constant"]

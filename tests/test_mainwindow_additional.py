@@ -64,3 +64,14 @@ class TestMainWindowBasic:
         assert mainwindow._dock_fit_parameters.isHidden()
         mainwindow._on_fit_parameters()
         assert not mainwindow._dock_fit_parameters.isHidden()
+
+    def test_on_export_current_plot_delegates_to_plot_panel(self, mainwindow: MainWindow) -> None:
+        """Export menu/toolbar handler should delegate to PlotPanel exporter."""
+        called = {"count": 0}
+
+        def _mark_called() -> None:
+            called["count"] += 1
+
+        mainwindow._plot_panel.export_current_plot = _mark_called
+        mainwindow._on_export_current_plot()
+        assert called["count"] == 1

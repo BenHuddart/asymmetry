@@ -26,6 +26,7 @@ classifiers = [
 dependencies = [
     "numpy>=1.24,<2.3",  # <2.3 for numba compatibility (used by iminuit)
     "iminuit>=2.0",
+    "scipy>=1.10",
 ]
 
 [project.optional-dependencies]
@@ -73,3 +74,4 @@ select = ["E", "F", "W", "I", "N", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/asymmetry/core/fitting/models.py" = ["N803"]  # Physics parameter names (A0, Lambda, Delta)
+"src/asymmetry/core/fitting/diffusion.py" = ["N803"]  # Physics parameter names (D_nD, D_perp)

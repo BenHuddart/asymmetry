@@ -136,6 +136,16 @@ class MainWindow(QMainWindow):
         self._setup_toolbar()
         self._setup_panels()
 
+        # Check for SciPy availability and warn if using fallback
+        from asymmetry.core.fitting.diffusion import is_scipy_available
+
+        if not is_scipy_available():
+            self._log_panel.log(
+                "⚠️  WARNING: SciPy is unavailable or broken. "
+                "Diffusion model will use slower NumPy fallback for numerical integration. "
+                "Please repair SciPy in your Python environment."
+            )
+
         self.statusBar().showMessage("Ready")
 
     # ── menus ──────────────────────────────────────────────────────────
@@ -147,6 +157,7 @@ class MainWindow(QMainWindow):
         # File
         file_menu = mb.addMenu("&File")
         file_menu.addAction("Open Data File(s)\u2026", self._on_open)
+        file_menu.addAction("Export Current Plot\u2026", self._on_export_current_plot)
         file_menu.addSeparator()
         file_menu.addAction("&New Project", self._on_new_project)
         file_menu.addAction("Open Project\u2026", self._on_open_project)
@@ -180,6 +191,7 @@ class MainWindow(QMainWindow):
         self.addToolBar(tb)
 
         tb.addAction("Open", self._on_open)
+        tb.addAction("Export", self._on_export_current_plot)
         tb.addAction("Fit", self._on_fit)
         tb.addAction("FFT", self._on_fourier)
         tb.addAction("Params", self._on_fit_parameters)
@@ -272,6 +284,10 @@ class MainWindow(QMainWindow):
                 self._last_open_dir = selected_dir
                 self._settings.setValue("io/last_open_dir", selected_dir)
             self._load_files(paths)
+
+    def _on_export_current_plot(self) -> None:
+        """Export the current main plot view to GLE/PDF/EPS."""
+        self._plot_panel.export_current_plot()
 
     def _load_files(self, paths: list[str]) -> None:
         """Load multiple data files."""
@@ -449,8 +465,8 @@ class MainWindow(QMainWindow):
             self._plot_panel._fit_curve = None
             self._plot_panel.plot_dataset(dataset)
             self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
-            self._log_panel.log(f"Selected run {dataset.run_label}")
-            self.statusBar().showMessage(f"Viewing run {dataset.run_label}")
+            self._log_panel.log(f"Selected run {run_number}")
+            self.statusBar().showMessage(f"Viewing run {run_number}")
 
     def _on_bunch_factor_changed(self, _factor: int) -> None:
         """Refresh fit inputs so fitting follows the current bunch factor."""
@@ -466,10 +482,15 @@ class MainWindow(QMainWindow):
             self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
         self._update_selected_datasets()
 
-    def _on_fit_completed(self, fit_result, fitted_curve) -> None:
+    def _on_fit_completed(self, fit_result, fitted_curve, component_curves) -> None:
         """Handle completed fit from fit panel."""
         t_fit, y_fit = fitted_curve
-        self._plot_panel.plot_fit(t_fit, y_fit, label="Fit")
+        self._plot_panel.plot_fit(
+            t_fit,
+            y_fit,
+            label="Fit",
+            component_curves=component_curves,
+        )
         self._log_panel.log(
             f"Fit completed: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}"
         )
@@ -480,7 +501,8 @@ class MainWindow(QMainWindow):
         Parameters
         ----------
         results_dict : dict
-            Dictionary mapping run_number -> (FitResult, fitted_curve_tuple).
+            Dictionary mapping run_number -> (FitResult, fitted_curve_tuple,
+            component_curves).
         global_params : ParameterSet
             The fitted global parameters.
         """
@@ -493,30 +515,48 @@ class MainWindow(QMainWindow):
                 continue
             normalized_results[run_number] = payload
 
+        # Normalize payload shape for backward compatibility:
+        #   legacy: (result, fitted_curve)
+        #   current: (result, fitted_curve, component_curves)
+        normalized_payloads = {}
+        for run_number, payload in normalized_results.items():
+            if not isinstance(payload, tuple) or len(payload) < 2:
+                continue
+            if len(payload) >= 3:
+                result, fitted_curve, component_curves = payload[0], payload[1], payload[2]
+            else:
+                result, fitted_curve = payload[0], payload[1]
+                component_curves = []
+            normalized_payloads[run_number] = (result, fitted_curve, component_curves)
+
         # Store fit curves for all datasets
         fit_curves = {}
-        for run_number, (result, fitted_curve) in normalized_results.items():
+        for run_number, (result, fitted_curve, component_curves) in normalized_payloads.items():
             t_fit, y_fit = fitted_curve
-            fit_curves[run_number] = (t_fit, y_fit, "Global Fit")
+            fit_curves[run_number] = (t_fit, y_fit, "Global Fit", component_curves)
 
         # Set all fit curves in plot panel
         self._plot_panel.set_global_fits(fit_curves)
 
         # Push fitted parameters into the trends panel.
+        trends_results = {
+            run_number: (result, fitted_curve)
+            for run_number, (result, fitted_curve, _component_curves) in normalized_payloads.items()
+        }
         datasets_by_run = {}
-        for run_number in normalized_results:
+        for run_number in normalized_payloads:
             dataset = self._data_browser.get_dataset(run_number)
             if dataset is not None:
                 datasets_by_run[run_number] = dataset
         self._fit_parameters_panel.set_fit_results(
-            normalized_results, datasets_by_run, global_params,
+            trends_results, datasets_by_run, global_params,
         )
         self._dock_fit_parameters.show()
         self._dock_fit_parameters.raise_()
 
         # Log summary
         successful_results = [
-            payload for payload in normalized_results.values()
+            payload for payload in normalized_payloads.values()
             if payload and payload[0].success
         ]
         n_datasets = len(successful_results)
@@ -529,7 +569,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        avg_chi2r = sum(r.reduced_chi_squared for r, _ in successful_results) / n_datasets
+        avg_chi2r = sum(payload[0].reduced_chi_squared for payload in successful_results) / n_datasets
         self._log_panel.log(
             f"Global fit completed: {n_datasets} datasets, "
             f"average χ²ᵣ = {avg_chi2r:.3f}"

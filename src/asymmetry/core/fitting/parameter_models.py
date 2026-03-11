@@ -9,7 +9,9 @@ from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core.fitting.diffusion import lambda_total
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
 
 @dataclass(frozen=True)
@@ -62,14 +64,74 @@ def _critical_divergence(x: NDArray, a: float, Tc: float, nu: float, c: float = 
     return a * np.power(dist, -nu) + c
 
 
-def _redfield(x: NDArray, a: float, B0: float, c: float = 0.0) -> NDArray[np.float64]:
+def _redfield(
+    x: NDArray,
+    D: float,
+    nu: float,
+    m: float = 2.0,
+) -> NDArray[np.float64]:
+    """0D Redfield contribution in paper notation.
+
+    λ0D(B) = (D^2 / 4) * [2/nu] / [1 + (ω_mu/nu)^m],
+    where ω_mu = gamma_mu * B.
+
+    Notes
+    -----
+    - ``x`` is field in Gauss.
+    - ``D`` and ``nu`` are in MHz.
+    """
+    xx = np.asarray(x, dtype=float)
+    omega_mu = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * np.abs(xx)
+    nu_safe = max(abs(float(nu)), 1e-12)
+    m_safe = max(abs(float(m)), 1e-12)
+    denom = 1.0 + np.power(omega_mu / nu_safe, m_safe)
+    return ((float(D) ** 2) / 4.0) * (2.0 / nu_safe) / denom
+
+
+def _lorentzian(x: NDArray, a: float, B0: float, c: float = 0.0) -> NDArray[np.float64]:
     xx = np.asarray(x, dtype=float)
     B0_safe = np.sign(B0) * max(abs(B0), 1e-12)
     return a / (1.0 + (xx / B0_safe) ** 2) + c
 
 
-def _lorentzian(x: NDArray, a: float, B0: float, c: float = 0.0) -> NDArray[np.float64]:
-    return _redfield(x, a, B0, c)
+def _lambda_bg(x: NDArray, lambda_BG: float) -> NDArray[np.float64]:
+    return np.full_like(np.asarray(x, dtype=float), float(lambda_BG), dtype=float)
+
+
+def _diffusion_lf_1d(
+    x: NDArray,
+    A: float,
+    D_2D: float,
+    D_perp: float = 0.0,
+) -> NDArray[np.float64]:
+    return np.asarray(
+        lambda_total(x, C=A, D_nD=D_2D, D_perp=D_perp, lambda_0D=0.0, n=1),
+        dtype=float,
+    )
+
+
+def _diffusion_lf_2d(
+    x: NDArray,
+    A: float,
+    D_2D: float,
+    D_perp: float = 0.0,
+) -> NDArray[np.float64]:
+    return np.asarray(
+        lambda_total(x, C=A, D_nD=D_2D, D_perp=D_perp, lambda_0D=0.0, n=2),
+        dtype=float,
+    )
+
+
+def _diffusion_lf_3d(
+    x: NDArray,
+    A: float,
+    D_2D: float,
+    D_perp: float = 0.0,
+) -> NDArray[np.float64]:
+    return np.asarray(
+        lambda_total(x, C=A, D_nD=D_2D, D_perp=D_perp, lambda_0D=0.0, n=3),
+        dtype=float,
+    )
 
 
 PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
@@ -129,11 +191,11 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
     ),
     "Redfield": ParameterModelComponentDefinition(
         name="Redfield",
-        description="a/(1 + (B/B0)^2) + c",
+        description="(D^2/4) * (2/nu)/(1 + (omega_mu/nu)^m)",
         function=_redfield,
-        param_names=["a", "B0", "c"],
-        param_defaults={"a": 1.0, "B0": 100.0, "c": 0.0},
-        formula_template="{a}/(1 + (x/{B0})^2) + {c}",
+        param_names=["D", "nu", "m"],
+        param_defaults={"D": 10.0, "nu": 10.0, "m": 2.0},
+        formula_template="(({D}^2)/4)*(2/{nu})/(1 + ((gamma_mu*x)/{nu})^{m})",
         scopes=("field",),
     ),
     "Lorentzian": ParameterModelComponentDefinition(
@@ -143,6 +205,42 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_names=["a", "B0", "c"],
         param_defaults={"a": 1.0, "B0": 100.0, "c": 0.0},
         formula_template="{a}/(1 + (x/{B0})^2) + {c}",
+        scopes=("field",),
+    ),
+    "DiffusionLF_1D": ParameterModelComponentDefinition(
+        name="DiffusionLF_1D",
+        description="(A^2/4) J(gamma_e B; n=1, D_2D)",
+        function=_diffusion_lf_1d,
+        param_names=["A", "D_2D", "D_perp"],
+        param_defaults={"A": 1.0, "D_2D": 1.0, "D_perp": 0.0},
+        formula_template="(({A}^2)/4)*J(x; n=1, D_2D={D_2D}, D_perp={D_perp})",
+        scopes=("field",),
+    ),
+    "DiffusionLF_2D": ParameterModelComponentDefinition(
+        name="DiffusionLF_2D",
+        description="(A^2/4) J(gamma_e B; n=2, D_2D)",
+        function=_diffusion_lf_2d,
+        param_names=["A", "D_2D", "D_perp"],
+        param_defaults={"A": 1.0, "D_2D": 1.0, "D_perp": 0.0},
+        formula_template="(({A}^2)/4)*J(x; n=2, D_2D={D_2D}, D_perp={D_perp})",
+        scopes=("field",),
+    ),
+    "DiffusionLF_3D": ParameterModelComponentDefinition(
+        name="DiffusionLF_3D",
+        description="(A^2/4) J(gamma_e B; n=3, D_2D)",
+        function=_diffusion_lf_3d,
+        param_names=["A", "D_2D", "D_perp"],
+        param_defaults={"A": 1.0, "D_2D": 1.0, "D_perp": 0.0},
+        formula_template="(({A}^2)/4)*J(x; n=3, D_2D={D_2D}, D_perp={D_perp})",
+        scopes=("field",),
+    ),
+    "Lambda_bg": ParameterModelComponentDefinition(
+        name="Lambda_bg",
+        description="lambda_BG",
+        function=_lambda_bg,
+        param_names=["lambda_BG"],
+        param_defaults={"lambda_BG": 0.0},
+        formula_template="{lambda_BG}",
         scopes=("field",),
     ),
 }
@@ -239,12 +337,7 @@ class ParameterCompositeModel:
         xx = np.asarray(x, dtype=float)
         values: list[NDArray[np.float64]] = []
         for component, mapping in zip(self.components, self._param_mappings, strict=True):
-            local_kwargs: dict[str, float] = {}
-            for pname in component.param_names:
-                unique_name = mapping[pname]
-                if unique_name not in kwargs:
-                    raise KeyError(f"Missing parameter '{unique_name}'")
-                local_kwargs[pname] = float(kwargs[unique_name])
+            local_kwargs = self._extract_component_kwargs(component, mapping, kwargs)
             values.append(np.asarray(component.function(xx, **local_kwargs), dtype=float))
 
         if not values:
@@ -276,6 +369,56 @@ class ParameterCompositeModel:
                 result = result - value
 
         return result
+
+    def _extract_component_kwargs(
+        self,
+        component: ParameterModelComponentDefinition,
+        mapping: dict[str, str],
+        kwargs: dict[str, float],
+    ) -> dict[str, float]:
+        local_kwargs: dict[str, float] = {}
+        for pname in component.param_names:
+            unique_name = mapping[pname]
+            if unique_name not in kwargs:
+                raise KeyError(f"Missing parameter '{unique_name}'")
+            local_kwargs[pname] = float(kwargs[unique_name])
+        return local_kwargs
+
+    def additive_component_indices(self) -> list[int]:
+        """Return indices for additive components (first term and '+' terms)."""
+        if not self.components:
+            return []
+        indices = [0]
+        for idx, op in enumerate(self.operators, start=1):
+            if op == "+":
+                indices.append(idx)
+        return indices
+
+    def evaluate_components(
+        self,
+        x: NDArray,
+        *,
+        additive_only: bool = False,
+        **kwargs: float,
+    ) -> list[tuple[str, NDArray[np.float64]]]:
+        """Evaluate individual component curves for plotting/export."""
+        xx = np.asarray(x, dtype=float)
+        include = (
+            set(self.additive_component_indices())
+            if additive_only
+            else set(range(len(self.components)))
+        )
+
+        out: list[tuple[str, NDArray[np.float64]]] = []
+        for idx, (component, mapping) in enumerate(
+            zip(self.components, self._param_mappings, strict=True)
+        ):
+            if idx not in include:
+                continue
+            local_kwargs = self._extract_component_kwargs(component, mapping, kwargs)
+            values = np.asarray(component.function(xx, **local_kwargs), dtype=float)
+            out.append((self.component_names[idx], values))
+        return out
 
 
 @dataclass

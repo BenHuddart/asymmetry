@@ -18,6 +18,10 @@ Models
    :members:
    :undoc-members:
 
+.. automodule:: asymmetry.core.fitting.diffusion
+   :members:
+   :undoc-members:
+
 Parameters
 ----------
 

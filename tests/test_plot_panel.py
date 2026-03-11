@@ -3,16 +3,56 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 # Import PySide6 conditionally
 pyside6 = pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication  # type: ignore
+from PySide6.QtWidgets import QApplication, QMessageBox  # type: ignore
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.panels.plot_panel import PlotPanel
+
+
+class _FakeAxis:
+    def __init__(self) -> None:
+        self.errorbar_calls: list[dict[str, object]] = []
+        self.plot_calls: list[dict[str, object]] = []
+        self.text_calls: list[dict[str, object]] = []
+
+    def errorbar(self, *args, **kwargs) -> None:
+        self.errorbar_calls.append({"args": args, "kwargs": kwargs})
+
+    def plot(self, *args, **kwargs) -> None:
+        self.plot_calls.append({"args": args, "kwargs": kwargs})
+
+    def text(self, *args, **kwargs) -> None:
+        self.text_calls.append({"args": args, "kwargs": kwargs})
+
+    def set_xlabel(self, *_args, **_kwargs) -> None:
+        return
+
+    def set_ylabel(self, *_args, **_kwargs) -> None:
+        return
+
+    def legend(self, *_args, **_kwargs) -> None:
+        return
+
+
+class _FakeFigure:
+    def __init__(self, axis: _FakeAxis) -> None:
+        self._axis = axis
+        self.saved_paths: list[str] = []
+
+    def add_subplot(self, *_args, **_kwargs) -> _FakeAxis:
+        return self._axis
+
+    def savefig(self, path: str) -> None:
+        self.saved_paths.append(path)
+        Path(path).write_text("! fake gle", encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
@@ -141,23 +181,106 @@ class TestPlotPanel:
         assert np.all(fit_ds.time <= 4.0)
         assert len(fit_ds.time) < len(sample_dataset.time)
 
-    def test_plot_uses_run_label_for_combined_dataset(self, panel: PlotPanel) -> None:
-        """Combined datasets should show user-facing run labels, not internal -1 IDs."""
+    def test_get_current_plot_export_data_requires_fitted_curve(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        t = np.linspace(0, 10, 100)
-        a = 0.2 * np.exp(-0.5 * t)
-        e = np.full_like(t, 0.01)
-        combined = MuonDataset(
-            time=t,
-            asymmetry=a,
-            error=e,
-            metadata={"run_number": -1, "run_label": "3039 + 3040"},
+        panel.plot_dataset(sample_dataset)
+        assert panel.get_current_plot_export_data() is None
+
+    def test_get_current_plot_export_data_includes_components_and_annotations(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        t_fit = np.linspace(0.0, 10.0, 120)
+        y_fit = 0.18 * np.exp(-0.45 * t_fit)
+        panel.plot_fit(
+            t_fit,
+            y_fit,
+            label="Fit",
+            component_curves=[("Exponential", y_fit - 0.01), ("Constant", np.full_like(t_fit, 0.01))],
+        )
+        panel._annotations = [{"x": 1.0, "y": 0.12, "text": "peak", "artist": None}]
+
+        payload = panel.get_current_plot_export_data()
+        assert payload is not None
+        assert payload["run_number"] == sample_dataset.run_number
+        assert len(payload["components"]) == 2
+        assert payload["components"][0]["name"] == "Exponential"
+        assert payload["annotations"][0]["text"] == "peak"
+
+    def test_export_current_plot_warns_when_no_fit(
+        self, panel: PlotPanel, sample_dataset: MuonDataset, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        warnings: list[str] = []
+        monkeypatch.setattr(
+            QMessageBox,
+            "warning",
+            lambda *args, **_kwargs: warnings.append(str(args[2]) if len(args) > 2 else ""),
         )
 
-        panel.plot_dataset(combined)
-        legend = panel._ax.get_legend()
-        assert legend is not None
-        labels = [text.get_text() for text in legend.get_texts()]
-        assert "Run 3039 + 3040" in labels
+        panel.export_current_plot()
+
+        assert warnings
+        assert "No fitted curve" in warnings[0]
+
+    def test_export_current_plot_writes_gle_and_compiles_pdf(
+        self,
+        panel: PlotPanel,
+        sample_dataset: MuonDataset,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        t_fit = np.linspace(0.0, 10.0, 120)
+        y_fit = 0.18 * np.exp(-0.45 * t_fit)
+        panel.plot_fit(t_fit, y_fit, label="Fit")
+        panel._annotations = [{"x": 2.0, "y": 0.09, "text": "note", "artist": None}]
+
+        target_pdf = tmp_path / "current_plot.pdf"
+        axis = _FakeAxis()
+        fig = _FakeFigure(axis)
+        fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)
+
+        subprocess_calls: list[list[str]] = []
+        infos: list[str] = []
+
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target_pdf), "PDF files (*.pdf)"),
+        )
+        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr(
+            "subprocess.run",
+            lambda args, **_kwargs: subprocess_calls.append(list(args)),
+        )
+        monkeypatch.setattr(
+            QMessageBox,
+            "information",
+            lambda *args, **_kwargs: infos.append(str(args[2]) if len(args) > 2 else ""),
+        )
+
+        panel.export_current_plot()
+
+        gle_path = target_pdf.with_suffix(".gle")
+        assert gle_path.exists()
+        assert axis.errorbar_calls
+        assert axis.plot_calls
+        assert axis.text_calls
+        assert subprocess_calls
+        assert subprocess_calls[0][:3] == ["gle", "-d", "pdf"]
+        assert str(gle_path) in subprocess_calls[0]
+        assert infos

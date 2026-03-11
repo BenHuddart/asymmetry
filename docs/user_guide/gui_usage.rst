@@ -174,6 +174,38 @@ fitting. If you want to fit the full unbinned data, run the fit with
 ``Bunch = 1`` first and then increase the bunch factor afterwards for viewing.
 The existing fit overlay remains on the plot when you change the bunch factor.
 
+Main Plot Labels and Export
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The main plot now supports interactive labels and direct GLE export for the
+currently displayed fitted run.
+
+**Interactive labels**
+
+* Click **Add Label**, then click on the plot to place text at that data
+   coordinate.
+* Drag a label with the mouse to reposition it.
+* Double-click a label to edit its text.
+* Right-click a label to delete it.
+
+**Export Current Plot**
+
+Use **File → Export Current Plot…** (or the **Export** toolbar button) to
+export the active run view, including:
+
+* Data points and error bars
+* The current fitted curve (single-fit or global-fit run overlay)
+* User labels placed on the plot
+
+Output options:
+
+* ``.gle`` writes the GLE script directly.
+* ``.pdf``/``.eps`` writes a ``.gle`` script first, then compiles it with
+   ``gle`` when available.
+
+If ``gle`` is not installed, Asymmetry still saves the ``.gle`` file so you
+can compile it later.
+
 Fitting Panel
 -------------
 
@@ -304,6 +336,13 @@ A plot of one selected parameter versus a sweep variable. Controls include:
 * **Y parameter**: Select which varying parameter to plot
 * **Scale**: Check **Log X** and/or **Log Y** to use logarithmic axes —
   useful for power-law behaviour or data spanning several orders of magnitude
+* **Model components**: Enable **Show components** to stack additive parameter-model
+   components under fitted overlays (for visual decomposition)
+* **Plot labels**: Use **Add Label** and **Clear Labels** to annotate exported and
+   on-screen parameter-trend plots
+
+When **Show components** is enabled, y-axes are forced to linear scale with a
+zero baseline so stacked component areas remain physically interpretable.
 
 Exporting Data
 ~~~~~~~~~~~~~~
@@ -432,11 +471,13 @@ What is saved
 * Data Browser sort column, sort order, column filters, and selected row
 * Plot axis limits and bunch factor
 * Most-recently-displayed fit overlay curve(s)
+* Main plot labels/annotations
 * Single-fit and global-fit model selection, parameter values, fixed/free
    flags, and bounds
 * Fit results text (χ², χ²ᵣ, best-fit values with uncertainties)
 * Active fit panel tab (Single or Global)
-* Fitted Parameters panel rows, axis settings, and plot mode
+* Fitted Parameters panel rows, axis settings, plot mode, component-display
+   toggle, and plot labels
 * Fourier window type, padding factor, and display mode (amplitude / power)
 
 What is **not** saved
