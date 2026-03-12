@@ -4,7 +4,7 @@ A Python library for muon-spin spectroscopy (μSR) data analysis.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-97%20passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-288%20passed-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-71%25-yellowgreen.svg)](htmlcov/)
 
 ## Overview
@@ -44,6 +44,8 @@ management.
   Hamming, Blackman, Bartlett) and zero-padding.
 - **Co-adding** — Average selected datasets with correct error propagation.
 - **Command-line interface** — `asymmetry info` for quick environment checks.
+- **Responsive parameter-model fitting UI** — Parameter-model and cross-group
+  parameter fits run in the background with clear in-progress feedback.
 
 ## Installation
 

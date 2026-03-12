@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 import re
+import traceback
+from typing import Callable
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, QThread, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -53,12 +55,14 @@ _PARAM_UNITS = {
     "a": None,
     "b": None,
     "c": None,
+    "f": "us^-1",
     "A": "MHz",
     "D": "MHz",
     "nu": "MHz",
     "m": None,
     "tau": "(x units)",
     "B0": "G",
+    "Bwid": "G",
     "Tc": "K",
     "Ea": "meV",
     "C": "MHz",  # legacy alias used in older saved model-fit states
@@ -69,8 +73,8 @@ _PARAM_UNITS = {
     "lambda_0D": "us^-1",
 }
 
-_NON_NEGATIVE_PARAMS = {"D", "D_2D", "D_nD", "D_perp", "lambda_BG", "lambda_0D"}
-_STRICTLY_POSITIVE_PARAMS = {"tau", "B0", "nu", "m"}
+_NON_NEGATIVE_PARAMS = {"D", "D_2D", "D_nD", "D_perp", "lambda_BG", "lambda_0D", "f"}
+_STRICTLY_POSITIVE_PARAMS = {"tau", "B0", "Bwid", "nu", "m"}
 _POSITIVE_EPS = 1e-12
 
 
@@ -114,6 +118,41 @@ def _format_param_label(name: str, x_key: str, parameter_name: str) -> str:
         unit = _PARAM_UNITS.get(base)
 
     return f"{name} [{unit}]" if unit else name
+
+
+def _format_model_param_label(
+    model: ParameterCompositeModel,
+    name: str,
+    x_key: str,
+    parameter_name: str,
+) -> str:
+    """Return display label for a specific model parameter.
+
+    Keeps Redfield exponent ``m`` unitless while using unit-aware labels for
+    all other parameters.
+    """
+    component_for_param: dict[str, str] = {}
+    for mapping, component in zip(model._param_mappings, model.components, strict=True):
+        for unique_name in mapping.values():
+            component_for_param[unique_name] = component.name
+
+    if _base_param_name(name) == "m" and component_for_param.get(name) == "Redfield":
+        return name
+    return _format_param_label(name, x_key, parameter_name)
+
+
+def _component_pool_for_context(x_key: str, parameter_name: str) -> list[str]:
+    """Return component pool with context-specific redundancy filtering."""
+    available = component_names_for_x(x_key)
+    if x_key != "field":
+        return available
+
+    base = _base_param_name(parameter_name).strip().lower()
+    is_lambda_like = base.startswith("lambda") or base.startswith("λ")
+
+    if is_lambda_like:
+        return [name for name in available if name != "Constant"]
+    return [name for name in available if name != "Lambda_bg"]
 
 
 def _normalize_parameter_limits(
@@ -325,6 +364,23 @@ class _RangeWidgets:
     remove_button: QPushButton
 
 
+class _FitWorker(QObject):
+    """Run a fit task off the UI thread and return the result."""
+
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, task: Callable[[], object]) -> None:
+        super().__init__()
+        self._task = task
+
+    def run(self) -> None:
+        try:
+            self.finished.emit(self._task())
+        except Exception:
+            self.failed.emit(traceback.format_exc())
+
+
 class ModelFitDialog(QDialog):
     """Configure and run model fits for one Y parameter vs selected X variable."""
 
@@ -345,12 +401,16 @@ class ModelFitDialog(QDialog):
 
         self._parameter_name = parameter_name
         self._x_key = x_key
+        self._component_pool = _component_pool_for_context(x_key, parameter_name)
         self._x = np.asarray(x_values, dtype=float)
         self._y = np.asarray(y_values, dtype=float)
         self._yerr = np.asarray(y_errors, dtype=float)
         self._removed = False
         self._range_widgets: list[_RangeWidgets] = []
         self._active_range_idx: int | None = None
+        self._fit_in_progress = False
+        self._fit_thread: QThread | None = None
+        self._fit_worker: _FitWorker | None = None
 
         if existing_fit is not None and existing_fit.ranges:
             self._fit = existing_fit
@@ -405,6 +465,11 @@ class ModelFitDialog(QDialog):
         self._chi2_label.setTextFormat(Qt.TextFormat.RichText)
         params_layout.addWidget(self._chi2_label)
 
+        self._fit_progress_label = QLabel("")
+        self._fit_progress_label.setStyleSheet("color: #9a6700;")
+        self._fit_progress_label.setVisible(False)
+        params_layout.addWidget(self._fit_progress_label)
+
         self._param_table = QTableWidget(0, 6)
         self._param_table.setHorizontalHeaderLabels(["Name", "Value", "Min", "Max", "Fixed", "Error"])
         self._param_table.itemChanged.connect(self._on_param_table_edited)
@@ -420,6 +485,9 @@ class ModelFitDialog(QDialog):
         buttons.addButton(remove_fit_btn, QDialogButtonBox.ButtonRole.DestructiveRole)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        self._buttons = buttons
+        self._remove_fit_btn = remove_fit_btn
+        self._add_range_btn = add_btn
         layout.addWidget(buttons)
 
         self._rebuild_ranges_ui()
@@ -437,7 +505,7 @@ class ModelFitDialog(QDialog):
         x_min = float(np.nanmin(self._x)) if np.any(np.isfinite(self._x)) else 0.0
         x_max = float(np.nanmax(self._x)) if np.any(np.isfinite(self._x)) else 1.0
 
-        available = component_names_for_x(self._x_key)
+        available = self._component_pool
         default_component = "Linear" if "Linear" in available else (available[0] if available else "Constant")
         model = ParameterCompositeModel([default_component], [])
 
@@ -597,7 +665,7 @@ class ModelFitDialog(QDialog):
 
         fit_range = self._fit.ranges[idx]
         dlg = ParameterModelBuilderDialog(
-            component_pool=component_names_for_x(self._x_key),
+            component_pool=self._component_pool,
             initial_model=fit_range.model,
             parent=self,
         )
@@ -624,6 +692,9 @@ class ModelFitDialog(QDialog):
         self._select_range(idx)
 
     def _run_fit(self, idx: int) -> None:
+        if self._fit_in_progress:
+            _show_info(self, "Fit in progress", "Please wait for the current fit to finish.")
+            return
         if idx < 0 or idx >= len(self._fit.ranges):
             return
 
@@ -634,29 +705,59 @@ class ModelFitDialog(QDialog):
             _show_warning(self, "Invalid range", "x max must be greater than x min.")
             return
 
-        result = fit_parameter_model(
-            x=self._x,
-            y=self._y,
-            yerr=self._yerr,
-            model=fit_range.model,
-            parameters=fit_range.parameters,
-            x_min=fit_range.x_min,
-            x_max=fit_range.x_max,
+        model_snapshot = ParameterCompositeModel(
+            component_names=list(fit_range.model.component_names),
+            operators=list(fit_range.model.operators),
         )
-        fit_range.result = result
-        if result.success:
-            fit_range.parameters = result.parameters
+        params_snapshot = ParameterSet(
+            [
+                Parameter(
+                    name=p.name,
+                    value=float(p.value),
+                    min=float(p.min),
+                    max=float(p.max),
+                    fixed=bool(p.fixed),
+                )
+                for p in fit_range.parameters
+            ]
+        )
+        x_vals = np.asarray(self._x, dtype=float).copy()
+        y_vals = np.asarray(self._y, dtype=float).copy()
+        y_errs = np.asarray(self._yerr, dtype=float).copy()
+        x_min = fit_range.x_min
+        x_max = fit_range.x_max
 
-        self._select_range(idx)
+        self._fit_progress_label.setText(f"Fit in progress for Range {idx + 1}...")
 
-        if result.success:
-            _show_info(
-                self,
-                "Fit complete",
-                f"Range {idx + 1} fit succeeded. Reduced chi2 = {result.reduced_chi_squared:.4g}",
+        def _task():
+            return fit_parameter_model(
+                x=x_vals,
+                y=y_vals,
+                yerr=y_errs,
+                model=model_snapshot,
+                parameters=params_snapshot,
+                x_min=x_min,
+                x_max=x_max,
             )
-        else:
-            _show_warning(self, "Fit failed", result.message or "Model fit failed")
+
+        def _on_done(result: object) -> None:
+            fit_result = result
+            fit_range.result = fit_result
+            if fit_result.success:
+                fit_range.parameters = fit_result.parameters
+
+            self._select_range(idx)
+
+            if fit_result.success:
+                _show_info(
+                    self,
+                    "Fit complete",
+                    f"Range {idx + 1} fit succeeded. Reduced chi2 = {fit_result.reduced_chi_squared:.4g}",
+                )
+            else:
+                _show_warning(self, "Fit failed", fit_result.message or "Model fit failed")
+
+        self._start_fit_task(_task, _on_done)
 
     def _select_range(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._fit.ranges):
@@ -702,8 +803,14 @@ class ModelFitDialog(QDialog):
         self._param_table.setRowCount(0)
         for row, param in enumerate(fit_range.parameters):
             self._param_table.insertRow(row)
+            display_name = _format_model_param_label(
+                fit_range.model,
+                param.name,
+                self._x_key,
+                self._parameter_name,
+            )
             name_item = QTableWidgetItem(
-                _format_param_label(param.name, self._x_key, self._parameter_name)
+                display_name
             )
             name_item.setData(Qt.ItemDataRole.UserRole, param.name)
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -813,5 +920,73 @@ class ModelFitDialog(QDialog):
                 _show_info(self, "Parameter limits adjusted", "; ".join(dict.fromkeys(adjustments)))
 
     def _on_remove_fit(self) -> None:
+        if self._fit_in_progress:
+            _show_info(self, "Fit in progress", "Cannot remove fit while fitting is in progress.")
+            return
         self._removed = True
         self.accept()
+
+    def reject(self) -> None:
+        if self._fit_in_progress:
+            _show_info(self, "Fit in progress", "Please wait for the current fit to finish.")
+            return
+        super().reject()
+
+    def _start_fit_task(self, task: Callable[[], object], on_done: Callable[[object], None]) -> None:
+        if self._fit_in_progress:
+            return
+
+        thread = QThread(self)
+        worker = _FitWorker(task)
+        worker.moveToThread(thread)
+
+        self._fit_in_progress = True
+        self._set_fit_ui_busy(True)
+        self._fit_thread = thread
+        self._fit_worker = worker
+
+        def _cleanup() -> None:
+            self._fit_in_progress = False
+            self._set_fit_ui_busy(False)
+            self._fit_worker = None
+            self._fit_thread = None
+
+        def _on_finished(result: object) -> None:
+            on_done(result)
+            thread.quit()
+
+        def _on_failed(trace: str) -> None:
+            _show_warning(self, "Fit failed", f"Unexpected error during fitting.\n\n{trace}")
+            thread.quit()
+
+        thread.started.connect(worker.run)
+        worker.finished.connect(_on_finished)
+        worker.failed.connect(_on_failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(_cleanup)
+        thread.start()
+
+    def _set_fit_ui_busy(self, busy: bool) -> None:
+        self._fit_progress_label.setVisible(busy)
+        if not busy:
+            self._fit_progress_label.setText("")
+
+        self._range_selector.setEnabled(not busy)
+        self._param_table.setEnabled(not busy)
+        if hasattr(self, "_add_range_btn"):
+            self._add_range_btn.setEnabled(not busy)
+        if hasattr(self, "_remove_fit_btn"):
+            self._remove_fit_btn.setEnabled(not busy)
+
+        for button in self._buttons.buttons():
+            button.setEnabled(not busy)
+
+        for widgets in self._range_widgets:
+            widgets.active.setEnabled(not busy)
+            widgets.x_min.setEnabled(not busy)
+            widgets.x_max.setEnabled(not busy)
+            widgets.edit_button.setEnabled(not busy)
+            widgets.fit_button.setEnabled(not busy)
+            widgets.remove_button.setEnabled(not busy)

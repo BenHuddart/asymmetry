@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -35,11 +35,14 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameter_models import (
+    CrossGroupFitResult,
     ModelFitRange,
     ParameterCompositeModel,
+    ParameterGroupData,
     ParameterModelFit,
     ParameterModelFitResult,
 )
+from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 
@@ -179,8 +182,27 @@ class _YParamControls:
     log: QCheckBox
 
 
+@dataclass
+class _GroupFitData:
+    group_id: str
+    group_name: str
+    rows: list[_FitRow]
+    global_params: ParameterSet | None
+    varying_params: list[str]
+    inferred_x_key: str
+    model_fits: dict[str, ParameterModelFit]
+    plot_annotations: list[dict[str, object]]
+
+
 class FitParametersPanel(QWidget):
     """Table + plot view for parameter trends from global fits."""
+
+    cross_group_fit_completed = Signal(object, object, object)
+
+    @property
+    def last_cross_group_fit(self) -> dict[str, object] | None:
+        """Return the most recent cross-group fit payload, if available."""
+        return self._last_cross_group_fit
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -196,11 +218,23 @@ class FitParametersPanel(QWidget):
         self._axes_tag_map: dict[int, str] = {}
         self._active_annotation_idx: int | None = None
         self._annotation_drag_started = False
+        self._group_fit_results: dict[str, _GroupFitData] = {}
+        self._group_button_map: dict[str, QPushButton] = {}
+        self._active_group_id: str | None = None
+        self._last_cross_group_fit: dict[str, object] | None = None
+        self._cross_group_fit_configs: dict[str, dict[str, object]] = {}
 
         layout = QVBoxLayout(self)
 
         controls_group = QGroupBox("Parameter settings")
         controls_form = QFormLayout(controls_group)
+
+        self._group_tabs_widget = QWidget()
+        self._group_tabs_layout = QHBoxLayout(self._group_tabs_widget)
+        self._group_tabs_layout.setContentsMargins(0, 0, 0, 0)
+        self._group_tabs_layout.setSpacing(6)
+        self._group_tabs_widget.setVisible(False)
+        controls_form.addRow("Groups:", self._group_tabs_widget)
 
         self._show_table_btn = QPushButton("Show fitted parameter table")
         self._show_table_btn.setEnabled(False)
@@ -319,6 +353,12 @@ class FitParametersPanel(QWidget):
         self._varying_params = []
         self._global_params = None
         self._model_fits = {}
+        self._group_fit_results = {}
+        self._group_button_map = {}
+        self._active_group_id = None
+        self._last_cross_group_fit = None
+        self._cross_group_fit_configs = {}
+        self._rebuild_group_buttons()
         self._show_table_btn.setEnabled(False)
         self._rebuild_y_controls()
         self._refresh_plot()
@@ -360,6 +400,11 @@ class FitParametersPanel(QWidget):
                 for ann in self._plot_annotations
             ],
             "model_fits": self._serialize_model_fits(),
+            "group_fit_results": self._serialize_group_fit_results(),
+            "active_group_id": self._active_group_id,
+            "selected_group_ids": self._selected_group_ids_from_buttons(),
+            "last_cross_group_fit": self._serialize_last_cross_group_fit(),
+            "cross_group_fit_configs": self._serialize_cross_group_fit_configs(),
         }
 
     def restore_state(self, state: dict) -> None:
@@ -441,6 +486,19 @@ class FitParametersPanel(QWidget):
         self._plot_annotations = restored_annotations
 
         self._model_fits = self._deserialize_model_fits(state.get("model_fits", {}))
+        self._group_fit_results = self._deserialize_group_fit_results(state.get("group_fit_results", {}))
+        self._active_group_id = state.get("active_group_id") if isinstance(state.get("active_group_id"), str) else None
+        self._last_cross_group_fit = self._deserialize_last_cross_group_fit(state.get("last_cross_group_fit"))
+        self._cross_group_fit_configs = self._deserialize_cross_group_fit_configs(state.get("cross_group_fit_configs", {}))
+        self._rebuild_group_buttons()
+
+        selected_group_ids = state.get("selected_group_ids", [])
+        if isinstance(selected_group_ids, list) and selected_group_ids:
+            self._set_selected_group_ids([str(v) for v in selected_group_ids], emit=False)
+            self._apply_group_selection_to_view()
+        elif self._active_group_id and self._active_group_id in self._group_fit_results:
+            self._set_selected_group_ids([self._active_group_id], emit=False)
+            self._apply_group_selection_to_view()
         self._refresh_model_fit_button_labels()
 
         x_axis = state.get("x_axis")
@@ -465,9 +523,11 @@ class FitParametersPanel(QWidget):
         results_dict: dict[int, tuple[FitResult, tuple[np.ndarray, np.ndarray]]],
         datasets_by_run: dict[int, MuonDataset],
         global_params: ParameterSet | None = None,
+        *,
+        group_id: str | None = None,
+        group_name: str | None = None,
     ) -> None:
-        self._rows = []
-        self._global_params = global_params
+        rows: list[_FitRow] = []
 
         for run_number, (fit_result, _) in results_dict.items():
             try:
@@ -484,7 +544,7 @@ class FitParametersPanel(QWidget):
             meta = dataset.metadata
             values = {p.name: p.value for p in fit_result.parameters}
             errors = dict(fit_result.uncertainties)
-            self._rows.append(
+            rows.append(
                 _FitRow(
                     run_number=run_number,
                     run_label=str(dataset.metadata.get("run_label") or run_number),
@@ -496,21 +556,215 @@ class FitParametersPanel(QWidget):
                 )
             )
 
-        self._rows.sort(key=lambda r: r.run_number)
+        rows.sort(key=lambda r: r.run_number)
+
+        gid = str(group_id).strip() if group_id else "__ungrouped__"
+        gname = (str(group_name).strip() if group_name else "Ungrouped")
+        varying = self._detect_varying_parameters(rows)
+        inferred_x = self._infer_x_key(rows)
+
+        self._group_fit_results[gid] = _GroupFitData(
+            group_id=gid,
+            group_name=gname,
+            rows=rows,
+            global_params=global_params,
+            varying_params=varying,
+            inferred_x_key=inferred_x,
+            model_fits=self._model_fits if gid == self._active_group_id else {},
+            plot_annotations=self._plot_annotations if gid == self._active_group_id else [],
+        )
+        self._active_group_id = gid
+        self._rebuild_group_buttons()
+        self._set_selected_group_ids([gid], emit=False)
+        self._apply_group_selection_to_view()
+
+    def _selected_group_ids_from_buttons(self) -> list[str]:
+        selected: list[str] = []
+        for gid, button in self._group_button_map.items():
+            if button.isChecked():
+                selected.append(gid)
+        return selected
+
+    def _set_selected_group_ids(self, group_ids: list[str], *, emit: bool) -> None:
+        selected = set(group_ids)
+        for gid, button in self._group_button_map.items():
+            button.blockSignals(not emit)
+            button.setChecked(gid in selected)
+            button.blockSignals(False)
+
+    def _rebuild_group_buttons(self) -> None:
+        while self._group_tabs_layout.count() > 0:
+            item = self._group_tabs_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        self._group_button_map = {}
+        groups = sorted(self._group_fit_results.values(), key=lambda g: g.group_name.lower())
+        for group in groups:
+            button = QPushButton(group.group_name)
+            button.setCheckable(True)
+            button.clicked.connect(self._on_group_button_clicked)
+            self._group_tabs_layout.addWidget(button)
+            self._group_button_map[group.group_id] = button
+        self._group_tabs_layout.addStretch()
+        self._group_tabs_widget.setVisible(bool(groups))
+
+    def _on_group_button_clicked(self) -> None:
+        if not self._selected_group_ids_from_buttons() and self._active_group_id in self._group_button_map:
+            self._group_button_map[self._active_group_id].setChecked(True)
+        self._apply_group_selection_to_view()
+
+    def _apply_group_selection_to_view(self) -> None:
+        selected_group_ids = self._selected_group_ids_from_buttons()
+        if not selected_group_ids and self._active_group_id and self._active_group_id in self._group_fit_results:
+            selected_group_ids = [self._active_group_id]
+            self._set_selected_group_ids(selected_group_ids, emit=False)
+
+        selected_groups = [self._group_fit_results[gid] for gid in selected_group_ids if gid in self._group_fit_results]
+        if not selected_groups:
+            self._rows = []
+            self._varying_params = []
+            self._global_params = None
+            self._inferred_x_key = "run"
+            self._model_fits = {}
+            self._plot_annotations = []
+            self._show_table_btn.setEnabled(False)
+            self._export_csv_btn.setEnabled(False)
+            self._export_gle_btn.setEnabled(False)
+            self._gle_format_combo.setEnabled(False)
+            self._rebuild_y_controls()
+            self._refresh_model_fit_button_labels()
+            self._update_x_axis_auto_hint()
+            self._refresh_views()
+            return
+
+        if len(selected_groups) == 1:
+            group = selected_groups[0]
+            self._active_group_id = group.group_id
+            self._rows = list(group.rows)
+            self._varying_params = list(group.varying_params)
+            self._global_params = group.global_params
+            self._inferred_x_key = group.inferred_x_key
+            self._model_fits = dict(group.model_fits)
+            self._plot_annotations = list(group.plot_annotations)
+        else:
+            merged_rows: list[_FitRow] = []
+            for group in selected_groups:
+                merged_rows.extend(group.rows)
+            self._rows = sorted(merged_rows, key=lambda r: r.run_number)
+            self._varying_params = self._detect_varying_parameters(self._rows)
+            self._global_params = None
+            self._inferred_x_key = self._infer_x_key(self._rows)
+            self._model_fits = {}
+            self._plot_annotations = []
+
         has_rows = bool(self._rows)
         self._show_table_btn.setEnabled(has_rows)
         self._export_csv_btn.setEnabled(has_rows)
         self._export_gle_btn.setEnabled(has_rows)
         self._gle_format_combo.setEnabled(has_rows)
 
-        self._varying_params = self._detect_varying_parameters(self._rows)
-        self._inferred_x_key = self._infer_x_key(self._rows)
         self._model_fits = {k: v for k, v in self._model_fits.items() if k in self._varying_params}
 
         self._rebuild_y_controls()
         self._refresh_model_fit_button_labels()
         self._update_x_axis_auto_hint()
         self._refresh_views()
+
+    def _serialize_group_fit_results(self) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        for gid, group in self._group_fit_results.items():
+            out[gid] = {
+                "group_id": group.group_id,
+                "group_name": group.group_name,
+                "rows": [
+                    {
+                        "run_number": int(row.run_number),
+                        "run_label": str(row.run_label),
+                        "field": float(row.field),
+                        "temperature": float(row.temperature),
+                        "values": {k: float(v) for k, v in row.values.items()},
+                        "errors": {k: float(v) for k, v in row.errors.items()},
+                        "combined_from": [int(v) for v in row.combined_from] if row.combined_from else None,
+                    }
+                    for row in group.rows
+                ],
+                "varying_params": list(group.varying_params),
+                "inferred_x_key": group.inferred_x_key,
+                "model_fits": self._serialize_specific_model_fits(group.model_fits),
+                "plot_annotations": [
+                    {
+                        "x": float(ann.get("x", 0.0)),
+                        "y": float(ann.get("y", 0.0)),
+                        "text": str(ann.get("text", "")),
+                        "axis_tag": str(ann.get("axis_tag", "main")),
+                    }
+                    for ann in group.plot_annotations
+                ],
+            }
+        return out
+
+    def _serialize_specific_model_fits(self, model_fits: dict[str, ParameterModelFit]) -> dict:
+        original = self._model_fits
+        try:
+            self._model_fits = model_fits
+            return self._serialize_model_fits()
+        finally:
+            self._model_fits = original
+
+    def _deserialize_group_fit_results(self, payload: object) -> dict[str, _GroupFitData]:
+        if not isinstance(payload, dict):
+            return {}
+        out: dict[str, _GroupFitData] = {}
+        for gid, entry in payload.items():
+            if not isinstance(gid, str) or not isinstance(entry, dict):
+                continue
+            rows: list[_FitRow] = []
+            for row_entry in entry.get("rows", []):
+                if not isinstance(row_entry, dict):
+                    continue
+                try:
+                    rows.append(
+                        _FitRow(
+                            run_number=int(row_entry.get("run_number", 0)),
+                            run_label=str(row_entry.get("run_label", row_entry.get("run_number", ""))),
+                            field=float(row_entry.get("field", 0.0)),
+                            temperature=float(row_entry.get("temperature", 0.0)),
+                            values={str(k): float(v) for k, v in dict(row_entry.get("values", {})).items()},
+                            errors={str(k): float(v) for k, v in dict(row_entry.get("errors", {})).items()},
+                            combined_from=[int(v) for v in row_entry.get("combined_from", [])] if row_entry.get("combined_from") else None,
+                        )
+                    )
+                except Exception:
+                    continue
+
+            model_fits = self._deserialize_model_fits(entry.get("model_fits", {}))
+            plot_annotations = []
+            for ann in entry.get("plot_annotations", []):
+                if not isinstance(ann, dict):
+                    continue
+                plot_annotations.append(
+                    {
+                        "x": float(ann.get("x", 0.0)),
+                        "y": float(ann.get("y", 0.0)),
+                        "text": str(ann.get("text", "")),
+                        "axis_tag": str(ann.get("axis_tag", "main")),
+                        "artist": None,
+                    }
+                )
+
+            out[gid] = _GroupFitData(
+                group_id=gid,
+                group_name=str(entry.get("group_name", gid)),
+                rows=rows,
+                global_params=None,
+                varying_params=[str(v) for v in entry.get("varying_params", []) if isinstance(v, str)],
+                inferred_x_key=_normalize_x_key(entry.get("inferred_x_key", "run")),
+                model_fits=model_fits,
+                plot_annotations=plot_annotations,
+            )
+        return out
 
     def _detect_varying_parameters(self, rows: list[_FitRow]) -> list[str]:
         if not rows:
@@ -797,6 +1051,19 @@ class FitParametersPanel(QWidget):
         return False
 
     def _open_model_fit_dialog(self, param_name: str) -> None:
+        selected_group_ids = self._selected_group_ids_from_buttons()
+        selected_groups = [
+            self._group_fit_results[gid]
+            for gid in selected_group_ids
+            if gid in self._group_fit_results
+        ]
+
+        if len(selected_groups) >= 2:
+            payload = self._run_cross_group_model_fit(param_name, selected_groups)
+            if payload is not None:
+                self._last_cross_group_fit = payload
+            return
+
         if not self._rows:
             return
 
@@ -835,6 +1102,317 @@ class FitParametersPanel(QWidget):
 
         self._refresh_model_fit_button_labels()
         self._refresh_plot()
+
+    def _run_cross_group_model_fit(
+        self,
+        param_name: str,
+        selected_groups: list[_GroupFitData],
+    ) -> dict[str, object] | None:
+        if not selected_groups:
+            return None
+
+        x_key = self._effective_x_key()
+        group_payload: list[ParameterGroupData] = []
+        for group in selected_groups:
+            rows = sorted(group.rows, key=lambda r: self._x_value(r, x_key))
+            if not rows:
+                continue
+            if any(param_name not in row.values for row in rows):
+                return None
+            x_vals = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
+            y_vals = np.array([row.values.get(param_name, np.nan) for row in rows], dtype=float)
+            y_err = np.array([row.errors.get(param_name, np.nan) for row in rows], dtype=float)
+            invalid_err = ~np.isfinite(y_err) | (y_err <= 0)
+            if np.any(invalid_err):
+                finite = np.abs(y_vals[np.isfinite(y_vals)])
+                fallback = max(float(np.nanmedian(finite)) * 0.02, 1e-9) if finite.size else 1e-3
+                y_err = y_err.copy()
+                y_err[invalid_err] = fallback
+            group_payload.append(
+                ParameterGroupData(
+                    group_id=group.group_id,
+                    group_name=group.group_name,
+                    x=x_vals,
+                    y=y_vals,
+                    yerr=y_err,
+                    group_variable_value=float(rows[0].temperature if x_key == "temperature" else rows[0].field),
+                )
+            )
+
+        if len(group_payload) < 2:
+            return None
+
+        config_key = self._cross_group_config_key(param_name, x_key, selected_groups)
+        existing_config = self._cross_group_fit_configs.get(config_key)
+
+        dialog = CrossGroupFitDialog(
+            parameter_name=param_name,
+            x_key=x_key,
+            groups=group_payload,
+            existing_config=existing_config,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+
+        output = dialog.output()
+        if output is None:
+            return None
+
+        fitted_groups = output.groups if output.groups else group_payload
+
+        payload: dict[str, object] = {
+            "parameter_name": param_name,
+            "x_key": x_key,
+            "groups": fitted_groups,
+            "model": output.model,
+            "fit_result": output.fit_result,
+            "fit_x_min": output.fit_x_min,
+            "fit_x_max": output.fit_x_max,
+            "config": output.config,
+            "config_key": config_key,
+        }
+        self._cross_group_fit_configs[config_key] = dict(output.config)
+        self.cross_group_fit_completed.emit(param_name, fitted_groups, output)
+        return payload
+
+    def _cross_group_config_key(
+        self,
+        param_name: str,
+        x_key: str,
+        selected_groups: list[_GroupFitData],
+    ) -> str:
+        group_ids = sorted(str(group.group_id) for group in selected_groups)
+        return f"{param_name}::{x_key}::{'|'.join(group_ids)}"
+
+    def _serialize_cross_group_fit_configs(self) -> dict[str, dict[str, object]]:
+        out: dict[str, dict[str, object]] = {}
+        for key, config in self._cross_group_fit_configs.items():
+            if not isinstance(key, str) or not isinstance(config, dict):
+                continue
+            out[key] = {
+                "model": dict(config.get("model", {})) if isinstance(config.get("model"), dict) else {},
+                "fit_x_min": float(config.get("fit_x_min")) if isinstance(config.get("fit_x_min"), (int, float)) else None,
+                "fit_x_max": float(config.get("fit_x_max")) if isinstance(config.get("fit_x_max"), (int, float)) else None,
+                "parameter_rows": [
+                    {
+                        "name": str(row.get("name", "")),
+                        "initial": float(row.get("initial", 0.0)) if isinstance(row.get("initial"), (int, float)) else 0.0,
+                        "min": float(row.get("min", -float("inf"))) if isinstance(row.get("min"), (int, float)) else -float("inf"),
+                        "max": float(row.get("max", float("inf"))) if isinstance(row.get("max"), (int, float)) else float("inf"),
+                        "type": str(row.get("type", "Global")),
+                    }
+                    for row in config.get("parameter_rows", [])
+                    if isinstance(row, dict)
+                ],
+            }
+        return out
+
+    def _deserialize_cross_group_fit_configs(self, state: object) -> dict[str, dict[str, object]]:
+        if not isinstance(state, dict):
+            return {}
+        out: dict[str, dict[str, object]] = {}
+        for key, config in state.items():
+            if not isinstance(key, str) or not isinstance(config, dict):
+                continue
+            model = config.get("model")
+            rows = config.get("parameter_rows")
+            out[key] = {
+                "model": dict(model) if isinstance(model, dict) else {},
+                "fit_x_min": float(config.get("fit_x_min")) if isinstance(config.get("fit_x_min"), (int, float)) else None,
+                "fit_x_max": float(config.get("fit_x_max")) if isinstance(config.get("fit_x_max"), (int, float)) else None,
+                "parameter_rows": [dict(row) for row in rows if isinstance(row, dict)] if isinstance(rows, list) else [],
+            }
+        return out
+
+    def _serialize_last_cross_group_fit(self) -> dict | None:
+        payload = self._last_cross_group_fit
+        if payload is None:
+            return None
+        fit_result = payload.get("fit_result")
+        model = payload.get("model")
+        groups = payload.get("groups")
+        if not isinstance(fit_result, CrossGroupFitResult):
+            return None
+        if not isinstance(model, ParameterCompositeModel):
+            return None
+        if not isinstance(groups, list):
+            return None
+
+        fit_x_min_raw = payload.get("fit_x_min", float("nan"))
+        fit_x_max_raw = payload.get("fit_x_max", float("nan"))
+        fit_x_min = float(fit_x_min_raw) if isinstance(fit_x_min_raw, (int, float)) else float("nan")
+        fit_x_max = float(fit_x_max_raw) if isinstance(fit_x_max_raw, (int, float)) else float("nan")
+
+        return {
+            "parameter_name": str(payload.get("parameter_name", "")),
+            "x_key": str(payload.get("x_key", "run")),
+            "fit_x_min": fit_x_min if np.isfinite(fit_x_min) else None,
+            "fit_x_max": fit_x_max if np.isfinite(fit_x_max) else None,
+            "config": dict(payload.get("config", {})) if isinstance(payload.get("config"), dict) else {},
+            "config_key": str(payload.get("config_key", "")),
+            "groups": [
+                {
+                    "group_id": g.group_id,
+                    "group_name": g.group_name,
+                    "x": np.asarray(g.x, dtype=float).tolist(),
+                    "y": np.asarray(g.y, dtype=float).tolist(),
+                    "yerr": np.asarray(g.yerr, dtype=float).tolist(),
+                    "group_variable_value": float(g.group_variable_value),
+                }
+                for g in groups
+                if isinstance(g, ParameterGroupData)
+            ],
+            "model": {
+                "component_names": list(model.component_names),
+                "operators": list(model.operators),
+            },
+            "fit_result": {
+                "success": bool(fit_result.success),
+                "chi_squared": float(fit_result.chi_squared),
+                "reduced_chi_squared": float(fit_result.reduced_chi_squared),
+                "message": str(fit_result.message),
+                "global_parameters": [
+                    {
+                        "name": p.name,
+                        "value": p.value,
+                        "min": p.min,
+                        "max": p.max,
+                        "fixed": p.fixed,
+                    }
+                    for p in fit_result.global_parameters
+                ],
+                "global_uncertainties": dict(fit_result.global_uncertainties),
+                "local_parameters": {
+                    gid: [
+                        {
+                            "name": p.name,
+                            "value": p.value,
+                            "min": p.min,
+                            "max": p.max,
+                            "fixed": p.fixed,
+                        }
+                        for p in pset
+                    ]
+                    for gid, pset in fit_result.local_parameters.items()
+                },
+                "fixed_parameters": [
+                    {
+                        "name": p.name,
+                        "value": p.value,
+                        "min": p.min,
+                        "max": p.max,
+                        "fixed": p.fixed,
+                    }
+                    for p in fit_result.fixed_parameters
+                ],
+                "local_uncertainties": {
+                    gid: dict(vals)
+                    for gid, vals in fit_result.local_uncertainties.items()
+                },
+            },
+        }
+
+    def _deserialize_last_cross_group_fit(self, state: object) -> dict[str, object] | None:
+        if not isinstance(state, dict):
+            return None
+        model_state = state.get("model")
+        fit_state = state.get("fit_result")
+        groups_state = state.get("groups")
+        if not isinstance(model_state, dict) or not isinstance(fit_state, dict) or not isinstance(groups_state, list):
+            return None
+
+        try:
+            model = ParameterCompositeModel(
+                component_names=list(model_state.get("component_names", [])),
+                operators=list(model_state.get("operators", [])),
+            )
+        except Exception:
+            return None
+
+        groups: list[ParameterGroupData] = []
+        for entry in groups_state:
+            if not isinstance(entry, dict):
+                continue
+            groups.append(
+                ParameterGroupData(
+                    group_id=str(entry.get("group_id", "")),
+                    group_name=str(entry.get("group_name", "")),
+                    x=np.asarray(entry.get("x", []), dtype=float),
+                    y=np.asarray(entry.get("y", []), dtype=float),
+                    yerr=np.asarray(entry.get("yerr", []), dtype=float),
+                    group_variable_value=float(entry.get("group_variable_value", 0.0)),
+                )
+            )
+
+        global_params = ParameterSet()
+        for p in fit_state.get("global_parameters", []):
+            if isinstance(p, dict):
+                global_params.add(
+                    Parameter(
+                        name=str(p.get("name", "")),
+                        value=float(p.get("value", 0.0)),
+                        min=float(p.get("min", -float("inf"))),
+                        max=float(p.get("max", float("inf"))),
+                        fixed=bool(p.get("fixed", False)),
+                    )
+                )
+
+        local_params: dict[str, ParameterSet] = {}
+        for gid, plist in dict(fit_state.get("local_parameters", {})).items():
+            pset = ParameterSet()
+            for p in plist:
+                if isinstance(p, dict):
+                    pset.add(
+                        Parameter(
+                            name=str(p.get("name", "")),
+                            value=float(p.get("value", 0.0)),
+                            min=float(p.get("min", -float("inf"))),
+                            max=float(p.get("max", float("inf"))),
+                            fixed=bool(p.get("fixed", False)),
+                        )
+                    )
+            local_params[str(gid)] = pset
+
+        fixed_params = ParameterSet()
+        for p in fit_state.get("fixed_parameters", []):
+            if isinstance(p, dict):
+                fixed_params.add(
+                    Parameter(
+                        name=str(p.get("name", "")),
+                        value=float(p.get("value", 0.0)),
+                        min=float(p.get("min", -float("inf"))),
+                        max=float(p.get("max", float("inf"))),
+                        fixed=bool(p.get("fixed", True)),
+                    )
+                )
+
+        fit_result = CrossGroupFitResult(
+            success=bool(fit_state.get("success", False)),
+            chi_squared=float(fit_state.get("chi_squared", 0.0)),
+            reduced_chi_squared=float(fit_state.get("reduced_chi_squared", 0.0)),
+            global_parameters=global_params,
+            local_parameters=local_params,
+            fixed_parameters=fixed_params,
+            global_uncertainties={str(k): float(v) for k, v in dict(fit_state.get("global_uncertainties", {})).items()},
+            local_uncertainties={
+                str(gid): {str(k): float(v) for k, v in dict(vals).items()}
+                for gid, vals in dict(fit_state.get("local_uncertainties", {})).items()
+            },
+            message=str(fit_state.get("message", "")),
+        )
+
+        return {
+            "parameter_name": str(state.get("parameter_name", "")),
+            "x_key": str(state.get("x_key", "run")),
+            "fit_x_min": float(state.get("fit_x_min")) if isinstance(state.get("fit_x_min"), (int, float)) else float("nan"),
+            "fit_x_max": float(state.get("fit_x_max")) if isinstance(state.get("fit_x_max"), (int, float)) else float("nan"),
+            "config": dict(state.get("config", {})) if isinstance(state.get("config"), dict) else {},
+            "config_key": str(state.get("config_key", "")),
+            "groups": groups,
+            "model": model,
+            "fit_result": fit_result,
+        }
 
     def _refresh_views(self) -> None:
         self._refresh_table()

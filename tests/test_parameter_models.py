@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -18,6 +20,7 @@ from asymmetry.core.fitting.parameter_models import (
     _constant,
     _critical_divergence,
     _exp_decay,
+    _lcr_gaussian,
     _linear,
     _lorentzian,
     _power_law,
@@ -37,6 +40,7 @@ def test_component_names_filtered_by_x_key() -> None:
 
     assert "Redfield" in field_names
     assert "Lorentzian" in field_names
+    assert "GaussianLCR" in field_names
     assert "Arrhenius" not in field_names
 
     assert "Arrhenius" in temp_names
@@ -120,9 +124,11 @@ def test_exp_decay_asymptotes_to_c() -> None:
 
 def test_exp_decay_safe_with_near_zero_tau() -> None:
     x = np.array([1.0, 2.0])
-    # Should not raise or return inf/nan even with tiny tau
-    result = _exp_decay(x, a=1.0, tau=0.0, c=0.0)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = _exp_decay(x, a=1.0, tau=0.0, c=0.0)
     assert np.all(np.isfinite(result))
+    assert not caught
 
 
 def test_arrhenius_large_temperature_approaches_a() -> None:
@@ -175,6 +181,19 @@ def test_lorentzian_peak_at_zero() -> None:
     x = np.linspace(0.0, 500.0, 20)
     lo = _lorentzian(x, a=3.0, B0=150.0, c=0.5)
     assert lo[0] == np.max(lo)
+
+
+def test_lcr_gaussian_peaks_at_b0() -> None:
+    x = np.array([800.0, 1000.0, 1200.0])
+    y = _lcr_gaussian(x, f=0.2, B0=1000.0, Bwid=100.0)
+    np.testing.assert_allclose(y[1], 0.2, rtol=1e-12)
+    assert y[1] > y[0]
+    np.testing.assert_allclose(y[0], y[2], rtol=1e-12)
+
+
+def test_lcr_gaussian_safe_with_near_zero_width() -> None:
+    y = _lcr_gaussian(np.array([1.0, 2.0]), f=0.1, B0=1.5, Bwid=0.0)
+    assert np.all(np.isfinite(y))
 
 
 def test_redfield_safe_with_near_zero_nu() -> None:

@@ -49,6 +49,7 @@ from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 from asymmetry.gui.panels.fourier_panel import FourierPanel
 from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
+from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
 
 
 def _load_window_icon() -> QIcon | None:
@@ -131,6 +132,8 @@ class MainWindow(QMainWindow):
         self._last_open_dir = self._settings.value("io/last_open_dir", "", str)
         self._current_dataset = None  # Track currently selected dataset
         self._current_project_path: str | None = None  # Path of currently open project
+        self._active_group_context: tuple[str, str] | None = None
+        self._global_parameter_fit_window: GlobalParameterFitWindow | None = None
 
         self._setup_menus()
         self._setup_toolbar()
@@ -173,6 +176,11 @@ class MainWindow(QMainWindow):
         analysis_menu.addAction("&Fit", self._on_fit)
         analysis_menu.addAction("F&ourier", self._on_fourier)
         analysis_menu.addAction("Fit &Parameters", self._on_fit_parameters)
+        self._global_parameter_fit_action = analysis_menu.addAction(
+            "Global Parameter Fit",
+            self._on_global_parameter_fit,
+        )
+        self._update_global_parameter_fit_menu_style(False)
 
         # View
         view_menu = mb.addMenu("&View")
@@ -195,6 +203,8 @@ class MainWindow(QMainWindow):
         tb.addAction("Fit", self._on_fit)
         tb.addAction("FFT", self._on_fourier)
         tb.addAction("Params", self._on_fit_parameters)
+        self._global_parameter_fit_toolbar_action = tb.addAction("Global Fit", self._on_global_parameter_fit)
+        self._global_parameter_fit_toolbar_action.setEnabled(False)
 
     # ── panels / docks ─────────────────────────────────────────────────
 
@@ -259,11 +269,17 @@ class MainWindow(QMainWindow):
 
         # Connect signals
         self._data_browser.dataset_selected.connect(self._on_dataset_selected)
+        if hasattr(self._data_browser, "group_selected"):
+            self._data_browser.group_selected.connect(self._on_group_selected)
         self._data_browser.selection_changed.connect(self._update_selected_datasets)
         self._plot_panel.bunch_factor_changed.connect(self._on_bunch_factor_changed)
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
+        if hasattr(self._fit_parameters_panel, "cross_group_fit_completed"):
+            self._fit_parameters_panel.cross_group_fit_completed.connect(
+                self._on_cross_group_fit_completed
+            )
 
         # Update selected datasets for global fitting whenever selection changes
         self._update_selected_datasets()
@@ -445,6 +461,25 @@ class MainWindow(QMainWindow):
         self._dock_fit_parameters.raise_()
         self._log_panel.log("Opened Fit Parameters panel")
 
+    def _on_global_parameter_fit(self) -> None:
+        """Show the Global Parameter Fit window if cross-group results exist."""
+        if self._global_parameter_fit_window is None or not self._global_parameter_fit_window.has_result():
+            return
+        self._global_parameter_fit_window.show()
+        self._global_parameter_fit_window.raise_()
+        self._global_parameter_fit_window.activateWindow()
+
+    def _update_global_parameter_fit_menu_style(self, has_result: bool) -> None:
+        if not hasattr(self, "_global_parameter_fit_action"):
+            return
+        if has_result:
+            self._global_parameter_fit_action.setText("Global Parameter Fit [available]")
+        else:
+            self._global_parameter_fit_action.setText("Global Parameter Fit")
+        self._global_parameter_fit_action.setEnabled(bool(has_result))
+        if hasattr(self, "_global_parameter_fit_toolbar_action"):
+            self._global_parameter_fit_toolbar_action.setEnabled(bool(has_result))
+
     def _on_about(self) -> None:
         """Show the About dialog with version information."""
         QMessageBox.about(
@@ -458,6 +493,7 @@ class MainWindow(QMainWindow):
 
     def _on_dataset_selected(self, run_number: int) -> None:
         """Handle dataset selection from data browser."""
+        self._active_group_context = None
         dataset = self._data_browser.get_dataset(run_number)
         if dataset:
             self._current_dataset = dataset
@@ -467,6 +503,15 @@ class MainWindow(QMainWindow):
             self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
             self._log_panel.log(f"Selected run {run_number}")
             self.statusBar().showMessage(f"Viewing run {run_number}")
+
+    def _on_group_selected(self, group_id: str) -> None:
+        """Track selected data-group context for grouped global-fit workflows."""
+        group_name = self._data_browser.get_group_name(group_id)
+        if group_name is None:
+            self._active_group_context = None
+            return
+        self._active_group_context = (group_id, group_name)
+        self.statusBar().showMessage(f"Selected group: {group_name}")
 
     def _on_bunch_factor_changed(self, _factor: int) -> None:
         """Refresh fit inputs so fitting follows the current bunch factor."""
@@ -548,8 +593,29 @@ class MainWindow(QMainWindow):
             dataset = self._data_browser.get_dataset(run_number)
             if dataset is not None:
                 datasets_by_run[run_number] = dataset
+        group_id = None
+        group_name = None
+        selected_group_ids = (
+            self._data_browser.get_selected_group_ids()
+            if hasattr(self._data_browser, "get_selected_group_ids")
+            else []
+        )
+        if len(selected_group_ids) == 1:
+            group_id = selected_group_ids[0]
+            group_name = (
+                self._data_browser.get_group_name(group_id)
+                if hasattr(self._data_browser, "get_group_name")
+                else None
+            )
+        elif self._active_group_context is not None:
+            group_id, group_name = self._active_group_context
+
         self._fit_parameters_panel.set_fit_results(
-            trends_results, datasets_by_run, global_params,
+            trends_results,
+            datasets_by_run,
+            global_params,
+            group_id=group_id,
+            group_name=group_name,
         )
         self._dock_fit_parameters.show()
         self._dock_fit_parameters.raise_()
@@ -576,9 +642,50 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage(f"Global fit completed for {n_datasets} datasets")
 
+    def _on_cross_group_fit_completed(self, parameter_name, groups, output) -> None:
+        """Display cross-group fit output in the Global Parameter Fit window."""
+        if self._global_parameter_fit_window is None:
+            self._global_parameter_fit_window = GlobalParameterFitWindow(self)
+        fit_result = getattr(output, "fit_result", None)
+        model = getattr(output, "model", None)
+        x_key = getattr(output, "x_key", "run")
+        fit_x_min = getattr(output, "fit_x_min", float("nan"))
+        fit_x_max = getattr(output, "fit_x_max", float("nan"))
+        if fit_result is None or model is None:
+            return
+        self._global_parameter_fit_window.set_results(
+            parameter_name=parameter_name,
+            x_key=x_key,
+            groups=groups,
+            model=model,
+            result=fit_result,
+            fit_x_min=fit_x_min,
+            fit_x_max=fit_x_max,
+        )
+        self._global_parameter_fit_window.show()
+        self._global_parameter_fit_window.raise_()
+        self._global_parameter_fit_window.activateWindow()
+        self._update_global_parameter_fit_menu_style(True)
+
     def _update_selected_datasets(self) -> None:
         """Update the fit panel with currently selected datasets."""
         selected = self._data_browser.get_selected_datasets()
+        selected_group_ids = (
+            self._data_browser.get_selected_group_ids()
+            if hasattr(self._data_browser, "get_selected_group_ids")
+            else []
+        )
+        if len(selected_group_ids) == 1:
+            gid = selected_group_ids[0]
+            gname = (
+                self._data_browser.get_group_name(gid)
+                if hasattr(self._data_browser, "get_group_name")
+                else None
+            )
+            if gname is not None:
+                self._active_group_context = (gid, gname)
+        elif selected_group_ids:
+            self._active_group_context = None
         if self._current_dataset is not None:
             current_run = self._current_dataset.run_number
             if self._data_browser.get_dataset(current_run) is None:
@@ -925,6 +1032,41 @@ class MainWindow(QMainWindow):
         if fit_parameters_state:
             self._fit_parameters_panel.restore_state(fit_parameters_state)
 
+        restored_cross_group = getattr(self._fit_parameters_panel, "last_cross_group_fit", None)
+        if isinstance(restored_cross_group, dict):
+            fit_result = restored_cross_group.get("fit_result")
+            model = restored_cross_group.get("model")
+            groups = restored_cross_group.get("groups")
+            parameter_name = restored_cross_group.get("parameter_name")
+            x_key = restored_cross_group.get("x_key", "run")
+            fit_x_min = restored_cross_group.get("fit_x_min", float("nan"))
+            fit_x_max = restored_cross_group.get("fit_x_max", float("nan"))
+            if (
+                fit_result is not None
+                and model is not None
+                and isinstance(groups, list)
+                and isinstance(parameter_name, str)
+            ):
+                if self._global_parameter_fit_window is None:
+                    self._global_parameter_fit_window = GlobalParameterFitWindow(self)
+                self._global_parameter_fit_window.set_results(
+                    parameter_name=parameter_name,
+                    x_key=str(x_key),
+                    groups=groups,
+                    model=model,
+                    result=fit_result,
+                    fit_x_min=float(fit_x_min),
+                    fit_x_max=float(fit_x_max),
+                )
+                self._global_parameter_fit_window.show()
+                self._global_parameter_fit_window.raise_()
+                self._global_parameter_fit_window.activateWindow()
+                self._update_global_parameter_fit_menu_style(True)
+            else:
+                self._update_global_parameter_fit_menu_style(False)
+        else:
+            self._update_global_parameter_fit_menu_style(False)
+
         # ── restore Fourier state ──────────────────────────────────────
         fourier_state = state.get("fourier_state")
         if fourier_state:
@@ -956,6 +1098,10 @@ class MainWindow(QMainWindow):
         self._fit_panel.set_dataset(None)
         self._fit_panel.set_datasets([])
         self._fit_parameters_panel.clear()
+        if self._global_parameter_fit_window is not None:
+            self._global_parameter_fit_window.close()
+            self._global_parameter_fit_window = None
+        self._update_global_parameter_fit_menu_style(False)
 
     def _add_recent_project(self, path: str) -> None:
         """Add *path* to the front of the recent-projects list in QSettings."""

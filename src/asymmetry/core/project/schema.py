@@ -11,7 +11,7 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 1)
+Current schema (version 2)
 --------------------------
 ::
 
@@ -35,7 +35,9 @@ Current schema (version 1)
             "sort_column": 0,
             "sort_order": "ascending",
             "filters": {"3": ["150.0"]},
-            "selected_run_numbers": [3077]
+            "selected_run_numbers": [3077],
+            "selected_group_ids": [],
+            "data_groups": []
         },
         "plot_state": {
             "current_run_number": 3077,
@@ -72,9 +74,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 1
+CURRENT_SCHEMA_VERSION: int = 2
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2})
 
 
 class UnsupportedSchemaVersion(ValueError):
@@ -84,7 +86,6 @@ class UnsupportedSchemaVersion(ValueError):
 def migrate_to_current(data: dict) -> dict:
     """Migrate a raw project dict to the current schema version.
 
-    Version 1 is the initial version; no migration is needed.
     Future schemas will chain ``_migrate_v1_to_v2``, etc.
 
     Parameters
@@ -110,7 +111,26 @@ def migrate_to_current(data: dict) -> dict:
             "Upgrade the Asymmetry package to open this file, or check that "
             "the file is a valid Asymmetry project."
         )
-    return data
+    migrated = dict(data)
+    if version == 1:
+        migrated = _migrate_v1_to_v2(migrated)
+    return migrated
+
+
+def _migrate_v1_to_v2(data: dict) -> dict:
+    """Migrate schema v1 project state to v2.
+
+    v2 adds browser group metadata used by grouped global-fitting workflows.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 2
+
+    browser_state = dict(migrated.get("browser_state", {}))
+    browser_state.setdefault("selected_group_ids", [])
+    browser_state.setdefault("data_groups", [])
+    migrated["browser_state"] = browser_state
+
+    return migrated
 
 
 def validate(data: dict) -> None:

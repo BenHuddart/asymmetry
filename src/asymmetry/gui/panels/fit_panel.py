@@ -907,20 +907,6 @@ class FitPanel(QWidget):
     """Fit setup and results panel with tabbed interface.
 
     Contains tabs for single dataset fitting and global (multi-dataset) fitting.
-
-    Attributes
-    ----------
-    fit_completed : Signal
-        Emitted with (FitResult, tuple, list) for single fits.
-    global_fit_completed : Signal
-        Emitted with (results_dict, global_params) for global fits.
-
-    Methods
-    -------
-    set_dataset(dataset)
-        Set the current dataset for single fitting tab.
-    set_datasets(datasets)
-        Set the datasets for global fitting tab.
     """
 
     fit_completed = Signal(object, object, object)  # (FitResult, fitted_curve, component_curves)

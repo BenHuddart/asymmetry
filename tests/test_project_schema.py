@@ -24,7 +24,7 @@ from asymmetry.core.project.schema import migrate_to_current, validate
 def _minimal_state() -> dict:
     """Return the smallest valid project state dict."""
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "created_with_app_version": "0.1.0",
         "datasets": [],
         "combined_datasets": [],
@@ -33,6 +33,8 @@ def _minimal_state() -> dict:
             "sort_order": "ascending",
             "filters": {},
             "selected_run_numbers": [],
+            "selected_group_ids": [],
+            "data_groups": [],
         },
         "plot_state": {
             "current_run_number": None,
@@ -68,10 +70,16 @@ def _minimal_state() -> dict:
 
 class TestSchemaMigration:
     def test_current_version_passes_through(self):
+        state = {"schema_version": 2, "datasets": []}
+        result = migrate_to_current(state)
+        assert result["schema_version"] == 2
+        assert result["datasets"] == []
+
+    def test_v1_migrates_to_v2(self):
         state = {"schema_version": 1, "datasets": []}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 1
-        assert result["datasets"] == []
+        assert result["schema_version"] == 2
+        assert "browser_state" in result
 
     def test_unsupported_future_version_raises(self):
         state = {"schema_version": 999, "datasets": []}
@@ -84,11 +92,11 @@ class TestSchemaMigration:
             migrate_to_current(state)
 
     def test_validate_passes_valid_state(self):
-        validate({"schema_version": 1, "datasets": []})
+        validate({"schema_version": 2, "datasets": []})
 
     def test_validate_raises_on_missing_datasets_key(self):
         with pytest.raises(ValueError, match="missing required keys"):
-            validate({"schema_version": 1})
+            validate({"schema_version": 2})
 
     def test_validate_raises_on_missing_schema_version(self):
         with pytest.raises(ValueError, match="missing required keys"):
@@ -96,11 +104,11 @@ class TestSchemaMigration:
 
     def test_unknown_top_level_fields_are_allowed(self):
         """Future-proofing: unknown fields must not break validation."""
-        state = {"schema_version": 1, "datasets": [], "future_field": "keep me"}
+        state = {"schema_version": 2, "datasets": [], "future_field": "keep me"}
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 1
+        assert CURRENT_SCHEMA_VERSION == 2
 
 
 class TestProjectIO:
@@ -110,7 +118,7 @@ class TestProjectIO:
         save_project(state, path)
 
         loaded = load_project(path)
-        assert loaded["schema_version"] == 1
+        assert loaded["schema_version"] == 2
         assert loaded["datasets"] == []
 
     def test_file_is_valid_json(self, tmp_path):
@@ -118,7 +126,7 @@ class TestProjectIO:
         path = tmp_path / "test.asymp"
         save_project(state, path)
         raw = json.loads(path.read_text(encoding="utf-8"))
-        assert raw["schema_version"] == 1
+        assert raw["schema_version"] == 2
 
     def test_numpy_arrays_serialised_as_lists(self, tmp_path):
         state = _minimal_state()
@@ -142,7 +150,7 @@ class TestProjectIO:
             load_project(path)
 
     def test_load_missing_key_raises(self, tmp_path):
-        bad_state = {"schema_version": 1}  # datasets key missing
+        bad_state = {"schema_version": 2}  # datasets key missing
         path = tmp_path / "bad.asymp"
         path.write_text(json.dumps(bad_state), encoding="utf-8")
         with pytest.raises(ValueError, match="missing required keys"):

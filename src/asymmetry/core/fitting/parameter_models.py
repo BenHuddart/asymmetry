@@ -44,7 +44,9 @@ def _power_law(x: NDArray, a: float, n: float, c: float = 0.0) -> NDArray[np.flo
 
 def _exp_decay(x: NDArray, a: float, tau: float, c: float = 0.0) -> NDArray[np.float64]:
     xx = np.asarray(x, dtype=float)
-    tau_safe = np.sign(tau) * max(abs(tau), 1e-12)
+    tau_value = float(tau)
+    tau_sign = 1.0 if tau_value >= 0.0 else -1.0
+    tau_safe = tau_sign * max(abs(tau_value), 1e-12)
     exponent = np.clip(-xx / tau_safe, -700, 700)
     return a * np.exp(exponent) + c
 
@@ -92,6 +94,14 @@ def _lorentzian(x: NDArray, a: float, B0: float, c: float = 0.0) -> NDArray[np.f
     xx = np.asarray(x, dtype=float)
     B0_safe = np.sign(B0) * max(abs(B0), 1e-12)
     return a / (1.0 + (xx / B0_safe) ** 2) + c
+
+
+def _lcr_gaussian(x: NDArray, f: float, B0: float, Bwid: float) -> NDArray[np.float64]:
+    """Eq. (4) LCR Gaussian term: lambda_LCR(B) = f * G(B; B0; Bwid)."""
+    xx = np.asarray(x, dtype=float)
+    bwid_safe = max(abs(float(Bwid)), 1e-12)
+    exponent = -0.5 * ((xx - float(B0)) / bwid_safe) ** 2
+    return float(f) * np.exp(exponent)
 
 
 def _lambda_bg(x: NDArray, lambda_BG: float) -> NDArray[np.float64]:
@@ -205,6 +215,15 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_names=["a", "B0", "c"],
         param_defaults={"a": 1.0, "B0": 100.0, "c": 0.0},
         formula_template="{a}/(1 + (x/{B0})^2) + {c}",
+        scopes=("field",),
+    ),
+    "GaussianLCR": ParameterModelComponentDefinition(
+        name="GaussianLCR",
+        description="f*G(B; B0; Bwid)",
+        function=_lcr_gaussian,
+        param_names=["f", "B0", "Bwid"],
+        param_defaults={"f": 0.1, "B0": 1000.0, "Bwid": 100.0},
+        formula_template="{f}*G(x; {B0}; {Bwid})",
         scopes=("field",),
     ),
     "DiffusionLF_1D": ParameterModelComponentDefinition(
@@ -464,6 +483,33 @@ class ParameterModelFitExecution:
     result: ParameterModelFitResult
 
 
+@dataclass
+class ParameterGroupData:
+    """Input data for one selected group in a cross-group parameter fit."""
+
+    group_id: str
+    group_name: str
+    x: NDArray[np.float64]
+    y: NDArray[np.float64]
+    yerr: NDArray[np.float64]
+    group_variable_value: float
+
+
+@dataclass
+class CrossGroupFitResult:
+    """Result container for cross-group parameter fits."""
+
+    success: bool
+    chi_squared: float
+    reduced_chi_squared: float
+    global_parameters: ParameterSet = field(default_factory=ParameterSet)
+    local_parameters: dict[str, ParameterSet] = field(default_factory=dict)
+    fixed_parameters: ParameterSet = field(default_factory=ParameterSet)
+    global_uncertainties: dict[str, float] = field(default_factory=dict)
+    local_uncertainties: dict[str, dict[str, float]] = field(default_factory=dict)
+    message: str = ""
+
+
 def fit_parameter_model(
     x: NDArray,
     y: NDArray,
@@ -545,6 +591,215 @@ def fit_parameter_model(
         reduced_chi_squared=float(m.fval) / ndof,
         parameters=result_params,
         uncertainties=uncertainties,
+        message="Fit successful" if m.valid else "Fit failed",
+    )
+
+
+def global_fit_parameter_model(
+    groups: list[ParameterGroupData],
+    model: ParameterCompositeModel,
+    global_params: list[str],
+    local_params: list[str],
+    fixed_params: dict[str, float],
+    initial_params: dict[str, float] | None = None,
+    parameter_bounds: dict[str, tuple[float, float]] | None = None,
+    method: str = "migrad",
+) -> CrossGroupFitResult:
+    """Jointly fit a parameter model across multiple groups.
+
+    Parameters are classified as:
+    - global: one shared value across all groups
+    - local: independent value per group
+    - fixed: fixed constant
+    """
+    if len(groups) < 2:
+        return CrossGroupFitResult(
+            success=False,
+            chi_squared=0.0,
+            reduced_chi_squared=0.0,
+            message="Need at least two groups for cross-group fitting",
+        )
+
+    if initial_params is None:
+        initial_params = dict(model.param_defaults)
+    if parameter_bounds is None:
+        parameter_bounds = {}
+
+    all_param_names = set(model.param_names)
+    fixed_names = set(fixed_params.keys())
+    global_names = set(global_params)
+    local_names = set(local_params)
+
+    if (fixed_names | global_names | local_names) - all_param_names:
+        unknown = sorted((fixed_names | global_names | local_names) - all_param_names)
+        return CrossGroupFitResult(
+            success=False,
+            chi_squared=0.0,
+            reduced_chi_squared=0.0,
+            message=f"Unknown parameter classification: {unknown}",
+        )
+
+    unknown_bounds = set(parameter_bounds.keys()) - all_param_names
+    if unknown_bounds:
+        return CrossGroupFitResult(
+            success=False,
+            chi_squared=0.0,
+            reduced_chi_squared=0.0,
+            message=f"Unknown parameter bounds: {sorted(unknown_bounds)}",
+        )
+
+    unclassified = all_param_names - fixed_names - global_names - local_names
+    # Default any unspecified parameters to global to avoid accidental omission.
+    global_names |= unclassified
+
+    bounds_by_param: dict[str, tuple[float, float]] = {}
+    for pname in all_param_names:
+        raw_bounds = parameter_bounds.get(pname, (-float("inf"), float("inf")))
+        try:
+            p_min = float(raw_bounds[0])
+        except (TypeError, ValueError, IndexError):
+            p_min = -float("inf")
+        try:
+            p_max = float(raw_bounds[1])
+        except (TypeError, ValueError, IndexError):
+            p_max = float("inf")
+        if p_min > p_max:
+            p_min, p_max = p_max, p_min
+        bounds_by_param[pname] = (p_min, p_max)
+
+    fixed_values: dict[str, float] = {}
+    for pname in sorted(fixed_names):
+        init_val = float(
+            fixed_params.get(pname, initial_params.get(pname, model.param_defaults.get(pname, 0.0)))
+        )
+        p_min, p_max = bounds_by_param[pname]
+        fixed_values[pname] = min(max(init_val, p_min), p_max)
+
+    try:
+        from iminuit import Minuit
+    except ImportError as exc:
+        return CrossGroupFitResult(
+            success=False,
+            chi_squared=0.0,
+            reduced_chi_squared=0.0,
+            message=f"iminuit import error: {exc}",
+        )
+
+    # Build Minuit parameter vector with deterministic names.
+    fit_param_names: list[str] = []
+    fit_init_values: list[float] = []
+    fit_limits: dict[str, tuple[float, float]] = {}
+
+    for pname in sorted(global_names):
+        minuit_name = f"g__{pname}"
+        fit_param_names.append(minuit_name)
+        init_val = float(initial_params.get(pname, model.param_defaults.get(pname, 0.0)))
+        p_min, p_max = bounds_by_param[pname]
+        fit_init_values.append(min(max(init_val, p_min), p_max))
+        fit_limits[minuit_name] = (p_min, p_max)
+
+    for gidx, group in enumerate(groups):
+        for pname in sorted(local_names):
+            minuit_name = f"l__{gidx}__{pname}"
+            fit_param_names.append(minuit_name)
+            init_val = float(initial_params.get(pname, model.param_defaults.get(pname, 0.0)))
+            p_min, p_max = bounds_by_param[pname]
+            fit_init_values.append(min(max(init_val, p_min), p_max))
+            fit_limits[minuit_name] = (p_min, p_max)
+
+    def _build_kwargs(arg_map: dict[str, float], gidx: int) -> dict[str, float]:
+        kwargs = {name: float(val) for name, val in fixed_values.items()}
+        for pname in global_names:
+            kwargs[pname] = float(arg_map[f"g__{pname}"])
+        for pname in local_names:
+            kwargs[pname] = float(arg_map[f"l__{gidx}__{pname}"])
+        return kwargs
+
+    def cost_function(*args: float) -> float:
+        arg_map = dict(zip(fit_param_names, args, strict=False))
+        total = 0.0
+        for gidx, group in enumerate(groups):
+            x = np.asarray(group.x, dtype=float)
+            y = np.asarray(group.y, dtype=float)
+            e = np.asarray(group.yerr, dtype=float)
+            mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(e) & (e > 0)
+            if not np.any(mask):
+                continue
+            xx = x[mask]
+            yy = y[mask]
+            ee = e[mask]
+            kwargs = _build_kwargs(arg_map, gidx)
+            pred = np.asarray(model.function(xx, **kwargs), dtype=float)
+            resid = (yy - pred) / ee
+            total += float(np.sum(resid ** 2))
+        return total
+
+    m = Minuit(cost_function, *fit_init_values, name=fit_param_names)
+    for i, minuit_name in enumerate(fit_param_names):
+        p_min, p_max = fit_limits[minuit_name]
+        if p_min != -float("inf") or p_max != float("inf"):
+            m.limits[i] = (p_min, p_max)
+    if method == "simplex":
+        m.simplex()
+    else:
+        m.migrad()
+
+    total_points = 0
+    for group in groups:
+        x = np.asarray(group.x, dtype=float)
+        y = np.asarray(group.y, dtype=float)
+        e = np.asarray(group.yerr, dtype=float)
+        mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(e) & (e > 0)
+        total_points += int(np.sum(mask))
+
+    ndof = max(total_points - len(fit_param_names), 1)
+
+    global_parameter_set = ParameterSet()
+    local_parameter_sets: dict[str, ParameterSet] = {}
+    fixed_parameter_set = ParameterSet()
+    global_unc: dict[str, float] = {}
+    local_unc: dict[str, dict[str, float]] = {}
+
+    values_by_name = {name: float(m.values[name]) for name in fit_param_names}
+
+    for pname in sorted(global_names):
+        key = f"g__{pname}"
+        val = values_by_name[key]
+        p_min, p_max = bounds_by_param[pname]
+        global_parameter_set.add(Parameter(name=pname, value=val, min=p_min, max=p_max, fixed=False))
+        err = m.errors[key]
+        if err is not None and np.isfinite(err):
+            global_unc[pname] = float(err)
+
+    for gidx, group in enumerate(groups):
+        pset = ParameterSet()
+        unc_map: dict[str, float] = {}
+        for pname in sorted(local_names):
+            key = f"l__{gidx}__{pname}"
+            val = values_by_name[key]
+            p_min, p_max = bounds_by_param[pname]
+            pset.add(Parameter(name=pname, value=val, min=p_min, max=p_max, fixed=False))
+            err = m.errors[key]
+            if err is not None and np.isfinite(err):
+                unc_map[pname] = float(err)
+        local_parameter_sets[group.group_id] = pset
+        local_unc[group.group_id] = unc_map
+
+    for pname in sorted(fixed_names):
+        p_min, p_max = bounds_by_param[pname]
+        fixed_parameter_set.add(
+            Parameter(name=pname, value=fixed_values[pname], min=p_min, max=p_max, fixed=True)
+        )
+
+    return CrossGroupFitResult(
+        success=bool(m.valid),
+        chi_squared=float(m.fval),
+        reduced_chi_squared=float(m.fval) / float(ndof),
+        global_parameters=global_parameter_set,
+        local_parameters=local_parameter_sets,
+        fixed_parameters=fixed_parameter_set,
+        global_uncertainties=global_unc,
+        local_uncertainties=local_unc,
         message="Fit successful" if m.valid else "Fit failed",
     )
 

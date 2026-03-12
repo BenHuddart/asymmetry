@@ -1,20 +1,20 @@
-"""Data browser / logbook panel.
-
-Displays a table of loaded runs (like WiMDA's run browser) with columns for
-run number, title, temperature, field, etc.  Clicking a row selects it for
-plotting and analysis.
-"""
+"""Data browser / logbook panel with dataset grouping support."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import uuid
+
 import numpy as np
 from PySide6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QPoint, Qt, QTimer, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDialog,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QMenu,
     QPushButton,
     QScrollArea,
@@ -41,15 +41,20 @@ class NumericTableWidgetItem(QTableWidgetItem):
         if isinstance(other, NumericTableWidgetItem):
             return self._numeric_value < other._numeric_value
 
-        # Mixed item types can happen in the Run column when combined rows are
-        # displayed as labels like "3031 + 3034". Avoid calling super().__lt__
-        # here because Qt may bounce back into Python overrides recursively.
         other_text = other.text() if isinstance(other, QTableWidgetItem) else str(other)
         try:
             other_numeric = float(other_text)
             return self._numeric_value < other_numeric
         except (ValueError, TypeError):
             return self.text() < other_text
+
+
+@dataclass
+class DataGroup:
+    group_id: str
+    name: str
+    member_run_numbers: list[int]
+    collapsed: bool = False
 
 
 class FilterDialog(QDialog):
@@ -60,7 +65,7 @@ class FilterDialog(QDialog):
         column_name: str,
         unique_values: list[str],
         current_selection: set[str] | None,
-        parent: QWidget | None = None
+        parent: QWidget | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(f"Filter - {column_name}")
@@ -68,30 +73,23 @@ class FilterDialog(QDialog):
         self.setMinimumHeight(400)
 
         self._checkboxes: list[QCheckBox] = []
-        self._unique_values = unique_values
 
         layout = QVBoxLayout(self)
 
-        # "All" checkbox
         self._all_checkbox = QCheckBox("(Select All)")
         self._all_checkbox.setChecked(current_selection is None)
         self._all_checkbox.stateChanged.connect(self._on_all_changed)
         layout.addWidget(self._all_checkbox)
 
-        # Scrollable area for value checkboxes
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
         scroll_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Create checkbox for each unique value
         for value in unique_values:
             checkbox = QCheckBox(value)
-            if current_selection is None:
-                checkbox.setChecked(True)
-            else:
-                checkbox.setChecked(value in current_selection)
+            checkbox.setChecked(current_selection is None or value in current_selection)
             checkbox.stateChanged.connect(self._on_checkbox_changed)
             self._checkboxes.append(checkbox)
             scroll_layout.addWidget(checkbox)
@@ -100,7 +98,6 @@ class FilterDialog(QDialog):
         scroll.setWidget(scroll_widget)
         layout.addWidget(scroll)
 
-        # Buttons
         button_layout = QHBoxLayout()
         button_layout.addStretch()
 
@@ -119,7 +116,6 @@ class FilterDialog(QDialog):
         layout.addLayout(button_layout)
 
     def _on_all_changed(self, state: int) -> None:
-        """Handle 'Select All' checkbox change."""
         checked = state == Qt.CheckState.Checked.value
         for checkbox in self._checkboxes:
             checkbox.blockSignals(True)
@@ -127,7 +123,6 @@ class FilterDialog(QDialog):
             checkbox.blockSignals(False)
 
     def _on_checkbox_changed(self) -> None:
-        """Handle individual checkbox change - update 'All' checkbox state."""
         all_checked = all(cb.isChecked() for cb in self._checkboxes)
         none_checked = not any(cb.isChecked() for cb in self._checkboxes)
 
@@ -141,70 +136,38 @@ class FilterDialog(QDialog):
         self._all_checkbox.blockSignals(False)
 
     def _clear_filter(self) -> None:
-        """Clear the filter for this column and close."""
         self._all_checkbox.setChecked(True)
         self.done(QDialog.DialogCode.Accepted)
 
     def get_selected_values(self) -> set[str] | None:
-        """Return set of selected values, or None if all are selected (no filter)."""
-        # Check if all checkboxes are checked (not just the Select All checkbox)
-        all_checked = all(cb.isChecked() for cb in self._checkboxes)
-
-        if all_checked:
-            # All selected = no filter
+        if all(cb.isChecked() for cb in self._checkboxes):
             return None
-
-        selected = {
-            checkbox.text() for checkbox in self._checkboxes
-            if checkbox.isChecked()
-        }
-
-        # Return the set of selected values (could be empty)
-        return selected
+        return {checkbox.text() for checkbox in self._checkboxes if checkbox.isChecked()}
 
 
 class DataBrowserPanel(QWidget):
-    """Logbook-style run table with sorting, filtering, and co-add capabilities.
+    """Logbook-style run table with grouping, sorting, filtering and co-add."""
 
-    Features
-    --------
-    * **Sorting**: Left-click column headers to sort (toggle asc/desc)
-    * **Excel-style filtering**: Right-click column headers to open filter dialog
-      with checkboxes for all unique values in that column
-    * **Multi-selection**: Ctrl+Click and Shift+Click for range selection
-    * **Context menu actions**: Right-click rows to access options:
-      
-      - **Co-add Selected**: Average multiple datasets (appears for 2+ selected)
-      - **Separate Combined**: Break apart a combined dataset (appears for combined entries)
-      - **Remove Entry(ies)**: Delete selected dataset(s) (always available)
-    
-    * **Delete key**: Press Delete/Backspace to remove selected datasets
-
-    Signals
-    -------
-    dataset_selected : Signal(int)
-        Emitted with run_number when a dataset is selected for viewing/analysis
-    selection_changed : Signal()
-        Emitted when the selection of datasets changes in the table
-
-    Implementation Notes
-    --------------------
-    Uses manual sorting via sortItems() and custom event filter on header viewport
-    to avoid Qt's broken header state machine when modal dialogs are opened.
-    """
-
-    dataset_selected = Signal(int)  # emits run_number
-    selection_changed = Signal()    # emits when table selection changes
+    dataset_selected = Signal(int)
+    selection_changed = Signal()
+    group_selected = Signal(str)
 
     _COLUMNS = ["Run", "Title", "𝑇 (K)", "𝐵 (G)", "Comment"]
+    _GROUP_ROLE = Qt.ItemDataRole.UserRole
+    _GROUP_SENTINEL_PREFIX = "group:"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._datasets: dict[int, MuonDataset] = {}
-        self._combined_datasets: dict[int, list[int]] = {}  # combined_run -> [original_runs]
+        self._combined_datasets: dict[int, list[int]] = {}
         self._combined_source_datasets: dict[int, list[MuonDataset]] = {}
-        self._next_combined_id = -1  # Use negative IDs for combined datasets
-        self._column_filters: dict[int, set[str]] = {}  # column_index -> set of selected values
+        self._next_combined_id = -1
+
+        self._groups: dict[str, DataGroup] = {}
+        self._run_to_group: dict[int, str] = {}
+        self._display_order: list[int | str] = []
+
+        self._column_filters: dict[int, set[str]] = {}
         self._current_sort_column: int = -1
         self._current_sort_order: Qt.SortOrder = Qt.SortOrder.AscendingOrder
         self._selection_anchor_row: int | None = None
@@ -213,11 +176,6 @@ class DataBrowserPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Table – sorting and filtering are handled entirely through an event
-        # filter on the header viewport.  We never use setSortingEnabled or
-        # sectionClicked/customContextMenuRequested because Qt's internal
-        # header state machine gets corrupted by the modal filter dialog,
-        # causing subsequent left-clicks to hang.
         self._table = QTableWidget(0, len(self._COLUMNS))
         self._table.setHorizontalHeaderLabels(self._COLUMNS)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -227,60 +185,344 @@ class DataBrowserPanel(QWidget):
             | QTableWidget.EditTrigger.EditKeyPressed
             | QTableWidget.EditTrigger.SelectedClicked
         )
-        # Start with widths that fill the default browser width (~480px).
-        # After data is loaded, columns are resized to fit content.
+
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.resizeSection(0, 70)   # Run
-        header.resizeSection(1, 145)  # Title
-        header.resizeSection(2, 60)   # 𝑇 (K)
-        header.resizeSection(3, 60)   # 𝐵 (G)
-        header.resizeSection(4, 155)  # Comment
+        header.resizeSection(0, 110)
+        header.resizeSection(1, 145)
+        header.resizeSection(2, 60)
+        header.resizeSection(3, 60)
+        header.resizeSection(4, 155)
         self._table.setSortingEnabled(False)
         self._table.horizontalHeader().setSortIndicatorShown(True)
         self._table.horizontalHeader().setSectionsClickable(False)
         self._table.horizontalHeader().viewport().installEventFilter(self)
         self._table.viewport().installEventFilter(self)
         self._table.installEventFilter(self)
-        # Enable context menus on the table
+
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.viewport().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_table_context_menu)
         self._table.viewport().customContextMenuRequested.connect(self._show_table_context_menu)
-        # Removed: self._table.cellClicked.connect(self._on_cell_clicked)
-        # Using itemSelectionChanged instead to avoid interfering with multi-selection
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
         self._table.itemChanged.connect(self._on_item_changed)
 
         layout.addWidget(self._table)
-
-        # Set minimum width very small to allow shrinking, but default is user-resizable
         self.setMinimumWidth(250)
 
+    # ------------------------------------------------------------------
+    # Dataset and grouping CRUD
+    # ------------------------------------------------------------------
+
     def add_dataset(self, dataset: MuonDataset) -> None:
-        rn = dataset.run_number
+        rn = int(dataset.run_number)
         self._datasets[rn] = dataset
-        self._add_table_row(dataset)
+        if rn not in self._display_order and rn not in self._run_to_group:
+            self._display_order.append(rn)
+        if self._current_sort_column >= 0 and not self._groups:
+            self._sort_table(rebuild=False)
+        self._rebuild_table()
         self._resize_columns_to_content()
 
+    def create_data_group(
+        self,
+        run_numbers: list[int],
+        name: str | None = None,
+        group_id: str | None = None,
+        collapsed: bool = False,
+    ) -> str | None:
+        valid_runs = [rn for rn in run_numbers if rn in self._datasets]
+        if len(valid_runs) < 2:
+            return None
+
+        gid = group_id or str(uuid.uuid4())
+        if gid in self._groups:
+            return None
+
+        for rn in valid_runs:
+            old_gid = self._run_to_group.get(rn)
+            if old_gid is not None:
+                self._remove_run_from_group(rn, old_gid)
+
+        if not name:
+            name = self._default_group_name(valid_runs)
+
+        first_index = min(self._display_index_for_run(rn) for rn in valid_runs)
+        for rn in valid_runs:
+            if rn in self._display_order:
+                self._display_order.remove(rn)
+
+        self._display_order.insert(first_index, gid)
+        self._groups[gid] = DataGroup(
+            group_id=gid,
+            name=name,
+            member_run_numbers=list(valid_runs),
+            collapsed=collapsed,
+        )
+        for rn in valid_runs:
+            self._run_to_group[rn] = gid
+
+        self._move_groups_to_top()
+
+        self._rebuild_table()
+        return gid
+
+    def ungroup(self, group_id: str) -> None:
+        group = self._groups.get(group_id)
+        if group is None:
+            return
+
+        insert_index = self._display_order.index(group_id) if group_id in self._display_order else len(self._display_order)
+        if group_id in self._display_order:
+            self._display_order.remove(group_id)
+
+        for offset, rn in enumerate(group.member_run_numbers):
+            self._run_to_group.pop(rn, None)
+            if rn in self._datasets:
+                self._display_order.insert(insert_index + offset, rn)
+
+        self._groups.pop(group_id, None)
+        self._move_groups_to_top()
+        self._rebuild_table()
+
+    def _move_groups_to_top(self) -> None:
+        """Keep all group headers above non-grouped rows in display order."""
+        groups = [entry for entry in self._display_order if isinstance(entry, str) and entry in self._groups]
+        runs = [entry for entry in self._display_order if isinstance(entry, int)]
+        self._display_order = groups + runs
+
+    def _remove_run_from_group(self, run_number: int, group_id: str) -> None:
+        group = self._groups.get(group_id)
+        if group is None:
+            return
+        group.member_run_numbers = [rn for rn in group.member_run_numbers if rn != run_number]
+        self._run_to_group.pop(run_number, None)
+        if len(group.member_run_numbers) == 0:
+            self.ungroup(group_id)
+
+    def add_runs_to_group(self, run_numbers: list[int], group_id: str) -> bool:
+        """Add existing dataset run rows into an existing group.
+
+        Parameters
+        ----------
+        run_numbers
+            Dataset run numbers to move.
+        group_id
+            Target group identifier.
+
+        Returns
+        -------
+        bool
+            ``True`` if at least one run was moved.
+        """
+        group = self._groups.get(group_id)
+        if group is None:
+            return False
+
+        moved_any = False
+        for rn in run_numbers:
+            if rn not in self._datasets:
+                continue
+            if self._run_to_group.get(rn) == group_id:
+                continue
+
+            old_gid = self._run_to_group.get(rn)
+            if old_gid is not None:
+                self._remove_run_from_group(rn, old_gid)
+
+            if rn in self._display_order:
+                self._display_order.remove(rn)
+            self._run_to_group[rn] = group_id
+            group.member_run_numbers.append(rn)
+            moved_any = True
+
+        if moved_any:
+            self._move_groups_to_top()
+            self._rebuild_table()
+        return moved_any
+
+    def remove_runs_from_group(self, run_numbers: list[int]) -> bool:
+        """Remove selected runs from their current groups and move to top-level list."""
+        moved_any = False
+        insert_at = len(self._display_order)
+        for rn in run_numbers:
+            gid = self._run_to_group.get(rn)
+            if gid is None or rn not in self._datasets:
+                continue
+            group_index = self._display_order.index(gid) if gid in self._display_order else len(self._display_order)
+            insert_at = min(insert_at, group_index + 1)
+            self._remove_run_from_group(rn, gid)
+            if rn not in self._display_order:
+                self._display_order.insert(insert_at, rn)
+                insert_at += 1
+            moved_any = True
+
+        if moved_any:
+            self._move_groups_to_top()
+            self._rebuild_table()
+        return moved_any
+
+    def _default_group_name(self, run_numbers: list[int]) -> str:
+        datasets = [self._datasets[rn] for rn in run_numbers if rn in self._datasets]
+        if not datasets:
+            return f"Group {len(self._groups) + 1}"
+
+        temps = [float(ds.metadata.get("temperature", np.nan)) for ds in datasets]
+        fields = [float(ds.metadata.get("field", np.nan)) for ds in datasets]
+        if all(np.isfinite(v) for v in temps) and np.ptp(temps) < 1e-9:
+            return f"T = {temps[0]:.6g} K"
+        if all(np.isfinite(v) for v in fields) and np.ptp(fields) < 1e-9:
+            return f"B = {fields[0]:.6g} G"
+        return f"Group {len(self._groups) + 1}"
+
+    def _display_index_for_run(self, run_number: int) -> int:
+        gid = self._run_to_group.get(run_number)
+        if gid is not None and gid in self._display_order:
+            return self._display_order.index(gid)
+        if run_number in self._display_order:
+            return self._display_order.index(run_number)
+        return len(self._display_order)
+
+    # ------------------------------------------------------------------
+    # Table building
+    # ------------------------------------------------------------------
+
+    def _rebuild_table(self) -> None:
+        selected_keys = self._selected_keys()
+
+        self._updating_table = True
+        self._table.setRowCount(0)
+
+        for entry in self._display_order:
+            if isinstance(entry, str):
+                self._add_group_header_row(entry)
+                group = self._groups.get(entry)
+                if group is None:
+                    continue
+                if not group.collapsed:
+                    for rn in group.member_run_numbers:
+                        if rn in self._datasets:
+                            self._add_dataset_row(self._datasets[rn], indent=True)
+            else:
+                dataset = self._datasets.get(entry)
+                if dataset is not None:
+                    self._add_dataset_row(dataset, indent=False)
+
+        self._updating_table = False
+        self._apply_row_visibility()
+        self._restore_selection_by_keys(selected_keys)
+
+    def _add_group_header_row(self, group_id: str) -> None:
+        group = self._groups.get(group_id)
+        if group is None:
+            return
+
+        row = self._table.rowCount()
+        self._table.insertRow(row)
+
+        prefix = "▸" if group.collapsed else "▾"
+        run_item = QTableWidgetItem(f"{prefix} {group.name}")
+        run_item.setData(self._GROUP_ROLE, f"{self._GROUP_SENTINEL_PREFIX}{group.group_id}")
+        run_item.setFlags((run_item.flags() & ~Qt.ItemFlag.ItemIsEditable) | Qt.ItemFlag.ItemIsSelectable)
+        font = run_item.font()
+        font.setBold(True)
+        run_item.setFont(font)
+        shade = QColor(230, 236, 245)
+        run_item.setBackground(shade)
+        self._table.setItem(row, 0, run_item)
+
+        count_item = QTableWidgetItem(f"({len(group.member_run_numbers)} datasets)")
+        count_item.setFlags(count_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        count_item.setFont(font)
+        count_item.setBackground(shade)
+        self._table.setItem(row, 1, count_item)
+
+        for col in range(2, len(self._COLUMNS)):
+            blank = QTableWidgetItem("")
+            blank.setFlags(blank.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            blank.setFont(font)
+            blank.setBackground(shade)
+            self._table.setItem(row, col, blank)
+
+    def _add_dataset_row(self, dataset: MuonDataset, *, indent: bool) -> None:
+        rn = int(dataset.run_number)
+        meta = dataset.metadata
+        run_display = str(rn)
+        if rn in self._combined_datasets:
+            run_display = " + ".join(map(str, self._combined_datasets[rn]))
+        if indent:
+            run_display = f"    {run_display}"
+
+        row = self._table.rowCount()
+        self._table.insertRow(row)
+
+        if rn in self._combined_datasets:
+            run_item = QTableWidgetItem(run_display)
+        else:
+            run_item = NumericTableWidgetItem(run_display)
+        run_item.setData(self._GROUP_ROLE, rn)
+        run_item.setFlags(run_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self._table.setItem(row, 0, run_item)
+
+        title = str(meta.get("title", ""))
+        title_item = QTableWidgetItem(title)
+        title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self._table.setItem(row, 1, title_item)
+
+        temp = float(meta.get("temperature", 0.0))
+        temp_item = NumericTableWidgetItem(f"{temp:.2f}")
+        temp_item.setFlags(temp_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self._table.setItem(row, 2, temp_item)
+
+        field = float(meta.get("field", 0.0))
+        field_item = NumericTableWidgetItem(f"{field:.1f}")
+        field_item.setFlags(field_item.flags() | Qt.ItemFlag.ItemIsEditable)
+        self._table.setItem(row, 3, field_item)
+
+        comment = str(meta.get("comment", ""))
+        comment_item = QTableWidgetItem(comment)
+        comment_item.setFlags(comment_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self._table.setItem(row, 4, comment_item)
+
+    def _selected_keys(self) -> list[int | str]:
+        selected: list[int | str] = []
+        selection_model = self._table.selectionModel()
+        if selection_model is None:
+            return selected
+        for idx in selection_model.selectedRows():
+            item = self._table.item(idx.row(), 0)
+            if item is None:
+                continue
+            key = item.data(self._GROUP_ROLE)
+            if isinstance(key, (int, str)):
+                selected.append(key)
+        return selected
+
+    def _restore_selection_by_keys(self, keys: list[int | str]) -> None:
+        if not keys:
+            return
+        wanted = set(keys)
+        selection_model = self._table.selectionModel()
+        if selection_model is None:
+            return
+        self._table.clearSelection()
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, 0)
+            if item is None:
+                continue
+            key = item.data(self._GROUP_ROLE)
+            if key in wanted:
+                idx = self._table.model().index(row, 0)
+                selection_model.select(
+                    idx,
+                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                )
+
     def _resize_columns_to_content(self) -> None:
-        """Expand columns to fit loaded content while keeping sensible minima."""
         self._table.resizeColumnsToContents()
         header = self._table.horizontalHeader()
-        minimums = {
-            0: 70,   # Run
-            1: 145,  # Title
-            2: 60,   # 𝑇 (K)
-            3: 60,   # 𝐵 (G)
-            4: 155,  # Comment
-        }
-        maximums = {
-            0: 110,  # Run
-            1: 260,  # Title
-            2: 90,   # 𝑇 (K)
-            3: 90,   # 𝐵 (G)
-            4: 320,  # Comment
-        }
+        minimums = {0: 90, 1: 145, 2: 60, 3: 60, 4: 155}
+        maximums = {0: 180, 1: 260, 2: 90, 3: 90, 4: 320}
         for col, min_width in minimums.items():
             size = header.sectionSize(col)
             if size < min_width:
@@ -288,121 +530,74 @@ class DataBrowserPanel(QWidget):
             elif size > maximums[col]:
                 header.resizeSection(col, maximums[col])
 
-    def _insert_table_row_at(self, dataset: MuonDataset, row: int) -> None:
-        """Insert a row at the given position for the given dataset."""
-        rn = dataset.run_number
-        meta = dataset.metadata
+    # ------------------------------------------------------------------
+    # Row and selection helpers
+    # ------------------------------------------------------------------
 
-        # Get title from metadata (for combined datasets, this already contains
-        # the shared title if applicable, or a generic "Combined N runs" label)
-        title = meta.get("title", "")
+    def _is_group_key(self, key: object) -> bool:
+        return isinstance(key, str) and key.startswith(self._GROUP_SENTINEL_PREFIX)
 
-        # Display run numbers as "3077 + 3076" for combined datasets
-        run_display = str(rn)
-        if rn in self._combined_datasets:
-            run_display = " + ".join(map(str, self._combined_datasets[rn]))
+    def _group_id_from_key(self, key: object) -> str | None:
+        if not self._is_group_key(key):
+            return None
+        return str(key)[len(self._GROUP_SENTINEL_PREFIX):]
 
-        self._table.insertRow(row)
-        self._updating_table = True
+    def _dataset_run_numbers_from_keys(self, keys: list[int | str]) -> list[int]:
+        out: list[int] = []
+        seen: set[int] = set()
+        for key in keys:
+            if isinstance(key, int) and key in self._datasets and key not in seen:
+                out.append(key)
+                seen.add(key)
+                continue
+            gid = self._group_id_from_key(key)
+            if gid is None:
+                continue
+            group = self._groups.get(gid)
+            if group is None:
+                continue
+            for rn in group.member_run_numbers:
+                if rn in self._datasets and rn not in seen:
+                    out.append(rn)
+                    seen.add(rn)
+        return out
 
-        # Column 0: Run number (display composite label for combined entries)
-        if rn in self._combined_datasets:
-            item = QTableWidgetItem(run_display)
-        else:
-            item = NumericTableWidgetItem(rn)
-        item.setData(Qt.ItemDataRole.UserRole, rn)
-        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self._table.setItem(row, 0, item)
+    def _get_selected_run_numbers(self) -> list[int]:
+        return self._dataset_run_numbers_from_keys(self._selected_keys())
 
-        # Column 1: Title (text)
-        title_item = QTableWidgetItem(title)
-        title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self._table.setItem(row, 1, title_item)
+    def _get_selected_group_ids(self) -> list[str]:
+        ids: list[str] = []
+        for key in self._selected_keys():
+            gid = self._group_id_from_key(key)
+            if gid is not None:
+                ids.append(gid)
+        return ids
 
-        # Column 2: Temperature (numeric)
-        temp = float(meta.get('temperature', 0))
-        temp_item = NumericTableWidgetItem(f"{temp:.2f}")
-        temp_item.setFlags(temp_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self._table.setItem(row, 2, temp_item)
+    def get_selected_group_ids(self) -> list[str]:
+        return self._get_selected_group_ids()
 
-        # Column 3: Field (numeric)
-        field = float(meta.get('field', 0))
-        field_item = NumericTableWidgetItem(f"{field:.1f}")
-        # Field is editable to support manual correction.
-        field_item.setFlags(field_item.flags() | Qt.ItemFlag.ItemIsEditable)
-        self._table.setItem(row, 3, field_item)
+    def get_group_name(self, group_id: str) -> str | None:
+        group = self._groups.get(group_id)
+        return None if group is None else group.name
 
-        # Column 4: Comment (read-only)
-        comment = str(meta.get("comment", ""))
-        comment_item = QTableWidgetItem(comment)
-        comment_item.setFlags(comment_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self._table.setItem(row, 4, comment_item)
-        self._updating_table = False
+    def get_dataset(self, run_number: int) -> MuonDataset | None:
+        return self._datasets.get(run_number)
 
-        # Maintain current sort order after inserting
-        self._sort_table()
+    def get_selected_datasets(self) -> list[MuonDataset]:
+        selected: list[MuonDataset] = []
+        for run_number in self._get_selected_run_numbers():
+            dataset = self._datasets.get(run_number)
+            if dataset is not None:
+                selected.append(dataset)
+        return selected
 
-    def _add_table_row(self, dataset: MuonDataset) -> None:
-        """Add a row to the table for the given dataset."""
-        rn = dataset.run_number
-        meta = dataset.metadata
-
-        # Get title from metadata (for combined datasets, this already contains
-        # the shared title if applicable, or a generic "Combined N runs" label)
-        title = meta.get("title", "")
-
-        # Display run numbers as "3077 + 3076" for combined datasets
-        run_display = str(rn)
-        if rn in self._combined_datasets:
-            run_display = " + ".join(map(str, self._combined_datasets[rn]))
-
-        row = self._table.rowCount()
-        self._table.insertRow(row)
-        self._updating_table = True
-
-        # Column 0: Run number (display composite label for combined entries)
-        if rn in self._combined_datasets:
-            item = QTableWidgetItem(run_display)
-        else:
-            item = NumericTableWidgetItem(rn)
-        item.setData(Qt.ItemDataRole.UserRole, rn)
-        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self._table.setItem(row, 0, item)
-
-        # Column 1: Title (text)
-        title_item = QTableWidgetItem(title)
-        title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self._table.setItem(row, 1, title_item)
-
-        # Column 2: Temperature (numeric)
-        temp = float(meta.get('temperature', 0))
-        temp_item = NumericTableWidgetItem(f"{temp:.2f}")
-        temp_item.setFlags(temp_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self._table.setItem(row, 2, temp_item)
-
-        # Column 3: Field (numeric)
-        field = float(meta.get('field', 0))
-        field_item = NumericTableWidgetItem(f"{field:.1f}")
-        # Field is editable to support manual correction.
-        field_item.setFlags(field_item.flags() | Qt.ItemFlag.ItemIsEditable)
-        self._table.setItem(row, 3, field_item)
-
-        # Column 4: Comment (read-only)
-        comment = str(meta.get("comment", ""))
-        comment_item = QTableWidgetItem(comment)
-        comment_item.setFlags(comment_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self._table.setItem(row, 4, comment_item)
-        self._updating_table = False
-
-        # Maintain current sort order after inserting
-        self._sort_table()
+    # ------------------------------------------------------------------
+    # Editing and removal
+    # ------------------------------------------------------------------
 
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
-        """Persist manual edits from table back to dataset metadata."""
         if self._updating_table:
             return
-
-        # Only field column is editable/persisted.
         if item.column() != 3:
             return
 
@@ -410,7 +605,11 @@ class DataBrowserPanel(QWidget):
         run_item = self._table.item(row, 0)
         if run_item is None:
             return
-        run_number = run_item.data(Qt.ItemDataRole.UserRole)
+
+        run_number = run_item.data(self._GROUP_ROLE)
+        if not isinstance(run_number, int):
+            return
+
         dataset = self._datasets.get(run_number)
         if dataset is None:
             return
@@ -419,7 +618,6 @@ class DataBrowserPanel(QWidget):
         try:
             field_value = float(text.split()[0]) if text else 0.0
         except ValueError:
-            # Revert invalid edit.
             self._updating_table = True
             item.setText(f"{float(dataset.metadata.get('field', 0.0)):.1f}")
             self._updating_table = False
@@ -429,101 +627,105 @@ class DataBrowserPanel(QWidget):
         if dataset.run is not None:
             dataset.run.metadata["field"] = field_value
 
-        # Normalize display text for consistent sorting/filtering.
         self._updating_table = True
         item.setText(f"{field_value:.1f}")
         self._updating_table = False
 
-    def _remove_row_for_run_number(self, run_number: int) -> None:
-        """Remove a table row by its internal run number ID."""
-        for row in range(self._table.rowCount()):
-            item = self._table.item(row, 0)
-            if item and item.data(Qt.ItemDataRole.UserRole) == run_number:
-                self._table.removeRow(row)
-                return
-
-    def _get_selected_run_numbers(self) -> list[int]:
-        """Return selected run numbers in table order, excluding hidden rows."""
-        selection_model = self._table.selectionModel()
-        if selection_model is None:
-            return []
-
-        run_numbers = []
-        for idx in selection_model.selectedRows():
-            row = idx.row()
-            if self._table.isRowHidden(row):
-                continue
-
-            item = self._table.item(row, 0)
-            if item is None:
-                continue
-
-            run_number = item.data(Qt.ItemDataRole.UserRole)
-            if run_number in self._datasets:
-                run_numbers.append(run_number)
-
-        return run_numbers
-
     def _remove_run_number(self, run_number: int) -> None:
-        """Remove a dataset and any combined-dataset bookkeeping for its row."""
         self._datasets.pop(run_number, None)
         self._combined_datasets.pop(run_number, None)
         self._combined_source_datasets.pop(run_number, None)
-        self._remove_row_for_run_number(run_number)
+
+        gid = self._run_to_group.get(run_number)
+        if gid is not None:
+            self._remove_run_from_group(run_number, gid)
+        if run_number in self._display_order:
+            self._display_order.remove(run_number)
 
     def _remove_selected_entries(self) -> None:
-        """Remove all currently selected entries from the browser."""
-        run_numbers = self._get_selected_run_numbers()
-        if not run_numbers:
+        keys = self._selected_keys()
+        if not keys:
             return
 
-        for run_number in run_numbers:
+        selected_group_ids = [gid for gid in (self._group_id_from_key(k) for k in keys) if gid is not None]
+        for gid in selected_group_ids:
+            self.ungroup(gid)
+
+        for run_number in self._dataset_run_numbers_from_keys(keys):
             self._remove_run_number(run_number)
 
-        self._apply_row_visibility()
+        self._rebuild_table()
         self._on_selection_changed()
 
+    # ------------------------------------------------------------------
+    # Context menu
+    # ------------------------------------------------------------------
+
     def _create_table_context_menu(self) -> QMenu | None:
-        """Create the row context menu for the current table selection."""
-        run_numbers = self._get_selected_run_numbers()
-        if not run_numbers:
+        keys = self._selected_keys()
+        if not keys:
             return None
 
         menu = QMenu(self)
-        
-        # Separate run numbers into regular and combined
-        regular_runs = [rn for rn in run_numbers if rn not in self._combined_datasets]
-        combined_runs = [rn for rn in run_numbers if rn in self._combined_datasets]
-        
-        # Co-add option: show if 2+ regular datasets selected (and no combined datasets)
+        selected_runs = [k for k in keys if isinstance(k, int)]
+        selected_group_ids = [gid for gid in (self._group_id_from_key(k) for k in keys) if gid is not None]
+        expanded_selected_runs = self._dataset_run_numbers_from_keys(keys)
+        grouped_selected_runs = [rn for rn in selected_runs if self._run_to_group.get(rn) is not None]
+
+        regular_runs = [rn for rn in expanded_selected_runs if rn not in self._combined_datasets]
+        combined_runs = [rn for rn in expanded_selected_runs if rn in self._combined_datasets]
+
         if len(regular_runs) >= 2 and not combined_runs:
             menu.addAction("Co-add Selected", self._coadd_selected)
-        
-        # Separate option: show if any combined datasets selected
+            menu.addAction("Form Data Group", self._form_data_group)
+
         if combined_runs:
             menu.addAction("Separate Combined", self._separate_combined)
-        
-        # Separator before delete option
-        if regular_runs or combined_runs:
-            menu.addSeparator()
-        
-        # Delete option
-        label = "Remove Entry" if len(run_numbers) == 1 else "Remove Selected Entries"
+
+        if selected_runs and self._groups:
+            send_menu = menu.addMenu("Send to Group")
+            self._populate_send_to_group_menu(send_menu, selected_runs)
+
+        if grouped_selected_runs:
+            label = "Remove from Group" if len(grouped_selected_runs) == 1 else "Remove from Groups"
+            menu.addAction(label, self._remove_selected_from_group)
+
+        if len(selected_group_ids) == 1 and len(keys) == 1:
+            gid = selected_group_ids[0]
+            group = self._groups.get(gid)
+            if group is not None:
+                collapse_text = "Expand Group" if group.collapsed else "Collapse Group"
+                menu.addAction(collapse_text, lambda gid=gid: self._toggle_group_collapsed(gid))
+                menu.addAction("Rename Group", lambda gid=gid: self._rename_group(gid))
+                menu.addAction("Ungroup", lambda gid=gid: self.ungroup(gid))
+                menu.addSeparator()
+
+        label = "Remove Entry" if len(keys) == 1 else "Remove Selected Entries"
         menu.addAction(label, self._remove_selected_entries)
-        
         return menu
 
-    def _show_table_context_menu(self, position: QPoint) -> None:
-        """Show a context menu for the row under the cursor."""
-        # Handle position from both table and viewport signals
-        # If position comes from viewport, get absolute viewport position
-        # If from table, map from table to viewport
-        sender = self.sender()
-        if sender is self._table:
-            viewport_pos = position
-        else:
-            viewport_pos = position
+    def _populate_send_to_group_menu(self, send_menu: QMenu, selected_runs: list[int]) -> None:
+        """Populate Send-to-Group submenu with current groups."""
+        groups = sorted(self._groups.values(), key=lambda g: g.name.lower())
+        if not groups:
+            action = send_menu.addAction("(No groups)")
+            action.setEnabled(False)
+            return
 
+        for group in groups:
+            action = send_menu.addAction(group.name)
+            action.triggered.connect(
+                lambda _checked=False, gid=group.group_id, runs=list(selected_runs): self.add_runs_to_group(runs, gid)
+            )
+
+    def _remove_selected_from_group(self) -> None:
+        run_numbers = [rn for rn in self._get_selected_run_numbers() if self._run_to_group.get(rn) is not None]
+        if not run_numbers:
+            return
+        self.remove_runs_from_group(run_numbers)
+
+    def _show_table_context_menu(self, position: QPoint) -> None:
+        viewport_pos = position
         item = self._table.itemAt(viewport_pos)
         if item is None:
             return
@@ -540,20 +742,43 @@ class DataBrowserPanel(QWidget):
         global_pos = self._table.viewport().mapToGlobal(viewport_pos)
         menu.popup(global_pos)
 
+    def _form_data_group(self) -> None:
+        run_numbers = [rn for rn in self._get_selected_run_numbers() if rn not in self._combined_datasets]
+        if len(run_numbers) < 2:
+            return
+
+        default_name = self._default_group_name(run_numbers)
+        name, ok = QInputDialog.getText(self, "Form Data Group", "Group name:", text=default_name)
+        if not ok:
+            return
+        group_name = name.strip() or default_name
+        self.create_data_group(run_numbers, name=group_name)
+
+    def _toggle_group_collapsed(self, group_id: str) -> None:
+        group = self._groups.get(group_id)
+        if group is None:
+            return
+        group.collapsed = not group.collapsed
+        self._rebuild_table()
+
+    def _rename_group(self, group_id: str) -> None:
+        group = self._groups.get(group_id)
+        if group is None:
+            return
+        name, ok = QInputDialog.getText(self, "Rename Data Group", "Group name:", text=group.name)
+        if not ok:
+            return
+        new_name = name.strip()
+        if not new_name:
+            return
+        group.name = new_name
+        self._rebuild_table()
+
     # ------------------------------------------------------------------
-    # Event filter – handles header clicks for sorting & filtering
+    # Event filter, selection, sorting, filtering
     # ------------------------------------------------------------------
 
     def eventFilter(self, watched, event):  # noqa: N802
-        """Intercept mouse clicks on the header viewport.
-
-        Left-click  → sort by clicked column.
-        Right-click → open filter dialog for clicked column.
-
-        By handling clicks at this level we bypass QHeaderView's internal
-        mouse-tracking state machine, which was getting corrupted by the
-        modal filter dialog and causing subsequent left-clicks to hang.
-        """
         header = self._table.horizontalHeader()
 
         if watched is self._table and event.type() == QEvent.Type.KeyPress:
@@ -564,10 +789,15 @@ class DataBrowserPanel(QWidget):
                 self._remove_selected_entries()
                 return True
 
-        # Custom selection behavior for table rows:
-        # Shift+Click selects the full range from the anchor row, matching
-        # standard file-browser behavior.
         if watched is self._table.viewport():
+            if event.type() == QEvent.Type.MouseButtonDblClick and event.button() == Qt.MouseButton.LeftButton:
+                item = self._table.itemAt(event.position().toPoint())
+                if item is not None:
+                    gid = self._group_id_from_key(item.data(self._GROUP_ROLE))
+                    if gid is not None:
+                        self._toggle_group_collapsed(gid)
+                        return True
+
             if (
                 event.type() == QEvent.Type.MouseButtonPress
                 and event.button() == Qt.MouseButton.LeftButton
@@ -596,10 +826,7 @@ class DataBrowserPanel(QWidget):
                             selection = QItemSelection(top_left, bottom_right)
                             add_to_selection = bool(
                                 modifiers
-                                & (
-                                    Qt.KeyboardModifier.ControlModifier
-                                    | Qt.KeyboardModifier.MetaModifier
-                                )
+                                & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier)
                             )
                             flags = QItemSelectionModel.SelectionFlag.Rows
                             if add_to_selection:
@@ -607,18 +834,12 @@ class DataBrowserPanel(QWidget):
                             else:
                                 flags |= QItemSelectionModel.SelectionFlag.ClearAndSelect
                             selection_model.select(selection, flags)
-                            selection_model.setCurrentIndex(
-                                index,
-                                QItemSelectionModel.SelectionFlag.NoUpdate,
-                            )
+                            selection_model.setCurrentIndex(index, QItemSelectionModel.SelectionFlag.NoUpdate)
                             return True
                     else:
                         self._selection_anchor_row = row
                         if selection_model is not None:
-                            selection_model.setCurrentIndex(
-                                index,
-                                QItemSelectionModel.SelectionFlag.NoUpdate,
-                            )
+                            selection_model.setCurrentIndex(index, QItemSelectionModel.SelectionFlag.NoUpdate)
 
         if watched is header.viewport():
             if event.type() == QEvent.Type.MouseButtonRelease:
@@ -628,20 +849,13 @@ class DataBrowserPanel(QWidget):
                     return False
                 if event.button() == Qt.MouseButton.LeftButton:
                     self._on_header_clicked(logical_index)
-                    return True  # consumed – don't let header process it
+                    return True
                 if event.button() == Qt.MouseButton.RightButton:
-                    QTimer.singleShot(
-                        0, lambda ci=logical_index: self._open_filter_dialog(ci)
-                    )
+                    QTimer.singleShot(0, lambda ci=logical_index: self._open_filter_dialog(ci))
                     return True
         return super().eventFilter(watched, event)
 
-    # ------------------------------------------------------------------
-    # Sorting – fully manual, never uses setSortingEnabled
-    # ------------------------------------------------------------------
-
     def _on_header_clicked(self, logical_index: int) -> None:
-        """Sort by the given column, toggling order on repeated clicks."""
         if logical_index == self._current_sort_column:
             self._current_sort_order = (
                 Qt.SortOrder.DescendingOrder
@@ -651,31 +865,53 @@ class DataBrowserPanel(QWidget):
         else:
             self._current_sort_column = logical_index
             self._current_sort_order = Qt.SortOrder.AscendingOrder
-
         self._sort_table()
 
-    def _sort_table(self) -> None:
-        """Perform a one-shot sort and re-apply row visibility."""
+    def _sort_table(self, *, rebuild: bool = True) -> None:
         if self._current_sort_column < 0:
             return
-        self._table.sortItems(self._current_sort_column, self._current_sort_order)
-        self._table.horizontalHeader().setSortIndicator(
-            self._current_sort_column, self._current_sort_order
-        )
-        # Row visibility flags don't move with items, so re-apply after sort.
-        self._apply_row_visibility()
 
-    # ------------------------------------------------------------------
-    # Filtering
-    # ------------------------------------------------------------------
+        reverse = self._current_sort_order == Qt.SortOrder.DescendingOrder
+
+        def _sort_key(run_number: int):
+            dataset = self._datasets.get(run_number)
+            if dataset is None:
+                return ""
+            meta = dataset.metadata
+            if self._current_sort_column == 0:
+                return run_number
+            if self._current_sort_column == 1:
+                return str(meta.get("title", ""))
+            if self._current_sort_column == 2:
+                return float(meta.get("temperature", 0.0))
+            if self._current_sort_column == 3:
+                return float(meta.get("field", 0.0))
+            return str(meta.get("comment", ""))
+
+        runs = [entry for entry in self._display_order if isinstance(entry, int)]
+        sorted_runs = sorted(runs, key=_sort_key, reverse=reverse)
+
+        if self._groups:
+            groups = [entry for entry in self._display_order if isinstance(entry, str) and entry in self._groups]
+            self._display_order = groups + sorted_runs
+        else:
+            self._display_order = sorted_runs
+
+        self._table.horizontalHeader().setSortIndicator(self._current_sort_column, self._current_sort_order)
+        if rebuild:
+            self._rebuild_table()
 
     def _open_filter_dialog(self, col_idx: int) -> None:
-        """Open the filter dialog for *col_idx*."""
         unique_values = set()
         for row in range(self._table.rowCount()):
+            run_item = self._table.item(row, 0)
+            if run_item is None:
+                continue
+            if self._is_group_key(run_item.data(self._GROUP_ROLE)):
+                continue
             item = self._table.item(row, col_idx)
             if item:
-                unique_values.add(item.text())
+                unique_values.add(item.text().strip())
 
         dialog = FilterDialog(
             self._COLUMNS[col_idx],
@@ -691,42 +927,86 @@ class DataBrowserPanel(QWidget):
                 self._column_filters[col_idx] = selected_values
             self._apply_row_visibility()
 
-    def _apply_row_visibility(self) -> None:
-        """Show or hide rows according to the active column filters."""
+    def _row_visible_by_filters(self, row: int) -> bool:
         if not self._column_filters:
+            return True
+        for col_idx, allowed in self._column_filters.items():
+            item = self._table.item(row, col_idx)
+            if item and item.text().strip() not in allowed:
+                return False
+        return True
+
+    def _apply_row_visibility(self) -> None:
+        for row in range(self._table.rowCount()):
+            self._table.setRowHidden(row, False)
+
+        if not self._column_filters:
+            # still need to apply collapsed state
             for row in range(self._table.rowCount()):
-                self._table.setRowHidden(row, False)
-            # Filtering state changed; refresh any dependent selection displays.
+                run_item = self._table.item(row, 0)
+                if run_item is None:
+                    continue
+                key = run_item.data(self._GROUP_ROLE)
+                if isinstance(key, int):
+                    gid = self._run_to_group.get(key)
+                    if gid is not None and self._groups.get(gid) is not None and self._groups[gid].collapsed:
+                        self._table.setRowHidden(row, True)
             self.selection_changed.emit()
             return
 
+        # First pass: hide dataset rows not matching filter or collapsed by group.
+        group_has_visible: dict[str, bool] = {gid: False for gid in self._groups}
         for row in range(self._table.rowCount()):
-            visible = True
-            for col_idx, allowed in self._column_filters.items():
-                item = self._table.item(row, col_idx)
-                if item and item.text() not in allowed:
+            run_item = self._table.item(row, 0)
+            if run_item is None:
+                continue
+            key = run_item.data(self._GROUP_ROLE)
+            if self._is_group_key(key):
+                continue
+
+            visible = self._row_visible_by_filters(row)
+            if isinstance(key, int):
+                gid = self._run_to_group.get(key)
+                if gid is not None and self._groups.get(gid) is not None and self._groups[gid].collapsed:
                     visible = False
-                    break
+                if gid is not None and visible:
+                    group_has_visible[gid] = True
             self._table.setRowHidden(row, not visible)
 
-        # Filtering state changed; refresh any dependent selection displays.
+        # Second pass: hide group rows when all children filtered out.
+        for row in range(self._table.rowCount()):
+            run_item = self._table.item(row, 0)
+            if run_item is None:
+                continue
+            gid = self._group_id_from_key(run_item.data(self._GROUP_ROLE))
+            if gid is None:
+                continue
+            self._table.setRowHidden(row, not group_has_visible.get(gid, False))
+
         self.selection_changed.emit()
 
+    def _on_selection_changed(self) -> None:
+        selected_datasets = self.get_selected_datasets()
+        selected_group_ids = self._get_selected_group_ids()
+
+        self.selection_changed.emit()
+
+        if len(selected_group_ids) == 1 and len(self._selected_keys()) == 1:
+            self.group_selected.emit(selected_group_ids[0])
+            return
+
+        if len(selected_datasets) == 1:
+            self.dataset_selected.emit(selected_datasets[0].run_number)
+
+    # ------------------------------------------------------------------
+    # Co-add and separate
+    # ------------------------------------------------------------------
+
     def _coadd_selected(self) -> None:
-        """Co-add (average) selected datasets."""
-        selected_rows = set(item.row() for item in self._table.selectedItems())
-        if len(selected_rows) < 2:
-            return  # Need at least 2 datasets to co-add
+        run_numbers = self._get_selected_run_numbers()
+        if len(run_numbers) < 2:
+            return
 
-        # Get run numbers of selected datasets
-        run_numbers = []
-        for row in sorted(selected_rows):
-            item = self._table.item(row, 0)
-            if item:
-                rn = item.data(Qt.ItemDataRole.UserRole)
-                run_numbers.append(rn)
-
-        # Do not allow nested combined datasets.
         datasets_to_combine = []
         for rn in run_numbers:
             if rn in self._combined_datasets:
@@ -738,40 +1018,29 @@ class DataBrowserPanel(QWidget):
         if len(datasets_to_combine) < 2:
             return
 
-        # Remember the minimum row position to insert at
-        insert_row = min(selected_rows)
+        insert_index = min(self._display_index_for_run(rn) for rn in run_numbers)
 
-        # Perform co-add
         combined_dataset = self._coadd_datasets(datasets_to_combine, run_numbers)
-
-        # Store the combined dataset
         combined_rn = self._next_combined_id
         self._next_combined_id -= 1
 
         self._datasets[combined_rn] = combined_dataset
-        self._combined_datasets[combined_rn] = run_numbers
+        self._combined_datasets[combined_rn] = list(run_numbers)
         self._combined_source_datasets[combined_rn] = [
             self._datasets[rn] for rn in run_numbers if rn in self._datasets
         ]
 
-        # Remove original runs from workspace/table.
         for rn in run_numbers:
-            self._datasets.pop(rn, None)
-            self._remove_row_for_run_number(rn)
+            self._remove_run_number(rn)
 
-        # Insert at the original position
-        self._insert_table_row_at(combined_dataset, insert_row)
+        self._display_order.insert(insert_index, combined_rn)
+        self._rebuild_table()
 
     def _coadd_datasets(
         self,
         datasets: list[MuonDataset],
         run_numbers: list[int],
     ) -> MuonDataset:
-        """Average multiple datasets with proper error propagation.
-
-        Interpolates all datasets to a common time grid (the first dataset's grid).
-        """
-        # Use the first dataset's time grid
         time_grid = datasets[0].time
 
         asymmetries = []
@@ -782,29 +1051,21 @@ class DataBrowserPanel(QWidget):
                 asymmetries.append(dataset.asymmetry)
                 errors_squared.append(dataset.error ** 2)
             else:
-                # Interpolate to common grid using numpy
                 interp_asymmetry = np.interp(time_grid, dataset.time, dataset.asymmetry)
                 interp_error = np.interp(time_grid, dataset.time, dataset.error)
                 asymmetries.append(interp_asymmetry)
                 errors_squared.append(interp_error ** 2)
 
-        # Average asymmetries
         combined_asymmetry = np.mean(asymmetries, axis=0)
-
-        # Propagate errors: σ_avg = sqrt(sum(σ²)) / N
         combined_error = np.sqrt(np.sum(errors_squared, axis=0)) / len(datasets)
 
-        # Determine combined title: use shared title if all non-empty titles match
         titles = [str(d.metadata.get("title", "")).strip() for d in datasets]
         non_empty_titles = [t for t in titles if t]
         if non_empty_titles and all(t == non_empty_titles[0] for t in non_empty_titles):
-            # All non-empty titles match, use it
             combined_title = non_empty_titles[0]
         else:
-            # Mixed or all-empty titles, use generic
             combined_title = f"Combined {len(datasets)} runs"
 
-        # Create combined metadata
         metadata = {
             "title": combined_title,
             "temperature": np.mean([d.metadata.get("temperature", 0) for d in datasets]),
@@ -822,102 +1083,47 @@ class DataBrowserPanel(QWidget):
         )
 
     def _separate_combined(self) -> None:
-        """Separate selected combined datasets back to originals."""
-        selected_rows = set(item.row() for item in self._table.selectedItems())
+        run_numbers = self._get_selected_run_numbers()
+        combined_items = [rn for rn in run_numbers if rn in self._combined_datasets]
+        if not combined_items:
+            return
 
-        # Collect combined run numbers and their row positions
-        combined_items: list[tuple[int, int, int]] = []  # (rn, row, position in selected_rows)
-        for row in sorted(selected_rows):
-            item = self._table.item(row, 0)
-            if not item:
-                continue
-            rn = item.data(Qt.ItemDataRole.UserRole)
-            if rn in self._combined_datasets:
-                combined_items.append((rn, row, len(combined_items)))
-
-        # Process in reverse order to avoid row index shifting issues
-        for rn, orig_row, _ in reversed(combined_items):
-            # Insert source datasets at the position of the combined dataset
-            insert_row = orig_row
+        for rn in combined_items:
+            insert_index = self._display_index_for_run(rn)
             source_datasets = self._combined_source_datasets.get(rn, [])
-            
-            # Remove the combined dataset first
+
             self._datasets.pop(rn, None)
             self._combined_datasets.pop(rn, None)
             self._combined_source_datasets.pop(rn, None)
-            self._remove_row_for_run_number(rn)
+            if rn in self._display_order:
+                self._display_order.remove(rn)
 
-            # Restore source datasets at the original position
-            for dataset in source_datasets:
-                source_rn = dataset.run_number
+            for offset, dataset in enumerate(source_datasets):
+                source_rn = int(dataset.run_number)
                 self._datasets[source_rn] = dataset
-                self._insert_table_row_at(dataset, insert_row)
-                insert_row += 1
+                if source_rn not in self._display_order:
+                    self._display_order.insert(insert_index + offset, source_rn)
 
-        self._sort_table()
+        self._rebuild_table()
 
-    def get_dataset(self, run_number: int) -> MuonDataset | None:
-        """Retrieve a dataset by run number."""
-        return self._datasets.get(run_number)
-
-    def get_selected_datasets(self) -> list[MuonDataset]:
-        """Get all currently selected datasets.
-
-        Returns
-        -------
-        list[MuonDataset]
-            List of datasets that are currently selected (highlighted) in the table,
-            in table order.
-        """
-        selected = []
-        for run_number in self._get_selected_run_numbers():
-            dataset = self._datasets.get(run_number)
-            if dataset is not None:
-                selected.append(dataset)
-
-        return selected
-
-    def _on_selection_changed(self) -> None:
-        """Handle selection changes - emit both single and multi-selection signals."""
-        # Get all selected datasets
-        selected = self.get_selected_datasets()
-
-        # Emit signal for multi-selection (global fitting)
-        self.selection_changed.emit()
-
-        # Only emit dataset_selected if exactly ONE dataset is selected
-        # (for plotting that dataset). If multiple, user is doing global fit.
-        if len(selected) == 1:
-            self.dataset_selected.emit(selected[0].run_number)
-
-    # ── project state helpers ──────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # Project state
+    # ------------------------------------------------------------------
 
     def clear(self) -> None:
-        """Remove all datasets and reset the browser to an empty state."""
         self._datasets.clear()
         self._combined_datasets.clear()
         self._combined_source_datasets.clear()
         self._next_combined_id = -1
+        self._groups.clear()
+        self._run_to_group.clear()
+        self._display_order.clear()
         self._column_filters.clear()
         self._current_sort_column = -1
         self._current_sort_order = Qt.SortOrder.AscendingOrder
         self._table.setRowCount(0)
 
     def add_combined_dataset(self, source_run_numbers: list[int]) -> int | None:
-        """Recreate a combined dataset programmatically from existing source runs.
-
-        Parameters
-        ----------
-        source_run_numbers : list[int]
-            Run numbers that should be co-added.  All must already be present
-            in the browser.
-
-        Returns
-        -------
-        int or None
-            The new combined run-number ID, or ``None`` if any source dataset
-            was not found.
-        """
         datasets_to_combine = []
         for rn in source_run_numbers:
             ds = self._datasets.get(rn)
@@ -938,85 +1144,71 @@ class DataBrowserPanel(QWidget):
             self._datasets[rn] for rn in source_run_numbers if rn in self._datasets
         ]
 
+        insert_index = min(self._display_index_for_run(rn) for rn in source_run_numbers)
         for rn in source_run_numbers:
-            self._datasets.pop(rn, None)
-            self._remove_row_for_run_number(rn)
+            self._remove_run_number(rn)
+        self._display_order.insert(insert_index, combined_rn)
 
-        self._add_table_row(combined_dataset)
+        self._rebuild_table()
         return combined_rn
 
     def get_state(self) -> dict:
-        """Return a serialisable snapshot of the browser's UI state.
-
-        This captures sort order, active column filters, and the set of
-        selected run numbers.  Dataset contents are managed separately by the
-        ``MainWindow`` project controller, so this does not include the actual
-        dataset arrays.
-
-        Returns
-        -------
-        dict
-            Browser state suitable for inclusion in a project file.
-        """
-        filters = {
-            str(col): sorted(values)
-            for col, values in self._column_filters.items()
-        }
+        filters = {str(col): sorted(values) for col, values in self._column_filters.items()}
+        data_groups = [
+            {
+                "group_id": group.group_id,
+                "name": group.name,
+                "member_run_numbers": [int(rn) for rn in group.member_run_numbers],
+                "collapsed": bool(group.collapsed),
+            }
+            for group in self._groups.values()
+        ]
+        selected_group_ids = self._get_selected_group_ids()
         return {
             "sort_column": self._current_sort_column,
-            "sort_order": (
-                "ascending"
-                if self._current_sort_order == Qt.SortOrder.AscendingOrder
-                else "descending"
-            ),
+            "sort_order": "ascending" if self._current_sort_order == Qt.SortOrder.AscendingOrder else "descending",
             "filters": filters,
             "selected_run_numbers": self._get_selected_run_numbers(),
+            "selected_group_ids": selected_group_ids,
+            "data_groups": data_groups,
         }
 
     def restore_state(self, state: dict) -> None:
-        """Restore browser UI state (sort/filter/selection) from a saved dict.
-
-        Must be called *after* all datasets have already been added to the
-        browser via :meth:`add_dataset` or :meth:`add_combined_dataset`.
-
-        Parameters
-        ----------
-        state : dict
-            Browser state as returned by :meth:`get_state`.
-        """
-        # Restore sort
-        sort_col = state.get("sort_column", -1)
-        sort_order_str = state.get("sort_order", "ascending")
-        if sort_col >= 0:
-            self._current_sort_column = sort_col
-            self._current_sort_order = (
-                Qt.SortOrder.AscendingOrder
-                if sort_order_str == "ascending"
-                else Qt.SortOrder.DescendingOrder
-            )
-            self._sort_table()
-
-        # Restore column filters
         self._column_filters = {}
         for col_str, values in state.get("filters", {}).items():
             self._column_filters[int(col_str)] = set(values)
-        self._apply_row_visibility()
 
-        # Restore row selection
+        self._current_sort_column = int(state.get("sort_column", -1))
+        sort_order_str = state.get("sort_order", "ascending")
+        self._current_sort_order = (
+            Qt.SortOrder.AscendingOrder
+            if sort_order_str == "ascending"
+            else Qt.SortOrder.DescendingOrder
+        )
+
+        for group_entry in state.get("data_groups", []):
+            if not isinstance(group_entry, dict):
+                continue
+            group_id = str(group_entry.get("group_id") or "")
+            if not group_id:
+                continue
+            run_numbers = [int(v) for v in group_entry.get("member_run_numbers", []) if int(v) in self._datasets]
+            if len(run_numbers) < 2:
+                continue
+            self.create_data_group(
+                run_numbers,
+                name=str(group_entry.get("name") or "").strip() or None,
+                group_id=group_id,
+                collapsed=bool(group_entry.get("collapsed", False)),
+            )
+
+        self._sort_table(rebuild=False)
+        self._move_groups_to_top()
+        self._rebuild_table()
+
         selected_runs = set(state.get("selected_run_numbers", []))
-        if not selected_runs:
-            return
+        selected_group_ids = {str(v) for v in state.get("selected_group_ids", [])}
 
-        selection_model = self._table.selectionModel()
-        if selection_model is None:
-            return
-        self._table.clearSelection()
-        for row in range(self._table.rowCount()):
-            item = self._table.item(row, 0)
-            if item and item.data(Qt.ItemDataRole.UserRole) in selected_runs:
-                idx = self._table.model().index(row, 0)
-                selection_model.select(
-                    idx,
-                    QItemSelectionModel.SelectionFlag.Select
-                    | QItemSelectionModel.SelectionFlag.Rows,
-                )
+        keys: list[int | str] = list(selected_runs)
+        keys.extend(f"{self._GROUP_SENTINEL_PREFIX}{gid}" for gid in selected_group_ids)
+        self._restore_selection_by_keys(keys)

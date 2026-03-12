@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 
 import numpy as np
 import pytest
@@ -14,7 +16,11 @@ from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.fitting.parameter_models import ModelFitRange, ParameterCompositeModel, ParameterModelFit
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
+from asymmetry.gui.panels.model_fit_dialog import (
+    ModelFitDialog,
+    _component_pool_for_context,
+    _format_model_param_label,
+)
 
 
 @pytest.fixture(scope="module")
@@ -56,6 +62,29 @@ def test_range_parameter_name_displays_units(qapp: QApplication) -> None:
     labels = [dlg._param_table.item(row, 0).text() for row in range(dlg._param_table.rowCount())]
     assert any("D [MHz]" in text for text in labels)
     assert any("nu [MHz]" in text for text in labels)
+    assert "m" in labels
+
+
+def test_component_pool_filters_constant_vs_lambda_bg() -> None:
+    lambda_pool = _component_pool_for_context("field", "Lambda")
+    sigma_pool = _component_pool_for_context("field", "sigma")
+
+    assert "Lambda_bg" in lambda_pool
+    assert "Constant" not in lambda_pool
+
+    assert "Constant" in sigma_pool
+    assert "Lambda_bg" not in sigma_pool
+
+
+def test_format_model_param_label_redfield_m_is_unitless() -> None:
+    redfield = ParameterCompositeModel(["Redfield"], [])
+    linear = ParameterCompositeModel(["Linear"], [])
+
+    redfield_label = _format_model_param_label(redfield, "m", "field", "Lambda")
+    linear_label = _format_model_param_label(linear, "m", "field", "Lambda")
+
+    assert redfield_label == "m"
+    assert linear_label == "m [us^-1 / G]"
 
 
 def test_linear_model_slope_uses_x_and_y_units(qapp: QApplication) -> None:
@@ -135,3 +164,42 @@ def test_commit_parameter_table_normalizes_domain_limits(qapp: QApplication) -> 
 
     assert normalized["D_perp"].min >= 0.0
     assert normalized["lambda_BG"].min >= 0.0
+
+
+def test_run_fit_sets_in_progress_state_immediately(qapp: QApplication, monkeypatch) -> None:
+    x = np.linspace(1.0, 10.0, 20)
+    y = 2.0 * x + 1.0
+    yerr = np.full_like(x, 0.1)
+
+    dlg = ModelFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        x_values=x,
+        y_values=y,
+        y_errors=yerr,
+        existing_fit=None,
+    )
+
+    gate = threading.Event()
+
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    def _fake_fit(**_kwargs):
+        gate.wait(timeout=1.0)
+        return ParameterModelFitResult(success=True, reduced_chi_squared=1.0)
+
+    monkeypatch.setattr("asymmetry.gui.panels.model_fit_dialog.fit_parameter_model", _fake_fit)
+
+    try:
+        dlg._run_fit(0)
+
+        assert dlg._fit_in_progress is True
+        assert "in progress" in dlg._fit_progress_label.text().lower()
+    finally:
+        gate.set()
+        deadline = time.time() + 2.0
+        while dlg._fit_in_progress and time.time() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+
+    assert dlg._fit_in_progress is False

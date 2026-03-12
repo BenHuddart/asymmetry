@@ -168,10 +168,11 @@ def test_context_menu_shows_coadd_for_multiple_selected(qapp: QApplication) -> N
 
     assert menu is not None
     actions = [a for a in menu.actions() if not a.isSeparator()]
-    # Should have "Co-add Selected" and "Remove Selected Entries"
-    assert len(actions) == 2
+    # Should have "Co-add Selected", "Form Data Group", and remove action.
+    assert len(actions) == 3
     action_texts = [a.text() for a in actions]
     assert "Co-add Selected" in action_texts
+    assert "Form Data Group" in action_texts
     assert "Remove Selected Entries" in action_texts
 
 
@@ -305,3 +306,203 @@ def test_shift_click_uses_latest_plain_click_as_anchor(qapp: QApplication) -> No
 
     selected = panel.get_selected_datasets()
     assert [dataset.run_number for dataset in selected] == [93, 94, 95]
+
+
+def test_group_header_context_menu_shows_ungroup(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(101))
+    panel.add_dataset(_dataset(102))
+    gid = panel.create_data_group([101, 102], name="T = 5 K")
+    assert gid is not None
+
+    # Select only the group header row.
+    group_row = None
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is None:
+            continue
+        key = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(key, str) and key.startswith("group:"):
+            group_row = row
+            break
+
+    assert group_row is not None
+    panel._table.clearSelection()
+    idx = panel._table.model().index(group_row, 0)
+    panel._table.selectionModel().select(
+        idx,
+        QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+    )
+
+    menu = panel._create_table_context_menu()
+    assert menu is not None
+    action_texts = [a.text() for a in menu.actions() if not a.isSeparator()]
+    assert "Ungroup" in action_texts
+
+
+def test_sort_keeps_groups_top_and_sorts_ungrouped(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    d1 = _dataset(111)
+    d1.metadata["temperature"] = 20.0
+    d2 = _dataset(112)
+    d2.metadata["temperature"] = 10.0
+    d3 = _dataset(113)
+    d3.metadata["temperature"] = 30.0
+    d4 = _dataset(114)
+    d4.metadata["temperature"] = 15.0
+
+    panel.add_dataset(d1)
+    panel.add_dataset(d2)
+    panel.add_dataset(d3)
+    panel.add_dataset(d4)
+    gid = panel.create_data_group([111, 112], name="Grouped")
+    assert gid is not None
+
+    # Sort by temperature ascending (column 2).
+    panel._on_header_clicked(2)
+
+    # Group header should remain at the top.
+    header_item = panel._table.item(0, 0)
+    assert header_item is not None
+    header_key = header_item.data(Qt.ItemDataRole.UserRole)
+    assert isinstance(header_key, str) and header_key.startswith("group:")
+
+    # Ungrouped runs should be sorted (114=15K then 113=30K).
+    visible_runs = []
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is None:
+            continue
+        key = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(key, int) and key in {113, 114}:
+            visible_runs.append(key)
+
+    assert visible_runs == [114, 113]
+
+
+def test_add_runs_to_existing_group_moves_entry(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(121))
+    panel.add_dataset(_dataset(122))
+    panel.add_dataset(_dataset(123))
+
+    gid = panel.create_data_group([121, 122], name="Group A")
+    assert gid is not None
+
+    moved = panel.add_runs_to_group([123], gid)
+    assert moved
+
+    group = panel._groups[gid]
+    assert group.member_run_numbers == [121, 122, 123]
+    assert panel._run_to_group[123] == gid
+
+
+def test_add_runs_to_group_rejects_unknown_group(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(131))
+
+    moved = panel.add_runs_to_group([131], "missing-group")
+    assert not moved
+
+
+def test_context_menu_has_send_to_group_submenu(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(141))
+    panel.add_dataset(_dataset(142))
+    panel.add_dataset(_dataset(143))
+    gid = panel.create_data_group([142, 143], name="Target Group")
+    assert gid is not None
+
+    # Select ungrouped dataset row for sending.
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is not None and item.data(Qt.ItemDataRole.UserRole) == 141:
+            panel._table.clearSelection()
+            idx = panel._table.model().index(row, 0)
+            panel._table.selectionModel().select(
+                idx,
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+            )
+            break
+
+    menu = panel._create_table_context_menu()
+    assert menu is not None
+    send_action = next((a for a in menu.actions() if a.text() == "Send to Group"), None)
+    assert send_action is not None
+    assert send_action.menu() is not None
+    subgroup_actions = [a.text() for a in send_action.menu().actions() if not a.isSeparator()]
+    assert "Target Group" in subgroup_actions
+
+
+def test_send_to_group_action_moves_selected_runs(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(151))
+    panel.add_dataset(_dataset(152))
+    panel.add_dataset(_dataset(153))
+    gid = panel.create_data_group([152, 153], name="Target Group")
+    assert gid is not None
+
+    # Select run 151 and invoke Send to Group -> Target Group.
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is not None and item.data(Qt.ItemDataRole.UserRole) == 151:
+            panel._table.clearSelection()
+            idx = panel._table.model().index(row, 0)
+            panel._table.selectionModel().select(
+                idx,
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+            )
+            break
+
+    menu = panel._create_table_context_menu()
+    assert menu is not None
+    send_action = next((a for a in menu.actions() if a.text() == "Send to Group"), None)
+    assert send_action is not None and send_action.menu() is not None
+    target_action = next((a for a in send_action.menu().actions() if a.text() == "Target Group"), None)
+    assert target_action is not None
+    target_action.trigger()
+
+    group = panel._groups[gid]
+    assert 151 in group.member_run_numbers
+    assert panel._run_to_group[151] == gid
+
+
+def test_context_menu_has_remove_from_group_for_grouped_entry(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(161))
+    panel.add_dataset(_dataset(162))
+    panel.add_dataset(_dataset(163))
+    gid = panel.create_data_group([161, 162], name="Group A")
+    assert gid is not None
+
+    # Select grouped run 161.
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is not None and item.data(Qt.ItemDataRole.UserRole) == 161:
+            panel._table.clearSelection()
+            idx = panel._table.model().index(row, 0)
+            panel._table.selectionModel().select(
+                idx,
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+            )
+            break
+
+    menu = panel._create_table_context_menu()
+    assert menu is not None
+    action_texts = [a.text() for a in menu.actions() if not a.isSeparator()]
+    assert "Remove from Group" in action_texts
+
+
+def test_remove_runs_from_group_moves_to_top_level(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(171))
+    panel.add_dataset(_dataset(172))
+    panel.add_dataset(_dataset(173))
+    gid = panel.create_data_group([171, 172], name="Group A")
+    assert gid is not None
+
+    moved = panel.remove_runs_from_group([171])
+    assert moved
+    assert panel._run_to_group.get(171) is None
+    assert 171 in panel._datasets
+    assert 171 not in panel._groups[gid].member_run_numbers

@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 
 import pytest
+import numpy as np
 
 pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # type: ignore
 
+from asymmetry.core.fitting.parameter_models import (
+    CrossGroupFitResult,
+    ParameterCompositeModel,
+    ParameterGroupData,
+)
 from asymmetry.gui.mainwindow import MainWindow
 
 
@@ -75,3 +82,29 @@ class TestMainWindowBasic:
         mainwindow._plot_panel.export_current_plot = _mark_called
         mainwindow._on_export_current_plot()
         assert called["count"] == 1
+
+    def test_cross_group_completion_shows_global_parameter_window(self, mainwindow: MainWindow) -> None:
+        """Accepted cross-group fit should open and focus the global-fit result window."""
+        model = ParameterCompositeModel(["Linear"])
+        fit_result = CrossGroupFitResult(
+            success=True,
+            chi_squared=1.0,
+            reduced_chi_squared=1.0,
+            message="Fit successful",
+        )
+        groups = [
+            ParameterGroupData(
+                group_id="g0",
+                group_name="G0",
+                x=np.array([1.0, 2.0], dtype=float),
+                y=np.array([0.1, 0.2], dtype=float),
+                yerr=np.array([0.01, 0.01], dtype=float),
+                group_variable_value=1.0,
+            )
+        ]
+        output = SimpleNamespace(model=model, fit_result=fit_result)
+
+        mainwindow._on_cross_group_fit_completed("Lambda", groups, output)
+
+        assert mainwindow._global_parameter_fit_window is not None
+        assert mainwindow._global_parameter_fit_window.isVisible()

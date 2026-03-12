@@ -268,6 +268,8 @@ Fitting workflow:
 
    The fit uses the dataset currently shown in the plot panel. If the bunch
    factor is greater than 1, the fit runs on that rebinned dataset.
+   Fits run asynchronously, and the dialog shows a "fit in progress" message
+   while fit controls are temporarily disabled.
 
 4. **Review results:**
    

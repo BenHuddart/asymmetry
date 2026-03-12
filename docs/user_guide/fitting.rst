@@ -376,11 +376,18 @@ and the total fitted field dependence is represented as
 
 .. math::
 
-   \lambda(B_{LF}) = \lambda_{2D}(B_{LF}) + \lambda_{0D}(B_{LF}) + \lambda_{BG}
+   \lambda(B_{LF}) = \lambda_{2D}(B_{LF}) + \lambda_{0D}(B_{LF}) + \lambda_{BG} + \lambda_{LCR}(B_{LF})
+
+with
+
+.. math::
+
+   \lambda_{LCR}(B_{LF}) = f\,G(B_{LF}; B_0; B_{wid})
 
 In the parameter-model builder, these are represented as separate basis
 functions: ``DiffusionLF_*`` (dynamic diffusion term), ``Redfield`` (0D
-dynamic term), and ``Lambda_bg`` (constant background).
+dynamic term), ``Lambda_bg`` (constant background), and ``GaussianLCR``
+(LCR Gaussian term).
 
 The autocorrelation for n-dimensional diffusion follows Pratt,
 J. Phys.: Conf. Ser. 2462 012038 (2023):
@@ -509,11 +516,20 @@ Field-specific
 
    Parameters: ``D``, ``nu``, ``m``
 
+   Notes: ``m`` is dimensionless.
+
 ``Lambda_bg``
    Constant background term,
    :math:`f(B) = \lambda_{BG}`.
 
    Parameters: ``lambda_BG``
+
+``GaussianLCR``
+   Gaussian level-crossing resonance term in the notation of Eq. (4)
+   of Phys. Rev. Lett. 135, 046704 (2025):
+   :math:`\lambda_{LCR}(B) = f\,G(B; B_0; B_{wid})`.
+
+   Parameters: ``f``, ``B0``, ``Bwid``
 
 ``Lorentzian``
    Simple empirical Lorentzian line-shape,
@@ -530,9 +546,15 @@ Querying available components
 
    from asymmetry.core.fitting.parameter_models import component_names_for_x
 
-   print(component_names_for_x("field"))        # includes Redfield, Lambda_bg, Lorentzian
+   print(component_names_for_x("field"))        # includes Redfield, Lambda_bg, GaussianLCR, Lorentzian
    print(component_names_for_x("temperature"))  # includes Arrhenius, CriticalDivergence
    print(component_names_for_x("run"))          # common components only
+
+In the GUI model builder, field-series component choices are also filtered by
+the selected y-parameter to avoid redundant constant terms:
+
+- For Lambda-like y-parameters, ``Lambda_bg`` is shown and ``Constant`` is hidden.
+- For non-Lambda y-parameters, ``Constant`` is shown and ``Lambda_bg`` is hidden.
 
 Building a composite parameter model
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -698,9 +720,28 @@ In the **Fitted Parameters** panel:
 3. Choose an x-variable (field or temperature) and add one or more basis
    functions using the **Add Component** button.
 4. Set initial parameter values and click **Fit**.
+   The fit runs in the background. The dialog shows a
+   "Fit in progress..." status and temporarily disables fit-edit controls
+   until the run completes.
 5. The fitted curve is overlaid on the parameter-vs-x plot automatically.
 6. Use **Export CSV** to save the fit results alongside the raw parameter
    values for further analysis.
+
+Cross-group parameter model fitting
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When two or more groups are selected in the **Fitted Parameters** panel,
+Asymmetry opens the cross-group model-fit dialog. This dialog shares one
+model across groups and lets each parameter be marked as:
+
+* **Global**: one value shared by all groups
+* **Local**: one independent value per group
+* **Fixed**: held constant
+
+Click **Run Fit** to execute the joint fit. As with single parameter-model
+fits, the run is non-blocking: the dialog remains responsive, shows a
+"Cross-group fit in progress..." status, and re-enables controls after
+completion.
 
 GUI Composite Function Builder
 -------------------------------
