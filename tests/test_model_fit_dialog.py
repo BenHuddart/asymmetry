@@ -12,7 +12,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 
 from asymmetry.core.fitting.parameter_models import ModelFitRange, ParameterCompositeModel, ParameterModelFit
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -61,7 +61,7 @@ def test_range_parameter_name_displays_units(qapp: QApplication) -> None:
 
     labels = [dlg._param_table.item(row, 0).text() for row in range(dlg._param_table.rowCount())]
     assert any("D [MHz]" in text for text in labels)
-    assert any("nu [MHz]" in text for text in labels)
+    assert any("ν [MHz]" in text for text in labels)
     assert "m" in labels
 
 
@@ -84,7 +84,7 @@ def test_format_model_param_label_redfield_m_is_unitless() -> None:
     linear_label = _format_model_param_label(linear, "m", "field", "Lambda")
 
     assert redfield_label == "m"
-    assert linear_label == "m [us^-1 / G]"
+    assert linear_label == "m [μs⁻¹ / G]"
 
 
 def test_linear_model_slope_uses_x_and_y_units(qapp: QApplication) -> None:
@@ -110,8 +110,8 @@ def test_linear_model_slope_uses_x_and_y_units(qapp: QApplication) -> None:
     )
 
     labels = [dlg._param_table.item(row, 0).text() for row in range(dlg._param_table.rowCount())]
-    assert any("m [us^-1 / K]" in text for text in labels)
-    assert any("b [us^-1]" in text for text in labels)
+    assert any("m [μs⁻¹ / K]" in text for text in labels)
+    assert any("b [μs⁻¹]" in text for text in labels)
 
 
 def test_commit_parameter_table_normalizes_domain_limits(qapp: QApplication) -> None:
@@ -203,3 +203,46 @@ def test_run_fit_sets_in_progress_state_immediately(qapp: QApplication, monkeypa
             time.sleep(0.01)
 
     assert dlg._fit_in_progress is False
+
+
+def test_edit_model_to_redfield_resets_m_to_default(qapp: QApplication, monkeypatch) -> None:
+    x = np.linspace(1.0, 10.0, 20)
+    y = 0.01 * x + 0.2
+    yerr = np.full_like(x, 0.01)
+
+    fit = ParameterModelFit(
+        parameter_name="Lambda",
+        x_key="field",
+        ranges=[
+            ModelFitRange(
+                x_min=1.0,
+                x_max=10.0,
+                model=ParameterCompositeModel(["Linear"], []),
+                parameters=ParameterSet([Parameter("m", 0.01), Parameter("b", 0.2)]),
+            )
+        ],
+    )
+    dlg = ModelFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        x_values=x,
+        y_values=y,
+        y_errors=yerr,
+        existing_fit=fit,
+    )
+
+    class _FakeBuilder:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def get_model(self):
+            return ParameterCompositeModel(["Redfield"], [])
+
+    monkeypatch.setattr("asymmetry.gui.panels.model_fit_dialog.ParameterModelBuilderDialog", _FakeBuilder)
+    dlg._edit_model(0)
+
+    params = dlg.get_model_fit().ranges[0].parameters
+    assert params["m"].value == pytest.approx(2.0)

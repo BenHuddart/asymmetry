@@ -6,8 +6,6 @@ parameters, run the fit, and inspect results.
 
 from __future__ import annotations
 
-import re
-
 import numpy as np
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
@@ -31,47 +29,13 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.models import MODELS
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
-
-_PARAM_SYMBOLS = {
-    "A": "A",
-    "A0": "A₀",
-    "Lambda": "λ",
-    "sigma": "σ",
-    "Delta": "Δ",
-    "beta": "β",
-    "phase": "φ",
-    "frequency": "f",
-}
-
-_PARAM_UNITS = {
-    "A": "%",
-    "A0": "%",
-    "A_bg": "%",
-    "baseline": "%",
-    "Lambda": "μs⁻¹",
-    "sigma": "μs⁻¹",
-    "Delta": "μs⁻¹",
-    "frequency": "MHz",
-    "phase": "rad",
-}
 
 
 def _format_param_label(name: str) -> str:
     """Return a display label with Greek symbols and units where applicable."""
-    base_name = name
-    suffix = ""
-    match = re.match(r"^(.+)_([0-9]+)$", name)
-    if match:
-        base_name = match.group(1)
-        suffix = f"_{match.group(2)}"
-
-    symbol = _PARAM_SYMBOLS.get(base_name, base_name) + suffix
-    unit = _PARAM_UNITS.get(base_name)
-    if unit:
-        return f"{symbol} ({unit})"
-    return symbol
+    return get_param_info(name).unicode_label()
 
 
 def _configure_formula_label(label: QLabel) -> None:

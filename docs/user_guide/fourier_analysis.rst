@@ -3,6 +3,15 @@ Fourier Analysis
 
 Transform time-domain data to frequency domain to identify oscillation frequencies.
 
+Notation
+--------
+
+In this guide, frequency-domain quantities use standard symbols:
+
+* :math:`A(t)` for asymmetry in the time domain
+* :math:`\nu` for frequency (MHz)
+* :math:`\lvert\mathcal{F}\rvert` for FFT magnitude
+
 Fast Fourier Transform (FFT)
 -----------------------------
 
@@ -21,14 +30,18 @@ The simplest method for frequency analysis:
    # Plot
    import matplotlib.pyplot as plt
    plt.plot(frequencies, magnitude)
-   plt.xlabel("Frequency (MHz)")
-   plt.ylabel("|FFT|")
+   plt.xlabel(r"$\\nu$ (MHz)")
+   plt.ylabel(r"$|\\mathcal{F}|$")
    plt.show()
 
 Windowing
 ~~~~~~~~~
 
 Apply a window function to reduce spectral leakage:
+
+.. math::
+
+   A_w(t) = w(t)\,A(t)
 
 .. code-block:: python
 
@@ -110,8 +123,8 @@ Complete workflow for frequency analysis:
    
    # Frequency domain
    ax2.plot(freq, magnitude)
-   ax2.set_xlabel("Frequency (MHz)")
-   ax2.set_ylabel("|FFT|")
+   ax2.set_xlabel(r"$\\nu$ (MHz)")
+   ax2.set_ylabel(r"$|\\mathcal{F}|$")
    ax2.set_title("Frequency Domain (FFT with Hann window)")
    ax2.set_xlim(0, 50)  # Focus on 0–50 MHz
    

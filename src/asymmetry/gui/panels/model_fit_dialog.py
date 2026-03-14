@@ -35,43 +35,9 @@ from asymmetry.core.fitting.parameter_models import (
     component_names_for_x,
     fit_parameter_model,
 )
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
 
 _OPERATOR_OPTIONS = ["+", "-", "*", "/"]
-
-_Y_PARAM_UNITS = {
-    "A": "%",
-    "A0": "%",
-    "A_bg": "%",
-    "baseline": "%",
-    "Lambda": "us^-1",
-    "sigma": "us^-1",
-    "Delta": "us^-1",
-    "frequency": "MHz",
-    "phase": "rad",
-}
-
-_PARAM_UNITS = {
-    "a": None,
-    "b": None,
-    "c": None,
-    "f": "us^-1",
-    "A": "MHz",
-    "D": "MHz",
-    "nu": "MHz",
-    "m": None,
-    "tau": "(x units)",
-    "B0": "G",
-    "Bwid": "G",
-    "Tc": "K",
-    "Ea": "meV",
-    "C": "MHz",  # legacy alias used in older saved model-fit states
-    "D_2D": "us^-1",
-    "D_nD": "us^-1",
-    "D_perp": "us^-1",
-    "lambda_BG": "us^-1",
-    "lambda_0D": "us^-1",
-}
 
 _NON_NEGATIVE_PARAMS = {"D", "D_2D", "D_nD", "D_perp", "lambda_BG", "lambda_0D", "f"}
 _STRICTLY_POSITIVE_PARAMS = {"tau", "B0", "Bwid", "nu", "m"}
@@ -94,12 +60,19 @@ def _x_unit(x_key: str) -> str | None:
 
 
 def _y_unit(parameter_name: str) -> str | None:
-    return _Y_PARAM_UNITS.get(_base_param_name(parameter_name))
+    return get_param_info(_base_param_name(parameter_name)).unit
 
 
-def _format_param_label(name: str, x_key: str, parameter_name: str) -> str:
+def _format_param_label(
+    name: str,
+    x_key: str,
+    parameter_name: str,
+    *,
+    unit_override: str | None = None,
+) -> str:
     """Return display label with units for range-parameter table."""
     base = _base_param_name(name)
+    symbol = get_param_info(name).unicode
     y_unit = _y_unit(parameter_name)
     x_unit = _x_unit(x_key)
 
@@ -115,9 +88,9 @@ def _format_param_label(name: str, x_key: str, parameter_name: str) -> str:
     elif base in {"a", "b", "c"}:
         unit = y_unit or "(y units)"
     else:
-        unit = _PARAM_UNITS.get(base)
+        unit = unit_override if unit_override is not None else get_param_info(base).unit
 
-    return f"{name} [{unit}]" if unit else name
+    return f"{symbol} [{unit}]" if unit else symbol
 
 
 def _format_model_param_label(
@@ -137,8 +110,25 @@ def _format_model_param_label(
             component_for_param[unique_name] = component.name
 
     if _base_param_name(name) == "m" and component_for_param.get(name) == "Redfield":
-        return name
-    return _format_param_label(name, x_key, parameter_name)
+        return get_param_info(name).unicode
+
+    component_unit = model.param_info.get(name)
+    unit_override = component_unit.unit if component_unit is not None else None
+    return _format_param_label(name, x_key, parameter_name, unit_override=unit_override)
+
+
+def _component_name_for_param(model: ParameterCompositeModel, name: str) -> str | None:
+    """Return component name that owns a unique model parameter name."""
+    for mapping, component in zip(model._param_mappings, model.components, strict=True):
+        for unique_name in mapping.values():
+            if unique_name == name:
+                return component.name
+    return None
+
+
+def _should_reset_param_on_model_change(model: ParameterCompositeModel, name: str) -> bool:
+    """Return True when model changes should prefer defaults over name-based carryover."""
+    return _base_param_name(name) == "m" and _component_name_for_param(model, name) == "Redfield"
 
 
 def _component_pool_for_context(x_key: str, parameter_name: str) -> list[str]:
@@ -411,6 +401,7 @@ class ModelFitDialog(QDialog):
         self._fit_in_progress = False
         self._fit_thread: QThread | None = None
         self._fit_worker: _FitWorker | None = None
+        self._fit_done_callback: Callable[[object], None] | None = None
 
         if existing_fit is not None and existing_fit.ranges:
             self._fit = existing_fit
@@ -680,7 +671,7 @@ class ModelFitDialog(QDialog):
 
         new_params = ParameterSet()
         for pname in model.param_names:
-            if pname in fit_range.parameters:
+            if pname in fit_range.parameters and not _should_reset_param_on_model_change(model, pname):
                 old = fit_range.parameters[pname]
                 new_params.add(Parameter(name=pname, value=old.value, min=old.min, max=old.max, fixed=old.fixed))
             else:
@@ -944,6 +935,7 @@ class ModelFitDialog(QDialog):
         self._set_fit_ui_busy(True)
         self._fit_thread = thread
         self._fit_worker = worker
+        self._fit_done_callback = on_done
 
         def _cleanup() -> None:
             self._fit_in_progress = False
@@ -951,22 +943,30 @@ class ModelFitDialog(QDialog):
             self._fit_worker = None
             self._fit_thread = None
 
-        def _on_finished(result: object) -> None:
-            on_done(result)
-            thread.quit()
-
-        def _on_failed(trace: str) -> None:
-            _show_warning(self, "Fit failed", f"Unexpected error during fitting.\n\n{trace}")
-            thread.quit()
-
         thread.started.connect(worker.run)
-        worker.finished.connect(_on_finished)
-        worker.failed.connect(_on_failed)
+        worker.finished.connect(self._on_fit_worker_finished)
+        worker.failed.connect(self._on_fit_worker_failed)
         worker.finished.connect(worker.deleteLater)
         worker.failed.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(_cleanup)
         thread.start()
+
+    def _on_fit_worker_finished(self, result: object) -> None:
+        """Handle fit completion on the dialog (UI) thread."""
+        callback = self._fit_done_callback
+        thread = self._fit_thread
+        if callback is not None:
+            callback(result)
+        if thread is not None:
+            thread.quit()
+
+    def _on_fit_worker_failed(self, trace: str) -> None:
+        """Handle fit failure on the dialog (UI) thread."""
+        _show_warning(self, "Fit failed", f"Unexpected error during fitting.\n\n{trace}")
+        thread = self._fit_thread
+        if thread is not None:
+            thread.quit()
 
     def _set_fit_ui_busy(self, busy: bool) -> None:
         self._fit_progress_label.setVisible(busy)

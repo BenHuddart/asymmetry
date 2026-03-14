@@ -32,8 +32,8 @@ Basic Fitting Workflow
    # Set up parameters
    params = ParameterSet()
    params.add(Parameter(name="A0", value=0.2, min=0, max=1))
-   params.add(Parameter(name="lambda", value=0.5, min=0))
-   params.add(Parameter(name="B", value=0.0, min=-0.1, max=0.1))
+   params.add(Parameter(name="Lambda", value=0.5, min=0))
+   params.add(Parameter(name="baseline", value=0.0, min=-0.1, max=0.1))
    
    # Perform fit
    result = engine.fit(dataset, model.function, params)
@@ -42,9 +42,27 @@ Basic Fitting Workflow
    print(f"Success: {result.success}")
    print(f"χ²: {result.chi_squared:.4f}")
    print(f"χ²ᵣ: {result.reduced_chi_squared:.4f}")
-   for name, value in result.parameters.items():
-       error = result.uncertainties.get(name, 0)
-       print(f"{name}: {value} ± {error:.6f}")
+   for param in result.parameters:
+       error = result.uncertainties.get(param.name, 0)
+       print(f"{param.name}: {param.value} ± {error:.6f}")
+
+Mathematical Notation in Documentation
+--------------------------------------
+
+Yes. The documentation supports LaTeX math notation via MathJax.
+
+Use inline math for symbols and short expressions, for example
+:math:`A_0`, :math:`\lambda`, :math:`\Delta`, :math:`\chi_r^2`.
+
+Use display blocks for full equations:
+
+.. math::
+
+   A(t) = A_0 e^{-\lambda t} + A_{\mathrm{bg}}
+
+In prose, keep the code-facing parameter names in monospaced form where needed,
+for example ``Lambda`` and ``baseline``, and pair them with their physical
+symbols :math:`\lambda` and :math:`A_{\mathrm{bg}}`.
 
 Available Models
 ----------------
@@ -60,7 +78,7 @@ Simple exponential relaxation:
 
    A(t) = A_0 e^{-\lambda t} + B
 
-Parameters: ``A0`` (initial asymmetry), ``lambda`` (relaxation rate), ``B`` (baseline)
+Parameters: ``A0`` (initial asymmetry), ``Lambda`` (:math:`\lambda`, relaxation rate), ``baseline`` (:math:`A_{\mathrm{bg}}`)
 
 .. code-block:: python
 
@@ -73,9 +91,9 @@ Gaussian Kubo-Toyabe relaxation:
 
 .. math::
 
-   A(t) = A_0 e^{-\frac{1}{2}(\sigma t)^2} + B
+   A(t) = A_0 e^{-(\sigma t)^2} + A_{\mathrm{bg}}
 
-Parameters: ``A0``, ``sigma`` (Gaussian relaxation rate), ``B``
+Parameters: ``A0``, ``sigma`` (:math:`\sigma`, Gaussian relaxation rate), ``baseline``
 
 .. code-block:: python
 
@@ -88,9 +106,9 @@ Damped oscillation with exponential decay:
 
 .. math::
 
-   A(t) = A_0 e^{-\lambda t} \cos(2\pi f t + \phi) + B
+   A(t) = A_0 e^{-\lambda t} \cos(2\pi f t + \phi) + A_{\mathrm{bg}}
 
-Parameters: ``A0``, ``lambda``, ``freq`` (frequency in MHz), ``phi`` (phase), ``B``
+Parameters: ``A0``, ``frequency`` (:math:`f`, MHz), ``phase`` (:math:`\phi`), ``Lambda`` (:math:`\lambda`), ``baseline``
 
 .. code-block:: python
 
@@ -103,9 +121,9 @@ Stretched exponential (Kohlrausch) relaxation:
 
 .. math::
 
-   A(t) = A_0 e^{-(\lambda t)^\beta} + B
+   A(t) = A_0 e^{-(\lambda t)^\beta} + A_{\mathrm{bg}}
 
-Parameters: ``A0``, ``lambda``, ``beta`` (stretching exponent, 0 < β ≤ 1), ``B``
+Parameters: ``A0``, ``Lambda`` (:math:`\lambda`), ``beta`` (:math:`\beta`, stretching exponent), ``baseline``
 
 .. code-block:: python
 
@@ -118,9 +136,9 @@ Static Gaussian Kubo-Toyabe function for zero field:
 
 .. math::
 
-   A(t) = A_0 \left[\frac{1}{3} + \frac{2}{3}(1-\sigma^2 t^2)e^{-\frac{1}{2}\sigma^2 t^2}\right] + B
+   A(t) = A_0 \left[\frac{1}{3} + \frac{2}{3}(1-\Delta^2 t^2)e^{-\Delta^2 t^2/2}\right] + A_{\mathrm{bg}}
 
-Parameters: ``A0``, ``sigma``, ``B``
+Parameters: ``A0``, ``Delta`` (:math:`\Delta`), ``baseline``
 
 .. code-block:: python
 
@@ -157,12 +175,12 @@ Constrain parameter ranges:
 
    from asymmetry.core.fitting.parameters import Parameter
    
-   param = Parameter(
-       name="lambda",
-       value=0.5,    # Initial value
-       min=0.0,      # Lower bound
-       max=10.0      # Upper bound
-   )
+      param = Parameter(
+         name="Lambda",
+         value=0.5,    # Initial value
+         min=0.0,      # Lower bound
+         max=10.0      # Upper bound
+      )
 
 Fixing Parameters
 ~~~~~~~~~~~~~~~~~

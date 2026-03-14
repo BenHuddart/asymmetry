@@ -14,7 +14,7 @@ from asymmetry.core.fitting.parameter_models import (
     evaluate_parameter_model_fit,
     fit_parameter_model,
 )
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.parameters import ParamInfo, Parameter, ParameterSet, get_param_info
 
 __all__ = [
     "FitEngine",
@@ -31,6 +31,8 @@ __all__ = [
     "fit_parameter_model",
     "evaluate_parameter_model_fit",
     "component_names_for_x",
+    "ParamInfo",
+    "get_param_info",
     "Parameter",
     "ParameterSet",
 ]

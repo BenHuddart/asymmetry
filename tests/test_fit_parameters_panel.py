@@ -6,19 +6,25 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 pyside6 = pytest.importorskip("PySide6")
+from PySide6.QtCore import Qt  # type: ignore
 from PySide6.QtWidgets import QApplication, QMessageBox  # type: ignore
 
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameter_models import (
+    CrossGroupFitResult,
     ModelFitRange,
+    ParameterGroupData,
     ParameterCompositeModel,
     ParameterModelFit,
     ParameterModelFitResult,
 )
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, _FitRow
+from asymmetry.gui.panels.fit_parameters_panel import _GroupFitData
 from asymmetry.gui.panels.fit_parameters_panel import (
     _format_gle_label,
     _format_gle_legend_label,
@@ -171,8 +177,8 @@ def test_refresh_table_uses_run_label_for_combined_rows(qapp: QApplication) -> N
 def test_background_labels_use_subscript_formatting() -> None:
     assert _format_plot_label("A_bg") == "$A_{bg}$ (%)"
     assert _format_plot_legend_label("A_bg") == "$A_{bg}$"
-    assert _format_gle_label("A_bg") == "{\\it{A}}_{bg} (%)"
-    assert _format_gle_legend_label("A_bg") == "{\\it{A}}_{bg}"
+    assert _format_gle_label("A_bg") == "{\\it A}_{bg} (%)"
+    assert _format_gle_legend_label("A_bg") == "{\\it A}_{bg}"
 
 
 class _FakeAxis:
@@ -493,6 +499,815 @@ def test_add_gle_model_overlay_uses_formatted_labels_without_hash_one(panel: Fit
     panel._add_gle_model_overlay(axis, "A_bg", color="red", include_labels=True, fit_file_map=fit_map)
 
     assert len(axis.line_calls) == 2
-    assert axis.line_calls[0]["kwargs"]["label"] == "fit {\\it{A}}_{bg}"
-    assert axis.line_calls[1]["kwargs"]["label"] == "fit {\\it{A}}_{bg} #2"
+    assert axis.line_calls[0]["kwargs"]["label"] == "fit {\\it A}_{bg}"
+    assert axis.line_calls[1]["kwargs"]["label"] == "fit {\\it A}_{bg} #2"
     assert axis.line_calls[0]["kwargs"]["color"] != axis.line_calls[1]["kwargs"]["color"]
+
+
+def test_build_inherited_cross_group_config_uses_best_successful_fit(panel: FitParametersPanel) -> None:
+    model = ParameterCompositeModel(["Linear"])
+
+    best_params = ParameterSet(
+        [
+            Parameter("m", value=0.002, min=0.0, max=1.0, fixed=True),
+            Parameter("b", value=0.21, min=-1.0, max=1.0, fixed=False),
+        ]
+    )
+    best_result = ParameterModelFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=0.4,
+        parameters=best_params,
+        uncertainties={"b": 0.01},
+        message="ok",
+    )
+    best_range = ModelFitRange(
+        x_min=100.0,
+        x_max=300.0,
+        model=model,
+        parameters=best_params,
+        result=best_result,
+    )
+
+    other_params = ParameterSet(
+        [
+            Parameter("m", value=0.01, min=0.0, max=1.0, fixed=False),
+            Parameter("b", value=0.5, min=-1.0, max=1.0, fixed=False),
+        ]
+    )
+    other_result = ParameterModelFitResult(
+        success=True,
+        chi_squared=10.0,
+        reduced_chi_squared=2.0,
+        parameters=other_params,
+        uncertainties={"m": 0.1, "b": 0.1},
+        message="ok",
+    )
+    other_range = ModelFitRange(
+        x_min=90.0,
+        x_max=310.0,
+        model=model,
+        parameters=other_params,
+        result=other_result,
+    )
+
+    best_group = _GroupFitData(
+        group_id="g_best",
+        group_name="Best",
+        rows=[],
+        global_params=None,
+        varying_params=["Lambda"],
+        inferred_x_key="field",
+        model_fits={
+            "Lambda": ParameterModelFit(
+                parameter_name="Lambda",
+                x_key="field",
+                ranges=[best_range],
+                active=True,
+            )
+        },
+        plot_annotations=[],
+    )
+    other_group = _GroupFitData(
+        group_id="g_other",
+        group_name="Other",
+        rows=[],
+        global_params=None,
+        varying_params=["Lambda"],
+        inferred_x_key="field",
+        model_fits={
+            "Lambda": ParameterModelFit(
+                parameter_name="Lambda",
+                x_key="field",
+                ranges=[other_range],
+                active=True,
+            )
+        },
+        plot_annotations=[],
+    )
+
+    config = panel._build_inherited_cross_group_config(
+        "Lambda",
+        "field",
+        [other_group, best_group],
+    )
+
+    assert config is not None
+    assert config["source_group_id"] == "g_best"
+    assert config["source_group_name"] == "Best"
+    assert config["fit_x_min"] == pytest.approx(100.0)
+    assert config["fit_x_max"] == pytest.approx(300.0)
+
+    rows = config.get("parameter_rows")
+    assert isinstance(rows, list)
+    row_by_name = {str(row["name"]): row for row in rows if isinstance(row, dict)}
+    assert row_by_name["m"]["initial"] == pytest.approx(0.002)
+    assert row_by_name["m"]["type"] == "Fixed"
+    assert row_by_name["b"]["initial"] == pytest.approx(0.21)
+    assert row_by_name["b"]["type"] == "Global"
+
+
+def test_build_inherited_cross_group_config_returns_none_without_success(panel: FitParametersPanel) -> None:
+    model = ParameterCompositeModel(["Linear"])
+    failed_params = ParameterSet([Parameter("m", value=0.1), Parameter("b", value=0.2)])
+    failed_range = ModelFitRange(
+        x_min=0.0,
+        x_max=1.0,
+        model=model,
+        parameters=failed_params,
+        result=ParameterModelFitResult(success=False, message="failed"),
+    )
+    failed_group = _GroupFitData(
+        group_id="g0",
+        group_name="G0",
+        rows=[],
+        global_params=None,
+        varying_params=["Lambda"],
+        inferred_x_key="field",
+        model_fits={
+            "Lambda": ParameterModelFit(
+                parameter_name="Lambda",
+                x_key="field",
+                ranges=[failed_range],
+                active=True,
+            )
+        },
+        plot_annotations=[],
+    )
+
+    config = panel._build_inherited_cross_group_config(
+        "Lambda",
+        "field",
+        [failed_group],
+    )
+    assert config is None
+
+
+def test_group_switch_persists_active_group_model_fits(panel: FitParametersPanel) -> None:
+    fit = ParameterModelFit(parameter_name="Lambda", x_key="field", ranges=[], active=True)
+
+    group_a = _GroupFitData(
+        group_id="g_a",
+        group_name="Group A",
+        rows=list(panel._rows),
+        global_params=None,
+        varying_params=list(panel._varying_params),
+        inferred_x_key="field",
+        model_fits={},
+        plot_annotations=[],
+    )
+    group_b = _GroupFitData(
+        group_id="g_b",
+        group_name="Group B",
+        rows=list(panel._rows),
+        global_params=None,
+        varying_params=list(panel._varying_params),
+        inferred_x_key="field",
+        model_fits={},
+        plot_annotations=[],
+    )
+
+    panel._group_fit_results = {"g_a": group_a, "g_b": group_b}
+    panel._active_group_id = "g_a"
+    panel._model_fits = {"Lambda": fit}
+    panel._rebuild_group_buttons()
+
+    panel._set_selected_group_ids(["g_b"], emit=False)
+    panel._apply_group_selection_to_view()
+
+    assert "Lambda" in panel._group_fit_results["g_a"].model_fits
+
+
+def test_get_state_syncs_active_group_before_serializing(panel: FitParametersPanel) -> None:
+    fit = ParameterModelFit(parameter_name="Lambda", x_key="field", ranges=[], active=True)
+
+    panel._group_fit_results = {
+        "g_a": _GroupFitData(
+            group_id="g_a",
+            group_name="Group A",
+            rows=list(panel._rows),
+            global_params=None,
+            varying_params=list(panel._varying_params),
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        )
+    }
+    panel._active_group_id = "g_a"
+    panel._model_fits = {"Lambda": fit}
+
+    state = panel.get_state()
+    groups_state = state.get("group_fit_results", {})
+    assert isinstance(groups_state, dict)
+    g_a_state = groups_state.get("g_a", {})
+    assert isinstance(g_a_state, dict)
+    model_fits_state = g_a_state.get("model_fits", {})
+    assert isinstance(model_fits_state, dict)
+    assert "Lambda" in model_fits_state
+
+
+def test_multi_group_view_excludes_asymmetry_global_parameters(panel: FitParametersPanel) -> None:
+    rows_a = [
+        _FitRow(
+            run_number=1,
+            run_label="1",
+            field=100.0,
+            temperature=10.0,
+            values={"A0": 0.20, "Lambda": 0.10},
+            errors={"A0": 0.01, "Lambda": 0.01},
+        )
+    ]
+    rows_b = [
+        _FitRow(
+            run_number=2,
+            run_label="2",
+            field=200.0,
+            temperature=10.0,
+            values={"A0": 0.30, "Lambda": 0.15},
+            errors={"A0": 0.01, "Lambda": 0.01},
+        )
+    ]
+
+    global_params = ParameterSet([Parameter("A0", value=0.25)])
+
+    panel._group_fit_results = {
+        "g_a": _GroupFitData(
+            group_id="g_a",
+            group_name="Group A",
+            rows=rows_a,
+            global_params=global_params,
+            varying_params=["Lambda"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+        "g_b": _GroupFitData(
+            group_id="g_b",
+            group_name="Group B",
+            rows=rows_b,
+            global_params=global_params,
+            varying_params=["Lambda"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+    }
+    panel._active_group_id = "g_a"
+    panel._rebuild_group_buttons()
+    panel._set_selected_group_ids(["g_a", "g_b"], emit=False)
+
+    panel._apply_group_selection_to_view(sync_active=False)
+
+    assert "Lambda" in panel._varying_params
+    assert "A0" not in panel._varying_params
+
+
+def test_group_global_params_roundtrip_in_panel_state(panel: FitParametersPanel) -> None:
+    global_params = ParameterSet([Parameter("A0", value=0.25, min=0.0, max=1.0, fixed=False)])
+    panel._group_fit_results = {
+        "g_a": _GroupFitData(
+            group_id="g_a",
+            group_name="Group A",
+            rows=list(panel._rows),
+            global_params=global_params,
+            varying_params=list(panel._varying_params),
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        )
+    }
+    panel._active_group_id = "g_a"
+    panel._global_params = global_params
+
+    state = panel.get_state()
+
+    restored = FitParametersPanel()
+    restored.restore_state(state)
+
+    assert "g_a" in restored._group_fit_results
+    restored_global = restored._group_fit_results["g_a"].global_params
+    assert restored_global is not None
+    assert "A0" in restored_global
+    assert restored_global["A0"].value == pytest.approx(0.25)
+
+
+def test_new_asymmetry_fit_overwrites_existing_group_model_fits(panel: FitParametersPanel) -> None:
+    existing_fit = ParameterModelFit(parameter_name="Lambda", x_key="field", ranges=[], active=True)
+    panel._group_fit_results = {
+        "g1": _GroupFitData(
+            group_id="g1",
+            group_name="Group 1",
+            rows=list(panel._rows),
+            global_params=None,
+            varying_params=list(panel._varying_params),
+            inferred_x_key="field",
+            model_fits={"Lambda": existing_fit},
+            plot_annotations=[{"parameter": "Lambda"}],
+        )
+    }
+    panel._active_group_id = "g1"
+    panel._model_fits = {"Lambda": existing_fit}
+    panel._plot_annotations = [{"parameter": "Lambda"}]
+
+    result = FitResult(
+        success=True,
+        reduced_chi_squared=1.0,
+        parameters=ParameterSet([Parameter("A0", value=0.24), Parameter("Lambda", value=0.11)]),
+        uncertainties={"A0": 0.01, "Lambda": 0.01},
+    )
+    datasets_by_run = {
+        101: SimpleNamespace(
+            metadata={
+                "run_label": "101",
+                "field": 150.0,
+                "temperature": 12.0,
+            }
+        )
+    }
+
+    panel.set_fit_results(
+        {101: (result, (np.array([0.0, 1.0]), np.array([0.24, 0.24])))},
+        datasets_by_run,
+        global_params=None,
+        group_id="g1",
+        group_name="Group 1",
+    )
+
+    assert panel._group_fit_results["g1"].model_fits == {}
+    assert panel._group_fit_results["g1"].plot_annotations == []
+    assert panel._model_fits == {}
+    assert panel._plot_annotations == []
+
+
+def test_multi_group_view_does_not_sync_merged_rows_back_into_active_group(panel: FitParametersPanel) -> None:
+    rows_a = [
+        _FitRow(
+            run_number=1,
+            run_label="1",
+            field=100.0,
+            temperature=10.0,
+            values={"A0": 0.20, "Lambda": 0.10},
+            errors={"A0": 0.01, "Lambda": 0.01},
+        )
+    ]
+    rows_b = [
+        _FitRow(
+            run_number=2,
+            run_label="2",
+            field=200.0,
+            temperature=11.0,
+            values={"A0": 0.30, "Lambda": 0.15},
+            errors={"A0": 0.01, "Lambda": 0.01},
+        )
+    ]
+
+    panel._group_fit_results = {
+        "g_a": _GroupFitData(
+            group_id="g_a",
+            group_name="Group A",
+            rows=rows_a,
+            global_params=None,
+            varying_params=["A0", "Lambda"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+        "g_b": _GroupFitData(
+            group_id="g_b",
+            group_name="Group B",
+            rows=rows_b,
+            global_params=None,
+            varying_params=["A0", "Lambda"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+    }
+    panel._active_group_id = "g_a"
+    panel._rebuild_group_buttons()
+    panel._set_selected_group_ids(["g_a", "g_b"], emit=False)
+
+    panel._apply_group_selection_to_view(sync_active=False)
+    assert panel._active_group_id == "g_a"
+    assert len(panel._rows) == 1
+    assert panel._rows[0].run_number == 1
+
+    # Regression guard: merged rows must never be written into Group A.
+    panel._sync_active_group_state()
+    assert [row.run_number for row in panel._group_fit_results["g_a"].rows] == [1]
+
+
+def test_group_button_styles_distinguish_single_active_from_multi_highlight(panel: FitParametersPanel) -> None:
+    panel._group_fit_results = {
+        "g_a": _GroupFitData(
+            group_id="g_a",
+            group_name="Group A",
+            rows=list(panel._rows),
+            global_params=None,
+            varying_params=list(panel._varying_params),
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+        "g_b": _GroupFitData(
+            group_id="g_b",
+            group_name="Group B",
+            rows=list(panel._rows),
+            global_params=None,
+            varying_params=list(panel._varying_params),
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+    }
+    panel._rebuild_group_buttons()
+
+    panel._set_selected_group_ids(["g_a"], emit=False)
+    panel._apply_group_selection_to_view(sync_active=False)
+    assert "2px solid #1f6feb" in panel._group_button_map["g_a"].styleSheet()
+
+    panel._set_selected_group_ids(["g_a", "g_b"], emit=False)
+    panel._apply_group_selection_to_view(sync_active=False)
+    assert "2px solid #1f6feb" in panel._group_button_map["g_a"].styleSheet()
+    assert "1px solid #d29922" not in panel._group_button_map["g_a"].styleSheet()
+    assert "1px solid #d29922" in panel._group_button_map["g_b"].styleSheet()
+
+
+def test_shift_click_highlights_group_without_changing_active_selection(panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch) -> None:
+    rows_a = [
+        _FitRow(
+            run_number=1,
+            run_label="1",
+            field=100.0,
+            temperature=10.0,
+            values={"Lambda": 0.10},
+            errors={"Lambda": 0.01},
+        )
+    ]
+    rows_b = [
+        _FitRow(
+            run_number=2,
+            run_label="2",
+            field=200.0,
+            temperature=10.0,
+            values={"Lambda": 0.14},
+            errors={"Lambda": 0.01},
+        )
+    ]
+
+    panel._group_fit_results = {
+        "g_a": _GroupFitData(
+            group_id="g_a",
+            group_name="Group A",
+            rows=rows_a,
+            global_params=None,
+            varying_params=["Lambda"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+        "g_b": _GroupFitData(
+            group_id="g_b",
+            group_name="Group B",
+            rows=rows_b,
+            global_params=None,
+            varying_params=["Lambda"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+    }
+    panel._active_group_id = "g_a"
+    panel._rebuild_group_buttons()
+    panel._set_selected_group_ids(["g_a"], emit=False)
+    panel._apply_group_selection_to_view(sync_active=False)
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.fit_parameters_panel.QApplication.keyboardModifiers",
+        lambda: Qt.KeyboardModifier.ShiftModifier,
+    )
+
+    panel._group_button_map["g_b"].click()
+
+    assert panel._active_group_id == "g_a"
+    assert panel._group_button_map["g_a"].isChecked()
+    assert panel._group_button_map["g_b"].isChecked()
+    assert len(panel._rows) == 1
+    assert panel._rows[0].run_number == 1
+
+
+def test_cross_group_fit_success_updates_each_group_model_fit(panel: FitParametersPanel) -> None:
+    rows_a = [
+        _FitRow(
+            run_number=1,
+            run_label="1",
+            field=100.0,
+            temperature=10.0,
+            values={"Lambda": 0.10},
+            errors={"Lambda": 0.01},
+        )
+    ]
+    rows_b = [
+        _FitRow(
+            run_number=2,
+            run_label="2",
+            field=200.0,
+            temperature=10.0,
+            values={"Lambda": 0.14},
+            errors={"Lambda": 0.01},
+        )
+    ]
+    group_a = _GroupFitData(
+        group_id="g_a",
+        group_name="Group A",
+        rows=rows_a,
+        global_params=None,
+        varying_params=["Lambda"],
+        inferred_x_key="field",
+        model_fits={},
+        plot_annotations=[],
+    )
+    group_b = _GroupFitData(
+        group_id="g_b",
+        group_name="Group B",
+        rows=rows_b,
+        global_params=None,
+        varying_params=["Lambda"],
+        inferred_x_key="field",
+        model_fits={},
+        plot_annotations=[],
+    )
+    panel._group_fit_results = {"g_a": group_a, "g_b": group_b}
+
+    model = ParameterCompositeModel(["Linear"])
+    global_params = ParameterSet([Parameter("m", value=0.002, min=0.0, max=1.0, fixed=False)])
+    local_params = {
+        "g_a": ParameterSet([Parameter("b", value=0.18, min=-1.0, max=1.0, fixed=False)]),
+        "g_b": ParameterSet([Parameter("b", value=0.23, min=-1.0, max=1.0, fixed=False)]),
+    }
+    fixed_params = ParameterSet()
+    fit_result = CrossGroupFitResult(
+        success=True,
+        chi_squared=1.2,
+        reduced_chi_squared=0.6,
+        global_parameters=global_params,
+        local_parameters=local_params,
+        fixed_parameters=fixed_params,
+        global_uncertainties={"m": 1e-4},
+        local_uncertainties={"g_a": {"b": 0.01}, "g_b": {"b": 0.02}},
+        message="Fit successful",
+    )
+
+    output = SimpleNamespace(
+        fit_result=fit_result,
+        model=model,
+        x_key="field",
+        fit_x_min=90.0,
+        fit_x_max=250.0,
+        groups=[
+            ParameterGroupData("g_a", "Group A", np.array([100.0]), np.array([0.1]), np.array([0.01]), 100.0),
+            ParameterGroupData("g_b", "Group B", np.array([200.0]), np.array([0.14]), np.array([0.01]), 200.0),
+        ],
+    )
+
+    panel._apply_cross_group_fit_to_groups(
+        parameter_name="Lambda",
+        x_key="field",
+        selected_groups=[group_a, group_b],
+        output=output,
+    )
+
+    fit_a = panel._group_fit_results["g_a"].model_fits.get("Lambda")
+    fit_b = panel._group_fit_results["g_b"].model_fits.get("Lambda")
+    assert fit_a is not None
+    assert fit_b is not None
+    assert fit_a.ranges[0].result is not None
+    assert fit_b.ranges[0].result is not None
+    assert fit_a.ranges[0].result.parameters["b"].value == pytest.approx(0.18)
+    assert fit_b.ranges[0].result.parameters["b"].value == pytest.approx(0.23)
+    assert fit_a.ranges[0].result.parameters["m"].value == pytest.approx(0.002)
+    assert fit_b.ranges[0].result.parameters["m"].value == pytest.approx(0.002)
+
+
+def test_set_fit_results_copies_global_params_per_group(panel: FitParametersPanel) -> None:
+    shared_global = ParameterSet([Parameter("A0", value=0.25, min=0.0, max=1.0, fixed=False)])
+
+    result_g1 = FitResult(
+        success=True,
+        reduced_chi_squared=1.0,
+        parameters=ParameterSet([Parameter("A0", value=0.24), Parameter("Lambda", value=0.11)]),
+        uncertainties={"A0": 0.01, "Lambda": 0.01},
+    )
+    datasets_g1 = {
+        101: SimpleNamespace(metadata={"run_label": "101", "field": 150.0, "temperature": 12.0})
+    }
+    panel.set_fit_results(
+        {101: (result_g1, (np.array([0.0, 1.0]), np.array([0.24, 0.24])))},
+        datasets_g1,
+        global_params=shared_global,
+        group_id="g1",
+        group_name="Group 1",
+    )
+
+    # Simulate reuse/mutation of the same ParameterSet object by later fits.
+    shared_global["A0"].value = 0.42
+
+    result_g2 = FitResult(
+        success=True,
+        reduced_chi_squared=1.0,
+        parameters=ParameterSet([Parameter("A0", value=0.30), Parameter("Lambda", value=0.12)]),
+        uncertainties={"A0": 0.01, "Lambda": 0.01},
+    )
+    datasets_g2 = {
+        202: SimpleNamespace(metadata={"run_label": "202", "field": 300.0, "temperature": 12.0})
+    }
+    panel.set_fit_results(
+        {202: (result_g2, (np.array([0.0, 1.0]), np.array([0.30, 0.30])))},
+        datasets_g2,
+        global_params=shared_global,
+        group_id="g2",
+        group_name="Group 2",
+    )
+
+    g1_params = panel._group_fit_results["g1"].global_params
+    g2_params = panel._group_fit_results["g2"].global_params
+    assert g1_params is not None
+    assert g2_params is not None
+    assert g1_params["A0"].value == pytest.approx(0.25)
+    assert g2_params["A0"].value == pytest.approx(0.42)
+
+
+def test_click_group_switch_does_not_copy_previous_group_rows(panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch) -> None:
+    rows_a = [
+        _FitRow(
+            run_number=11,
+            run_label="11",
+            field=101.0,
+            temperature=0.1,
+            values={"Lambda": 0.11},
+            errors={"Lambda": 0.01},
+        )
+    ]
+    rows_b = [
+        _FitRow(
+            run_number=22,
+            run_label="22",
+            field=202.0,
+            temperature=2.0,
+            values={"Lambda": 0.22},
+            errors={"Lambda": 0.02},
+        )
+    ]
+
+    panel._group_fit_results = {
+        "g_a": _GroupFitData(
+            group_id="g_a",
+            group_name="T = 0.1 K",
+            rows=rows_a,
+            global_params=None,
+            varying_params=["Lambda"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+        "g_b": _GroupFitData(
+            group_id="g_b",
+            group_name="T = 2 K",
+            rows=rows_b,
+            global_params=None,
+            varying_params=["Lambda"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+    }
+    panel._active_group_id = "g_a"
+    panel._rows = list(rows_a)
+    panel._varying_params = ["Lambda"]
+    panel._rebuild_group_buttons()
+    panel._set_selected_group_ids(["g_a"], emit=False)
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.fit_parameters_panel.QApplication.keyboardModifiers",
+        lambda: Qt.KeyboardModifier.NoModifier,
+    )
+
+    panel._group_button_map["g_b"].click()
+
+    # Active view now shows group B's own rows.
+    assert panel._active_group_id == "g_b"
+    assert len(panel._rows) == 1
+    assert panel._rows[0].run_number == 22
+
+    # Group B storage remains intact and was not overwritten by group A rows.
+    assert len(panel._group_fit_results["g_b"].rows) == 1
+    assert panel._group_fit_results["g_b"].rows[0].run_number == 22
+
+
+def test_group_switch_keeps_selected_y_parameter_when_available(panel: FitParametersPanel) -> None:
+    rows_a = [
+        _FitRow(
+            run_number=11,
+            run_label="11",
+            field=101.0,
+            temperature=0.1,
+            values={"Lambda": 0.11, "A0": 0.21},
+            errors={"Lambda": 0.01, "A0": 0.01},
+        ),
+        _FitRow(
+            run_number=12,
+            run_label="12",
+            field=102.0,
+            temperature=0.1,
+            values={"Lambda": 0.12, "A0": 0.22},
+            errors={"Lambda": 0.01, "A0": 0.01},
+        ),
+    ]
+    rows_b = [
+        _FitRow(
+            run_number=21,
+            run_label="21",
+            field=201.0,
+            temperature=2.0,
+            values={"Lambda": 0.21, "A0": 0.31},
+            errors={"Lambda": 0.02, "A0": 0.02},
+        ),
+        _FitRow(
+            run_number=22,
+            run_label="22",
+            field=202.0,
+            temperature=2.0,
+            values={"Lambda": 0.22, "A0": 0.32},
+            errors={"Lambda": 0.02, "A0": 0.02},
+        ),
+    ]
+
+    panel._group_fit_results = {
+        "g_a": _GroupFitData(
+            group_id="g_a",
+            group_name="T = 0.1 K",
+            rows=rows_a,
+            global_params=None,
+            varying_params=["A0", "Lambda"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+        "g_b": _GroupFitData(
+            group_id="g_b",
+            group_name="T = 2 K",
+            rows=rows_b,
+            global_params=None,
+            varying_params=["A0", "Lambda"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+    }
+    panel._active_group_id = "g_a"
+    panel._rebuild_group_buttons()
+    panel._set_selected_group_ids(["g_a"], emit=False)
+    panel._apply_group_selection_to_view(sync_active=False)
+
+    # Select Lambda in group A.
+    lambda_row = panel._varying_params.index("Lambda")
+    lambda_item = panel._y_selector_table.item(lambda_row, 0)
+    assert lambda_item is not None
+    panel._y_selector_table.clearSelection()
+    lambda_item.setSelected(True)
+    assert panel._selected_y_parameters() == ["Lambda"]
+
+    # Switch to group B; Lambda exists there too and should stay selected.
+    panel._set_selected_group_ids(["g_b"], emit=False)
+    panel._active_group_id = "g_b"
+    panel._apply_group_selection_to_view()
+    assert panel._selected_y_parameters() == ["Lambda"]
+
+
+def test_group_variable_value_for_rows_uses_complementary_axis(panel: FitParametersPanel) -> None:
+    rows = [
+        _FitRow(
+            run_number=1,
+            run_label="1",
+            field=20.0,
+            temperature=20.10,
+            values={"Lambda": 0.1},
+            errors={"Lambda": 0.01},
+        ),
+        _FitRow(
+            run_number=2,
+            run_label="2",
+            field=20.0,
+            temperature=20.13,
+            values={"Lambda": 0.1},
+            errors={"Lambda": 0.01},
+        ),
+    ]
+
+    gv_field_fit = panel._group_variable_value_for_rows(rows, "field")
+    gv_temp_fit = panel._group_variable_value_for_rows(rows, "temperature")
+
+    # For field-based fits, group variable should be temperature.
+    assert gv_field_fit == pytest.approx((20.10 + 20.13) / 2.0)
+    # For temperature-based fits, group variable should be field.
+    assert gv_temp_fit == pytest.approx(20.0)

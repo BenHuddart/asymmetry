@@ -22,6 +22,8 @@ class _FakeAxis:
         self.errorbar_calls: list[dict[str, object]] = []
         self.plot_calls: list[dict[str, object]] = []
         self.text_calls: list[dict[str, object]] = []
+        self.xlabel: str | None = None
+        self.ylabel: str | None = None
 
     def errorbar(self, *args, **kwargs) -> None:
         self.errorbar_calls.append({"args": args, "kwargs": kwargs})
@@ -32,11 +34,13 @@ class _FakeAxis:
     def text(self, *args, **kwargs) -> None:
         self.text_calls.append({"args": args, "kwargs": kwargs})
 
-    def set_xlabel(self, *_args, **_kwargs) -> None:
-        return
+    def set_xlabel(self, *args, **_kwargs) -> None:
+        if args:
+            self.xlabel = str(args[0])
 
-    def set_ylabel(self, *_args, **_kwargs) -> None:
-        return
+    def set_ylabel(self, *args, **_kwargs) -> None:
+        if args:
+            self.ylabel = str(args[0])
 
     def legend(self, *_args, **_kwargs) -> None:
         return
@@ -280,6 +284,9 @@ class TestPlotPanel:
         assert axis.errorbar_calls
         assert axis.plot_calls
         assert axis.text_calls
+        assert axis.xlabel is not None and "$" not in axis.xlabel
+        assert axis.ylabel is not None and "$" not in axis.ylabel
+        assert "\\mu" in axis.xlabel
         assert subprocess_calls
         assert subprocess_calls[0][:3] == ["gle", "-d", "pdf"]
         assert str(gle_path) in subprocess_calls[0]

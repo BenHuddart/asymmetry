@@ -12,6 +12,8 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core.fitting.parameters import ParamInfo, param_info_map
+
 
 @dataclass
 class ModelDefinition:
@@ -22,6 +24,7 @@ class ModelDefinition:
     function: Callable[..., NDArray[np.float64]]
     param_names: list[str]
     param_defaults: dict[str, float]
+    param_info: dict[str, ParamInfo]
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +89,7 @@ MODELS: dict[str, ModelDefinition] = {}
 
 
 def _register(name: str, desc: str, fn: Callable, params: list[str], defaults: dict) -> None:
-    MODELS[name] = ModelDefinition(name, desc, fn, params, defaults)
+    MODELS[name] = ModelDefinition(name, desc, fn, params, defaults, param_info_map(params))
 
 
 _register(

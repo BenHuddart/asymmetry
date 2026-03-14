@@ -48,8 +48,8 @@ def test_cross_group_dialog_parameter_labels_include_units() -> None:
 
     # Default model is Linear -> params m and b.
     labels = [dlg._param_table.item(row, 0).text() for row in range(dlg._param_table.rowCount())]
-    assert any("[us^-1 / G]" in label for label in labels)
-    assert any("[us^-1]" in label for label in labels)
+    assert any("[μs⁻¹ / G]" in label for label in labels)
+    assert any("[μs⁻¹]" in label for label in labels)
 
     # Canonical parameter names used by fitting are preserved in UserRole.
     canonical = [
@@ -139,6 +139,29 @@ def test_cross_group_dialog_redfield_m_is_unitless() -> None:
     labels = [dlg._param_table.item(row, 0).text() for row in range(dlg._param_table.rowCount())]
     assert "m" in labels
     assert not any(label.startswith("m [") for label in labels)
+    assert dlg._fit.ranges[0].parameters["m"].value == 2.0
+    assert app is not None
+
+
+def test_cross_group_dialog_shows_inherited_source_in_banner() -> None:
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        existing_config={
+            "source_group_name": "G0",
+            "source_reduced_chi_squared": 0.8123,
+        },
+        parent=None,
+    )
+
+    banner = dlg.layout().itemAt(0).widget() if dlg.layout() is not None else None
+    assert banner is not None
+    text = banner.text()
+    assert "Inherited from" in text
+    assert "G0" in text
+    assert "chi2_r=" in text
     assert app is not None
 
 

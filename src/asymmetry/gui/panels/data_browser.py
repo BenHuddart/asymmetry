@@ -27,6 +27,31 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import MuonDataset
 
 
+_GROUP_TEMP_ABS_TOL_K = 5e-3
+_GROUP_TEMP_REL_TOL = 2e-3
+_GROUP_FIELD_ABS_TOL_G = 1e-3
+_GROUP_FIELD_REL_TOL = 1e-4
+
+
+def _is_effectively_constant(values: list[float], *, abs_tol: float, rel_tol: float) -> bool:
+    """Return True when finite values vary only within tolerance.
+
+    Uses a combined absolute/relative tolerance so low-value groups (e.g.
+    0.1 K) and higher-value groups (e.g. 20 K with small drift) are both
+    handled robustly.
+    """
+    if not values:
+        return False
+    arr = np.asarray(values, dtype=float)
+    if not np.all(np.isfinite(arr)):
+        return False
+
+    center = float(np.nanmedian(arr))
+    span = float(np.nanmax(arr) - np.nanmin(arr))
+    tolerance = max(float(abs_tol), float(rel_tol) * max(abs(center), 1.0))
+    return span <= tolerance
+
+
 class NumericTableWidgetItem(QTableWidgetItem):
     """QTableWidgetItem that sorts numerically instead of alphabetically."""
 
@@ -369,10 +394,18 @@ class DataBrowserPanel(QWidget):
 
         temps = [float(ds.metadata.get("temperature", np.nan)) for ds in datasets]
         fields = [float(ds.metadata.get("field", np.nan)) for ds in datasets]
-        if all(np.isfinite(v) for v in temps) and np.ptp(temps) < 1e-9:
-            return f"T = {temps[0]:.6g} K"
-        if all(np.isfinite(v) for v in fields) and np.ptp(fields) < 1e-9:
-            return f"B = {fields[0]:.6g} G"
+        if _is_effectively_constant(
+            temps,
+            abs_tol=_GROUP_TEMP_ABS_TOL_K,
+            rel_tol=_GROUP_TEMP_REL_TOL,
+        ):
+            return f"T = {float(np.nanmedian(temps)):.6g} K"
+        if _is_effectively_constant(
+            fields,
+            abs_tol=_GROUP_FIELD_ABS_TOL_G,
+            rel_tol=_GROUP_FIELD_REL_TOL,
+        ):
+            return f"B = {float(np.nanmedian(fields)):.6g} G"
         return f"Group {len(self._groups) + 1}"
 
     def _display_index_for_run(self, run_number: int) -> int:

@@ -506,3 +506,34 @@ def test_remove_runs_from_group_moves_to_top_level(qapp: QApplication) -> None:
     assert panel._run_to_group.get(171) is None
     assert 171 in panel._datasets
     assert 171 not in panel._groups[gid].member_run_numbers
+
+
+def test_default_group_name_detects_near_constant_temperature_with_tolerance(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    d1 = _dataset(201)
+    d2 = _dataset(202)
+    d1.metadata["temperature"] = 20.10
+    d2.metadata["temperature"] = 20.13
+    d1.metadata["field"] = 150.0
+    d2.metadata["field"] = 151.0
+    panel.add_dataset(d1)
+    panel.add_dataset(d2)
+
+    name = panel._default_group_name([201, 202])
+    assert name.startswith("T = ")
+    assert name.endswith(" K")
+
+
+def test_default_group_name_tolerance_not_too_loose_for_low_temperature(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    d1 = _dataset(211)
+    d2 = _dataset(212)
+    d1.metadata["temperature"] = 0.10
+    d2.metadata["temperature"] = 0.11
+    d1.metadata["field"] = 300.0
+    d2.metadata["field"] = 305.0
+    panel.add_dataset(d1)
+    panel.add_dataset(d2)
+
+    name = panel._default_group_name([211, 212])
+    assert name == "Group 1"

@@ -223,7 +223,7 @@ By default, the function is:
 
 .. math::
 
-   A(t) = A_1 e^{-\Lambda t} + A_{bg}
+   A(t) = A_1 e^{-\lambda t} + A_{\mathrm{bg}}
 
 where ``A_bg`` is an explicit constant background term.
 
@@ -235,12 +235,12 @@ To edit the model:
 
 Available components in the builder:
 
-* **Exponential**: :math:`A e^{-\Lambda t}`
+* **Exponential**: :math:`A e^{-\lambda t}`
 * **Gaussian**: :math:`A e^{-(\sigma t)^2}`
 * **Oscillatory**: :math:`A\cos(2\pi f t + \phi)`
-* **StretchedExponential**: :math:`A e^{-(|\Lambda|t)^\beta}`
+* **StretchedExponential**: :math:`A e^{-(|\lambda|t)^\beta}`
 * **StaticGKT_ZF**: Static Gaussian Kubo-Toyabe
-* **Constant**: :math:`A_{bg}`
+* **Constant**: :math:`A_{\mathrm{bg}}`
 
 .. note::
 
@@ -309,8 +309,43 @@ per-dataset parameters:
 After a global fit completes:
 
 * Fit curves appear on the plot for all datasets
-* The **Fitted Parameters** panel opens automatically (see below)
+* The **Global Parameter Fit** window opens automatically (see below)
 * The log panel shows a summary with average χ²ᵣ
+
+Global Parameter Fit Window
+---------------------------
+
+The global-fit result window is split into two synchronized views:
+
+* **Left: fit overlays per selected dataset**
+* **Right: local-parameter trends vs the complementary sweep axis**
+
+Left pane controls
+~~~~~~~~~~~~~~~~~~
+
+* **Show components**: stack additive fit components under the total fit curve
+* **Log X / Log Y**: toggle axis scaling for dataset fit overlays
+* **Share X Axis**: render one aligned x-axis across all group subplots
+* **Add Label**: place draggable text labels directly on the plot
+
+Right pane controls
+~~~~~~~~~~~~~~~~~~~
+
+* **Single Axes / Subplots**: choose one combined axis or one axis per local parameter
+* **Log X**: log scaling for the local-parameter x-axis
+* **Per-parameter Log Y**: enable from the selector table for individual local parameters
+* **Add Label**: place draggable labels on local-parameter plots
+
+Plot labels and annotations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Left-click and drag to reposition labels
+* Double-click an existing label to edit text
+* Right-click a label to remove it
+* Automatic group labels can be hidden per subplot by right-clicking them
+
+All label positions and text are saved in the project file and restored when the
+project is reopened.
 
 Fitted Parameters Panel
 -----------------------
@@ -324,8 +359,8 @@ Parameter Table
 A tabular view of all fitted varying parameters, with columns for:
 
 * Run number
-* 𝐵 (G) — applied magnetic field
-* 𝑇 (K) — sample temperature
+* :math:`B` (G) — applied magnetic field
+* :math:`T` (K) — sample temperature
 * Each varying parameter with its uncertainty
 
 Parameter Trend Plot
@@ -333,7 +368,7 @@ Parameter Trend Plot
 
 A plot of one selected parameter versus a sweep variable. Controls include:
 
-* **X axis**: Choose between Auto (inferred from data), 𝐵 (G), 𝑇 (K), or Run number.
+* **X axis**: Choose between Auto (inferred from data), :math:`B` (G), :math:`T` (K), or Run number.
   Auto mode detects whether field or temperature varies across the datasets.
 * **Y parameter**: Select which varying parameter to plot
 * **Scale**: Check **Log X** and/or **Log Y** to use logarithmic axes —
@@ -375,6 +410,22 @@ or other analysis software.
    Install GLE from source or from http://glx.sourceforge.io/ to enable
    automatic compilation. The ``gleplot`` Python package is required for
    script generation (``pip install gleplot``).
+
+Global-fit GLE exports
+~~~~~~~~~~~~~~~~~~~~~~
+
+The Global Parameter Fit window provides two dedicated GLE export buttons:
+
+* **Export fits to GLE** (left pane): exports the per-dataset fit overlays
+* **Export plot(s) to GLE** (right pane): exports local-parameter trend plots
+
+For local-parameter exports, Asymmetry also writes:
+
+* A ``*_local_parameters.dat`` table with units and an explicit column map
+* Optional ``*_local_<parameter>.fit`` files for any active local model fit overlays
+
+Both global and local export dialogs remember the last export directory and use
+it as the default location next time.
 
 Analysis Workflows
 ------------------

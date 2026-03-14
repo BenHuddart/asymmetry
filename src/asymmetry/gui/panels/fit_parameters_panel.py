@@ -9,11 +9,13 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -43,78 +45,29 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterModelFitResult,
 )
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
+from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
-
-_PARAM_SYMBOLS = {
-    "A0": "A₀",
-    "A_bg": "A_bg",
-    "Lambda": "λ",
-    "sigma": "σ",
-    "Delta": "Δ",
-    "beta": "β",
-    "phase": "φ",
-    "frequency": "f",
-}
-
-_PARAM_UNITS = {
-    "A0": "%",
-    "A_bg": "%",
-    "baseline": "%",
-    "Lambda": "μs⁻¹",
-    "sigma": "μs⁻¹",
-    "Delta": "μs⁻¹",
-    "frequency": "MHz",
-    "phase": "rad",
-}
 
 
 def _format_param_label(name: str) -> str:
-    symbol = _PARAM_SYMBOLS.get(name, name)
-    unit = _PARAM_UNITS.get(name)
-    return f"{symbol} ({unit})" if unit else symbol
+    return get_param_info(name).unicode_label()
 
 
 def _format_plot_label(name: str) -> str:
-    if name == "A_bg":
-        return "$A_{bg}$ (%)"
-    return _format_param_label(name)
+    return get_param_info(name).latex_label()
 
 
 def _format_plot_legend_label(name: str) -> str:
-    if name == "A_bg":
-        return "$A_{bg}$"
-    return _PARAM_SYMBOLS.get(name, name)
+    return get_param_info(name).latex
 
 
 def _format_gle_label(name: str) -> str:
-    gle_labels = {
-        "A0": "{\\it{A}}_{0} (%)",
-        "A_bg": "{\\it{A}}_{bg} (%)",
-        "Lambda": "{\\it{λ}} (μs^{-1})",
-        "sigma": "{\\it{σ}} (μs^{-1})",
-        "Delta": "{\\it{Δ}} (μs^{-1})",
-        "beta": "{\\it{β}}",
-        "phase": "{\\it{φ}} (rad)",
-        "frequency": "{\\it{f}} (MHz)",
-        "baseline": "baseline (%)",
-    }
-    return gle_labels.get(name, name)
+    return get_param_info(name).gle_label()
 
 
 def _format_gle_legend_label(name: str) -> str:
-    gle_labels = {
-        "A0": "{\\it{A}}_{0}",
-        "A_bg": "{\\it{A}}_{bg}",
-        "Lambda": "{\\it{λ}}",
-        "sigma": "{\\it{σ}}",
-        "Delta": "{\\it{Δ}}",
-        "beta": "{\\it{β}}",
-        "phase": "{\\it{φ}}",
-        "frequency": "{\\it{f}}",
-        "baseline": "baseline",
-    }
-    return gle_labels.get(name, name)
+    return get_param_info(name).gle
 
 
 def _format_x_label_gle(x_key: str) -> str:
@@ -213,6 +166,7 @@ class FitParametersPanel(QWidget):
         self._table_dialog: QDialog | None = None
         self._inferred_x_key = "field"
         self._y_controls: dict[str, _YParamControls] = {}
+        self._selected_y_param_names: list[str] = []
         self._model_fits: dict[str, ParameterModelFit] = {}
         self._plot_annotations: list[dict[str, object]] = []
         self._axes_tag_map: dict[int, str] = {}
@@ -264,7 +218,7 @@ class FitParametersPanel(QWidget):
         self._y_selector_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._y_selector_table.horizontalHeader().setVisible(False)
         self._y_selector_table.verticalHeader().setVisible(False)
-        self._y_selector_table.itemSelectionChanged.connect(self._refresh_plot)
+        self._y_selector_table.itemSelectionChanged.connect(self._on_y_selection_changed)
 
         y_header = self._y_selector_table.horizontalHeader()
         y_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -358,12 +312,14 @@ class FitParametersPanel(QWidget):
         self._active_group_id = None
         self._last_cross_group_fit = None
         self._cross_group_fit_configs = {}
+        self._selected_y_param_names = []
         self._rebuild_group_buttons()
         self._show_table_btn.setEnabled(False)
         self._rebuild_y_controls()
         self._refresh_plot()
 
     def get_state(self) -> dict:
+        self._sync_active_group_state()
         rows = [
             {
                 "run_number": int(row.run_number),
@@ -377,7 +333,7 @@ class FitParametersPanel(QWidget):
             for row in self._rows
         ]
 
-        selected_y = self._selected_y_parameters()
+        selected_y = list(self._selected_y_param_names) or self._selected_y_parameters()
         log_y = [name for name, c in self._y_controls.items() if c.log.isChecked()]
 
         return {
@@ -444,9 +400,15 @@ class FitParametersPanel(QWidget):
         inferred_x = state.get("inferred_x_key", "field")
         self._inferred_x_key = inferred_x if inferred_x in {"field", "temperature", "run"} else "field"
 
-        self._rebuild_y_controls()
+        selected_y_state = state.get("selected_y_params", [])
+        if isinstance(selected_y_state, list):
+            self._selected_y_param_names = [str(v) for v in selected_y_state]
+        else:
+            self._selected_y_param_names = []
 
-        selected_y = set(state.get("selected_y_params", []))
+        self._rebuild_y_controls(preferred_selected=self._selected_y_param_names)
+
+        selected_y = set(self._selected_y_param_names)
         for i in range(self._y_selector_table.rowCount()):
             item = self._y_selector_table.item(i, 0)
             if item is None:
@@ -455,6 +417,7 @@ class FitParametersPanel(QWidget):
             if not isinstance(pname, str):
                 continue
             item.setSelected(pname in selected_y if selected_y else i == 0)
+        self._selected_y_param_names = self._selected_y_parameters()
 
         log_y_state = state.get("log_y_params", [])
         log_y = set(log_y_state if isinstance(log_y_state, list) else [])
@@ -495,10 +458,10 @@ class FitParametersPanel(QWidget):
         selected_group_ids = state.get("selected_group_ids", [])
         if isinstance(selected_group_ids, list) and selected_group_ids:
             self._set_selected_group_ids([str(v) for v in selected_group_ids], emit=False)
-            self._apply_group_selection_to_view()
+            self._apply_group_selection_to_view(sync_active=False)
         elif self._active_group_id and self._active_group_id in self._group_fit_results:
             self._set_selected_group_ids([self._active_group_id], emit=False)
-            self._apply_group_selection_to_view()
+            self._apply_group_selection_to_view(sync_active=False)
         self._refresh_model_fit_button_labels()
 
         x_axis = state.get("x_axis")
@@ -527,6 +490,7 @@ class FitParametersPanel(QWidget):
         group_id: str | None = None,
         group_name: str | None = None,
     ) -> None:
+        self._sync_active_group_state()
         rows: list[_FitRow] = []
 
         for run_number, (fit_result, _) in results_dict.items():
@@ -562,21 +526,43 @@ class FitParametersPanel(QWidget):
         gname = (str(group_name).strip() if group_name else "Ungrouped")
         varying = self._detect_varying_parameters(rows)
         inferred_x = self._infer_x_key(rows)
+        # A newly completed asymmetry fit replaces prior per-group trend/model-fit
+        # state for this group. Keep only the fresh fit-parameter rows.
+        model_fits: dict[str, ParameterModelFit] = {}
+        plot_annotations: list[dict[str, Any]] = []
 
         self._group_fit_results[gid] = _GroupFitData(
             group_id=gid,
             group_name=gname,
             rows=rows,
-            global_params=global_params,
+            global_params=self._copy_parameter_set(global_params) if global_params is not None else None,
             varying_params=varying,
             inferred_x_key=inferred_x,
-            model_fits=self._model_fits if gid == self._active_group_id else {},
-            plot_annotations=self._plot_annotations if gid == self._active_group_id else [],
+            model_fits=model_fits,
+            plot_annotations=plot_annotations,
         )
         self._active_group_id = gid
         self._rebuild_group_buttons()
         self._set_selected_group_ids([gid], emit=False)
-        self._apply_group_selection_to_view()
+        self._apply_group_selection_to_view(sync_active=False)
+
+    def _sync_active_group_state(self) -> None:
+        """Persist current view state into the active group snapshot."""
+        gid = self._active_group_id
+        if gid is None or gid not in self._group_fit_results:
+            return
+
+        current = self._group_fit_results[gid]
+        self._group_fit_results[gid] = _GroupFitData(
+            group_id=current.group_id,
+            group_name=current.group_name,
+            rows=list(self._rows),
+            global_params=self._copy_parameter_set(self._global_params) if self._global_params is not None else None,
+            varying_params=list(self._varying_params),
+            inferred_x_key=self._inferred_x_key,
+            model_fits=dict(self._model_fits),
+            plot_annotations=list(self._plot_annotations),
+        )
 
     def _selected_group_ids_from_buttons(self) -> list[str]:
         selected: list[str] = []
@@ -609,13 +595,118 @@ class FitParametersPanel(QWidget):
             self._group_button_map[group.group_id] = button
         self._group_tabs_layout.addStretch()
         self._group_tabs_widget.setVisible(bool(groups))
+        self._refresh_group_button_styles()
+
+    def _refresh_group_button_styles(self) -> None:
+        selected_ids = set(self._selected_group_ids_from_buttons())
+        active_gid: str | None = None
+        if self._active_group_id in selected_ids:
+            active_gid = self._active_group_id
+        elif selected_ids:
+            active_gid = next(iter(selected_ids))
+
+        base = (
+            "QPushButton {"
+            " border-radius: 12px;"
+            " padding: 6px 14px;"
+            " }"
+            "QPushButton:checked {"
+            " border-radius: 12px;"
+            " padding: 6px 14px;"
+            " }"
+        )
+
+        for gid, button in self._group_button_map.items():
+            if gid == active_gid:
+                # Active group: included in global fit and additionally marked
+                # as currently selected via a stronger blue border.
+                button.setStyleSheet(
+                    base +
+                    "QPushButton {"
+                    " font-weight: 700;"
+                    " border: 2px solid #1f6feb;"
+                    " background: #fff4cc;"
+                    " color: #1f2328;"
+                    " }"
+                    "QPushButton:checked {"
+                    " font-weight: 700;"
+                    " border: 2px solid #1f6feb;"
+                    " background: #ffe9a8;"
+                    " color: #1f2328;"
+                    " }"
+                )
+            elif gid in selected_ids:
+                # Included for global fit but not currently selected.
+                button.setStyleSheet(
+                    base +
+                    "QPushButton {"
+                    " font-weight: 500;"
+                    " border: 1px solid #d29922;"
+                    " background: #fff9db;"
+                    " color: #1f2328;"
+                    " }"
+                    "QPushButton:checked {"
+                    " font-weight: 500;"
+                    " border: 1px solid #d29922;"
+                    " background: #fff9db;"
+                    " color: #1f2328;"
+                    " }"
+                )
+            else:
+                button.setStyleSheet(
+                    base +
+                    "QPushButton {"
+                    " font-weight: 500;"
+                    " border: 1px solid #d0d7de;"
+                    " background: #f3f4f6;"
+                    " color: #1f2328;"
+                    " }"
+                    "QPushButton:checked {"
+                    " font-weight: 500;"
+                    " border: 1px solid #d0d7de;"
+                    " background: #f3f4f6;"
+                    " color: #1f2328;"
+                    " }"
+                )
 
     def _on_group_button_clicked(self) -> None:
-        if not self._selected_group_ids_from_buttons() and self._active_group_id in self._group_button_map:
-            self._group_button_map[self._active_group_id].setChecked(True)
-        self._apply_group_selection_to_view()
+        self._sync_active_group_state()
 
-    def _apply_group_selection_to_view(self) -> None:
+        clicked_gid: str | None = None
+        sender = self.sender()
+        for gid, button in self._group_button_map.items():
+            if button is sender:
+                clicked_gid = gid
+                break
+
+        modifiers = QApplication.keyboardModifiers()
+        shift_pressed = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+
+        if clicked_gid is not None:
+            clicked_button = self._group_button_map[clicked_gid]
+            # Shift+click toggles whether a group is included for global fit,
+            # but does not change which group is currently selected.
+            if shift_pressed and not clicked_button.isChecked() and clicked_gid == self._active_group_id:
+                clicked_button.setChecked(True)
+            elif clicked_button.isChecked() and not shift_pressed:
+                self._active_group_id = clicked_gid
+
+        selected_ids = self._selected_group_ids_from_buttons()
+        if not selected_ids and self._active_group_id in self._group_button_map:
+            self._group_button_map[self._active_group_id].setChecked(True)
+        elif self._active_group_id not in selected_ids and selected_ids:
+            self._active_group_id = selected_ids[0]
+
+        # We already synced the previous active group at the top of this
+        # handler. Avoid a second sync here because _active_group_id may now
+        # refer to the newly clicked group while self._rows still contains the
+        # previous group's data.
+        self._apply_group_selection_to_view(sync_active=False)
+
+    def _apply_group_selection_to_view(self, *, sync_active: bool = True) -> None:
+        if sync_active:
+            self._sync_active_group_state()
+        previous_selected_y = list(self._selected_y_param_names) or self._selected_y_parameters()
         selected_group_ids = self._selected_group_ids_from_buttons()
         if not selected_group_ids and self._active_group_id and self._active_group_id in self._group_fit_results:
             selected_group_ids = [self._active_group_id]
@@ -633,7 +724,7 @@ class FitParametersPanel(QWidget):
             self._export_csv_btn.setEnabled(False)
             self._export_gle_btn.setEnabled(False)
             self._gle_format_combo.setEnabled(False)
-            self._rebuild_y_controls()
+            self._rebuild_y_controls(preferred_selected=previous_selected_y)
             self._refresh_model_fit_button_labels()
             self._update_x_axis_auto_hint()
             self._refresh_views()
@@ -644,20 +735,26 @@ class FitParametersPanel(QWidget):
             self._active_group_id = group.group_id
             self._rows = list(group.rows)
             self._varying_params = list(group.varying_params)
-            self._global_params = group.global_params
+            self._global_params = self._copy_parameter_set(group.global_params) if group.global_params is not None else None
             self._inferred_x_key = group.inferred_x_key
             self._model_fits = dict(group.model_fits)
             self._plot_annotations = list(group.plot_annotations)
         else:
-            merged_rows: list[_FitRow] = []
-            for group in selected_groups:
-                merged_rows.extend(group.rows)
-            self._rows = sorted(merged_rows, key=lambda r: r.run_number)
-            self._varying_params = self._detect_varying_parameters(self._rows)
-            self._global_params = None
-            self._inferred_x_key = self._infer_x_key(self._rows)
-            self._model_fits = {}
-            self._plot_annotations = []
+            active_gid = self._active_group_id if self._active_group_id in selected_group_ids else selected_group_ids[0]
+            active_group = self._group_fit_results.get(active_gid)
+            if active_group is None:
+                active_group = selected_groups[0]
+                active_gid = active_group.group_id
+
+            # Keep group data distinct: with multi-selection we still display
+            # the active group's parameter table/plot only.
+            self._active_group_id = active_gid
+            self._rows = list(active_group.rows)
+            self._varying_params = list(active_group.varying_params)
+            self._global_params = self._copy_parameter_set(active_group.global_params) if active_group.global_params is not None else None
+            self._inferred_x_key = active_group.inferred_x_key
+            self._model_fits = dict(active_group.model_fits)
+            self._plot_annotations = list(active_group.plot_annotations)
 
         has_rows = bool(self._rows)
         self._show_table_btn.setEnabled(has_rows)
@@ -667,10 +764,161 @@ class FitParametersPanel(QWidget):
 
         self._model_fits = {k: v for k, v in self._model_fits.items() if k in self._varying_params}
 
-        self._rebuild_y_controls()
+        self._rebuild_y_controls(preferred_selected=previous_selected_y)
         self._refresh_model_fit_button_labels()
         self._update_x_axis_auto_hint()
+        self._refresh_group_button_styles()
         self._refresh_views()
+
+    def _on_y_selection_changed(self) -> None:
+        self._selected_y_param_names = self._selected_y_parameters()
+        self._refresh_plot()
+
+    def _copy_parameter_set(self, source: ParameterSet) -> ParameterSet:
+        copied = ParameterSet()
+        for p in source:
+            copied.add(
+                Parameter(
+                    name=p.name,
+                    value=float(p.value),
+                    min=float(p.min),
+                    max=float(p.max),
+                    fixed=bool(p.fixed),
+                )
+            )
+        return copied
+
+    def _build_cross_group_group_model_fit(
+        self,
+        *,
+        parameter_name: str,
+        x_key: str,
+        group_id: str,
+        model: ParameterCompositeModel,
+        fit_result: CrossGroupFitResult,
+        fit_x_min: float,
+        fit_x_max: float,
+    ) -> ParameterModelFit:
+        param_result = ParameterSet()
+        fit_params = ParameterSet()
+        uncertainties: dict[str, float] = {}
+
+        global_params = fit_result.global_parameters
+        local_params = fit_result.local_parameters.get(group_id, ParameterSet())
+        fixed_params = fit_result.fixed_parameters
+
+        for pname in model.param_names:
+            if pname in local_params:
+                src = local_params[pname]
+                err = fit_result.local_uncertainties.get(group_id, {}).get(pname)
+            elif pname in global_params:
+                src = global_params[pname]
+                err = fit_result.global_uncertainties.get(pname)
+            elif pname in fixed_params:
+                src = fixed_params[pname]
+                err = None
+            else:
+                src = Parameter(name=pname, value=float(model.param_defaults.get(pname, 0.0)), fixed=False)
+                err = None
+
+            fit_param = Parameter(
+                name=src.name,
+                value=float(src.value),
+                min=float(src.min),
+                max=float(src.max),
+                fixed=bool(src.fixed),
+            )
+            fit_params.add(fit_param)
+            param_result.add(
+                Parameter(
+                    name=fit_param.name,
+                    value=fit_param.value,
+                    min=fit_param.min,
+                    max=fit_param.max,
+                    fixed=fit_param.fixed,
+                )
+            )
+            if isinstance(err, (int, float)) and np.isfinite(float(err)):
+                uncertainties[pname] = float(err)
+
+        result = ParameterModelFitResult(
+            success=fit_result.success,
+            chi_squared=float(fit_result.chi_squared),
+            reduced_chi_squared=float(fit_result.reduced_chi_squared),
+            parameters=param_result,
+            uncertainties=uncertainties,
+            message=fit_result.message,
+        )
+
+        x_min_value: float | None = float(fit_x_min) if np.isfinite(fit_x_min) else None
+        x_max_value: float | None = float(fit_x_max) if np.isfinite(fit_x_max) else None
+
+        model_snapshot = ParameterCompositeModel(
+            component_names=list(model.component_names),
+            operators=list(model.operators),
+        )
+        fit_range = ModelFitRange(
+            x_min=x_min_value,
+            x_max=x_max_value,
+            model=model_snapshot,
+            parameters=fit_params,
+            result=result,
+        )
+        return ParameterModelFit(
+            parameter_name=parameter_name,
+            x_key=x_key,
+            ranges=[fit_range],
+            active=True,
+        )
+
+    def _apply_cross_group_fit_to_groups(
+        self,
+        *,
+        parameter_name: str,
+        x_key: str,
+        selected_groups: list[_GroupFitData],
+        output: object,
+    ) -> None:
+        fit_result = getattr(output, "fit_result", None)
+        model = getattr(output, "model", None)
+        fit_x_min = getattr(output, "fit_x_min", float("nan"))
+        fit_x_max = getattr(output, "fit_x_max", float("nan"))
+        if not isinstance(fit_result, CrossGroupFitResult):
+            return
+        if not isinstance(model, ParameterCompositeModel):
+            return
+        if not fit_result.success:
+            return
+
+        for group in selected_groups:
+            existing = self._group_fit_results.get(group.group_id)
+            if existing is None:
+                continue
+
+            group_fit = self._build_cross_group_group_model_fit(
+                parameter_name=parameter_name,
+                x_key=x_key,
+                group_id=group.group_id,
+                model=model,
+                fit_result=fit_result,
+                fit_x_min=float(fit_x_min),
+                fit_x_max=float(fit_x_max),
+            )
+            next_model_fits = dict(existing.model_fits)
+            next_model_fits[parameter_name] = group_fit
+            self._group_fit_results[group.group_id] = _GroupFitData(
+                group_id=existing.group_id,
+                group_name=existing.group_name,
+                rows=list(existing.rows),
+                global_params=existing.global_params,
+                varying_params=list(existing.varying_params),
+                inferred_x_key=existing.inferred_x_key,
+                model_fits=next_model_fits,
+                plot_annotations=list(existing.plot_annotations),
+            )
+
+        self._refresh_model_fit_button_labels()
+        self._refresh_plot()
 
     def _serialize_group_fit_results(self) -> dict[str, dict]:
         out: dict[str, dict] = {}
@@ -678,6 +926,16 @@ class FitParametersPanel(QWidget):
             out[gid] = {
                 "group_id": group.group_id,
                 "group_name": group.group_name,
+                "global_params": [
+                    {
+                        "name": p.name,
+                        "value": float(p.value),
+                        "min": float(p.min),
+                        "max": float(p.max),
+                        "fixed": bool(p.fixed),
+                    }
+                    for p in group.global_params
+                ] if group.global_params is not None else None,
                 "rows": [
                     {
                         "run_number": int(row.run_number),
@@ -754,11 +1012,32 @@ class FitParametersPanel(QWidget):
                     }
                 )
 
+            global_params_state = entry.get("global_params")
+            global_params: ParameterSet | None = None
+            if isinstance(global_params_state, list):
+                restored = ParameterSet()
+                for p in global_params_state:
+                    if not isinstance(p, dict):
+                        continue
+                    try:
+                        restored.add(
+                            Parameter(
+                                name=str(p.get("name", "")),
+                                value=float(p.get("value", 0.0)),
+                                min=float(p.get("min", -float("inf"))),
+                                max=float(p.get("max", float("inf"))),
+                                fixed=bool(p.get("fixed", False)),
+                            )
+                        )
+                    except Exception:
+                        continue
+                global_params = restored
+
             out[gid] = _GroupFitData(
                 group_id=gid,
                 group_name=str(entry.get("group_name", gid)),
                 rows=rows,
-                global_params=None,
+                global_params=global_params,
                 varying_params=[str(v) for v in entry.get("varying_params", []) if isinstance(v, str)],
                 inferred_x_key=_normalize_x_key(entry.get("inferred_x_key", "run")),
                 model_fits=model_fits,
@@ -971,7 +1250,7 @@ class FitParametersPanel(QWidget):
         inferred_label = {"field": "(B)", "temperature": "(T)", "run": "(Run)"}
         self._x_auto_hint.setText(inferred_label.get(self._inferred_x_key, "(Run)"))
 
-    def _rebuild_y_controls(self) -> None:
+    def _rebuild_y_controls(self, *, preferred_selected: list[str] | None = None) -> None:
         self._y_selector_table.blockSignals(True)
         self._y_selector_table.clearContents()
         self._y_selector_table.setRowCount(0)
@@ -1012,12 +1291,19 @@ class FitParametersPanel(QWidget):
         self._y_selector_table.resizeColumnsToContents()
         self._set_y_table_visible_rows(3)
 
-        if self._y_selector_table.rowCount() > 0:
+        preferred = [name for name in (preferred_selected or []) if name in self._varying_params]
+        if preferred:
+            for idx, name in enumerate(self._varying_params):
+                item = self._y_selector_table.item(idx, 0)
+                if item is not None and name in preferred:
+                    item.setSelected(True)
+        elif self._y_selector_table.rowCount() > 0:
             item = self._y_selector_table.item(0, 0)
             if item is not None:
                 item.setSelected(True)
 
         self._y_selector_table.blockSignals(False)
+        self._selected_y_param_names = self._selected_y_parameters()
 
     def _set_y_table_visible_rows(self, visible_rows: int = 3) -> None:
         """Set selector table height to show at most ``visible_rows`` rows."""
@@ -1100,6 +1386,8 @@ class FitParametersPanel(QWidget):
             if fit is not None:
                 self._model_fits[param_name] = fit
 
+        self._sync_active_group_state()
+
         self._refresh_model_fit_button_labels()
         self._refresh_plot()
 
@@ -1118,6 +1406,11 @@ class FitParametersPanel(QWidget):
             if not rows:
                 continue
             if any(param_name not in row.values for row in rows):
+                QMessageBox.information(
+                    self,
+                    "Cross-group fit",
+                    f"Selected groups do not all contain fitted values for '{param_name}'.",
+                )
                 return None
             x_vals = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
             y_vals = np.array([row.values.get(param_name, np.nan) for row in rows], dtype=float)
@@ -1135,15 +1428,26 @@ class FitParametersPanel(QWidget):
                     x=x_vals,
                     y=y_vals,
                     yerr=y_err,
-                    group_variable_value=float(rows[0].temperature if x_key == "temperature" else rows[0].field),
+                    group_variable_value=self._group_variable_value_for_rows(rows, x_key),
                 )
             )
 
         if len(group_payload) < 2:
+            QMessageBox.information(
+                self,
+                "Cross-group fit",
+                "Need at least two selected groups with valid points for cross-group fitting.",
+            )
             return None
 
         config_key = self._cross_group_config_key(param_name, x_key, selected_groups)
         existing_config = self._cross_group_fit_configs.get(config_key)
+        if existing_config is None:
+            existing_config = self._build_inherited_cross_group_config(
+                param_name,
+                x_key,
+                selected_groups,
+            )
 
         dialog = CrossGroupFitDialog(
             parameter_name=param_name,
@@ -1158,6 +1462,13 @@ class FitParametersPanel(QWidget):
         output = dialog.output()
         if output is None:
             return None
+
+        self._apply_cross_group_fit_to_groups(
+            parameter_name=param_name,
+            x_key=x_key,
+            selected_groups=selected_groups,
+            output=output,
+        )
 
         fitted_groups = output.groups if output.groups else group_payload
 
@@ -1175,6 +1486,125 @@ class FitParametersPanel(QWidget):
         self._cross_group_fit_configs[config_key] = dict(output.config)
         self.cross_group_fit_completed.emit(param_name, fitted_groups, output)
         return payload
+
+    def _group_variable_value_for_rows(self, rows: list[_FitRow], x_key: str) -> float:
+        """Return per-group coordinate used for local-parameter trend plots.
+
+        For cross-group fits over field, local parameters should be plotted
+        against group temperature; for fits over temperature, against group
+        field. This keeps group-level trends physically meaningful.
+        """
+        if not rows:
+            return 0.0
+
+        if x_key == "field":
+            vals = np.asarray([row.temperature for row in rows], dtype=float)
+            finite = vals[np.isfinite(vals)]
+            if finite.size:
+                return float(np.nanmedian(finite))
+
+            fallback = np.asarray([row.field for row in rows], dtype=float)
+            finite_fb = fallback[np.isfinite(fallback)]
+            return float(np.nanmedian(finite_fb)) if finite_fb.size else 0.0
+
+        if x_key == "temperature":
+            vals = np.asarray([row.field for row in rows], dtype=float)
+            finite = vals[np.isfinite(vals)]
+            if finite.size:
+                return float(np.nanmedian(finite))
+
+            fallback = np.asarray([row.temperature for row in rows], dtype=float)
+            finite_fb = fallback[np.isfinite(fallback)]
+            return float(np.nanmedian(finite_fb)) if finite_fb.size else 0.0
+
+        # For run-index fits, prefer temperature if available, otherwise field.
+        temps = np.asarray([row.temperature for row in rows], dtype=float)
+        finite_t = temps[np.isfinite(temps)]
+        if finite_t.size:
+            return float(np.nanmedian(finite_t))
+
+        fields = np.asarray([row.field for row in rows], dtype=float)
+        finite_f = fields[np.isfinite(fields)]
+        if finite_f.size:
+            return float(np.nanmedian(finite_f))
+
+        return float(rows[0].run_number)
+
+    def _build_inherited_cross_group_config(
+        self,
+        param_name: str,
+        x_key: str,
+        selected_groups: list[_GroupFitData],
+    ) -> dict[str, object] | None:
+        """Build cross-group defaults from the best successful single-group fit."""
+        best_group: _GroupFitData | None = None
+        best_range: ModelFitRange | None = None
+        best_result: ParameterModelFitResult | None = None
+        best_chi2 = float("inf")
+
+        for group in selected_groups:
+            model_fit = group.model_fits.get(param_name)
+            if model_fit is None or model_fit.x_key != x_key:
+                continue
+            for fit_range in model_fit.ranges:
+                result = fit_range.result
+                if result is None or not result.success:
+                    continue
+                chi2r = result.reduced_chi_squared
+                if not np.isfinite(chi2r):
+                    chi2r = float("inf")
+                if chi2r < best_chi2:
+                    best_chi2 = float(chi2r)
+                    best_group = group
+                    best_range = fit_range
+                    best_result = result
+
+        if best_group is None or best_range is None or best_result is None:
+            return None
+
+        rows: list[dict[str, object]] = []
+        for pname in best_range.model.param_names:
+            if pname in best_result.parameters:
+                fitted = best_result.parameters[pname]
+                initial = float(fitted.value)
+                pmin = float(fitted.min)
+                pmax = float(fitted.max)
+                role = "Fixed" if fitted.fixed else "Global"
+            elif pname in best_range.parameters:
+                fallback = best_range.parameters[pname]
+                initial = float(fallback.value)
+                pmin = float(fallback.min)
+                pmax = float(fallback.max)
+                role = "Fixed" if fallback.fixed else "Global"
+            else:
+                initial = float(best_range.model.param_defaults.get(pname, 0.0))
+                pmin = -float("inf")
+                pmax = float("inf")
+                role = "Global"
+
+            rows.append(
+                {
+                    "name": pname,
+                    "initial": initial,
+                    "min": pmin,
+                    "max": pmax,
+                    "type": role,
+                }
+            )
+
+        config: dict[str, object] = {
+            "model": {
+                "component_names": list(best_range.model.component_names),
+                "operators": list(best_range.model.operators),
+            },
+            "fit_x_min": float(best_range.x_min) if best_range.x_min is not None else None,
+            "fit_x_max": float(best_range.x_max) if best_range.x_max is not None else None,
+            "parameter_rows": rows,
+            "source_group_id": best_group.group_id,
+            "source_group_name": best_group.group_name,
+            "source_reduced_chi_squared": float(best_result.reduced_chi_squared),
+        }
+        return config
 
     def _cross_group_config_key(
         self,
@@ -1703,7 +2133,7 @@ class FitParametersPanel(QWidget):
         if self._global_params is not None:
             lines = []
             for param in self._global_params:
-                unit = _PARAM_UNITS.get(param.name)
+                unit = get_param_info(param.name).unit
                 unit_text = f" {unit}" if unit else ""
                 lines.append(f"{param.name} = {param.value:.6g}{unit_text}")
             header_text = "\n".join(lines) if lines else "None"
@@ -1746,15 +2176,16 @@ class FitParametersPanel(QWidget):
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Fit Parameter Table",
-            "fit_parameters.csv",
+            default_export_path("fit_parameters.csv"),
             "CSV files (*.csv);;All files (*)",
         )
         if not path:
             return
+        remember_export_path(path)
 
         headers = ["Run", "B (G)", "T (K)"]
         for name in self._varying_params:
-            unit = _PARAM_UNITS.get(name)
+            unit = get_param_info(name).unit
             if unit:
                 headers.extend([f"{name} ({unit})", f"err_{name} ({unit})"])
             else:
@@ -2096,7 +2527,7 @@ class FitParametersPanel(QWidget):
             if self._global_params is not None:
                 f.write("! Global fitting parameters:\n")
                 for param in self._global_params:
-                    unit = _PARAM_UNITS.get(param.name)
+                    unit = get_param_info(param.name).unit
                     label = f"{param.name} ({unit})" if unit else param.name
                     f.write(f"!   {label} = {param.value:.6g}\n")
 
@@ -2104,7 +2535,7 @@ class FitParametersPanel(QWidget):
 
             headers = ["Run", "B_field(G)", "Temperature(K)"]
             for name in self._varying_params:
-                unit = _PARAM_UNITS.get(name)
+                unit = get_param_info(name).unit
                 if unit:
                     headers.extend([f"{name} ({unit})", f"err_{name} ({unit})"])
                 else:
@@ -2250,11 +2681,12 @@ class FitParametersPanel(QWidget):
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export to GLE",
-            "fit_parameters.gle",
+            default_export_path("fit_parameters.gle"),
             "GLE files (*.gle);;All files (*)",
         )
         if not path:
             return
+        remember_export_path(path)
 
         gle_path = Path(path)
         data_path = gle_path.with_suffix(".dat")

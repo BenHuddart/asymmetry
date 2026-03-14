@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.core.transform.rebin import rebin
 
 
@@ -766,11 +767,12 @@ class PlotPanel(QWidget):
         path, selected_filter = QFileDialog.getSaveFileName(
             self,
             "Export Current Plot",
-            "current_plot.gle",
+            default_export_path("current_plot.gle"),
             "GLE files (*.gle);;PDF files (*.pdf);;EPS files (*.eps)",
         )
         if not path:
             return
+        remember_export_path(path)
 
         target = Path(path)
         suffix = target.suffix.lower()
@@ -829,7 +831,7 @@ class PlotPanel(QWidget):
             if text:
                 ax.text(x, y, text, color='black', ha='left')
 
-        ax.set_xlabel("Time (μs)")
+        ax.set_xlabel("Time (\\mu s)")
         ax.set_ylabel("Asymmetry (%)")
         ax.legend(loc="best")
 

@@ -496,6 +496,24 @@ class _StubFitParamsClear(_StubFitParams):
         self._restored_state = state
 
 
+class _StubFitParamsWithCrossGroup(_StubFitParamsClear):
+    def __init__(self):
+        super().__init__()
+        self._last_cross_group_fit = {
+            "fit_result": object(),
+            "model": object(),
+            "groups": [],
+            "parameter_name": "Lambda",
+            "x_key": "run",
+            "fit_x_min": float("nan"),
+            "fit_x_max": float("nan"),
+        }
+
+    @property
+    def last_cross_group_fit(self):
+        return self._last_cross_group_fit
+
+
 class _StubPlotPanelWithState(_StubPlotPanel):
     def get_state(self):
         return {
@@ -570,6 +588,46 @@ class TestFitParametersPanelState:
         assert "Lambda" in out["log_y_params"]
         assert "Lambda" in out["selected_y_params"]
 
+    def test_selected_y_persists_when_table_selection_transiently_empty(self, qapp):
+        from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
+
+        panel = FitParametersPanel()
+        state = {
+            "rows": [
+                {
+                    "run_number": 101,
+                    "field": 100.0,
+                    "temperature": 5.0,
+                    "values": {"A0": 20.0, "Lambda": 0.4},
+                    "errors": {"A0": 0.5, "Lambda": 0.02},
+                },
+                {
+                    "run_number": 102,
+                    "field": 200.0,
+                    "temperature": 5.1,
+                    "values": {"A0": 19.5, "Lambda": 0.5},
+                    "errors": {"A0": 0.4, "Lambda": 0.03},
+                },
+            ],
+            "varying_params": ["A0", "Lambda"],
+            "inferred_x_key": "field",
+            "x_axis": "Auto",
+            "selected_y_params": ["Lambda"],
+            "log_x": False,
+            "log_y_params": [],
+            "plot_mode": "Single Axes",
+        }
+
+        panel.restore_state(state)
+
+        # Simulate a transient UI state where table selection appears empty.
+        panel._y_selector_table.blockSignals(True)
+        panel._y_selector_table.clearSelection()
+        panel._y_selector_table.blockSignals(False)
+
+        out = panel.get_state()
+        assert "Lambda" in out["selected_y_params"]
+
 
 class _StubFourierWithState(_StubFourier):
     def get_state(self):
@@ -602,7 +660,29 @@ class TestMainWindowProjectState:
         assert "global_fit_state" in state
         assert "fit_ui_state" in state
         assert "fit_parameters_state" in state
+        assert "global_parameter_fit_window_state" in state
         assert "fourier_state" in state
+
+    def test_collect_project_state_includes_global_parameter_fit_window_state(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+    ) -> None:
+        monkeypatch.setattr(mw_module, "DataBrowserPanel", _StubDataBrowserWithState)
+        monkeypatch.setattr(mw_module, "FitPanel", _StubFitPanelWithState)
+        monkeypatch.setattr(mw_module, "PlotPanel", _StubPlotPanelWithState)
+        monkeypatch.setattr(mw_module, "LogPanel", _StubLogPanel)
+        monkeypatch.setattr(mw_module, "FourierPanel", _StubFourierWithState)
+        monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParamsClear)
+
+        window = mw_module.MainWindow()
+
+        class _StateWindow:
+            def get_state(self):
+                return {"fit_share_x": True}
+
+        window._global_parameter_fit_window = _StateWindow()
+        state = window.collect_project_state()
+
+        assert state["global_parameter_fit_window_state"] == {"fit_share_x": True}
 
     def test_collect_project_state_round_trips_to_file(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
@@ -780,3 +860,56 @@ class TestMainWindowProjectState:
 
         assert not window._dock_fit.isHidden()
         assert not window._dock_fit_parameters.isHidden()
+
+    def test_restore_project_state_restores_global_parameter_fit_window_state(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
+    ) -> None:
+        monkeypatch.setattr(mw_module, "DataBrowserPanel", _StubDataBrowserWithState)
+        monkeypatch.setattr(mw_module, "FitPanel", _StubFitPanelWithState)
+        monkeypatch.setattr(mw_module, "PlotPanel", _StubPlotPanelWithState)
+        monkeypatch.setattr(mw_module, "LogPanel", _StubLogPanel)
+        monkeypatch.setattr(mw_module, "FourierPanel", _StubFourierWithState)
+        monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParamsWithCrossGroup)
+
+        class _StubGlobalParameterFitWindow:
+            def __init__(self, _parent):
+                self.restored_state = None
+
+            def set_results(self, **_kwargs):
+                return
+
+            def restore_state(self, state):
+                self.restored_state = state
+
+            def show(self):
+                return
+
+            def raise_(self):
+                return
+
+            def activateWindow(self):
+                return
+
+            def has_result(self):
+                return True
+
+            def close(self):
+                return
+
+        monkeypatch.setattr(mw_module, "GlobalParameterFitWindow", _StubGlobalParameterFitWindow)
+
+        window = mw_module.MainWindow()
+        state = _minimal_state()
+        state["global_parameter_fit_window_state"] = {
+            "show_components": True,
+            "fit_share_x": True,
+        }
+
+        project_path = str(tmp_path / "test.asymp")
+        window.restore_project_state(state, project_path)
+
+        assert window._global_parameter_fit_window is not None
+        assert window._global_parameter_fit_window.restored_state == {
+            "show_components": True,
+            "fit_share_x": True,
+        }

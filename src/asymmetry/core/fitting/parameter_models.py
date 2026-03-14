@@ -10,7 +10,13 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.fitting.diffusion import lambda_total
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.parameters import (
+    ParamInfo,
+    Parameter,
+    ParameterSet,
+    get_param_info,
+    split_parameter_name,
+)
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
 
@@ -23,6 +29,7 @@ class ParameterModelComponentDefinition:
     function: Callable[..., NDArray[np.float64]]
     param_names: list[str]
     param_defaults: dict[str, float]
+    param_info: dict[str, ParamInfo]
     formula_template: str
     scopes: tuple[str, ...] = ("common",)
 
@@ -70,7 +77,7 @@ def _redfield(
     x: NDArray,
     D: float,
     nu: float,
-    m: float = 2.0,
+    m: int = 2,
 ) -> NDArray[np.float64]:
     """0D Redfield contribution in paper notation.
 
@@ -151,6 +158,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         function=_constant,
         param_names=["c"],
         param_defaults={"c": 0.0},
+        param_info={"c": get_param_info("c")},
         formula_template="{c}",
         scopes=("common",),
     ),
@@ -160,6 +168,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         function=_linear,
         param_names=["m", "b"],
         param_defaults={"m": 1.0, "b": 0.0},
+        param_info={"m": get_param_info("m"), "b": get_param_info("b")},
         formula_template="{m}*x + {b}",
         scopes=("common", "field", "temperature"),
     ),
@@ -169,6 +178,11 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         function=_power_law,
         param_names=["a", "n", "c"],
         param_defaults={"a": 1.0, "n": 1.0, "c": 0.0},
+        param_info={
+            "a": get_param_info("a"),
+            "n": get_param_info("n"),
+            "c": get_param_info("c"),
+        },
         formula_template="{a}*|x|^{n} + {c}",
         scopes=("common",),
     ),
@@ -178,6 +192,11 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         function=_exp_decay,
         param_names=["a", "tau", "c"],
         param_defaults={"a": 1.0, "tau": 10.0, "c": 0.0},
+        param_info={
+            "a": get_param_info("a"),
+            "tau": get_param_info("tau"),
+            "c": get_param_info("c"),
+        },
         formula_template="{a}*exp(-x/{tau}) + {c}",
         scopes=("common",),
     ),
@@ -187,6 +206,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         function=_arrhenius,
         param_names=["a", "Ea"],
         param_defaults={"a": 1.0, "Ea": 1.0},
+        param_info={"a": get_param_info("a"), "Ea": get_param_info("Ea")},
         formula_template="{a}*exp(-{Ea}/(k_B*T))",
         scopes=("temperature",),
     ),
@@ -196,6 +216,12 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         function=_critical_divergence,
         param_names=["a", "Tc", "nu", "c"],
         param_defaults={"a": 1.0, "Tc": 10.0, "nu": 1.0, "c": 0.0},
+        param_info={
+            "a": get_param_info("a"),
+            "Tc": get_param_info("Tc"),
+            "nu": ParamInfo("nu", "nu", "ν", r"$\\nu$", r"\\nu"),
+            "c": get_param_info("c"),
+        },
         formula_template="{a}*|x-{Tc}|^(-{nu}) + {c}",
         scopes=("temperature",),
     ),
@@ -204,7 +230,12 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         description="(D^2/4) * (2/nu)/(1 + (omega_mu/nu)^m)",
         function=_redfield,
         param_names=["D", "nu", "m"],
-        param_defaults={"D": 10.0, "nu": 10.0, "m": 2.0},
+        param_defaults={"D": 10.0, "nu": 10.0, "m": 2},
+        param_info={
+            "D": get_param_info("D"),
+            "nu": get_param_info("nu"),
+            "m": get_param_info("m"),
+        },
         formula_template="(({D}^2)/4)*(2/{nu})/(1 + ((gamma_mu*x)/{nu})^{m})",
         scopes=("field",),
     ),
@@ -214,6 +245,11 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         function=_lorentzian,
         param_names=["a", "B0", "c"],
         param_defaults={"a": 1.0, "B0": 100.0, "c": 0.0},
+        param_info={
+            "a": get_param_info("a"),
+            "B0": get_param_info("B0"),
+            "c": get_param_info("c"),
+        },
         formula_template="{a}/(1 + (x/{B0})^2) + {c}",
         scopes=("field",),
     ),
@@ -223,6 +259,11 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         function=_lcr_gaussian,
         param_names=["f", "B0", "Bwid"],
         param_defaults={"f": 0.1, "B0": 1000.0, "Bwid": 100.0},
+        param_info={
+            "f": get_param_info("f"),
+            "B0": get_param_info("B0"),
+            "Bwid": get_param_info("Bwid"),
+        },
         formula_template="{f}*G(x; {B0}; {Bwid})",
         scopes=("field",),
     ),
@@ -232,6 +273,11 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         function=_diffusion_lf_1d,
         param_names=["A", "D_2D", "D_perp"],
         param_defaults={"A": 1.0, "D_2D": 1.0, "D_perp": 0.0},
+        param_info={
+            "A": ParamInfo("A", "A", "A", r"$A$", r"{\\it A}", "MHz"),
+            "D_2D": get_param_info("D_2D"),
+            "D_perp": get_param_info("D_perp"),
+        },
         formula_template="(({A}^2)/4)*J(x; n=1, D_2D={D_2D}, D_perp={D_perp})",
         scopes=("field",),
     ),
@@ -241,6 +287,11 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         function=_diffusion_lf_2d,
         param_names=["A", "D_2D", "D_perp"],
         param_defaults={"A": 1.0, "D_2D": 1.0, "D_perp": 0.0},
+        param_info={
+            "A": ParamInfo("A", "A", "A", r"$A$", r"{\\it A}", "MHz"),
+            "D_2D": get_param_info("D_2D"),
+            "D_perp": get_param_info("D_perp"),
+        },
         formula_template="(({A}^2)/4)*J(x; n=2, D_2D={D_2D}, D_perp={D_perp})",
         scopes=("field",),
     ),
@@ -250,6 +301,11 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         function=_diffusion_lf_3d,
         param_names=["A", "D_2D", "D_perp"],
         param_defaults={"A": 1.0, "D_2D": 1.0, "D_perp": 0.0},
+        param_info={
+            "A": ParamInfo("A", "A", "A", r"$A$", r"{\\it A}", "MHz"),
+            "D_2D": get_param_info("D_2D"),
+            "D_perp": get_param_info("D_perp"),
+        },
         formula_template="(({A}^2)/4)*J(x; n=3, D_2D={D_2D}, D_perp={D_perp})",
         scopes=("field",),
     ),
@@ -259,6 +315,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         function=_lambda_bg,
         param_names=["lambda_BG"],
         param_defaults={"lambda_BG": 0.0},
+        param_info={"lambda_BG": get_param_info("lambda_BG")},
         formula_template="{lambda_BG}",
         scopes=("field",),
     ),
@@ -310,14 +367,22 @@ class ParameterCompositeModel:
 
         param_names: list[str] = []
         param_defaults: dict[str, float] = {}
+        param_info: dict[str, ParamInfo] = {}
         for mapping, component in zip(self._param_mappings, self.components, strict=True):
             for pname in component.param_names:
                 unique_name = mapping[pname]
                 param_names.append(unique_name)
                 param_defaults[unique_name] = component.param_defaults[pname]
+                base_info = component.param_info[pname]
+                if unique_name == pname:
+                    param_info[unique_name] = base_info
+                else:
+                    _base, index = split_parameter_name(unique_name)
+                    param_info[unique_name] = base_info.with_index(index) if index else base_info
 
         self.param_names = param_names
         self.param_defaults = param_defaults
+        self.param_info = param_info
 
     def _build_param_mapping(self) -> list[dict[str, str]]:
         counts = Counter(

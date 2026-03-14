@@ -22,6 +22,7 @@ from asymmetry.core.fitting.models import (
     static_gkt_zf,
     stretched_exponential,
 )
+from asymmetry.core.fitting.parameters import ParamInfo, get_param_info
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class ComponentDefinition:
     function: Callable[..., NDArray[np.float64]]
     param_names: list[str]
     param_defaults: dict[str, float]
+    param_info: dict[str, ParamInfo]
     formula_template: str
 
 
@@ -77,6 +79,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         function=_exp_component,
         param_names=["A", "Lambda"],
         param_defaults={"A": 25.0, "Lambda": 0.5},
+        param_info={"A": get_param_info("A"), "Lambda": get_param_info("Lambda")},
         formula_template="{A}*exp(-{Lambda}*t)",
     ),
     "Gaussian": ComponentDefinition(
@@ -85,6 +88,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         function=_gaussian_component,
         param_names=["A", "sigma"],
         param_defaults={"A": 25.0, "sigma": 0.5},
+        param_info={"A": get_param_info("A"), "sigma": get_param_info("sigma")},
         formula_template="{A}*exp(-({sigma}*t)^2)",
     ),
     "Oscillatory": ComponentDefinition(
@@ -93,6 +97,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         function=_oscillatory_component,
         param_names=["A", "frequency", "phase"],
         param_defaults={"A": 25.0, "frequency": 1.0, "phase": 0.0},
+        param_info={
+            "A": get_param_info("A"),
+            "frequency": get_param_info("frequency"),
+            "phase": get_param_info("phase"),
+        },
         formula_template="{A}*cos(2*pi*{frequency}*t + {phase})",
     ),
     "StretchedExponential": ComponentDefinition(
@@ -101,6 +110,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         function=_stretched_component,
         param_names=["A", "Lambda", "beta"],
         param_defaults={"A": 25.0, "Lambda": 0.5, "beta": 1.0},
+        param_info={
+            "A": get_param_info("A"),
+            "Lambda": get_param_info("Lambda"),
+            "beta": get_param_info("beta"),
+        },
         formula_template="{A}*exp(-(abs({Lambda})*t)^({beta}))",
     ),
     "StaticGKT_ZF": ComponentDefinition(
@@ -109,6 +123,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         function=_gkt_component,
         param_names=["A", "Delta"],
         param_defaults={"A": 25.0, "Delta": 0.5},
+        param_info={"A": get_param_info("A"), "Delta": get_param_info("Delta")},
         formula_template=(
             "{A}*(1/3 + 2/3*(1-({Delta}*t)^2)*exp(-({Delta}*t)^2/2))"
         ),
@@ -119,6 +134,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         function=_constant_component,
         param_names=["A_bg"],
         param_defaults={"A_bg": 0.0},
+        param_info={"A_bg": get_param_info("A_bg")},
         formula_template="{A_bg}",
     ),
 }
@@ -153,13 +169,16 @@ class CompositeModel:
 
         param_names: list[str] = []
         defaults: dict[str, float] = {}
+        param_info: dict[str, ParamInfo] = {}
         for mapping, component in zip(self._param_mappings, self.components, strict=True):
             for pname in component.param_names:
                 unique_name = mapping[pname]
                 param_names.append(unique_name)
                 defaults[unique_name] = component.param_defaults[pname]
+                param_info[unique_name] = get_param_info(unique_name)
         self.param_names = param_names
         self.param_defaults = defaults
+        self.param_info = param_info
 
     def _build_param_mapping(self) -> list[dict[str, str]]:
         name_counts = Counter(
@@ -304,6 +323,7 @@ class CompositeModel:
             function=self.function,
             param_names=list(self.param_names),
             param_defaults=dict(self.param_defaults),
+            param_info=dict(self.param_info),
         )
 
     def to_dict(self) -> dict:

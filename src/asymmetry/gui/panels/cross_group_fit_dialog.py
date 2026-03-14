@@ -14,7 +14,13 @@ from PySide6.QtWidgets import QComboBox, QLabel, QMessageBox, QTableWidgetItem
 
 from asymmetry.core.fitting.parameter_models import CrossGroupFitResult, ParameterCompositeModel, ParameterGroupData, global_fit_parameter_model
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog, _format_model_param_label, _show_info, _show_warning
+from asymmetry.gui.panels.model_fit_dialog import (
+    ModelFitDialog,
+    _format_model_param_label,
+    _should_reset_param_on_model_change,
+    _show_info,
+    _show_warning,
+)
 
 
 @dataclass
@@ -63,7 +69,16 @@ class CrossGroupFitDialog(ModelFitDialog):
         )
         self.setWindowTitle(f"Cross-group fit: {parameter_name}")
 
-        banner = QLabel(f"Cross-group mode | Parameter: <b>{parameter_name}</b> | X: <b>{x_key}</b> | Groups: <b>{len(groups)}</b>")
+        banner_text = f"Cross-group mode | Parameter: <b>{parameter_name}</b> | X: <b>{x_key}</b> | Groups: <b>{len(groups)}</b>"
+        source_name = existing_config.get("source_group_name") if isinstance(existing_config, dict) else None
+        source_chi2 = existing_config.get("source_reduced_chi_squared") if isinstance(existing_config, dict) else None
+        if isinstance(source_name, str) and source_name.strip():
+            if isinstance(source_chi2, (int, float)) and np.isfinite(float(source_chi2)):
+                banner_text += f" | Inherited from: <b>{source_name}</b> (chi2_r={float(source_chi2):.4g})"
+            else:
+                banner_text += f" | Inherited from: <b>{source_name}</b>"
+
+        banner = QLabel(banner_text)
         banner.setStyleSheet("color: #1f6feb;")
         top_layout = self.layout()
         if top_layout is not None:
@@ -131,7 +146,7 @@ class CrossGroupFitDialog(ModelFitDialog):
         model = fit_range.model
         new_params = ParameterSet()
         for pname in model.param_names:
-            if pname in fit_range.parameters:
+            if pname in fit_range.parameters and not _should_reset_param_on_model_change(model, pname):
                 old = fit_range.parameters[pname]
                 new_params.add(Parameter(name=pname, value=old.value, min=old.min, max=old.max, fixed=old.fixed))
             else:
@@ -162,7 +177,7 @@ class CrossGroupFitDialog(ModelFitDialog):
                 fit_range.model = model
                 new_params = ParameterSet()
                 for pname in model.param_names:
-                    if pname in fit_range.parameters:
+                    if pname in fit_range.parameters and not _should_reset_param_on_model_change(model, pname):
                         old = fit_range.parameters[pname]
                         new_params.add(Parameter(name=pname, value=old.value, min=old.min, max=old.max, fixed=old.fixed))
                     else:

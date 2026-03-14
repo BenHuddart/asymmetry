@@ -865,6 +865,11 @@ class MainWindow(QMainWindow):
             "global_fit_state": self._fit_panel.get_global_state(),
             "fit_ui_state": self._fit_panel.get_ui_state(),
             "fit_parameters_state": self._fit_parameters_panel.get_state(),
+            "global_parameter_fit_window_state": (
+                self._global_parameter_fit_window.get_state()
+                if self._global_parameter_fit_window is not None
+                else None
+            ),
             "fourier_state": self._fourier_panel.get_state(),
         }
 
@@ -1033,6 +1038,7 @@ class MainWindow(QMainWindow):
             self._fit_parameters_panel.restore_state(fit_parameters_state)
 
         restored_cross_group = getattr(self._fit_parameters_panel, "last_cross_group_fit", None)
+        global_parameter_fit_window_state = state.get("global_parameter_fit_window_state")
         if isinstance(restored_cross_group, dict):
             fit_result = restored_cross_group.get("fit_result")
             model = restored_cross_group.get("model")
@@ -1058,6 +1064,8 @@ class MainWindow(QMainWindow):
                     fit_x_min=float(fit_x_min),
                     fit_x_max=float(fit_x_max),
                 )
+                if isinstance(global_parameter_fit_window_state, dict):
+                    self._global_parameter_fit_window.restore_state(global_parameter_fit_window_state)
                 self._global_parameter_fit_window.show()
                 self._global_parameter_fit_window.raise_()
                 self._global_parameter_fit_window.activateWindow()
