@@ -197,8 +197,10 @@ class SingleFitTab(QWidget):
             fix_layout.setAlignment(fix_checkbox, Qt.AlignmentFlag.AlignCenter)
             self._param_table.setCellWidget(i, 2, fix_widget)
 
-            # Min column
-            min_item = QTableWidgetItem("-inf")
+            # Min column — default to 0 for physically positive-definite parameters
+            default_min = get_param_info(pname).default_min
+            min_text = str(default_min) if default_min is not None else "-inf"
+            min_item = QTableWidgetItem(min_text)
             self._param_table.setItem(i, 3, min_item)
 
             # Max column
@@ -437,6 +439,11 @@ class GlobalFitTab(QWidget):
         self._fit_engine = FitEngine()
         self._datasets = []  # Will be set by parent
         self._composite_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+        # Successful single-fit seeds keyed by run number.
+        self._single_fit_seed_by_run: dict[int, dict[str, object]] = {}
+        # Inherited seed cache for current dataset selection.
+        self._inherited_seed_by_run: dict[int, dict[str, float]] = {}
+        self._inherited_model_dict: dict[str, object] | None = None
 
         # Model selection
         model_group = QGroupBox("Model")
@@ -499,6 +506,37 @@ class GlobalFitTab(QWidget):
 
         self._set_composite_model(self._composite_model)
 
+    def register_single_fit_seed(self, run_number: int, model: CompositeModel, fit_result: object) -> None:
+        """Store successful single-fit results for later global-fit initialisation."""
+        if getattr(fit_result, "success", False) is not True:
+            return
+
+        values_by_name: dict[str, float] = {}
+        for param in getattr(fit_result, "parameters", []):
+            name = getattr(param, "name", None)
+            value = getattr(param, "value", None)
+            if isinstance(name, str):
+                try:
+                    numeric_value = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if np.isfinite(numeric_value):
+                    values_by_name[name] = numeric_value
+
+        if not values_by_name:
+            return
+
+        try:
+            run_key = int(run_number)
+        except (TypeError, ValueError):
+            return
+
+        self._single_fit_seed_by_run[run_key] = {
+            "model": model.to_dict(),
+            "values": values_by_name,
+        }
+        self._refresh_inherited_single_fit_defaults()
+
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting."""
         self._datasets = datasets
@@ -519,6 +557,100 @@ class GlobalFitTab(QWidget):
                 f"{n} datasets selected. "
                 "Configure parameters and click Run Global Fit."
             )
+        self._refresh_inherited_single_fit_defaults()
+
+    def _refresh_inherited_single_fit_defaults(self) -> None:
+        """Apply single-fit seeds when every selected dataset shares one model."""
+        self._inherited_seed_by_run = {}
+        self._inherited_model_dict = None
+
+        if len(self._datasets) < 2:
+            return
+
+        run_numbers: list[int] = []
+        for ds in self._datasets:
+            try:
+                run_numbers.append(int(ds.run_number))
+            except (TypeError, ValueError):
+                return
+
+        seeds: list[dict[str, object]] = []
+        for run_number in run_numbers:
+            seed = self._single_fit_seed_by_run.get(run_number)
+            if not isinstance(seed, dict):
+                return
+            seeds.append(seed)
+
+        first_model = seeds[0].get("model")
+        if not isinstance(first_model, dict):
+            return
+        for seed in seeds[1:]:
+            if seed.get("model") != first_model:
+                return
+
+        try:
+            inherited_model = CompositeModel.from_dict(first_model)
+        except ValueError:
+            return
+
+        inherited_values_by_run: dict[int, dict[str, float]] = {}
+        for run_number, seed in zip(run_numbers, seeds, strict=False):
+            values = seed.get("values")
+            if not isinstance(values, dict):
+                return
+            typed_values: dict[str, float] = {}
+            for key, value in values.items():
+                if not isinstance(key, str):
+                    continue
+                try:
+                    numeric_value = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if np.isfinite(numeric_value):
+                    typed_values[key] = numeric_value
+            if not typed_values:
+                return
+            inherited_values_by_run[run_number] = typed_values
+
+        self._set_composite_model(inherited_model)
+
+        averages = self._inherited_param_averages(
+            inherited_values_by_run,
+            inherited_model.param_names,
+        )
+        if averages:
+            for row in range(self._param_table.rowCount()):
+                name_item = self._param_table.item(row, 0)
+                pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+                if not isinstance(pname, str):
+                    pname = name_item.text() if name_item else ""
+                if pname not in averages:
+                    continue
+                value_item = self._param_table.item(row, 1)
+                if value_item is not None:
+                    value_item.setText(f"{averages[pname]:.6g}")
+
+        self._inherited_seed_by_run = inherited_values_by_run
+        self._inherited_model_dict = inherited_model.to_dict()
+
+    def _inherited_param_averages(
+        self,
+        values_by_run: dict[int, dict[str, float]],
+        param_names: list[str],
+    ) -> dict[str, float]:
+        """Return finite means per parameter from inherited per-run seeds."""
+        averages: dict[str, float] = {}
+        for pname in param_names:
+            vals: list[float] = []
+            for values in values_by_run.values():
+                value = values.get(pname)
+                if value is None:
+                    continue
+                if np.isfinite(value):
+                    vals.append(float(value))
+            if vals:
+                averages[pname] = float(np.mean(vals))
+        return averages
 
     def _set_composite_model(self, model: CompositeModel) -> None:
         """Set the active composite model and rebuild classification rows."""
@@ -544,8 +676,10 @@ class GlobalFitTab(QWidget):
             type_combo.setCurrentText("Global" if i == 0 else "Local")
             self._param_table.setCellWidget(i, 2, type_combo)
 
-            # Bounds (min, max)
-            bounds_item = QTableWidgetItem("-inf, inf")
+            # Bounds (min, max) — default lower bound to 0 for positive-definite parameters
+            default_min = get_param_info(pname).default_min
+            min_text = str(default_min) if default_min is not None else "-inf"
+            bounds_item = QTableWidgetItem(f"{min_text}, inf")
             self._param_table.setItem(i, 3, bounds_item)
 
     def _edit_function(self) -> None:
@@ -566,6 +700,20 @@ class GlobalFitTab(QWidget):
             self._result_text.setText("Error: No function defined")
             return
         model = self._composite_model
+
+        inherited_seed_by_run: dict[int, dict[str, float]] = {}
+        inherited_averages: dict[str, float] = {}
+        if self._inherited_model_dict == model.to_dict() and self._inherited_seed_by_run:
+            selected_runs = {int(ds.run_number) for ds in self._datasets}
+            if selected_runs.issubset(self._inherited_seed_by_run):
+                inherited_seed_by_run = {
+                    run_number: self._inherited_seed_by_run[run_number]
+                    for run_number in selected_runs
+                }
+                inherited_averages = self._inherited_param_averages(
+                    inherited_seed_by_run,
+                    model.param_names,
+                )
 
         # Parse parameter classification
         global_params = []
@@ -647,10 +795,17 @@ class GlobalFitTab(QWidget):
         # Build initial parameter sets for each dataset
         initial_params = {}
         for ds in self._datasets:
+            run_number = int(ds.run_number)
+            local_seed_values = inherited_seed_by_run.get(run_number, {})
             params = ParameterSet()
             for pname in model.param_names:
                 min_val, max_val = param_bounds[pname]
                 value = param_values[pname]
+                if inherited_seed_by_run:
+                    if pname in local_params and pname in local_seed_values:
+                        value = local_seed_values[pname]
+                    elif pname in inherited_averages and (pname in global_params or pname in fixed_params):
+                        value = inherited_averages[pname]
                 fixed = pname in fixed_params
                 params.add(Parameter(
                     name=pname,
@@ -659,7 +814,7 @@ class GlobalFitTab(QWidget):
                     max=max_val,
                     fixed=fixed,
                 ))
-            initial_params[ds.run_number] = params
+            initial_params[run_number] = params
 
         # Run global fit in background thread
         self._result_text.setText("Fitting... This may take a moment for many datasets...")
@@ -882,12 +1037,15 @@ class FitPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        self._single_state_by_run: dict[int, dict] = {}
+        self._active_single_run_number: int | None = None
+
         # Create tab widget
         self._tabs = QTabWidget()
 
         # Single fit tab
         self._single_tab = SingleFitTab()
-        self._single_tab.fit_completed.connect(self.fit_completed.emit)
+        self._single_tab.fit_completed.connect(self._on_single_fit_completed)
         self._tabs.addTab(self._single_tab, "Single")
 
         # Global fit tab
@@ -897,9 +1055,47 @@ class FitPanel(QWidget):
 
         layout.addWidget(self._tabs)
 
+    def _on_single_fit_completed(self, fit_result, fitted_curve, component_curves) -> None:
+        """Forward single-fit completion and cache seeds for global fitting."""
+        dataset = self._single_tab._current_dataset
+        if dataset is not None:
+            run_number = int(dataset.run_number)
+            self._global_tab.register_single_fit_seed(
+                run_number,
+                self._single_tab._composite_model,
+                fit_result,
+            )
+            # Keep most recent tab state per run (parameters, function, and result text).
+            self._single_state_by_run[run_number] = self._single_tab.get_state()
+        self.fit_completed.emit(fit_result, fitted_curve, component_curves)
+
+    def _run_number_from_dataset(self, dataset: MuonDataset | None) -> int | None:
+        if dataset is None:
+            return None
+        try:
+            return int(dataset.run_number)
+        except (TypeError, ValueError):
+            return None
+
     def set_dataset(self, dataset: MuonDataset | None) -> None:
         """Set the current dataset for single fitting tab."""
+        if self._active_single_run_number is not None:
+            self._single_state_by_run[self._active_single_run_number] = self._single_tab.get_state()
+
         self._single_tab.set_dataset(dataset)
+
+        run_number = self._run_number_from_dataset(dataset)
+        self._active_single_run_number = run_number
+
+        if run_number is None:
+            return
+
+        if run_number in self._single_state_by_run:
+            self._single_tab.restore_state(self._single_state_by_run[run_number])
+        else:
+            # Unseen datasets should not inherit another run's fit UI/result state.
+            self._single_tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
+            self._single_tab._result_label.setText("No fit performed yet")
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting tab."""
@@ -909,11 +1105,46 @@ class FitPanel(QWidget):
 
     def get_single_state(self) -> dict:
         """Return serialisable state of the single-fit tab."""
-        return self._single_tab.get_state()
+        if self._active_single_run_number is not None:
+            self._single_state_by_run[self._active_single_run_number] = self._single_tab.get_state()
+
+        active_state = self._single_tab.get_state()
+        states_by_run = {
+            str(run_number): dict(state)
+            for run_number, state in self._single_state_by_run.items()
+            if isinstance(state, dict)
+        }
+        combined_state = dict(active_state)
+        combined_state["states_by_run"] = states_by_run
+        combined_state["active_run_number"] = self._active_single_run_number
+        return combined_state
 
     def restore_single_state(self, state: dict) -> None:
         """Restore single-fit tab state from a saved dict."""
-        self._single_tab.restore_state(state)
+        states_by_run: dict[int, dict] = {}
+        raw_states = state.get("states_by_run") if isinstance(state, dict) else None
+        if isinstance(raw_states, dict):
+            for run_key, run_state in raw_states.items():
+                if not isinstance(run_state, dict):
+                    continue
+                try:
+                    run_number = int(run_key)
+                except (TypeError, ValueError):
+                    continue
+                states_by_run[run_number] = dict(run_state)
+
+        self._single_state_by_run = states_by_run
+
+        active_run = self._active_single_run_number
+        if active_run is not None and active_run in self._single_state_by_run:
+            self._single_tab.restore_state(self._single_state_by_run[active_run])
+            return
+
+        # Backward-compatible legacy payloads (single shared state).
+        if isinstance(state, dict):
+            self._single_tab.restore_state(state)
+            if active_run is not None:
+                self._single_state_by_run[active_run] = self._single_tab.get_state()
 
     def get_global_state(self) -> dict:
         """Return serialisable state of the global-fit tab."""

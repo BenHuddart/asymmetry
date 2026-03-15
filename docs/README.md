@@ -9,13 +9,13 @@ This directory contains the Sphinx documentation for the Asymmetry project.
 Install the documentation dependencies:
 
 ```bash
-pip install -r docs/requirements.txt
+pip install -c constraints.txt -r docs/requirements.txt
 ```
 
 Or install with the dev extras:
 
 ```bash
-pip install -e ".[dev]"
+pip install -c constraints.txt -e ".[dev]"
 ```
 
 ### Build HTML Documentation

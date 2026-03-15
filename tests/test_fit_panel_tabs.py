@@ -11,13 +11,15 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QComboBox
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.gui.panels.fit_panel import GlobalFitTab, SingleFitTab
+from asymmetry.gui.panels import fit_panel as fit_panel_module
+from asymmetry.gui.panels.fit_panel import FitPanel, GlobalFitTab, SingleFitTab
 
 
 @pytest.fixture(scope="module")
@@ -243,3 +245,181 @@ def test_global_edit_function_updates_parameter_rows(qapp: QApplication) -> None
     tab = GlobalFitTab()
     tab._set_composite_model(CompositeModel(["Gaussian", "Constant"], operators=["+"]))
     assert tab._param_table.rowCount() == 3
+
+
+def test_global_tab_inherits_model_and_average_values_from_single_fits(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    tab = GlobalFitTab()
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    tab.set_datasets([dataset, d2])
+
+    model = CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    p1 = ParameterSet([Parameter("A_1", 0.20), Parameter("sigma", 1.1), Parameter("A_bg", 0.01)])
+    p2 = ParameterSet([Parameter("A_1", 0.30), Parameter("sigma", 1.5), Parameter("A_bg", 0.03)])
+    r1 = FitResult(success=True, parameters=p1)
+    r2 = FitResult(success=True, parameters=p2)
+
+    tab.register_single_fit_seed(101, model, r1)
+    tab.register_single_fit_seed(102, model, r2)
+
+    assert tab._composite_model.to_dict() == model.to_dict()
+
+    value_by_name = {}
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        value_item = tab._param_table.item(row, 1)
+        assert name_item is not None
+        assert value_item is not None
+        pname = name_item.data(Qt.ItemDataRole.UserRole)
+        value_by_name[pname] = float(value_item.text())
+
+    assert value_by_name["A_1"] == pytest.approx(0.25)
+    assert value_by_name["sigma"] == pytest.approx(1.3)
+    assert value_by_name["A_bg"] == pytest.approx(0.02)
+
+
+def test_global_fit_uses_inherited_local_values_per_run(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tab = GlobalFitTab()
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    tab.set_datasets([dataset, d2])
+
+    model = tab._composite_model
+    p1 = ParameterSet([Parameter("A_1", 0.22), Parameter("Lambda", 0.40), Parameter("A_bg", 0.01)])
+    p2 = ParameterSet([Parameter("A_1", 0.30), Parameter("Lambda", 0.85), Parameter("A_bg", 0.02)])
+    tab.register_single_fit_seed(101, model, FitResult(success=True, parameters=p1))
+    tab.register_single_fit_seed(102, model, FitResult(success=True, parameters=p2))
+
+    # Enforce classification for this test case.
+    row_by_name = {}
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        assert name_item is not None
+        row_by_name[name_item.data(Qt.ItemDataRole.UserRole)] = row
+
+    global_combo = tab._param_table.cellWidget(row_by_name["A_1"], 2)
+    local_combo = tab._param_table.cellWidget(row_by_name["Lambda"], 2)
+    fixed_combo = tab._param_table.cellWidget(row_by_name["A_bg"], 2)
+    assert isinstance(global_combo, QComboBox)
+    assert isinstance(local_combo, QComboBox)
+    assert isinstance(fixed_combo, QComboBox)
+    global_combo.setCurrentText("Global")
+    local_combo.setCurrentText("Local")
+    fixed_combo.setCurrentText("Fixed")
+
+    captured: dict[str, object] = {}
+
+    class _DummySignal:
+        def connect(self, *_args, **_kwargs):
+            return None
+
+    class _FakeThread:
+        def __init__(self):
+            self.started = _DummySignal()
+            self.finished = _DummySignal()
+
+        def start(self):
+            return None
+
+        def quit(self):
+            return None
+
+        def wait(self):
+            return None
+
+        def deleteLater(self):
+            return None
+
+    class _FakeWorker:
+        def __init__(
+            self,
+            _fit_engine,
+            _datasets,
+            _model_fn,
+            _global_params,
+            _local_params,
+            initial_params,
+        ):
+            captured["initial_params"] = initial_params
+            self.finished = _DummySignal()
+            self.error = _DummySignal()
+
+        def moveToThread(self, _thread):
+            return None
+
+        def run(self):
+            return None
+
+        def deleteLater(self):
+            return None
+
+    monkeypatch.setattr(fit_panel_module, "QThread", _FakeThread)
+    monkeypatch.setattr(fit_panel_module, "GlobalFitWorker", _FakeWorker)
+
+    tab._run_global_fit()
+
+    initial_params = captured["initial_params"]
+    pset_101 = initial_params[101]
+    pset_102 = initial_params[102]
+
+    assert pset_101["Lambda"].value == pytest.approx(0.40)
+    assert pset_102["Lambda"].value == pytest.approx(0.85)
+    # Global/fixed parameters are seeded from per-run averages.
+    assert pset_101["A_1"].value == pytest.approx(0.26)
+    assert pset_102["A_1"].value == pytest.approx(0.26)
+    assert pset_101["A_bg"].value == pytest.approx(0.015)
+    assert pset_102["A_bg"].value == pytest.approx(0.015)
+
+
+def test_fit_panel_restores_single_fit_state_per_dataset(qapp: QApplication, dataset: MuonDataset) -> None:
+    panel = FitPanel()
+    d1 = dataset
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+
+    panel.set_dataset(d1)
+    panel._single_tab._result_label.setText("fit for run 101")
+    panel._single_tab._param_table.item(0, 1).setText("0.123")
+
+    panel.set_dataset(d2)
+    panel._single_tab._result_label.setText("fit for run 102")
+    panel._single_tab._param_table.item(0, 1).setText("0.456")
+
+    panel.set_dataset(d1)
+    assert "fit for run 101" in panel._single_tab._result_label.text()
+    assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.123)
+
+    panel.set_dataset(d2)
+    assert "fit for run 102" in panel._single_tab._result_label.text()
+    assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.456)
+
+
+def test_fit_panel_single_state_roundtrip_preserves_per_run_states(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    panel = FitPanel()
+    d1 = dataset
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+
+    panel.set_dataset(d1)
+    panel._single_tab._result_label.setText("saved fit 101")
+    panel.set_dataset(d2)
+    panel._single_tab._result_label.setText("saved fit 102")
+
+    saved = panel.get_single_state()
+    assert isinstance(saved.get("states_by_run"), dict)
+    assert "101" in saved["states_by_run"]
+    assert "102" in saved["states_by_run"]
+
+    restored = FitPanel()
+    restored.set_dataset(d1)
+    restored.restore_single_state(saved)
+    assert "saved fit 101" in restored._single_tab._result_label.text()
+
+    restored.set_dataset(d2)
+    assert "saved fit 102" in restored._single_tab._result_label.text()

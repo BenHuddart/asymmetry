@@ -85,6 +85,9 @@ Multi-Selection
 * Ctrl+Click to add/remove from selection
 * Shift+Click to select a range
 
+When more than one dataset is selected, the main plot overlays all selected
+runs on the same axes using distinct colours.
+
 Viewing Data
 ~~~~~~~~~~~~
 
@@ -142,7 +145,7 @@ This removes the dataset(s) from the browser; they can be reloaded via **File â†
 Plot Panel Controls
 -------------------
 
-The plot panel displays the currently selected dataset with error bars.
+The plot panel displays the selected dataset(s) with error bars.
 
 Axis Limits
 ~~~~~~~~~~~
@@ -160,6 +163,20 @@ foreground points (excluding undefined/low-confidence bins when available).
 
 Default limits automatically adjust to fit the data including error bars, 
 with 5% padding.
+
+Legend Label Field
+~~~~~~~~~~~~~~~~~~
+
+Use the **Label** dropdown in the plot toolbar to choose how each selected run
+is labelled in the legend:
+
+* **Run** (default)
+* **Field (G)**
+* **Temperature (K)**
+* **Comment**
+
+If the selected metadata value is unavailable for a run, Asymmetry
+automatically falls back to the run label.
 
 Run Info and Metadata Columns
 -----------------------------
@@ -200,6 +217,9 @@ toolbar.
 
 This keeps fit inputs consistent with the run grouping settings and project
 state.
+
+Changing bunching refreshes both the displayed curve and the dataset passed to
+the fitting panel.
 
 Low-count Tail Display
 ~~~~~~~~~~~~~~~~~~~~~~

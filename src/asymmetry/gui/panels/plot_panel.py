@@ -2,6 +2,11 @@
 
 Displays time-domain asymmetry with error bars and optional fit overlay,
 similar to WiMDA's main plot area.
+
+The bunch-factor control rebins the displayed data and also defines the
+dataset passed to fitting in the GUI. The original MuonDataset is preserved,
+so changing the bunch factor after fitting only changes the plotted data while
+the existing fit curve remains overlaid.
 """
 
 from __future__ import annotations
@@ -12,8 +17,10 @@ import subprocess
 from pathlib import Path
 
 import numpy as np
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
@@ -21,12 +28,21 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.transform import apply_grouping
+from asymmetry.core.transform.rebin import rebin
+
+# Metadata fields available for dataset labelling in the legend.
+_LABEL_FIELDS: list[tuple[str, str]] = [
+    ("Run", "run"),
+    ("Field (G)", "field"),
+    ("Temperature (K)", "temperature"),
+    ("Comment", "comment"),
+]
 
 
 class PlotPanel(QWidget):
@@ -34,10 +50,12 @@ class PlotPanel(QWidget):
 
     Notes
     -----
-    The plot panel renders the dataset currently selected in the data browser.
-    Grouping/bunching choices are controlled in the grouping workflow.
+    The bunch factor controls both the plotted representation and the dataset
+    prepared for fitting in the GUI. The stored source dataset remains
+    unchanged, and any rebinned fit dataset is produced as a temporary copy.
     """
 
+    bunch_factor_changed = Signal(int)
     fit_range_changed = Signal(float, float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -63,7 +81,6 @@ class PlotPanel(QWidget):
             self._fit_max_handle = None
             self._active_fit_handle: str | None = None
             self._drag_started = False
-            self._limits_initialized = False
 
             # Add plot limit controls toolbar
             self._create_limit_controls()
@@ -74,9 +91,12 @@ class PlotPanel(QWidget):
 
             # Store current dataset for rebunching
             self._current_dataset = None
+            self._current_datasets: list[MuonDataset] = []
+            self._limits_initialized = False
 
             # Store fit curve data to persist across redraws
             self._fit_curve = None  # (t_fit, y_fit, label) for single fits
+            self._fit_curve_run_number = None
             self._fit_curves = {}   # {run_number: (t_fit, y_fit, label)} for global fits
 
             # Per-fit additive component curves for shading.
@@ -87,6 +107,12 @@ class PlotPanel(QWidget):
             self._annotations: list[dict] = []
             self._active_annotation_idx: int | None = None
             self._annotation_drag_started = False
+
+            # Cached arrays from the most recently plotted analysis dataset.
+            self._last_plot_time = None
+            self._last_plot_asymmetry = None
+            self._last_plot_error = None
+            self._last_low_count_mask = None
 
             self._canvas.mpl_connect("button_press_event", self._on_canvas_button_press)
             self._canvas.mpl_connect("motion_notify_event", self._on_canvas_motion_notify)
@@ -100,8 +126,7 @@ class PlotPanel(QWidget):
     def _create_limit_controls(self) -> None:
         """Create toolbar for adjusting plot limits.
 
-        Uses a compact grid layout:
-        Row 1: X min/max  Y min/max  AutoX AutoY  Add Label
+        Uses a grid layout for compactness.
         """
         self._limit_toolbar = QGridLayout()
         self._limit_toolbar.setSpacing(4)  # Tight spacing
@@ -145,37 +170,105 @@ class PlotPanel(QWidget):
         self._y_max.setMaximumWidth(80)
         self._limit_toolbar.addWidget(self._y_max, 0, 7)
 
-        for spin in (self._x_min, self._x_max, self._y_min, self._y_max):
-            spin.editingFinished.connect(self._apply_limits)
-
-        # Independent auto buttons
+        # Separate axis auto-scale controls (restored behavior).
         auto_x_btn = QPushButton("Auto X")
         auto_x_btn.clicked.connect(self._auto_x_limits)
-        auto_x_btn.setFixedWidth(72)
+        auto_x_btn.setMaximumWidth(65)
         self._limit_toolbar.addWidget(auto_x_btn, 0, 8)
 
         auto_y_btn = QPushButton("Auto Y")
         auto_y_btn.clicked.connect(self._auto_y_limits)
-        auto_y_btn.setFixedWidth(72)
+        auto_y_btn.setMaximumWidth(65)
         self._limit_toolbar.addWidget(auto_y_btn, 0, 9)
 
-        # Add-label action
+        # Apply limit changes immediately from spinbox edits.
+        self._x_min.editingFinished.connect(self._apply_limits)
+        self._x_max.editingFinished.connect(self._apply_limits)
+        self._y_min.editingFinished.connect(self._apply_limits)
+        self._y_max.editingFinished.connect(self._apply_limits)
+
+        # Stretch to fill remaining space
+        self._limit_toolbar.setColumnStretch(10, 1)
+        self._limit_toolbar.addWidget(QWidget(), 0, 10)
+
+        # Keep bunching control internal (hidden) for backward compatibility
+        # with project state and tests; it is intentionally not shown in UI.
+        self._bunch_factor = QSpinBox()
+        self._bunch_factor.setRange(1, 1000)
+        self._bunch_factor.setValue(1)
+        self._bunch_factor.setMaximumWidth(60)
+        self._bunch_factor.valueChanged.connect(self._on_bunch_changed)
+        self._bunch_factor.hide()
+
         self._add_label_btn = QPushButton("Add Label")
         self._add_label_btn.setCheckable(True)
         self._add_label_btn.setMaximumWidth(90)
-        self._limit_toolbar.addWidget(self._add_label_btn, 0, 10)
+        self._limit_toolbar.addWidget(self._add_label_btn, 1, 0)
 
-        # Stretch to fill remaining space
-        self._limit_toolbar.setColumnStretch(11, 1)
-        self._limit_toolbar.addWidget(QWidget(), 0, 11)
+        self._limit_toolbar.addWidget(QLabel("Label:"), 1, 1)
+        self._label_field_combo = QComboBox()
+        for display, key in _LABEL_FIELDS:
+            self._label_field_combo.addItem(display, userData=key)
+        self._label_field_combo.setMaximumWidth(140)
+        self._label_field_combo.currentIndexChanged.connect(self._on_label_field_changed)
+        self._limit_toolbar.addWidget(self._label_field_combo, 1, 2)
+
+    def _dataset_label_for(self, dataset: MuonDataset) -> str:
+        """Return the legend label for *dataset* using the selected label field."""
+        field = self._label_field_combo.currentData()
+        if field == "run":
+            return str(dataset.run_label)
+        run = dataset.run
+        val = dataset.metadata.get(field)
+        if val is None and run is not None:
+            val = run.metadata.get(field)
+        if val is None:
+            return str(dataset.run_label)
+        if field == "field":
+            try:
+                return f"{float(val):.1f} G"
+            except (ValueError, TypeError):
+                pass
+        elif field == "temperature":
+            try:
+                return f"{float(val):.2f} K"
+            except (ValueError, TypeError):
+                pass
+        return str(val)
+
+    def _on_label_field_changed(self) -> None:
+        """Re-draw the current plot using the newly selected label field."""
+        if not self._has_mpl or not self._current_datasets:
+            return
+        self.plot_datasets(self._current_datasets)
 
     def get_analysis_dataset(self, dataset: MuonDataset | None) -> MuonDataset | None:
-        """Return the dataset used for plotting and fitting.
+        """Return the dataset that should be used for plotting and fitting.
 
-        Grouping/rebin choices are now applied upstream, so this returns the
-        original dataset unchanged.
+        When the bunch factor is 1, the original dataset is returned. For a
+        larger bunch factor, a rebinned MuonDataset copy is returned with the
+        same metadata and run association.
         """
-        return dataset
+        if dataset is None:
+            return None
+
+        bunch_factor = self._bunch_factor.value()
+        if bunch_factor <= 1:
+            return dataset
+
+        time, asymmetry, error = rebin(
+            dataset.time,
+            dataset.asymmetry,
+            dataset.error,
+            bunch_factor,
+        )
+        return MuonDataset(
+            time=time,
+            asymmetry=asymmetry,
+            error=error,
+            metadata=dict(dataset.metadata),
+            run=dataset.run,
+        )
 
     def get_fit_dataset(self, dataset: MuonDataset | None) -> MuonDataset | None:
         """Return *dataset* restricted to the currently selected fit range."""
@@ -197,13 +290,137 @@ class PlotPanel(QWidget):
         """Set fit range limits and refresh visual handles."""
         self._set_fit_range(x_min, x_max, emit_signal=True, redraw=True)
 
+    def plot_datasets(self, datasets: list[MuonDataset]) -> None:
+        """Plot multiple datasets on the same axes with per-dataset colours.
+
+        Each dataset is assigned a colour from matplotlib's default cycle
+        (C0, C1, …).  Any stored fit curve for a run is drawn in the same
+        colour.  Low-count (grey) points are still drawn at reduced opacity.
+        The axes limits are initialised from the combined data extent on the
+        first call, then held fixed on subsequent redraws.
+
+        Delegates to :meth:`plot_dataset` when *datasets* has exactly one
+        entry so that the single-dataset code path (limit initialisation,
+        fit-range clamping, etc.) is exercised unchanged.
+        """
+        if not self._has_mpl or not datasets:
+            return
+        if len(datasets) == 1:
+            self.plot_dataset(datasets[0])
+            return
+
+        self._current_dataset = datasets[-1]
+        self._current_datasets = list(datasets)
+        self._ax.clear()
+
+        all_times: list[np.ndarray] = []
+        all_asym: list[np.ndarray] = []
+        all_err: list[np.ndarray] = []
+        all_low: list[np.ndarray] = []
+
+        for i, dataset in enumerate(datasets):
+            color = f"C{i % 10}"
+            analysis_dataset = self.get_analysis_dataset(dataset)
+            if analysis_dataset is None:
+                continue
+
+            time = analysis_dataset.time
+            asymmetry = analysis_dataset.asymmetry
+            error = analysis_dataset.error
+            low_count_mask = self._low_count_mask_for_dataset(analysis_dataset)
+
+            finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
+            valid_low = finite_mask & low_count_mask
+            valid_main = finite_mask & ~low_count_mask
+
+            if np.any(valid_low):
+                self._ax.errorbar(
+                    time[valid_low],
+                    asymmetry[valid_low],
+                    yerr=error[valid_low],
+                    fmt=".",
+                    markersize=3,
+                    color="0.6",
+                    ecolor="0.6",
+                    label="_nolegend_",
+                )
+
+            draw_mask = valid_main if np.any(valid_main) else finite_mask
+            self._ax.errorbar(
+                time[draw_mask],
+                asymmetry[draw_mask],
+                yerr=error[draw_mask],
+                fmt=".",
+                markersize=3,
+                color=color,
+                label=self._dataset_label_for(dataset),
+            )
+
+            # Overlay fit curve in same colour; excluded from legend by "_" prefix.
+            fit_to_plot = self._fit_curves.get(dataset.run_number)
+            if fit_to_plot is None:
+                if self._fit_curve is not None and self._fit_curve_run_number == dataset.run_number:
+                    fit_to_plot = self._fit_curve
+            if fit_to_plot is not None:
+                t_fit, y_fit, fit_label = fit_to_plot
+                self._ax.plot(t_fit, y_fit, '-', color=color, linewidth=2,
+                              label="_nolegend_")
+
+            if np.any(finite_mask):
+                all_times.append(time[finite_mask])
+                all_asym.append(asymmetry[finite_mask])
+                all_err.append(error[finite_mask])
+                all_low.append(low_count_mask[finite_mask])
+
+        self._ax.set_xlabel("Time (μs)")
+        self._ax.set_ylabel("Asymmetry (%)")
+        self._draw_annotations()
+        self._ax.legend()
+
+        if all_times:
+            self._last_plot_time = np.concatenate(all_times)
+            self._last_plot_asymmetry = np.concatenate(all_asym)
+            self._last_plot_error = np.concatenate(all_err)
+            self._last_low_count_mask = np.concatenate(all_low)
+
+            if not self._limits_initialized:
+                t_all = self._last_plot_time
+                a_all = self._last_plot_asymmetry
+                e_all = self._last_plot_error
+                x_min, x_max = float(t_all.min()), float(t_all.max())
+                y_min = float((a_all - e_all).min())
+                y_max = float((a_all + e_all).max())
+                xpad = (x_max - x_min) * 0.05
+                ypad = (y_max - y_min) * 0.05
+                self._x_min.setValue(x_min - xpad)
+                self._x_max.setValue(x_max + xpad)
+                self._y_min.setValue(y_min - ypad)
+                self._y_max.setValue(y_max + ypad)
+                self._limits_initialized = True
+
+            # Set fit range to span all datasets.
+            all_t_min = float(self._last_plot_time.min())
+            all_t_max = float(self._last_plot_time.max())
+            if self._fit_x_min is None or self._fit_x_max is None:
+                self._fit_x_min = all_t_min
+                self._fit_x_max = all_t_max
+
+        self._draw_fit_range_artists()
+        self._apply_limits()
+
     def plot_dataset(self, dataset: MuonDataset) -> None:
-        """Plot the selected dataset with error bars and fit overlays."""
+        """Plot a dataset, optionally rebinned according to the bunch factor.
+
+        The input dataset is stored unchanged as the current dataset. If the
+        bunch factor is greater than 1, temporary rebinned arrays are created
+        for plotting. The source dataset itself is never mutated.
+        """
         if not self._has_mpl:
             return
 
         # Store the original dataset
         self._current_dataset = dataset
+        self._current_datasets = [dataset]
 
         analysis_dataset = self.get_analysis_dataset(dataset)
         if analysis_dataset is None:
@@ -211,51 +428,49 @@ class PlotPanel(QWidget):
         time = analysis_dataset.time
         asymmetry = analysis_dataset.asymmetry
         error = analysis_dataset.error
+        low_count_mask = self._low_count_mask_for_dataset(analysis_dataset)
 
-        plot_asymmetry = asymmetry.astype(float, copy=True)
-        plot_error = error.astype(float, copy=True)
-        background_asymmetry = np.full_like(plot_asymmetry, np.nan, dtype=float)
-        background_error = np.full_like(plot_error, np.nan, dtype=float)
-        valid = self._compute_plot_valid_mask(analysis_dataset)
-        if valid is not None and valid.shape == plot_asymmetry.shape:
-            invalid = ~valid
-            background_asymmetry[invalid] = plot_asymmetry[invalid]
-            background_error[invalid] = plot_error[invalid]
-            plot_asymmetry[invalid] = float("nan")
-            plot_error[invalid] = float("nan")
+        self._last_plot_time = time
+        self._last_plot_asymmetry = asymmetry
+        self._last_plot_error = error
+        self._last_low_count_mask = low_count_mask
 
         self._ax.clear()
+
+        finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
+        valid_low = finite_mask & low_count_mask
+        valid_main = finite_mask & ~low_count_mask
+
+        if np.any(valid_low):
+            self._ax.errorbar(
+                time[valid_low],
+                asymmetry[valid_low],
+                yerr=error[valid_low],
+                fmt=".",
+                markersize=3,
+                color="0.6",
+                ecolor="0.6",
+                label="_nolegend_",
+            )
+
+        draw_mask = valid_main if np.any(valid_main) else finite_mask
         self._ax.errorbar(
-            time,
-            background_asymmetry,
-            yerr=background_error,
+            time[draw_mask],
+            asymmetry[draw_mask],
+            yerr=error[draw_mask],
             fmt=".",
             markersize=3,
-            color="lightgray",
-            ecolor="lightgray",
-            elinewidth=1.0,
-            capsize=0,
-            zorder=1,
-            label="_nolegend_",
-        )
-        self._ax.errorbar(
-            time,
-            plot_asymmetry,
-            yerr=plot_error,
-            fmt=".",
-            markersize=3,
-            label=f"Run {dataset.run_label}",
-            zorder=2,
+            label=self._dataset_label_for(dataset),
         )
         self._ax.set_xlabel("Time (μs)")
         self._ax.set_ylabel("Asymmetry (%)")
 
         # Re-plot fit curve if it exists (check both single and global fits)
         fit_to_plot = None
-        if self._fit_curve is not None:
-            fit_to_plot = self._fit_curve
-        elif dataset.run_number in self._fit_curves:
+        if dataset.run_number in self._fit_curves:
             fit_to_plot = self._fit_curves[dataset.run_number]
+        elif self._fit_curve is not None and self._fit_curve_run_number == dataset.run_number:
+            fit_to_plot = self._fit_curve
 
         if fit_to_plot is not None:
             t_fit, y_fit, fit_label = fit_to_plot
@@ -265,19 +480,19 @@ class PlotPanel(QWidget):
 
         self._ax.legend()
 
-        # Only initialize limits once; do not reset user limits on replot.
+        # Initialize limits once; preserve user-set limits on redraw.
         if not self._limits_initialized:
-            x_min, x_max = self._compute_auto_x_limits(time)
-            y_min, y_max = self._compute_auto_y_limits(
-                asymmetry,
-                error,
-                plot_asymmetry,
-                plot_error,
-            )
-            self._x_min.setValue(x_min)
-            self._x_max.setValue(x_max)
-            self._y_min.setValue(y_min)
-            self._y_max.setValue(y_max)
+            x_min, x_max = float(time.min()), float(time.max())
+            y_min = float((asymmetry - error).min())
+            y_max = float((asymmetry + error).max())
+
+            x_padding = (x_max - x_min) * 0.05
+            y_padding = (y_max - y_min) * 0.05
+
+            self._x_min.setValue(x_min - x_padding)
+            self._x_max.setValue(x_max + x_padding)
+            self._y_min.setValue(y_min - y_padding)
+            self._y_max.setValue(y_max + y_padding)
             self._limits_initialized = True
 
         data_x_min = float(time.min())
@@ -321,159 +536,113 @@ class PlotPanel(QWidget):
             )
             ann["artist"] = artist
 
-    def _compute_auto_x_limits(self, time: np.ndarray) -> tuple[float, float]:
-        """Compute padded X limits from the displayed time array."""
-        x_min = float(np.nanmin(time))
-        x_max = float(np.nanmax(time))
-        if not np.isfinite(x_min) or not np.isfinite(x_max):
-            return 0.0, 1.0
-        if x_max <= x_min:
-            return x_min - 0.5, x_max + 0.5
-        x_padding = (x_max - x_min) * 0.05
-        return x_min - x_padding, x_max + x_padding
-
-    def _compute_auto_y_limits(
-        self,
-        asymmetry: np.ndarray,
-        error: np.ndarray,
-        reliable_asymmetry: np.ndarray,
-        reliable_error: np.ndarray,
-    ) -> tuple[float, float]:
-        """Compute padded Y limits using reliable points only when available."""
-        y_low = reliable_asymmetry - reliable_error
-        y_high = reliable_asymmetry + reliable_error
-
-        if np.all(~np.isfinite(y_low)) or np.all(~np.isfinite(y_high)):
-            y_low = asymmetry - error
-            y_high = asymmetry + error
-
-        y_min = float(np.nanmin(y_low))
-        y_max = float(np.nanmax(y_high))
-        if not np.isfinite(y_min) or not np.isfinite(y_max):
-            return -1.0, 1.0
-        if y_max <= y_min:
-            return y_min - 1.0, y_max + 1.0
-        y_padding = (y_max - y_min) * 0.05
-        return y_min - y_padding, y_max + y_padding
-
     def _auto_x_limits(self) -> None:
-        """Auto-scale X limits only."""
+        """Auto-scale x-axis and update x-limit controls."""
         if not self._has_mpl:
             return
 
-        analysis_dataset = self.get_analysis_dataset(self._current_dataset)
-        if analysis_dataset is None or analysis_dataset.n_points == 0:
-            return
-        x_min, x_max = self._compute_auto_x_limits(analysis_dataset.time)
-        self._x_min.setValue(x_min)
-        self._x_max.setValue(x_max)
-        self._apply_limits()
+        self._ax.relim()
+        self._ax.autoscale(enable=True, axis="x", tight=False)
+        x_lim = self._ax.get_xlim()
+        self._x_min.setValue(x_lim[0])
+        self._x_max.setValue(x_lim[1])
+
+        self._draw_fit_range_artists()
+        self._canvas.draw()
 
     def _auto_y_limits(self) -> None:
-        """Auto-scale Y limits only using reliable points inside the current X range."""
+        """Auto-scale y-axis from visible, non-low-count points only."""
         if not self._has_mpl:
             return
 
-        analysis_dataset = self.get_analysis_dataset(self._current_dataset)
-        if analysis_dataset is None or analysis_dataset.n_points == 0:
+        if self._last_plot_time is None or self._last_plot_asymmetry is None or self._last_plot_error is None:
             return
 
-        asymmetry = analysis_dataset.asymmetry.astype(float, copy=True)
-        error = analysis_dataset.error.astype(float, copy=True)
-        reliable_asymmetry = asymmetry.copy()
-        reliable_error = error.copy()
-        valid = self._compute_plot_valid_mask(analysis_dataset)
-        if valid is not None and valid.shape == reliable_asymmetry.shape:
-            invalid = ~valid
-            reliable_asymmetry[invalid] = float("nan")
-            reliable_error[invalid] = float("nan")
+        x_lo = float(self._x_min.value())
+        x_hi = float(self._x_max.value())
+        lo, hi = (x_lo, x_hi) if x_lo <= x_hi else (x_hi, x_lo)
 
-        x_min = float(min(self._x_min.value(), self._x_max.value()))
-        x_max = float(max(self._x_min.value(), self._x_max.value()))
-        in_x_range = (analysis_dataset.time >= x_min) & (analysis_dataset.time <= x_max)
+        time = self._last_plot_time
+        asymmetry = self._last_plot_asymmetry
+        error = self._last_plot_error
+        low_mask = self._last_low_count_mask
+        if low_mask is None:
+            low_mask = np.zeros_like(time, dtype=bool)
 
-        if np.any(in_x_range):
-            asymmetry = asymmetry[in_x_range]
-            error = error[in_x_range]
-            reliable_asymmetry = reliable_asymmetry[in_x_range]
-            reliable_error = reliable_error[in_x_range]
-
-        y_min, y_max = self._compute_auto_y_limits(
-            asymmetry,
-            error,
-            reliable_asymmetry,
-            reliable_error,
+        mask = (
+            np.isfinite(time)
+            & np.isfinite(asymmetry)
+            & np.isfinite(error)
+            & (time >= lo)
+            & (time <= hi)
+            & (~low_mask)
         )
+
+        if not np.any(mask):
+            mask = np.isfinite(asymmetry) & np.isfinite(error) & (~low_mask)
+        if not np.any(mask):
+            mask = np.isfinite(asymmetry) & np.isfinite(error)
+        if not np.any(mask):
+            return
+
+        y_min = float(np.min(asymmetry[mask] - error[mask]))
+        y_max = float(np.max(asymmetry[mask] + error[mask]))
+        if y_max <= y_min:
+            delta = max(abs(y_min) * 0.05, 1e-6)
+            y_min -= delta
+            y_max += delta
+        else:
+            padding = (y_max - y_min) * 0.05
+            y_min -= padding
+            y_max += padding
+
         self._y_min.setValue(y_min)
         self._y_max.setValue(y_max)
+
         self._apply_limits()
 
-    def _auto_limits(self) -> None:
-        """Auto-scale both X and Y limits."""
-        if not self._has_mpl:
-            return
+    def _low_count_mask_for_dataset(self, dataset: MuonDataset) -> np.ndarray:
+        """Return mask of low-count bins (plotted gray) for *dataset* points."""
+        time = np.asarray(dataset.time, dtype=float)
+        mask = np.zeros_like(time, dtype=bool)
 
-        self._auto_x_limits()
-        self._auto_y_limits()
-
-    def _compute_plot_valid_mask(self, dataset: MuonDataset):
-        """Return a mask of bins to plot as reliable foreground points.
-
-        Bins with non-positive grouped denominator are treated as undefined.
-        Bins saturated at ±100% are shown as low-confidence background points.
-        """
         run = dataset.run
-        if run is None or not run.histograms:
-            return None
+        if run is None or not isinstance(getattr(run, "grouping", None), dict):
+            return mask
 
-        grouping = run.grouping or {}
-        groups = grouping.get("groups")
+        grouping = run.grouping
+        first_good = grouping.get("first_good_bin")
+        last_good = grouping.get("last_good_bin")
+        if first_good is None or last_good is None:
+            return mask
+
+        histograms = getattr(run, "histograms", None)
+        if not histograms:
+            return mask
+
+        hist0 = histograms[0]
+        axis = np.asarray(hist0.time_axis, dtype=float)
+        if axis.size == 0:
+            return mask
+
         try:
-            forward_gid = int(grouping.get("forward_group", 1))
-            backward_gid = int(grouping.get("backward_group", 2))
+            lo_idx = max(0, int(first_good))
+            hi_idx = min(int(last_good), axis.size - 1)
         except (TypeError, ValueError):
-            return None
-        if not isinstance(groups, dict):
-            return None
+            return mask
 
-        def _to_indices(values):
-            out = []
-            for v in values:
-                try:
-                    out.append(max(0, int(v) - 1))
-                except (TypeError, ValueError):
-                    continue
-            return out
+        if lo_idx > hi_idx:
+            return mask
 
-        forward_idx = _to_indices(groups.get(forward_gid, []))
-        backward_idx = _to_indices(groups.get(backward_gid, []))
-        if not forward_idx or not backward_idx:
-            return None
-        if max(forward_idx, default=-1) >= len(run.histograms):
-            return None
-        if max(backward_idx, default=-1) >= len(run.histograms):
-            return None
+        good_t_min = float(axis[lo_idx])
+        good_t_max = float(axis[hi_idx])
+        return (time < good_t_min) | (time > good_t_max)
 
-        forward = apply_grouping(run.histograms, forward_idx)
-        backward = apply_grouping(run.histograms, backward_idx)
-        alpha = float(grouping.get("alpha", 1.0))
-        denominator = forward + alpha * backward
-
-        lo = int(grouping.get("first_good_bin", 0))
-        hi = int(grouping.get("last_good_bin", len(denominator) - 1))
-        lo = max(0, lo)
-        hi = min(len(denominator) - 1, hi)
-        if lo > hi:
-            return None
-
-        denominator = denominator[lo : hi + 1]
-        if denominator.shape[0] != dataset.time.shape[0]:
-            return None
-        reliable = denominator > 0.0
-        saturated = np.isclose(np.abs(dataset.asymmetry), 100.0, atol=1e-12)
-        if saturated.shape == reliable.shape:
-            reliable = reliable & (~saturated)
-        return reliable
+    def _on_bunch_changed(self) -> None:
+        """Re-plot and refresh fit inputs when the bunch factor changes."""
+        if self._current_dataset is not None:
+            self.plot_dataset(self._current_dataset)
+        self.bunch_factor_changed.emit(self._bunch_factor.value())
 
     def _set_fit_range(
         self,
@@ -744,7 +913,7 @@ class PlotPanel(QWidget):
     ) -> None:
         """Overlay a fit curve on the current plot.
 
-        The fit curve will be retained when limits change.
+        The fit curve will be retained even when bunching or limits change.
 
         Parameters
         ----------
@@ -760,9 +929,17 @@ class PlotPanel(QWidget):
 
         # Store fit curve data for persistence across redraws (single fit)
         self._fit_curve = (t_fit, y_fit, label)
-        # Clear global fits when doing a single fit
-        self._fit_curves = {}
-        self._fit_components_by_run = {}
+        run_number = None
+        if self._current_dataset is not None:
+            try:
+                run_number = int(self._current_dataset.run_number)
+            except (TypeError, ValueError):
+                run_number = None
+        self._fit_curve_run_number = run_number
+
+        if run_number is not None:
+            self._fit_curves[run_number] = (t_fit, y_fit, label)
+            self._fit_components_by_run[run_number] = list(component_curves or [])
 
         self._fit_components = list(component_curves or [])
 
@@ -797,10 +974,13 @@ class PlotPanel(QWidget):
             self._fit_components_by_run[run_number] = list(component_curves or [])
         # Clear single fit curve
         self._fit_curve = None
+        self._fit_curve_run_number = None
         self._fit_components = None
 
-        # Redraw current dataset with its fit
-        if self._current_dataset is not None:
+        # Redraw current view while preserving multi-selection overlays.
+        if len(self._current_datasets) > 1:
+            self.plot_datasets(self._current_datasets)
+        elif self._current_dataset is not None:
             self.plot_dataset(self._current_dataset)
 
     def clear(self) -> None:
@@ -809,10 +989,17 @@ class PlotPanel(QWidget):
             self._ax.clear()
             self._canvas.draw()
             self._current_dataset = None
+            self._current_datasets = []
             self._fit_curve = None
+            self._fit_curve_run_number = None
             self._fit_curves = {}
             self._fit_components = None
             self._fit_components_by_run = {}
+            self._limits_initialized = False
+            self._last_plot_time = None
+            self._last_plot_asymmetry = None
+            self._last_plot_error = None
+            self._last_low_count_mask = None
             self._annotations = []
             self._active_annotation_idx = None
             self._annotation_drag_started = False
@@ -821,7 +1008,6 @@ class PlotPanel(QWidget):
             self._fit_span_artist = None
             self._fit_min_handle = None
             self._fit_max_handle = None
-            self._limits_initialized = False
 
     def clear_fit(self) -> None:
         """Clear all fit curves and redraw the plot."""
@@ -829,6 +1015,7 @@ class PlotPanel(QWidget):
             return
 
         self._fit_curve = None
+        self._fit_curve_run_number = None
         self._fit_curves = {}
         self._fit_components = None
         self._fit_components_by_run = {}
@@ -847,12 +1034,12 @@ class PlotPanel(QWidget):
         fit_data = None
         component_data = None
         run_number = self._current_dataset.run_number
-        if self._fit_curve is not None:
-            fit_data = self._fit_curve
-            component_data = self._fit_components or []
-        elif run_number in self._fit_curves:
+        if run_number in self._fit_curves:
             fit_data = self._fit_curves[run_number]
             component_data = self._fit_components_by_run.get(run_number, [])
+        elif self._fit_curve is not None and self._fit_curve_run_number == run_number:
+            fit_data = self._fit_curve
+            component_data = self._fit_components or []
 
         if fit_data is None:
             return None
@@ -978,7 +1165,7 @@ class PlotPanel(QWidget):
     def get_state(self) -> dict:
         """Return a serialisable snapshot of the plot panel state.
 
-        This captures axis limits, the currently displayed
+        This captures the bunch factor, axis limits, the currently displayed
         run number, and any stored fit curves.  Fit curve arrays are
         serialised as plain Python lists for JSON compatibility.
 
@@ -993,13 +1180,13 @@ class PlotPanel(QWidget):
                 if self._current_dataset is not None
                 else None
             ),
-            # Kept for backward compatibility with existing project files.
-            "bunch_factor": 1,
+            "bunch_factor": self._bunch_factor.value() if self._has_mpl else 1,
             "x_min": self._x_min.value() if self._has_mpl else 0.0,
             "x_max": self._x_max.value() if self._has_mpl else 10.0,
             "y_min": self._y_min.value() if self._has_mpl else -30.0,
             "y_max": self._y_max.value() if self._has_mpl else 30.0,
             "fit_curve": None,
+            "fit_curve_run_number": self._fit_curve_run_number,
             "fit_curves": {},
             "fit_components": None,
             "fit_components_by_run": {},
@@ -1052,7 +1239,7 @@ class PlotPanel(QWidget):
             Plot state as returned by :meth:`get_state`.
         dataset : MuonDataset, optional
             Dataset to re-plot after restoring limits.  If *None* no plot is
-            drawn, but all other state (limits, fit curves) is
+            drawn, but all other state (limits, bunch factor, fit curves) is
             still applied.
         """
         if not self._has_mpl:
@@ -1060,7 +1247,10 @@ class PlotPanel(QWidget):
 
         import numpy as np
 
-        # ``bunch_factor`` is intentionally ignored (legacy key).
+        # Keep bunch factor at default in restored projects; control is hidden.
+        self._bunch_factor.blockSignals(True)
+        self._bunch_factor.setValue(1)
+        self._bunch_factor.blockSignals(False)
 
         # Restore axis limit spinboxes (will be applied after optional re-plot).
         for spin, key, default in (
@@ -1073,9 +1263,6 @@ class PlotPanel(QWidget):
             spin.setValue(state.get(key, default))
             spin.blockSignals(False)
 
-        # Keep restored limits when plot_dataset is called during restore.
-        self._limits_initialized = True
-
         fit_x_min = state.get("fit_x_min")
         fit_x_max = state.get("fit_x_max")
         if fit_x_min is not None and fit_x_max is not None:
@@ -1084,6 +1271,7 @@ class PlotPanel(QWidget):
 
         # Restore fit curves.
         self._fit_curve = None
+        self._fit_curve_run_number = None
         self._fit_curves = {}
         self._fit_components = None
         self._fit_components_by_run = {}
@@ -1095,6 +1283,12 @@ class PlotPanel(QWidget):
                 np.array(fit_curve_data["y"]),
                 fit_curve_data.get("label", "Fit"),
             )
+            fit_curve_run_number = state.get("fit_curve_run_number")
+            if fit_curve_run_number is not None:
+                try:
+                    self._fit_curve_run_number = int(fit_curve_run_number)
+                except (TypeError, ValueError):
+                    self._fit_curve_run_number = None
 
         for run_str, curve_data in state.get("fit_curves", {}).items():
             self._fit_curves[int(run_str)] = (
@@ -1140,6 +1334,18 @@ class PlotPanel(QWidget):
         if dataset is not None:
             self._current_dataset = dataset
             self.plot_dataset(dataset)
+
+        # Re-apply saved axis limits after dataset redraw, which may reset
+        # spinbox values to data-derived defaults.
+        for spin, key, default in (
+            (self._x_min, "x_min", 0.0),
+            (self._x_max, "x_max", 10.0),
+            (self._y_min, "y_min", -30.0),
+            (self._y_max, "y_max", 30.0),
+        ):
+            spin.blockSignals(True)
+            spin.setValue(state.get(key, default))
+            spin.blockSignals(False)
 
         if fit_x_min is not None and fit_x_max is not None:
             self._set_fit_range(

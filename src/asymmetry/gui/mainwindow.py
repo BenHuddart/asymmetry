@@ -286,6 +286,8 @@ class MainWindow(QMainWindow):
             self._data_browser.group_selected.connect(self._on_group_selected)
         self._data_browser.selection_changed.connect(self._update_selected_datasets)
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
+        if hasattr(self._plot_panel, "bunch_factor_changed"):
+            self._plot_panel.bunch_factor_changed.connect(self._update_selected_datasets)
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
         if hasattr(self._fit_parameters_panel, "cross_group_fit_completed"):
@@ -865,8 +867,6 @@ class MainWindow(QMainWindow):
         dataset = self._data_browser.get_dataset(run_number)
         if dataset:
             self._current_dataset = dataset
-            # Clear any previous fit curve when switching datasets
-            self._plot_panel._fit_curve = None
             self._plot_panel.plot_dataset(dataset)
             self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
             self._log_panel.log(f"Selected run {run_number}")
@@ -1027,7 +1027,7 @@ class MainWindow(QMainWindow):
         self._global_parameter_fit_window.activateWindow()
         self._update_global_parameter_fit_menu_style(True)
 
-    def _update_selected_datasets(self) -> None:
+    def _update_selected_datasets(self, *_args) -> None:
         """Update the fit panel with currently selected datasets."""
         selected = self._data_browser.get_selected_datasets()
         selected_group_ids = (
@@ -1052,6 +1052,13 @@ class MainWindow(QMainWindow):
                 self._current_dataset = None
                 self._plot_panel.clear()
                 self._fit_panel.set_dataset(None)
+
+        # When multiple datasets are selected, overlay them all on the plot.
+        if len(selected) > 1:
+            self._plot_panel.plot_datasets(selected)
+            run_labels = ", ".join(str(ds.run_label) for ds in selected)
+            self.statusBar().showMessage(f"Viewing runs {run_labels}")
+
         analysis_datasets = [
             dataset
             for dataset in (
@@ -1059,6 +1066,12 @@ class MainWindow(QMainWindow):
             )
             if dataset is not None
         ]
+
+        # Refresh the single-fit tab with the currently active dataset so that
+        # bunch-factor or fit-range changes are reflected immediately.
+        if self._current_dataset is not None:
+            self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
+
         self._fit_panel.set_datasets(analysis_datasets)
 
     def _get_fit_dataset(self, dataset):

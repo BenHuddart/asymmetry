@@ -63,3 +63,35 @@ def test_plot_panel_basic_plot_fit_clear_flow(qapp: QApplication) -> None:
     assert panel._current_dataset is None
     assert panel._fit_curve is None
     assert panel._fit_curves == {}
+
+
+def test_plot_panel_set_global_fits_preserves_multi_dataset_view(qapp: QApplication) -> None:
+    panel = PlotPanel()
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+
+    t = np.linspace(0.0, 5.0, 50)
+    ds1 = MuonDataset(
+        time=t,
+        asymmetry=0.2 * np.exp(-0.5 * t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": 7},
+    )
+    ds2 = MuonDataset(
+        time=t,
+        asymmetry=0.15 * np.exp(-0.3 * t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": 8},
+    )
+
+    panel.plot_datasets([ds1, ds2])
+    panel.set_global_fits(
+        {
+            7: (t, 0.2 * np.exp(-0.4 * t), "global"),
+            8: (t, 0.15 * np.exp(-0.2 * t), "global"),
+        }
+    )
+
+    assert len(panel._current_datasets) == 2
+    assert panel._current_datasets[0] is ds1
+    assert panel._current_datasets[1] is ds2

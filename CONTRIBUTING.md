@@ -12,12 +12,12 @@ Thank you for your interest in contributing to Asymmetry!
 
 2. Install in development mode with all dependencies:
    ```bash
-   pip install -e ".[all]"
+   pip install -c constraints.txt -e ".[all]"
    ```
 
 3. Run tests to verify setup:
    ```bash
-   pytest tests/
+   python -m pytest tests/
    ```
 
 ## Code Style
@@ -34,7 +34,7 @@ Thank you for your interest in contributing to Asymmetry!
 - Write tests for new features in the `tests/` directory
 - Ensure all tests pass before submitting:
   ```bash
-  pytest tests/ --cov=src/asymmetry
+   python -m pytest tests/ --cov=src/asymmetry
   ```
 - Aim for comprehensive test coverage (current: 71%)
 - Use pytest fixtures for common test setup

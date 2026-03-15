@@ -69,11 +69,17 @@ class _StubPlotPanel(QWidget):
         super().__init__()
         self._fit_curve = None
         self._fit_curves = {}
+        self.bunch_factor_changed = _DummySignal()
         self.fit_range_changed = _DummySignal()
+        self.factor = 1
         self.last_plotted_dataset = None
 
     def plot_dataset(self, dataset):
         self.last_plotted_dataset = dataset
+        return
+
+    def plot_datasets(self, datasets):
+        self.last_plotted_dataset = datasets[-1] if datasets else None
         return
 
     def plot_fit(self, *_args, **_kwargs):
@@ -83,7 +89,15 @@ class _StubPlotPanel(QWidget):
         return
 
     def get_analysis_dataset(self, dataset):
-        return dataset
+        if dataset is None or self.factor <= 1:
+            return dataset
+        return MuonDataset(
+            time=dataset.time[::self.factor],
+            asymmetry=dataset.asymmetry[::self.factor],
+            error=dataset.error[::self.factor],
+            metadata={**dataset.metadata, "analysis_factor": self.factor},
+            run=dataset.run,
+        )
 
     def get_fit_dataset(self, dataset):
         return dataset
@@ -148,8 +162,11 @@ def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplicat
     assert choice == "yes_to_all"
     assert ds.metadata["field"] == pytest.approx(150.0)
 
-    window._plot_panel.fit_range_changed.emit(0.0, 1.0)
-    assert window._fit_panel.last_dataset is ds
+    window._plot_panel.factor = 2
+    window._plot_panel.bunch_factor_changed.emit(2)
+    assert window._fit_panel.last_dataset is not ds
+    assert window._fit_panel.last_dataset.metadata["analysis_factor"] == 2
+    assert all(d.metadata["analysis_factor"] == 2 for d in window._fit_panel.last_datasets)
 
     results_dict = {
         42: (

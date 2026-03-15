@@ -11,9 +11,9 @@ import pytest
 
 # Import PySide6 conditionally
 pyside6 = pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication, QMessageBox  # type: ignore
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton  # type: ignore
 
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.gui.panels.plot_panel import PlotPanel
 
 
@@ -86,6 +86,112 @@ class TestPlotPanel:
         if hasattr(panel, "_canvas"):
             assert panel._canvas is not None
 
+    def test_toolbar_does_not_show_apply_or_bunch_controls(self, panel: PlotPanel) -> None:
+        """Main plot toolbar should not expose Apply or Bunch controls."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        buttons = panel.findChildren(QPushButton)
+        button_texts = {btn.text() for btn in buttons}
+        assert "Apply" not in button_texts
+        assert "Auto" not in button_texts
+        assert "Auto X" in button_texts
+        assert "Auto Y" in button_texts
+
+        labels = panel.findChildren(QLabel)
+        label_texts = {lbl.text() for lbl in labels}
+        assert "Bunch:" not in label_texts
+
+    def test_auto_x_and_auto_y_change_only_their_axes(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+
+        panel._x_min.setValue(1.0)
+        panel._x_max.setValue(2.0)
+        panel._y_min.setValue(-10.0)
+        panel._y_max.setValue(10.0)
+        panel._apply_limits()
+
+        x_before = panel._ax.get_xlim()
+        y_before = panel._ax.get_ylim()
+
+        panel._auto_x_limits()
+        x_after_x = panel._ax.get_xlim()
+        y_after_x = panel._ax.get_ylim()
+
+        assert x_after_x != x_before
+        assert y_after_x == pytest.approx(y_before)
+
+        panel._auto_y_limits()
+        x_after_y = panel._ax.get_xlim()
+
+        assert x_after_y == pytest.approx(x_after_x)
+
+    def test_auto_y_uses_current_x_range_and_ignores_low_count_points(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        counts = np.full(100, 1000.0)
+        hist = Histogram(counts=counts, bin_width=0.1, t0_bin=0)
+        run = Run(
+            run_number=321,
+            histograms=[hist],
+            grouping={"first_good_bin": 10, "last_good_bin": 80},
+        )
+
+        time = hist.time_axis.copy()
+        asym = np.full_like(time, 0.2, dtype=float)
+        err = np.full_like(time, 0.01, dtype=float)
+        # Outliers in low-count bins (outside good-bin window): should be ignored by Auto Y.
+        asym[5] = 100.0
+        asym[95] = -100.0
+        # Outlier in good bins but outside current x-range: also ignored by Auto Y.
+        asym[60] = 5.0
+
+        ds = MuonDataset(time=time, asymmetry=asym, error=err, metadata={"run_number": 321}, run=run)
+        panel.plot_dataset(ds)
+
+        panel._x_min.setValue(1.0)
+        panel._x_max.setValue(3.0)
+        panel._apply_limits()
+        panel._auto_y_limits()
+
+        assert panel._y_max.value() < 1.0
+        assert panel._y_min.value() > -1.0
+
+    def test_axis_limits_persist_across_redraw_and_dataset_switch(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        ds1 = sample_dataset
+        ds2 = MuonDataset(
+            time=sample_dataset.time,
+            asymmetry=sample_dataset.asymmetry * 0.5,
+            error=sample_dataset.error,
+            metadata={"run_number": 67890},
+        )
+
+        panel.plot_dataset(ds1)
+        panel._x_min.setValue(0.5)
+        panel._x_max.setValue(2.5)
+        panel._y_min.setValue(-0.1)
+        panel._y_max.setValue(0.4)
+        panel._apply_limits()
+
+        panel.plot_dataset(ds2)
+        panel.plot_dataset(ds1)
+
+        assert panel._x_min.value() == pytest.approx(0.5)
+        assert panel._x_max.value() == pytest.approx(2.5)
+        assert panel._y_min.value() == pytest.approx(-0.1)
+        assert panel._y_max.value() == pytest.approx(0.4)
+
     def test_plot_dataset(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test plotting a single dataset."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -108,18 +214,76 @@ class TestPlotPanel:
         # Panel should handle multiple datasets
         assert panel._canvas is not None
 
-    def test_analysis_dataset_is_pass_through(
-        self, panel: PlotPanel, sample_dataset: MuonDataset
-    ) -> None:
-        """Plot analysis dataset should now match the source dataset."""
+    def test_multi_dataset_legend_labels_follow_selected_label_field(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
+        t = np.linspace(0, 5, 50)
+        err = np.full_like(t, 0.01)
+        ds1 = MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-0.4 * t),
+            error=err,
+            metadata={"run_number": 101, "temperature": 2.5},
+        )
+        ds2 = MuonDataset(
+            time=t,
+            asymmetry=0.15 * np.exp(-0.3 * t),
+            error=err,
+            metadata={"run_number": 102, "temperature": 7.25},
+        )
+
+        panel.plot_datasets([ds1, ds2])
+        _, labels = panel._ax.get_legend_handles_labels()
+        assert str(ds1.run_label) in labels
+        assert str(ds2.run_label) in labels
+
+        idx = panel._label_field_combo.findData("temperature")
+        assert idx >= 0
+        panel._label_field_combo.setCurrentIndex(idx)
+
+        _, labels = panel._ax.get_legend_handles_labels()
+        assert "2.50 K" in labels
+        assert "7.25 K" in labels
+
+    def test_dataset_label_falls_back_to_run_label_when_field_missing(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        ds = MuonDataset(
+            time=np.array([0.0, 1.0]),
+            asymmetry=np.array([0.1, 0.09]),
+            error=np.array([0.01, 0.01]),
+            metadata={"run_number": 111},
+        )
+        idx = panel._label_field_combo.findData("comment")
+        assert idx >= 0
+        panel._label_field_combo.setCurrentIndex(idx)
+
+        assert panel._dataset_label_for(ds) == str(ds.run_label)
+
+    def test_bunching_only_changes_plotted_representation(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """Bunching should preserve the source dataset and create a fit-ready copy."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        original_time = sample_dataset.time.copy()
+        original_asymmetry = sample_dataset.asymmetry.copy()
+        original_error = sample_dataset.error.copy()
+
+        panel._bunch_factor.setValue(5)
         panel.plot_dataset(sample_dataset)
         analysis_dataset = panel.get_analysis_dataset(sample_dataset)
 
         assert panel._current_dataset is sample_dataset
-        assert analysis_dataset is sample_dataset
+        assert analysis_dataset is not None
+        assert analysis_dataset is not sample_dataset
+        assert len(analysis_dataset.time) < len(sample_dataset.time)
+        np.testing.assert_array_equal(sample_dataset.time, original_time)
+        np.testing.assert_array_equal(sample_dataset.asymmetry, original_asymmetry)
+        np.testing.assert_array_equal(sample_dataset.error, original_error)
 
     def test_clear_plot(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test clearing the plot."""
@@ -171,116 +335,6 @@ class TestPlotPanel:
         assert np.all(fit_ds.time <= 4.0)
         assert len(fit_ds.time) < len(sample_dataset.time)
 
-    def test_plot_does_not_reset_user_limits_on_replot(
-        self, panel: PlotPanel, sample_dataset: MuonDataset
-    ) -> None:
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
-            pytest.skip("matplotlib not available")
-
-        panel.plot_dataset(sample_dataset)
-        panel._x_min.setValue(1.23)
-        panel._x_max.setValue(4.56)
-        panel._y_min.setValue(-7.89)
-        panel._y_max.setValue(9.87)
-        panel._apply_limits()
-
-        panel.plot_dataset(sample_dataset)
-
-        assert panel._x_min.value() == pytest.approx(1.23)
-        assert panel._x_max.value() == pytest.approx(4.56)
-        assert panel._y_min.value() == pytest.approx(-7.89)
-        assert panel._y_max.value() == pytest.approx(9.87)
-
-    def test_auto_x_keeps_y_limits(
-        self, panel: PlotPanel, sample_dataset: MuonDataset
-    ) -> None:
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
-            pytest.skip("matplotlib not available")
-
-        panel.plot_dataset(sample_dataset)
-        panel._y_min.setValue(-11.0)
-        panel._y_max.setValue(12.0)
-        panel._auto_x_limits()
-
-        assert panel._y_min.value() == pytest.approx(-11.0)
-        assert panel._y_max.value() == pytest.approx(12.0)
-
-    def test_auto_y_ignores_unreliable_points(self, panel: PlotPanel) -> None:
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
-            pytest.skip("matplotlib not available")
-
-        ds = MuonDataset(
-            time=np.array([0.0, 1.0], dtype=float),
-            asymmetry=np.array([0.0, 100.0], dtype=float),
-            error=np.array([1.0, 1.0], dtype=float),
-            metadata={"run_number": 1},
-        )
-        panel.plot_dataset(ds)
-        panel._compute_plot_valid_mask = lambda _dataset: np.array([True, False], dtype=bool)
-
-        panel._auto_y_limits()
-
-        # Reliable foreground is the first point only: 0 +/- 1 with small padding.
-        assert panel._y_max.value() < 10.0
-
-    def test_auto_y_uses_points_in_current_x_range(self, panel: PlotPanel) -> None:
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
-            pytest.skip("matplotlib not available")
-
-        ds = MuonDataset(
-            time=np.array([0.0, 1.0, 2.0], dtype=float),
-            asymmetry=np.array([0.0, 1.0, 200.0], dtype=float),
-            error=np.array([0.2, 0.2, 0.2], dtype=float),
-            metadata={"run_number": 1},
-        )
-        panel.plot_dataset(ds)
-        panel._compute_plot_valid_mask = lambda _dataset: np.array([True, True, True], dtype=bool)
-
-        panel._x_min.setValue(0.0)
-        panel._x_max.setValue(1.1)
-        panel._auto_y_limits()
-
-        # The outlier at x=2 should be excluded from auto-Y.
-        assert panel._y_max.value() < 10.0
-
-    def test_limit_spinbox_editing_finished_applies_limits(
-        self, panel: PlotPanel, sample_dataset: MuonDataset
-    ) -> None:
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
-            pytest.skip("matplotlib not available")
-
-        panel.plot_dataset(sample_dataset)
-        panel._x_min.setValue(2.0)
-        panel._x_max.setValue(3.0)
-        panel._x_max.editingFinished.emit()
-
-        x_lo, x_hi = panel._ax.get_xlim()
-        assert x_lo == pytest.approx(2.0)
-        assert x_hi == pytest.approx(3.0)
-
-    def test_restore_state_keeps_saved_limits_when_dataset_replotted(
-        self, panel: PlotPanel, sample_dataset: MuonDataset
-    ) -> None:
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
-            pytest.skip("matplotlib not available")
-
-        panel.plot_dataset(sample_dataset)
-        state = panel.get_state()
-        state["x_min"] = 2.5
-        state["x_max"] = 4.5
-        state["y_min"] = -3.0
-        state["y_max"] = 6.0
-
-        panel2 = PlotPanel()
-        if not panel2._has_mpl:
-            pytest.skip("matplotlib not available")
-        panel2.restore_state(state, sample_dataset)
-
-        assert panel2._x_min.value() == pytest.approx(2.5)
-        assert panel2._x_max.value() == pytest.approx(4.5)
-        assert panel2._y_min.value() == pytest.approx(-3.0)
-        assert panel2._y_max.value() == pytest.approx(6.0)
-
     def test_get_current_plot_export_data_requires_fitted_curve(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
@@ -313,6 +367,35 @@ class TestPlotPanel:
         assert len(payload["components"]) == 2
         assert payload["components"][0]["name"] == "Exponential"
         assert payload["annotations"][0]["text"] == "peak"
+
+    def test_single_fit_curve_is_restored_when_returning_to_dataset(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        ds1 = sample_dataset
+        ds2 = MuonDataset(
+            time=sample_dataset.time,
+            asymmetry=sample_dataset.asymmetry,
+            error=sample_dataset.error,
+            metadata={"run_number": 999},
+        )
+
+        t_fit = np.linspace(0.0, 10.0, 120)
+        y_fit = 0.18 * np.exp(-0.45 * t_fit)
+
+        panel.plot_dataset(ds1)
+        panel.plot_fit(t_fit, y_fit, label="Fit")
+        assert panel.get_current_plot_export_data() is not None
+
+        panel.plot_dataset(ds2)
+        assert panel.get_current_plot_export_data() is None
+
+        panel.plot_dataset(ds1)
+        restored = panel.get_current_plot_export_data()
+        assert restored is not None
+        assert restored["run_number"] == ds1.run_number
 
     def test_export_current_plot_warns_when_no_fit(
         self, panel: PlotPanel, sample_dataset: MuonDataset, monkeypatch: pytest.MonkeyPatch

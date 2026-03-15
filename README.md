@@ -51,14 +51,17 @@ management.
 
 ```bash
 # Core library only
-pip install -e .
+pip install -c constraints.txt -e .
 
 # With GUI
-pip install -e ".[gui]"
+pip install -c constraints.txt -e ".[gui]"
 
 # Everything (GUI + optional formats + dev tools)
-pip install -e ".[all]"
+pip install -c constraints.txt -e ".[all]"
 ```
+
+To avoid environment drift (for example incompatible NumPy/Numba combinations),
+use the shared [constraints.txt](constraints.txt) file for local installs.
 
 ### Dependencies
 
@@ -145,13 +148,13 @@ Asymmetry has a comprehensive test suite with 97 tests and 71% coverage:
 
 ```bash
 # Run all tests
-pytest tests/
+python -m pytest tests/
 
 # Run with coverage report
-pytest tests/ --cov=src/asymmetry --cov-report=term
+python -m pytest tests/ --cov=src/asymmetry --cov-report=term
 
 # Run specific test file
-pytest tests/test_fitting_engine.py -v
+python -m pytest tests/test_fitting_engine.py -v
 ```
 
 ## Contributing

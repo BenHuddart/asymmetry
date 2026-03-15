@@ -20,6 +20,7 @@ class ParamInfo:
     latex: str
     gle: str
     unit: str | None = None
+    default_min: float | None = None  # None means no lower bound (-inf)
 
     def with_index(self, index: str) -> ParamInfo:
         """Return indexed metadata (e.g. ``A`` -> ``A_2``)."""
@@ -30,6 +31,7 @@ class ParamInfo:
             latex=_append_latex_index(self.latex, index),
             gle=f"{self.gle}_{{{index}}}",
             unit=self.unit,
+            default_min=self.default_min,
         )
 
     def plain_label(self, *, include_unit: bool = True) -> str:
@@ -86,39 +88,39 @@ def _gle_symbol_with_spacing_boundary(symbol: str) -> str:
 
 
 PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
-    "A": ParamInfo("A", "A", "A", r"$A$", r"{\it A}", "%"),
-    "A0": ParamInfo("A0", "A0", "A₀", r"$A_0$", r"{\it A}_{0}", "%"),
-    "A_bg": ParamInfo("A_bg", "A_bg", "A_bg", r"$A_{bg}$", r"{\it A}_{bg}", "%"),
-    "Lambda": ParamInfo("Lambda", "Lambda", "λ", r"$\lambda$", r"\lambda", "μs⁻¹"),
-    "sigma": ParamInfo("sigma", "sigma", "σ", r"$\sigma$", r"\sigma", "μs⁻¹"),
-    "Delta": ParamInfo("Delta", "Delta", "Δ", r"$\Delta$", r"\Delta", "μs⁻¹"),
-    "beta": ParamInfo("beta", "beta", "β", r"$\beta$", r"\beta"),
+    "A": ParamInfo("A", "A", "A", r"$A$", r"{\it A}", "%", default_min=0.0),
+    "A0": ParamInfo("A0", "A0", "A₀", r"$A_0$", r"{\it A}_{0}", "%", default_min=0.0),
+    "A_bg": ParamInfo("A_bg", "A_bg", "A_bg", r"$A_{bg}$", r"{\it A}_{bg}", "%", default_min=0.0),
+    "Lambda": ParamInfo("Lambda", "Lambda", "λ", r"$\lambda$", r"\lambda", "μs⁻¹", default_min=0.0),
+    "sigma": ParamInfo("sigma", "sigma", "σ", r"$\sigma$", r"\sigma", "μs⁻¹", default_min=0.0),
+    "Delta": ParamInfo("Delta", "Delta", "Δ", r"$\Delta$", r"\Delta", "μs⁻¹", default_min=0.0),
+    "beta": ParamInfo("beta", "beta", "β", r"$\beta$", r"\beta", default_min=0.0),
     "phase": ParamInfo("phase", "phase", "φ", r"$\phi$", r"\phi", "rad"),
-    "frequency": ParamInfo("frequency", "frequency", "f", r"$f$", r"{\it f}", "MHz"),
+    "frequency": ParamInfo("frequency", "frequency", "f", r"$f$", r"{\it f}", "MHz", default_min=0.0),
     "baseline": ParamInfo("baseline", "baseline", "baseline", "baseline", "baseline", "%"),
     "a": ParamInfo("a", "a", "a", r"$a$", r"{\it a}"),
     "b": ParamInfo("b", "b", "b", r"$b$", r"{\it b}"),
     "c": ParamInfo("c", "c", "c", r"$c$", r"{\it c}"),
     "n": ParamInfo("n", "n", "n", r"$n$", r"{\it n}"),
-    "tau": ParamInfo("tau", "tau", "τ", r"$\tau$", r"\tau"),
+    "tau": ParamInfo("tau", "tau", "τ", r"$\tau$", r"\tau", default_min=0.0),
     "B0": ParamInfo("B0", "B0", "B₀", r"$B_0$", r"{\it B}_{0}", "G"),
-    "Bwid": ParamInfo("Bwid", "Bwid", "B_wid", r"$B_{wid}$", r"{\it B}_{wid}", "G"),
-    "Tc": ParamInfo("Tc", "Tc", "T_c", r"$T_c$", r"{\it T}_{c}", "K"),
-    "Ea": ParamInfo("Ea", "Ea", "E_a", r"$E_a$", r"{\it E}_{a}", "meV"),
-    "D": ParamInfo("D", "D", "D", r"$D$", r"{\it D}", "MHz"),
-    "nu": ParamInfo("nu", "nu", "ν", r"$\nu$", r"\nu", "MHz"),
+    "Bwid": ParamInfo("Bwid", "Bwid", "B_wid", r"$B_{wid}$", r"{\it B}_{wid}", "G", default_min=0.0),
+    "Tc": ParamInfo("Tc", "Tc", "T_c", r"$T_c$", r"{\it T}_{c}", "K", default_min=0.0),
+    "Ea": ParamInfo("Ea", "Ea", "E_a", r"$E_a$", r"{\it E}_{a}", "meV", default_min=0.0),
+    "D": ParamInfo("D", "D", "D", r"$D$", r"{\it D}", "MHz", default_min=0.0),
+    "nu": ParamInfo("nu", "nu", "ν", r"$\nu$", r"\nu", "MHz", default_min=0.0),
     "m": ParamInfo("m", "m", "m", r"$m$", r"{\it m}"),
-    "f": ParamInfo("f", "f", "f", r"$f$", r"{\it f}", "μs⁻¹"),
-    "D_2D": ParamInfo("D_2D", "D_2D", "D_2D", r"$D_{2D}$", r"{\it D}_{2D}", "μs⁻¹"),
-    "D_nD": ParamInfo("D_nD", "D_nD", "D_nD", r"$D_{nD}$", r"{\it D}_{nD}", "μs⁻¹"),
-    "D_perp": ParamInfo("D_perp", "D_perp", "D_⊥", r"$D_{\perp}$", r"{\it D}_{\perp}", "μs⁻¹"),
+    "f": ParamInfo("f", "f", "f", r"$f$", r"{\it f}", "μs⁻¹", default_min=0.0),
+    "D_2D": ParamInfo("D_2D", "D_2D", "D_2D", r"$D_{2D}$", r"{\it D}_{2D}", "μs⁻¹", default_min=0.0),
+    "D_nD": ParamInfo("D_nD", "D_nD", "D_nD", r"$D_{nD}$", r"{\it D}_{nD}", "μs⁻¹", default_min=0.0),
+    "D_perp": ParamInfo("D_perp", "D_perp", "D_⊥", r"$D_{\perp}$", r"{\it D}_{\perp}", "μs⁻¹", default_min=0.0),
     "lambda_BG": ParamInfo(
-        "lambda_BG", "lambda_BG", "λ_BG", r"$\lambda_{BG}$", r"\lambda_{BG}", "μs⁻¹"
+        "lambda_BG", "lambda_BG", "λ_BG", r"$\lambda_{BG}$", r"\lambda_{BG}", "μs⁻¹", default_min=0.0
     ),
     "lambda_0D": ParamInfo(
-        "lambda_0D", "lambda_0D", "λ_0D", r"$\lambda_{0D}$", r"\lambda_{0D}", "μs⁻¹"
+        "lambda_0D", "lambda_0D", "λ_0D", r"$\lambda_{0D}$", r"\lambda_{0D}", "μs⁻¹", default_min=0.0
     ),
-    "C": ParamInfo("C", "C", "C", r"$C$", r"{\it C}", "MHz"),
+    "C": ParamInfo("C", "C", "C", r"$C$", r"{\it C}", "MHz", default_min=0.0),
 }
 
 
@@ -129,7 +131,7 @@ def get_param_info(name: str) -> ParamInfo:
     if info is None:
         info = ParamInfo(base_name, base_name, base_name, f"${base_name}$", base_name)
     if index is None:
-        return ParamInfo(name, info.plain, info.unicode, info.latex, info.gle, info.unit)
+        return ParamInfo(name, info.plain, info.unicode, info.latex, info.gle, info.unit, info.default_min)
     return info.with_index(index)
 
 
