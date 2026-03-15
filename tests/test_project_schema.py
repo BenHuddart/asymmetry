@@ -24,7 +24,7 @@ from asymmetry.core.project.schema import migrate_to_current, validate
 def _minimal_state() -> dict:
     """Return the smallest valid project state dict."""
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "created_with_app_version": "0.1.0",
         "datasets": [],
         "combined_datasets": [],
@@ -35,6 +35,7 @@ def _minimal_state() -> dict:
             "selected_run_numbers": [],
             "selected_group_ids": [],
             "data_groups": [],
+            "extra_columns": [],
         },
         "plot_state": {
             "current_run_number": None,
@@ -70,16 +71,22 @@ def _minimal_state() -> dict:
 
 class TestSchemaMigration:
     def test_current_version_passes_through(self):
-        state = {"schema_version": 2, "datasets": []}
+        state = {"schema_version": 3, "datasets": []}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 2
+        assert result["schema_version"] == 3
         assert result["datasets"] == []
 
     def test_v1_migrates_to_v2(self):
         state = {"schema_version": 1, "datasets": []}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 2
+        assert result["schema_version"] == 3
         assert "browser_state" in result
+
+    def test_v2_migrates_to_v3_with_extra_columns(self):
+        state = {"schema_version": 2, "datasets": [], "browser_state": {}}
+        result = migrate_to_current(state)
+        assert result["schema_version"] == 3
+        assert result["browser_state"]["extra_columns"] == []
 
     def test_unsupported_future_version_raises(self):
         state = {"schema_version": 999, "datasets": []}
@@ -92,11 +99,11 @@ class TestSchemaMigration:
             migrate_to_current(state)
 
     def test_validate_passes_valid_state(self):
-        validate({"schema_version": 2, "datasets": []})
+        validate({"schema_version": 3, "datasets": []})
 
     def test_validate_raises_on_missing_datasets_key(self):
         with pytest.raises(ValueError, match="missing required keys"):
-            validate({"schema_version": 2})
+            validate({"schema_version": 3})
 
     def test_validate_raises_on_missing_schema_version(self):
         with pytest.raises(ValueError, match="missing required keys"):
@@ -104,11 +111,11 @@ class TestSchemaMigration:
 
     def test_unknown_top_level_fields_are_allowed(self):
         """Future-proofing: unknown fields must not break validation."""
-        state = {"schema_version": 2, "datasets": [], "future_field": "keep me"}
+        state = {"schema_version": 3, "datasets": [], "future_field": "keep me"}
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 2
+        assert CURRENT_SCHEMA_VERSION == 3
 
 
 class TestProjectIO:
@@ -118,7 +125,7 @@ class TestProjectIO:
         save_project(state, path)
 
         loaded = load_project(path)
-        assert loaded["schema_version"] == 2
+        assert loaded["schema_version"] == 3
         assert loaded["datasets"] == []
 
     def test_file_is_valid_json(self, tmp_path):
@@ -126,7 +133,7 @@ class TestProjectIO:
         path = tmp_path / "test.asymp"
         save_project(state, path)
         raw = json.loads(path.read_text(encoding="utf-8"))
-        assert raw["schema_version"] == 2
+        assert raw["schema_version"] == 3
 
     def test_numpy_arrays_serialised_as_lists(self, tmp_path):
         state = _minimal_state()
@@ -150,7 +157,7 @@ class TestProjectIO:
             load_project(path)
 
     def test_load_missing_key_raises(self, tmp_path):
-        bad_state = {"schema_version": 2}  # datasets key missing
+        bad_state = {"schema_version": 3}  # datasets key missing
         path = tmp_path / "bad.asymp"
         path.write_text(json.dumps(bad_state), encoding="utf-8")
         with pytest.raises(ValueError, match="missing required keys"):
@@ -185,7 +192,7 @@ from PySide6.QtWidgets import QApplication
 
 import numpy as np
 
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import Histogram, MuonDataset
 
 
 @pytest.fixture(scope="module")
@@ -286,8 +293,9 @@ class TestPlotPanelState:
         for key in ("current_run_number", "bunch_factor", "x_min", "x_max",
                     "y_min", "y_max", "fit_curve", "fit_curves"):
             assert key in state
+        assert state["bunch_factor"] == 1
 
-    def test_restore_state_applies_bunch_factor(self, qapp):
+    def test_restore_state_accepts_legacy_bunch_factor_key(self, qapp):
         from asymmetry.gui.panels.plot_panel import PlotPanel
 
         panel = PlotPanel()
@@ -297,7 +305,8 @@ class TestPlotPanelState:
         panel.restore_state({"bunch_factor": 4, "x_min": 0.0, "x_max": 5.0,
                              "y_min": -20.0, "y_max": 20.0,
                              "fit_curve": None, "fit_curves": {}})
-        assert panel._bunch_factor.value() == 4
+        state = panel.get_state()
+        assert state["bunch_factor"] == 1
 
     def test_restore_state_restores_fit_curve(self, qapp):
         from asymmetry.gui.panels.plot_panel import PlotPanel
@@ -327,7 +336,6 @@ class TestPlotPanelState:
 
         ds = _make_dataset(42)
         panel.plot_dataset(ds)
-        panel._bunch_factor.setValue(3)
 
         state1 = panel.get_state()
 
@@ -518,7 +526,7 @@ class _StubPlotPanelWithState(_StubPlotPanel):
     def get_state(self):
         return {
             "current_run_number": None,
-            "bunch_factor": self.factor,
+            "bunch_factor": 1,
             "x_min": 0.0, "x_max": 10.0,
             "y_min": -30.0, "y_max": 30.0,
             "fit_curve": None,
@@ -526,7 +534,7 @@ class _StubPlotPanelWithState(_StubPlotPanel):
         }
 
     def restore_state(self, state, dataset=None):
-        self.factor = state.get("bunch_factor", 1)
+        self._restored_state = state
 
 
 class _StubFitPanelWithState(_StubFitPanel):
@@ -638,6 +646,102 @@ class _StubFourierWithState(_StubFourier):
 
 
 class TestMainWindowProjectState:
+    def test_project_round_trip_restores_grouping_and_plot_limits_end_to_end(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
+    ) -> None:
+        source_file = tmp_path / "run6001.wim"
+        source_file.write_bytes(b"\x00")
+
+        def _make_groupable_dataset() -> MuonDataset:
+            from asymmetry.core.data.dataset import Run
+
+            h0 = Histogram(counts=np.array([10.0, 20.0, 30.0, 40.0]), bin_width=1.0)
+            h1 = Histogram(counts=np.array([5.0, 10.0, 15.0, 20.0]), bin_width=1.0)
+            run = Run(
+                run_number=6001,
+                histograms=[h0, h1],
+                source_file=str(source_file),
+                grouping={
+                    "groups": {1: [1], 2: [2]},
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "alpha": 1.0,
+                    "first_good_bin": 0,
+                    "last_good_bin": 3,
+                    "bunching_factor": 1,
+                    "deadtime_correction": False,
+                },
+            )
+            run.metadata["field"] = 100.0
+            t = np.array([0.0, 1.0, 2.0, 3.0], dtype=float)
+            return MuonDataset(
+                time=t,
+                asymmetry=np.zeros_like(t),
+                error=np.ones_like(t),
+                metadata={"title": "Run 6001", "temperature": 5.0, "field": 100.0, "comment": ""},
+                run=run,
+            )
+
+        # Save-side window: apply grouping and custom axis limits.
+        window1 = mw_module.MainWindow()
+        if not getattr(window1._plot_panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+
+        ds = _make_groupable_dataset()
+        window1._data_browser.add_dataset(ds)
+        window1._current_dataset = ds
+
+        grouping_payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+        applied, _ = window1._apply_grouping_settings_to_dataset(ds, grouping_payload)
+        assert applied
+
+        window1._plot_panel.plot_dataset(ds)
+        window1._plot_panel._x_min.setValue(0.25)
+        window1._plot_panel._x_max.setValue(2.75)
+        window1._plot_panel._y_min.setValue(20.0)
+        window1._plot_panel._y_max.setValue(45.0)
+        window1._plot_panel._apply_limits()
+
+        state = window1.collect_project_state()
+        path = tmp_path / "roundtrip.asymp"
+        save_project(state, path)
+        loaded_state = load_project(path)
+
+        # Restore-side window: load fresh dataset from file and restore state.
+        def _stub_load_file(self_inner, path_str: str):
+            assert path_str == str(source_file)
+            return _make_groupable_dataset()
+
+        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        window2 = mw_module.MainWindow()
+        if not getattr(window2._plot_panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+
+        window2.restore_project_state(loaded_state, str(path))
+
+        restored = window2._data_browser.get_dataset(6001)
+        assert restored is not None
+
+        # Grouping asymmetry: (F-B)/(F+B) = 1/3, then scaled to percent.
+        assert np.allclose(restored.asymmetry, np.full_like(restored.asymmetry, 33.3333333333), atol=1e-6)
+        assert restored.run is not None
+        assert restored.run.grouping.get("forward_group") == 1
+        assert restored.run.grouping.get("backward_group") == 2
+
+        assert window2._plot_panel._x_min.value() == pytest.approx(0.25)
+        assert window2._plot_panel._x_max.value() == pytest.approx(2.75)
+        assert window2._plot_panel._y_min.value() == pytest.approx(20.0)
+        assert window2._plot_panel._y_max.value() == pytest.approx(45.0)
+
     def test_collect_project_state_structure(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication
     ) -> None:
@@ -733,6 +837,133 @@ class TestMainWindowProjectState:
         assert state["combined_datasets"] == [
             {"combined_run_number": -1, "source_run_numbers": [3039, 3040]}
         ]
+
+    def test_collect_project_state_includes_grouping_overrides(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+    ) -> None:
+        class _StubDataBrowserGrouping(_StubDataBrowserWithState):
+            def __init__(self):
+                super().__init__()
+                ds = _make_dataset(4042)
+                ds.run.grouping = {
+                    "groups": {1: [1, 2], 2: [3, 4]},
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "alpha": 1.23,
+                    "first_good_bin": 5,
+                    "last_good_bin": 55,
+                    "bunching_factor": 4,
+                    "deadtime_correction": True,
+                }
+                self._datasets = {4042: ds}
+
+        monkeypatch.setattr(mw_module, "DataBrowserPanel", _StubDataBrowserGrouping)
+        monkeypatch.setattr(mw_module, "FitPanel", _StubFitPanelWithState)
+        monkeypatch.setattr(mw_module, "PlotPanel", _StubPlotPanelWithState)
+        monkeypatch.setattr(mw_module, "LogPanel", _StubLogPanel)
+        monkeypatch.setattr(mw_module, "FourierPanel", _StubFourierWithState)
+        monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParamsClear)
+
+        window = mw_module.MainWindow()
+        state = window.collect_project_state()
+        entry = next(e for e in state["datasets"] if e["run_number"] == 4042)
+
+        grouping = entry.get("grouping_overrides")
+        assert grouping is not None
+        assert grouping["forward_group"] == 1
+        assert grouping["backward_group"] == 2
+        assert grouping["bunching_factor"] == 4
+
+    def test_restore_project_state_selects_matching_dataset_from_multiperiod_load(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
+    ) -> None:
+        monkeypatch.setattr(mw_module, "DataBrowserPanel", _StubDataBrowserWithState)
+        monkeypatch.setattr(mw_module, "FitPanel", _StubFitPanelWithState)
+        monkeypatch.setattr(mw_module, "PlotPanel", _StubPlotPanelWithState)
+        monkeypatch.setattr(mw_module, "LogPanel", _StubLogPanel)
+        monkeypatch.setattr(mw_module, "FourierPanel", _StubFourierWithState)
+        monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParamsClear)
+
+        file_path = tmp_path / "multi.nxs"
+        file_path.write_bytes(b"\x00")
+
+        ds1 = _make_dataset(51001)
+        ds2 = _make_dataset(51002)
+
+        def _stub_load_file(self_inner, path):
+            assert path == str(file_path)
+            return [ds1, ds2]
+
+        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+
+        window = mw_module.MainWindow()
+        state = _minimal_state()
+        state["datasets"] = [
+            {
+                "run_number": 51002,
+                "source_file": str(file_path),
+                "metadata_overrides": {"field": 123.0},
+            }
+        ]
+        window.restore_project_state(state, str(tmp_path / "project.asymp"))
+
+        assert 51002 in window._data_browser._datasets
+        assert 51001 not in window._data_browser._datasets
+
+    def test_restore_project_state_applies_grouping_overrides(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
+    ) -> None:
+        monkeypatch.setattr(mw_module, "DataBrowserPanel", _StubDataBrowserWithState)
+        monkeypatch.setattr(mw_module, "FitPanel", _StubFitPanelWithState)
+        monkeypatch.setattr(mw_module, "PlotPanel", _StubPlotPanelWithState)
+        monkeypatch.setattr(mw_module, "LogPanel", _StubLogPanel)
+        monkeypatch.setattr(mw_module, "FourierPanel", _StubFourierWithState)
+        monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParamsClear)
+
+        file_path = tmp_path / "run42.wim"
+        file_path.write_bytes(b"\x00")
+
+        grouping_payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 10,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+
+        def _stub_load_file(self_inner, path):
+            assert path == str(file_path)
+            return _make_dataset(42)
+
+        applied_payloads: list[dict] = []
+
+        def _stub_apply_grouping(self_inner, dataset, payload):
+            applied_payloads.append(payload)
+            return True, False
+
+        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        monkeypatch.setattr(
+            mw_module.MainWindow,
+            "_apply_grouping_settings_to_dataset",
+            _stub_apply_grouping,
+        )
+
+        window = mw_module.MainWindow()
+        state = _minimal_state()
+        state["datasets"] = [
+            {
+                "run_number": 42,
+                "source_file": str(file_path),
+                "metadata_overrides": {"field": 100.0},
+                "grouping_overrides": grouping_payload,
+            }
+        ]
+        window.restore_project_state(state, str(tmp_path / "project.asymp"))
+
+        assert applied_payloads == [grouping_payload]
 
     def test_clear_all_state_clears_browser_and_panel(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication

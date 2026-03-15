@@ -35,9 +35,43 @@ from asymmetry.core.fitting.parameter_models import (
     component_names_for_x,
     fit_parameter_model,
 )
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 _OPERATOR_OPTIONS = ["+", "-", "*", "/"]
+
+_Y_PARAM_UNITS = {
+    "A": "%",
+    "A0": "%",
+    "A_bg": "%",
+    "baseline": "%",
+    "Lambda": "us^-1",
+    "sigma": "us^-1",
+    "Delta": "us^-1",
+    "frequency": "MHz",
+    "phase": "rad",
+}
+
+_PARAM_UNITS = {
+    "a": None,
+    "b": None,
+    "c": None,
+    "f": "us^-1",
+    "A": "MHz",
+    "D": "MHz",
+    "nu": "MHz",
+    "m": None,
+    "tau": "(x units)",
+    "B0": "G",
+    "Bwid": "G",
+    "Tc": "K",
+    "Ea": "meV",
+    "C": "MHz",  # legacy alias used in older saved model-fit states
+    "D_2D": "us^-1",
+    "D_nD": "us^-1",
+    "D_perp": "us^-1",
+    "lambda_BG": "us^-1",
+    "lambda_0D": "us^-1",
+}
 
 _NON_NEGATIVE_PARAMS = {"D", "D_2D", "D_nD", "D_perp", "lambda_BG", "lambda_0D", "f"}
 _STRICTLY_POSITIVE_PARAMS = {"tau", "B0", "Bwid", "nu", "m"}
@@ -60,19 +94,12 @@ def _x_unit(x_key: str) -> str | None:
 
 
 def _y_unit(parameter_name: str) -> str | None:
-    return get_param_info(_base_param_name(parameter_name)).unit
+    return _Y_PARAM_UNITS.get(_base_param_name(parameter_name))
 
 
-def _format_param_label(
-    name: str,
-    x_key: str,
-    parameter_name: str,
-    *,
-    unit_override: str | None = None,
-) -> str:
+def _format_param_label(name: str, x_key: str, parameter_name: str) -> str:
     """Return display label with units for range-parameter table."""
     base = _base_param_name(name)
-    symbol = get_param_info(name).unicode
     y_unit = _y_unit(parameter_name)
     x_unit = _x_unit(x_key)
 
@@ -88,9 +115,9 @@ def _format_param_label(
     elif base in {"a", "b", "c"}:
         unit = y_unit or "(y units)"
     else:
-        unit = unit_override if unit_override is not None else get_param_info(base).unit
+        unit = _PARAM_UNITS.get(base)
 
-    return f"{symbol} [{unit}]" if unit else symbol
+    return f"{name} [{unit}]" if unit else name
 
 
 def _format_model_param_label(
@@ -110,11 +137,8 @@ def _format_model_param_label(
             component_for_param[unique_name] = component.name
 
     if _base_param_name(name) == "m" and component_for_param.get(name) == "Redfield":
-        return get_param_info(name).unicode
-
-    component_unit = model.param_info.get(name)
-    unit_override = component_unit.unit if component_unit is not None else None
-    return _format_param_label(name, x_key, parameter_name, unit_override=unit_override)
+        return name
+    return _format_param_label(name, x_key, parameter_name)
 
 
 def _component_name_for_param(model: ParameterCompositeModel, name: str) -> str | None:

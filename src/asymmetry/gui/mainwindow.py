@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import numpy as np
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
@@ -39,6 +40,10 @@ from asymmetry.core.project import (
     load_project,
     save_project,
 )
+from asymmetry.core.data.dataset import Histogram
+from asymmetry.core.transform import apply_grouping, compute_asymmetry
+from asymmetry.core.transform.asymmetry import estimate_alpha
+from asymmetry.core.transform.rebin import rebin
 
 _MAX_RECENT_PROJECTS = 10
 _PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
@@ -50,6 +55,8 @@ from asymmetry.gui.panels.fourier_panel import FourierPanel
 from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
+from asymmetry.gui.windows.grouping_dialog import GroupingDialog
+from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
 
 
 def _load_window_icon() -> QIcon | None:
@@ -105,7 +112,7 @@ class MainWindow(QMainWindow):
     * List of loaded datasets with source-file paths and field overrides
     * Co-added (combined) dataset group definitions
     * Data browser sort column, active filters, and selected runs
-    * Plot panel bunch factor, axis limits, and fit-curve overlay
+    * Plot panel axis limits and fit-curve overlay
     * Single-fit and global-fit model selection and parameter table contents
     * Fourier panel window, zero-pad factor, and display mode
 
@@ -176,6 +183,7 @@ class MainWindow(QMainWindow):
         analysis_menu.addAction("&Fit", self._on_fit)
         analysis_menu.addAction("F&ourier", self._on_fourier)
         analysis_menu.addAction("Fit &Parameters", self._on_fit_parameters)
+        analysis_menu.addAction("Grouping...", self._on_grouping_current)
         self._global_parameter_fit_action = analysis_menu.addAction(
             "Global Parameter Fit",
             self._on_global_parameter_fit,
@@ -200,6 +208,7 @@ class MainWindow(QMainWindow):
 
         tb.addAction("Open", self._on_open)
         tb.addAction("Export", self._on_export_current_plot)
+        tb.addAction("Grouping", self._on_grouping_current)
         tb.addAction("Fit", self._on_fit)
         tb.addAction("FFT", self._on_fourier)
         tb.addAction("Params", self._on_fit_parameters)
@@ -269,10 +278,13 @@ class MainWindow(QMainWindow):
 
         # Connect signals
         self._data_browser.dataset_selected.connect(self._on_dataset_selected)
+        if hasattr(self._data_browser, "get_info_requested"):
+            self._data_browser.get_info_requested.connect(self._on_get_info_requested)
+        if hasattr(self._data_browser, "grouping_requested"):
+            self._data_browser.grouping_requested.connect(self._on_grouping_requested)
         if hasattr(self._data_browser, "group_selected"):
             self._data_browser.group_selected.connect(self._on_group_selected)
         self._data_browser.selection_changed.connect(self._update_selected_datasets)
-        self._plot_panel.bunch_factor_changed.connect(self._on_bunch_factor_changed)
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
@@ -287,12 +299,14 @@ class MainWindow(QMainWindow):
     # ── slots ──────────────────────────────────────────────────────────
 
     def _on_open(self) -> None:
-        """Prompt the user to select one or more .wim data files and load them."""
+        """Prompt the user to select one or more data files and load them."""
+        from asymmetry.core.io.base import LoaderRegistry
+
         paths, _ = QFileDialog.getOpenFileNames(
             self,
             "Open μSR data files",
             self._last_open_dir,
-            "WiMDA files (*.wim);;All files (*)",
+            LoaderRegistry.file_dialog_filter(),
         )
         if paths:
             selected_dir = os.path.dirname(paths[0])
@@ -314,27 +328,36 @@ class MainWindow(QMainWindow):
 
         for path in paths:
             try:
-                dataset = self._load_file(path)
-                if dataset is None:
+                loaded = self._load_file(path)
+                if loaded is None:
                     continue
 
-                # Offer to apply field extracted from comment when available.
-                apply_choice = self._maybe_apply_comment_field(
-                    dataset,
-                    path,
-                    apply_comment_field_to_all,
-                )
-                if apply_choice == "cancel":
-                    self._log_panel.log("File loading cancelled by user")
-                    break
-                if apply_choice == "yes_to_all":
-                    apply_comment_field_to_all = True
+                datasets = loaded if isinstance(loaded, list) else [loaded]
+                if not datasets:
+                    continue
 
-                self._data_browser.add_dataset(dataset)
-                self._log_panel.log(f"Loaded {path}")
-                if dataset:
-                    last_dataset = dataset
-                    successful += 1
+                for dataset in datasets:
+                    # Offer to apply field extracted from comment when available.
+                    apply_choice = self._maybe_apply_comment_field(
+                        dataset,
+                        path,
+                        apply_comment_field_to_all,
+                    )
+                    if apply_choice == "cancel":
+                        self._log_panel.log("File loading cancelled by user")
+                        break
+                    if apply_choice == "yes_to_all":
+                        apply_comment_field_to_all = True
+
+                    self._data_browser.add_dataset(dataset)
+                    if dataset:
+                        last_dataset = dataset
+                        successful += 1
+                else:
+                    self._log_panel.log(f"Loaded {path}")
+                    continue
+
+                break
             except Exception as e:
                 self._log_panel.log(f"ERROR loading {path}: {e}")
                 failed += 1
@@ -359,11 +382,356 @@ class MainWindow(QMainWindow):
         elif failed > 0:
             self.statusBar().showMessage(f"Failed to load {failed} file(s)")
 
-    def _load_file(self, path: str) -> None:
+    def _load_file(self, path: str):
         from asymmetry.core.io import load
 
         dataset = load(path)
         return dataset
+
+    def _on_get_info_requested(self, run_number: int) -> None:
+        """Open run-information dialog for a selected dataset row."""
+        dataset = self._data_browser.get_dataset(run_number)
+        if dataset is None:
+            return
+        dialog = RunInfoDialog(
+            dataset,
+            self,
+            included_fields=set(self._data_browser.get_extra_columns()),
+        )
+        dialog.set_browser_field_inclusion_requested.connect(self._on_run_info_field_inclusion_changed)
+        dialog.exec()
+
+    def _on_run_info_field_inclusion_changed(self, field_key: str, include: bool) -> None:
+        """Apply include/exclude requests from the Run Info dialog."""
+        if include:
+            self._data_browser.add_extra_column(field_key)
+        else:
+            self._data_browser.remove_extra_column(field_key)
+
+    def _on_grouping_requested(self, run_number: int) -> None:
+        """Open shared grouping dialog focused on a selected run."""
+        self._open_shared_grouping_dialog(selected_run_number=run_number)
+
+    def _on_grouping_current(self) -> None:
+        """Open shared grouping dialog for all datasets in the active project."""
+        selected_run = None if self._current_dataset is None else int(self._current_dataset.run_number)
+        self._open_shared_grouping_dialog(selected_run_number=selected_run)
+
+    def _open_shared_grouping_dialog(self, *, selected_run_number: int | None = None) -> None:
+        """Show shared grouping dialog and apply settings to selected datasets."""
+        all_datasets = (
+            self._data_browser.get_all_datasets()
+            if hasattr(self._data_browser, "get_all_datasets")
+            else []
+        )
+        dialog = GroupingDialog(
+            all_datasets,
+            selected_run_number=selected_run_number,
+            parent=self,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+
+        grouping_result = dialog.get_grouping_result()
+        if not grouping_result:
+            return
+
+        run_numbers = {int(v) for v in grouping_result.get("run_numbers", [])}
+        alpha = float(grouping_result.get("alpha", 1.0))
+        use_deadtime = bool(grouping_result.get("deadtime_correction", False))
+
+        updated = 0
+        skipped = 0
+        deadtime_applied = 0
+        deadtime_missing = 0
+        first_updated_dataset = None
+
+        for dataset in all_datasets:
+            if run_numbers and int(dataset.run_number) not in run_numbers:
+                continue
+            applied, dt_applied = self._apply_grouping_settings_to_dataset(dataset, grouping_result)
+            if not applied:
+                skipped += 1
+                continue
+            if use_deadtime and not dt_applied:
+                deadtime_missing += 1
+            if dt_applied:
+                deadtime_applied += 1
+
+            if dataset is self._current_dataset:
+                self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
+            if first_updated_dataset is None:
+                first_updated_dataset = dataset
+            updated += 1
+
+        if updated > 0:
+            self._data_browser._rebuild_table()
+            if self._current_dataset is not None:
+                self._plot_panel.plot_dataset(self._current_dataset)
+            elif first_updated_dataset is not None:
+                self._plot_panel.plot_dataset(first_updated_dataset)
+
+        deadtime_msg = "off"
+        if use_deadtime:
+            deadtime_msg = f"on (applied={deadtime_applied}, missing={deadtime_missing})"
+
+        self._log_panel.log(
+            f"Applied grouping to {updated} dataset(s); skipped {skipped}. "
+            f"F={grouping_result['forward_group']}, "
+            f"B={grouping_result['backward_group']}, alpha={alpha:.6g}, "
+            f"deadtime={deadtime_msg}"
+        )
+
+    def _extract_grouping_overrides(self, dataset) -> dict | None:
+        """Return grouping settings that should persist in project files."""
+        run = getattr(dataset, "run", None)
+        grouping = getattr(run, "grouping", None)
+        if not isinstance(grouping, dict):
+            return None
+
+        groups_raw = grouping.get("groups")
+        if not isinstance(groups_raw, dict):
+            return None
+
+        groups: dict[int, list[int]] = {}
+        for key, values in groups_raw.items():
+            try:
+                gid = int(key)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(values, list):
+                continue
+            detectors: list[int] = []
+            for value in values:
+                try:
+                    detectors.append(int(value))
+                except (TypeError, ValueError):
+                    continue
+            if detectors:
+                groups[gid] = detectors
+
+        if not groups:
+            return None
+
+        payload = {
+            "groups": groups,
+            "forward_group": int(grouping.get("forward_group", 1)),
+            "backward_group": int(grouping.get("backward_group", 2)),
+            "alpha": float(grouping.get("alpha", 1.0)),
+            "first_good_bin": int(grouping.get("first_good_bin", 0)),
+            "last_good_bin": int(grouping.get("last_good_bin", 0)),
+            "bunching_factor": int(grouping.get("bunching_factor", 1)),
+            "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
+        }
+
+        if "dead_time_us" in grouping and isinstance(grouping.get("dead_time_us"), list):
+            payload["dead_time_us"] = list(grouping.get("dead_time_us", []))
+        if "good_frames" in grouping:
+            payload["good_frames"] = grouping.get("good_frames")
+        return payload
+
+    def _apply_grouping_settings_to_dataset(self, dataset, grouping_result: dict) -> tuple[bool, bool]:
+        """Apply grouping settings to one dataset and recompute asymmetry.
+
+        Returns
+        -------
+        tuple[bool, bool]
+            ``(applied, deadtime_applied)``.
+        """
+        run = dataset.run
+        if run is None or not run.histograms:
+            return False, False
+
+        groups_raw = grouping_result.get("groups", {})
+        if not isinstance(groups_raw, dict):
+            return False, False
+
+        groups: dict[int, list[int]] = {}
+        for key, values in groups_raw.items():
+            try:
+                gid = int(key)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(values, list):
+                continue
+            detectors: list[int] = []
+            for value in values:
+                try:
+                    detectors.append(int(value))
+                except (TypeError, ValueError):
+                    continue
+            if detectors:
+                groups[gid] = detectors
+        if not groups:
+            return False, False
+
+        try:
+            forward_gid = int(grouping_result.get("forward_group", 1))
+            backward_gid = int(grouping_result.get("backward_group", 2))
+        except (TypeError, ValueError):
+            return False, False
+
+        forward_idx = [max(0, int(v) - 1) for v in groups.get(forward_gid, [])]
+        backward_idx = [max(0, int(v) - 1) for v in groups.get(backward_gid, [])]
+        if not forward_idx or not backward_idx:
+            return False, False
+        if max(forward_idx, default=-1) >= len(run.histograms):
+            return False, False
+        if max(backward_idx, default=-1) >= len(run.histograms):
+            return False, False
+
+        first_good = int(grouping_result.get("first_good_bin", 0))
+        last_good = int(grouping_result.get("last_good_bin", len(run.histograms[0].counts) - 1))
+        alpha = float(grouping_result.get("alpha", 1.0))
+        bunch_factor = int(grouping_result.get("bunching_factor", 1))
+        use_deadtime = bool(grouping_result.get("deadtime_correction", False))
+
+        if not isinstance(run.grouping, dict):
+            run.grouping = {}
+        if isinstance(grouping_result.get("dead_time_us"), list):
+            run.grouping["dead_time_us"] = list(grouping_result.get("dead_time_us", []))
+        if "good_frames" in grouping_result:
+            run.grouping["good_frames"] = grouping_result.get("good_frames")
+
+        working_histograms, dt_applied = self._prepare_grouping_histograms(
+            run.histograms,
+            run.grouping,
+            use_deadtime,
+        )
+
+        forward = apply_grouping(working_histograms, forward_idx)
+        backward = apply_grouping(working_histograms, backward_idx)
+
+        run_alpha = alpha
+        if run_alpha <= 0:
+            run_alpha = estimate_alpha(
+                forward,
+                backward,
+                first_good_bin=first_good,
+                last_good_bin=last_good,
+            )
+
+        asymmetry, error = compute_asymmetry(forward, backward, alpha=run_alpha)
+        asymmetry = asymmetry * 100.0
+        error = error * 100.0
+        time_axis = run.histograms[0].time_axis
+
+        lo = max(0, first_good)
+        hi = min(len(asymmetry) - 1, last_good)
+        if lo <= hi:
+            time_out = time_axis[lo : hi + 1].copy()
+            asym_out = asymmetry[lo : hi + 1].copy()
+            err_out = error[lo : hi + 1].copy()
+            if bunch_factor > 1:
+                time_out, asym_out, err_out = rebin(time_out, asym_out, err_out, bunch_factor)
+            dataset.time = time_out
+            dataset.asymmetry = asym_out
+            dataset.error = err_out
+
+        run.grouping.update(
+            {
+                "groups": groups,
+                "forward_group": forward_gid,
+                "backward_group": backward_gid,
+                "alpha": float(run_alpha),
+                "first_good_bin": first_good,
+                "last_good_bin": last_good,
+                "bunching_factor": bunch_factor,
+                "deadtime_correction": use_deadtime,
+            }
+        )
+        return True, dt_applied
+
+    def _prepare_grouping_histograms(self, histograms, grouping: dict, use_deadtime: bool):
+        """Return histograms prepared for grouping, with optional deadtime correction.
+
+        Parameters
+        ----------
+        histograms
+            Original run histograms.
+        grouping
+            Run grouping dictionary potentially containing ``dead_time_us``.
+        use_deadtime
+            Whether deadtime correction should be applied.
+
+        Returns
+        -------
+        tuple[list[Histogram], bool]
+            Prepared histogram list and a flag indicating whether deadtime was
+            actually applied.
+        """
+        if not use_deadtime:
+            return list(histograms), False
+
+        dead_time_us = grouping.get("dead_time_us") if isinstance(grouping, dict) else None
+        if not isinstance(dead_time_us, list):
+            return list(histograms), False
+        if len(dead_time_us) < len(histograms):
+            return list(histograms), False
+
+        good_frames = 1.0
+        try:
+            good_frames = float(grouping.get("good_frames", 1.0))
+        except (TypeError, ValueError):
+            good_frames = 1.0
+        if good_frames <= 0.0:
+            good_frames = 1.0
+
+        corrected: list[Histogram] = []
+        applied_any = False
+        for i, hist in enumerate(histograms):
+            try:
+                tau_us = float(dead_time_us[i])
+            except (TypeError, ValueError):
+                tau_us = 0.0
+
+            counts = hist.counts
+            if tau_us > 0.0:
+                counts = self._apply_deadtime_correction(
+                    counts,
+                    tau_us,
+                    hist.bin_width,
+                    num_good_frames=good_frames,
+                )
+                applied_any = True
+
+            corrected.append(
+                Histogram(
+                    counts=counts,
+                    bin_width=hist.bin_width,
+                    t0_bin=hist.t0_bin,
+                    good_bin_start=hist.good_bin_start,
+                    good_bin_end=hist.good_bin_end,
+                )
+            )
+
+        return corrected, applied_any
+
+    def _apply_deadtime_correction(
+        self,
+        counts,
+        tau_us: float,
+        bin_width_us: float,
+        *,
+        num_good_frames: float = 1.0,
+    ):
+        """Apply non-paralyzable deadtime correction to histogram counts.
+
+        The corrected counts are computed as:
+
+        ``N_corr = N / (1 - N * tau / (dt * n_frames))``
+
+        where ``tau`` is detector deadtime, ``dt`` is bin width, and
+        ``n_frames`` is the number of good frames (Mantid-compatible).
+        Denominators are clamped away from zero for numerical stability.
+        """
+        n = np.asarray(counts, dtype=np.float64)
+        if tau_us <= 0.0 or bin_width_us <= 0.0 or num_good_frames <= 0.0:
+            return n.copy()
+
+        denom = 1.0 - (n * tau_us / (float(bin_width_us) * float(num_good_frames)))
+        denom = np.clip(denom, 1.0e-6, None)
+        return n / denom
 
     def _maybe_apply_comment_field(
         self,
@@ -512,14 +880,6 @@ class MainWindow(QMainWindow):
             return
         self._active_group_context = (group_id, group_name)
         self.statusBar().showMessage(f"Selected group: {group_name}")
-
-    def _on_bunch_factor_changed(self, _factor: int) -> None:
-        """Refresh fit inputs so fitting follows the current bunch factor."""
-        if self._current_dataset is not None:
-            current_run = self._current_dataset.run_number
-            if self._data_browser.get_dataset(current_run) is not None:
-                self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
-        self._update_selected_datasets()
 
     def _on_fit_range_changed(self, _x_min: float, _x_max: float) -> None:
         """Refresh fit inputs when the selected fit x-range changes."""
@@ -832,6 +1192,7 @@ class MainWindow(QMainWindow):
                 "metadata_overrides": {
                     "field": float(dataset.metadata.get("field", 0.0)),
                 },
+                "grouping_overrides": self._extract_grouping_overrides(dataset),
             })
             seen_run_numbers.add(run_number)
 
@@ -945,6 +1306,7 @@ class MainWindow(QMainWindow):
                     resolved_paths[rn] = candidate
 
         # ── load source files ──────────────────────────────────────────
+        loaded_file_cache: dict[str, object] = {}
         for ds_info in datasets_info:
             rn = ds_info.get("run_number")
             source_file = ds_info.get("source_file", "")
@@ -962,14 +1324,46 @@ class MainWindow(QMainWindow):
                 continue
 
             try:
-                dataset = self._load_file(resolved)
-                if dataset is None:
+                if resolved in loaded_file_cache:
+                    loaded_obj = loaded_file_cache[resolved]
+                else:
+                    loaded_obj = self._load_file(resolved)
+                    loaded_file_cache[resolved] = loaded_obj
+
+                if loaded_obj is None:
                     continue
+
+                candidates = loaded_obj if isinstance(loaded_obj, list) else [loaded_obj]
+                dataset = None
+                for cand in candidates:
+                    if cand is None:
+                        continue
+                    try:
+                        if int(cand.run_number) == int(rn):
+                            dataset = cand
+                            break
+                    except (TypeError, ValueError):
+                        continue
+                if dataset is None and len(candidates) == 1:
+                    dataset = candidates[0]
+                if dataset is None:
+                    self._log_panel.log(
+                        f"WARNING: Run {rn} not found in loaded file {source_file}; skipping."
+                    )
+                    continue
+                if int(dataset.run_number) in loaded_run_numbers:
+                    continue
+
                 # Apply saved metadata overrides without prompting.
                 for key, val in ds_info.get("metadata_overrides", {}).items():
                     dataset.metadata[key] = val
                     if dataset.run:
                         dataset.run.metadata[key] = val
+
+                grouping_overrides = ds_info.get("grouping_overrides")
+                if isinstance(grouping_overrides, dict):
+                    self._apply_grouping_settings_to_dataset(dataset, grouping_overrides)
+
                 self._data_browser.add_dataset(dataset)
                 loaded_run_numbers.add(dataset.run_number)
             except Exception as e:

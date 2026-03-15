@@ -151,28 +151,66 @@ Control the plot range using the spinboxes at the top:
 
 * **X min/max**: Time axis range (μs)
 * **Y min/max**: Asymmetry axis range
-* Click **Apply** to update limits
-* Click **Auto** to auto-scale to fit all data
+* Press **Enter** after editing any limit value to apply immediately
+* Click **Auto X** to auto-scale the X axis only
+* Click **Auto Y** to auto-scale the Y axis only
+
+Auto-Y uses points inside the currently selected X range and prefers reliable
+foreground points (excluding undefined/low-confidence bins when available).
 
 Default limits automatically adjust to fit the data including error bars, 
 with 5% padding.
 
-Bunch Factor
-~~~~~~~~~~~~
+Run Info and Metadata Columns
+-----------------------------
 
-Reduce noise by combining adjacent points:
+Use **Get Info** (context menu on a run) to open the Run Info window.
 
-1. Set "Bunch: factor" spinbox to desired value (1 = no bunching)
-2. Plot updates automatically
-3. Future fits use the rebinned dataset currently shown in the plot
+Primary Run Info table
+~~~~~~~~~~~~~~~~~~~~~~
 
-Example: factor=10 reduces 1000 points to 100 points with smaller error bars.
+The primary table shows key run parameters in four columns:
 
-The original loaded dataset is still preserved internally, but in the GUI the
-bunch factor now determines the dataset sent to both single-run and global
-fitting. If you want to fit the full unbinned data, run the fit with
-``Bunch = 1`` first and then increase the bunch factor afterwards for viewing.
-The existing fit overlay remains on the plot when you change the bunch factor.
+* **Include in Data Browser** (checkbox)
+* **Field**
+* **Value**
+* **Log Plot**
+
+Ticking a checkbox adds that field as a dynamic column in the Data Browser.
+Unticking removes it.
+
+For parameters backed by time-series NeXus logs, a **Plot** button appears in
+the right column and opens the full log trace.
+
+Advanced subwindow
+~~~~~~~~~~~~~~~~~~
+
+Click **Advanced** to open a separate, scrollable subwindow containing a full
+metadata table with the same include-checkbox and log-plot behavior.
+
+This allows promoting any advanced NeXus field into the Data Browser without
+leaving the Run Info workflow.
+
+Grouping and Bunching
+~~~~~~~~~~~~~~~~~~~~~
+
+Grouping, alpha, deadtime correction, good-bin limits, and bunching are now
+managed from the **Grouping** dialog (toolbar/menu), not from the main plot
+toolbar.
+
+This keeps fit inputs consistent with the run grouping settings and project
+state.
+
+Low-count Tail Display
+~~~~~~~~~~~~~~~~~~~~~~
+
+At late times, grouped counts can become very small. Asymmetry bins with a
+non-positive denominator :math:`F + \alpha B` are treated as undefined and are
+not drawn in the main plot.
+
+Bins with very small but positive denominator may still show large
+point-to-point variation (including values near :math:`\pm 100\%`), which is
+expected for low-statistics tails.
 
 Main Plot Labels and Export
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -266,8 +304,8 @@ Fitting workflow:
 
 3. **Click "Fit"** to execute the fitting
 
-   The fit uses the dataset currently shown in the plot panel. If the bunch
-   factor is greater than 1, the fit runs on that rebinned dataset.
+   The fit uses the dataset currently shown in the plot panel. Grouping and
+   bunching are configured from the Grouping dialog and applied before fitting.
    Fits run asynchronously, and the dialog shows a "fit in progress" message
    while fit controls are temporarily disabled.
 
@@ -303,8 +341,8 @@ per-dataset parameters:
 
 5. **Click "Run Global Fit"**
 
-   Global fitting follows the same rule: the current bunch factor is applied
-   to each selected dataset before they are passed to the global fitter.
+   Global fitting follows the same rule: current grouped/bunched dataset
+   settings are applied to each selected dataset before fitting.
 
 After a global fit completes:
 
@@ -500,7 +538,7 @@ Opening a project
 * **File → Recent Projects** lists up to the 10 most recently opened projects
    for one-click access.
 
-On open, every source ``.wim`` file referenced by the project is reloaded
+On open, every source data file referenced by the project is reloaded
 from disk.  Asymmetry tries paths in this order:
 
 1. The absolute path stored in the project file
@@ -521,8 +559,11 @@ What is saved
 
 * All loaded datasets (stored as file paths, not raw arrays)
 * Co-added ("combined") dataset groups
-* Data Browser sort column, sort order, column filters, and selected row
-* Plot axis limits and bunch factor
+* Data Browser sort column, sort order, column filters, selected rows, and
+   dynamic metadata columns (including Run Info selections)
+* Plot axis limits (X/Y), fit range, and current run
+* Grouping settings per run (groups, forward/backward selection, alpha,
+   good-bin range, bunching, deadtime toggle)
 * Most-recently-displayed fit overlay curve(s)
 * Main plot labels/annotations
 * Single-fit and global-fit model selection, parameter values, fixed/free

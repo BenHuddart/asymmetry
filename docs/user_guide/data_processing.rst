@@ -65,6 +65,31 @@ Combine detector histograms into logical groups:
    
    asymmetry = calculate_asymmetry(forward_counts, backward_counts)
 
+Asymmetry Definition and Error Model
+------------------------------------
+
+Asymmetry uses the standard pair formula:
+
+.. math::
+
+   A(t) = \frac{F(t) - \alpha B(t)}{F(t) + \alpha B(t)}
+
+where :math:`F` and :math:`B` are grouped forward/backward counts.
+
+Asymmetry and uncertainty handling follows Mantid-style behavior:
+
+* If :math:`F + \alpha B = 0`, asymmetry is set to 0 for that bin.
+* The default uncertainty for that bin is 1.0 (fractional), i.e. 100% in the
+  GUI percentage display.
+* For non-zero denominator, uncertainty is computed as:
+
+.. math::
+
+   \sigma_A = \frac{\sqrt{(F + \alpha^2 B)\left(1 + \left(\frac{F-\alpha B}{F+\alpha B}\right)^2\right)}}{|F+\alpha B|}
+
+In low-count late-time tails, this naturally produces large fluctuations and
+large uncertainties.
+
 Co-adding Datasets
 ------------------
 

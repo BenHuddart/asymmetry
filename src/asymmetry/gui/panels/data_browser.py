@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import uuid
 
 import numpy as np
@@ -176,6 +177,8 @@ class DataBrowserPanel(QWidget):
     dataset_selected = Signal(int)
     selection_changed = Signal()
     group_selected = Signal(str)
+    get_info_requested = Signal(int)
+    grouping_requested = Signal(int)
 
     _COLUMNS = ["Run", "Title", "𝑇 (K)", "𝐵 (G)", "Comment"]
     _GROUP_ROLE = Qt.ItemDataRole.UserRole
@@ -193,6 +196,7 @@ class DataBrowserPanel(QWidget):
         self._display_order: list[int | str] = []
 
         self._column_filters: dict[int, set[str]] = {}
+        self._extra_columns: list[str] = []
         self._current_sort_column: int = -1
         self._current_sort_order: Qt.SortOrder = Qt.SortOrder.AscendingOrder
         self._selection_anchor_row: int | None = None
@@ -202,7 +206,7 @@ class DataBrowserPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._table = QTableWidget(0, len(self._COLUMNS))
-        self._table.setHorizontalHeaderLabels(self._COLUMNS)
+        self._refresh_column_headers()
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(
@@ -470,7 +474,7 @@ class DataBrowserPanel(QWidget):
         count_item.setBackground(shade)
         self._table.setItem(row, 1, count_item)
 
-        for col in range(2, len(self._COLUMNS)):
+        for col in range(2, self._table.columnCount()):
             blank = QTableWidgetItem("")
             blank.setFlags(blank.flags() & ~Qt.ItemFlag.ItemIsEditable)
             blank.setFont(font)
@@ -480,7 +484,7 @@ class DataBrowserPanel(QWidget):
     def _add_dataset_row(self, dataset: MuonDataset, *, indent: bool) -> None:
         rn = int(dataset.run_number)
         meta = dataset.metadata
-        run_display = str(rn)
+        run_display = str(dataset.run_label)
         if rn in self._combined_datasets:
             run_display = " + ".join(map(str, self._combined_datasets[rn]))
         if indent:
@@ -489,7 +493,7 @@ class DataBrowserPanel(QWidget):
         row = self._table.rowCount()
         self._table.insertRow(row)
 
-        if rn in self._combined_datasets:
+        if rn in self._combined_datasets or dataset.run_label != str(rn):
             run_item = QTableWidgetItem(run_display)
         else:
             run_item = NumericTableWidgetItem(run_display)
@@ -516,6 +520,11 @@ class DataBrowserPanel(QWidget):
         comment_item = QTableWidgetItem(comment)
         comment_item.setFlags(comment_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self._table.setItem(row, 4, comment_item)
+        for i, field_key in enumerate(self._extra_columns, start=len(self._COLUMNS)):
+            value = self._value_for_extra_column(dataset, field_key)
+            item = QTableWidgetItem(value)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._table.setItem(row, i, item)
 
     def _selected_keys(self) -> list[int | str]:
         selected: list[int | str] = []
@@ -562,6 +571,116 @@ class DataBrowserPanel(QWidget):
                 header.resizeSection(col, min_width)
             elif size > maximums[col]:
                 header.resizeSection(col, maximums[col])
+
+        for col in range(len(self._COLUMNS), self._table.columnCount()):
+            size = header.sectionSize(col)
+            if size < 120:
+                header.resizeSection(col, 120)
+            elif size > 320:
+                header.resizeSection(col, 320)
+
+    def _refresh_column_headers(self) -> None:
+        """Apply base and dynamic column labels to the table header."""
+        labels = list(self._COLUMNS) + list(self._extra_columns)
+        self._table.setColumnCount(len(labels))
+        self._table.setHorizontalHeaderLabels(labels)
+
+    def add_extra_column(self, field_key: str) -> None:
+        """Add a metadata-backed dynamic column to the browser table."""
+        key = str(field_key).strip()
+        if not key or key in self._extra_columns:
+            return
+        self._extra_columns.append(key)
+        self._refresh_column_headers()
+        self._rebuild_table()
+        self._resize_columns_to_content()
+
+    def remove_extra_column(self, field_key: str) -> None:
+        """Remove a dynamic metadata column from the browser table."""
+        if field_key not in self._extra_columns:
+            return
+        self._extra_columns = [key for key in self._extra_columns if key != field_key]
+        self._refresh_column_headers()
+        self._rebuild_table()
+        self._resize_columns_to_content()
+
+    def get_extra_columns(self) -> list[str]:
+        """Return the current metadata-backed extra columns."""
+        return list(self._extra_columns)
+
+    def _resolve_metadata_path(self, dataset: MuonDataset, field_key: str):
+        """Resolve a metadata/synthetic key to a value for dynamic columns."""
+        if field_key.startswith("run_info."):
+            return self._resolve_run_info_value(dataset, field_key)
+
+        metadata = dataset.metadata
+        current = metadata
+        for part in field_key.split("."):
+            if isinstance(current, dict) and part in current:
+                current = current[part]
+            else:
+                return None
+        return current
+
+    def _resolve_run_info_value(self, dataset: MuonDataset, field_key: str):
+        """Resolve synthetic ``run_info.*`` keys used by Run Info summary rows."""
+        key = field_key[len("run_info.") :]
+        if key == "points":
+            return dataset.n_points
+
+        run = dataset.run
+        if run is None or not run.histograms:
+            return None
+
+        if key == "histograms":
+            return len(run.histograms)
+
+        h0 = run.histograms[0]
+        if key == "bins":
+            return h0.n_bins
+        if key == "bin_width_us":
+            return h0.bin_width
+
+        total_counts = float(np.sum([np.sum(h.counts) for h in run.histograms]))
+        if key == "counts_mev":
+            return total_counts / 1.0e6
+        if key == "counts_per_detector":
+            return total_counts / max(len(run.histograms), 1)
+        return None
+
+    def _format_extra_value(self, value) -> str:
+        """Format dynamic-column values into compact table text."""
+        if value is None:
+            return "—"
+
+        if isinstance(value, dict):
+            if "mean" in value:
+                try:
+                    return f"{float(value['mean']):.6g}"
+                except (TypeError, ValueError):
+                    return str(value.get("mean", "—"))
+            text = json.dumps(value, separators=(",", ":"), ensure_ascii=True)
+            return text if len(text) <= 48 else f"{text[:45]}..."
+
+        if isinstance(value, (list, tuple, np.ndarray)):
+            arr = np.asarray(value)
+            if arr.size == 0:
+                return "—"
+            if np.issubdtype(arr.dtype, np.number):
+                return f"{float(np.nanmean(arr.astype(np.float64))):.6g}"
+            text = str(list(value))
+            return text if len(text) <= 48 else f"{text[:45]}..."
+
+        if isinstance(value, (float, np.floating)):
+            return f"{float(value):.6g}"
+
+        text = str(value)
+        return text if text else "—"
+
+    def _value_for_extra_column(self, dataset: MuonDataset, field_key: str) -> str:
+        """Return rendered text for a metadata-backed extra column cell."""
+        value = self._resolve_metadata_path(dataset, field_key)
+        return self._format_extra_value(value)
 
     # ------------------------------------------------------------------
     # Row and selection helpers
@@ -623,6 +742,10 @@ class DataBrowserPanel(QWidget):
             if dataset is not None:
                 selected.append(dataset)
         return selected
+
+    def get_all_datasets(self) -> list[MuonDataset]:
+        """Return all datasets currently present in the browser."""
+        return list(self._datasets.values())
 
     # ------------------------------------------------------------------
     # Editing and removal
@@ -711,6 +834,9 @@ class DataBrowserPanel(QWidget):
         if len(regular_runs) >= 2 and not combined_runs:
             menu.addAction("Co-add Selected", self._coadd_selected)
             menu.addAction("Form Data Group", self._form_data_group)
+        if len(selected_runs) == 1 and not selected_group_ids:
+            selected_run = selected_runs[0]
+            menu.addAction("Get Info", lambda rn=selected_run: self.get_info_requested.emit(rn))
 
         if combined_runs:
             menu.addAction("Separate Combined", self._separate_combined)
@@ -884,9 +1010,30 @@ class DataBrowserPanel(QWidget):
                     self._on_header_clicked(logical_index)
                     return True
                 if event.button() == Qt.MouseButton.RightButton:
-                    QTimer.singleShot(0, lambda ci=logical_index: self._open_filter_dialog(ci))
+                    QTimer.singleShot(0, lambda ci=logical_index: self._open_header_context_menu(ci))
                     return True
         return super().eventFilter(watched, event)
+
+    def _open_header_context_menu(self, col_idx: int) -> None:
+        """Open right-click header menu for filtering or dynamic-column removal."""
+        if col_idx < 0:
+            return
+
+        if col_idx < len(self._COLUMNS):
+            self._open_filter_dialog(col_idx)
+            return
+
+        extra_index = col_idx - len(self._COLUMNS)
+        if extra_index < 0 or extra_index >= len(self._extra_columns):
+            return
+
+        field_key = self._extra_columns[extra_index]
+        menu = QMenu(self)
+        menu.addAction(
+            "Remove from Data Browser",
+            lambda fk=field_key: self.remove_extra_column(fk),
+        )
+        menu.exec(self.cursor().pos())
 
     def _on_header_clicked(self, logical_index: int) -> None:
         if logical_index == self._current_sort_column:
@@ -919,6 +1066,18 @@ class DataBrowserPanel(QWidget):
                 return float(meta.get("temperature", 0.0))
             if self._current_sort_column == 3:
                 return float(meta.get("field", 0.0))
+            if self._current_sort_column >= len(self._COLUMNS):
+                idx = self._current_sort_column - len(self._COLUMNS)
+                if idx < 0 or idx >= len(self._extra_columns):
+                    return ""
+                value = self._resolve_metadata_path(dataset, self._extra_columns[idx])
+                if isinstance(value, (int, float, np.integer, np.floating)):
+                    return float(value)
+                if isinstance(value, (list, tuple, np.ndarray)):
+                    arr = np.asarray(value)
+                    if arr.size and np.issubdtype(arr.dtype, np.number):
+                        return float(np.nanmean(arr.astype(np.float64)))
+                return "" if value is None else str(value)
             return str(meta.get("comment", ""))
 
         runs = [entry for entry in self._display_order if isinstance(entry, int)]
@@ -946,8 +1105,11 @@ class DataBrowserPanel(QWidget):
             if item:
                 unique_values.add(item.text().strip())
 
+        header_item = self._table.horizontalHeaderItem(col_idx)
+        column_name = header_item.text() if header_item is not None else str(col_idx)
+
         dialog = FilterDialog(
-            self._COLUMNS[col_idx],
+            column_name,
             sorted(unique_values),
             self._column_filters.get(col_idx),
             self,
@@ -1152,8 +1314,10 @@ class DataBrowserPanel(QWidget):
         self._run_to_group.clear()
         self._display_order.clear()
         self._column_filters.clear()
+        self._extra_columns.clear()
         self._current_sort_column = -1
         self._current_sort_order = Qt.SortOrder.AscendingOrder
+        self._refresh_column_headers()
         self._table.setRowCount(0)
 
     def add_combined_dataset(self, source_run_numbers: list[int]) -> int | None:
@@ -1204,6 +1368,7 @@ class DataBrowserPanel(QWidget):
             "selected_run_numbers": self._get_selected_run_numbers(),
             "selected_group_ids": selected_group_ids,
             "data_groups": data_groups,
+            "extra_columns": list(self._extra_columns),
         }
 
     def restore_state(self, state: dict) -> None:
@@ -1218,6 +1383,8 @@ class DataBrowserPanel(QWidget):
             if sort_order_str == "ascending"
             else Qt.SortOrder.DescendingOrder
         )
+        self._extra_columns = [str(v) for v in state.get("extra_columns", []) if str(v).strip()]
+        self._refresh_column_headers()
 
         for group_entry in state.get("data_groups", []):
             if not isinstance(group_entry, dict):

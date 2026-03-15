@@ -14,6 +14,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parameter-model docs now explicitly state that Redfield exponent `m` is dimensionless.
 - In the model-fit GUI for field-series parameter fits, component selection now avoids redundant constants: Lambda-like y-parameters show `Lambda_bg` and hide `Constant`, while non-Lambda y-parameters show `Constant` and hide `Lambda_bg`.
 - Model parameter fits and cross-group parameter fits now run asynchronously in the GUI, with explicit in-progress status text and temporary control locking to avoid blocking the UI.
+- Asymmetry uncertainty calculation now follows Mantid `AsymmetryCalc` behavior, including default uncertainty for zero-denominator bins.
+- Main plot now suppresses bins with non-positive grouped denominator (`F + alpha*B <= 0`) to avoid displaying undefined asymmetry points.
+- Main plot bunch-factor control has been removed; bunching is managed in the Grouping workflow.
+- Grouping deadtime correction now uses Mantid-style good-frame normalization: `Ncorr = N / (1 - N*tau/(dt*good_frames))`.
+- Grouping dialog bunching-factor input range has been expanded to support large values.
+- Main-plot limit controls now use independent `Auto X` / `Auto Y`; manual X/Y limits apply on Enter and no longer require an Apply button.
+- `Auto Y` now computes limits from points inside the current X range and prioritizes reliable foreground points.
+- Run Info now provides include-in-browser checkboxes and per-row log plotting in both the primary table and Advanced subwindow.
+- Project persistence now round-trips grouping settings and restored plot limits more reliably, including list-returning/multi-period loader paths.
+
+### Documentation
+- Updated GUI user guide to document current axis-control behavior, Run Info include/log workflows, Advanced subwindow usage, and persistence details for dynamic columns and grouping settings.
+
+### Tests
+- Added regression and end-to-end persistence tests for:
+	- plot-limit restore with dataset replot,
+	- grouping override save/restore,
+	- multi-period restore dataset selection,
+	- project round-trip restoring grouping and axis limits,
+	- Run Info/Data Browser synthetic column integration.
 
 ## [0.1.0] - 2026-03-09
 

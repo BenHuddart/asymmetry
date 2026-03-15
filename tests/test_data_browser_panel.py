@@ -14,7 +14,7 @@ from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
 
 
@@ -40,6 +40,20 @@ def _dataset(run_number: int, t_shift: float = 0.0) -> MuonDataset:
             "comment": "ok",
         },
     )
+
+
+def _dataset_with_run(run_number: int) -> MuonDataset:
+    ds = _dataset(run_number)
+    h0 = Histogram(counts=np.array([10.0, 20.0, 30.0]), bin_width=0.5)
+    h1 = Histogram(counts=np.array([5.0, 10.0, 15.0]), bin_width=0.5)
+    run = Run(
+        run_number=run_number,
+        histograms=[h0, h1],
+        metadata={"run_number": run_number},
+        grouping={"groups": {1: [1], 2: [2]}, "forward_group": 1, "backward_group": 2},
+    )
+    ds.run = run
+    return ds
 
 
 def _click_row(panel: DataBrowserPanel, row: int, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier) -> None:
@@ -140,9 +154,10 @@ def test_context_menu_action_removes_selected_entries(qapp: QApplication) -> Non
 
     assert menu is not None
     actions = [a for a in menu.actions() if not a.isSeparator()]
-    assert len(actions) == 1
+    remove_action = next((a for a in actions if a.text() == "Remove Entry"), None)
+    assert remove_action is not None
 
-    actions[0].trigger()
+    remove_action.trigger()
 
     assert panel._table.rowCount() == 1
     assert panel.get_dataset(31) is d1
@@ -168,8 +183,6 @@ def test_context_menu_shows_coadd_for_multiple_selected(qapp: QApplication) -> N
 
     assert menu is not None
     actions = [a for a in menu.actions() if not a.isSeparator()]
-    # Should have "Co-add Selected", "Form Data Group", and remove action.
-    assert len(actions) == 3
     action_texts = [a.text() for a in actions]
     assert "Co-add Selected" in action_texts
     assert "Form Data Group" in action_texts
@@ -205,11 +218,47 @@ def test_context_menu_shows_separate_for_combined_dataset(qapp: QApplication) ->
 
     assert menu is not None
     actions = [a for a in menu.actions() if not a.isSeparator()]
-    # Should have "Separate Combined" and "Remove Entry"
-    assert len(actions) == 2
     action_texts = [a.text() for a in actions]
     assert "Separate Combined" in action_texts
     assert "Remove Entry" in action_texts
+
+
+def test_extra_column_roundtrip_in_state(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _dataset(301)
+    ds.metadata["nexus_fields"] = {"sample": {"temperature": 12.34}}
+    panel.add_dataset(ds)
+
+    panel.add_extra_column("nexus_fields.sample.temperature")
+    state = panel.get_state()
+    assert "nexus_fields.sample.temperature" in state["extra_columns"]
+
+    panel.clear()
+    panel.add_dataset(ds)
+    panel.restore_state(state)
+
+    header_labels = [panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())]
+    assert "nexus_fields.sample.temperature" in header_labels
+
+
+def test_run_info_synthetic_extra_columns_render_values(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _dataset_with_run(302)
+    panel.add_dataset(ds)
+
+    panel.add_extra_column("run_info.points")
+    panel.add_extra_column("run_info.histograms")
+    panel.add_extra_column("run_info.counts_mev")
+
+    labels = [panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())]
+    points_col = labels.index("run_info.points")
+    hist_col = labels.index("run_info.histograms")
+    mev_col = labels.index("run_info.counts_mev")
+
+    assert panel._table.item(0, points_col).text() == str(ds.n_points)
+    assert panel._table.item(0, hist_col).text() == "2"
+    # (10+20+30+5+10+15) / 1e6 = 9e-05
+    assert float(panel._table.item(0, mev_col).text()) == pytest.approx(9.0e-05)
 
 
 def test_coadd_inserts_at_first_selected_position(qapp: QApplication) -> None:

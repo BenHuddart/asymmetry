@@ -9,7 +9,7 @@ import pytest
 import numpy as np
 
 pyside6 = pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication  # type: ignore
+from PySide6.QtWidgets import QApplication, QToolBar  # type: ignore
 
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
@@ -82,6 +82,39 @@ class TestMainWindowBasic:
         mainwindow._plot_panel.export_current_plot = _mark_called
         mainwindow._on_export_current_plot()
         assert called["count"] == 1
+
+    def test_toolbar_grouping_before_fit(self, mainwindow: MainWindow) -> None:
+        """Toolbar should expose Grouping action before Fit for discoverability."""
+        toolbar = mainwindow.findChild(QToolBar)
+        assert toolbar is not None
+        texts = [action.text() for action in toolbar.actions()]
+        assert "Grouping" in texts
+        assert "Fit" in texts
+        assert texts.index("Grouping") < texts.index("Fit")
+
+    def test_deadtime_correction_uses_good_frames(self, mainwindow: MainWindow) -> None:
+        """Deadtime correction should include good-frame normalization (Mantid-style)."""
+        counts = np.array([100.0], dtype=float)
+        corrected = mainwindow._apply_deadtime_correction(
+            counts,
+            tau_us=0.01,
+            bin_width_us=0.02,
+            num_good_frames=1000.0,
+        )
+        expected = 100.0 / (1.0 - (100.0 * 0.01 / (0.02 * 1000.0)))
+        assert corrected[0] == pytest.approx(expected)
+
+    def test_run_info_inclusion_handler_updates_data_browser(self, mainwindow: MainWindow) -> None:
+        """Run Info include/exclude signal should add/remove data-browser columns."""
+        calls: list[tuple[str, str]] = []
+
+        mainwindow._data_browser.add_extra_column = lambda key: calls.append(("add", key))
+        mainwindow._data_browser.remove_extra_column = lambda key: calls.append(("remove", key))
+
+        mainwindow._on_run_info_field_inclusion_changed("run_info.points", True)
+        mainwindow._on_run_info_field_inclusion_changed("run_info.points", False)
+
+        assert calls == [("add", "run_info.points"), ("remove", "run_info.points")]
 
     def test_cross_group_completion_shows_global_parameter_window(self, mainwindow: MainWindow) -> None:
         """Accepted cross-group fit should open and focus the global-fit result window."""

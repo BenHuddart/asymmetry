@@ -36,20 +36,74 @@ def compute_asymmetry(
     f = np.asarray(forward, dtype=np.float64)
     b = np.asarray(backward, dtype=np.float64)
 
+    numerator = f - alpha * b
     denominator = f + alpha * b
-    # Avoid division by zero
-    safe = denominator > 0
+    # Mantid-compatible handling: only divide on non-zero denominator.
+    safe = denominator != 0.0
     asym = np.zeros_like(f)
     err = np.zeros_like(f)
 
-    asym[safe] = (f[safe] - alpha * b[safe]) / denominator[safe]
+    asym[safe] = numerator[safe] / denominator[safe]
 
-    # Error propagation (Poisson statistics on counts)
-    err[safe] = (
-        2.0
-        * alpha
-        * np.sqrt(f[safe] * b[safe] ** 2 + b[safe] * f[safe] ** 2)
-        / denominator[safe] ** 2
-    )
+    # Match Mantid AsymmetryCalc error model:
+    # error = sqrt((F + alpha^2 B) * (1 + (num/den)^2)) / den
+    # with a default error of 1.0 where denominator is zero.
+    err[~safe] = 1.0
+    if np.any(safe):
+        den_safe = denominator[safe]
+        num_safe = numerator[safe]
+        q1 = f[safe] + (alpha * alpha) * b[safe]
+        q2 = 1.0 + (num_safe * num_safe) / (den_safe * den_safe)
+        err[safe] = np.sqrt(np.maximum(q1 * q2, 0.0)) / np.abs(den_safe)
 
     return asym, err
+
+
+def estimate_alpha(
+    forward: NDArray[np.float64],
+    backward: NDArray[np.float64],
+    *,
+    first_good_bin: int | None = None,
+    last_good_bin: int | None = None,
+) -> float:
+    r"""Estimate the detector-balance parameter ``alpha`` from grouped counts.
+
+    This follows the same approach used by Mantid's ``AlphaCalc`` algorithm:
+
+    .. math::
+
+        \alpha = \frac{\sum_i F_i}{\sum_i B_i}
+
+    where :math:`F_i` and :math:`B_i` are forward and backward grouped counts
+    integrated over the selected good-bin window.
+
+    Parameters
+    ----------
+    forward, backward
+        Forward and backward grouped count arrays.
+    first_good_bin, last_good_bin
+        Optional inclusive bin range for integration. If omitted, the full
+        overlap of the two arrays is used.
+
+    Returns
+    -------
+    float
+        Estimated alpha value. Returns ``1.0`` when the backward integral is
+        not positive or when no valid bins are available.
+    """
+    f = np.asarray(forward, dtype=np.float64)
+    b = np.asarray(backward, dtype=np.float64)
+    n = min(len(f), len(b))
+    if n <= 0:
+        return 1.0
+
+    lo = 0 if first_good_bin is None else max(0, int(first_good_bin))
+    hi = n - 1 if last_good_bin is None else min(n - 1, int(last_good_bin))
+    if lo > hi:
+        return 1.0
+
+    fs = float(np.sum(f[lo : hi + 1]))
+    bs = float(np.sum(b[lo : hi + 1]))
+    if bs <= 0.0:
+        return 1.0
+    return fs / bs

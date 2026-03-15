@@ -48,8 +48,8 @@ def test_cross_group_dialog_parameter_labels_include_units() -> None:
 
     # Default model is Linear -> params m and b.
     labels = [dlg._param_table.item(row, 0).text() for row in range(dlg._param_table.rowCount())]
-    assert any("[μs⁻¹ / G]" in label for label in labels)
-    assert any("[μs⁻¹]" in label for label in labels)
+    assert any("[us^-1 / G]" in label for label in labels)
+    assert any("[us^-1]" in label for label in labels)
 
     # Canonical parameter names used by fitting are preserved in UserRole.
     canonical = [

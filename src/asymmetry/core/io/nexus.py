@@ -1,0 +1,805 @@
+"""Loader for ISIS muon NeXus files (legacy V1 and modern V2).
+
+This module implements a pure-Python NeXus reader using ``h5py``. The
+implementation is intentionally independent of Mantid code so that Asymmetry
+can stay MIT-licensed while still supporting ISIS muon NeXus layouts.
+
+Supported families
+------------------
+* Legacy V1 layout (``/run/...``)
+* Modern V2 layout (typically ``/raw_data_1/...``)
+
+Both single-period and multi-period files are supported. Multi-period files are
+returned as a list of :class:`~asymmetry.core.data.dataset.MuonDataset`
+instances, one per period.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.io.base import BaseLoader, LoadResult
+from asymmetry.core.transform import apply_grouping, compute_asymmetry
+
+try:  # optional dependency
+    import h5py  # type: ignore[import-untyped]
+except ImportError:  # pragma: no cover - exercised when h5py is not installed
+    h5py = None
+
+
+@dataclass
+class _GroupingSelection:
+    """Resolved detector-group selection used for asymmetry reduction."""
+
+    forward_indices: list[int]
+    backward_indices: list[int]
+    groups: dict[int, list[int]]
+    forward_group_id: int
+    backward_group_id: int
+
+
+class NexusLoader(BaseLoader):
+    """Read ISIS muon ``.nxs`` files and return one or more datasets."""
+
+    extensions = [".nxs", ".nexus"]
+    format_name = "ISIS NeXus (.nxs, .nexus)"
+
+    def load(self, filepath: str) -> LoadResult:
+        """Load a NeXus file and return reduced asymmetry dataset(s).
+
+        Parameters
+        ----------
+        filepath
+            Path to a NeXus file.
+
+        Returns
+        -------
+        MuonDataset or list[MuonDataset]
+            Single dataset for single-period files, or one dataset per period
+            for multi-period files.
+        """
+        self._require_h5py()
+        path = Path(filepath)
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {filepath}")
+
+        with h5py.File(path, "r") as handle:
+            version, entry = self._detect_layout(handle)
+            if version == "v1":
+                result = self._load_v1(handle, entry, str(path))
+            else:
+                result = self._load_v2(handle, entry, str(path))
+
+        if len(result) == 1:
+            return result[0]
+        return result
+
+    def _require_h5py(self) -> None:
+        """Ensure ``h5py`` is available before trying to read HDF5 content."""
+        if h5py is None:
+            raise ImportError(
+                "h5py is required for NeXus support. Install with "
+                "'pip install h5py' or 'pip install asymmetry[hdf5]'."
+            )
+
+    def _detect_layout(self, handle: Any) -> tuple[str, str]:
+        """Detect whether a file is V1 or V2 and return the selected entry name."""
+        if "run" in handle:
+            run = handle["run"]
+            analysis = self._safe_str(self._read_optional(run, "analysis"))
+            idf_v = self._safe_int(self._read_optional(run, "IDF_version"))
+            if idf_v is None:
+                idf_v = self._safe_int(self._read_optional(run, "idf_version"))
+            if analysis in {"muonTD", "pulsedTD"} or idf_v == 1:
+                return "v1", "run"
+
+        for key in handle.keys():
+            node = handle.get(key)
+            if not hasattr(node, "keys"):
+                continue
+            definition = self._safe_str(self._read_optional(node, "definition"))
+            idf_v = self._safe_int(self._read_optional(node, "IDF_version"))
+            if idf_v is None:
+                idf_v = self._safe_int(self._read_optional(node, "idf_version"))
+            if definition in {"muonTD", "pulsedTD"} or idf_v == 2:
+                return "v2", key
+
+        raise ValueError("Unsupported NeXus file: could not detect ISIS muon V1/V2 layout")
+
+    def _load_v1(self, handle: Any, entry_name: str, source_file: str) -> list[MuonDataset]:
+        """Read legacy ``/run`` muon NeXus content and reduce to asymmetry."""
+        entry = handle[entry_name]
+        h_data = self._require_group(entry, "histogram_data_1")
+
+        counts = np.asarray(self._require_dataset(h_data, "counts"), dtype=np.float64)
+        counts_periods = self._split_period_counts(counts)
+
+        corrected_time = np.asarray(
+            self._read_optional(h_data, "corrected_time", default=[]),
+            dtype=np.float64,
+        )
+        grouping_array = np.asarray(
+            self._read_optional(h_data, "grouping", default=[]),
+            dtype=np.int64,
+        )
+        good_frames_values = np.asarray(
+            self._read_optional(entry, "good_frames", default=[]),
+            dtype=np.float64,
+        )
+        if good_frames_values.size == 0:
+            good_frames_values = np.asarray(
+                self._read_optional(entry, "goodfrm", default=[]),
+                dtype=np.float64,
+            )
+        if good_frames_values.size == 0:
+            good_frames_values = np.asarray(
+                self._read_optional(self._read_optional(entry, "periods"), "good_frames", default=[]),
+                dtype=np.float64,
+            )
+        dead_time_values = np.asarray(
+            self._read_optional(h_data, "dead_time", default=[]),
+            dtype=np.float64,
+        )
+        if dead_time_values.size == 0:
+            dead_time_values = np.asarray(
+                self._read_optional(h_data, "deadtime", default=[]),
+                dtype=np.float64,
+            )
+        time_zero_values = np.asarray(
+            self._read_optional(h_data, "time_zero", default=[]),
+            dtype=np.float64,
+        )
+
+        run_number = self._safe_int(self._read_optional(entry, "number"), default=0)
+        instrument_name = self._safe_str(
+            self._read_optional(self._read_optional(entry, "instrument"), "name")
+        )
+
+        sample = self._read_optional(entry, "sample")
+        temperature = self._safe_float(self._read_optional(sample, "temperature"), default=0.0)
+        magnetic_field = self._safe_float(self._read_optional(sample, "magnetic_field"), default=0.0)
+
+        orientation_raw = self._safe_str(
+            self._read_optional(self._read_optional(entry, "instrument"), "detector/orientation")
+        )
+        field_direction = self._normalise_orientation(orientation_raw)
+
+        metadata_base = {
+            "run_number": run_number,
+            "title": self._safe_str(self._read_optional(entry, "title")),
+            "comment": self._safe_str(self._read_optional(entry, "notes")),
+            "started": self._safe_str(self._read_optional(entry, "start_time")),
+            "stopped": self._safe_str(self._read_optional(entry, "stop_time")),
+            "temperature": temperature,
+            "field": magnetic_field,
+            "instrument": instrument_name,
+            "field_direction": field_direction,
+            "source_file": source_file,
+            "nexus_version": "v1",
+        }
+
+        nexus_fields = self._extract_tree(entry)
+        time_series = self._extract_time_series(entry)
+        metadata_base["nexus_fields"] = nexus_fields
+        metadata_base["nexus_time_series"] = time_series
+
+        first_good_bin = self._safe_int(self._read_optional(h_data, "first_good_bin"), default=0)
+        last_good_bin_default = counts_periods[0].shape[-1] - 1
+        last_good_bin = self._safe_int(
+            self._read_optional(h_data, "last_good_bin"),
+            default=last_good_bin_default,
+        )
+
+        return self._build_period_datasets(
+            counts_periods=counts_periods,
+            corrected_time=corrected_time,
+            grouping_array=grouping_array,
+            good_frames_values=good_frames_values,
+            dead_time_values=dead_time_values,
+            time_zero_values=time_zero_values,
+            metadata_base=metadata_base,
+            run_number=run_number,
+            first_good_bin=first_good_bin,
+            last_good_bin=last_good_bin,
+            source_file=source_file,
+        )
+
+    def _load_v2(self, handle: Any, entry_name: str, source_file: str) -> list[MuonDataset]:
+        """Read modern V2 muon NeXus content and reduce to asymmetry."""
+        entry = handle[entry_name]
+        detector = self._require_group(self._require_group(entry, "instrument"), "detector_1")
+
+        counts = np.asarray(self._require_dataset(detector, "counts"), dtype=np.float64)
+        counts_periods = self._split_period_counts(counts)
+
+        raw_time = np.asarray(self._read_optional(detector, "raw_time", default=[]), dtype=np.float64)
+        if raw_time.size == 0:
+            raw_time = np.asarray(self._read_optional(detector, "time_of_flight", default=[]), dtype=np.float64)
+
+        grouping_array = np.asarray(self._read_optional(detector, "grouping", default=[]), dtype=np.int64)
+        good_frames_values = np.asarray(
+            self._read_optional(entry, "good_frames", default=[]),
+            dtype=np.float64,
+        )
+        if good_frames_values.size == 0:
+            good_frames_values = np.asarray(
+                self._read_optional(self._read_optional(entry, "periods"), "good_frames", default=[]),
+                dtype=np.float64,
+            )
+        if good_frames_values.size == 0:
+            good_frames_values = np.asarray(
+                self._read_optional(entry, "goodfrm", default=[]),
+                dtype=np.float64,
+            )
+        dead_time_values = np.asarray(
+            self._read_optional(detector, "dead_time", default=[]),
+            dtype=np.float64,
+        )
+        if dead_time_values.size == 0:
+            dead_time_values = np.asarray(
+                self._read_optional(detector, "deadtime", default=[]),
+                dtype=np.float64,
+            )
+        time_zero_values = np.asarray(self._read_optional(detector, "time_zero", default=[]), dtype=np.float64)
+
+        run_number = self._safe_int(self._read_optional(entry, "run_number"), default=0)
+        title = self._safe_str(self._read_optional(entry, "title"))
+        started = self._safe_str(self._read_optional(entry, "start_time"))
+        stopped = self._safe_str(self._read_optional(entry, "end_time"))
+        instrument_name = self._safe_str(self._read_optional(entry, "name"))
+        if not instrument_name:
+            instrument_name = self._safe_str(self._read_optional(self._read_optional(entry, "instrument"), "name"))
+
+        sample = self._read_optional(entry, "sample")
+        temperature = self._safe_float(self._read_optional(sample, "temperature"), default=0.0)
+        magnetic_field = self._safe_float(self._read_optional(sample, "magnetic_field"), default=0.0)
+
+        orientation_raw = self._safe_str(self._read_optional(detector, "orientation"))
+        field_direction = self._normalise_orientation(orientation_raw)
+
+        counts_ds = detector.get("counts")
+        first_good_bin = self._safe_attr_int(counts_ds, "first_good_bin", default=0)
+        last_good_bin_default = counts_periods[0].shape[-1] - 1
+        last_good_bin = self._safe_attr_int(counts_ds, "last_good_bin", default=last_good_bin_default)
+
+        metadata_base = {
+            "run_number": run_number,
+            "title": title,
+            "comment": self._safe_str(self._read_optional(entry, "notes")),
+            "started": started,
+            "stopped": stopped,
+            "temperature": temperature,
+            "field": magnetic_field,
+            "instrument": instrument_name,
+            "field_direction": field_direction,
+            "source_file": source_file,
+            "nexus_version": "v2",
+        }
+
+        periods_group = self._read_optional(entry, "periods")
+        if periods_group is not None:
+            metadata_base["period_count"] = self._safe_int(
+                self._read_optional(periods_group, "number"),
+                default=len(counts_periods),
+            )
+
+        nexus_fields = self._extract_tree(entry)
+        time_series = self._extract_time_series(entry)
+        metadata_base["nexus_fields"] = nexus_fields
+        metadata_base["nexus_time_series"] = time_series
+
+        return self._build_period_datasets(
+            counts_periods=counts_periods,
+            corrected_time=raw_time,
+            grouping_array=grouping_array,
+            good_frames_values=good_frames_values,
+            dead_time_values=dead_time_values,
+            time_zero_values=time_zero_values,
+            metadata_base=metadata_base,
+            run_number=run_number,
+            first_good_bin=first_good_bin,
+            last_good_bin=last_good_bin,
+            source_file=source_file,
+        )
+
+    def _build_period_datasets(
+        self,
+        *,
+        counts_periods: list[np.ndarray],
+        corrected_time: np.ndarray,
+        grouping_array: np.ndarray,
+        good_frames_values: np.ndarray,
+        dead_time_values: np.ndarray,
+        time_zero_values: np.ndarray,
+        metadata_base: dict[str, Any],
+        run_number: int,
+        first_good_bin: int,
+        last_good_bin: int,
+        source_file: str,
+    ) -> list[MuonDataset]:
+        """Construct one :class:`MuonDataset` per period from detector counts."""
+        datasets: list[MuonDataset] = []
+        n_periods = len(counts_periods)
+
+        dead_time_periods = self._split_period_vectors(
+            dead_time_values,
+            n_periods=n_periods,
+            n_detectors=counts_periods[0].shape[0],
+        )
+        good_frames_periods = self._split_period_scalars(
+            good_frames_values,
+            n_periods=n_periods,
+            default=1.0,
+        )
+
+        for period_idx, period_counts in enumerate(counts_periods, start=1):
+            if period_counts.ndim != 2:
+                raise ValueError("Detector counts must be 2D [n_detectors, n_bins] per period")
+
+            n_detectors, n_bins = period_counts.shape
+            time_axis, bin_width = self._build_time_axis(corrected_time, n_bins)
+
+            grouping = self._resolve_grouping(grouping_array, n_detectors)
+            forward = apply_grouping(
+                [Histogram(counts=period_counts[i], bin_width=bin_width) for i in range(n_detectors)],
+                grouping.forward_indices,
+            )
+            backward = apply_grouping(
+                [Histogram(counts=period_counts[i], bin_width=bin_width) for i in range(n_detectors)],
+                grouping.backward_indices,
+            )
+
+            alpha = 1.0
+            asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
+
+            # Asymmetry works in percent throughout Asymmetry/WiMDA-style UI.
+            asymmetry = asymmetry * 100.0
+            error = error * 100.0
+
+            lo = max(0, int(first_good_bin))
+            hi = min(len(asymmetry) - 1, int(last_good_bin))
+            if lo <= hi:
+                time_axis = time_axis[lo : hi + 1]
+                asymmetry = asymmetry[lo : hi + 1]
+                error = error[lo : hi + 1]
+
+            histograms = self._build_histograms(
+                period_counts,
+                bin_width,
+                time_zero_values,
+                first_good_bin=first_good_bin,
+                last_good_bin=last_good_bin,
+            )
+
+            period_run_number = run_number
+            run_label = str(run_number)
+            if n_periods > 1:
+                period_run_number = self._encode_period_run_number(run_number, period_idx)
+                run_label = f"{run_number}/{period_idx}"
+
+            run_meta = dict(metadata_base)
+            run_meta["run_number"] = period_run_number
+            run_meta["source_run_number"] = run_number
+            run_meta["run_label"] = run_label
+            run_meta["period_number"] = period_idx
+            run_meta["period_count"] = n_periods
+
+            run = Run(
+                run_number=period_run_number,
+                histograms=histograms,
+                metadata=run_meta,
+                grouping={
+                    "groups": {gid: [idx + 1 for idx in dets] for gid, dets in grouping.groups.items()},
+                    "forward_group": grouping.forward_group_id,
+                    "backward_group": grouping.backward_group_id,
+                    "alpha": alpha,
+                    "first_good_bin": int(first_good_bin),
+                    "last_good_bin": int(last_good_bin),
+                    "bunching_factor": 1,
+                    "deadtime_correction": False,
+                    "good_frames": float(good_frames_periods[period_idx - 1]),
+                    "dead_time_us": [
+                        float(v)
+                        for v in np.asarray(dead_time_periods[period_idx - 1], dtype=np.float64).tolist()
+                    ],
+                },
+                source_file=source_file,
+            )
+
+            datasets.append(
+                MuonDataset(
+                    time=np.asarray(time_axis, dtype=np.float64),
+                    asymmetry=np.asarray(asymmetry, dtype=np.float64),
+                    error=np.asarray(error, dtype=np.float64),
+                    metadata=run_meta,
+                    run=run,
+                )
+            )
+
+        return datasets
+
+    def _build_histograms(
+        self,
+        period_counts: np.ndarray,
+        bin_width: float,
+        time_zero_values: np.ndarray,
+        *,
+        first_good_bin: int,
+        last_good_bin: int,
+    ) -> list[Histogram]:
+        """Create per-detector :class:`Histogram` objects for a period."""
+        histograms: list[Histogram] = []
+        for i in range(period_counts.shape[0]):
+            t0_bin = 0
+            if time_zero_values.size == period_counts.shape[0]:
+                t0_bin = int(round(float(time_zero_values[i])))
+            elif time_zero_values.size > 0:
+                t0_bin = int(round(float(time_zero_values.flat[0])))
+
+            histograms.append(
+                Histogram(
+                    counts=np.asarray(period_counts[i], dtype=np.float64),
+                    bin_width=float(bin_width),
+                    t0_bin=t0_bin,
+                    good_bin_start=int(first_good_bin),
+                    good_bin_end=int(last_good_bin),
+                )
+            )
+        return histograms
+
+    def _build_time_axis(self, source_axis: np.ndarray, n_bins: int) -> tuple[np.ndarray, float]:
+        """Build a usable time axis and bin width from NeXus time datasets."""
+        if source_axis.size == n_bins + 1:
+            axis = 0.5 * (source_axis[:-1] + source_axis[1:])
+        elif source_axis.size >= n_bins:
+            axis = source_axis[:n_bins]
+        else:
+            axis = np.arange(n_bins, dtype=np.float64)
+
+        if axis.size >= 2:
+            bin_width = float(np.nanmedian(np.diff(axis)))
+        else:
+            bin_width = 1.0
+        if not np.isfinite(bin_width) or bin_width == 0.0:
+            bin_width = 1.0
+        return np.asarray(axis, dtype=np.float64), float(bin_width)
+
+    def _resolve_grouping(self, grouping_array: np.ndarray, n_detectors: int) -> _GroupingSelection:
+        """Resolve forward/backward detector sets from file grouping or defaults."""
+        groups: dict[int, list[int]] = {}
+        if grouping_array.size >= n_detectors:
+            vals = np.asarray(grouping_array[:n_detectors], dtype=np.int64)
+            for i, gid in enumerate(vals):
+                if gid <= 0:
+                    continue
+                groups.setdefault(int(gid), []).append(i)
+
+        if len(groups) >= 2:
+            group_ids = sorted(groups)
+            forward_group_id = int(group_ids[0])
+            backward_group_id = int(group_ids[1])
+            forward_indices = groups[forward_group_id]
+            backward_indices = groups[backward_group_id]
+        else:
+            split = max(1, n_detectors // 2)
+            forward_indices = list(range(0, split))
+            backward_indices = list(range(split, n_detectors))
+            if not backward_indices:
+                backward_indices = list(range(0, n_detectors))
+            groups = {1: forward_indices, 2: backward_indices}
+            forward_group_id = 1
+            backward_group_id = 2
+
+        return _GroupingSelection(
+            forward_indices=forward_indices,
+            backward_indices=backward_indices,
+            groups=groups,
+            forward_group_id=forward_group_id,
+            backward_group_id=backward_group_id,
+        )
+
+    def _split_period_counts(self, counts: np.ndarray) -> list[np.ndarray]:
+        """Normalise detector counts into a list of ``[detectors, bins]`` arrays."""
+        if counts.ndim == 2:
+            return [counts]
+        if counts.ndim == 3:
+            return [counts[i] for i in range(counts.shape[0])]
+        raise ValueError(f"Unsupported counts array shape: {counts.shape}")
+
+    def _split_period_vectors(
+        self,
+        values: np.ndarray,
+        *,
+        n_periods: int,
+        n_detectors: int,
+    ) -> list[np.ndarray]:
+        """Normalise optional per-detector vectors into one vector per period."""
+        if values.size == 0:
+            return [np.zeros(n_detectors, dtype=np.float64) for _ in range(n_periods)]
+
+        arr = np.asarray(values, dtype=np.float64)
+        if arr.ndim == 1:
+            if arr.size == n_detectors:
+                return [arr.copy() for _ in range(n_periods)]
+            if arr.size == n_periods * n_detectors:
+                return [arr[i * n_detectors : (i + 1) * n_detectors].copy() for i in range(n_periods)]
+            return [np.resize(arr, n_detectors).astype(np.float64, copy=False) for _ in range(n_periods)]
+
+        if arr.ndim >= 2:
+            if arr.shape[0] == n_periods:
+                return [np.resize(np.asarray(arr[i], dtype=np.float64), n_detectors) for i in range(n_periods)]
+            if arr.shape[-1] == n_detectors:
+                base = np.asarray(arr.reshape(-1, n_detectors)[0], dtype=np.float64)
+                return [base.copy() for _ in range(n_periods)]
+
+        flat = np.asarray(arr, dtype=np.float64).ravel()
+        resized = np.resize(flat, n_detectors).astype(np.float64, copy=False)
+        return [resized.copy() for _ in range(n_periods)]
+
+    def _split_period_scalars(
+        self,
+        values: np.ndarray,
+        *,
+        n_periods: int,
+        default: float,
+    ) -> list[float]:
+        """Normalise optional scalar metadata into one value per period."""
+        if values.size == 0:
+            return [float(default) for _ in range(n_periods)]
+
+        arr = np.asarray(values, dtype=np.float64).ravel()
+        if arr.size >= n_periods:
+            out = arr[:n_periods]
+        elif arr.size == 1:
+            out = np.full(n_periods, arr[0], dtype=np.float64)
+        else:
+            out = np.resize(arr, n_periods)
+
+        result: list[float] = []
+        for val in out:
+            f = float(val)
+            result.append(f if np.isfinite(f) and f > 0.0 else float(default))
+        return result
+
+    def _encode_period_run_number(self, run_number: int, period_idx: int) -> int:
+        """Encode a stable unique run number for a specific period row.
+
+        The data browser key is integer-based. For multi-period files we keep
+        the user-facing label as ``run/period`` while encoding a unique integer
+        key that avoids clashes with single-period runs.
+        """
+        return int(run_number) * 1000 + int(period_idx)
+
+    def _extract_tree(self, node: Any) -> Any:
+        """Recursively extract NeXus group/dataset content into plain Python types."""
+        if node is None:
+            return None
+
+        if hasattr(node, "dtype") and hasattr(node, "shape"):
+            return self._dataset_to_python(node)
+
+        if hasattr(node, "keys"):
+            out: dict[str, Any] = {}
+            attrs = self._attrs_to_python(getattr(node, "attrs", {}))
+            if attrs:
+                out["@attrs"] = attrs
+            for key in node.keys():
+                out[str(key)] = self._extract_tree(node[key])
+            return out
+
+        return None
+
+    def _extract_time_series(self, root: Any) -> dict[str, dict[str, Any]]:
+        """Collect all ``time``/``value`` NXlog-like groups for advanced display."""
+        series: dict[str, dict[str, Any]] = {}
+
+        def _walk(node: Any, prefix: str) -> None:
+            if not hasattr(node, "keys"):
+                return
+
+            keys = set(map(str, node.keys()))
+            has_time = "time" in keys
+            value_name = "value" if "value" in keys else ("values" if "values" in keys else "")
+            if has_time and value_name:
+                t = np.asarray(node["time"][()])
+                v = np.asarray(node[value_name][()])
+                t_num = self._to_numeric_array(t)
+                v_num = self._to_numeric_array(v)
+                units = self._safe_str(getattr(node[value_name], "attrs", {}).get("units", ""))
+                if v_num.size > 0:
+                    series[prefix] = {
+                        "path": prefix,
+                        "units": units,
+                        "time": t_num.tolist(),
+                        "values": v_num.tolist(),
+                        "mean": float(np.nanmean(v_num)),
+                        "min": float(np.nanmin(v_num)),
+                        "max": float(np.nanmax(v_num)),
+                    }
+
+            for child in node.keys():
+                child_name = str(child)
+                child_node = node[child]
+                child_path = f"{prefix}/{child_name}" if prefix else child_name
+                _walk(child_node, child_path)
+
+        _walk(root, "")
+        return series
+
+    def _dataset_to_python(self, dataset: Any) -> Any:
+        """Convert a dataset payload into JSON-safe Python data.
+
+        Large arrays are summarised to avoid bloating metadata while still
+        exposing useful diagnostics for the advanced information view.
+        """
+        data = dataset[()]
+        attrs = self._attrs_to_python(getattr(dataset, "attrs", {}))
+
+        value = self._value_to_python(data)
+        if attrs:
+            return {"value": value, "@attrs": attrs}
+        return value
+
+    def _value_to_python(self, value: Any) -> Any:
+        """Convert HDF5 scalar/array values into plain Python objects."""
+        if isinstance(value, np.ndarray):
+            if value.ndim == 0:
+                return self._value_to_python(value.item())
+
+            if value.dtype.kind in {"S", "O", "U"}:
+                flat = [self._safe_str(v) for v in value.ravel().tolist()]
+                if len(flat) <= 64:
+                    return flat
+                return {
+                    "kind": "array",
+                    "dtype": str(value.dtype),
+                    "shape": list(value.shape),
+                    "preview": flat[:16],
+                }
+
+            numeric = np.asarray(value, dtype=np.float64)
+            if numeric.size <= 64:
+                return numeric.tolist()
+            return {
+                "kind": "array",
+                "dtype": str(value.dtype),
+                "shape": list(value.shape),
+                "min": float(np.nanmin(numeric)),
+                "max": float(np.nanmax(numeric)),
+                "mean": float(np.nanmean(numeric)),
+            }
+
+        if isinstance(value, (np.integer,)):
+            return int(value)
+        if isinstance(value, (np.floating,)):
+            return float(value)
+        if isinstance(value, (bytes, np.bytes_)):
+            return self._safe_str(value)
+        return value
+
+    def _attrs_to_python(self, attrs: Any) -> dict[str, Any]:
+        """Convert attribute mappings to JSON-safe primitives."""
+        out: dict[str, Any] = {}
+        if attrs is None:
+            return out
+        for key in attrs.keys():
+            out[str(key)] = self._value_to_python(attrs[key])
+        return out
+
+    def _to_numeric_array(self, values: np.ndarray) -> np.ndarray:
+        """Convert mixed/string arrays to numeric values where possible."""
+        if values.size == 0:
+            return np.asarray([], dtype=np.float64)
+        if values.dtype.kind in {"i", "u", "f"}:
+            return np.asarray(values, dtype=np.float64).ravel()
+
+        out: list[float] = []
+        for item in values.ravel().tolist():
+            s = self._safe_str(item)
+            try:
+                out.append(float(s))
+            except ValueError:
+                continue
+        return np.asarray(out, dtype=np.float64)
+
+    def _normalise_orientation(self, raw: str) -> str:
+        """Map short orientation labels to user-facing text."""
+        text = (raw or "").strip().upper()
+        if text.startswith("L"):
+            return "Longitudinal"
+        if text.startswith("T"):
+            return "Transverse"
+        return raw or ""
+
+    def _read_optional(self, node: Any, name: str, default: Any = None) -> Any:
+        """Read a dataset or nested path from a group-like object if present."""
+        if node is None:
+            return default
+        if "/" in name:
+            current = node
+            for part in name.split("/"):
+                if current is None or not hasattr(current, "get"):
+                    return default
+                current = current.get(part)
+            if current is None:
+                return default
+            if hasattr(current, "dtype"):
+                return current[()]
+            return current
+
+        if not hasattr(node, "get"):
+            return default
+        child = node.get(name)
+        if child is None:
+            return default
+        if hasattr(child, "dtype"):
+            return child[()]
+        return child
+
+    def _require_group(self, node: Any, name: str) -> Any:
+        """Return required child group or raise a descriptive error."""
+        group = self._read_optional(node, name)
+        if group is None or not hasattr(group, "keys"):
+            raise ValueError(f"NeXus file missing required group: {name}")
+        return group
+
+    def _require_dataset(self, node: Any, name: str) -> Any:
+        """Return required child dataset payload or raise a descriptive error."""
+        value = self._read_optional(node, name)
+        if value is None:
+            raise ValueError(f"NeXus file missing required dataset: {name}")
+        return value
+
+    def _safe_str(self, value: Any, default: str = "") -> str:
+        """Convert scalar HDF5 values to ``str`` while handling bytes arrays."""
+        if value is None:
+            return default
+        if isinstance(value, np.ndarray):
+            if value.size == 0:
+                return default
+            return self._safe_str(value.flat[0], default=default)
+        if isinstance(value, (bytes, np.bytes_)):
+            return value.decode("utf-8", errors="replace").strip()
+        return str(value).strip()
+
+    def _safe_int(self, value: Any, default: int | None = None) -> int | None:
+        """Best-effort integer conversion for HDF5 scalar values."""
+        if value is None:
+            return default
+        if isinstance(value, np.ndarray):
+            if value.size == 0:
+                return default
+            value = value.flat[0]
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return default
+
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        """Best-effort float conversion for HDF5 scalar values."""
+        if value is None:
+            return default
+        if isinstance(value, np.ndarray):
+            if value.size == 0:
+                return default
+            value = value.flat[0]
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _safe_attr_int(self, dataset: Any, attr_name: str, default: int) -> int:
+        """Read an integer attribute from a dataset with robust conversion."""
+        if dataset is None:
+            return int(default)
+        attrs = getattr(dataset, "attrs", {})
+        raw = attrs.get(attr_name)
+        converted = self._safe_int(raw)
+        if converted is None:
+            return int(default)
+        return int(converted)

@@ -61,7 +61,7 @@ def test_range_parameter_name_displays_units(qapp: QApplication) -> None:
 
     labels = [dlg._param_table.item(row, 0).text() for row in range(dlg._param_table.rowCount())]
     assert any("D [MHz]" in text for text in labels)
-    assert any("ν [MHz]" in text for text in labels)
+    assert any("nu [MHz]" in text for text in labels)
     assert "m" in labels
 
 
@@ -84,7 +84,7 @@ def test_format_model_param_label_redfield_m_is_unitless() -> None:
     linear_label = _format_model_param_label(linear, "m", "field", "Lambda")
 
     assert redfield_label == "m"
-    assert linear_label == "m [μs⁻¹ / G]"
+    assert linear_label == "m [us^-1 / G]"
 
 
 def test_linear_model_slope_uses_x_and_y_units(qapp: QApplication) -> None:
@@ -110,8 +110,8 @@ def test_linear_model_slope_uses_x_and_y_units(qapp: QApplication) -> None:
     )
 
     labels = [dlg._param_table.item(row, 0).text() for row in range(dlg._param_table.rowCount())]
-    assert any("m [μs⁻¹ / K]" in text for text in labels)
-    assert any("b [μs⁻¹]" in text for text in labels)
+    assert any("m [us^-1 / K]" in text for text in labels)
+    assert any("b [us^-1]" in text for text in labels)
 
 
 def test_commit_parameter_table_normalizes_domain_limits(qapp: QApplication) -> None:

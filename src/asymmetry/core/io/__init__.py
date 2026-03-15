@@ -6,14 +6,16 @@ Use the :func:`load` convenience function to auto-detect the format::
     dataset = load("run12345.wim")
 """
 
-from asymmetry.core.io.base import BaseLoader, LoaderRegistry
+from asymmetry.core.io.base import BaseLoader, LoadResult, LoaderRegistry
+from asymmetry.core.io.nexus import NexusLoader
 from asymmetry.core.io.wim import WimLoader
 
 # Register built-in loaders
 LoaderRegistry.register(WimLoader)
+LoaderRegistry.register(NexusLoader)
 
 
-def load(filepath: str, fmt: str | None = None):
+def load(filepath: str, fmt: str | None = None) -> LoadResult:
     """Load a μSR data file and return a :class:`MuonDataset`.
 
     Parameters
@@ -28,4 +30,4 @@ def load(filepath: str, fmt: str | None = None):
     return loader.load(filepath)
 
 
-__all__ = ["BaseLoader", "LoaderRegistry", "WimLoader", "load"]
+__all__ = ["BaseLoader", "LoadResult", "LoaderRegistry", "WimLoader", "NexusLoader", "load"]

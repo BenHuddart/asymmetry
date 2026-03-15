@@ -11,7 +11,7 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 2)
+Current schema (version 3)
 --------------------------
 ::
 
@@ -74,9 +74,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 2
+CURRENT_SCHEMA_VERSION: int = 3
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3})
 
 
 class UnsupportedSchemaVersion(ValueError):
@@ -114,6 +114,9 @@ def migrate_to_current(data: dict) -> dict:
     migrated = dict(data)
     if version == 1:
         migrated = _migrate_v1_to_v2(migrated)
+        version = 2
+    if version == 2:
+        migrated = _migrate_v2_to_v3(migrated)
     return migrated
 
 
@@ -130,6 +133,21 @@ def _migrate_v1_to_v2(data: dict) -> dict:
     browser_state.setdefault("data_groups", [])
     migrated["browser_state"] = browser_state
 
+    return migrated
+
+
+def _migrate_v2_to_v3(data: dict) -> dict:
+    """Migrate schema v2 project state to v3.
+
+    v3 adds browser-state persistence for user-selected dynamic metadata
+    columns (``extra_columns``).
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 3
+
+    browser_state = dict(migrated.get("browser_state", {}))
+    browser_state.setdefault("extra_columns", [])
+    migrated["browser_state"] = browser_state
     return migrated
 
 

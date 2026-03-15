@@ -11,6 +11,13 @@ WiMDA Format (.wim)
 
 The primary format currently supported is WiMDA (.wim) files.
 
+ISIS Muon NeXus (.nxs, .nexus)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Asymmetry also supports ISIS muon NeXus files (legacy V1 and modern V2),
+including multi-period runs. For multi-period data, one dataset row is created
+per period.
+
 Basic Usage
 -----------
 
@@ -23,6 +30,12 @@ Loading a Single File
    
    dataset = load("path/to/data.wim")
    print(dataset.summary())
+
+The same ``load`` API can be used with NeXus files:
+
+.. code-block:: python
+
+   dataset_or_periods = load("path/to/HIFI00206453.nxs")
 
 The returned ``MuonDataset`` contains:
 
@@ -102,3 +115,12 @@ For advanced users, you can access the low-level file loaders:
    # Access raw histograms
    for i, hist in enumerate(run.histograms):
        print(f"Histogram {i}: {hist.n_bins} bins")
+
+   For NeXus files:
+
+   .. code-block:: python
+
+      from asymmetry.core.io.nexus import NexusLoader
+
+      loader = NexusLoader()
+      dataset_or_periods = loader.load("HIFI00206453.nxs")
