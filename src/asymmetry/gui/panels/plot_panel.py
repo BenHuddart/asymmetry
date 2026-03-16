@@ -12,6 +12,8 @@ the existing fit curve remains overlaid.
 from __future__ import annotations
 
 import importlib
+import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,20 +23,24 @@ import numpy as np
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
+    QHBoxLayout,
     QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.transform.rebin import rebin
+from asymmetry.gui.export_paths import default_export_path, remember_export_path
 
 # Metadata fields available for dataset labelling in the legend.
 _LABEL_FIELDS: list[tuple[str, str]] = [
@@ -94,6 +100,11 @@ class PlotPanel(QWidget):
             self._current_datasets: list[MuonDataset] = []
             self._limits_initialized = False
 
+            # Legend label field preferences can be scoped per Data Group.
+            self._active_label_group_id: str | None = None
+            self._default_label_field: str = "run"
+            self._label_field_by_group: dict[str, str] = {}
+
             # Store fit curve data to persist across redraws
             self._fit_curve = None  # (t_fit, y_fit, label) for single fits
             self._fit_curve_run_number = None
@@ -103,8 +114,13 @@ class PlotPanel(QWidget):
             self._fit_components = None  # list[(name, y_component)] for single fit
             self._fit_components_by_run = {}  # {run_number: list[(name, y_component)]}
 
+            # Per-run fit metadata for export headers.
+            self._fit_metadata: dict[int, dict] = {}  # {run_number: {formula, chi2, ...}}
+
             # Interactive plot labels (text annotations).
-            self._annotations: list[dict] = []
+            self._default_annotations: list[dict] = []
+            self._annotations_by_group: dict[str, list[dict]] = {}
+            self._annotations: list[dict] = self._default_annotations
             self._active_annotation_idx: int | None = None
             self._annotation_drag_started = False
 
@@ -213,6 +229,23 @@ class PlotPanel(QWidget):
         self._label_field_combo.currentIndexChanged.connect(self._on_label_field_changed)
         self._limit_toolbar.addWidget(self._label_field_combo, 1, 2)
 
+        # Export controls (row 1, right side)
+        self._export_gle_btn = QPushButton("Export Plot(s) to GLE")
+        self._export_gle_btn.setEnabled(False)
+        self._export_gle_btn.clicked.connect(self.export_plots_to_gle)
+        self._gle_format_combo = QComboBox()
+        self._gle_format_combo.addItems(["PDF", "EPS"])
+        self._gle_format_combo.setEnabled(False)
+
+        export_row = QHBoxLayout()
+        export_row.addWidget(self._export_gle_btn)
+        export_row.addWidget(QLabel("Format:"))
+        export_row.addWidget(self._gle_format_combo)
+        export_row.addStretch()
+        export_container = QWidget()
+        export_container.setLayout(export_row)
+        self._limit_toolbar.addWidget(export_container, 1, 4, 1, 7)
+
     def _dataset_label_for(self, dataset: MuonDataset) -> str:
         """Return the legend label for *dataset* using the selected label field."""
         field = self._label_field_combo.currentData()
@@ -238,9 +271,95 @@ class PlotPanel(QWidget):
 
     def _on_label_field_changed(self) -> None:
         """Re-draw the current plot using the newly selected label field."""
+        field = self._label_field_combo.currentData()
+        if field is None:
+            field = "run"
+        if self._active_label_group_id is None:
+            self._default_label_field = str(field)
+        else:
+            self._label_field_by_group[str(self._active_label_group_id)] = str(field)
+
         if not self._has_mpl or not self._current_datasets:
             return
         self.plot_datasets(self._current_datasets)
+
+    def set_active_label_group(self, group_id: str | None) -> None:
+        """Switch legend label-field context between ungrouped and Data Group views."""
+        if not self._has_mpl:
+            return
+
+        normalized_group_id = None if group_id is None else str(group_id)
+        if normalized_group_id == self._active_label_group_id:
+            return
+
+        current_field = self._label_field_combo.currentData()
+        if current_field is None:
+            current_field = "run"
+
+        # Persist the outgoing context before switching.
+        if self._active_label_group_id is None:
+            self._default_label_field = str(current_field)
+        else:
+            self._label_field_by_group[str(self._active_label_group_id)] = str(current_field)
+
+        self._active_label_group_id = normalized_group_id
+        if normalized_group_id is None:
+            self._annotations = self._default_annotations
+        else:
+            self._annotations = self._annotations_by_group.setdefault(normalized_group_id, [])
+        self._active_annotation_idx = None
+        self._annotation_drag_started = False
+
+        target_field = self._default_label_field
+        if normalized_group_id is not None:
+            target_field = self._label_field_by_group.get(normalized_group_id, self._default_label_field)
+
+        idx = self._label_field_combo.findData(target_field)
+        if idx < 0:
+            idx = self._label_field_combo.findData("run")
+            target_field = "run"
+        if idx < 0:
+            return
+
+        self._label_field_combo.blockSignals(True)
+        self._label_field_combo.setCurrentIndex(idx)
+        self._label_field_combo.blockSignals(False)
+
+        if self._active_label_group_id is None:
+            self._default_label_field = str(target_field)
+        else:
+            self._label_field_by_group[str(self._active_label_group_id)] = str(target_field)
+
+        if self._current_datasets:
+            self._redraw_current_view()
+
+    def _serialize_annotations(self, annotations: list[dict]) -> list[dict[str, object]]:
+        """Return serializable annotation payload from in-memory annotation dicts."""
+        return [
+            {"x": ann["x"], "y": ann["y"], "text": ann["text"]}
+            for ann in annotations
+        ]
+
+    def _deserialize_annotations(self, payload: object) -> list[dict]:
+        """Return in-memory annotation dicts from serialized annotation payload."""
+        restored: list[dict] = []
+        if not isinstance(payload, list):
+            return restored
+        for ann in payload:
+            if not isinstance(ann, dict):
+                continue
+            try:
+                restored.append(
+                    {
+                        "x": float(ann.get("x", 0.0)),
+                        "y": float(ann.get("y", 0.0)),
+                        "text": str(ann.get("text", "")),
+                        "artist": None,
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
+        return restored
 
     def get_analysis_dataset(self, dataset: MuonDataset | None) -> MuonDataset | None:
         """Return the dataset that should be used for plotting and fitting.
@@ -285,6 +404,13 @@ class PlotPanel(QWidget):
         if self._fit_x_min is None or self._fit_x_max is None:
             return None, None
         return float(self._fit_x_min), float(self._fit_x_max)
+
+    def _redraw_current_view(self) -> None:
+        """Redraw using the active single- or multi-dataset context."""
+        if len(self._current_datasets) > 1:
+            self.plot_datasets(self._current_datasets)
+        elif self._current_dataset is not None:
+            self.plot_dataset(self._current_dataset)
 
     def set_fit_range(self, x_min: float, x_max: float) -> None:
         """Set fit range limits and refresh visual handles."""
@@ -782,8 +908,7 @@ class PlotPanel(QWidget):
         }
         self._annotations.append(annotation)
         self._add_label_btn.setChecked(False)
-        if self._current_dataset is not None:
-            self.plot_dataset(self._current_dataset)
+        self._redraw_current_view()
 
     def _edit_annotation(self, idx: int) -> None:
         """Edit an existing annotation label."""
@@ -792,14 +917,12 @@ class PlotPanel(QWidget):
         if not ok or not text.strip():
             return
         self._annotations[idx]["text"] = text.strip()
-        if self._current_dataset is not None:
-            self.plot_dataset(self._current_dataset)
+        self._redraw_current_view()
 
     def _delete_annotation(self, idx: int) -> None:
         """Delete an annotation by index."""
         self._annotations.pop(idx)
-        if self._current_dataset is not None:
-            self.plot_dataset(self._current_dataset)
+        self._redraw_current_view()
 
     def _on_canvas_button_press(self, event) -> None:
         """Capture left-clicks on fit-range handles for drag/edit."""
@@ -910,6 +1033,8 @@ class PlotPanel(QWidget):
         y_fit,
         label: str = "Fit",
         component_curves: list[tuple[str, object]] | None = None,
+        fit_result: object | None = None,
+        fit_function: str | None = None,
     ) -> None:
         """Overlay a fit curve on the current plot.
 
@@ -923,6 +1048,8 @@ class PlotPanel(QWidget):
             Fitted asymmetry values.
         label : str, optional
             Label for the fit curve in the legend.
+        fit_result : object, optional
+            FitResult containing chi_squared, parameters, uncertainties, etc.
         """
         if not self._has_mpl:
             return
@@ -940,8 +1067,12 @@ class PlotPanel(QWidget):
         if run_number is not None:
             self._fit_curves[run_number] = (t_fit, y_fit, label)
             self._fit_components_by_run[run_number] = list(component_curves or [])
+            if fit_result is not None or fit_function:
+                self._store_fit_metadata(run_number, fit_result, fit_function=fit_function)
 
         self._fit_components = list(component_curves or [])
+
+        self._update_export_enabled()
 
         if self._current_dataset is not None:
             self.plot_dataset(self._current_dataset)
@@ -956,26 +1087,39 @@ class PlotPanel(QWidget):
         Parameters
         ----------
         fit_curves_dict : dict
-            Dictionary mapping run_number -> (t_fit, y_fit, label, component_curves).
+            Dictionary mapping run_number -> (t_fit, y_fit, label, component_curves),
+            (t_fit, y_fit, label, component_curves, fit_result), or
+            (t_fit, y_fit, label, component_curves, fit_result, fit_function).
         """
         if not self._has_mpl:
             return
 
-        # Store all fit curves
-        self._fit_curves = {}
-        self._fit_components_by_run = {}
+        # Update fit curves, preserving results from other groups
         for run_number, payload in fit_curves_dict.items():
-            if len(payload) == 4:
+            if len(payload) >= 6:
+                t_fit, y_fit, label, component_curves, fit_result, fit_function = payload[:6]
+            elif len(payload) >= 5:
+                t_fit, y_fit, label, component_curves, fit_result = payload[:5]
+                fit_function = None
+            elif len(payload) == 4:
                 t_fit, y_fit, label, component_curves = payload
+                fit_result = None
+                fit_function = None
             else:
                 t_fit, y_fit, label = payload
                 component_curves = []
+                fit_result = None
+                fit_function = None
             self._fit_curves[run_number] = (t_fit, y_fit, label)
             self._fit_components_by_run[run_number] = list(component_curves or [])
+            if fit_result is not None or fit_function:
+                self._store_fit_metadata(run_number, fit_result, fit_function=fit_function)
         # Clear single fit curve
         self._fit_curve = None
         self._fit_curve_run_number = None
         self._fit_components = None
+
+        self._update_export_enabled()
 
         # Redraw current view while preserving multi-selection overlays.
         if len(self._current_datasets) > 1:
@@ -995,12 +1139,15 @@ class PlotPanel(QWidget):
             self._fit_curves = {}
             self._fit_components = None
             self._fit_components_by_run = {}
+            self._fit_metadata = {}
             self._limits_initialized = False
             self._last_plot_time = None
             self._last_plot_asymmetry = None
             self._last_plot_error = None
             self._last_low_count_mask = None
-            self._annotations = []
+            self._default_annotations = []
+            self._annotations_by_group = {}
+            self._annotations = self._default_annotations
             self._active_annotation_idx = None
             self._annotation_drag_started = False
             self._fit_x_min = None
@@ -1008,6 +1155,7 @@ class PlotPanel(QWidget):
             self._fit_span_artist = None
             self._fit_min_handle = None
             self._fit_max_handle = None
+            self._update_export_enabled()
 
     def clear_fit(self) -> None:
         """Clear all fit curves and redraw the plot."""
@@ -1019,112 +1167,427 @@ class PlotPanel(QWidget):
         self._fit_curves = {}
         self._fit_components = None
         self._fit_components_by_run = {}
-        if self._current_dataset is not None:
-            self.plot_dataset(self._current_dataset)
+        self._fit_metadata = {}
+        self._update_export_enabled()
+        self._redraw_current_view()
 
-    def get_current_plot_export_data(self) -> dict | None:
-        """Return current fit/components/annotation payload for export."""
-        if self._current_dataset is None:
+    def clear_fits_for_runs(self, run_numbers: list[int]) -> int:
+        """Clear stored fit overlays for the provided run numbers."""
+        if not self._has_mpl:
+            return 0
+
+        normalized_runs: set[int] = set()
+        for run_number in run_numbers:
+            try:
+                normalized_runs.add(int(run_number))
+            except (TypeError, ValueError):
+                continue
+
+        if not normalized_runs:
+            return 0
+
+        removed = 0
+        for run_number in normalized_runs:
+            if self._fit_curves.pop(run_number, None) is not None:
+                removed += 1
+            self._fit_components_by_run.pop(run_number, None)
+            self._fit_metadata.pop(run_number, None)
+
+        if self._fit_curve_run_number in normalized_runs:
+            self._fit_curve = None
+            self._fit_curve_run_number = None
+            self._fit_components = None
+            removed += 1
+
+        if removed > 0:
+            self._update_export_enabled()
+            if len(self._current_datasets) > 1:
+                self.plot_datasets(self._current_datasets)
+            elif self._current_dataset is not None:
+                self.plot_dataset(self._current_dataset)
+
+        return removed
+
+    def _store_fit_metadata(
+        self,
+        run_number: int,
+        fit_result: object | None,
+        fit_function: str | None = None,
+    ) -> None:
+        """Extract and store fit metadata from a FitResult for export headers."""
+        meta: dict = {}
+        if fit_result is not None:
+            chi2 = getattr(fit_result, "chi_squared", None)
+            red_chi2 = getattr(fit_result, "reduced_chi_squared", None)
+            if chi2 is not None:
+                meta["chi_squared"] = float(chi2)
+            if red_chi2 is not None:
+                meta["reduced_chi_squared"] = float(red_chi2)
+
+            params = getattr(fit_result, "parameters", None)
+            uncertainties = getattr(fit_result, "uncertainties", {})
+            if params is not None:
+                meta["parameters"] = [
+                    {
+                        "name": p.name,
+                        "value": float(p.value),
+                        "error": float(uncertainties.get(p.name, float("nan"))),
+                    }
+                    for p in params
+                ]
+
+        fit_function_value = fit_function
+        if not fit_function_value:
+            fit_function_value = getattr(fit_result, "fit_function", None)
+        if fit_function_value:
+            meta["fit_function"] = str(fit_function_value)
+        self._fit_metadata[int(run_number)] = meta
+
+    def _update_export_enabled(self) -> None:
+        """Enable the export button when any displayed dataset has a fit curve."""
+        has_fit = bool(self._fit_curves) or self._fit_curve is not None
+        self._export_gle_btn.setEnabled(has_fit)
+        self._gle_format_combo.setEnabled(has_fit)
+
+    @staticmethod
+    def _safe_file_token(value: str) -> str:
+        """Sanitize a string for use in a filename."""
+        token = "".join(
+            ch if ch.isalnum() or ch in {"_", "-"} else "_"
+            for ch in str(value).strip()
+        )
+        token = "_".join(part for part in token.split("_") if part)
+        return token or "dataset"
+
+    @staticmethod
+    def _sanitize_gle_text(value: object, *, fallback: str = "") -> str:
+        """Return text that is safe for GLE string rendering."""
+        text = str(value)
+        text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+        text = text.replace("\r", " ").replace("\n", " ")
+        text = text.replace("μ", "u").replace("µ", "u")
+        text = text.replace("χ", "chi").replace("²", "^2")
+        text = "".join(ch for ch in text if ch.isprintable())
+        text = " ".join(text.split())
+        text = text.encode("ascii", "ignore").decode("ascii")
+        return text or fallback
+
+    def get_current_plot_export_data(self) -> list[dict] | None:
+        """Return export payloads for all displayed datasets with fits.
+
+        Returns a list of dicts (one per dataset with a fit), or *None* when
+        nothing is available to export.
+        """
+        if not self._current_datasets:
             return None
 
-        analysis_dataset = self.get_analysis_dataset(self._current_dataset)
-        if analysis_dataset is None:
+        payloads: list[dict] = []
+        for dataset in self._current_datasets:
+            analysis = self.get_analysis_dataset(dataset)
+            if analysis is None:
+                continue
+
+            rn = dataset.run_number
+            fit_data = self._fit_curves.get(rn)
+            if fit_data is None:
+                if self._fit_curve is not None and self._fit_curve_run_number == rn:
+                    fit_data = self._fit_curve
+            if fit_data is None:
+                continue
+
+            t_fit, y_fit, fit_label = fit_data
+            component_data = self._fit_components_by_run.get(rn) or []
+            if not component_data and self._fit_components and self._fit_curve_run_number == rn:
+                component_data = self._fit_components or []
+
+            label_text = self._dataset_label_for(dataset)
+
+            payloads.append({
+                "run_number": rn,
+                "label": label_text,
+                "data": {
+                    "t": analysis.time,
+                    "y": analysis.asymmetry,
+                    "err": analysis.error,
+                },
+                "fit": {"t": t_fit, "y": y_fit, "label": fit_label},
+                "components": [
+                    {"name": name, "y": y_vals} for name, y_vals in component_data
+                ],
+                "fit_metadata": self._fit_metadata.get(rn, {}),
+            })
+
+        if not payloads:
             return None
 
-        fit_data = None
-        component_data = None
-        run_number = self._current_dataset.run_number
-        if run_number in self._fit_curves:
-            fit_data = self._fit_curves[run_number]
-            component_data = self._fit_components_by_run.get(run_number, [])
-        elif self._fit_curve is not None and self._fit_curve_run_number == run_number:
-            fit_data = self._fit_curve
-            component_data = self._fit_components or []
+        # Append annotations (shared across all datasets in this view)
+        annotations = [
+            {"x": ann["x"], "y": ann["y"], "text": ann["text"]}
+            for ann in self._annotations
+        ]
+        for p in payloads:
+            p["annotations"] = annotations
 
-        if fit_data is None:
-            return None
+        return payloads
 
-        t_fit, y_fit, fit_label = fit_data
-        return {
-            "run_number": run_number,
-            "data": {
-                "t": analysis_dataset.time,
-                "y": analysis_dataset.asymmetry,
-                "err": analysis_dataset.error,
-            },
-            "fit": {"t": t_fit, "y": y_fit, "label": fit_label},
-            "components": [
-                {"name": name, "y": y_vals} for name, y_vals in (component_data or [])
-            ],
-            "annotations": [
-                {"x": ann["x"], "y": ann["y"], "text": ann["text"]}
-                for ann in self._annotations
-            ],
-        }
-
-    def export_current_plot(self) -> None:
-        """Export current main-plot view as GLE (with optional compiled output)."""
-        payload = self.get_current_plot_export_data()
-        if not payload:
-            QMessageBox.warning(self, "Export unavailable", "No fitted curve is available to export.")
+    def _write_fit_file(self, fit_path: Path, payload: dict) -> None:
+        """Write a .fit file with fit-curve data and metadata header."""
+        fit = payload.get("fit") or {}
+        t_fit = fit.get("t")
+        y_fit = fit.get("y")
+        if t_fit is None or y_fit is None:
             return
 
-        path, selected_filter = QFileDialog.getSaveFileName(
+        meta = payload.get("fit_metadata") or {}
+        with open(fit_path, "w", encoding="utf-8") as f:
+            f.write(f"! Fit curve for {payload.get('label', 'dataset')}\n")
+            f.write(f"! run_number: {payload.get('run_number', '')}\n")
+            fit_function = meta.get("fit_function") or fit.get("label") or "Fit"
+            f.write(f"! fit_function: {fit_function}\n")
+            chi2 = meta.get("chi_squared")
+            red_chi2 = meta.get("reduced_chi_squared")
+            if chi2 is not None:
+                f.write(f"! chi_squared: {chi2:.8g}\n")
+            if red_chi2 is not None:
+                f.write(f"! reduced_chi_squared: {red_chi2:.8g}\n")
+            params = meta.get("parameters")
+            if params:
+                f.write("! fitted_parameters:\n")
+                for p in params:
+                    err = p.get("error", float("nan"))
+                    if np.isfinite(err):
+                        f.write(f"!   {p['name']} = {p['value']:.8g} +/- {err:.4g}\n")
+                    else:
+                        f.write(f"!   {p['name']} = {p['value']:.8g}\n")
+            f.write("!\n")
+            f.write("! time  asymmetry_fit\n")
+            for t_val, y_val in zip(t_fit, y_fit):
+                f.write(f"{float(t_val):.10g} {float(y_val):.10g}\n")
+
+    def _show_export_result_dialog(self, title: str, summary: str, details: str) -> None:
+        """Show export results with scrollable details and fixed bottom button."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setModal(True)
+        dialog.resize(760, 460)
+
+        layout = QVBoxLayout(dialog)
+        summary_label = QLabel(summary)
+        summary_label.setWordWrap(True)
+        layout.addWidget(summary_label)
+
+        details_view = QTextEdit()
+        details_view.setReadOnly(True)
+        details_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        details_view.setPlainText(details)
+        details_view.setMinimumHeight(180)
+        details_view.setMaximumHeight(280)
+        layout.addWidget(details_view)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch()
+        close_btn = QPushButton("OK")
+        close_btn.clicked.connect(dialog.accept)
+        button_row.addWidget(close_btn)
+        layout.addLayout(button_row)
+
+        dialog.exec()
+
+    @staticmethod
+    def _export_figure_size(series_count: int) -> tuple[float, float]:
+        """Return a figure size that grows taller for crowded multi-series exports."""
+        width = 6.0
+        if series_count <= 1:
+            return width, 4.2
+
+        # Increase height with number of overlaid spectra while capping growth.
+        # This keeps multi-series plots closer to square for readability.
+        height = 4.2 + min(3.0, 0.55 * float(series_count - 1))
+        height = max(height, width * 0.85)
+        height = min(height, 7.2)
+        return width, height
+
+    def _extract_gle_data_dependencies(self, gle_path: Path) -> list[str]:
+        """Return data-file names referenced by `data <file>` commands."""
+        try:
+            text = gle_path.read_text(encoding="utf-8")
+        except OSError:
+            return []
+
+        seen: set[str] = set()
+        deps: list[str] = []
+        pattern = r"^\s*data\s+(?:\"([^\"]+)\"|(\S+))"
+        for match in re.finditer(pattern, text, flags=re.MULTILINE):
+            token = (match.group(1) or match.group(2) or "").strip()
+            name = Path(token).name
+            if name and name not in seen:
+                seen.add(name)
+                deps.append(name)
+        return deps
+
+    def _show_gle_preview(self, gle_path: Path) -> None:
+        """Show an in-app preview dialog for an exported GLE plot."""
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            return
+        if not gle_path.exists():
+            return
+        if shutil.which("gle") is None:
+            return
+
+        try:
+            import tempfile
+            from PySide6.QtGui import QPixmap
+
+            dialog = QDialog(self)
+            dialog.setWindowTitle("GLE Plot Preview")
+            dialog.resize(850, 620)
+            layout = QVBoxLayout(dialog)
+
+            image_label = QLabel("Preview unavailable")
+            layout.addWidget(image_label)
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmpdir_path = Path(tmpdir)
+                tmp_gle = tmpdir_path / gle_path.name
+                preview_png = tmp_gle.with_suffix(".png")
+
+                shutil.copy2(gle_path, tmp_gle)
+                for dep_name in self._extract_gle_data_dependencies(gle_path):
+                    src = gle_path.parent / dep_name
+                    if src.exists() and src.is_file():
+                        shutil.copy2(src, tmpdir_path / dep_name)
+
+                subprocess.run(
+                    ["gle", "-d", "png", str(tmp_gle)],
+                    capture_output=True,
+                    check=True,
+                    cwd=str(tmpdir_path),
+                )
+
+                pixmap = QPixmap(str(preview_png))
+                if not pixmap.isNull():
+                    image_label.setPixmap(pixmap)
+                    image_label.setText("")
+
+            close_btn = QPushButton("Close")
+            close_btn.clicked.connect(dialog.accept)
+            layout.addWidget(close_btn)
+            dialog.exec()
+        except Exception:
+            # Preview is best-effort only; export should still succeed.
+            return
+
+    def export_plots_to_gle(self) -> None:
+        """Export current main-plot view as GLE using gleplot.
+
+        Data is plotted with error bars (no connecting lines), fit curves
+        with lines (no markers).  File names are derived from the Label
+        dropdown value for each dataset.
+        """
+        payloads = self.get_current_plot_export_data()
+        if not payloads:
+            QMessageBox.warning(
+                self, "Export unavailable",
+                "No fitted curve is available to export.",
+            )
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export Current Plot",
-            "current_plot.gle",
-            "GLE files (*.gle);;PDF files (*.pdf);;EPS files (*.eps)",
+            "Export Plot(s) to GLE",
+            default_export_path("asymmetry_plot.gle"),
+            "GLE files (*.gle)",
         )
         if not path:
             return
-
-        target = Path(path)
-        suffix = target.suffix.lower()
-        if "PDF" in selected_filter and suffix not in {".pdf", ".gle", ".eps"}:
-            target = target.with_suffix(".pdf")
-            suffix = ".pdf"
-        elif "EPS" in selected_filter and suffix not in {".eps", ".gle", ".pdf"}:
-            target = target.with_suffix(".eps")
-            suffix = ".eps"
-        elif suffix not in {".gle", ".pdf", ".eps"}:
-            target = target.with_suffix(".gle")
-            suffix = ".gle"
+        remember_export_path(path)
 
         try:
             glp = importlib.import_module("gleplot")
         except ImportError:
-            QMessageBox.warning(self, "gleplot not available", "Install gleplot to export GLE plots.")
+            QMessageBox.warning(
+                self, "gleplot not available",
+                "Install gleplot to export GLE plots.",
+            )
             return
 
-        data = payload.get("data") or {}
-        fit = payload.get("fit") or {}
-        annotations = payload.get("annotations") or []
-        t_data = data.get("t")
-        y_data = data.get("y")
-        y_err = data.get("err")
-        t_fit = fit.get("t")
-        y_fit = fit.get("y")
+        gle_path = Path(path)
+        output_format = self._gle_format_combo.currentText().lower()
+        is_multi = len(payloads) > 1
+        colors = [
+            "black", "red", "blue", "green", "orange", "purple",
+            "cyan", "magenta", "brown", "gray",
+        ]
 
-        fig = glp.figure(figsize=(6.0, 4.2))
+        fig = glp.figure(figsize=self._export_figure_size(len(payloads)))
         ax = fig.add_subplot(111)
+        written_files: list[Path] = []
 
-        if t_data is not None and y_data is not None:
-            has_err = y_err is not None
-            ax.errorbar(
-                t_data,
-                y_data,
-                yerr=y_err if has_err else None,
-                fmt='none',
-                marker='o',
-                color='black',
-                markersize=4,
-                capsize=2,
-                label=f"Run {payload.get('run_number', '')}",
+        for i, payload in enumerate(payloads):
+            label_text = payload.get("label", f"dataset_{i}")
+            safe_label = self._sanitize_gle_text(
+                label_text,
+                fallback=f"Run {payload.get('run_number', i)}",
             )
+            token = self._safe_file_token(label_text)
+            data_color = colors[i % len(colors)] if is_multi else "black"
+            fit_color = data_color if is_multi else "red"
 
-        if t_fit is not None and y_fit is not None:
-            ax.plot(t_fit, y_fit, color='red', linewidth=1.6, label=fit.get("label", "Fit"))
+            data = payload.get("data") or {}
+            fit = payload.get("fit") or {}
+            t_data = data.get("t")
+            y_data = data.get("y")
+            y_err = data.get("err")
+            t_fit = fit.get("t")
+            y_fit = fit.get("y")
 
+            # Write .dat data file
+            dat_path = gle_path.parent / f"{token}.dat"
+            if t_data is not None and y_data is not None:
+                with open(dat_path, "w", encoding="utf-8") as f:
+                    f.write(f"! Data for {label_text}\n")
+                    f.write(f"! run_number: {payload.get('run_number', '')}\n")
+                    f.write("! time  asymmetry  error\n")
+                    err_arr = y_err if y_err is not None else np.zeros_like(y_data)
+                    for t_val, y_val, e_val in zip(t_data, y_data, err_arr):
+                        f.write(f"{float(t_val):.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
+                written_files.append(dat_path)
+
+                ax.errorbar(
+                    t_data,
+                    y_data,
+                    yerr=y_err,
+                    fmt="none",
+                    marker="o",
+                    color=data_color,
+                    markersize=4,
+                    capsize=2,
+                    label=safe_label,
+                    data_name=token,
+                )
+
+            # Write .fit file with header info
+            fit_path = gle_path.parent / f"{token}.fit"
+            if t_fit is not None and y_fit is not None:
+                self._write_fit_file(fit_path, payload)
+                written_files.append(fit_path)
+
+                fit_label = fit.get("label", "Fit")
+                if is_multi:
+                    fit_label = None
+                else:
+                    fit_label = self._sanitize_gle_text(fit_label, fallback="Fit")
+                ax.plot(
+                    t_fit,
+                    y_fit,
+                    color=fit_color,
+                    linewidth=1.6,
+                    label=fit_label,
+                    data_name=f"{token}_fit",
+                )
+
+        # Add annotations
+        annotations = payloads[0].get("annotations") or []
         for ann in annotations:
             try:
                 x = float(ann.get("x", 0.0))
@@ -1132,33 +1595,57 @@ class PlotPanel(QWidget):
             except (TypeError, ValueError):
                 continue
             text = str(ann.get("text", "")).strip()
+            text = self._sanitize_gle_text(text)
             if text:
-                ax.text(x, y, text, color='black', ha='left')
+                ax.text(x, y, text, color="black", ha="left")
 
-        ax.set_xlabel("Time (μs)")
+        ax.set_xlabel("Time (µs)")
         ax.set_ylabel("Asymmetry (%)")
         ax.legend(loc="best")
 
-        gle_path = target if suffix == ".gle" else target.with_suffix(".gle")
+        # Preserve the visible GUI window limits in the exported GLE plot.
+        if hasattr(ax, "set_xlim"):
+            ax.set_xlim(float(self._x_min.value()), float(self._x_max.value()))
+        if hasattr(ax, "set_ylim"):
+            ax.set_ylim(float(self._y_min.value()), float(self._y_max.value()))
+
         fig.savefig(str(gle_path))
 
-        if suffix in {".pdf", ".eps"}:
-            if shutil.which("gle") is None:
-                QMessageBox.information(
-                    self,
-                    "GLE Not Installed",
-                    f"GLE script saved to {gle_path}. Install GLE to compile to {suffix[1:].upper()}.",
-                )
-                return
-            fmt = "pdf" if suffix == ".pdf" else "eps"
+        # Compile using gleplot / GLE
+        if shutil.which("gle") is not None:
+            output_path = gle_path.with_suffix(f".{output_format}")
             try:
-                subprocess.run(["gle", "-d", fmt, str(gle_path)], capture_output=True, text=True, check=True)
-                QMessageBox.information(self, "Export Successful", f"Plot exported:\n\n{gle_path}\n{target}")
+                subprocess.run(
+                    ["gle", "-d", output_format, str(gle_path)],
+                    capture_output=True, text=True, check=True,
+                )
+                files_text = "\n".join(str(p) for p in written_files)
+                self._show_export_result_dialog(
+                    "Export Successful",
+                    "GLE plot exported successfully.",
+                    (
+                        f"GLE script: {gle_path}\n"
+                        f"Output: {output_path}\n\n"
+                        f"Data/fit files:\n{files_text}"
+                    ),
+                )
+                self._show_gle_preview(gle_path)
             except subprocess.CalledProcessError as exc:
-                QMessageBox.warning(self, "GLE compilation failed", exc.stderr or str(exc))
-            return
+                QMessageBox.warning(
+                    self, "GLE compilation failed",
+                    exc.stderr or str(exc),
+                )
+        else:
+            QMessageBox.information(
+                self,
+                "GLE Not Installed",
+                f"GLE script saved to {gle_path}.\nInstall GLE to compile to {output_format.upper()}.",
+            )
 
-        QMessageBox.information(self, "Export Successful", f"GLE plot exported:\n\n{gle_path}")
+    # Keep old name as alias for backward compatibility with tests.
+    def export_current_plot(self) -> None:
+        """Export current main-plot view as GLE (with optional compiled output)."""
+        self.export_plots_to_gle()
 
     # ── project state helpers ──────────────────────────────────────────
 
@@ -1180,6 +1667,9 @@ class PlotPanel(QWidget):
                 if self._current_dataset is not None
                 else None
             ),
+            "label_field": self._label_field_combo.currentData() if self._has_mpl else "run",
+            "default_label_field": self._default_label_field,
+            "label_field_by_group": dict(self._label_field_by_group),
             "bunch_factor": self._bunch_factor.value() if self._has_mpl else 1,
             "x_min": self._x_min.value() if self._has_mpl else 0.0,
             "x_max": self._x_max.value() if self._has_mpl else 10.0,
@@ -1191,6 +1681,7 @@ class PlotPanel(QWidget):
             "fit_components": None,
             "fit_components_by_run": {},
             "annotations": [],
+            "annotations_by_group": {},
             "fit_x_min": self._fit_x_min,
             "fit_x_max": self._fit_x_max,
         }
@@ -1219,10 +1710,14 @@ class PlotPanel(QWidget):
                     {"name": name, "y": list(y_vals)}
                     for name, y_vals in curves
                 ]
-            state["annotations"] = [
-                {"x": ann["x"], "y": ann["y"], "text": ann["text"]}
-                for ann in self._annotations
-            ]
+            state["annotations"] = self._serialize_annotations(self._default_annotations)
+            state["annotations_by_group"] = {
+                str(group_id): self._serialize_annotations(annotations)
+                for group_id, annotations in self._annotations_by_group.items()
+            }
+            state["fit_metadata"] = {
+                str(rn): meta for rn, meta in self._fit_metadata.items()
+            }
 
         return state
 
@@ -1247,6 +1742,35 @@ class PlotPanel(QWidget):
 
         import numpy as np
 
+        valid_label_fields = {key for _, key in _LABEL_FIELDS}
+        default_label_field = state.get("default_label_field", state.get("label_field", "run"))
+        if default_label_field not in valid_label_fields:
+            default_label_field = "run"
+        self._default_label_field = str(default_label_field)
+
+        raw_group_label_fields = state.get("label_field_by_group", {})
+        self._label_field_by_group = {}
+        if isinstance(raw_group_label_fields, dict):
+            for group_id, field in raw_group_label_fields.items():
+                if field in valid_label_fields:
+                    self._label_field_by_group[str(group_id)] = str(field)
+
+        self._active_label_group_id = None
+
+        label_field = state.get("label_field", self._default_label_field)
+        if label_field not in valid_label_fields:
+            label_field = "run"
+        idx = self._label_field_combo.findData(label_field)
+        if idx < 0:
+            idx = self._label_field_combo.findData("run")
+        if idx >= 0:
+            self._label_field_combo.blockSignals(True)
+            self._label_field_combo.setCurrentIndex(idx)
+            self._label_field_combo.blockSignals(False)
+            selected_field = self._label_field_combo.currentData()
+            if selected_field in valid_label_fields:
+                self._default_label_field = str(selected_field)
+
         # Keep bunch factor at default in restored projects; control is hidden.
         self._bunch_factor.blockSignals(True)
         self._bunch_factor.setValue(1)
@@ -1262,6 +1786,10 @@ class PlotPanel(QWidget):
             spin.blockSignals(True)
             spin.setValue(state.get(key, default))
             spin.blockSignals(False)
+
+        # Treat restored limits as user-defined so later dataset additions do
+        # not overwrite them with auto-derived bounds.
+        self._limits_initialized = True
 
         fit_x_min = state.get("fit_x_min")
         fit_x_max = state.get("fit_x_max")
@@ -1314,21 +1842,28 @@ class PlotPanel(QWidget):
                 if isinstance(entry, dict)
             ]
 
-        self._annotations = []
-        for ann in state.get("annotations", []):
-            if not isinstance(ann, dict):
-                continue
-            try:
-                self._annotations.append(
-                    {
-                        "x": float(ann.get("x", 0.0)),
-                        "y": float(ann.get("y", 0.0)),
-                        "text": str(ann.get("text", "")),
-                        "artist": None,
-                    }
-                )
-            except (TypeError, ValueError):
-                continue
+        self._default_annotations = self._deserialize_annotations(state.get("annotations", []))
+        raw_annotations_by_group = state.get("annotations_by_group", {})
+        self._annotations_by_group = {}
+        if isinstance(raw_annotations_by_group, dict):
+            for group_id, payload in raw_annotations_by_group.items():
+                self._annotations_by_group[str(group_id)] = self._deserialize_annotations(payload)
+        self._annotations = self._default_annotations
+        self._active_annotation_idx = None
+        self._annotation_drag_started = False
+
+        # Restore fit metadata.
+        self._fit_metadata = {}
+        raw_fit_metadata = state.get("fit_metadata", {})
+        if isinstance(raw_fit_metadata, dict):
+            for rn_str, meta in raw_fit_metadata.items():
+                if isinstance(meta, dict):
+                    try:
+                        self._fit_metadata[int(rn_str)] = meta
+                    except (TypeError, ValueError):
+                        pass
+
+        self._update_export_enabled()
 
         # Re-plot the current dataset if one was provided.
         if dataset is not None:

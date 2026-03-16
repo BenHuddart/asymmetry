@@ -1,7 +1,7 @@
 Loading Data
 ============
 
-Asymmetry supports loading μSR data from various file formats.
+Asymmetry supports WiMDA and ISIS muon NeXus files through a common API.
 
 Supported Formats
 -----------------
@@ -9,14 +9,13 @@ Supported Formats
 WiMDA Format (.wim)
 ~~~~~~~~~~~~~~~~~~~
 
-The primary format currently supported is WiMDA (.wim) files.
+WiMDA files are loaded with ``WimLoader`` or the convenience ``load`` function.
 
 ISIS Muon NeXus (.nxs, .nexus)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Asymmetry also supports ISIS muon NeXus files (legacy V1 and modern V2),
-including multi-period runs. For multi-period data, one dataset row is created
-per period.
+Asymmetry supports ISIS muon NeXus files (legacy V1 and modern V2), including
+multi-period runs. Multi-period files return a list of ``MuonDataset`` values.
 
 Basic Usage
 -----------
@@ -35,7 +34,9 @@ The same ``load`` API can be used with NeXus files:
 
 .. code-block:: python
 
-   dataset_or_periods = load("path/to/HIFI00206453.nxs")
+      dataset_or_periods = load("path/to/HIFI00206453.nxs")
+      if isinstance(dataset_or_periods, list):
+         print(f"Loaded {len(dataset_or_periods)} periods")
 
 The returned ``MuonDataset`` contains:
 
@@ -73,33 +74,6 @@ Loading Multiple Files
    
    print(f"Loaded {len(datasets)} datasets")
 
-Using the Logbook
------------------
-
-For managing multiple runs, use the ``Logbook`` class:
-
-.. code-block:: python
-
-   from asymmetry.core.data.logbook import Logbook
-   from asymmetry.core.io import load
-   
-   logbook = Logbook()
-   
-   # Add datasets
-   for file in ["run1.wim", "run2.wim", "run3.wim"]:
-       dataset = load(file)
-       logbook.add(dataset, tags=["low_field"])
-   
-   # Filter by criteria
-   low_temp_runs = logbook.filter(temperature=10.0)
-   
-   # Search by text
-   results = logbook.search("copper")
-   
-   # Iterate over all entries
-   for entry in logbook:
-       print(f"Run {entry.run_number}: {entry.title}")
-
 Direct File Format Access
 --------------------------
 
@@ -110,17 +84,37 @@ For advanced users, you can access the low-level file loaders:
    from asymmetry.core.io.wim import WimLoader
    
    loader = WimLoader()
-   run = loader.load("data.wim")
-   
-   # Access raw histograms
-   for i, hist in enumerate(run.histograms):
-       print(f"Histogram {i}: {hist.n_bins} bins")
+   dataset = loader.load("data.wim")
+   print(dataset.run_number)
 
-   For NeXus files:
+For NeXus files:
 
-   .. code-block:: python
+.. code-block:: python
 
-      from asymmetry.core.io.nexus import NexusLoader
+   from asymmetry.core.io.nexus import NexusLoader
 
-      loader = NexusLoader()
-      dataset_or_periods = loader.load("HIFI00206453.nxs")
+   loader = NexusLoader()
+   dataset_or_periods = loader.load("HIFI00206453.nxs")
+
+Loader Registry and Custom Formats
+----------------------------------
+
+``LoaderRegistry`` maps file extensions to loader classes.
+
+.. code-block:: python
+
+   from asymmetry.core.io.base import LoaderRegistry
+
+   print(LoaderRegistry.supported_extensions())
+   print(LoaderRegistry.file_dialog_filter())
+
+You can register custom loader classes at runtime for additional formats.
+
+Runnable Examples
+-----------------
+
+See the executable scripts:
+
+* ``examples/basic_dataset_loading.py``
+* ``examples/custom_loader.py``
+

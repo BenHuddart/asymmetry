@@ -7,7 +7,7 @@ import importlib
 import os
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QInputDialog,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -145,12 +146,14 @@ class _GroupFitData:
     inferred_x_key: str
     model_fits: dict[str, ParameterModelFit]
     plot_annotations: list[dict[str, object]]
+    global_param_uncertainties: dict[str, float] = field(default_factory=dict)
 
 
 class FitParametersPanel(QWidget):
     """Table + plot view for parameter trends from global fits."""
 
     cross_group_fit_completed = Signal(object, object, object)
+    delete_group_fits_requested = Signal(str, object)
 
     @property
     def last_cross_group_fit(self) -> dict[str, object] | None:
@@ -163,6 +166,7 @@ class FitParametersPanel(QWidget):
         self._rows: list[_FitRow] = []
         self._varying_params: list[str] = []
         self._global_params: ParameterSet | None = None
+        self._global_param_uncertainties: dict[str, float] = {}
         self._table_dialog: QDialog | None = None
         self._inferred_x_key = "field"
         self._y_controls: dict[str, _YParamControls] = {}
@@ -306,6 +310,7 @@ class FitParametersPanel(QWidget):
         self._rows = []
         self._varying_params = []
         self._global_params = None
+        self._global_param_uncertainties = {}
         self._model_fits = {}
         self._group_fit_results = {}
         self._group_button_map = {}
@@ -522,6 +527,19 @@ class FitParametersPanel(QWidget):
 
         rows.sort(key=lambda r: r.run_number)
 
+        # Extract global parameter uncertainties from any successful per-run result.
+        # The engine embeds global param errors in each FitResult.uncertainties.
+        global_param_uncertainties: dict[str, float] = {}
+        if global_params is not None:
+            global_param_names = {p.name for p in global_params if not p.fixed}
+            for fit_result, _ in results_dict.values():
+                if fit_result.success and fit_result.uncertainties:
+                    for pname in global_param_names:
+                        if pname in fit_result.uncertainties and pname not in global_param_uncertainties:
+                            global_param_uncertainties[pname] = fit_result.uncertainties[pname]
+                    if global_param_uncertainties.keys() >= global_param_names:
+                        break
+
         gid = str(group_id).strip() if group_id else "__ungrouped__"
         gname = (str(group_name).strip() if group_name else "Ungrouped")
         varying = self._detect_varying_parameters(rows)
@@ -540,6 +558,7 @@ class FitParametersPanel(QWidget):
             inferred_x_key=inferred_x,
             model_fits=model_fits,
             plot_annotations=plot_annotations,
+            global_param_uncertainties=global_param_uncertainties,
         )
         self._active_group_id = gid
         self._rebuild_group_buttons()
@@ -562,6 +581,7 @@ class FitParametersPanel(QWidget):
             inferred_x_key=self._inferred_x_key,
             model_fits=dict(self._model_fits),
             plot_annotations=list(self._plot_annotations),
+            global_param_uncertainties=dict(self._global_param_uncertainties),
         )
 
     def _selected_group_ids_from_buttons(self) -> list[str]:
@@ -591,11 +611,72 @@ class FitParametersPanel(QWidget):
             button = QPushButton(group.group_name)
             button.setCheckable(True)
             button.clicked.connect(self._on_group_button_clicked)
+            button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            button.customContextMenuRequested.connect(
+                lambda pos, gid=group.group_id, b=button: self._show_group_button_context_menu(gid, b, pos)
+            )
             self._group_tabs_layout.addWidget(button)
             self._group_button_map[group.group_id] = button
         self._group_tabs_layout.addStretch()
         self._group_tabs_widget.setVisible(bool(groups))
         self._refresh_group_button_styles()
+
+    def _show_group_button_context_menu(self, group_id: str, button: QPushButton, pos) -> None:
+        if group_id not in self._group_fit_results:
+            return
+
+        menu = QMenu(self)
+        delete_action = menu.addAction("Delete fit(s)")
+        selected_action = menu.exec(button.mapToGlobal(pos))
+        if selected_action is delete_action:
+            self._delete_group_fits(group_id)
+
+    def _group_run_numbers(self, group: _GroupFitData) -> list[int]:
+        run_numbers: set[int] = set()
+        for row in group.rows:
+            try:
+                run_numbers.add(int(row.run_number))
+            except (TypeError, ValueError):
+                continue
+        return sorted(run_numbers)
+
+    def _delete_group_fits(self, group_id: str) -> None:
+        group = self._group_fit_results.get(group_id)
+        if group is None:
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Delete fit(s)",
+            (
+                f'Delete fit(s) for group "{group.group_name}"?\n'
+                "This removes the group from Fit Parameters and clears its dataset fits."
+            ),
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Ok:
+            return
+
+        run_numbers = self._group_run_numbers(group)
+        self._sync_active_group_state()
+        self._group_fit_results.pop(group_id, None)
+
+        if self._active_group_id == group_id:
+            self._active_group_id = None
+
+        remaining_ids = sorted(
+            self._group_fit_results,
+            key=lambda gid: self._group_fit_results[gid].group_name.lower(),
+        )
+        if self._active_group_id not in self._group_fit_results:
+            self._active_group_id = remaining_ids[0] if remaining_ids else None
+
+        self._rebuild_group_buttons()
+        selected_ids = [self._active_group_id] if self._active_group_id is not None else []
+        self._set_selected_group_ids(selected_ids, emit=False)
+        self._apply_group_selection_to_view(sync_active=False)
+        self.delete_group_fits_requested.emit(group_id, run_numbers)
 
     def _refresh_group_button_styles(self) -> None:
         selected_ids = set(self._selected_group_ids_from_buttons())
@@ -717,6 +798,7 @@ class FitParametersPanel(QWidget):
             self._rows = []
             self._varying_params = []
             self._global_params = None
+            self._global_param_uncertainties = {}
             self._inferred_x_key = "run"
             self._model_fits = {}
             self._plot_annotations = []
@@ -736,6 +818,7 @@ class FitParametersPanel(QWidget):
             self._rows = list(group.rows)
             self._varying_params = list(group.varying_params)
             self._global_params = self._copy_parameter_set(group.global_params) if group.global_params is not None else None
+            self._global_param_uncertainties = dict(group.global_param_uncertainties)
             self._inferred_x_key = group.inferred_x_key
             self._model_fits = dict(group.model_fits)
             self._plot_annotations = list(group.plot_annotations)
@@ -752,6 +835,7 @@ class FitParametersPanel(QWidget):
             self._rows = list(active_group.rows)
             self._varying_params = list(active_group.varying_params)
             self._global_params = self._copy_parameter_set(active_group.global_params) if active_group.global_params is not None else None
+            self._global_param_uncertainties = dict(active_group.global_param_uncertainties)
             self._inferred_x_key = active_group.inferred_x_key
             self._model_fits = dict(active_group.model_fits)
             self._plot_annotations = list(active_group.plot_annotations)
@@ -915,6 +999,7 @@ class FitParametersPanel(QWidget):
                 inferred_x_key=existing.inferred_x_key,
                 model_fits=next_model_fits,
                 plot_annotations=list(existing.plot_annotations),
+                global_param_uncertainties=dict(existing.global_param_uncertainties),
             )
 
         self._refresh_model_fit_button_labels()
@@ -960,6 +1045,7 @@ class FitParametersPanel(QWidget):
                     }
                     for ann in group.plot_annotations
                 ],
+                "global_param_uncertainties": {k: float(v) for k, v in group.global_param_uncertainties.items()},
             }
         return out
 
@@ -1033,6 +1119,15 @@ class FitParametersPanel(QWidget):
                         continue
                 global_params = restored
 
+            gpu_state = entry.get("global_param_uncertainties", {})
+            global_param_uncertainties: dict[str, float] = {}
+            if isinstance(gpu_state, dict):
+                for k, v in gpu_state.items():
+                    try:
+                        global_param_uncertainties[str(k)] = float(v)
+                    except (TypeError, ValueError):
+                        pass
+
             out[gid] = _GroupFitData(
                 group_id=gid,
                 group_name=str(entry.get("group_name", gid)),
@@ -1042,6 +1137,7 @@ class FitParametersPanel(QWidget):
                 inferred_x_key=_normalize_x_key(entry.get("inferred_x_key", "run")),
                 model_fits=model_fits,
                 plot_annotations=plot_annotations,
+                global_param_uncertainties=global_param_uncertainties,
             )
         return out
 
@@ -2135,7 +2231,11 @@ class FitParametersPanel(QWidget):
             for param in self._global_params:
                 unit = get_param_info(param.name).unit
                 unit_text = f" {unit}" if unit else ""
-                lines.append(f"{param.name} = {param.value:.6g}{unit_text}")
+                err = self._global_param_uncertainties.get(param.name)
+                if err is not None:
+                    lines.append(f"{param.name} = {param.value:.6g} \u00b1 {err:.6g}{unit_text}")
+                else:
+                    lines.append(f"{param.name} = {param.value:.6g}{unit_text}")
             header_text = "\n".join(lines) if lines else "None"
         else:
             header_text = "None"
@@ -2529,7 +2629,11 @@ class FitParametersPanel(QWidget):
                 for param in self._global_params:
                     unit = get_param_info(param.name).unit
                     label = f"{param.name} ({unit})" if unit else param.name
-                    f.write(f"!   {label} = {param.value:.6g}\n")
+                    err = self._global_param_uncertainties.get(param.name)
+                    if err is not None:
+                        f.write(f"!   {label} = {param.value:.6g} +/- {err:.6g}\n")
+                    else:
+                        f.write(f"!   {label} = {param.value:.6g}\n")
 
             f.write("!\n")
 

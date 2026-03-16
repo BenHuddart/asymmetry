@@ -20,3 +20,16 @@ Dataset
    :members:
    :undoc-members:
    :show-inheritance:
+
+Logbook
+-------
+
+.. autoclass:: asymmetry.core.data.logbook.LogbookEntry
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: asymmetry.core.data.logbook.Logbook
+   :members:
+   :undoc-members:
+   :show-inheritance:

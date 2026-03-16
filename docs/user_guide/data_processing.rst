@@ -47,9 +47,12 @@ Combine detector histograms into logical groups:
 
 .. code-block:: python
 
-   from asymmetry.core.transform.grouping import group_histograms
-   
-   run = load_run("data.wim")
+   from asymmetry.core.data import Histogram
+   from asymmetry.core.transform import apply_grouping
+   import numpy as np
+
+   # Synthetic detector histograms for the example
+   histograms = [Histogram(counts=np.random.poisson(1000, 200), bin_width=0.01) for _ in range(8)]
    
    # Define grouping: forward and backward detectors
    grouping = {
@@ -57,13 +60,25 @@ Combine detector histograms into logical groups:
        "backward": [4, 5, 6, 7]
    }
    
-   # Group and calculate asymmetry
-   from asymmetry.core.transform.asymmetry import calculate_asymmetry
-   
-   forward_counts = group_histograms(run.histograms, grouping["forward"])
-   backward_counts = group_histograms(run.histograms, grouping["backward"])
-   
-   asymmetry = calculate_asymmetry(forward_counts, backward_counts)
+   forward_counts = apply_grouping(histograms, grouping["forward"])
+   backward_counts = apply_grouping(histograms, grouping["backward"])
+
+Alpha Estimation and Asymmetry
+------------------------------
+
+Estimate ``alpha`` from a good-bin range, then compute asymmetry and errors.
+
+.. code-block:: python
+
+   from asymmetry.core.transform import compute_asymmetry, estimate_alpha
+
+   alpha = estimate_alpha(
+       forward_counts,
+       backward_counts,
+       first_good_bin=5,
+       last_good_bin=150,
+   )
+   asymmetry, error = compute_asymmetry(forward_counts, backward_counts, alpha=alpha)
 
 Asymmetry Definition and Error Model
 ------------------------------------
@@ -133,3 +148,8 @@ Apply window functions before FFT:
    windowed_data = apply_window(dataset.asymmetry, window_type="hann")
    
    # Available windows: 'hann', 'hamming', 'blackman', 'bartlett'
+
+Runnable Example
+----------------
+
+See ``examples/transform_workflow.py`` for a complete executable script.

@@ -40,6 +40,10 @@ management.
   trends via [gleplot](https://github.com/bhuddart/gleplot) and the
   [GLE Graphics Layout Engine](http://glx.sourceforge.io/). Data files include
   headers and global parameters as comments. Output formats: PDF, EPS.
+- **Main plot export to GLE** — Export fitted single- or multi-dataset main
+  plot overlays directly from the plot toolbar. Produces label-based
+  ``.dat``/``.fit`` sidecars (with fit-function and fit-statistics headers),
+  includes plot annotations, and compiles to PDF/EPS via GLE when available.
 - **Fourier analysis** — FFT with configurable apodization windows (Hann,
   Hamming, Blackman, Bartlett) and zero-padding.
 - **Co-adding** — Average selected datasets with correct error propagation.
@@ -124,7 +128,8 @@ The documentation includes:
 
 - **Installation guide**: Detailed setup instructions
 - **User guide**: Tutorials for data loading, processing, GUI usage, fitting
-  (single and global), Fourier analysis, and GLE export
+  (single and global), Fourier analysis, and GLE export (including main-plot
+  export with label-based ``.dat``/``.fit`` files)
 - **API reference**: Complete API documentation auto-generated from docstrings
 - **Architecture**: Design principles and project structure (see `docs/ARCHITECTURE.md`)
 

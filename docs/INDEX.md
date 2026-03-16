@@ -54,9 +54,13 @@ docs/
 ├── user_guide/           # User tutorials and guides
 │   ├── index.rst
 │   ├── loading_data.rst
+│   ├── logbook.rst
 │   ├── data_processing.rst
 │   ├── gui_usage.rst
 │   ├── fitting.rst
+│   ├── composite_models.rst
+│   ├── parameter_trending.rst
+│   ├── project_files.rst
 │   └── fourier_analysis.rst
 ├── api/                  # API reference (auto-generated)
 │   ├── index.rst
@@ -64,6 +68,9 @@ docs/
 │   ├── io.rst
 │   ├── fitting.rst
 │   └── ...
+├── ../examples/          # Runnable documentation examples
+│   ├── run_all.py
+│   └── *.py
 └── _build/               # Generated output (gitignored)
     └── html/
 ```

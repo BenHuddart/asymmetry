@@ -46,6 +46,21 @@ class _StubDataBrowser(QWidget):
     def get_selected_datasets(self):
         return list(self._datasets.values())
 
+    def get_group_id_for_run(self, run_number):
+        if run_number in self._datasets:
+            return "g1"
+        return None
+
+    def get_group_member_run_numbers(self, group_id):
+        if group_id == "g1":
+            return [42, 43]
+        return []
+
+    def get_group_name(self, group_id):
+        if group_id == "g1":
+            return "Group 1"
+        return None
+
 
 class _StubFitPanel(QWidget):
     def __init__(self):
@@ -54,6 +69,8 @@ class _StubFitPanel(QWidget):
         self.global_fit_completed = _DummySignal()
         self.last_dataset = None
         self.last_datasets = None
+        self.last_global_results = None
+        self.shared_calls = []
 
     def set_datasets(self, datasets):
         self.last_datasets = datasets
@@ -62,6 +79,14 @@ class _StubFitPanel(QWidget):
     def set_dataset(self, dataset):
         self.last_dataset = dataset
         return
+
+    def register_global_fit_results(self, results_by_run):
+        self.last_global_results = results_by_run
+        return
+
+    def share_single_function_state(self, source_run_number, target_run_numbers):
+        self.shared_calls.append((source_run_number, list(target_run_numbers)))
+        return len(target_run_numbers)
 
 
 class _StubPlotPanel(QWidget):
@@ -217,3 +242,39 @@ def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert exc.value.code == 0
     assert captured["code"] == 0
+
+
+def test_mainwindow_share_single_fit_function_with_group(
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    monkeypatch.setattr(mw_module, "DataBrowserPanel", _StubDataBrowser)
+    monkeypatch.setattr(mw_module, "FitPanel", _StubFitPanel)
+    monkeypatch.setattr(mw_module, "PlotPanel", _StubPlotPanel)
+    monkeypatch.setattr(mw_module, "LogPanel", _StubLogPanel)
+    monkeypatch.setattr(mw_module, "FourierPanel", _StubFourier)
+    monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParams)
+
+    window = mw_module.MainWindow()
+    ds42 = MuonDataset(
+        time=np.array([0.0, 1.0]),
+        asymmetry=np.array([0.2, 0.1]),
+        error=np.array([0.01, 0.01]),
+        metadata={"run_number": 42},
+    )
+    ds43 = MuonDataset(
+        time=np.array([0.0, 1.0]),
+        asymmetry=np.array([0.15, 0.08]),
+        error=np.array([0.01, 0.01]),
+        metadata={"run_number": 43},
+    )
+    window._data_browser.add_dataset(ds42)
+    window._data_browser.add_dataset(ds43)
+
+    window._on_share_single_function_with_group(42)
+
+    assert window._fit_panel.shared_calls
+    source, targets = window._fit_panel.shared_calls[-1]
+    assert source == 42
+    assert targets == [43]
+    assert "Shared fit function" in window.statusBar().currentMessage()

@@ -102,6 +102,25 @@ class GroupingDialog(QDialog):
             item.setData(Qt.ItemDataRole.UserRole, int(ds.run_number))
             item.setCheckState(Qt.CheckState.Checked)
             self._dataset_list.addItem(item)
+
+        dataset_buttons = QHBoxLayout()
+        select_all_btn = QPushButton("Select All")
+        select_all_btn.setAutoDefault(False)
+        select_all_btn.setDefault(False)
+        select_all_btn.clicked.connect(self._select_all_datasets)
+        select_reference_btn = QPushButton("Select Reference Run")
+        select_reference_btn.setAutoDefault(False)
+        select_reference_btn.setDefault(False)
+        select_reference_btn.clicked.connect(self._select_reference_dataset)
+        deselect_all_btn = QPushButton("Deselect All")
+        deselect_all_btn.setAutoDefault(False)
+        deselect_all_btn.setDefault(False)
+        deselect_all_btn.clicked.connect(self._deselect_all_datasets)
+        dataset_buttons.addWidget(select_all_btn)
+        dataset_buttons.addWidget(select_reference_btn)
+        dataset_buttons.addWidget(deselect_all_btn)
+        dataset_buttons.addStretch()
+        root.addLayout(dataset_buttons)
         root.addWidget(self._dataset_list)
 
         self._group_table = QTableWidget(0, 2)
@@ -143,6 +162,8 @@ class GroupingDialog(QDialog):
         self._deadtime_checkbox.setChecked(bool(grouping.get("deadtime_correction", False)))
 
         estimate_btn = QPushButton("Estimate α")
+        estimate_btn.setAutoDefault(False)
+        estimate_btn.setDefault(False)
         estimate_btn.clicked.connect(self._estimate_alpha)
 
         form.addRow("Forward Group", self._forward_combo)
@@ -161,8 +182,12 @@ class GroupingDialog(QDialog):
 
         file_buttons = QHBoxLayout()
         load_btn = QPushButton("Load .grp")
+        load_btn.setAutoDefault(False)
+        load_btn.setDefault(False)
         load_btn.clicked.connect(self._load_grp_file)
         save_btn = QPushButton("Save .grp")
+        save_btn.setAutoDefault(False)
+        save_btn.setDefault(False)
         save_btn.clicked.connect(self._save_grp_file)
         file_buttons.addWidget(load_btn)
         file_buttons.addWidget(save_btn)
@@ -172,8 +197,12 @@ class GroupingDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.addStretch()
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setAutoDefault(False)
+        cancel_btn.setDefault(False)
         cancel_btn.clicked.connect(self.reject)
         apply_btn = QPushButton("Apply")
+        apply_btn.setAutoDefault(False)
+        apply_btn.setDefault(False)
         apply_btn.clicked.connect(self.accept)
         buttons.addWidget(cancel_btn)
         buttons.addWidget(apply_btn)
@@ -250,6 +279,28 @@ class GroupingDialog(QDialog):
             if item.checkState() == Qt.CheckState.Checked:
                 selected.append(int(item.data(Qt.ItemDataRole.UserRole)))
         return selected
+
+    def _set_all_dataset_checkstates(self, state: Qt.CheckState) -> None:
+        """Set check state for all runs in the dataset list."""
+        for i in range(self._dataset_list.count()):
+            self._dataset_list.item(i).setCheckState(state)
+
+    def _select_all_datasets(self) -> None:
+        """Mark all datasets for grouping application."""
+        self._set_all_dataset_checkstates(Qt.CheckState.Checked)
+
+    def _select_reference_dataset(self) -> None:
+        """Select only the currently chosen reference run."""
+        reference_run = self._reference_combo.currentData()
+        for i in range(self._dataset_list.count()):
+            item = self._dataset_list.item(i)
+            run_number = item.data(Qt.ItemDataRole.UserRole)
+            state = Qt.CheckState.Checked if run_number == reference_run else Qt.CheckState.Unchecked
+            item.setCheckState(state)
+
+    def _deselect_all_datasets(self) -> None:
+        """Unmark all datasets for grouping application."""
+        self._set_all_dataset_checkstates(Qt.CheckState.Unchecked)
 
     def _populate_group_table(self) -> None:
         """Render the detector-group table used as grouping context."""

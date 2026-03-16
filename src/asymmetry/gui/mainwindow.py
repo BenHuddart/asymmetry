@@ -42,7 +42,6 @@ from asymmetry.core.project import (
 )
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform import apply_grouping, compute_asymmetry
-from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.transform.rebin import rebin
 
 _MAX_RECENT_PROJECTS = 10
@@ -57,6 +56,11 @@ from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
+
+
+def _normalise_source_path(path: str) -> str:
+    """Return a canonical string for source-file path comparisons."""
+    return os.path.normcase(os.path.abspath(os.path.realpath(path)))
 
 
 def _load_window_icon() -> QIcon | None:
@@ -167,7 +171,6 @@ class MainWindow(QMainWindow):
         # File
         file_menu = mb.addMenu("&File")
         file_menu.addAction("Open Data File(s)\u2026", self._on_open)
-        file_menu.addAction("Export Current Plot\u2026", self._on_export_current_plot)
         file_menu.addSeparator()
         file_menu.addAction("&New Project", self._on_new_project)
         file_menu.addAction("Open Project\u2026", self._on_open_project)
@@ -207,7 +210,6 @@ class MainWindow(QMainWindow):
         self.addToolBar(tb)
 
         tb.addAction("Open", self._on_open)
-        tb.addAction("Export", self._on_export_current_plot)
         tb.addAction("Grouping", self._on_grouping_current)
         tb.addAction("Fit", self._on_fit)
         tb.addAction("FFT", self._on_fourier)
@@ -290,9 +292,19 @@ class MainWindow(QMainWindow):
             self._plot_panel.bunch_factor_changed.connect(self._update_selected_datasets)
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
+        if hasattr(self._fit_panel, "preview_requested"):
+            self._fit_panel.preview_requested.connect(self._on_preview_requested)
+        if hasattr(self._fit_panel, "share_function_with_group_requested"):
+            self._fit_panel.share_function_with_group_requested.connect(
+                self._on_share_single_function_with_group
+            )
         if hasattr(self._fit_parameters_panel, "cross_group_fit_completed"):
             self._fit_parameters_panel.cross_group_fit_completed.connect(
                 self._on_cross_group_fit_completed
+            )
+        if hasattr(self._fit_parameters_panel, "delete_group_fits_requested"):
+            self._fit_parameters_panel.delete_group_fits_requested.connect(
+                self._on_fit_parameters_group_fits_deleted
             )
 
         # Update selected datasets for global fitting whenever selection changes
@@ -327,8 +339,23 @@ class MainWindow(QMainWindow):
         failed = 0
         last_dataset = None
         apply_comment_field_to_all = False
+        overwrite_existing_to_all = False
+        auto_grouping_payload = self._get_project_grouping_template()
+        auto_grouping_attempts = 0
+        auto_grouping_applied = 0
 
         for path in paths:
+            should_overwrite_existing = False
+            if self._is_source_file_loaded(path):
+                if not overwrite_existing_to_all:
+                    overwrite_choice = self._prompt_overwrite_existing_dataset(path)
+                    if overwrite_choice == QMessageBox.StandardButton.No:
+                        self._log_panel.log(f"Skipped already-loaded file: {path}")
+                        continue
+                    if overwrite_choice == QMessageBox.StandardButton.YesToAll:
+                        overwrite_existing_to_all = True
+                should_overwrite_existing = True
+
             try:
                 loaded = self._load_file(path)
                 if loaded is None:
@@ -337,6 +364,12 @@ class MainWindow(QMainWindow):
                 datasets = loaded if isinstance(loaded, list) else [loaded]
                 if not datasets:
                     continue
+
+                if should_overwrite_existing:
+                    removed = self._remove_datasets_for_source_file(path)
+                    self._log_panel.log(
+                        f"Updated file {path} (replaced {removed} existing dataset(s))."
+                    )
 
                 for dataset in datasets:
                     # Offer to apply field extracted from comment when available.
@@ -350,6 +383,12 @@ class MainWindow(QMainWindow):
                         break
                     if apply_choice == "yes_to_all":
                         apply_comment_field_to_all = True
+
+                    if auto_grouping_payload is not None:
+                        auto_grouping_attempts += 1
+                        applied, _ = self._apply_grouping_settings_to_dataset(dataset, auto_grouping_payload)
+                        if applied:
+                            auto_grouping_applied += 1
 
                     self._data_browser.add_dataset(dataset)
                     if dataset:
@@ -366,9 +405,6 @@ class MainWindow(QMainWindow):
 
         # Plot the last successfully loaded dataset
         if last_dataset:
-            # Clear any previous fit curve when loading new data
-            self._plot_panel._fit_curve = None
-            self._plot_panel._fit_curves = {}
             self._plot_panel.plot_dataset(last_dataset)
 
         # Update selected datasets for global fitting
@@ -383,6 +419,108 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(msg)
         elif failed > 0:
             self.statusBar().showMessage(f"Failed to load {failed} file(s)")
+
+        if auto_grouping_payload is not None and auto_grouping_attempts > 0:
+            skipped = auto_grouping_attempts - auto_grouping_applied
+            self._log_panel.log(
+                "Auto-applied existing project grouping to "
+                f"{auto_grouping_applied} dataset(s); skipped {skipped}."
+            )
+
+    def _dataset_source_file(self, dataset) -> str:
+        """Return the dataset source file path, if available."""
+        source_file = ""
+        run = getattr(dataset, "run", None)
+        if run is not None:
+            source_file = str(getattr(run, "source_file", "") or "")
+        if not source_file:
+            metadata = getattr(dataset, "metadata", {})
+            if isinstance(metadata, dict):
+                source_file = str(metadata.get("source_file", "") or "")
+        return source_file
+
+    def _is_source_file_loaded(self, path: str) -> bool:
+        """Return True when a source file is already represented in the browser."""
+        target = _normalise_source_path(path)
+        for dataset in self._data_browser.get_all_datasets():
+            source_file = self._dataset_source_file(dataset)
+            if source_file and _normalise_source_path(source_file) == target:
+                return True
+        return False
+
+    def _remove_datasets_for_source_file(self, path: str) -> int:
+        """Remove all datasets that originate from *path* and return count."""
+        target = _normalise_source_path(path)
+        run_numbers_to_remove: list[int] = []
+        for dataset in self._data_browser.get_all_datasets():
+            source_file = self._dataset_source_file(dataset)
+            if source_file and _normalise_source_path(source_file) == target:
+                run_numbers_to_remove.append(int(dataset.run_number))
+
+        for run_number in run_numbers_to_remove:
+            self._data_browser._remove_run_number(run_number)
+
+        if run_numbers_to_remove:
+            self._data_browser._rebuild_table()
+
+        return len(run_numbers_to_remove)
+
+    def _prompt_overwrite_existing_dataset(self, path: str) -> QMessageBox.StandardButton:
+        """Ask whether a duplicate file should overwrite currently loaded datasets."""
+        run_numbers = []
+        target = _normalise_source_path(path)
+        for dataset in self._data_browser.get_all_datasets():
+            source_file = self._dataset_source_file(dataset)
+            if source_file and _normalise_source_path(source_file) == target:
+                run_numbers.append(int(dataset.run_number))
+
+        run_numbers_text = "unknown"
+        if run_numbers:
+            run_numbers_text = ", ".join(str(rn) for rn in sorted(set(run_numbers)))
+
+        answer = QMessageBox.question(
+            self,
+            "Data File Already Loaded",
+            "This data file is already in the Data Browser.\n\n"
+            f"Run number(s): {run_numbers_text}\n\n"
+            "Do you want to update this dataset and overwrite the existing one?",
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No
+            | QMessageBox.StandardButton.YesToAll,
+            QMessageBox.StandardButton.No,
+        )
+        if answer in {
+            QMessageBox.StandardButton.Yes,
+            QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.YesToAll,
+        }:
+            return answer
+        return QMessageBox.StandardButton.No
+
+    def _get_project_grouping_template(self) -> dict | None:
+        """Return a grouping payload from the current project, if available."""
+        datasets: list = []
+        if self._current_dataset is not None:
+            datasets.append(self._current_dataset)
+        if hasattr(self._data_browser, "get_all_datasets"):
+            datasets.extend(self._data_browser.get_all_datasets())
+
+        seen_runs: set[int] = set()
+        for dataset in datasets:
+            try:
+                run_number = int(dataset.run_number)
+            except (TypeError, ValueError):
+                run_number = id(dataset)
+            if run_number in seen_runs:
+                continue
+            seen_runs.add(run_number)
+
+            payload = self._extract_grouping_overrides(dataset)
+            if isinstance(payload, dict) and isinstance(payload.get("groups"), dict):
+                groups = payload.get("groups", {})
+                if groups:
+                    return payload
+        return None
 
     def _load_file(self, path: str):
         from asymmetry.core.io import load
@@ -468,7 +606,10 @@ class MainWindow(QMainWindow):
 
         if updated > 0:
             self._data_browser._rebuild_table()
-            if self._current_dataset is not None:
+            selected_after = self._data_browser.get_selected_datasets()
+            if len(selected_after) > 1:
+                self._plot_panel.plot_datasets(selected_after)
+            elif self._current_dataset is not None:
                 self._plot_panel.plot_dataset(self._current_dataset)
             elif first_updated_dataset is not None:
                 self._plot_panel.plot_dataset(first_updated_dataset)
@@ -604,14 +745,7 @@ class MainWindow(QMainWindow):
         forward = apply_grouping(working_histograms, forward_idx)
         backward = apply_grouping(working_histograms, backward_idx)
 
-        run_alpha = alpha
-        if run_alpha <= 0:
-            run_alpha = estimate_alpha(
-                forward,
-                backward,
-                first_good_bin=first_good,
-                last_good_bin=last_good,
-            )
+        run_alpha = alpha if alpha > 0 else 1.0
 
         asymmetry, error = compute_asymmetry(forward, backward, alpha=run_alpha)
         asymmetry = asymmetry * 100.0
@@ -864,6 +998,8 @@ class MainWindow(QMainWindow):
     def _on_dataset_selected(self, run_number: int) -> None:
         """Handle dataset selection from data browser."""
         self._active_group_context = None
+        if hasattr(self._plot_panel, "set_active_label_group"):
+            self._plot_panel.set_active_label_group(None)
         dataset = self._data_browser.get_dataset(run_number)
         if dataset:
             self._current_dataset = dataset
@@ -877,8 +1013,12 @@ class MainWindow(QMainWindow):
         group_name = self._data_browser.get_group_name(group_id)
         if group_name is None:
             self._active_group_context = None
+            if hasattr(self._plot_panel, "set_active_label_group"):
+                self._plot_panel.set_active_label_group(None)
             return
         self._active_group_context = (group_id, group_name)
+        if hasattr(self._plot_panel, "set_active_label_group"):
+            self._plot_panel.set_active_label_group(group_id)
         self.statusBar().showMessage(f"Selected group: {group_name}")
 
     def _on_fit_range_changed(self, _x_min: float, _x_max: float) -> None:
@@ -890,14 +1030,73 @@ class MainWindow(QMainWindow):
     def _on_fit_completed(self, fit_result, fitted_curve, component_curves) -> None:
         """Handle completed fit from fit panel."""
         t_fit, y_fit = fitted_curve
+        fit_function = None
+        if hasattr(self._fit_panel, "single_fit_formula_string"):
+            fit_function = self._fit_panel.single_fit_formula_string()
         self._plot_panel.plot_fit(
             t_fit,
             y_fit,
             label="Fit",
             component_curves=component_curves,
+            fit_result=fit_result,
+            fit_function=fit_function,
         )
         self._log_panel.log(
             f"Fit completed: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}"
+        )
+
+    def _on_preview_requested(self, fit_result, fitted_curve, component_curves) -> None:
+        """Handle preview request from fit panel."""
+        t_fit, y_fit = fitted_curve
+        fit_function = None
+        if hasattr(self._fit_panel, "single_fit_formula_string"):
+            fit_function = self._fit_panel.single_fit_formula_string()
+        self._plot_panel.plot_fit(
+            t_fit,
+            y_fit,
+            label="Preview",
+            component_curves=component_curves,
+            fit_result=None,
+            fit_function=fit_function,
+        )
+
+    def _on_share_single_function_with_group(self, source_run_number: int) -> None:
+        """Copy single-fit function settings from one run to its data-group peers."""
+        if not hasattr(self._data_browser, "get_group_id_for_run"):
+            self.statusBar().showMessage("Data-group sharing unavailable in this browser mode")
+            return
+
+        group_id = self._data_browser.get_group_id_for_run(source_run_number)
+        if not group_id:
+            self.statusBar().showMessage("Selected run is not in a data group")
+            return
+
+        member_runs = []
+        if hasattr(self._data_browser, "get_group_member_run_numbers"):
+            member_runs = self._data_browser.get_group_member_run_numbers(group_id)
+        if not member_runs:
+            self.statusBar().showMessage("No data-group members found to share with")
+            return
+
+        target_runs = [rn for rn in member_runs if int(rn) != int(source_run_number)]
+        if not target_runs:
+            self.statusBar().showMessage("Data group has no other members to share with")
+            return
+
+        updated = 0
+        if hasattr(self._fit_panel, "share_single_function_state"):
+            updated = int(self._fit_panel.share_single_function_state(source_run_number, target_runs))
+
+        group_name = (
+            self._data_browser.get_group_name(group_id)
+            if hasattr(self._data_browser, "get_group_name")
+            else group_id
+        )
+        self._log_panel.log(
+            f"Shared fit function from run {source_run_number} to {updated} run(s) in group {group_name}"
+        )
+        self.statusBar().showMessage(
+            f"Shared fit function to {updated} run(s) in group {group_name}"
         )
 
     def _on_global_fit_completed(self, results_dict, global_params) -> None:
@@ -935,10 +1134,22 @@ class MainWindow(QMainWindow):
             normalized_payloads[run_number] = (result, fitted_curve, component_curves)
 
         # Store fit curves for all datasets
+        global_fit_function = None
+        if hasattr(self._fit_panel, "global_fit_formula_string"):
+            global_fit_function = self._fit_panel.global_fit_formula_string()
         fit_curves = {}
         for run_number, (result, fitted_curve, component_curves) in normalized_payloads.items():
             t_fit, y_fit = fitted_curve
-            fit_curves[run_number] = (t_fit, y_fit, "Global Fit", component_curves)
+            fit_curves[run_number] = (
+                t_fit,
+                y_fit,
+                "Global Fit",
+                component_curves,
+                result,
+                global_fit_function,
+            )
+
+        self._fit_panel.register_global_fit_results(normalized_payloads)
 
         # Set all fit curves in plot panel
         self._plot_panel.set_global_fits(fit_curves)
@@ -1027,6 +1238,33 @@ class MainWindow(QMainWindow):
         self._global_parameter_fit_window.activateWindow()
         self._update_global_parameter_fit_menu_style(True)
 
+    def _on_fit_parameters_group_fits_deleted(self, group_id: str, run_numbers: object) -> None:
+        """Clear run-level fit state when a Fit Parameters group is deleted."""
+        if not isinstance(run_numbers, (list, tuple, set)):
+            return
+
+        normalized_runs: list[int] = []
+        seen: set[int] = set()
+        for run_number in run_numbers:
+            try:
+                run_key = int(run_number)
+            except (TypeError, ValueError):
+                continue
+            if run_key in seen:
+                continue
+            seen.add(run_key)
+            normalized_runs.append(run_key)
+
+        if not normalized_runs:
+            return
+
+        self._fit_panel.clear_fits_for_runs(normalized_runs)
+        self._plot_panel.clear_fits_for_runs(normalized_runs)
+        self._log_panel.log(
+            f"Deleted fit(s) for group {group_id}: cleared {len(normalized_runs)} dataset fit entry/entries"
+        )
+        self.statusBar().showMessage(f"Deleted fit(s) for group {group_id}")
+
     def _update_selected_datasets(self, *_args) -> None:
         """Update the fit panel with currently selected datasets."""
         selected = self._data_browser.get_selected_datasets()
@@ -1035,6 +1273,9 @@ class MainWindow(QMainWindow):
             if hasattr(self._data_browser, "get_selected_group_ids")
             else []
         )
+        active_plot_group_id = selected_group_ids[0] if len(selected_group_ids) == 1 else None
+        if hasattr(self._plot_panel, "set_active_label_group"):
+            self._plot_panel.set_active_label_group(active_plot_group_id)
         if len(selected_group_ids) == 1:
             gid = selected_group_ids[0]
             gname = (

@@ -222,9 +222,9 @@ Parameter Values and Errors
 .. code-block:: python
 
    # Best-fit parameters with uncertainties
-   for name, param in result.parameters.items():
-       error = result.uncertainties.get(name, 0)
-       print(f"{name}: {param.value:.6f} ± {error:.6f}")
+   for param in result.parameters:
+      error = result.uncertainties.get(param.name, 0)
+      print(f"{param.name}: {param.value:.6f} ± {error:.6f}")
 
 Plotting Results
 ~~~~~~~~~~~~~~~~
@@ -350,6 +350,8 @@ Bootstrap resampling for error estimation:
 
 .. code-block:: python
 
+   from asymmetry.core.data import MuonDataset
+
    n_bootstrap = 100
    bootstrap_results = []
 
@@ -358,7 +360,8 @@ Bootstrap resampling for error estimation:
        resampled_data = data + np.random.randn(len(data)) * error
 
        # Fit
-       result = engine.fit(model, time, resampled_data, error, params)
+      boot_dataset = MuonDataset(time=time, asymmetry=resampled_data, error=error)
+      result = engine.fit(boot_dataset, model.function, params)
        bootstrap_results.append(result)
 
    # Analyze distribution of parameters
@@ -464,6 +467,13 @@ Example usage
    lam = lam_dyn + 0.05  # Add Lambda_bg contribution separately
 
    print(lam[:5])
+
+See also
+--------
+
+* ``composite_models`` for time-domain composite model construction.
+* ``parameter_trending`` for fitting parameter trends vs field/temperature.
+* ``examples/single_fit.py`` for an executable fitting workflow.
 
 Tips for Good Fits
 ------------------

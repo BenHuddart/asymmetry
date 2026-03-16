@@ -9,6 +9,8 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
@@ -105,6 +107,42 @@ def test_estimate_alpha_uses_reference_run_only(qapp: QApplication) -> None:
 
     # Must use selected reference run (5002 => alpha=4), not an average of runs.
     assert dialog._alpha_spin.value() == pytest.approx(4.0)
+
+
+def test_pressing_enter_on_bunch_factor_does_not_estimate_alpha(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    assert dialog._alpha_spin.value() == pytest.approx(1.0)
+
+    dialog._bunch_spin.setFocus()
+    dialog._bunch_spin.setValue(7)
+    QTest.keyClick(dialog._bunch_spin, Qt.Key.Key_Return)
+
+    # Enter on bunching should not trigger the Estimate alpha action.
+    assert dialog._alpha_spin.value() == pytest.approx(1.0)
+
+
+def test_pressing_enter_on_bunch_factor_does_not_trigger_save_grp(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+
+    save_called = {"value": False}
+
+    def _stub_get_save_file_name(*_args, **_kwargs):
+        save_called["value"] = True
+        return "", ""
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.grouping_dialog.QFileDialog.getSaveFileName",
+        _stub_get_save_file_name,
+    )
+
+    dialog._bunch_spin.setFocus()
+    dialog._bunch_spin.setValue(9)
+    QTest.keyClick(dialog._bunch_spin, Qt.Key.Key_Return)
+
+    assert save_called["value"] is False
 
 
 def test_grp_round_trip_parser_and_serializer() -> None:

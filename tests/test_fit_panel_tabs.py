@@ -45,6 +45,25 @@ def test_single_fit_requires_dataset(qapp: QApplication) -> None:
     assert "No dataset selected" in tab._result_label.text()
 
 
+def test_fit_panel_forwards_single_tab_preview(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+
+    emitted = {}
+    panel.preview_requested.connect(
+        lambda result, curve, components: emitted.update(
+            {"result": result, "curve": curve, "components": components}
+        )
+    )
+
+    panel._single_tab._on_preview()
+
+    assert "curve" in emitted
+    assert len(emitted["curve"][0]) == 500
+
+
 def test_single_fit_invalid_value_shows_error(qapp: QApplication, dataset: MuonDataset) -> None:
     tab = SingleFitTab()
     tab.set_dataset(dataset)
@@ -423,3 +442,99 @@ def test_fit_panel_single_state_roundtrip_preserves_per_run_states(
 
     restored.set_dataset(d2)
     assert "saved fit 102" in restored._single_tab._result_label.text()
+
+
+def test_fit_panel_global_fit_results_seed_single_state_per_run(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    panel = FitPanel()
+    d1 = dataset
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+
+    panel.set_dataset(d1)
+
+    model = panel._global_tab._composite_model
+    pnames = model.param_names
+
+    def _fit_result(values: list[float]) -> FitResult:
+        params = ParameterSet(
+            [Parameter(name=name, value=value) for name, value in zip(pnames, values, strict=False)]
+        )
+        return FitResult(
+            success=True,
+            chi_squared=2.0,
+            reduced_chi_squared=1.0,
+            parameters=params,
+            uncertainties={name: 0.01 for name in pnames},
+        )
+
+    results = {
+        101: (_fit_result([0.11, 0.22, 0.33]), (np.array([0.0, 1.0]), np.array([0.2, 0.1])), []),
+        102: (_fit_result([0.44, 0.55, 0.66]), (np.array([0.0, 1.0]), np.array([0.2, 0.1])), []),
+    }
+    panel.register_global_fit_results(results)
+
+    assert "Global fit" in panel._single_tab._result_label.text()
+    assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.11)
+
+    panel.set_dataset(d2)
+    assert "Global fit" in panel._single_tab._result_label.text()
+    assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.44)
+
+    saved = panel.get_single_state()
+    assert "101" in saved.get("states_by_run", {})
+    assert "102" in saved.get("states_by_run", {})
+
+
+def test_fit_panel_share_single_function_state_to_other_runs(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    panel = FitPanel()
+    d1 = dataset
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    d3 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 103})
+
+    panel.set_dataset(d1)
+    panel._single_tab._param_table.item(0, 1).setText("0.777")
+    panel._single_tab._result_label.setText("source fit result")
+
+    copied = panel.share_single_function_state(101, [102, 103])
+    assert copied == 2
+
+    panel.set_dataset(d2)
+    assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.777)
+    assert panel._single_tab._result_label.text() == "No fit performed yet"
+
+    panel.set_dataset(d3)
+    assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.777)
+    assert panel._single_tab._result_label.text() == "No fit performed yet"
+
+
+def test_fit_panel_clear_fits_for_runs_removes_cached_fit_state(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    panel = FitPanel()
+    d1 = dataset
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+
+    panel.set_dataset(d1)
+    panel._single_tab._result_label.setText("fit for run 101")
+    panel._single_state_by_run[101] = panel._single_tab.get_state()
+
+    panel.set_dataset(d2)
+    panel._single_tab._result_label.setText("fit for run 102")
+    panel._single_state_by_run[102] = panel._single_tab.get_state()
+
+    panel._global_tab._single_fit_seed_by_run[101] = {"model": {}, "values": {"A": 0.1}}
+    panel._global_tab._single_fit_seed_by_run[102] = {"model": {}, "values": {"A": 0.2}}
+
+    cleared = panel.clear_fits_for_runs([101])
+
+    assert cleared == 1
+    assert 101 not in panel._single_state_by_run
+    assert 101 not in panel._global_tab._single_fit_seed_by_run
+    assert 102 in panel._single_state_by_run
+    assert 102 in panel._global_tab._single_fit_seed_by_run

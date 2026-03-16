@@ -23,9 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Auto Y` now computes limits from points inside the current X range and prioritizes reliable foreground points.
 - Run Info now provides include-in-browser checkboxes and per-row log plotting in both the primary table and Advanced subwindow.
 - Project persistence now round-trips grouping settings and restored plot limits more reliably, including list-returning/multi-period loader paths.
+- Main-plot GLE export has moved from File/toolbar menu actions to in-panel controls: **Export Plot(s) to GLE** with a PDF/EPS format selector.
+- Main-plot GLE export now supports multi-dataset overlays, label-based sidecar filenames, and exports data as error bars plus fits as line curves.
+- Main-plot ``.fit`` sidecar headers now include fit-function descriptions, fit statistics, and fitted parameter values/uncertainties when available.
 
 ### Documentation
 - Updated GUI user guide to document current axis-control behavior, Run Info include/log workflows, Advanced subwindow usage, and persistence details for dynamic columns and grouping settings.
+- Documented the new main-plot export workflow, including toolbar location, format selection, multi-dataset behavior, label-based ``.dat``/``.fit`` naming, annotation export, and ``.fit`` header metadata.
 
 ### Tests
 - Added regression and end-to-end persistence tests for:

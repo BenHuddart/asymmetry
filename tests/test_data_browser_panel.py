@@ -189,6 +189,25 @@ def test_context_menu_shows_coadd_for_multiple_selected(qapp: QApplication) -> N
     assert "Remove Selected Entries" in action_texts
 
 
+def test_group_lookup_helpers_return_group_and_members(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    d1 = _dataset(61)
+    d2 = _dataset(62)
+    d3 = _dataset(63)
+    panel.add_dataset(d1)
+    panel.add_dataset(d2)
+    panel.add_dataset(d3)
+
+    gid = panel.create_data_group([61, 62], name="Share Group")
+    assert isinstance(gid, str)
+
+    assert panel.get_group_id_for_run(61) == gid
+    assert panel.get_group_id_for_run(63) is None
+
+    members = panel.get_group_member_run_numbers(gid)
+    assert members == [61, 62]
+
+
 def test_context_menu_shows_separate_for_combined_dataset(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     d1 = _dataset(51)

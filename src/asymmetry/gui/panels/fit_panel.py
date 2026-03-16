@@ -6,6 +6,7 @@ parameters, run the fit, and inspect results.
 
 from __future__ import annotations
 
+import copy
 import numpy as np
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
@@ -109,6 +110,8 @@ class SingleFitTab(QWidget):
     """
 
     fit_completed = Signal(object, object, object)  # (FitResult, fitted_curve, component_curves)
+    preview_requested = Signal(object, object, object)  # (FitResult, fitted_curve, component_curves)
+    share_function_with_group_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -125,8 +128,18 @@ class SingleFitTab(QWidget):
         _configure_formula_label(self._formula_label)
         self._edit_model_btn = QPushButton("Edit Function...")
         self._edit_model_btn.clicked.connect(self._edit_function)
+        self._share_group_btn = QPushButton("Share Function With Data Group")
+        self._share_group_btn.clicked.connect(self._on_share_function_with_group)
+        self._share_group_btn.setEnabled(False)
+        
+        # Button row for Edit and Share
+        model_button_layout = QHBoxLayout()
+        model_button_layout.addWidget(self._edit_model_btn)
+        model_button_layout.addWidget(self._share_group_btn)
+        model_button_layout.addStretch()
+        
         model_layout.addRow("A(t):", self._formula_label)
-        model_layout.addRow("", self._edit_model_btn)
+        model_layout.addRow("", model_button_layout)
         layout.addWidget(model_group)
 
         # Parameter table
@@ -149,8 +162,12 @@ class SingleFitTab(QWidget):
         self._fit_btn.clicked.connect(self._run_fit)
         self._reset_btn = QPushButton("Reset")
         self._reset_btn.clicked.connect(self._reset_parameters)
+        self._preview_btn = QPushButton("Preview")
+        self._preview_btn.clicked.connect(self._on_preview)
+        self._preview_btn.setEnabled(False)
         btn_layout.addWidget(self._fit_btn)
         btn_layout.addWidget(self._reset_btn)
+        btn_layout.addWidget(self._preview_btn)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
@@ -170,6 +187,18 @@ class SingleFitTab(QWidget):
         """Set the current dataset to fit."""
         self._current_dataset = dataset
         self._fit_btn.setEnabled(dataset is not None)
+        self._preview_btn.setEnabled(dataset is not None)
+        self._share_group_btn.setEnabled(dataset is not None)
+
+    def _on_share_function_with_group(self) -> None:
+        """Request sharing the active single-fit function with the current data group."""
+        if self._current_dataset is None:
+            return
+        try:
+            run_number = int(self._current_dataset.run_number)
+        except (TypeError, ValueError):
+            return
+        self.share_function_with_group_requested.emit(run_number)
 
     def _set_composite_model(self, model: CompositeModel) -> None:
         """Set the active composite model and rebuild the parameter table."""
@@ -218,6 +247,75 @@ class SingleFitTab(QWidget):
     def _reset_parameters(self) -> None:
         """Reset parameters to model defaults."""
         self._set_composite_model(self._composite_model)
+
+    def _on_preview(self) -> None:
+        """Generate and emit a preview fit curve with current parameters."""
+        if self._current_dataset is None:
+            return
+
+        if self._composite_model is None:
+            return
+
+        # Build parameter set from table
+        parameters = ParameterSet()
+        for i in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(i, 0)
+            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(param_name, str):
+                param_name = name_item.text() if name_item else f"param_{i}"
+
+            # Parse value
+            try:
+                value = float(self._param_table.item(i, 1).text())
+            except (ValueError, AttributeError):
+                return
+
+            # Check if fixed
+            fix_widget = self._param_table.cellWidget(i, 2)
+            fix_checkbox = fix_widget.findChild(QCheckBox)
+            fixed = fix_checkbox.isChecked() if fix_checkbox else False
+
+            # Parse bounds
+            try:
+                min_text = self._param_table.item(i, 3).text()
+                min_val = float(min_text) if min_text and min_text != "-inf" else -float("inf")
+            except (ValueError, AttributeError):
+                min_val = -float("inf")
+
+            try:
+                max_text = self._param_table.item(i, 4).text()
+                max_val = float(max_text) if max_text and max_text != "inf" else float("inf")
+            except (ValueError, AttributeError):
+                max_val = float("inf")
+
+            param = Parameter(
+                name=param_name,
+                value=value,
+                min=min_val,
+                max=max_val,
+                fixed=fixed,
+            )
+            parameters.add(param)
+
+        # Generate fitted curve for plotting
+        import numpy as np
+        t_fit = np.linspace(
+            self._current_dataset.time.min(),
+            self._current_dataset.time.max(),
+            500,
+        )
+        param_dict = {p.name: p.value for p in parameters}
+        y_fit = self._composite_model.function(t_fit, **param_dict)
+
+        component_curves = self._composite_model.evaluate_components(
+            t_fit,
+            additive_only=True,
+            **param_dict,
+        )
+
+        # Create a dummy result object for preview (not a real fit)
+        preview_result = object()
+        self.preview_requested.emit(preview_result, (t_fit, y_fit), component_curves)
 
     def _run_fit(self) -> None:
         """Execute the fit."""
@@ -536,6 +634,20 @@ class GlobalFitTab(QWidget):
             "values": values_by_name,
         }
         self._refresh_inherited_single_fit_defaults()
+
+    def remove_single_fit_seeds(self, run_numbers: list[int] | set[int]) -> set[int]:
+        """Remove stored single-fit seeds for the given runs."""
+        removed: set[int] = set()
+        for run_number in run_numbers:
+            try:
+                run_key = int(run_number)
+            except (TypeError, ValueError):
+                continue
+            if self._single_fit_seed_by_run.pop(run_key, None) is not None:
+                removed.add(run_key)
+        if removed:
+            self._refresh_inherited_single_fit_defaults()
+        return removed
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting."""
@@ -1029,8 +1141,10 @@ class FitPanel(QWidget):
     """
 
     fit_completed = Signal(object, object, object)  # (FitResult, fitted_curve, component_curves)
+    preview_requested = Signal(object, object, object)  # (preview_result, fitted_curve, component_curves)
     # Keep payload generic to preserve Python dict key/value types end-to-end.
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
+    share_function_with_group_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1046,6 +1160,10 @@ class FitPanel(QWidget):
         # Single fit tab
         self._single_tab = SingleFitTab()
         self._single_tab.fit_completed.connect(self._on_single_fit_completed)
+        self._single_tab.preview_requested.connect(self.preview_requested.emit)
+        self._single_tab.share_function_with_group_requested.connect(
+            self.share_function_with_group_requested.emit
+        )
         self._tabs.addTab(self._single_tab, "Single")
 
         # Global fit tab
@@ -1100,6 +1218,188 @@ class FitPanel(QWidget):
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting tab."""
         self._global_tab.set_datasets(datasets)
+
+    def single_fit_formula_string(self) -> str | None:
+        """Return the active single-fit formula string, if available."""
+        model = getattr(self._single_tab, "_composite_model", None)
+        if model is None:
+            return None
+        try:
+            return str(model.formula_string())
+        except Exception:
+            return None
+
+    def global_fit_formula_string(self) -> str | None:
+        """Return the active global-fit formula string, if available."""
+        model = getattr(self._global_tab, "_composite_model", None)
+        if model is None:
+            return None
+        try:
+            return str(model.formula_string())
+        except Exception:
+            return None
+
+    def clear_fits_for_runs(self, run_numbers: list[int]) -> int:
+        """Clear cached single/global fit state for specific dataset runs."""
+        normalized_runs: set[int] = set()
+        for run_number in run_numbers:
+            try:
+                normalized_runs.add(int(run_number))
+            except (TypeError, ValueError):
+                continue
+
+        if not normalized_runs:
+            return 0
+
+        changed_runs: set[int] = set()
+        for run_number in normalized_runs:
+            if self._single_state_by_run.pop(run_number, None) is not None:
+                changed_runs.add(run_number)
+
+        changed_runs |= self._global_tab.remove_single_fit_seeds(normalized_runs)
+
+        active_run = self._active_single_run_number
+        if active_run is not None and active_run in normalized_runs:
+            self._single_tab._result_label.setText("No fit performed yet")
+
+        return len(changed_runs)
+
+    def get_single_state_for_run(self, run_number: int) -> dict | None:
+        """Return current single-fit state for one run, if available."""
+        try:
+            run_key = int(run_number)
+        except (TypeError, ValueError):
+            return None
+
+        if self._active_single_run_number == run_key:
+            state = self._single_tab.get_state()
+            self._single_state_by_run[run_key] = state
+            return copy.deepcopy(state)
+
+        state = self._single_state_by_run.get(run_key)
+        if isinstance(state, dict):
+            return copy.deepcopy(state)
+        return None
+
+    def share_single_function_state(self, source_run_number: int, target_run_numbers: list[int]) -> int:
+        """Copy source single-fit function/parameter state to target runs.
+
+        The copied state intentionally clears fit-result text for targets because
+        no fit has been run for those datasets yet.
+        """
+        source_state = self.get_single_state_for_run(source_run_number)
+        if not isinstance(source_state, dict):
+            return 0
+
+        shared_state = copy.deepcopy(source_state)
+        shared_state["result_html"] = "No fit performed yet"
+
+        updated = 0
+        active_run = self._active_single_run_number
+        for run_number in target_run_numbers:
+            try:
+                run_key = int(run_number)
+            except (TypeError, ValueError):
+                continue
+            if run_key == int(source_run_number):
+                continue
+            self._single_state_by_run[run_key] = copy.deepcopy(shared_state)
+            if active_run is not None and run_key == active_run:
+                self._single_tab.restore_state(self._single_state_by_run[run_key])
+            updated += 1
+        return updated
+
+    def _result_html_from_fit(self, fit_result: object, source: str) -> str:
+        """Build single-fit result HTML from a completed fit result object."""
+        if getattr(fit_result, "success", False) is not True:
+            message = str(getattr(fit_result, "message", "Fit failed"))
+            return f"<b>{source} failed:</b> {message}"
+
+        reduced = float(getattr(fit_result, "reduced_chi_squared", float("nan")))
+        chi2 = float(getattr(fit_result, "chi_squared", float("nan")))
+        lines = [
+            f"<b>{source}</b>",
+            f"<b>χ² = {chi2:.4f}</b>",
+            f"<b>χ²ᵣ = {reduced:.4f}</b>",
+            "<br><b>Parameters:</b>",
+        ]
+
+        uncertainties = getattr(fit_result, "uncertainties", {}) or {}
+        for param in getattr(fit_result, "parameters", []):
+            name = getattr(param, "name", None)
+            if not isinstance(name, str):
+                continue
+            value = float(getattr(param, "value", 0.0))
+            unc = float(uncertainties.get(name, 0.0))
+            lines.append(f"  {_format_param_label(name)} = {value:.6f} ± {unc:.6f}")
+        return "<br>".join(lines)
+
+    def _single_state_from_fit_result(
+        self,
+        model: CompositeModel,
+        fit_result: object,
+        source: str,
+    ) -> dict:
+        """Return single-tab state populated from a fitted model result."""
+        values_by_name: dict[str, object] = {}
+        for param in getattr(fit_result, "parameters", []):
+            name = getattr(param, "name", None)
+            if isinstance(name, str):
+                values_by_name[name] = param
+
+        params: list[dict[str, object]] = []
+        for pname in model.param_names:
+            param = values_by_name.get(pname)
+            if param is None:
+                value = float(model.param_defaults.get(pname, 0.0))
+                fixed = False
+                default_min = get_param_info(pname).default_min
+                min_text = str(default_min) if default_min is not None else "-inf"
+                max_text = "inf"
+            else:
+                try:
+                    value = float(getattr(param, "value", model.param_defaults.get(pname, 0.0)))
+                except (TypeError, ValueError):
+                    value = float(model.param_defaults.get(pname, 0.0))
+                fixed = bool(getattr(param, "fixed", False))
+
+                min_val = getattr(param, "min", -float("inf"))
+                max_val = getattr(param, "max", float("inf"))
+                min_text = "-inf" if min_val is None or not np.isfinite(float(min_val)) else str(float(min_val))
+                max_text = "inf" if max_val is None or not np.isfinite(float(max_val)) else str(float(max_val))
+
+            params.append({
+                "name": pname,
+                "value": value,
+                "fixed": fixed,
+                "min": min_text,
+                "max": max_text,
+            })
+
+        return {
+            "model_name": "Composite",
+            "composite_model": model.to_dict(),
+            "parameters": params,
+            "result_html": self._result_html_from_fit(fit_result, source),
+        }
+
+    def register_global_fit_results(self, results_by_run: dict[int, tuple[object, object, object]]) -> None:
+        """Persist per-run single-tab state using the latest successful global fit."""
+        model = self._global_tab._composite_model
+        active_run = self._active_single_run_number
+
+        for run_number, payload in results_by_run.items():
+            if not isinstance(payload, tuple) or not payload:
+                continue
+            fit_result = payload[0]
+            if getattr(fit_result, "success", False) is not True:
+                continue
+            self._global_tab.register_single_fit_seed(run_number, model, fit_result)
+            run_state = self._single_state_from_fit_result(model, fit_result, source="Global fit")
+            self._single_state_by_run[int(run_number)] = run_state
+
+            if active_run is not None and int(run_number) == int(active_run):
+                self._single_tab.restore_state(run_state)
 
     # ── project state helpers ──────────────────────────────────────────
 

@@ -22,6 +22,10 @@ class _FakeAxis:
         self.errorbar_calls: list[dict[str, object]] = []
         self.plot_calls: list[dict[str, object]] = []
         self.text_calls: list[dict[str, object]] = []
+        self.xlim_calls: list[tuple[float, float]] = []
+        self.ylim_calls: list[tuple[float, float]] = []
+        self.xlabel_calls: list[str] = []
+        self.ylabel_calls: list[str] = []
 
     def errorbar(self, *args, **kwargs) -> None:
         self.errorbar_calls.append({"args": args, "kwargs": kwargs})
@@ -32,20 +36,27 @@ class _FakeAxis:
     def text(self, *args, **kwargs) -> None:
         self.text_calls.append({"args": args, "kwargs": kwargs})
 
-    def set_xlabel(self, *_args, **_kwargs) -> None:
-        return
+    def set_xlabel(self, label: str, *_args, **_kwargs) -> None:
+        self.xlabel_calls.append(label)
 
-    def set_ylabel(self, *_args, **_kwargs) -> None:
-        return
+    def set_ylabel(self, label: str, *_args, **_kwargs) -> None:
+        self.ylabel_calls.append(label)
 
     def legend(self, *_args, **_kwargs) -> None:
         return
 
+    def set_xlim(self, xmin: float, xmax: float) -> None:
+        self.xlim_calls.append((xmin, xmax))
+
+    def set_ylim(self, ymin: float, ymax: float) -> None:
+        self.ylim_calls.append((ymin, ymax))
+
 
 class _FakeFigure:
-    def __init__(self, axis: _FakeAxis) -> None:
+    def __init__(self, axis: _FakeAxis, figsize: tuple[float, float] | None = None) -> None:
         self._axis = axis
         self.saved_paths: list[str] = []
+        self.figsize = figsize
 
     def add_subplot(self, *_args, **_kwargs) -> _FakeAxis:
         return self._axis
@@ -192,6 +203,28 @@ class TestPlotPanel:
         assert panel._y_min.value() == pytest.approx(-0.1)
         assert panel._y_max.value() == pytest.approx(0.4)
 
+    def test_restored_limits_are_preserved_when_plotting_after_restore_without_dataset(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        restored_state = {
+            "x_min": 0.25,
+            "x_max": 2.75,
+            "y_min": -0.2,
+            "y_max": 0.35,
+            "fit_x_min": None,
+            "fit_x_max": None,
+        }
+        panel.restore_state(restored_state, dataset=None)
+        panel.plot_dataset(sample_dataset)
+
+        assert panel._x_min.value() == pytest.approx(0.25)
+        assert panel._x_max.value() == pytest.approx(2.75)
+        assert panel._y_min.value() == pytest.approx(-0.2)
+        assert panel._y_max.value() == pytest.approx(0.35)
+
     def test_plot_dataset(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test plotting a single dataset."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -245,6 +278,157 @@ class TestPlotPanel:
         _, labels = panel._ax.get_legend_handles_labels()
         assert "2.50 K" in labels
         assert "7.25 K" in labels
+
+    def test_add_label_keeps_multi_dataset_redraw(
+        self, panel: PlotPanel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0, 5, 50)
+        err = np.full_like(t, 0.01)
+        ds1 = MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-0.4 * t),
+            error=err,
+            metadata={"run_number": 201},
+        )
+        ds2 = MuonDataset(
+            time=t,
+            asymmetry=0.15 * np.exp(-0.3 * t),
+            error=err,
+            metadata={"run_number": 202},
+        )
+
+        panel._current_datasets = [ds1, ds2]
+        panel._current_dataset = ds2
+
+        redraw_calls: list[str] = []
+        monkeypatch.setattr(panel, "plot_datasets", lambda datasets: redraw_calls.append("multi"))
+        monkeypatch.setattr(panel, "plot_dataset", lambda dataset: redraw_calls.append("single"))
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QInputDialog.getText",
+            lambda *_args, **_kwargs: ("peak", True),
+        )
+
+        event = SimpleNamespace(inaxes=panel._ax, xdata=1.0, ydata=0.1)
+        panel._add_annotation_at_event(event)
+
+        assert len(panel._annotations) == 1
+        assert redraw_calls == ["multi"]
+
+    def test_label_field_selection_persists_in_panel_state(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        idx = panel._label_field_combo.findData("temperature")
+        assert idx >= 0
+        panel._label_field_combo.setCurrentIndex(idx)
+
+        state = panel.get_state()
+
+        restored = PlotPanel()
+        if not hasattr(restored, "_has_mpl") or not restored._has_mpl:
+            pytest.skip("matplotlib not available")
+        restored.restore_state(state, dataset=None)
+
+        assert restored._label_field_combo.currentData() == "temperature"
+
+    def test_label_field_selection_is_tracked_per_data_group(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        idx_temperature = panel._label_field_combo.findData("temperature")
+        idx_field = panel._label_field_combo.findData("field")
+        assert idx_temperature >= 0
+        assert idx_field >= 0
+
+        panel.set_active_label_group("g1")
+        panel._label_field_combo.setCurrentIndex(idx_temperature)
+
+        panel.set_active_label_group("g2")
+        panel._label_field_combo.setCurrentIndex(idx_field)
+
+        panel.set_active_label_group("g1")
+        assert panel._label_field_combo.currentData() == "temperature"
+
+        panel.set_active_label_group("g2")
+        assert panel._label_field_combo.currentData() == "field"
+
+    def test_group_label_field_preferences_persist_in_panel_state(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        idx_temperature = panel._label_field_combo.findData("temperature")
+        idx_field = panel._label_field_combo.findData("field")
+        assert idx_temperature >= 0
+        assert idx_field >= 0
+
+        panel.set_active_label_group("g1")
+        panel._label_field_combo.setCurrentIndex(idx_temperature)
+        panel.set_active_label_group("g2")
+        panel._label_field_combo.setCurrentIndex(idx_field)
+
+        state = panel.get_state()
+
+        restored = PlotPanel()
+        if not hasattr(restored, "_has_mpl") or not restored._has_mpl:
+            pytest.skip("matplotlib not available")
+        restored.restore_state(state, dataset=None)
+
+        restored.set_active_label_group("g1")
+        assert restored._label_field_combo.currentData() == "temperature"
+
+        restored.set_active_label_group("g2")
+        assert restored._label_field_combo.currentData() == "field"
+
+    def test_annotations_are_scoped_per_data_group(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel._annotations.append({"x": 0.2, "y": 0.1, "text": "default", "artist": None})
+
+        panel.set_active_label_group("g1")
+        assert panel._annotations == []
+        panel._annotations.append({"x": 0.3, "y": 0.2, "text": "g1", "artist": None})
+
+        panel.set_active_label_group("g2")
+        assert panel._annotations == []
+        panel._annotations.append({"x": 0.4, "y": 0.3, "text": "g2", "artist": None})
+
+        panel.set_active_label_group(None)
+        assert [ann["text"] for ann in panel._annotations] == ["default"]
+
+        panel.set_active_label_group("g1")
+        assert [ann["text"] for ann in panel._annotations] == ["g1"]
+
+        panel.set_active_label_group("g2")
+        assert [ann["text"] for ann in panel._annotations] == ["g2"]
+
+    def test_group_annotations_persist_in_panel_state(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel._annotations.append({"x": 0.1, "y": 0.1, "text": "default", "artist": None})
+        panel.set_active_label_group("g1")
+        panel._annotations.append({"x": 0.2, "y": 0.2, "text": "g1", "artist": None})
+        panel.set_active_label_group("g2")
+        panel._annotations.append({"x": 0.3, "y": 0.3, "text": "g2", "artist": None})
+
+        state = panel.get_state()
+
+        restored = PlotPanel()
+        if not hasattr(restored, "_has_mpl") or not restored._has_mpl:
+            pytest.skip("matplotlib not available")
+        restored.restore_state(state, dataset=None)
+
+        assert [ann["text"] for ann in restored._annotations] == ["default"]
+
+        restored.set_active_label_group("g1")
+        assert [ann["text"] for ann in restored._annotations] == ["g1"]
+
+        restored.set_active_label_group("g2")
+        assert [ann["text"] for ann in restored._annotations] == ["g2"]
 
     def test_dataset_label_falls_back_to_run_label_when_field_missing(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -361,8 +545,10 @@ class TestPlotPanel:
         )
         panel._annotations = [{"x": 1.0, "y": 0.12, "text": "peak", "artist": None}]
 
-        payload = panel.get_current_plot_export_data()
-        assert payload is not None
+        payloads = panel.get_current_plot_export_data()
+        assert payloads is not None
+        assert len(payloads) == 1
+        payload = payloads[0]
         assert payload["run_number"] == sample_dataset.run_number
         assert len(payload["components"]) == 2
         assert payload["components"][0]["name"] == "Exponential"
@@ -395,7 +581,7 @@ class TestPlotPanel:
         panel.plot_dataset(ds1)
         restored = panel.get_current_plot_export_data()
         assert restored is not None
-        assert restored["run_number"] == ds1.run_number
+        assert restored[0]["run_number"] == ds1.run_number
 
     def test_export_current_plot_warns_when_no_fit(
         self, panel: PlotPanel, sample_dataset: MuonDataset, monkeypatch: pytest.MonkeyPatch
@@ -429,20 +615,27 @@ class TestPlotPanel:
         panel.plot_dataset(sample_dataset)
         t_fit = np.linspace(0.0, 10.0, 120)
         y_fit = 0.18 * np.exp(-0.45 * t_fit)
-        panel.plot_fit(t_fit, y_fit, label="Fit")
+        fit_function = "A0*exp(-lambda*t)+C"
+        panel.plot_fit(t_fit, y_fit, label="Fit", fit_function=fit_function)
         panel._annotations = [{"x": 2.0, "y": 0.09, "text": "note", "artist": None}]
 
-        target_pdf = tmp_path / "current_plot.pdf"
+        target_gle = tmp_path / "asymmetry_plot.gle"
         axis = _FakeAxis()
         fig = _FakeFigure(axis)
         fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)
 
         subprocess_calls: list[list[str]] = []
-        infos: list[str] = []
+        dialogs: list[tuple[str, str, str]] = []
+        previews: list[str] = []
+
+        panel._x_min.setValue(1.25)
+        panel._x_max.setValue(8.75)
+        panel._y_min.setValue(-0.3)
+        panel._y_max.setValue(0.4)
 
         monkeypatch.setattr(
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
-            lambda *_a, **_k: (str(target_pdf), "PDF files (*.pdf)"),
+            lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
         monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
@@ -451,19 +644,144 @@ class TestPlotPanel:
             lambda args, **_kwargs: subprocess_calls.append(list(args)),
         )
         monkeypatch.setattr(
-            QMessageBox,
-            "information",
-            lambda *args, **_kwargs: infos.append(str(args[2]) if len(args) > 2 else ""),
+            panel,
+            "_show_export_result_dialog",
+            lambda title, summary, details: dialogs.append((title, summary, details)),
+        )
+        monkeypatch.setattr(
+            panel,
+            "_show_gle_preview",
+            lambda gle_path: previews.append(str(gle_path)),
         )
 
         panel.export_current_plot()
 
-        gle_path = target_pdf.with_suffix(".gle")
-        assert gle_path.exists()
+        assert target_gle.exists()
         assert axis.errorbar_calls
         assert axis.plot_calls
         assert axis.text_calls
+        assert axis.xlim_calls
+        assert axis.ylim_calls
+        assert axis.xlim_calls[-1] == (1.25, 8.75)
+        assert axis.ylim_calls[-1] == (-0.3, 0.4)
+        assert axis.xlabel_calls[-1] == "Time (µs)"
         assert subprocess_calls
         assert subprocess_calls[0][:3] == ["gle", "-d", "pdf"]
-        assert str(gle_path) in subprocess_calls[0]
-        assert infos
+        assert str(target_gle) in subprocess_calls[0]
+
+        fit_files = sorted(tmp_path.glob("*.fit"))
+        assert fit_files
+        fit_text = fit_files[0].read_text(encoding="utf-8")
+        assert f"! fit_function: {fit_function}" in fit_text
+        assert dialogs
+        assert dialogs[0][0] == "Export Successful"
+        assert "Data/fit files:" in dialogs[0][2]
+        assert previews == [str(target_gle)]
+
+    def test_export_current_plot_sanitizes_gle_text(
+        self,
+        panel: PlotPanel,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 60)
+        e = np.full_like(t, 0.01)
+        payload = {
+            "run_number": 901,
+            "label": "\x1b[91mRed Label\x1b[0m μ-test",
+            "data": {"t": t, "y": 0.2 * np.exp(-0.3 * t), "err": e},
+            "fit": {"t": t, "y": 0.19 * np.exp(-0.28 * t), "label": "Fit"},
+            "fit_metadata": {},
+            "annotations": [{"x": 1.0, "y": 0.1, "text": "note \x1b[92mOK\x1b[0m"}],
+        }
+
+        target_gle = tmp_path / "sanitize_export.gle"
+        axis = _FakeAxis()
+        fig = _FakeFigure(axis)
+        fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)
+
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
+        )
+        monkeypatch.setattr(panel, "get_current_plot_export_data", lambda: [payload])
+        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
+        monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
+        monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
+
+        panel.export_current_plot()
+
+        label = axis.errorbar_calls[0]["kwargs"].get("label")
+        assert "\x1b" not in str(label)
+        assert "Red Label" in str(label)
+
+        ann_text = axis.text_calls[0]["args"][2]
+        assert "\x1b" not in str(ann_text)
+
+    def test_export_current_plot_multi_uses_matching_colors_and_clean_legend(
+        self,
+        panel: PlotPanel,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 80)
+        e = np.full_like(t, 0.01)
+        ds1 = MuonDataset(time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 1001})
+        ds2 = MuonDataset(time=t, asymmetry=0.16 * np.exp(-0.22 * t), error=e, metadata={"run_number": 1002})
+        panel.plot_datasets([ds1, ds2])
+
+        panel._fit_curves = {
+            1001: (t, 0.2 * np.exp(-0.28 * t), "Fit"),
+            1002: (t, 0.16 * np.exp(-0.2 * t), "Fit"),
+        }
+        panel._fit_components_by_run = {1001: [], 1002: []}
+
+        target_gle = tmp_path / "multi_export.gle"
+        axis = _FakeAxis()
+        created_figs: list[_FakeFigure] = []
+
+        def _make_fig(**kwargs):
+            fig = _FakeFigure(axis, figsize=kwargs.get("figsize"))
+            created_figs.append(fig)
+            return fig
+
+        fake_glp = SimpleNamespace(figure=_make_fig)
+
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
+        )
+        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
+        monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
+        monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
+
+        panel.export_current_plot()
+
+        assert created_figs
+        assert created_figs[0].figsize is not None
+        width, height = created_figs[0].figsize
+        assert width == 6.0
+        assert height > 4.2
+
+        assert len(axis.errorbar_calls) >= 2
+        assert len(axis.plot_calls) >= 2
+
+        first_data_color = axis.errorbar_calls[0]["kwargs"].get("color")
+        first_fit_color = axis.plot_calls[0]["kwargs"].get("color")
+        second_data_color = axis.errorbar_calls[1]["kwargs"].get("color")
+        second_fit_color = axis.plot_calls[1]["kwargs"].get("color")
+
+        assert first_data_color == first_fit_color
+        assert second_data_color == second_fit_color
+        assert axis.plot_calls[0]["kwargs"].get("label") is None
+        assert axis.plot_calls[1]["kwargs"].get("label") is None

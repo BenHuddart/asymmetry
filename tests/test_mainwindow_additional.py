@@ -9,14 +9,16 @@ import pytest
 import numpy as np
 
 pyside6 = pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication, QToolBar  # type: ignore
+from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar  # type: ignore
 
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ParameterCompositeModel,
     ParameterGroupData,
 )
 from asymmetry.gui.mainwindow import MainWindow
+import asymmetry.gui.mainwindow as mw_module
 
 
 @pytest.fixture(scope="module")
@@ -32,6 +34,40 @@ def qapp() -> QApplication:
 def mainwindow(qapp: QApplication) -> MainWindow:
     """Create a mainwindow for testing."""
     return MainWindow()
+
+
+def _make_dataset(run_number: int, *, with_grouping: bool) -> MuonDataset:
+    counts = np.array([100.0, 95.0, 90.0, 85.0], dtype=float)
+    run = Run(
+        run_number=run_number,
+        histograms=[
+            Histogram(counts=counts, bin_width=0.01),
+            Histogram(counts=counts * 0.8, bin_width=0.01),
+        ],
+        metadata={"run_number": run_number, "field": 100.0},
+        grouping=(
+            {
+                "groups": {1: [1], 2: [2]},
+                "forward_group": 1,
+                "backward_group": 2,
+                "alpha": 1.0,
+                "first_good_bin": 0,
+                "last_good_bin": 3,
+                "bunching_factor": 1,
+                "deadtime_correction": False,
+            }
+            if with_grouping
+            else {}
+        ),
+    )
+    t = np.array([0.0, 0.01, 0.02, 0.03])
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number, "field": 100.0},
+        run=run,
+    )
 
 
 class TestMainWindowBasic:
@@ -104,6 +140,29 @@ class TestMainWindowBasic:
         expected = 100.0 / (1.0 - (100.0 * 0.01 / (0.02 * 1000.0)))
         assert corrected[0] == pytest.approx(expected)
 
+    def test_apply_grouping_does_not_auto_estimate_alpha_from_bunching_change(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Grouping apply should not recalculate alpha when bunching factor is changed."""
+        dataset = _make_dataset(7401, with_grouping=False)
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 0.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 3,
+            "deadtime_correction": False,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert dataset.run is not None
+        assert dataset.run.grouping["alpha"] == pytest.approx(1.0)
+
     def test_run_info_inclusion_handler_updates_data_browser(self, mainwindow: MainWindow) -> None:
         """Run Info include/exclude signal should add/remove data-browser columns."""
         calls: list[tuple[str, str]] = []
@@ -141,3 +200,289 @@ class TestMainWindowBasic:
 
         assert mainwindow._global_parameter_fit_window is not None
         assert mainwindow._global_parameter_fit_window.isVisible()
+
+    def test_fit_parameters_delete_group_handler_clears_matching_run_fits(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Deleting a fit-parameter group should clear fit data for its runs."""
+        captured: dict[str, list[int]] = {"fit": [], "plot": []}
+
+        mainwindow._fit_panel.clear_fits_for_runs = lambda runs: captured["fit"].extend(runs) or len(runs)
+        mainwindow._plot_panel.clear_fits_for_runs = lambda runs: captured["plot"].extend(runs) or len(runs)
+
+        mainwindow._on_fit_parameters_group_fits_deleted("g1", [101, "102", 101, "bad"])
+
+        assert captured["fit"] == [101, 102]
+        assert captured["plot"] == [101, 102]
+
+    def test_load_files_auto_applies_existing_grouping(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Newly loaded datasets should inherit existing project grouping settings."""
+        existing = _make_dataset(7001, with_grouping=True)
+        incoming = _make_dataset(7002, with_grouping=False)
+        mainwindow._data_browser.add_dataset(existing)
+
+        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
+
+        applied_payloads: list[dict] = []
+
+        def _stub_apply(dataset, payload):
+            assert int(dataset.run_number) == 7002
+            applied_payloads.append(payload)
+            return True, False
+
+        monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
+
+        mainwindow._load_files(["/tmp/new_run.wim"])
+
+        assert len(applied_payloads) == 1
+        assert applied_payloads[0]["forward_group"] == 1
+        assert applied_payloads[0]["backward_group"] == 2
+
+    def test_load_files_does_not_auto_apply_grouping_without_template(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """No grouping should be auto-applied when project has no grouping template."""
+        incoming = _make_dataset(7101, with_grouping=False)
+
+        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
+
+        call_count = {"n": 0}
+
+        def _stub_apply(_dataset, _payload):
+            call_count["n"] += 1
+            return True, False
+
+        monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
+
+        mainwindow._load_files(["/tmp/new_run_no_template.wim"])
+
+        assert call_count["n"] == 0
+
+    def test_load_files_preserves_existing_fit_curves(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Adding a new run should not clear fits stored for existing runs."""
+        existing = _make_dataset(7201, with_grouping=False)
+        incoming = _make_dataset(7202, with_grouping=False)
+
+        mainwindow._data_browser.add_dataset(existing)
+        mainwindow._plot_panel.plot_dataset(existing)
+
+        t_fit = np.array([0.0, 0.01, 0.02, 0.03], dtype=float)
+        y_fit = np.array([0.1, 0.09, 0.08, 0.07], dtype=float)
+        mainwindow._plot_panel.plot_fit(t_fit, y_fit, label="Fit")
+
+        assert 7201 in mainwindow._plot_panel._fit_curves
+
+        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
+
+        mainwindow._load_files(["/tmp/new_run_keeps_fits.wim"])
+
+        assert 7201 in mainwindow._plot_panel._fit_curves
+        stored_t, stored_y, stored_label = mainwindow._plot_panel._fit_curves[7201]
+        np.testing.assert_allclose(stored_t, t_fit)
+        np.testing.assert_allclose(stored_y, y_fit)
+        assert stored_label == "Fit"
+
+    def test_load_files_duplicate_path_no_keeps_existing_dataset(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Choosing No on duplicate-path prompt should skip reloading that file."""
+        existing = _make_dataset(7301, with_grouping=False)
+        existing.run.source_file = "/tmp/duplicate_no.wim"
+        incoming = _make_dataset(7301, with_grouping=False)
+        incoming.run.source_file = "/tmp/duplicate_no.wim"
+        incoming.metadata["comment"] = "NEW"
+
+        mainwindow._data_browser.add_dataset(existing)
+        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
+        monkeypatch.setattr(
+            QMessageBox,
+            "question",
+            lambda *_a, **_k: QMessageBox.StandardButton.No,
+        )
+
+        mainwindow._load_files(["/tmp/duplicate_no.wim"])
+
+        result = mainwindow._data_browser.get_dataset(7301)
+        assert result is not None
+        assert result.metadata.get("comment") != "NEW"
+
+    def test_load_files_duplicate_path_yes_replaces_existing_dataset(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Choosing Yes on duplicate-path prompt should replace matching datasets."""
+        existing = _make_dataset(7302, with_grouping=False)
+        existing.run.source_file = "/tmp/duplicate_yes.wim"
+        incoming = _make_dataset(7302, with_grouping=False)
+        incoming.run.source_file = "/tmp/duplicate_yes.wim"
+        incoming.metadata["comment"] = "NEW"
+
+        mainwindow._data_browser.add_dataset(existing)
+        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
+        monkeypatch.setattr(
+            QMessageBox,
+            "question",
+            lambda *_a, **_k: QMessageBox.StandardButton.Yes,
+        )
+
+        mainwindow._load_files(["/tmp/duplicate_yes.wim"])
+
+        result = mainwindow._data_browser.get_dataset(7302)
+        assert result is not None
+        assert result.metadata.get("comment") == "NEW"
+
+    def test_load_files_duplicate_path_yes_to_all_applies_to_rest(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Yes to All should prompt once and overwrite all duplicate files in batch."""
+        first_existing = _make_dataset(7303, with_grouping=False)
+        first_existing.run.source_file = "/tmp/duplicate_all_1.wim"
+        second_existing = _make_dataset(7304, with_grouping=False)
+        second_existing.run.source_file = "/tmp/duplicate_all_2.wim"
+        mainwindow._data_browser.add_dataset(first_existing)
+        mainwindow._data_browser.add_dataset(second_existing)
+
+        first_incoming = _make_dataset(7303, with_grouping=False)
+        first_incoming.run.source_file = "/tmp/duplicate_all_1.wim"
+        first_incoming.metadata["comment"] = "NEW1"
+        second_incoming = _make_dataset(7304, with_grouping=False)
+        second_incoming.run.source_file = "/tmp/duplicate_all_2.wim"
+        second_incoming.metadata["comment"] = "NEW2"
+
+        def _stub_load_file(path: str):
+            if path.endswith("duplicate_all_1.wim"):
+                return first_incoming
+            if path.endswith("duplicate_all_2.wim"):
+                return second_incoming
+            raise AssertionError(f"Unexpected path: {path}")
+
+        prompt_calls = {"n": 0}
+
+        def _stub_question(*_a, **_k):
+            prompt_calls["n"] += 1
+            return QMessageBox.StandardButton.YesToAll
+
+        monkeypatch.setattr(mainwindow, "_load_file", _stub_load_file)
+        monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
+        monkeypatch.setattr(QMessageBox, "question", _stub_question)
+
+        mainwindow._load_files([
+            "/tmp/duplicate_all_1.wim",
+            "/tmp/duplicate_all_2.wim",
+        ])
+
+        assert prompt_calls["n"] == 1
+        first_result = mainwindow._data_browser.get_dataset(7303)
+        second_result = mainwindow._data_browser.get_dataset(7304)
+        assert first_result is not None
+        assert second_result is not None
+        assert first_result.metadata.get("comment") == "NEW1"
+        assert second_result.metadata.get("comment") == "NEW2"
+
+    def test_load_files_duplicate_prompt_includes_run_number(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Duplicate-file prompt should show the already-loaded run number."""
+        existing = _make_dataset(7305, with_grouping=False)
+        existing.run.source_file = "/tmp/duplicate_message.wim"
+        incoming = _make_dataset(7305, with_grouping=False)
+        incoming.run.source_file = "/tmp/duplicate_message.wim"
+
+        captured = {"text": ""}
+
+        def _stub_question(_parent, _title, text, *_args, **_kwargs):
+            captured["text"] = text
+            return QMessageBox.StandardButton.No
+
+        mainwindow._data_browser.add_dataset(existing)
+        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
+        monkeypatch.setattr(QMessageBox, "question", _stub_question)
+
+        mainwindow._load_files(["/tmp/duplicate_message.wim"])
+
+        assert "Run number(s): 7305" in captured["text"]
+
+    def test_grouping_apply_preserves_multi_plot_selection(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Applying grouping with multiple selected datasets should keep multi-plot view."""
+        ds1 = _make_dataset(8101, with_grouping=False)
+        ds2 = _make_dataset(8102, with_grouping=False)
+        mainwindow._data_browser.add_dataset(ds1)
+        mainwindow._data_browser.add_dataset(ds2)
+        mainwindow._current_dataset = ds1
+
+        class _StubGroupingDialog:
+            class DialogCode:
+                Accepted = 1
+
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def exec(self):
+                return self.DialogCode.Accepted
+
+            def get_grouping_result(self):
+                return {
+                    "run_numbers": [8101, 8102],
+                    "groups": {1: [1], 2: [2]},
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "alpha": 1.0,
+                    "first_good_bin": 0,
+                    "last_good_bin": 3,
+                    "bunching_factor": 2,
+                    "deadtime_correction": False,
+                }
+
+        monkeypatch.setattr(mw_module, "GroupingDialog", _StubGroupingDialog)
+        monkeypatch.setattr(
+            mainwindow,
+            "_apply_grouping_settings_to_dataset",
+            lambda _dataset, _payload: (True, False),
+        )
+        monkeypatch.setattr(mainwindow._data_browser, "_rebuild_table", lambda: None)
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
+
+        calls = {"multi": 0, "single": 0}
+        monkeypatch.setattr(
+            mainwindow._plot_panel,
+            "plot_datasets",
+            lambda _datasets: calls.__setitem__("multi", calls["multi"] + 1),
+        )
+        monkeypatch.setattr(
+            mainwindow._plot_panel,
+            "plot_dataset",
+            lambda _dataset: calls.__setitem__("single", calls["single"] + 1),
+        )
+
+        mainwindow._open_shared_grouping_dialog(selected_run_number=8101)
+
+        assert calls["multi"] == 1
+        assert calls["single"] == 0

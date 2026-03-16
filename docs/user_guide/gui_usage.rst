@@ -246,23 +246,45 @@ currently displayed fitted run.
 * Double-click a label to edit its text.
 * Right-click a label to delete it.
 
-**Export Current Plot**
+**Export Plot(s) to GLE**
 
-Use **File → Export Current Plot…** (or the **Export** toolbar button) to
-export the active run view, including:
+Main-plot export is now driven directly from the plot toolbar, using:
 
-* Data points and error bars
-* The current fitted curve (single-fit or global-fit run overlay)
-* User labels placed on the plot
+* **Export Plot(s) to GLE** button
+* **Format** dropdown (PDF or EPS)
 
-Output options:
+The export writes a ``.gle`` script and per-dataset data sidecar files for the
+currently displayed fitted datasets. This works for:
 
-* ``.gle`` writes the GLE script directly.
-* ``.pdf``/``.eps`` writes a ``.gle`` script first, then compiles it with
-   ``gle`` when available.
+* Single-dataset views
+* Multi-selection overlays (all selected datasets with available fits)
 
-If ``gle`` is not installed, Asymmetry still saves the ``.gle`` file so you
-can compile it later.
+What is exported:
+
+* Data as error bars (no connecting lines)
+* Fit curves as lines
+* User plot labels/annotations (same text and coordinates)
+
+Output files and naming:
+
+* ``<label>.dat`` for each exported dataset (time, asymmetry, error)
+* ``<label>.fit`` for each exported fit curve (time, fitted asymmetry)
+* file stems are derived from the selected **Label** field value and sanitized
+   for safe filenames
+
+The ``.fit`` header includes run metadata and fit metadata, including:
+
+* fit function description
+* :math:`\chi^2`
+* reduced :math:`\chi^2`
+* fitted parameter values and uncertainties (when available)
+
+Compilation behavior:
+
+* If ``gle`` is available, Asymmetry compiles the ``.gle`` to the selected
+   format from the **Format** dropdown.
+* If ``gle`` is not available, Asymmetry still saves the ``.gle`` and sidecar
+   files so you can compile later.
 
 Fitting Panel
 -------------

@@ -10,6 +10,12 @@ Asymmetry Calculation
    :members:
    :undoc-members:
 
+.. autofunction:: asymmetry.core.transform.asymmetry.compute_asymmetry
+   :no-index:
+
+.. autofunction:: asymmetry.core.transform.asymmetry.estimate_alpha
+   :no-index:
+
 Grouping
 --------
 
@@ -17,9 +23,15 @@ Grouping
    :members:
    :undoc-members:
 
+.. autofunction:: asymmetry.core.transform.grouping.apply_grouping
+   :no-index:
+
 Rebinning
 ---------
 
 .. automodule:: asymmetry.core.transform.rebin
    :members:
    :undoc-members:
+
+.. autofunction:: asymmetry.core.transform.rebin.rebin
+   :no-index:

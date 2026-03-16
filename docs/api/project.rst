@@ -26,7 +26,7 @@ Public API
 .. autodata:: CURRENT_SCHEMA_VERSION
 
    The integer schema version written into every new project file.  Currently
-   ``1``.
+    ``3``.
 
 .. autoexception:: UnsupportedSchemaVersion
 
@@ -47,8 +47,8 @@ A project file is a UTF-8 JSON document with the following top-level
 structure::
 
     {
-        "schema_version": 1,
-        "app_version": "0.1.0",
+        "schema_version": 3,
+        "created_with_app_version": "0.1.0",
         "datasets": [
             {
                 "source_file": "/absolute/path/to/file.wim",
@@ -63,7 +63,10 @@ structure::
             "sort_column": 0,
             "sort_order": "ascending",
             "filters": {},
-            "selected_run_numbers": [1234]
+            "selected_run_numbers": [1234],
+            "selected_group_ids": [],
+            "data_groups": [],
+            "extra_columns": []
         },
         "plot_state": { ... },
         "single_fit_state": {

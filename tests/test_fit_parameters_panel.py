@@ -174,6 +174,71 @@ def test_refresh_table_uses_run_label_for_combined_rows(qapp: QApplication) -> N
     assert run_item.text() == "3039 + 3040"
 
 
+def test_delete_group_fits_removes_group_and_emits_run_numbers(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    panel = FitParametersPanel()
+    rows = [
+        _FitRow(
+            run_number=101,
+            run_label="101",
+            field=100.0,
+            temperature=5.0,
+            values={"A0": 0.2},
+            errors={"A0": 0.01},
+        ),
+        _FitRow(
+            run_number=102,
+            run_label="102",
+            field=120.0,
+            temperature=5.0,
+            values={"A0": 0.19},
+            errors={"A0": 0.01},
+        ),
+    ]
+    panel._group_fit_results = {
+        "g1": _GroupFitData(
+            group_id="g1",
+            group_name="Group 1",
+            rows=rows,
+            global_params=None,
+            varying_params=["A0"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+        "g2": _GroupFitData(
+            group_id="g2",
+            group_name="Group 2",
+            rows=list(rows),
+            global_params=None,
+            varying_params=["A0"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+    }
+    panel._active_group_id = "g1"
+    panel._rebuild_group_buttons()
+    panel._set_selected_group_ids(["g1"], emit=False)
+
+    emitted: list[tuple[str, object]] = []
+    panel.delete_group_fits_requested.connect(lambda gid, run_numbers: emitted.append((gid, run_numbers)))
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_a, **_k: QMessageBox.StandardButton.Ok,
+    )
+
+    panel._delete_group_fits("g1")
+
+    assert "g1" not in panel._group_fit_results
+    assert panel._active_group_id == "g2"
+    assert emitted == [("g1", [101, 102])]
+
+
 def test_background_labels_use_subscript_formatting() -> None:
     assert _format_plot_label("A_bg") == "$A_{bg}$ (%)"
     assert _format_plot_legend_label("A_bg") == "$A_{bg}$"

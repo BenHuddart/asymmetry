@@ -732,6 +732,21 @@ class DataBrowserPanel(QWidget):
         group = self._groups.get(group_id)
         return None if group is None else group.name
 
+    def get_group_id_for_run(self, run_number: int) -> str | None:
+        """Return data-group id containing *run_number*, if any."""
+        try:
+            run_key = int(run_number)
+        except (TypeError, ValueError):
+            return None
+        return self._run_to_group.get(run_key)
+
+    def get_group_member_run_numbers(self, group_id: str) -> list[int]:
+        """Return run numbers currently belonging to *group_id*."""
+        group = self._groups.get(group_id)
+        if group is None:
+            return []
+        return [int(rn) for rn in group.member_run_numbers]
+
     def get_dataset(self, run_number: int) -> MuonDataset | None:
         return self._datasets.get(run_number)
 

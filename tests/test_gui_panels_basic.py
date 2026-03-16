@@ -95,3 +95,36 @@ def test_plot_panel_set_global_fits_preserves_multi_dataset_view(qapp: QApplicat
     assert len(panel._current_datasets) == 2
     assert panel._current_datasets[0] is ds1
     assert panel._current_datasets[1] is ds2
+
+
+def test_plot_panel_set_global_fits_preserves_other_group_fits(qapp: QApplication) -> None:
+    """Running a global fit for one group must not remove fit curves from others."""
+    panel = PlotPanel()
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+
+    t = np.linspace(0.0, 5.0, 50)
+
+    # First global fit (group A, runs 1 & 2)
+    panel.set_global_fits(
+        {
+            1: (t, 0.2 * np.exp(-0.5 * t), "Global Fit", []),
+            2: (t, 0.15 * np.exp(-0.3 * t), "Global Fit", []),
+        }
+    )
+    assert 1 in panel._fit_curves
+    assert 2 in panel._fit_curves
+
+    # Second global fit (group B, runs 3 & 4)
+    panel.set_global_fits(
+        {
+            3: (t, 0.25 * np.exp(-0.4 * t), "Global Fit", []),
+            4: (t, 0.10 * np.exp(-0.6 * t), "Global Fit", []),
+        }
+    )
+
+    # Both groups' fit curves should be present
+    assert 1 in panel._fit_curves, "Group A fit for run 1 was incorrectly removed"
+    assert 2 in panel._fit_curves, "Group A fit for run 2 was incorrectly removed"
+    assert 3 in panel._fit_curves
+    assert 4 in panel._fit_curves
