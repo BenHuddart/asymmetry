@@ -181,6 +181,25 @@ class DataBrowserPanel(QWidget):
     grouping_requested = Signal(int)
 
     _COLUMNS = ["Run", "Title", "𝑇 (K)", "𝐵 (G)", "Comment"]
+    _RUN_INFO_FIELD_LABELS = {
+        "instrument": "Instrument",
+        "run_label": "Run",
+        "title": "Title",
+        "comment": "Comment",
+        "started": "Start",
+        "stopped": "End",
+        "temperature": "Temperature (K)",
+        "field": "Magnetic Field (G)",
+        "field_direction": "Field Direction",
+        "period_count": "Periods",
+        "run_info.points": "Points",
+        "run_info.histograms": "Histograms",
+        "run_info.bins": "Bins",
+        "run_info.bin_width_us": "Bin Width (us)",
+        "run_info.counts_mev": "Counts (MEv)",
+        "run_info.counts_per_detector": "Counts per Detector",
+        "nexus_fields.sample.shape": "Orientation",
+    }
     _GROUP_ROLE = Qt.ItemDataRole.UserRole
     _GROUP_SENTINEL_PREFIX = "group:"
 
@@ -581,9 +600,16 @@ class DataBrowserPanel(QWidget):
 
     def _refresh_column_headers(self) -> None:
         """Apply base and dynamic column labels to the table header."""
-        labels = list(self._COLUMNS) + list(self._extra_columns)
+        labels = list(self._COLUMNS) + [self._extra_column_header(key) for key in self._extra_columns]
         self._table.setColumnCount(len(labels))
         self._table.setHorizontalHeaderLabels(labels)
+
+    def _extra_column_header(self, field_key: str) -> str:
+        """Return display header for an extra metadata-backed column."""
+        key = str(field_key).strip()
+        if not key:
+            return ""
+        return self._RUN_INFO_FIELD_LABELS.get(key, key)
 
     def add_extra_column(self, field_key: str) -> None:
         """Add a metadata-backed dynamic column to the browser table."""

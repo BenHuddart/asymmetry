@@ -260,6 +260,18 @@ def test_extra_column_roundtrip_in_state(qapp: QApplication) -> None:
     assert "nexus_fields.sample.temperature" in header_labels
 
 
+def test_orientation_extra_column_uses_friendly_header(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _dataset(303)
+    ds.metadata["nexus_fields"] = {"sample": {"shape": "plate"}}
+    panel.add_dataset(ds)
+
+    panel.add_extra_column("nexus_fields.sample.shape")
+
+    header_labels = [panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())]
+    assert "Orientation" in header_labels
+
+
 def test_run_info_synthetic_extra_columns_render_values(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     ds = _dataset_with_run(302)
@@ -270,9 +282,9 @@ def test_run_info_synthetic_extra_columns_render_values(qapp: QApplication) -> N
     panel.add_extra_column("run_info.counts_mev")
 
     labels = [panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())]
-    points_col = labels.index("run_info.points")
-    hist_col = labels.index("run_info.histograms")
-    mev_col = labels.index("run_info.counts_mev")
+    points_col = labels.index("Points")
+    hist_col = labels.index("Histograms")
+    mev_col = labels.index("Counts (MEv)")
 
     assert panel._table.item(0, points_col).text() == str(ds.n_points)
     assert panel._table.item(0, hist_col).text() == "2"

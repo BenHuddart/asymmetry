@@ -244,6 +244,54 @@ class TestMainWindowBasic:
         assert applied_payloads[0]["forward_group"] == 1
         assert applied_payloads[0]["backward_group"] == 2
 
+    def test_load_files_auto_applies_grouping_from_highest_run_dataset(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Auto-grouping should use the highest run number already in the browser."""
+        low_run = _make_dataset(7001, with_grouping=True)
+        high_run = _make_dataset(7010, with_grouping=True)
+        incoming = _make_dataset(7020, with_grouping=False)
+
+        assert low_run.run is not None
+        low_run.run.grouping.update({
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+        })
+        assert high_run.run is not None
+        high_run.run.grouping.update({
+            "groups": {5: [1], 6: [2]},
+            "forward_group": 5,
+            "backward_group": 6,
+            "alpha": 2.5,
+        })
+
+        mainwindow._data_browser.add_dataset(low_run)
+        mainwindow._data_browser.add_dataset(high_run)
+        mainwindow._current_dataset = low_run
+
+        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
+
+        applied_payloads: list[dict] = []
+
+        def _stub_apply(dataset, payload):
+            assert int(dataset.run_number) == 7020
+            applied_payloads.append(payload)
+            return True, False
+
+        monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
+
+        mainwindow._load_files(["/tmp/new_run_uses_highest_grouping.wim"])
+
+        assert len(applied_payloads) == 1
+        assert applied_payloads[0]["forward_group"] == 5
+        assert applied_payloads[0]["backward_group"] == 6
+        assert applied_payloads[0]["alpha"] == pytest.approx(2.5)
+
     def test_load_files_does_not_auto_apply_grouping_without_template(
         self,
         mainwindow: MainWindow,
@@ -486,3 +534,34 @@ class TestMainWindowBasic:
 
         assert calls["multi"] == 1
         assert calls["single"] == 0
+
+    def test_on_grouping_current_passes_selected_runs_to_dialog(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Grouping launch should preselect currently highlighted datasets."""
+        ds1 = _make_dataset(8201, with_grouping=False)
+        ds2 = _make_dataset(8202, with_grouping=False)
+
+        mainwindow._current_dataset = ds1
+        monkeypatch.setattr(mainwindow._data_browser, "get_all_datasets", lambda: [ds1, ds2])
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
+
+        captured = {"selected_run_numbers": None}
+
+        class _StubGroupingDialog:
+            class DialogCode:
+                Accepted = 1
+
+            def __init__(self, *_args, **kwargs):
+                captured["selected_run_numbers"] = kwargs.get("selected_run_numbers")
+
+            def exec(self):
+                return 0
+
+        monkeypatch.setattr(mw_module, "GroupingDialog", _StubGroupingDialog)
+
+        mainwindow._on_grouping_current()
+
+        assert captured["selected_run_numbers"] == [8201, 8202]

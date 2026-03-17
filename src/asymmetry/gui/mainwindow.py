@@ -498,23 +498,29 @@ class MainWindow(QMainWindow):
         return QMessageBox.StandardButton.No
 
     def _get_project_grouping_template(self) -> dict | None:
-        """Return a grouping payload from the current project, if available."""
-        datasets: list = []
-        if self._current_dataset is not None:
-            datasets.append(self._current_dataset)
+        """Return grouping payload from the highest-run dataset in the browser.
+
+        When multiple datasets have different grouping definitions, this chooses
+        the payload from the largest run number currently loaded in the data
+        browser so newly added files inherit the latest in-browser grouping.
+        """
+        browser_datasets: list = []
         if hasattr(self._data_browser, "get_all_datasets"):
-            datasets.extend(self._data_browser.get_all_datasets())
+            browser_datasets = list(self._data_browser.get_all_datasets())
 
-        seen_runs: set[int] = set()
-        for dataset in datasets:
+        ranked: list[tuple[float, object]] = []
+        for dataset in browser_datasets:
             try:
-                run_number = int(dataset.run_number)
+                rank = float(int(dataset.run_number))
             except (TypeError, ValueError):
-                run_number = id(dataset)
-            if run_number in seen_runs:
-                continue
-            seen_runs.add(run_number)
+                rank = float("-inf")
+            ranked.append((rank, dataset))
 
+        if not ranked and self._current_dataset is not None:
+            ranked.append((float("-inf"), self._current_dataset))
+
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        for _, dataset in ranked:
             payload = self._extract_grouping_overrides(dataset)
             if isinstance(payload, dict) and isinstance(payload.get("groups"), dict):
                 groups = payload.get("groups", {})
@@ -550,14 +556,35 @@ class MainWindow(QMainWindow):
 
     def _on_grouping_requested(self, run_number: int) -> None:
         """Open shared grouping dialog focused on a selected run."""
-        self._open_shared_grouping_dialog(selected_run_number=run_number)
+        selected_run_numbers = [
+            int(ds.run_number)
+            for ds in self._data_browser.get_selected_datasets()
+        ]
+        if int(run_number) not in selected_run_numbers:
+            selected_run_numbers = [int(run_number)]
+        self._open_shared_grouping_dialog(
+            selected_run_number=run_number,
+            selected_run_numbers=selected_run_numbers,
+        )
 
     def _on_grouping_current(self) -> None:
         """Open shared grouping dialog for all datasets in the active project."""
         selected_run = None if self._current_dataset is None else int(self._current_dataset.run_number)
-        self._open_shared_grouping_dialog(selected_run_number=selected_run)
+        selected_run_numbers = [
+            int(ds.run_number)
+            for ds in self._data_browser.get_selected_datasets()
+        ]
+        self._open_shared_grouping_dialog(
+            selected_run_number=selected_run,
+            selected_run_numbers=selected_run_numbers if selected_run_numbers else None,
+        )
 
-    def _open_shared_grouping_dialog(self, *, selected_run_number: int | None = None) -> None:
+    def _open_shared_grouping_dialog(
+        self,
+        *,
+        selected_run_number: int | None = None,
+        selected_run_numbers: list[int] | None = None,
+    ) -> None:
         """Show shared grouping dialog and apply settings to selected datasets."""
         all_datasets = (
             self._data_browser.get_all_datasets()
@@ -567,6 +594,7 @@ class MainWindow(QMainWindow):
         dialog = GroupingDialog(
             all_datasets,
             selected_run_number=selected_run_number,
+            selected_run_numbers=selected_run_numbers,
             parent=self,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:

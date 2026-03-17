@@ -173,9 +173,10 @@ class CompositeModel:
         for mapping, component in zip(self._param_mappings, self.components, strict=True):
             for pname in component.param_names:
                 unique_name = mapping[pname]
-                param_names.append(unique_name)
-                defaults[unique_name] = component.param_defaults[pname]
-                param_info[unique_name] = get_param_info(unique_name)
+                if unique_name not in defaults:
+                    param_names.append(unique_name)
+                    defaults[unique_name] = component.param_defaults[pname]
+                    param_info[unique_name] = get_param_info(unique_name)
         self.param_names = param_names
         self.param_defaults = defaults
         self.param_info = param_info
@@ -185,12 +186,23 @@ class CompositeModel:
             pname for component in self.components for pname in component.param_names
         )
         mappings: list[dict[str, str]] = []
+        amplitude_group_starts: list[int] = []
+        current_start = 1
+        for idx in range(1, len(self.components) + 1):
+            if idx == 1:
+                current_start = 1
+            else:
+                # Start a new amplitude group after additive operators.
+                if self.operators[idx - 2] in {"+", "-"}:
+                    current_start = idx
+            amplitude_group_starts.append(current_start)
+
         for idx, component in enumerate(self.components, start=1):
             mapping: dict[str, str] = {}
             for pname in component.param_names:
                 if pname == "A":
-                    # Amplitudes are always indexed by component.
-                    mapping[pname] = f"{pname}_{idx}"
+                    # Share one amplitude within each multiplicative/divisive chain.
+                    mapping[pname] = f"{pname}_{amplitude_group_starts[idx - 1]}"
                 elif name_counts[pname] > 1:
                     mapping[pname] = f"{pname}_{idx}"
                 else:
@@ -203,16 +215,24 @@ class CompositeModel:
         t_arr = np.asarray(t, dtype=float)
 
         values: list[NDArray[np.float64]] = []
+        amplitudes: list[str | None] = []
         for component, mapping in zip(self.components, self._param_mappings, strict=True):
             component_kwargs = self._extract_component_kwargs(component, mapping, kwargs)
+            amp_name = None
+            if "A" in component.param_names:
+                amp_name = mapping["A"]
+                # Apply composite amplitude once per multiplicative group.
+                component_kwargs["A"] = 1.0
             values.append(np.asarray(component.function(t_arr, **component_kwargs), dtype=float))
+            amplitudes.append(amp_name)
 
         if not values:
             return np.zeros_like(t_arr)
 
         reduced_values: list[NDArray[np.float64]] = [values[0]]
+        reduced_amplitudes: list[str | None] = [amplitudes[0]]
         reduced_ops: list[str] = []
-        for op, rhs in zip(self.operators, values[1:], strict=True):
+        for op, rhs, rhs_amp in zip(self.operators, values[1:], amplitudes[1:], strict=True):
             if op in {"*", "/"}:
                 lhs = reduced_values[-1]
                 if op == "*":
@@ -222,12 +242,26 @@ class CompositeModel:
                         out = np.full_like(lhs, 1e30, dtype=float)
                         np.divide(lhs, rhs, out=out, where=np.abs(rhs) > 1e-30)
                     reduced_values[-1] = out
+
+                lhs_amp = reduced_amplitudes[-1]
+                if lhs_amp is None:
+                    reduced_amplitudes[-1] = rhs_amp
+                elif rhs_amp is not None and rhs_amp != lhs_amp:
+                    raise ValueError("Inconsistent amplitude mapping in multiplicative chain")
             else:
                 reduced_ops.append(op)
                 reduced_values.append(rhs)
+                reduced_amplitudes.append(rhs_amp)
 
-        result = reduced_values[0]
-        for op, rhs in zip(reduced_ops, reduced_values[1:], strict=True):
+        weighted_values: list[NDArray[np.float64]] = []
+        for amp_name, value in zip(reduced_amplitudes, reduced_values, strict=True):
+            if amp_name is None:
+                weighted_values.append(value)
+            else:
+                weighted_values.append(float(kwargs[amp_name]) * value)
+
+        result = weighted_values[0]
+        for op, rhs in zip(reduced_ops, weighted_values[1:], strict=True):
             if op == "+":
                 result = result + rhs
             else:
@@ -304,9 +338,16 @@ class CompositeModel:
     def formula_string(self) -> str:
         """Return a symbolic formula preview string."""
         parts: list[str] = []
-        for component, mapping in zip(self.components, self._param_mappings, strict=True):
+        for idx, (component, mapping) in enumerate(
+            zip(self.components, self._param_mappings, strict=True), start=1
+        ):
             fmt_values = {pname: mapping[pname] for pname in component.param_names}
-            parts.append(component.formula_template.format(**fmt_values))
+            if "A" in fmt_values and idx > 1 and self.operators[idx - 2] in {"*", "/"}:
+                fmt_values["A"] = "1"
+            term = component.formula_template.format(**fmt_values)
+            if fmt_values.get("A") == "1" and term.startswith("1*"):
+                term = term[2:]
+            parts.append(term)
 
         if not parts:
             return ""

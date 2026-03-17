@@ -25,10 +25,11 @@ def test_addition_and_multiplication_work() -> None:
     assert np.allclose(add_out, COMPONENTS["Exponential"].function(t, A=1.0, Lambda=0.5) + 0.2)
 
     mul_model = CompositeModel(["Exponential", "Gaussian"], operators=["*"])
-    mul_out = mul_model.function(t, A_1=1.0, Lambda=0.5, A_2=0.8, sigma=0.25)
+    mul_out = mul_model.function(t, A_1=0.8, Lambda=0.5, sigma=0.25)
     exp_vals = COMPONENTS["Exponential"].function(t, A=1.0, Lambda=0.5)
-    gauss_vals = COMPONENTS["Gaussian"].function(t, A=0.8, sigma=0.25)
-    assert np.allclose(mul_out, exp_vals * gauss_vals)
+    gauss_vals = COMPONENTS["Gaussian"].function(t, A=1.0, sigma=0.25)
+    expected = 0.8 * exp_vals * gauss_vals
+    assert np.allclose(mul_out, expected)
 
 
 def test_operator_precedence_is_respected() -> None:
@@ -54,6 +55,14 @@ def test_unique_symbols_are_not_indexed_except_amplitude() -> None:
     assert "A_1" in model.param_names
     assert "Lambda" in model.param_names
     assert "A_bg" in model.param_names
+
+
+def test_multiplicative_chain_uses_single_amplitude_parameter() -> None:
+    model = CompositeModel(["Exponential", "Gaussian", "Oscillatory"], operators=["*", "*"])
+
+    assert "A_1" in model.param_names
+    assert "A_2" not in model.param_names
+    assert "A_3" not in model.param_names
 
 
 def test_formula_and_serialization_round_trip() -> None:
@@ -99,7 +108,7 @@ def test_evaluate_components_returns_named_component_curves() -> None:
         A_1=1.2,
         Lambda=0.3,
         A_bg=0.1,
-        A_3=0.8,
+        A_2=0.8,
         sigma=0.4,
     )
 
@@ -126,3 +135,12 @@ def test_evaluate_components_additive_only_filters_multiplicative_terms() -> Non
     )
 
     assert [name for name, _vals in curves] == ["Exponential", "Constant", "Constant"]
+
+
+def test_formula_string_shows_single_amplitude_for_multiplicative_chain() -> None:
+    model = CompositeModel(["Exponential", "Gaussian"], operators=["*"])
+    formula = model.formula_string()
+
+    assert "A_1*exp(-Lambda*t)" in formula
+    assert "exp(-(sigma*t)^2)" in formula
+    assert "1*exp(-(sigma*t)^2)" not in formula

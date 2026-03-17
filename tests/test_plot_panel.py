@@ -53,10 +53,17 @@ class _FakeAxis:
 
 
 class _FakeFigure:
-    def __init__(self, axis: _FakeAxis, figsize: tuple[float, float] | None = None) -> None:
+    def __init__(
+        self,
+        axis: _FakeAxis,
+        figsize: tuple[float, float] | None = None,
+        *,
+        generate_data_files: bool = False,
+    ) -> None:
         self._axis = axis
         self.saved_paths: list[str] = []
         self.figsize = figsize
+        self.generate_data_files = generate_data_files
 
     def add_subplot(self, *_args, **_kwargs) -> _FakeAxis:
         return self._axis
@@ -64,6 +71,26 @@ class _FakeFigure:
     def savefig(self, path: str) -> None:
         self.saved_paths.append(path)
         Path(path).write_text("! fake gle", encoding="utf-8")
+        if not self.generate_data_files:
+            return
+
+        out_dir = Path(path).parent
+        for call in self._axis.errorbar_calls:
+            kwargs = call.get("kwargs", {})
+            data_name = kwargs.get("data_name")
+            if not data_name:
+                continue
+            args = call.get("args", ())
+            if len(args) < 2:
+                continue
+            x_vals = np.asarray(args[0], dtype=float)
+            y_vals = np.asarray(args[1], dtype=float)
+            e_vals = kwargs.get("yerr")
+            err = np.asarray(e_vals, dtype=float) if e_vals is not None else np.zeros_like(y_vals)
+            data_path = out_dir / f"{data_name}.dat"
+            with open(data_path, "w", encoding="utf-8") as f:
+                for xv, yv, ev in zip(x_vals, y_vals, err):
+                    f.write(f"{float(xv):.10g} {float(yv):.10g} {float(ev):.10g}\n")
 
 
 @pytest.fixture(scope="module")
@@ -233,6 +260,26 @@ class TestPlotPanel:
         # Check if plot was created (canvas should have drawn something)
         assert panel._canvas is not None
 
+    def test_single_dataset_shows_alpha_value_in_plot(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0, 10, 100)
+        a = 0.2 * np.exp(-0.5 * t)
+        e = np.full_like(t, 0.01)
+        run = Run(run_number=4321, grouping={"alpha": 1.2345})
+        ds = MuonDataset(
+            time=t,
+            asymmetry=a,
+            error=e,
+            metadata={"run_number": 4321},
+            run=run,
+        )
+
+        panel.plot_dataset(ds)
+        assert not panel._alpha_label.isHidden()
+        assert panel._alpha_label.text() == "(alpha = 1.2345)"
+
     def test_plot_multiple_datasets(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test plotting multiple datasets."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -278,6 +325,33 @@ class TestPlotPanel:
         _, labels = panel._ax.get_legend_handles_labels()
         assert "2.50 K" in labels
         assert "7.25 K" in labels
+
+    def test_multi_dataset_plot_does_not_show_alpha_overlay(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0, 5, 50)
+        err = np.full_like(t, 0.01)
+        run1 = Run(run_number=701, grouping={"alpha": 1.1})
+        run2 = Run(run_number=702, grouping={"alpha": 1.2})
+        ds1 = MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-0.4 * t),
+            error=err,
+            metadata={"run_number": 701},
+            run=run1,
+        )
+        ds2 = MuonDataset(
+            time=t,
+            asymmetry=0.15 * np.exp(-0.3 * t),
+            error=err,
+            metadata={"run_number": 702},
+            run=run2,
+        )
+
+        panel.plot_datasets([ds1, ds2])
+        assert panel._alpha_label.isHidden()
+        assert panel._alpha_label.text() == ""
 
     def test_add_label_keeps_multi_dataset_redraw(
         self, panel: PlotPanel, monkeypatch: pytest.MonkeyPatch
@@ -519,14 +593,33 @@ class TestPlotPanel:
         assert np.all(fit_ds.time <= 4.0)
         assert len(fit_ds.time) < len(sample_dataset.time)
 
-    def test_get_current_plot_export_data_requires_fitted_curve(
+    def test_get_current_plot_export_data_available_with_plotted_data(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
         panel.plot_dataset(sample_dataset)
-        assert panel.get_current_plot_export_data() is None
+        payloads = panel.get_current_plot_export_data()
+        assert payloads is not None
+        assert len(payloads) == 1
+        assert payloads[0]["run_number"] == sample_dataset.run_number
+        assert payloads[0]["fit"] is None
+
+    def test_export_controls_enabled_after_plotting_data(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        assert panel._export_gle_btn.isEnabled() is False
+        assert panel._gle_format_combo.isEnabled() is False
+
+        panel.plot_dataset(sample_dataset)
+        panel._update_export_enabled()
+
+        assert panel._export_gle_btn.isEnabled() is True
+        assert panel._gle_format_combo.isEnabled() is True
 
     def test_get_current_plot_export_data_includes_components_and_annotations(
         self, panel: PlotPanel, sample_dataset: MuonDataset
@@ -576,20 +669,22 @@ class TestPlotPanel:
         assert panel.get_current_plot_export_data() is not None
 
         panel.plot_dataset(ds2)
-        assert panel.get_current_plot_export_data() is None
+        payload_no_fit = panel.get_current_plot_export_data()
+        assert payload_no_fit is not None
+        assert payload_no_fit[0]["run_number"] == ds2.run_number
+        assert payload_no_fit[0]["fit"] is None
 
         panel.plot_dataset(ds1)
         restored = panel.get_current_plot_export_data()
         assert restored is not None
         assert restored[0]["run_number"] == ds1.run_number
 
-    def test_export_current_plot_warns_when_no_fit(
+    def test_export_current_plot_warns_when_no_data(
         self, panel: PlotPanel, sample_dataset: MuonDataset, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        panel.plot_dataset(sample_dataset)
         warnings: list[str] = []
         monkeypatch.setattr(
             QMessageBox,
@@ -600,7 +695,7 @@ class TestPlotPanel:
         panel.export_current_plot()
 
         assert warnings
-        assert "No fitted curve" in warnings[0]
+        assert "No plotted data" in warnings[0]
 
     def test_export_current_plot_writes_gle_and_compiles_pdf(
         self,
@@ -722,6 +817,118 @@ class TestPlotPanel:
 
         ann_text = axis.text_calls[0]["args"][2]
         assert "\x1b" not in str(ann_text)
+
+    def test_export_current_plot_dat_header_includes_grouping(
+        self,
+        panel: PlotPanel,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 80)
+        e = np.full_like(t, 0.01)
+        run = Run(
+            run_number=2401,
+            grouping={
+                "forward": [1, 2, 3],
+                "backward": [4, 5, 6],
+                "alpha": 1.125,
+                "first_good_bin": 8,
+                "last_good_bin": 72,
+            },
+        )
+        ds = MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-0.3 * t),
+            error=e,
+            metadata={"run_number": 2401},
+            run=run,
+        )
+        panel.plot_dataset(ds)
+
+        target_gle = tmp_path / "grouping_export.gle"
+        axis = _FakeAxis()
+        fig = _FakeFigure(axis)
+        fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)
+
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
+        )
+        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
+        monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
+        monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
+
+        panel.export_current_plot()
+
+        dat_files = sorted(tmp_path.glob("*.dat"))
+        assert dat_files
+        dat_text = dat_files[0].read_text(encoding="utf-8")
+        assert "! START OF RUN INFORMATION" in dat_text
+        assert "!  Run number  : 2401" in dat_text
+        assert "! END OF RUN INFORMATION" in dat_text
+        assert "! START OF GROUPING INFORMATION" in dat_text
+        assert "!  Group#01  Hist(t0): 01, 02, 03" in dat_text
+        assert "!  Group#02  Hist(t0): 04, 05, 06" in dat_text
+        assert "!  Forward Group = forward, Backward Group = backward, Alpha = 1.1250" in dat_text
+        assert "!  Offset to first good bin = 8, Last good bin = 72" in dat_text
+        assert "! END OF GROUPING INFORMATION" in dat_text
+        assert "! START OF DATA SET INFORMATION" in dat_text
+        assert "! END OF DATA SET INFORMATION" in dat_text
+
+    def test_export_current_plot_dat_header_survives_gleplot_save_overwrite(
+        self,
+        panel: PlotPanel,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 40)
+        e = np.full_like(t, 0.01)
+        run = Run(
+            run_number=2410,
+            grouping={"forward": [1, 2], "backward": [3, 4], "alpha": 0.95},
+        )
+        ds = MuonDataset(
+            time=t,
+            asymmetry=0.12 * np.exp(-0.25 * t),
+            error=e,
+            metadata={"run_number": 2410},
+            run=run,
+        )
+        panel.plot_dataset(ds)
+
+        target_gle = tmp_path / "overwrite_export.gle"
+        axis = _FakeAxis()
+        fig = _FakeFigure(axis, generate_data_files=True)
+        fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)
+
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
+        )
+        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
+        monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
+        monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
+
+        panel.export_current_plot()
+
+        dat_files = sorted(tmp_path.glob("*.dat"))
+        assert dat_files
+        dat_text = dat_files[0].read_text(encoding="utf-8")
+        assert dat_text.startswith("! START OF RUN INFORMATION")
+        assert "! START OF GROUPING INFORMATION" in dat_text
+        assert "!  Group#01  Hist(t0): 01, 02" in dat_text
+        assert "!  Group#02  Hist(t0): 03, 04" in dat_text
+        assert "!  Forward Group = forward, Backward Group = backward, Alpha = 0.9500" in dat_text
 
     def test_export_current_plot_multi_uses_matching_colors_and_clean_legend(
         self,

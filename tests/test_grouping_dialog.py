@@ -109,6 +109,19 @@ def test_estimate_alpha_uses_reference_run_only(qapp: QApplication) -> None:
     assert dialog._alpha_spin.value() == pytest.approx(4.0)
 
 
+def test_preselected_run_numbers_set_dataset_tickboxes(qapp: QApplication) -> None:
+    ds_a = _dataset_with_ratio(5101, ratio=2.0)
+    ds_b = _dataset_with_ratio(5102, ratio=3.0)
+
+    dialog = GroupingDialog(
+        [ds_a, ds_b],
+        selected_run_number=5101,
+        selected_run_numbers=[5102],
+    )
+
+    assert dialog._checked_run_numbers() == [5102]
+
+
 def test_pressing_enter_on_bunch_factor_does_not_estimate_alpha(qapp: QApplication) -> None:
     dialog = GroupingDialog([_dataset_with_histograms()])
     assert dialog._alpha_spin.value() == pytest.approx(1.0)

@@ -35,7 +35,7 @@ def _dataset() -> MuonDataset:
             "title": "Test",
             "temperature": 10.0,
             "field": 50.0,
-            "nexus_fields": {"sample": {"temperature": 10.0}},
+            "nexus_fields": {"sample": {"temperature": 10.0, "shape": "plate"}},
             "nexus_time_series": {
                 "sample/Temp_Sample": {
                     "units": "K",
@@ -124,6 +124,21 @@ def test_summary_derived_rows_have_enabled_include_checkboxes(qapp: QApplication
         assert checkbox is not None
         assert checkbox.isEnabled()
 
+    dialog.close()
+
+
+def test_summary_shows_orientation_from_nexus_sample_shape(qapp: QApplication) -> None:
+    dialog = RunInfoDialog(_dataset())
+
+    orientation_row = _row_for_field(dialog._summary_table, "Orientation")
+    assert orientation_row >= 0
+    value_item = dialog._summary_table.item(orientation_row, 2)
+    assert value_item is not None
+    assert value_item.text() == "plate"
+
+    checkbox = dialog._summary_table.cellWidget(orientation_row, 0)
+    assert checkbox is not None
+    assert checkbox.isEnabled()
     dialog.close()
 
 

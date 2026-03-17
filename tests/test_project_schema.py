@@ -283,6 +283,26 @@ class TestDataBrowserPanelState:
         result = panel.add_combined_dataset([10, 99])
         assert result is None
 
+    def test_extra_column_header_uses_run_info_label_for_known_field(self, qapp):
+        from asymmetry.gui.panels.data_browser import DataBrowserPanel
+
+        panel = DataBrowserPanel()
+        panel.add_extra_column("run_info.points")
+
+        header = panel._table.horizontalHeaderItem(len(panel._COLUMNS))
+        assert header is not None
+        assert header.text() == "Points"
+
+    def test_extra_column_header_keeps_key_for_unknown_field(self, qapp):
+        from asymmetry.gui.panels.data_browser import DataBrowserPanel
+
+        panel = DataBrowserPanel()
+        panel.add_extra_column("nexus_fields.sample.custom_value")
+
+        header = panel._table.horizontalHeaderItem(len(panel._COLUMNS))
+        assert header is not None
+        assert header.text() == "nexus_fields.sample.custom_value"
+
 
 class TestPlotPanelState:
     def test_get_state_returns_required_keys(self, qapp):

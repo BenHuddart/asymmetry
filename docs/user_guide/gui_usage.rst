@@ -178,6 +178,10 @@ is labelled in the legend:
 If the selected metadata value is unavailable for a run, Asymmetry
 automatically falls back to the run label.
 
+For single-dataset views, the main plot also shows the active grouping
+``alpha`` value above the canvas when one is available. The overlay is hidden
+for multi-dataset comparisons.
+
 Run Info and Metadata Columns
 -----------------------------
 
@@ -196,6 +200,10 @@ The primary table shows key run parameters in four columns:
 Ticking a checkbox adds that field as a dynamic column in the Data Browser.
 Unticking removes it.
 
+Known summary fields use friendly Data Browser headers rather than raw metadata
+paths. For example, ``run_info.points`` appears as **Points**, and
+``nexus_fields.sample.shape`` appears as **Orientation**.
+
 For parameters backed by time-series NeXus logs, a **Plot** button appears in
 the right column and opens the full log trace.
 
@@ -208,6 +216,10 @@ metadata table with the same include-checkbox and log-plot behavior.
 This allows promoting any advanced NeXus field into the Data Browser without
 leaving the Run Info workflow.
 
+The Advanced window now includes a search box, so you can filter the metadata
+table by field name or rendered value before adding a column or opening a log
+trace.
+
 Grouping and Bunching
 ~~~~~~~~~~~~~~~~~~~~~
 
@@ -217,6 +229,11 @@ toolbar.
 
 This keeps fit inputs consistent with the run grouping settings and project
 state.
+
+When you open the Grouping dialog from a run selection, the currently selected
+datasets are pre-ticked in the dialog. When loading new runs into an existing
+project, Asymmetry reuses the grouping payload from the highest run number
+currently present in the Data Browser when that payload is well-defined.
 
 Changing bunching refreshes both the displayed curve and the dataset passed to
 the fitting panel.
@@ -236,7 +253,7 @@ Main Plot Labels and Export
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The main plot now supports interactive labels and direct GLE export for the
-currently displayed fitted run.
+currently displayed dataset or dataset overlay.
 
 **Interactive labels**
 
@@ -253,24 +270,30 @@ Main-plot export is now driven directly from the plot toolbar, using:
 * **Export Plot(s) to GLE** button
 * **Format** dropdown (PDF or EPS)
 
-The export writes a ``.gle`` script and per-dataset data sidecar files for the
-currently displayed fitted datasets. This works for:
+The export writes a ``.gle`` script and per-dataset sidecar files for the
+currently displayed datasets. This works for:
 
 * Single-dataset views
-* Multi-selection overlays (all selected datasets with available fits)
+* Multi-selection overlays (all selected datasets currently plotted)
 
 What is exported:
 
 * Data as error bars (no connecting lines)
-* Fit curves as lines
+* Fit curves as lines when a fit overlay is available
 * User plot labels/annotations (same text and coordinates)
 
 Output files and naming:
 
 * ``<label>.dat`` for each exported dataset (time, asymmetry, error)
-* ``<label>.fit`` for each exported fit curve (time, fitted asymmetry)
+* ``<label>.fit`` for each exported fit curve when present (time, fitted asymmetry)
 * file stems are derived from the selected **Label** field value and sanitized
    for safe filenames
+
+The ``.dat`` sidecar now includes structured comment headers describing the run
+and grouping state used to produce the plotted asymmetry, including run number,
+title/comment timestamps when available, histogram/binning information,
+forward/backward grouping, alpha, good-bin limits, bunching, and deadtime
+correction state.
 
 The ``.fit`` header includes run metadata and fit metadata, including:
 
@@ -285,6 +308,8 @@ Compilation behavior:
    format from the **Format** dropdown.
 * If ``gle`` is not available, Asymmetry still saves the ``.gle`` and sidecar
    files so you can compile later.
+* If ``gleplot`` regenerates matching ``.dat`` files while saving, Asymmetry
+  rewrites the metadata-rich sidecars afterwards so those headers are retained.
 
 Fitting Panel
 -------------
@@ -329,7 +354,9 @@ Available components in the builder:
 
 Parameter naming rules in the table:
 
-* Amplitudes are always indexed by component order: ``A_1``, ``A_2``, ...
+* Additive terms get their own amplitudes: ``A_1``, ``A_2``, ...
+* Multiplicative or divisive component chains share one amplitude parameter,
+   so ``Exponential * Gaussian`` uses ``A_1`` rather than ``A_1`` and ``A_2``
 * ``A_bg`` is present by default from the constant component
 * Other symbols (for example ``Lambda``, ``sigma``, ``frequency``) are only
   indexed when duplicates exist in the same expression

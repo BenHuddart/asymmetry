@@ -22,10 +22,17 @@ Parameter Naming Rules
 
 Composite models generate unique parameter names automatically:
 
-* Amplitudes are indexed by component: ``A_1``, ``A_2``, ...
+* Additive terms get their own amplitude parameters: ``A_1``, ``A_2``, ...
+* Components joined by ``*`` or ``/`` share a single amplitude for that
+    multiplicative chain. For example, ``Exponential * Gaussian`` uses only
+    ``A_1``.
 * Repeated symbols are indexed: ``Lambda_1``, ``Lambda_2``
 * Unique symbols remain unindexed: ``frequency``
 * Constant background uses ``A_bg``
+
+This keeps the parameterization closer to the usual physics notation for
+products such as an exponentially damped oscillation, where the envelope and
+oscillation share one overall asymmetry.
 
 Evaluate Model and Components
 -----------------------------
@@ -57,6 +64,26 @@ Evaluate Model and Components
        A_bg=0.6,
    )
 
+For multiplicative models, pass the shared chain amplitude only once:
+
+.. code-block:: python
+
+   damped_cosine = CompositeModel(
+       component_names=["Exponential", "Oscillatory"],
+       operators=["*"],
+   )
+
+   y = damped_cosine.function(
+       t,
+       A_1=20.0,
+       Lambda=0.4,
+       frequency=2.0,
+       phase=0.0,
+   )
+
+In symbolic previews, downstream multiplicative factors suppress the redundant
+``1*`` amplitude term, so the displayed formula stays readable.
+
 Use with FitEngine
 ------------------
 
@@ -75,6 +102,9 @@ Use with FitEngine
 
    result = FitEngine().fit(dataset, model.function, params)
    print(result.success)
+
+If the model contains a multiplicative chain, include only that chain's shared
+amplitude parameter in the fit table.
 
 Runnable Example
 ----------------

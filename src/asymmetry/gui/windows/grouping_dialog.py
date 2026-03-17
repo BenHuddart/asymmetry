@@ -45,6 +45,9 @@ class GroupingDialog(QDialog):
         histograms are ignored for grouping operations.
     selected_run_number
         Optional run number used as initial reference dataset.
+    selected_run_numbers
+        Optional run numbers to pre-select in the dataset tick-list. When not
+        provided, all datasets are selected by default.
     parent
         Parent Qt widget.
     """
@@ -54,6 +57,7 @@ class GroupingDialog(QDialog):
         datasets: list[MuonDataset],
         *,
         selected_run_number: int | None = None,
+        selected_run_numbers: list[int] | None = None,
         parent=None,
     ) -> None:
         """Create a shared grouping dialog for project datasets."""
@@ -62,6 +66,11 @@ class GroupingDialog(QDialog):
             ds for ds in datasets if ds.run is not None and bool(ds.run.histograms)
         ]
         self._selected_run_number = selected_run_number
+        self._selected_run_numbers = (
+            {int(v) for v in selected_run_numbers}
+            if selected_run_numbers is not None
+            else None
+        )
 
         self.setWindowTitle("Grouping")
         self.resize(860, 560)
@@ -99,8 +108,17 @@ class GroupingDialog(QDialog):
         for ds in self._datasets:
             item = QListWidgetItem(ds.run_label)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setData(Qt.ItemDataRole.UserRole, int(ds.run_number))
-            item.setCheckState(Qt.CheckState.Checked)
+            run_number = int(ds.run_number)
+            item.setData(Qt.ItemDataRole.UserRole, run_number)
+            if self._selected_run_numbers is None:
+                item.setCheckState(Qt.CheckState.Checked)
+            else:
+                state = (
+                    Qt.CheckState.Checked
+                    if run_number in self._selected_run_numbers
+                    else Qt.CheckState.Unchecked
+                )
+                item.setCheckState(state)
             self._dataset_list.addItem(item)
 
         dataset_buttons = QHBoxLayout()

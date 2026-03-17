@@ -20,13 +20,12 @@ from pathlib import Path
 
 import numpy as np
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDoubleSpinBox,
     QFileDialog,
-    QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -68,6 +67,7 @@ class PlotPanel(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
 
         try:
             from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -91,6 +91,17 @@ class PlotPanel(QWidget):
             # Add plot limit controls toolbar
             self._create_limit_controls()
             layout.addLayout(self._limit_toolbar)
+
+            self._alpha_label = QLabel("")
+            self._alpha_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._alpha_label.hide()
+
+            alpha_row = QHBoxLayout()
+            alpha_row.setContentsMargins(2, 0, 2, 0)
+            alpha_row.setSpacing(0)
+            alpha_row.addStretch()
+            alpha_row.addWidget(self._alpha_label)
+            layout.addLayout(alpha_row)
 
             layout.addWidget(self._canvas)
             self._has_mpl = True
@@ -134,78 +145,76 @@ class PlotPanel(QWidget):
             self._canvas.mpl_connect("motion_notify_event", self._on_canvas_motion_notify)
             self._canvas.mpl_connect("button_release_event", self._on_canvas_button_release)
         except ImportError:
-            from PySide6.QtWidgets import QLabel
-
             layout.addWidget(QLabel("matplotlib not installed — plotting disabled"))
             self._has_mpl = False
 
     def _create_limit_controls(self) -> None:
         """Create toolbar for adjusting plot limits.
 
-        Uses a grid layout for compactness.
+        Uses two independent HBox rows inside a VBox so that widgets in one
+        row cannot inflate column widths seen by the other row.
         """
-        self._limit_toolbar = QGridLayout()
-        self._limit_toolbar.setSpacing(4)  # Tight spacing
-        self._limit_toolbar.setContentsMargins(4, 4, 4, 4)  # Minimal margins
+        self._limit_toolbar = QVBoxLayout()
+        self._limit_toolbar.setSpacing(2)
+        self._limit_toolbar.setContentsMargins(4, 4, 4, 4)
+
+        # ── Row 0: axis range spinboxes + auto-scale buttons ──────────────
+        row0 = QHBoxLayout()
+        row0.setSpacing(4)
 
         # X-axis limits
-        self._limit_toolbar.addWidget(QLabel("X:"), 0, 0)
+        row0.addWidget(QLabel("X:"))
         self._x_min = QDoubleSpinBox()
         self._x_min.setRange(-1e6, 1e6)
         self._x_min.setDecimals(3)
         self._x_min.setValue(0.0)
         self._x_min.setSuffix(" μs")
-        self._x_min.setMaximumWidth(80)  # Constrain width
-        self._limit_toolbar.addWidget(self._x_min, 0, 1)
-
-        self._limit_toolbar.addWidget(QLabel("–"), 0, 2)  # Dash separator
-
+        self._x_min.setMaximumWidth(80)
+        row0.addWidget(self._x_min)
+        row0.addWidget(QLabel("–"))
         self._x_max = QDoubleSpinBox()
         self._x_max.setRange(-1e6, 1e6)
         self._x_max.setDecimals(3)
         self._x_max.setValue(10.0)
         self._x_max.setSuffix(" μs")
         self._x_max.setMaximumWidth(80)
-        self._limit_toolbar.addWidget(self._x_max, 0, 3)
+        row0.addWidget(self._x_max)
 
         # Y-axis limits
-        self._limit_toolbar.addWidget(QLabel("Y:"), 0, 4)
+        row0.addWidget(QLabel("Y:"))
         self._y_min = QDoubleSpinBox()
         self._y_min.setRange(-1e6, 1e6)
         self._y_min.setDecimals(3)
         self._y_min.setValue(-30.0)
         self._y_min.setMaximumWidth(80)
-        self._limit_toolbar.addWidget(self._y_min, 0, 5)
-
-        self._limit_toolbar.addWidget(QLabel("–"), 0, 6)  # Dash separator
-
+        row0.addWidget(self._y_min)
+        row0.addWidget(QLabel("–"))
         self._y_max = QDoubleSpinBox()
         self._y_max.setRange(-1e6, 1e6)
         self._y_max.setDecimals(3)
         self._y_max.setValue(30.0)
         self._y_max.setMaximumWidth(80)
-        self._limit_toolbar.addWidget(self._y_max, 0, 7)
+        row0.addWidget(self._y_max)
 
-        # Separate axis auto-scale controls (restored behavior).
+        # Separate axis auto-scale controls.
         auto_x_btn = QPushButton("Auto X")
         auto_x_btn.clicked.connect(self._auto_x_limits)
         auto_x_btn.setMaximumWidth(65)
-        self._limit_toolbar.addWidget(auto_x_btn, 0, 8)
+        row0.addWidget(auto_x_btn)
 
         auto_y_btn = QPushButton("Auto Y")
         auto_y_btn.clicked.connect(self._auto_y_limits)
         auto_y_btn.setMaximumWidth(65)
-        self._limit_toolbar.addWidget(auto_y_btn, 0, 9)
+        row0.addWidget(auto_y_btn)
+
+        row0.addStretch()
+        self._limit_toolbar.addLayout(row0)
 
         # Apply limit changes immediately from spinbox edits.
         self._x_min.editingFinished.connect(self._apply_limits)
         self._x_max.editingFinished.connect(self._apply_limits)
         self._y_min.editingFinished.connect(self._apply_limits)
         self._y_max.editingFinished.connect(self._apply_limits)
-
-        # Stretch to fill remaining space
-        self._limit_toolbar.setColumnStretch(10, 1)
-        self._limit_toolbar.addWidget(QWidget(), 0, 10)
 
         # Keep bunching control internal (hidden) for backward compatibility
         # with project state and tests; it is intentionally not shown in UI.
@@ -216,20 +225,24 @@ class PlotPanel(QWidget):
         self._bunch_factor.valueChanged.connect(self._on_bunch_changed)
         self._bunch_factor.hide()
 
-        self._add_label_btn = QPushButton("Add Label")
-        self._add_label_btn.setCheckable(True)
-        self._add_label_btn.setMaximumWidth(90)
-        self._limit_toolbar.addWidget(self._add_label_btn, 1, 0)
+        # ── Row 1: annotation controls + export controls ───────────────────
+        row1 = QHBoxLayout()
+        row1.setSpacing(4)
 
-        self._limit_toolbar.addWidget(QLabel("Label:"), 1, 1)
+        self._add_label_btn = QPushButton("Add Annotation")
+        self._add_label_btn.setCheckable(True)
+        self._add_label_btn.setMaximumWidth(110)
+        row1.addWidget(self._add_label_btn)
+
+        row1.addWidget(QLabel("Label:"))
         self._label_field_combo = QComboBox()
         for display, key in _LABEL_FIELDS:
             self._label_field_combo.addItem(display, userData=key)
         self._label_field_combo.setMaximumWidth(140)
         self._label_field_combo.currentIndexChanged.connect(self._on_label_field_changed)
-        self._limit_toolbar.addWidget(self._label_field_combo, 1, 2)
+        row1.addWidget(self._label_field_combo)
 
-        # Export controls (row 1, right side)
+        # Export controls (right side of row 1)
         self._export_gle_btn = QPushButton("Export Plot(s) to GLE")
         self._export_gle_btn.setEnabled(False)
         self._export_gle_btn.clicked.connect(self.export_plots_to_gle)
@@ -237,14 +250,12 @@ class PlotPanel(QWidget):
         self._gle_format_combo.addItems(["PDF", "EPS"])
         self._gle_format_combo.setEnabled(False)
 
-        export_row = QHBoxLayout()
-        export_row.addWidget(self._export_gle_btn)
-        export_row.addWidget(QLabel("Format:"))
-        export_row.addWidget(self._gle_format_combo)
-        export_row.addStretch()
-        export_container = QWidget()
-        export_container.setLayout(export_row)
-        self._limit_toolbar.addWidget(export_container, 1, 4, 1, 7)
+        row1.addStretch()
+        row1.addWidget(self._export_gle_btn)
+        row1.addWidget(QLabel("Format:"))
+        row1.addWidget(self._gle_format_combo)
+
+        self._limit_toolbar.addLayout(row1)
 
     def _dataset_label_for(self, dataset: MuonDataset) -> str:
         """Return the legend label for *dataset* using the selected label field."""
@@ -412,6 +423,40 @@ class PlotPanel(QWidget):
         elif self._current_dataset is not None:
             self.plot_dataset(self._current_dataset)
 
+    def _set_alpha_label(self, text: str | None) -> None:
+        """Show or hide the alpha label above the plot."""
+        if not hasattr(self, "_alpha_label"):
+            return
+        if text:
+            self._alpha_label.setText(text)
+            self._alpha_label.show()
+        else:
+            self._alpha_label.clear()
+            self._alpha_label.hide()
+
+    def _alpha_value_for_dataset(self, dataset: MuonDataset) -> float | None:
+        """Return the asymmetry alpha value used for *dataset*, if available."""
+        run = dataset.run
+        if run is not None and isinstance(run.grouping, dict):
+            alpha = run.grouping.get("alpha")
+            try:
+                return float(alpha)
+            except (TypeError, ValueError):
+                pass
+
+        alpha = dataset.metadata.get("alpha")
+        try:
+            return float(alpha)
+        except (TypeError, ValueError):
+            return None
+
+    def _single_dataset_alpha_label_text(self, dataset: MuonDataset) -> str | None:
+        """Return alpha label text for single-dataset views when available."""
+        alpha = self._alpha_value_for_dataset(dataset)
+        if alpha is None:
+            return None
+        return f"(alpha = {alpha:.6g})"
+
     def set_fit_range(self, x_min: float, x_max: float) -> None:
         """Set fit range limits and refresh visual handles."""
         self._set_fit_range(x_min, x_max, emit_signal=True, redraw=True)
@@ -435,6 +480,7 @@ class PlotPanel(QWidget):
             self.plot_dataset(datasets[0])
             return
 
+        self._set_alpha_label(None)
         self._current_dataset = datasets[-1]
         self._current_datasets = list(datasets)
         self._ax.clear()
@@ -590,6 +636,7 @@ class PlotPanel(QWidget):
         )
         self._ax.set_xlabel("Time (μs)")
         self._ax.set_ylabel("Asymmetry (%)")
+        self._set_alpha_label(self._single_dataset_alpha_label_text(dataset))
 
         # Re-plot fit curve if it exists (check both single and global fits)
         fit_to_plot = None
@@ -1130,6 +1177,7 @@ class PlotPanel(QWidget):
     def clear(self) -> None:
         """Clear the plot and reset stored data."""
         if self._has_mpl:
+            self._set_alpha_label(None)
             self._ax.clear()
             self._canvas.draw()
             self._current_dataset = None
@@ -1244,10 +1292,10 @@ class PlotPanel(QWidget):
         self._fit_metadata[int(run_number)] = meta
 
     def _update_export_enabled(self) -> None:
-        """Enable the export button when any displayed dataset has a fit curve."""
-        has_fit = bool(self._fit_curves) or self._fit_curve is not None
-        self._export_gle_btn.setEnabled(has_fit)
-        self._gle_format_combo.setEnabled(has_fit)
+        """Enable export controls when there is plotted data to export."""
+        has_data = bool(self._current_datasets)
+        self._export_gle_btn.setEnabled(has_data)
+        self._gle_format_combo.setEnabled(has_data)
 
     @staticmethod
     def _safe_file_token(value: str) -> str:
@@ -1273,9 +1321,9 @@ class PlotPanel(QWidget):
         return text or fallback
 
     def get_current_plot_export_data(self) -> list[dict] | None:
-        """Return export payloads for all displayed datasets with fits.
+        """Return export payloads for all displayed datasets.
 
-        Returns a list of dicts (one per dataset with a fit), or *None* when
+        Returns a list of dicts (one per displayed dataset), or *None* when
         nothing is available to export.
         """
         if not self._current_datasets:
@@ -1287,15 +1335,85 @@ class PlotPanel(QWidget):
             if analysis is None:
                 continue
 
+            grouping = None
+            run = getattr(dataset, "run", None)
+            if run is not None and isinstance(getattr(run, "grouping", None), dict):
+                grouping = dict(run.grouping)
+            elif isinstance(dataset.metadata.get("grouping"), dict):
+                grouping = dict(dataset.metadata["grouping"])
+
+            run_metadata: dict[str, object] = {}
+            if run is not None and isinstance(getattr(run, "metadata", None), dict):
+                run_metadata.update(run.metadata)
+            if isinstance(dataset.metadata, dict):
+                run_metadata.update(dataset.metadata)
+
+            histogram_info: dict[str, object] | None = None
+            if run is not None and getattr(run, "histograms", None):
+                histograms = list(run.histograms)
+                if histograms:
+                    h0 = histograms[0]
+                    total_events = float(np.sum([np.sum(h.counts) for h in histograms]))
+                    histogram_info = {
+                        "count": len(histograms),
+                        "n_bins": int(h0.n_bins),
+                        "bin_width_us": float(h0.bin_width),
+                        "t0_bins": [int(h.t0_bin) for h in histograms],
+                        "events_total": total_events,
+                    }
+
+                    def _safe_int(raw: object) -> int | None:
+                        try:
+                            return int(raw)
+                        except (TypeError, ValueError):
+                            return None
+
+                    if isinstance(grouping, dict):
+                        first_good = _safe_int(grouping.get("first_good_bin"))
+                        last_good = _safe_int(grouping.get("last_good_bin"))
+                        if first_good is not None and last_good is not None:
+                            lo = max(0, min(first_good, last_good))
+                            hi = max(first_good, last_good)
+
+                            grouped_total = 0.0
+                            n_hist = len(histograms)
+                            groups_raw = grouping.get("groups")
+                            if isinstance(groups_raw, dict):
+                                f_gid = _safe_int(grouping.get("forward_group"))
+                                b_gid = _safe_int(grouping.get("backward_group"))
+                                selected = []
+                                if f_gid is not None and f_gid in groups_raw:
+                                    selected.extend(groups_raw[f_gid])
+                                if b_gid is not None and b_gid in groups_raw:
+                                    selected.extend(groups_raw[b_gid])
+                                for det in selected:
+                                    det_idx = _safe_int(det)
+                                    if det_idx is None:
+                                        continue
+                                    hist_idx = det_idx - 1
+                                    if hist_idx < 0 or hist_idx >= n_hist:
+                                        continue
+                                    counts = np.asarray(histograms[hist_idx].counts, dtype=float)
+                                    if counts.size == 0:
+                                        continue
+                                    hi_clamped = min(hi, counts.size - 1)
+                                    if hi_clamped >= lo:
+                                        grouped_total += float(np.sum(counts[lo:hi_clamped + 1]))
+
+                            if grouped_total > 0:
+                                histogram_info["events_grouped"] = grouped_total
+
             rn = dataset.run_number
             fit_data = self._fit_curves.get(rn)
             if fit_data is None:
                 if self._fit_curve is not None and self._fit_curve_run_number == rn:
                     fit_data = self._fit_curve
-            if fit_data is None:
-                continue
 
-            t_fit, y_fit, fit_label = fit_data
+            t_fit = None
+            y_fit = None
+            fit_label = "Fit"
+            if fit_data is not None:
+                t_fit, y_fit, fit_label = fit_data
             component_data = self._fit_components_by_run.get(rn) or []
             if not component_data and self._fit_components and self._fit_curve_run_number == rn:
                 component_data = self._fit_components or []
@@ -1310,11 +1428,14 @@ class PlotPanel(QWidget):
                     "y": analysis.asymmetry,
                     "err": analysis.error,
                 },
-                "fit": {"t": t_fit, "y": y_fit, "label": fit_label},
+                "fit": {"t": t_fit, "y": y_fit, "label": fit_label} if t_fit is not None and y_fit is not None else None,
                 "components": [
                     {"name": name, "y": y_vals} for name, y_vals in component_data
                 ],
                 "fit_metadata": self._fit_metadata.get(rn, {}),
+                "grouping": grouping,
+                "run_metadata": run_metadata,
+                "histogram_info": histogram_info,
             })
 
         if not payloads:
@@ -1363,6 +1484,170 @@ class PlotPanel(QWidget):
             f.write("! time  asymmetry_fit\n")
             for t_val, y_val in zip(t_fit, y_fit):
                 f.write(f"{float(t_val):.10g} {float(y_val):.10g}\n")
+
+    def _write_data_file(self, dat_path: Path, payload: dict, *, label_text: object | None = None) -> None:
+        """Write a .dat file with spectra data and metadata header."""
+        data = payload.get("data") or {}
+        t_data = data.get("t")
+        y_data = data.get("y")
+        y_err = data.get("err")
+        if t_data is None or y_data is None:
+            return
+
+        display_label = label_text if label_text is not None else payload.get("label", "dataset")
+        run_metadata = payload.get("run_metadata") if isinstance(payload.get("run_metadata"), dict) else {}
+        histogram_info = payload.get("histogram_info") if isinstance(payload.get("histogram_info"), dict) else {}
+        grouping = payload.get("grouping") if isinstance(payload.get("grouping"), dict) else {}
+
+        def _fmt_float(value: object, decimals: int) -> str:
+            try:
+                return f"{float(value):.{decimals}f}"
+            except (TypeError, ValueError):
+                return ""
+
+        def _fmt_mev(value: object) -> str:
+            try:
+                return f"{float(value) / 1.0e6:.2f}"
+            except (TypeError, ValueError):
+                return ""
+
+        def _safe_int(value: object) -> int | None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        title = str(run_metadata.get("title", "") or "")
+        comment = str(run_metadata.get("comment", "") or "")
+        started = str(run_metadata.get("started", "") or "")
+        stopped = str(run_metadata.get("stopped", "") or "")
+        temperature = _fmt_float(run_metadata.get("temperature"), 3)
+        temperature_label = str(
+            run_metadata.get("temperature_label")
+            or run_metadata.get("temperature_setpoint")
+            or ""
+        ).strip()
+        field = _fmt_float(run_metadata.get("field"), 2)
+
+        n_hist = _safe_int(histogram_info.get("count"))
+        n_bins = _safe_int(histogram_info.get("n_bins"))
+        bin_width_us = histogram_info.get("bin_width_us")
+        bin_width_ps_text = ""
+        bin_width_us_text = ""
+        if bin_width_us is not None:
+            bin_width_ps_text = _fmt_float(float(bin_width_us) * 1.0e6, 6)
+            bin_width_us_text = _fmt_float(bin_width_us, 2)
+
+        events_grouped = _fmt_mev(histogram_info.get("events_grouped"))
+        events_raw = _fmt_mev(histogram_info.get("events_total"))
+
+        groups_raw = grouping.get("groups")
+        groups: dict[int, list[int]] = {}
+        if isinstance(groups_raw, dict):
+            for key, values in groups_raw.items():
+                gid = _safe_int(key)
+                if gid is None or not isinstance(values, list):
+                    continue
+                detectors: list[int] = []
+                for v in values:
+                    vv = _safe_int(v)
+                    if vv is not None:
+                        detectors.append(vv)
+                if detectors:
+                    groups[gid] = sorted(set(detectors))
+
+        # Backward-compatible fallback for payloads that store detectors as
+        # direct forward/backward lists rather than a groups mapping.
+        if not groups:
+            f_list = grouping.get("forward")
+            b_list = grouping.get("backward")
+            if isinstance(f_list, list):
+                f_det = [v for v in (_safe_int(x) for x in f_list) if v is not None]
+                if f_det:
+                    groups[1] = sorted(set(f_det))
+            if isinstance(b_list, list):
+                b_det = [v for v in (_safe_int(x) for x in b_list) if v is not None]
+                if b_det:
+                    groups[2] = sorted(set(b_det))
+
+        t0_bins = histogram_info.get("t0_bins") if isinstance(histogram_info.get("t0_bins"), list) else []
+        forward_group = _safe_int(grouping.get("forward_group"))
+        backward_group = _safe_int(grouping.get("backward_group"))
+        alpha = _fmt_float(grouping.get("alpha"), 4)
+        first_good_bin = _safe_int(grouping.get("first_good_bin"))
+        last_good_bin = _safe_int(grouping.get("last_good_bin"))
+        bunching_factor = _safe_int(grouping.get("bunching_factor"))
+        deadtime_correction = bool(grouping.get("deadtime_correction", False))
+
+        with open(dat_path, "w", encoding="utf-8") as f:
+            f.write("! START OF RUN INFORMATION\n")
+            f.write(f"!  Run number  : {payload.get('run_number', '')}\n")
+            if title:
+                f.write(f"!  Title       : {title}\n")
+            if temperature:
+                if temperature_label:
+                    f.write(f"!  Temperature : {temperature} K (label {temperature_label})\n")
+                else:
+                    f.write(f"!  Temperature : {temperature} K\n")
+            if field:
+                f.write(f"!  Field       : {field} G\n")
+            if comment:
+                f.write(f"!  Comment     : {comment}\n")
+            if started:
+                f.write(f"!  Started     : {started}\n")
+            if stopped:
+                f.write(f"!  Stopped     : {stopped}\n")
+            if n_hist is not None and n_bins is not None and bin_width_ps_text and bin_width_us_text:
+                f.write(
+                    "!  Histograms  : "
+                    f"{n_hist} ({n_bins} bins of {bin_width_ps_text} ps = {bin_width_us_text} us)\n"
+                )
+            if events_grouped and events_raw:
+                f.write(f"!  Events      : {events_grouped} MEv grouped in range (raw = {events_raw})\n")
+            elif events_raw:
+                f.write(f"!  Events      : {events_raw} MEv\n")
+            f.write("! END OF RUN INFORMATION\n")
+            f.write("!\n")
+
+            f.write("! START OF GROUPING INFORMATION\n")
+            for gid in sorted(groups):
+                det_tokens: list[str] = []
+                for det in groups[gid]:
+                    idx = det - 1
+                    if 0 <= idx < len(t0_bins):
+                        det_tokens.append(f"{det:02d}({int(t0_bins[idx])})")
+                    else:
+                        det_tokens.append(f"{det:02d}")
+                f.write(f"!  Group#{gid:02d}  Hist(t0): {', '.join(det_tokens)}\n")
+
+            if forward_group is not None or backward_group is not None:
+                fwd_text = "" if forward_group is None else str(forward_group)
+                bwd_text = "" if backward_group is None else str(backward_group)
+                f.write(
+                    f"!  Forward Group = {fwd_text}, Backward Group = {bwd_text}, Alpha = {alpha}\n"
+                )
+            elif isinstance(grouping.get("forward"), list) or isinstance(grouping.get("backward"), list):
+                f.write(f"!  Forward Group = forward, Backward Group = backward, Alpha = {alpha}\n")
+            if first_good_bin is not None or last_good_bin is not None:
+                fg_text = "" if first_good_bin is None else str(first_good_bin)
+                lg_text = "" if last_good_bin is None else str(last_good_bin)
+                f.write(f"!  Offset to first good bin = {fg_text}, Last good bin = {lg_text}\n")
+            if bunching_factor is not None:
+                f.write(f"!  Fixed binning, bunching factor = {bunching_factor}\n")
+            f.write(f"!  Deadtime correction {'on' if deadtime_correction else 'off'}\n")
+            f.write("! END OF GROUPING INFORMATION\n")
+            f.write("!\n")
+
+            f.write("! START OF DATA SET INFORMATION\n")
+            f.write("!  Datarow: (Time) (FB asymmetry) (Error)\n")
+            f.write(f"!  Title: {display_label}\n")
+            f.write("!  Xlabel: Time in microseconds\n")
+            f.write("!  Ylabel: % Asymmetry\n")
+            f.write("! END OF DATA SET INFORMATION\n")
+            f.write("! time  asymmetry  error\n")
+            err_arr = y_err if y_err is not None else np.zeros_like(y_data)
+            for t_val, y_val, e_val in zip(t_data, y_data, err_arr):
+                f.write(f"{float(t_val):.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
 
     def _show_export_result_dialog(self, title: str, summary: str, details: str) -> None:
         """Show export results with scrollable details and fixed bottom button."""
@@ -1488,7 +1773,7 @@ class PlotPanel(QWidget):
         if not payloads:
             QMessageBox.warning(
                 self, "Export unavailable",
-                "No fitted curve is available to export.",
+                "No plotted data is available to export.",
             )
             return
 
@@ -1522,6 +1807,7 @@ class PlotPanel(QWidget):
         fig = glp.figure(figsize=self._export_figure_size(len(payloads)))
         ax = fig.add_subplot(111)
         written_files: list[Path] = []
+        dat_writes: list[tuple[Path, dict, object]] = []
 
         for i, payload in enumerate(payloads):
             label_text = payload.get("label", f"dataset_{i}")
@@ -1541,16 +1827,11 @@ class PlotPanel(QWidget):
             t_fit = fit.get("t")
             y_fit = fit.get("y")
 
-            # Write .dat data file
+            # Track .dat sidecar files; write after fig.savefig() because
+            # gleplot may regenerate data_name-matched .dat files during save.
             dat_path = gle_path.parent / f"{token}.dat"
             if t_data is not None and y_data is not None:
-                with open(dat_path, "w", encoding="utf-8") as f:
-                    f.write(f"! Data for {label_text}\n")
-                    f.write(f"! run_number: {payload.get('run_number', '')}\n")
-                    f.write("! time  asymmetry  error\n")
-                    err_arr = y_err if y_err is not None else np.zeros_like(y_data)
-                    for t_val, y_val, e_val in zip(t_data, y_data, err_arr):
-                        f.write(f"{float(t_val):.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
+                dat_writes.append((dat_path, payload, label_text))
                 written_files.append(dat_path)
 
                 ax.errorbar(
@@ -1610,6 +1891,11 @@ class PlotPanel(QWidget):
             ax.set_ylim(float(self._y_min.value()), float(self._y_max.value()))
 
         fig.savefig(str(gle_path))
+
+        # Ensure our sidecar .dat files retain metadata headers even when
+        # gleplot generates/overwrites data_name-matched data files on save.
+        for dat_path, payload, label_text in dat_writes:
+            self._write_data_file(dat_path, payload, label_text=label_text)
 
         # Compile using gleplot / GLE
         if shutil.which("gle") is not None:

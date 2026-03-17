@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QCheckBox,
     QLabel,
+    QLineEdit,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -81,6 +82,9 @@ class RunInfoDialog(QDialog):
         """Populate the primary run-info table with include/log controls."""
         meta = self._dataset.metadata
         run = self._dataset.run
+        orientation = self._stringify(
+            ((meta.get("nexus_fields") or {}).get("sample") or {}).get("shape", "")
+        )
 
         rows: list[tuple[str, str, str | None, str | None]] = [
             ("Instrument", str(meta.get("instrument", "")), "instrument", None),
@@ -107,6 +111,7 @@ class RunInfoDialog(QDialog):
                 "field_direction",
                 self._series_path_for_field("field_direction"),
             ),
+            ("Orientation", orientation, "nexus_fields.sample.shape", None),
             ("Periods", str(meta.get("period_count", 1)), "period_count", None),
             ("Points", str(self._dataset.n_points), "run_info.points", None),
         ]
@@ -278,7 +283,16 @@ class AdvancedRunInfoDialog(QDialog):
         self.setWindowTitle("Advanced Run Info")
         self.resize(980, 560)
 
+        self._all_rows = rows
+
         root = QVBoxLayout(self)
+
+        self._search_bar = QLineEdit()
+        self._search_bar.setPlaceholderText("Search fields...")
+        self._search_bar.setClearButtonEnabled(True)
+        self._search_bar.textChanged.connect(self._filter_rows)
+        root.addWidget(self._search_bar)
+
         self._table = QTableWidget(0, len(RunInfoDialog._TABLE_HEADERS))
         self._table.setHorizontalHeaderLabels(RunInfoDialog._TABLE_HEADERS)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -316,3 +330,13 @@ class AdvancedRunInfoDialog(QDialog):
         close_button.clicked.connect(self.accept)
         controls.addWidget(close_button)
         root.addLayout(controls)
+
+    def _filter_rows(self, text: str) -> None:
+        """Show only rows whose Field or Value contains the search text."""
+        query = text.strip().lower()
+        for row in range(self._table.rowCount()):
+            field_item = self._table.item(row, 1)
+            value_item = self._table.item(row, 2)
+            field_text = field_item.text().lower() if field_item else ""
+            value_text = value_item.text().lower() if value_item else ""
+            self._table.setRowHidden(row, bool(query) and query not in field_text and query not in value_text)

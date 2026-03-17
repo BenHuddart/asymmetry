@@ -4,7 +4,7 @@ A Python library for muon-spin spectroscopy (μSR) data analysis.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-288%20passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-430%20passed-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-71%25-yellowgreen.svg)](htmlcov/)
 
 ## Overview
@@ -22,12 +22,16 @@ management.
   multi-selection for co-adding or global fitting. Right-click for context
   menu actions: co-add selected runs, separate combined datasets, or delete.
 - **Interactive plotting** — Matplotlib-based plot panel with adjustable axis
-  limits, bunch factor for noise reduction, and error-bar display.
+  limits, grouping-aware alpha display for single-run views, and error-bar
+  display.
 - **Single-dataset fitting** — Build composite `A(t)` models from
   μSR components (exponential, Gaussian, oscillatory, stretched exponential,
   static Gaussian Kubo-Toyabe, constant background) with ``+``, ``-``, ``*``,
   ``/`` operators, then fit with
   [iminuit](https://scikit-hep.org/iminuit/) using parameter bounds and fixing.
+- **Physics-style composite amplitudes** — Multiplicative/divisive component
+  chains share one amplitude parameter, so damped products like
+  ``Exponential * Oscillatory`` use a single overall asymmetry term.
 - **Default explicit background** — New fits start with
   ``A(t) = Exponential + A_bg`` so constant background is always visible and
   editable from the start.
@@ -42,8 +46,9 @@ management.
   headers and global parameters as comments. Output formats: PDF, EPS.
 - **Main plot export to GLE** — Export fitted single- or multi-dataset main
   plot overlays directly from the plot toolbar. Produces label-based
-  ``.dat``/``.fit`` sidecars (with fit-function and fit-statistics headers),
-  includes plot annotations, and compiles to PDF/EPS via GLE when available.
+  ``.dat`` sidecars for plotted datasets and optional ``.fit`` sidecars when
+  fit curves are present, preserves run/grouping metadata headers, includes
+  plot annotations, and compiles to PDF/EPS via GLE when available.
 - **Fourier analysis** — FFT with configurable apodization windows (Hann,
   Hamming, Blackman, Bartlett) and zero-padding.
 - **Co-adding** — Average selected datasets with correct error propagation.
@@ -133,6 +138,9 @@ The documentation includes:
 - **API reference**: Complete API documentation auto-generated from docstrings
 - **Architecture**: Design principles and project structure (see `docs/ARCHITECTURE.md`)
 
+For composite fitting examples, see `docs/user_guide/composite_models.rst` and
+`examples/composite_models.py`.
+
 See `docs/README.md` for more information about the documentation system.
 
 ## Project structure
@@ -147,9 +155,17 @@ src/asymmetry/
 │   ├── fourier/    # FFT, apodization windows
 │   └── utils/      # Physical constants (γ_μ, τ_μ)
 ├── gui/            # PySide6 graphical front-end
-│  Testing
+│   ├── app.py      # GUI entry point
+│   ├── mainwindow.py
+│   ├── panels/
+│   └── windows/
+├── cli.py          # Command-line interface
+└── __main__.py     # `python -m asymmetry`
+```
 
-Asymmetry has a comprehensive test suite with 97 tests and 71% coverage:
+## Testing
+
+Asymmetry has a comprehensive test suite with 430 tests and 71% coverage:
 
 ```bash
 # Run all tests
@@ -172,9 +188,4 @@ See [CHANGELOG.md](CHANGELOG.md) for version history and release notes.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details. cli.py          # Command-line interface
-```
-
-## License
-
-MIT
+MIT License - see [LICENSE](LICENSE) for details.
