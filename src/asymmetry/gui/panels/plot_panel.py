@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 
 # Metadata fields available for dataset labelling in the legend.
@@ -457,6 +458,25 @@ class PlotPanel(QWidget):
             return None
         return f"(alpha = {alpha:.6g})"
 
+    def _period_mode_color_for_dataset(self, dataset: MuonDataset) -> str | None:
+        """Return WiMDA-like color for selected two-period mode, else None."""
+        run = getattr(dataset, "run", None)
+        grouping = getattr(run, "grouping", None)
+        if not isinstance(grouping, dict):
+            return None
+        period_hist = grouping.get("period_histograms")
+        if not isinstance(period_hist, list) or len(period_hist) != 2:
+            return None
+
+        mode = str(grouping.get("period_mode", PeriodMode.RED))
+        color_map = {
+            str(PeriodMode.RED): "#c00000",
+            str(PeriodMode.GREEN): "#008000",
+            str(PeriodMode.GREEN_MINUS_RED): "#0000c0",
+            str(PeriodMode.GREEN_PLUS_RED): "#800080",
+        }
+        return color_map.get(mode)
+
     def set_fit_range(self, x_min: float, x_max: float) -> None:
         """Set fit range limits and refresh visual handles."""
         self._set_fit_range(x_min, x_max, emit_signal=True, redraw=True)
@@ -492,6 +512,9 @@ class PlotPanel(QWidget):
 
         for i, dataset in enumerate(datasets):
             color = f"C{i % 10}"
+            period_color = self._period_mode_color_for_dataset(dataset)
+            if period_color is not None:
+                color = period_color
             analysis_dataset = self.get_analysis_dataset(dataset)
             if analysis_dataset is None:
                 continue
@@ -626,12 +649,15 @@ class PlotPanel(QWidget):
             )
 
         draw_mask = valid_main if np.any(valid_main) else finite_mask
+        point_color = self._period_mode_color_for_dataset(dataset)
         self._ax.errorbar(
             time[draw_mask],
             asymmetry[draw_mask],
             yerr=error[draw_mask],
             fmt=".",
             markersize=3,
+            color=point_color,
+            ecolor=point_color,
             label=self._dataset_label_for(dataset),
         )
         self._ax.set_xlabel("Time (μs)")

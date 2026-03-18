@@ -14,6 +14,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 
 
@@ -75,6 +76,32 @@ def _dataset_with_ratio(run_number: int, ratio: float) -> MuonDataset:
         asymmetry=np.zeros_like(t),
         error=np.full_like(t, 0.01),
         metadata={"run_number": run_number},
+        run=run,
+    )
+
+
+def _two_period_dataset(run_number: int = 6001) -> MuonDataset:
+    red = Histogram(counts=np.array([100.0, 100.0, 100.0, 100.0]), bin_width=0.01)
+    green = Histogram(counts=np.array([120.0, 120.0, 120.0, 120.0]), bin_width=0.01)
+    run = Run(
+        run_number=run_number,
+        histograms=[red],
+        metadata={"run_number": run_number, "period_count": 2},
+        grouping={
+            "groups": {1: [1], 2: [1]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "period_mode": str(PeriodMode.GREEN),
+            "period_histograms": [[red], [green]],
+        },
+    )
+    t = np.array([0.0, 0.01, 0.02, 0.03])
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number, "period_count": 2},
         run=run,
     )
 
@@ -168,6 +195,7 @@ def test_grp_round_trip_parser_and_serializer() -> None:
         "last_good_bin": 2048,
         "bunching_factor": 5,
         "deadtime_correction": True,
+        "period_mode": str(PeriodMode.GREEN_PLUS_RED),
     }
     text = GroupingDialog.serialize_grp(payload)
     parsed = GroupingDialog.parse_grp(text)
@@ -181,3 +209,11 @@ def test_grp_round_trip_parser_and_serializer() -> None:
     assert parsed["last_good_bin"] == 2048
     assert parsed["bunching_factor"] == 5
     assert parsed["deadtime_correction"] is True
+    assert parsed["period_mode"] == str(PeriodMode.GREEN_PLUS_RED)
+
+
+def test_period_mode_row_visible_for_two_period_reference(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_two_period_dataset()])
+    assert not dialog._period_mode_label.isHidden()
+    assert not dialog._period_mode_widget.isHidden()
+    assert dialog._current_period_mode() == str(PeriodMode.GREEN)

@@ -17,6 +17,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
     ParameterGroupData,
 )
+from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.mainwindow import MainWindow
 import asymmetry.gui.mainwindow as mw_module
 
@@ -162,6 +163,48 @@ class TestMainWindowBasic:
         assert applied is True
         assert dataset.run is not None
         assert dataset.run.grouping["alpha"] == pytest.approx(1.0)
+
+    def test_apply_grouping_uses_selected_two_period_mode(self, mainwindow: MainWindow) -> None:
+        red = Histogram(counts=np.array([200.0, 200.0, 200.0, 200.0]), bin_width=0.01)
+        green = Histogram(counts=np.array([100.0, 100.0, 100.0, 100.0]), bin_width=0.01)
+        run = Run(
+            run_number=7450,
+            histograms=[red],
+            metadata={"run_number": 7450, "period_count": 2},
+            grouping={
+                "groups": {1: [1], 2: [1]},
+                "forward_group": 1,
+                "backward_group": 2,
+                "alpha": 1.0,
+                "period_histograms": [[red], [green]],
+                "period_good_frames": [1000.0, 1000.0],
+                "period_dead_time_us": [[0.01], [0.02]],
+            },
+        )
+        ds = MuonDataset(
+            time=np.array([0.0, 0.01, 0.02, 0.03], dtype=float),
+            asymmetry=np.zeros(4, dtype=float),
+            error=np.full(4, 0.01, dtype=float),
+            metadata={"run_number": 7450, "period_count": 2},
+            run=run,
+        )
+        payload = {
+            "groups": {1: [1], 2: [1]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+            "period_mode": str(PeriodMode.GREEN),
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(ds, payload)
+
+        assert applied is True
+        assert ds.run is not None
+        assert ds.run.grouping["period_mode"] == str(PeriodMode.GREEN)
 
     def test_run_info_inclusion_handler_updates_data_browser(self, mainwindow: MainWindow) -> None:
         """Run Info include/exclude signal should add/remove data-browser columns."""

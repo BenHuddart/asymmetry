@@ -43,6 +43,7 @@ from asymmetry.core.project import (
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform import apply_grouping, compute_asymmetry
 from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.utils.constants import PeriodMode
 
 _MAX_RECENT_PROJECTS = 10
 _PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
@@ -693,6 +694,7 @@ class MainWindow(QMainWindow):
             "last_good_bin": int(grouping.get("last_good_bin", 0)),
             "bunching_factor": int(grouping.get("bunching_factor", 1)),
             "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
+            "period_mode": str(grouping.get("period_mode", PeriodMode.RED)),
         }
 
         if "dead_time_us" in grouping and isinstance(grouping.get("dead_time_us"), list):
@@ -756,6 +758,7 @@ class MainWindow(QMainWindow):
         alpha = float(grouping_result.get("alpha", 1.0))
         bunch_factor = int(grouping_result.get("bunching_factor", 1))
         use_deadtime = bool(grouping_result.get("deadtime_correction", False))
+        period_mode = str(grouping_result.get("period_mode", run.grouping.get("period_mode", PeriodMode.RED)))
 
         if not isinstance(run.grouping, dict):
             run.grouping = {}
@@ -764,9 +767,21 @@ class MainWindow(QMainWindow):
         if "good_frames" in grouping_result:
             run.grouping["good_frames"] = grouping_result.get("good_frames")
 
+        source_histograms = list(run.histograms)
+        grouping_for_mode = run.grouping
+        if isinstance(run.grouping, dict):
+            source_histograms, grouping_for_mode = self._select_histograms_for_period_mode(
+                run.histograms,
+                run.grouping,
+                period_mode,
+            )
+            run.grouping["period_mode"] = period_mode
+            run.grouping["good_frames"] = grouping_for_mode.get("good_frames", run.grouping.get("good_frames", 1.0))
+            run.grouping["dead_time_us"] = list(grouping_for_mode.get("dead_time_us", run.grouping.get("dead_time_us", [])))
+
         working_histograms, dt_applied = self._prepare_grouping_histograms(
-            run.histograms,
-            run.grouping,
+            source_histograms,
+            grouping_for_mode,
             use_deadtime,
         )
 
@@ -802,9 +817,78 @@ class MainWindow(QMainWindow):
                 "last_good_bin": last_good,
                 "bunching_factor": bunch_factor,
                 "deadtime_correction": use_deadtime,
+                "period_mode": period_mode,
             }
         )
         return True, dt_applied
+
+    def _select_histograms_for_period_mode(
+        self,
+        histograms,
+        grouping: dict,
+        period_mode: str,
+    ):
+        """Return histograms and deadtime metadata for the selected period mode."""
+        period_hist = grouping.get("period_histograms") if isinstance(grouping, dict) else None
+        period_good_frames = grouping.get("period_good_frames") if isinstance(grouping, dict) else None
+        period_dead_time = grouping.get("period_dead_time_us") if isinstance(grouping, dict) else None
+        if not isinstance(period_hist, list) or len(period_hist) != 2:
+            return list(histograms), grouping
+
+        red_hist = period_hist[0] if isinstance(period_hist[0], list) else list(histograms)
+        green_hist = period_hist[1] if isinstance(period_hist[1], list) else list(histograms)
+
+        red_good = 1.0
+        green_good = 1.0
+        if isinstance(period_good_frames, list) and len(period_good_frames) == 2:
+            try:
+                red_good = float(period_good_frames[0])
+                green_good = float(period_good_frames[1])
+            except (TypeError, ValueError):
+                red_good = 1.0
+                green_good = 1.0
+
+        red_dt: list[float] = []
+        green_dt: list[float] = []
+        if isinstance(period_dead_time, list) and len(period_dead_time) == 2:
+            red_dt = [float(v) for v in period_dead_time[0]] if isinstance(period_dead_time[0], list) else []
+            green_dt = [float(v) for v in period_dead_time[1]] if isinstance(period_dead_time[1], list) else []
+
+        selected_mode = period_mode
+        if selected_mode == str(PeriodMode.GREEN):
+            return list(green_hist), {
+                **grouping,
+                "good_frames": green_good,
+                "dead_time_us": green_dt,
+            }
+
+        if selected_mode == str(PeriodMode.GREEN_MINUS_RED):
+            combined = [
+                Histogram(counts=np.asarray(g.counts, dtype=float) - np.asarray(r.counts, dtype=float), bin_width=g.bin_width)
+                for r, g in zip(red_hist, green_hist)
+            ]
+            return combined, {
+                **grouping,
+                "good_frames": max(green_good + red_good, 1.0),
+                "dead_time_us": [0.0] * len(combined),
+            }
+
+        if selected_mode == str(PeriodMode.GREEN_PLUS_RED):
+            combined = [
+                Histogram(counts=np.asarray(g.counts, dtype=float) + np.asarray(r.counts, dtype=float), bin_width=g.bin_width)
+                for r, g in zip(red_hist, green_hist)
+            ]
+            return combined, {
+                **grouping,
+                "good_frames": max(green_good + red_good, 1.0),
+                "dead_time_us": [0.0] * len(combined),
+            }
+
+        return list(red_hist), {
+            **grouping,
+            "good_frames": red_good,
+            "dead_time_us": red_dt,
+        }
 
     def _prepare_grouping_histograms(self, histograms, grouping: dict, use_deadtime: bool):
         """Return histograms prepared for grouping, with optional deadtime correction.

@@ -142,12 +142,14 @@ def test_load_v2_multiperiod(tmp_path, loader: NexusLoader) -> None:
     _write_v2_file(path, multiperiod=True)
 
     result = loader.load(str(path))
-    assert isinstance(result, list)
-    assert len(result) == 2
-
-    labels = [ds.run_label for ds in result]
-    assert labels == ["12345/1", "12345/2"]
-    assert all(ds.metadata["period_count"] == 2 for ds in result)
+    assert not isinstance(result, list)
+    assert result.run is not None
+    assert result.run_label == "12345"
+    assert result.metadata["period_count"] == 2
+    period_histograms = result.run.grouping.get("period_histograms")
+    assert isinstance(period_histograms, list)
+    assert len(period_histograms) == 2
+    assert result.run.grouping.get("period_mode") == "red"
 
 
 def test_load_v1_single_period(tmp_path, loader: NexusLoader) -> None:

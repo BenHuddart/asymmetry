@@ -9,9 +9,9 @@ Supported families
 * Legacy V1 layout (``/run/...``)
 * Modern V2 layout (typically ``/raw_data_1/...``)
 
-Both single-period and multi-period files are supported. Multi-period files are
-returned as a list of :class:`~asymmetry.core.data.dataset.MuonDataset`
-instances, one per period.
+Both single-period and multi-period files are supported. Two-period files are
+loaded as a single dataset and retain both period histograms for red/green
+mode selection in the grouping workflow.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ import numpy as np
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.base import BaseLoader, LoadResult
 from asymmetry.core.transform import apply_grouping, compute_asymmetry
+from asymmetry.core.utils.constants import PeriodMode
 
 try:  # optional dependency
     import h5py  # type: ignore[import-untyped]
@@ -60,8 +61,8 @@ class NexusLoader(BaseLoader):
         Returns
         -------
         MuonDataset or list[MuonDataset]
-            Single dataset for single-period files, or one dataset per period
-            for multi-period files.
+            Single dataset for single-period and two-period files. Files with
+            more than two periods return one dataset per period.
         """
         self._require_h5py()
         path = Path(filepath)
@@ -421,7 +422,84 @@ class NexusLoader(BaseLoader):
                 )
             )
 
+        if n_periods == 2 and len(datasets) == 2:
+            return [
+                self._combine_two_period_datasets(
+                    datasets,
+                    source_run_number=run_number,
+                    source_file=source_file,
+                )
+            ]
         return datasets
+
+    def _combine_two_period_datasets(
+        self,
+        period_datasets: list[MuonDataset],
+        *,
+        source_run_number: int,
+        source_file: str,
+    ) -> MuonDataset:
+        """Merge two period datasets into one run with red/green period metadata."""
+        red_ds, green_ds = period_datasets[0], period_datasets[1]
+        if red_ds.run is None or green_ds.run is None:
+            raise ValueError("Two-period combination requires run metadata for both periods")
+
+        red_hist = self._clone_histograms(red_ds.run.histograms)
+        green_hist = self._clone_histograms(green_ds.run.histograms)
+
+        metadata = dict(red_ds.metadata)
+        metadata["run_number"] = int(source_run_number)
+        metadata["source_run_number"] = int(source_run_number)
+        metadata["run_label"] = str(source_run_number)
+        metadata["period_number"] = 1
+        metadata["period_count"] = 2
+
+        red_grouping = red_ds.run.grouping if isinstance(red_ds.run.grouping, dict) else {}
+        green_grouping = green_ds.run.grouping if isinstance(green_ds.run.grouping, dict) else {}
+        combined_grouping = dict(red_grouping)
+        combined_grouping["period_histograms"] = [red_hist, green_hist]
+        combined_grouping["period_mode"] = str(PeriodMode.RED)
+        combined_grouping["period_good_frames"] = [
+            float(red_grouping.get("good_frames", 1.0)),
+            float(green_grouping.get("good_frames", 1.0)),
+        ]
+        combined_grouping["period_dead_time_us"] = [
+            [float(v) for v in red_grouping.get("dead_time_us", [])],
+            [float(v) for v in green_grouping.get("dead_time_us", [])],
+        ]
+        combined_grouping["good_frames"] = float(combined_grouping["period_good_frames"][0])
+        combined_grouping["dead_time_us"] = list(combined_grouping["period_dead_time_us"][0])
+
+        run = Run(
+            run_number=int(source_run_number),
+            histograms=self._clone_histograms(red_hist),
+            metadata=metadata,
+            grouping=combined_grouping,
+            source_file=source_file,
+        )
+
+        return MuonDataset(
+            time=np.asarray(red_ds.time, dtype=np.float64).copy(),
+            asymmetry=np.asarray(red_ds.asymmetry, dtype=np.float64).copy(),
+            error=np.asarray(red_ds.error, dtype=np.float64).copy(),
+            metadata=metadata,
+            run=run,
+        )
+
+    def _clone_histograms(self, histograms: list[Histogram]) -> list[Histogram]:
+        """Return deep-copy style clones of histogram containers."""
+        out: list[Histogram] = []
+        for hist in histograms:
+            out.append(
+                Histogram(
+                    counts=np.asarray(hist.counts, dtype=np.float64).copy(),
+                    bin_width=float(hist.bin_width),
+                    t0_bin=int(hist.t0_bin),
+                    good_bin_start=int(hist.good_bin_start),
+                    good_bin_end=int(hist.good_bin_end),
+                )
+            )
+        return out
 
     def _build_histograms(
         self,

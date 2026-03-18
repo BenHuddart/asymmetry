@@ -1,4 +1,17 @@
-"""Physical constants relevant to μSR."""
+"""Physical constants and period-mode identifiers relevant to μSR."""
+
+from __future__ import annotations
+
+from enum import StrEnum
+
+
+class PeriodMode(StrEnum):
+	"""Supported combination modes for two-period muon data."""
+
+	RED = "red"
+	GREEN = "green"
+	GREEN_MINUS_RED = "green_minus_red"
+	GREEN_PLUS_RED = "green_plus_red"
 
 # Muon gyromagnetic ratio  γ_μ / (2π)  in MHz/T
 MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = 135.538817

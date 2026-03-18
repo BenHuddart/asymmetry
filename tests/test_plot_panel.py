@@ -14,6 +14,7 @@ pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton  # type: ignore
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.panels.plot_panel import PlotPanel
 
 
@@ -279,6 +280,25 @@ class TestPlotPanel:
         panel.plot_dataset(ds)
         assert not panel._alpha_label.isHidden()
         assert panel._alpha_label.text() == "(alpha = 1.2345)"
+
+    def test_period_mode_color_mapping(self, panel: PlotPanel) -> None:
+        red_hist = Histogram(counts=np.array([1.0, 2.0, 3.0]), bin_width=0.01)
+        run = Run(
+            run_number=9001,
+            histograms=[red_hist],
+            grouping={
+                "period_histograms": [[red_hist], [red_hist]],
+                "period_mode": str(PeriodMode.GREEN_MINUS_RED),
+            },
+        )
+        ds = MuonDataset(
+            time=np.array([0.0, 0.01, 0.02]),
+            asymmetry=np.array([0.1, 0.2, 0.3]),
+            error=np.array([0.01, 0.01, 0.01]),
+            metadata={"run_number": 9001},
+            run=run,
+        )
+        assert panel._period_mode_color_for_dataset(ds) == "#0000c0"
 
     def test_plot_multiple_datasets(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test plotting multiple datasets."""

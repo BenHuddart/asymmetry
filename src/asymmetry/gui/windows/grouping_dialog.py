@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -23,16 +24,19 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QSpinBox,
     QDoubleSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.transform import apply_grouping
 from asymmetry.core.transform.asymmetry import estimate_alpha
+from asymmetry.core.utils.constants import PeriodMode
 
 
 class GroupingDialog(QDialog):
@@ -179,6 +183,29 @@ class GroupingDialog(QDialog):
         self._deadtime_checkbox = QCheckBox("Enable Deadtime Correction")
         self._deadtime_checkbox.setChecked(bool(grouping.get("deadtime_correction", False)))
 
+        self._period_mode_label = QLabel("RG Mode")
+        self._period_mode_group = QButtonGroup(self)
+        self._period_mode_buttons: dict[str, QRadioButton] = {}
+        self._period_mode_widget = QWidget()
+        period_layout = QHBoxLayout(self._period_mode_widget)
+        period_layout.setContentsMargins(0, 0, 0, 0)
+        period_layout.setSpacing(10)
+
+        period_specs = [
+            ("Red", str(PeriodMode.RED), "#c00000"),
+            ("Green", str(PeriodMode.GREEN), "#008000"),
+            ("G minus R", str(PeriodMode.GREEN_MINUS_RED), "#0000c0"),
+            ("G plus R", str(PeriodMode.GREEN_PLUS_RED), "#800080"),
+        ]
+        for idx, (label, mode_key, color) in enumerate(period_specs):
+            btn = QRadioButton(label)
+            btn.setStyleSheet(f"color: {color};")
+            self._period_mode_group.addButton(btn, idx)
+            self._period_mode_buttons[mode_key] = btn
+            period_layout.addWidget(btn)
+        period_layout.addStretch()
+        self._set_period_mode(str(grouping.get("period_mode", PeriodMode.RED)))
+
         estimate_btn = QPushButton("Estimate α")
         estimate_btn.setAutoDefault(False)
         estimate_btn.setDefault(False)
@@ -196,6 +223,7 @@ class GroupingDialog(QDialog):
         form.addRow("Last Good Bin", self._last_good_spin)
         form.addRow("Bunching Factor", self._bunch_spin)
         form.addRow("Deadtime", self._deadtime_checkbox)
+        form.addRow(self._period_mode_label, self._period_mode_widget)
         root.addLayout(form)
 
         file_buttons = QHBoxLayout()
@@ -225,6 +253,7 @@ class GroupingDialog(QDialog):
         buttons.addWidget(cancel_btn)
         buttons.addWidget(apply_btn)
         root.addLayout(buttons)
+        self._update_period_mode_visibility()
 
     def _choose_reference_dataset(self) -> MuonDataset:
         """Return preferred reference dataset for initial grouping values."""
@@ -288,6 +317,8 @@ class GroupingDialog(QDialog):
         self._set_combo_to_group(self._backward_combo, int(grouping.get("backward_group", 2)))
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
         self._deadtime_checkbox.setChecked(bool(grouping.get("deadtime_correction", False)))
+        self._set_period_mode(str(grouping.get("period_mode", PeriodMode.RED)))
+        self._update_period_mode_visibility()
 
     def _checked_run_numbers(self) -> list[int]:
         """Return run numbers selected for grouping application."""
@@ -375,6 +406,40 @@ class GroupingDialog(QDialog):
         )
         self._alpha_spin.setValue(float(alpha))
 
+    def _reference_has_two_period_data(self) -> bool:
+        """Return True when the reference run contains two-period histograms."""
+        if self._run is None:
+            return False
+        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+        period_histograms = grouping.get("period_histograms")
+        if isinstance(period_histograms, list) and len(period_histograms) == 2:
+            return True
+        try:
+            return int(self._run.metadata.get("period_count", 1)) == 2
+        except (TypeError, ValueError):
+            return False
+
+    def _update_period_mode_visibility(self) -> None:
+        """Show RG controls only for two-period reference datasets."""
+        has_two_period = self._reference_has_two_period_data()
+        self._period_mode_label.setVisible(has_two_period)
+        self._period_mode_widget.setVisible(has_two_period)
+        self._period_mode_widget.setEnabled(has_two_period)
+
+    def _set_period_mode(self, mode_key: str) -> None:
+        """Select a period-mode radio button, defaulting to RED."""
+        btn = self._period_mode_buttons.get(str(mode_key))
+        if btn is None:
+            btn = self._period_mode_buttons[str(PeriodMode.RED)]
+        btn.setChecked(True)
+
+    def _current_period_mode(self) -> str:
+        """Return key for the selected period mode."""
+        for key, btn in self._period_mode_buttons.items():
+            if btn.isChecked():
+                return key
+        return str(PeriodMode.RED)
+
     def _current_grouping_payload(self) -> dict[str, Any]:
         """Build the current grouping payload from UI controls."""
         forward_gid = int(self._forward_combo.currentData())
@@ -390,6 +455,7 @@ class GroupingDialog(QDialog):
             "last_good_bin": int(self._last_good_spin.value()),
             "bunching_factor": int(self._bunch_spin.value()),
             "deadtime_correction": bool(self._deadtime_checkbox.isChecked()),
+            "period_mode": self._current_period_mode(),
         }
 
     def _save_grp_file(self) -> None:
@@ -455,6 +521,7 @@ class GroupingDialog(QDialog):
         self._last_good_spin.setValue(int(payload.get("last_good_bin", self._last_good_spin.value())))
         self._bunch_spin.setValue(int(payload.get("bunching_factor", self._bunch_spin.value())))
         self._deadtime_checkbox.setChecked(bool(payload.get("deadtime_correction", False)))
+        self._set_period_mode(str(payload.get("period_mode", PeriodMode.RED)))
 
     @staticmethod
     def serialize_grp(payload: dict[str, Any]) -> str:
@@ -475,6 +542,7 @@ class GroupingDialog(QDialog):
             f"last_good_bin={int(payload.get('last_good_bin', 0))}",
             f"bunching_factor={int(payload.get('bunching_factor', 1))}",
             f"deadtime_correction={1 if bool(payload.get('deadtime_correction', False)) else 0}",
+            f"period_mode={str(payload.get('period_mode', PeriodMode.RED))}",
         ]
 
         groups = payload.get("groups", {})
@@ -497,6 +565,7 @@ class GroupingDialog(QDialog):
             "last_good_bin": 0,
             "bunching_factor": 1,
             "deadtime_correction": False,
+            "period_mode": str(PeriodMode.RED),
         }
 
         for raw in text.splitlines():
@@ -519,6 +588,14 @@ class GroupingDialog(QDialog):
                 payload[key] = float(value)
             elif key == "deadtime_correction":
                 payload[key] = value.strip().lower() in {"1", "true", "yes", "on"}
+            elif key == "period_mode":
+                if value in {
+                    str(PeriodMode.RED),
+                    str(PeriodMode.GREEN),
+                    str(PeriodMode.GREEN_MINUS_RED),
+                    str(PeriodMode.GREEN_PLUS_RED),
+                }:
+                    payload[key] = value
 
         return payload
 
