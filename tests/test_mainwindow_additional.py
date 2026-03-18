@@ -206,6 +206,55 @@ class TestMainWindowBasic:
         assert ds.run is not None
         assert ds.run.grouping["period_mode"] == str(PeriodMode.GREEN)
 
+    def test_apply_grouping_green_minus_red_subtracts_asymmetry(self, mainwindow: MainWindow) -> None:
+        red_forward = Histogram(counts=np.array([200.0, 200.0, 200.0, 200.0]), bin_width=0.01)
+        red_backward = Histogram(counts=np.array([100.0, 100.0, 100.0, 100.0]), bin_width=0.01)
+        green_forward = Histogram(counts=np.array([180.0, 180.0, 180.0, 180.0]), bin_width=0.01)
+        green_backward = Histogram(counts=np.array([120.0, 120.0, 120.0, 120.0]), bin_width=0.01)
+
+        run = Run(
+            run_number=7451,
+            histograms=[red_forward, red_backward],
+            metadata={"run_number": 7451, "period_count": 2},
+            grouping={
+                "groups": {1: [1], 2: [2]},
+                "forward_group": 1,
+                "backward_group": 2,
+                "alpha": 1.0,
+                "period_histograms": [
+                    [red_forward, red_backward],
+                    [green_forward, green_backward],
+                ],
+                "period_good_frames": [1000.0, 1000.0],
+                "period_dead_time_us": [[0.0, 0.0], [0.0, 0.0]],
+            },
+        )
+        ds = MuonDataset(
+            time=np.array([0.0, 0.01, 0.02, 0.03], dtype=float),
+            asymmetry=np.zeros(4, dtype=float),
+            error=np.full(4, 0.01, dtype=float),
+            metadata={"run_number": 7451, "period_count": 2},
+            run=run,
+        )
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+            "period_mode": str(PeriodMode.GREEN_MINUS_RED),
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(ds, payload)
+
+        assert applied is True
+        # Expected: A_green - A_red = 0.2 - 0.333333... = -0.133333... (in fraction).
+        assert ds.asymmetry[0] == pytest.approx(-13.3333333333)
+        assert np.isfinite(ds.error[0])
+
     def test_run_info_inclusion_handler_updates_data_browser(self, mainwindow: MainWindow) -> None:
         """Run Info include/exclude signal should add/remove data-browser columns."""
         calls: list[tuple[str, str]] = []

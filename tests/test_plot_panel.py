@@ -300,6 +300,53 @@ class TestPlotPanel:
         )
         assert panel._period_mode_color_for_dataset(ds) == "#0000c0"
 
+    def test_multi_dataset_same_period_mode_uses_distinct_colors(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.array([0.0, 0.01, 0.02, 0.03])
+        err = np.full_like(t, 0.01)
+
+        def _two_period_ds(run_number: int) -> MuonDataset:
+            red_hist = Histogram(counts=np.array([50.0, 60.0, 55.0, 58.0]), bin_width=0.01)
+            run = Run(
+                run_number=run_number,
+                histograms=[red_hist],
+                grouping={
+                    "period_histograms": [[red_hist], [red_hist]],
+                    "period_mode": str(PeriodMode.RED),
+                },
+            )
+            return MuonDataset(
+                time=t,
+                asymmetry=np.array([0.1, 0.11, 0.09, 0.1]),
+                error=err,
+                metadata={"run_number": run_number},
+                run=run,
+            )
+
+        ds1 = _two_period_ds(9101)
+        ds2 = _two_period_ds(9102)
+
+        panel.plot_datasets([ds1, ds2])
+        handles, labels = panel._ax.get_legend_handles_labels()
+        assert len(handles) >= 2
+
+        def _handle_color(handle) -> str | None:
+            if hasattr(handle, "lines") and getattr(handle, "lines"):
+                return handle.lines[0].get_color()
+            if hasattr(handle, "get_color"):
+                return handle.get_color()
+            return None
+
+        first = _handle_color(handles[0])
+        second = _handle_color(handles[1])
+        assert first is not None
+        assert second is not None
+        assert first != second
+        assert labels[0] == str(ds1.run_label)
+        assert labels[1] == str(ds2.run_label)
+
     def test_plot_multiple_datasets(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test plotting multiple datasets."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:

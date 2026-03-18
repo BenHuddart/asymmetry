@@ -477,6 +477,28 @@ class PlotPanel(QWidget):
         }
         return color_map.get(mode)
 
+    def _period_mode_color_variant(self, base_color: str, index: int) -> str:
+        """Return a deterministic, high-contrast color variant for RG mode.
+
+        The first trace uses the mode's base color. Additional traces rotate
+        through a contrasting palette so selected runs are clearly separable.
+        """
+        if index <= 0:
+            return base_color
+
+        distinct_palette = [
+            "#1f77b4",  # blue
+            "#ff7f0e",  # orange
+            "#2ca02c",  # green
+            "#d62728",  # red
+            "#9467bd",  # purple
+            "#8c564b",  # brown
+            "#e377c2",  # pink
+            "#17becf",  # cyan
+            "#bcbd22",  # olive
+        ]
+        return distinct_palette[(index - 1) % len(distinct_palette)]
+
     def set_fit_range(self, x_min: float, x_max: float) -> None:
         """Set fit range limits and refresh visual handles."""
         self._set_fit_range(x_min, x_max, emit_signal=True, redraw=True)
@@ -509,12 +531,15 @@ class PlotPanel(QWidget):
         all_asym: list[np.ndarray] = []
         all_err: list[np.ndarray] = []
         all_low: list[np.ndarray] = []
+        period_color_counts: dict[str, int] = {}
 
         for i, dataset in enumerate(datasets):
             color = f"C{i % 10}"
             period_color = self._period_mode_color_for_dataset(dataset)
             if period_color is not None:
-                color = period_color
+                variant_idx = period_color_counts.get(period_color, 0)
+                color = self._period_mode_color_variant(period_color, variant_idx)
+                period_color_counts[period_color] = variant_idx + 1
             analysis_dataset = self.get_analysis_dataset(dataset)
             if analysis_dataset is None:
                 continue

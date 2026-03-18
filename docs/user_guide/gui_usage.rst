@@ -238,6 +238,43 @@ currently present in the Data Browser when that payload is well-defined.
 Changing bunching refreshes both the displayed curve and the dataset passed to
 the fitting panel.
 
+Two-Period RG Mode
+~~~~~~~~~~~~~~~~~~
+
+When the reference run contains two periods, the Grouping dialog shows an
+**RG Mode** row with WiMDA-style radio buttons:
+
+* **Red**
+* **Green**
+* **G minus R**
+* **G plus R**
+
+The selected mode is applied during grouping recomputation:
+
+* **Red** uses period-1 histograms.
+* **Green** uses period-2 histograms.
+* **G minus R** computes asymmetry for Green and Red separately, then subtracts
+   them in asymmetry space: :math:`A_{G-R} = A_G - A_R`.
+* **G plus R** computes asymmetry for Green and Red separately, then adds them
+   in asymmetry space: :math:`A_{G+R} = A_G + A_R`.
+
+For :math:`G \pm R`, the uncertainty is propagated from the two period
+asymmetry uncertainties using quadrature:
+
+.. math::
+
+    \sigma_{G\pm R} = \sqrt{\sigma_G^2 + \sigma_R^2}
+
+Color behavior in the main plot:
+
+* Single-run views use the RG mode color directly.
+* Multi-run overlays keep the first trace in the selected RG mode color and
+   use contrasting colors for additional selected runs so traces remain
+   distinguishable.
+
+The selected RG mode is saved in the grouping payload and in ``.grp`` files as
+``period_mode``.
+
 Low-count Tail Display
 ~~~~~~~~~~~~~~~~~~~~~~
 

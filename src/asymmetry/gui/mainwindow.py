@@ -785,12 +785,26 @@ class MainWindow(QMainWindow):
             use_deadtime,
         )
 
-        forward = apply_grouping(working_histograms, forward_idx)
-        backward = apply_grouping(working_histograms, backward_idx)
-
         run_alpha = alpha if alpha > 0 else 1.0
 
-        asymmetry, error = compute_asymmetry(forward, backward, alpha=run_alpha)
+        if (
+            isinstance(run.grouping, dict)
+            and period_mode in {str(PeriodMode.GREEN_MINUS_RED), str(PeriodMode.GREEN_PLUS_RED)}
+            and isinstance(run.grouping.get("period_histograms"), list)
+            and len(run.grouping.get("period_histograms", [])) == 2
+        ):
+            asymmetry, error, dt_applied = self._compute_period_mode_asymmetry(
+                run.grouping,
+                period_mode,
+                forward_idx,
+                backward_idx,
+                run_alpha,
+                use_deadtime,
+            )
+        else:
+            forward = apply_grouping(working_histograms, forward_idx)
+            backward = apply_grouping(working_histograms, backward_idx)
+            asymmetry, error = compute_asymmetry(forward, backward, alpha=run_alpha)
         asymmetry = asymmetry * 100.0
         error = error * 100.0
         time_axis = run.histograms[0].time_axis
@@ -821,6 +835,57 @@ class MainWindow(QMainWindow):
             }
         )
         return True, dt_applied
+
+    def _compute_period_mode_asymmetry(
+        self,
+        grouping: dict,
+        period_mode: str,
+        forward_idx: list[int],
+        backward_idx: list[int],
+        alpha: float,
+        use_deadtime: bool,
+    ) -> tuple[np.ndarray, np.ndarray, bool]:
+        """Compute two-period combined asymmetry directly in asymmetry space."""
+        period_hist = grouping.get("period_histograms") if isinstance(grouping, dict) else None
+        if not isinstance(period_hist, list) or len(period_hist) != 2:
+            raise ValueError("Expected two period histogram sets for period-mode asymmetry")
+
+        period_good_frames = grouping.get("period_good_frames") if isinstance(grouping, dict) else None
+        period_dead_time = grouping.get("period_dead_time_us") if isinstance(grouping, dict) else None
+
+        def _period_meta(index: int) -> dict:
+            good_frames = 1.0
+            if isinstance(period_good_frames, list) and len(period_good_frames) > index:
+                try:
+                    good_frames = float(period_good_frames[index])
+                except (TypeError, ValueError):
+                    good_frames = 1.0
+            dead_time_us: list[float] = []
+            if isinstance(period_dead_time, list) and len(period_dead_time) > index:
+                raw = period_dead_time[index]
+                if isinstance(raw, list):
+                    dead_time_us = [float(v) for v in raw]
+            return {"good_frames": good_frames, "dead_time_us": dead_time_us}
+
+        red_hist = period_hist[0] if isinstance(period_hist[0], list) else []
+        green_hist = period_hist[1] if isinstance(period_hist[1], list) else []
+        red_working, red_dt = self._prepare_grouping_histograms(red_hist, _period_meta(0), use_deadtime)
+        green_working, green_dt = self._prepare_grouping_histograms(green_hist, _period_meta(1), use_deadtime)
+
+        red_forward = apply_grouping(red_working, forward_idx)
+        red_backward = apply_grouping(red_working, backward_idx)
+        green_forward = apply_grouping(green_working, forward_idx)
+        green_backward = apply_grouping(green_working, backward_idx)
+
+        red_asym, red_err = compute_asymmetry(red_forward, red_backward, alpha=alpha)
+        green_asym, green_err = compute_asymmetry(green_forward, green_backward, alpha=alpha)
+
+        if period_mode == str(PeriodMode.GREEN_PLUS_RED):
+            combined_asym = green_asym + red_asym
+        else:
+            combined_asym = green_asym - red_asym
+        combined_err = np.sqrt(np.square(green_err) + np.square(red_err))
+        return combined_asym, combined_err, (red_dt or green_dt)
 
     def _select_histograms_for_period_mode(
         self,
@@ -863,25 +928,17 @@ class MainWindow(QMainWindow):
             }
 
         if selected_mode == str(PeriodMode.GREEN_MINUS_RED):
-            combined = [
-                Histogram(counts=np.asarray(g.counts, dtype=float) - np.asarray(r.counts, dtype=float), bin_width=g.bin_width)
-                for r, g in zip(red_hist, green_hist)
-            ]
-            return combined, {
+            return list(red_hist), {
                 **grouping,
                 "good_frames": max(green_good + red_good, 1.0),
-                "dead_time_us": [0.0] * len(combined),
+                "dead_time_us": [0.0] * len(red_hist),
             }
 
         if selected_mode == str(PeriodMode.GREEN_PLUS_RED):
-            combined = [
-                Histogram(counts=np.asarray(g.counts, dtype=float) + np.asarray(r.counts, dtype=float), bin_width=g.bin_width)
-                for r, g in zip(red_hist, green_hist)
-            ]
-            return combined, {
+            return list(red_hist), {
                 **grouping,
                 "good_frames": max(green_good + red_good, 1.0),
-                "dead_time_us": [0.0] * len(combined),
+                "dead_time_us": [0.0] * len(red_hist),
             }
 
         return list(red_hist), {

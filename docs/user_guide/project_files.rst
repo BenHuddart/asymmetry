@@ -13,6 +13,10 @@ Project files store:
 * Plot state (ranges, selected run, bunch factor)
 * Fit-panel and Fourier-panel state
 
+For two-period NeXus runs, grouping metadata persisted with each dataset also
+includes red/green period configuration such as ``period_mode`` and per-period
+histogram metadata used by RG recomputation.
+
 Project files do not embed raw detector arrays.
 
 Save and Load
