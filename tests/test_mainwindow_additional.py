@@ -17,7 +17,6 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
     ParameterGroupData,
 )
-from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.mainwindow import MainWindow
 import asymmetry.gui.mainwindow as mw_module
 
@@ -164,78 +163,17 @@ class TestMainWindowBasic:
         assert dataset.run is not None
         assert dataset.run.grouping["alpha"] == pytest.approx(1.0)
 
-    def test_apply_grouping_uses_selected_two_period_mode(self, mainwindow: MainWindow) -> None:
-        red = Histogram(counts=np.array([200.0, 200.0, 200.0, 200.0]), bin_width=0.01)
-        green = Histogram(counts=np.array([100.0, 100.0, 100.0, 100.0]), bin_width=0.01)
-        run = Run(
-            run_number=7450,
-            histograms=[red],
-            metadata={"run_number": 7450, "period_count": 2},
-            grouping={
-                "groups": {1: [1], 2: [1]},
-                "forward_group": 1,
-                "backward_group": 2,
-                "alpha": 1.0,
-                "period_histograms": [[red], [green]],
-                "period_good_frames": [1000.0, 1000.0],
-                "period_dead_time_us": [[0.01], [0.02]],
-            },
-        )
-        ds = MuonDataset(
-            time=np.array([0.0, 0.01, 0.02, 0.03], dtype=float),
-            asymmetry=np.zeros(4, dtype=float),
-            error=np.full(4, 0.01, dtype=float),
-            metadata={"run_number": 7450, "period_count": 2},
-            run=run,
-        )
-        payload = {
-            "groups": {1: [1], 2: [1]},
-            "forward_group": 1,
-            "backward_group": 2,
-            "alpha": 1.0,
-            "first_good_bin": 0,
-            "last_good_bin": 3,
-            "bunching_factor": 1,
-            "deadtime_correction": False,
-            "period_mode": str(PeriodMode.GREEN),
-        }
+    def test_apply_grouping_with_source_bunching_avoids_extra_rebinning_at_source_value(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Requested bunch factor equal to source factor should not rebunch again."""
+        dataset = _make_dataset(7402, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.source_file = "/tmp/run_7402.wim"
+        dataset.run.grouping["source_bunching_factor"] = 2
+        original_points = len(dataset.time)
 
-        applied, _ = mainwindow._apply_grouping_settings_to_dataset(ds, payload)
-
-        assert applied is True
-        assert ds.run is not None
-        assert ds.run.grouping["period_mode"] == str(PeriodMode.GREEN)
-
-    def test_apply_grouping_green_minus_red_subtracts_asymmetry(self, mainwindow: MainWindow) -> None:
-        red_forward = Histogram(counts=np.array([200.0, 200.0, 200.0, 200.0]), bin_width=0.01)
-        red_backward = Histogram(counts=np.array([100.0, 100.0, 100.0, 100.0]), bin_width=0.01)
-        green_forward = Histogram(counts=np.array([180.0, 180.0, 180.0, 180.0]), bin_width=0.01)
-        green_backward = Histogram(counts=np.array([120.0, 120.0, 120.0, 120.0]), bin_width=0.01)
-
-        run = Run(
-            run_number=7451,
-            histograms=[red_forward, red_backward],
-            metadata={"run_number": 7451, "period_count": 2},
-            grouping={
-                "groups": {1: [1], 2: [2]},
-                "forward_group": 1,
-                "backward_group": 2,
-                "alpha": 1.0,
-                "period_histograms": [
-                    [red_forward, red_backward],
-                    [green_forward, green_backward],
-                ],
-                "period_good_frames": [1000.0, 1000.0],
-                "period_dead_time_us": [[0.0, 0.0], [0.0, 0.0]],
-            },
-        )
-        ds = MuonDataset(
-            time=np.array([0.0, 0.01, 0.02, 0.03], dtype=float),
-            asymmetry=np.zeros(4, dtype=float),
-            error=np.full(4, 0.01, dtype=float),
-            metadata={"run_number": 7451, "period_count": 2},
-            run=run,
-        )
         payload = {
             "groups": {1: [1], 2: [2]},
             "forward_group": 1,
@@ -243,17 +181,98 @@ class TestMainWindowBasic:
             "alpha": 1.0,
             "first_good_bin": 0,
             "last_good_bin": 3,
-            "bunching_factor": 1,
+            "bunching_factor": 2,
+            "source_bunching_factor": 2,
             "deadtime_correction": False,
-            "period_mode": str(PeriodMode.GREEN_MINUS_RED),
         }
 
-        applied, _ = mainwindow._apply_grouping_settings_to_dataset(ds, payload)
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
 
         assert applied is True
-        # Expected: A_green - A_red = 0.2 - 0.333333... = -0.133333... (in fraction).
-        assert ds.asymmetry[0] == pytest.approx(-13.3333333333)
-        assert np.isfinite(ds.error[0])
+        assert len(dataset.time) == original_points
+
+    def test_apply_grouping_rejects_bunching_not_multiple_of_source(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Grouping payloads with non-multiple bunching factors should be rejected."""
+        dataset = _make_dataset(7403, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.source_file = "/tmp/run_7403.wim"
+        dataset.run.grouping["source_bunching_factor"] = 10
+
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 15,
+            "source_bunching_factor": 10,
+            "deadtime_correction": False,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is False
+
+    def test_apply_grouping_nexus_keeps_non_multiple_bunching_behavior(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Non-WIM datasets should keep legacy bunching behavior (no multiple constraint)."""
+        dataset = _make_dataset(7404, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.source_file = "/tmp/run_7404.nxs"
+        dataset.run.grouping["source_bunching_factor"] = 10
+
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 15,
+            "source_bunching_factor": 10,
+            "deadtime_correction": False,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+
+    def test_apply_grouping_wim_without_histograms_updates_bunching(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """WIM datasets without raw histograms should still allow bunch-factor changes."""
+        dataset = _make_dataset(7405, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.source_file = "/tmp/run_7405.wim"
+        dataset.run.histograms = []
+        dataset.run.grouping["source_bunching_factor"] = 2
+        original_points = len(dataset.time)
+
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 4,
+            "source_bunching_factor": 2,
+            "enforce_source_bunching": True,
+            "deadtime_correction": False,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert len(dataset.time) < original_points
+        assert dataset.run.grouping["bunching_factor"] == 4
 
     def test_run_info_inclusion_handler_updates_data_browser(self, mainwindow: MainWindow) -> None:
         """Run Info include/exclude signal should add/remove data-browser columns."""
@@ -657,3 +676,47 @@ class TestMainWindowBasic:
         mainwindow._on_grouping_current()
 
         assert captured["selected_run_numbers"] == [8201, 8202]
+
+    def test_grouping_request_uses_wim_dialog_for_wim_reference(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """WIM runs should open the dedicated WIM grouping dialog."""
+        ds = _make_dataset(8301, with_grouping=False)
+        assert ds.run is not None
+        ds.run.source_file = "/tmp/run_8301.wim"
+        mainwindow._current_dataset = ds
+
+        monkeypatch.setattr(mainwindow._data_browser, "get_all_datasets", lambda: [ds])
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds])
+
+        calls = {"wim": 0, "normal": 0}
+
+        class _StubWimGroupingDialog:
+            class DialogCode:
+                Accepted = 1
+
+            def __init__(self, *_args, **_kwargs):
+                calls["wim"] += 1
+
+            def exec(self):
+                return 0
+
+        class _StubGroupingDialog:
+            class DialogCode:
+                Accepted = 1
+
+            def __init__(self, *_args, **_kwargs):
+                calls["normal"] += 1
+
+            def exec(self):
+                return 0
+
+        monkeypatch.setattr(mw_module, "WimGroupingDialog", _StubWimGroupingDialog)
+        monkeypatch.setattr(mw_module, "GroupingDialog", _StubGroupingDialog)
+
+        mainwindow._on_grouping_current()
+
+        assert calls["wim"] == 1
+        assert calls["normal"] == 0

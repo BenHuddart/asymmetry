@@ -17,6 +17,18 @@ ISIS Muon NeXus (.nxs, .nexus)
 Asymmetry supports ISIS muon NeXus files (legacy V1 and modern V2), including
 multi-period runs. Multi-period files return a list of ``MuonDataset`` values.
 
+Grouping behavior by format
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In the GUI, grouping controls are format-aware:
+
+* ``.wim`` runs use a dedicated **WIM Grouping** dialog where only bunching is
+   editable and other grouping values are shown read-only.
+* Non-WIM runs (for example NeXus) use the full Grouping dialog.
+
+For ``.wim`` runs, bunching is constrained to integer multiples of the
+file-provided baseline bunching factor when present.
+
 Basic Usage
 -----------
 

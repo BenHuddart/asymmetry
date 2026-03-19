@@ -77,6 +77,7 @@ class TestWimLoader:
         assert ds.run.grouping["backward_group"] == 2
         assert ds.run.grouping["alpha"] == pytest.approx(1.0)
         assert ds.run.grouping["first_good_bin"] == 5
+        assert ds.run.grouping["source_bunching_factor"] == 1
 
     def test_file_not_found(self):
         loader = WimLoader()

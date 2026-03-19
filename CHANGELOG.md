@@ -33,12 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Grouping launch now preselects the highlighted runs, and newly loaded runs inherit the most recent in-browser grouping payload from the highest run number when possible.
 - Two-period red/green grouping mode now computes `G-R` and `G+R` in asymmetry space (`A_G - A_R`, `A_G + A_R`) with uncertainty propagation by quadrature.
 - Multi-run overlays in RG mode now use contrasting colors for additional runs so selected traces remain visually distinguishable.
+- Grouping is now format-specific in the GUI: `.wim` runs open a dedicated WIM Grouping dialog that only allows bunching edits, while non-WIM runs continue to use the full Grouping dialog.
+- For `.wim` runs, bunching now enforces the file-provided baseline (`source_bunching_factor`) as a minimum and integer-multiple constraint.
+- `.wim` runs without raw histograms can now still apply bunching changes from Grouping by rebunching existing asymmetry arrays.
 
 ### Documentation
 - Updated the composite-model guide to document shared amplitudes across multiplicative/divisive chains and the resulting formula/parameter-table behavior.
 - Updated the GUI user guide to document alpha display, Run Info search/orientation workflows, friendly Data Browser metadata headers, grouping preselection/template inheritance, and persistence details for dynamic columns and grouping settings.
 - Documented the main-plot export workflow for plotted datasets, including data-only exports, label-based ``.dat``/``.fit`` naming, metadata-rich ``.dat`` headers, annotation export, and ``.fit`` header metadata.
 - Documented two-period RG mode behavior in the GUI guide, including mode definitions, asymmetry-space `G±R` formulas, uncertainty propagation, and plotting color behavior.
+- Documented format-specific grouping workflows (`.wim` dedicated dialog vs full non-WIM dialog), including `.wim` bunching constraints and read-only grouping metadata display.
 
 ### Tests
 - Added regression and end-to-end persistence tests for:
@@ -48,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 	- project round-trip restoring grouping and axis limits,
 	- Run Info/Data Browser synthetic column integration.
 - Added regression tests covering two-period `G-R` asymmetry-space subtraction and multi-run RG overlay color distinction.
+- Added regression tests for WIM-specific grouping dialog routing and payload behavior, `.wim` bunching constraints, and `.wim` bunching updates when raw histograms are absent.
 
 ## [0.1.0] - 2026-03-09
 

@@ -683,7 +683,6 @@ class TestPlotPanel:
         assert panel._gle_format_combo.isEnabled() is False
 
         panel.plot_dataset(sample_dataset)
-        panel._update_export_enabled()
 
         assert panel._export_gle_btn.isEnabled() is True
         assert panel._gle_format_combo.isEnabled() is True

@@ -209,7 +209,11 @@ def _parse_group_info(content: str) -> dict:
         # Bunching
         m = re.search(r"bunching factor\s*=\s*(\d+)", line)
         if m:
-            result["bunching_factor"] = int(m.group(1))
+            bunching_factor = int(m.group(1))
+            result["bunching_factor"] = bunching_factor
+            # Preserve the file-provided bunching baseline so the GUI can
+            # allow only integer multiples without losing the original value.
+            result["source_bunching_factor"] = bunching_factor
         if "Fixed binning" in line:
             result["fixed_binning"] = True
 

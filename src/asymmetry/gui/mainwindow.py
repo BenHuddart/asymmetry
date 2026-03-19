@@ -43,7 +43,6 @@ from asymmetry.core.project import (
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform import apply_grouping, compute_asymmetry
 from asymmetry.core.transform.rebin import rebin
-from asymmetry.core.utils.constants import PeriodMode
 
 _MAX_RECENT_PROJECTS = 10
 _PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
@@ -55,7 +54,7 @@ from asymmetry.gui.panels.fourier_panel import FourierPanel
 from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
-from asymmetry.gui.windows.grouping_dialog import GroupingDialog
+from asymmetry.gui.windows.grouping_dialog import GroupingDialog, WimGroupingDialog
 from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
 
 
@@ -592,12 +591,48 @@ class MainWindow(QMainWindow):
             if hasattr(self._data_browser, "get_all_datasets")
             else []
         )
-        dialog = GroupingDialog(
-            all_datasets,
-            selected_run_number=selected_run_number,
-            selected_run_numbers=selected_run_numbers,
-            parent=self,
-        )
+        reference_dataset = None
+        if selected_run_number is not None:
+            reference_dataset = next(
+                (ds for ds in all_datasets if int(ds.run_number) == int(selected_run_number)),
+                None,
+            )
+        if reference_dataset is None:
+            reference_dataset = self._current_dataset
+
+        use_wim_dialog = False
+        if reference_dataset is not None and reference_dataset.run is not None:
+            source_file = str(getattr(reference_dataset.run, "source_file", "") or "")
+            use_wim_dialog = source_file.lower().endswith(".wim")
+
+        if use_wim_dialog:
+            dialog_datasets = [
+                ds
+                for ds in all_datasets
+                if ds.run is not None
+                and str(getattr(ds.run, "source_file", "") or "").lower().endswith(".wim")
+            ]
+            filtered_selected = None
+            if selected_run_numbers is not None:
+                selected_set = {int(v) for v in selected_run_numbers}
+                filtered_selected = [
+                    int(ds.run_number)
+                    for ds in dialog_datasets
+                    if int(ds.run_number) in selected_set
+                ]
+            dialog = WimGroupingDialog(
+                dialog_datasets,
+                selected_run_number=selected_run_number,
+                selected_run_numbers=filtered_selected,
+                parent=self,
+            )
+        else:
+            dialog = GroupingDialog(
+                all_datasets,
+                selected_run_number=selected_run_number,
+                selected_run_numbers=selected_run_numbers,
+                parent=self,
+            )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
 
@@ -693,8 +728,10 @@ class MainWindow(QMainWindow):
             "first_good_bin": int(grouping.get("first_good_bin", 0)),
             "last_good_bin": int(grouping.get("last_good_bin", 0)),
             "bunching_factor": int(grouping.get("bunching_factor", 1)),
+            "source_bunching_factor": int(
+                grouping.get("source_bunching_factor", grouping.get("bunching_factor", 1))
+            ),
             "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
-            "period_mode": str(grouping.get("period_mode", PeriodMode.RED)),
         }
 
         if "dead_time_us" in grouping and isinstance(grouping.get("dead_time_us"), list):
@@ -712,12 +749,12 @@ class MainWindow(QMainWindow):
             ``(applied, deadtime_applied)``.
         """
         run = dataset.run
-        if run is None or not run.histograms:
+        if run is None:
             return False, False
 
         groups_raw = grouping_result.get("groups", {})
         if not isinstance(groups_raw, dict):
-            return False, False
+            groups_raw = {}
 
         groups: dict[int, list[int]] = {}
         for key, values in groups_raw.items():
@@ -735,8 +772,6 @@ class MainWindow(QMainWindow):
                     continue
             if detectors:
                 groups[gid] = detectors
-        if not groups:
-            return False, False
 
         try:
             forward_gid = int(grouping_result.get("forward_group", 1))
@@ -746,19 +781,78 @@ class MainWindow(QMainWindow):
 
         forward_idx = [max(0, int(v) - 1) for v in groups.get(forward_gid, [])]
         backward_idx = [max(0, int(v) - 1) for v in groups.get(backward_gid, [])]
+
+        first_good = int(grouping_result.get("first_good_bin", 0))
+        if run.histograms:
+            last_good_default = len(run.histograms[0].counts) - 1
+        else:
+            last_good_default = len(dataset.time) - 1
+        last_good = int(grouping_result.get("last_good_bin", last_good_default))
+        alpha = float(grouping_result.get("alpha", 1.0))
+        bunch_factor = int(grouping_result.get("bunching_factor", 1))
+        enforce_source_bunching = bool(grouping_result.get("enforce_source_bunching", False))
+        if "enforce_source_bunching" not in grouping_result:
+            source_file = str(getattr(run, "source_file", "") or "")
+            enforce_source_bunching = source_file.lower().endswith(".wim")
+
+        source_bunch_factor = 1
+        additional_bunch_factor = max(1, bunch_factor)
+        if enforce_source_bunching:
+            source_bunch_factor = int(
+                grouping_result.get(
+                    "source_bunching_factor",
+                    run.grouping.get("source_bunching_factor", run.grouping.get("bunching_factor", 1)),
+                )
+            )
+            source_bunch_factor = max(1, source_bunch_factor)
+            if bunch_factor < source_bunch_factor:
+                return False, False
+            if bunch_factor % source_bunch_factor != 0:
+                return False, False
+            additional_bunch_factor = max(1, bunch_factor // source_bunch_factor)
+        use_deadtime = bool(grouping_result.get("deadtime_correction", False))
+
+        if not run.histograms:
+            lo = max(0, first_good)
+            hi = min(len(dataset.time) - 1, last_good)
+            if lo <= hi:
+                time_out = dataset.time[lo : hi + 1].copy()
+                asym_out = dataset.asymmetry[lo : hi + 1].copy()
+                err_out = dataset.error[lo : hi + 1].copy()
+                if additional_bunch_factor > 1:
+                    time_out, asym_out, err_out = rebin(
+                        time_out,
+                        asym_out,
+                        err_out,
+                        additional_bunch_factor,
+                    )
+                dataset.time = time_out
+                dataset.asymmetry = asym_out
+                dataset.error = err_out
+
+            if not isinstance(run.grouping, dict):
+                run.grouping = {}
+            if groups:
+                run.grouping["groups"] = groups
+                run.grouping["forward_group"] = forward_gid
+                run.grouping["backward_group"] = backward_gid
+            run.grouping["alpha"] = float(alpha if alpha > 0 else 1.0)
+            run.grouping["first_good_bin"] = first_good
+            run.grouping["last_good_bin"] = last_good
+            run.grouping["bunching_factor"] = bunch_factor
+            run.grouping["deadtime_correction"] = use_deadtime
+            if enforce_source_bunching:
+                run.grouping["source_bunching_factor"] = source_bunch_factor
+            return True, False
+
+        if not groups:
+            return False, False
         if not forward_idx or not backward_idx:
             return False, False
         if max(forward_idx, default=-1) >= len(run.histograms):
             return False, False
         if max(backward_idx, default=-1) >= len(run.histograms):
             return False, False
-
-        first_good = int(grouping_result.get("first_good_bin", 0))
-        last_good = int(grouping_result.get("last_good_bin", len(run.histograms[0].counts) - 1))
-        alpha = float(grouping_result.get("alpha", 1.0))
-        bunch_factor = int(grouping_result.get("bunching_factor", 1))
-        use_deadtime = bool(grouping_result.get("deadtime_correction", False))
-        period_mode = str(grouping_result.get("period_mode", run.grouping.get("period_mode", PeriodMode.RED)))
 
         if not isinstance(run.grouping, dict):
             run.grouping = {}
@@ -767,44 +861,18 @@ class MainWindow(QMainWindow):
         if "good_frames" in grouping_result:
             run.grouping["good_frames"] = grouping_result.get("good_frames")
 
-        source_histograms = list(run.histograms)
-        grouping_for_mode = run.grouping
-        if isinstance(run.grouping, dict):
-            source_histograms, grouping_for_mode = self._select_histograms_for_period_mode(
-                run.histograms,
-                run.grouping,
-                period_mode,
-            )
-            run.grouping["period_mode"] = period_mode
-            run.grouping["good_frames"] = grouping_for_mode.get("good_frames", run.grouping.get("good_frames", 1.0))
-            run.grouping["dead_time_us"] = list(grouping_for_mode.get("dead_time_us", run.grouping.get("dead_time_us", [])))
-
         working_histograms, dt_applied = self._prepare_grouping_histograms(
-            source_histograms,
-            grouping_for_mode,
+            run.histograms,
+            run.grouping,
             use_deadtime,
         )
 
+        forward = apply_grouping(working_histograms, forward_idx)
+        backward = apply_grouping(working_histograms, backward_idx)
+
         run_alpha = alpha if alpha > 0 else 1.0
 
-        if (
-            isinstance(run.grouping, dict)
-            and period_mode in {str(PeriodMode.GREEN_MINUS_RED), str(PeriodMode.GREEN_PLUS_RED)}
-            and isinstance(run.grouping.get("period_histograms"), list)
-            and len(run.grouping.get("period_histograms", [])) == 2
-        ):
-            asymmetry, error, dt_applied = self._compute_period_mode_asymmetry(
-                run.grouping,
-                period_mode,
-                forward_idx,
-                backward_idx,
-                run_alpha,
-                use_deadtime,
-            )
-        else:
-            forward = apply_grouping(working_histograms, forward_idx)
-            backward = apply_grouping(working_histograms, backward_idx)
-            asymmetry, error = compute_asymmetry(forward, backward, alpha=run_alpha)
+        asymmetry, error = compute_asymmetry(forward, backward, alpha=run_alpha)
         asymmetry = asymmetry * 100.0
         error = error * 100.0
         time_axis = run.histograms[0].time_axis
@@ -815,8 +883,15 @@ class MainWindow(QMainWindow):
             time_out = time_axis[lo : hi + 1].copy()
             asym_out = asymmetry[lo : hi + 1].copy()
             err_out = error[lo : hi + 1].copy()
-            if bunch_factor > 1:
-                time_out, asym_out, err_out = rebin(time_out, asym_out, err_out, bunch_factor)
+            # Datasets can already be bunched in-source (e.g. .wim). Apply
+            # only the extra bunching requested relative to source binning.
+            if additional_bunch_factor > 1:
+                time_out, asym_out, err_out = rebin(
+                    time_out,
+                    asym_out,
+                    err_out,
+                    additional_bunch_factor,
+                )
             dataset.time = time_out
             dataset.asymmetry = asym_out
             dataset.error = err_out
@@ -831,121 +906,11 @@ class MainWindow(QMainWindow):
                 "last_good_bin": last_good,
                 "bunching_factor": bunch_factor,
                 "deadtime_correction": use_deadtime,
-                "period_mode": period_mode,
             }
         )
+        if enforce_source_bunching:
+            run.grouping["source_bunching_factor"] = source_bunch_factor
         return True, dt_applied
-
-    def _compute_period_mode_asymmetry(
-        self,
-        grouping: dict,
-        period_mode: str,
-        forward_idx: list[int],
-        backward_idx: list[int],
-        alpha: float,
-        use_deadtime: bool,
-    ) -> tuple[np.ndarray, np.ndarray, bool]:
-        """Compute two-period combined asymmetry directly in asymmetry space."""
-        period_hist = grouping.get("period_histograms") if isinstance(grouping, dict) else None
-        if not isinstance(period_hist, list) or len(period_hist) != 2:
-            raise ValueError("Expected two period histogram sets for period-mode asymmetry")
-
-        period_good_frames = grouping.get("period_good_frames") if isinstance(grouping, dict) else None
-        period_dead_time = grouping.get("period_dead_time_us") if isinstance(grouping, dict) else None
-
-        def _period_meta(index: int) -> dict:
-            good_frames = 1.0
-            if isinstance(period_good_frames, list) and len(period_good_frames) > index:
-                try:
-                    good_frames = float(period_good_frames[index])
-                except (TypeError, ValueError):
-                    good_frames = 1.0
-            dead_time_us: list[float] = []
-            if isinstance(period_dead_time, list) and len(period_dead_time) > index:
-                raw = period_dead_time[index]
-                if isinstance(raw, list):
-                    dead_time_us = [float(v) for v in raw]
-            return {"good_frames": good_frames, "dead_time_us": dead_time_us}
-
-        red_hist = period_hist[0] if isinstance(period_hist[0], list) else []
-        green_hist = period_hist[1] if isinstance(period_hist[1], list) else []
-        red_working, red_dt = self._prepare_grouping_histograms(red_hist, _period_meta(0), use_deadtime)
-        green_working, green_dt = self._prepare_grouping_histograms(green_hist, _period_meta(1), use_deadtime)
-
-        red_forward = apply_grouping(red_working, forward_idx)
-        red_backward = apply_grouping(red_working, backward_idx)
-        green_forward = apply_grouping(green_working, forward_idx)
-        green_backward = apply_grouping(green_working, backward_idx)
-
-        red_asym, red_err = compute_asymmetry(red_forward, red_backward, alpha=alpha)
-        green_asym, green_err = compute_asymmetry(green_forward, green_backward, alpha=alpha)
-
-        if period_mode == str(PeriodMode.GREEN_PLUS_RED):
-            combined_asym = green_asym + red_asym
-        else:
-            combined_asym = green_asym - red_asym
-        combined_err = np.sqrt(np.square(green_err) + np.square(red_err))
-        return combined_asym, combined_err, (red_dt or green_dt)
-
-    def _select_histograms_for_period_mode(
-        self,
-        histograms,
-        grouping: dict,
-        period_mode: str,
-    ):
-        """Return histograms and deadtime metadata for the selected period mode."""
-        period_hist = grouping.get("period_histograms") if isinstance(grouping, dict) else None
-        period_good_frames = grouping.get("period_good_frames") if isinstance(grouping, dict) else None
-        period_dead_time = grouping.get("period_dead_time_us") if isinstance(grouping, dict) else None
-        if not isinstance(period_hist, list) or len(period_hist) != 2:
-            return list(histograms), grouping
-
-        red_hist = period_hist[0] if isinstance(period_hist[0], list) else list(histograms)
-        green_hist = period_hist[1] if isinstance(period_hist[1], list) else list(histograms)
-
-        red_good = 1.0
-        green_good = 1.0
-        if isinstance(period_good_frames, list) and len(period_good_frames) == 2:
-            try:
-                red_good = float(period_good_frames[0])
-                green_good = float(period_good_frames[1])
-            except (TypeError, ValueError):
-                red_good = 1.0
-                green_good = 1.0
-
-        red_dt: list[float] = []
-        green_dt: list[float] = []
-        if isinstance(period_dead_time, list) and len(period_dead_time) == 2:
-            red_dt = [float(v) for v in period_dead_time[0]] if isinstance(period_dead_time[0], list) else []
-            green_dt = [float(v) for v in period_dead_time[1]] if isinstance(period_dead_time[1], list) else []
-
-        selected_mode = period_mode
-        if selected_mode == str(PeriodMode.GREEN):
-            return list(green_hist), {
-                **grouping,
-                "good_frames": green_good,
-                "dead_time_us": green_dt,
-            }
-
-        if selected_mode == str(PeriodMode.GREEN_MINUS_RED):
-            return list(red_hist), {
-                **grouping,
-                "good_frames": max(green_good + red_good, 1.0),
-                "dead_time_us": [0.0] * len(red_hist),
-            }
-
-        if selected_mode == str(PeriodMode.GREEN_PLUS_RED):
-            return list(red_hist), {
-                **grouping,
-                "good_frames": max(green_good + red_good, 1.0),
-                "dead_time_us": [0.0] * len(red_hist),
-            }
-
-        return list(red_hist), {
-            **grouping,
-            "good_frames": red_good,
-            "dead_time_us": red_dt,
-        }
 
     def _prepare_grouping_histograms(self, histograms, grouping: dict, use_deadtime: bool):
         """Return histograms prepared for grouping, with optional deadtime correction.

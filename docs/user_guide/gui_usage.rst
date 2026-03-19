@@ -223,9 +223,11 @@ trace.
 Grouping and Bunching
 ~~~~~~~~~~~~~~~~~~~~~
 
-Grouping, alpha, deadtime correction, good-bin limits, and bunching are now
-managed from the **Grouping** dialog (toolbar/menu), not from the main plot
-toolbar.
+Grouping configuration is opened from **Grouping** (toolbar/menu), but the
+dialog now depends on the run format:
+
+* **WiMDA (.wim)** runs open a dedicated **WIM Grouping** dialog.
+* **NeXus (.nxs/.nexus)** and other runs open the full **Grouping** dialog.
 
 This keeps fit inputs consistent with the run grouping settings and project
 state.
@@ -235,13 +237,38 @@ datasets are pre-ticked in the dialog. When loading new runs into an existing
 project, Asymmetry reuses the grouping payload from the highest run number
 currently present in the Data Browser when that payload is well-defined.
 
-Changing bunching refreshes both the displayed curve and the dataset passed to
-the fitting panel.
+WIM Grouping dialog
+~~~~~~~~~~~~~~~~~~~
+
+For ``.wim`` runs, only **Bunching Factor** is editable. Grouping values read
+from the file (forward/backward group, alpha, good-bin limits, deadtime) are
+shown as read-only fields.
+
+When the source file contains a bunching baseline, the allowed values are
+restricted to integer multiples of that baseline. For example, a baseline of
+``10`` allows ``10, 20, 30, ...``.
+
+If you enter an invalid value (below baseline or non-multiple), Asymmetry
+shows a warning and does not apply the change.
+
+The WIM dialog is available even when raw histograms are not present; bunching
+still updates the plotted/fitted asymmetry by rebunching the current dataset
+arrays.
+
+Full Grouping dialog
+~~~~~~~~~~~~~~~~~~~~
+
+For NeXus and other non-WIM datasets, the full Grouping dialog is used and
+supports editing grouping assignment, alpha, deadtime, good-bin limits, and
+bunching.
+
+Changing bunching in either dialog refreshes both the displayed curve and the
+dataset passed to the fitting panel.
 
 Two-Period RG Mode
 ~~~~~~~~~~~~~~~~~~
 
-When the reference run contains two periods, the Grouping dialog shows an
+When the reference run contains two periods in the full Grouping dialog, an
 **RG Mode** row with WiMDA-style radio buttons:
 
 * **Red**

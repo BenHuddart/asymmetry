@@ -627,6 +627,7 @@ class PlotPanel(QWidget):
 
         self._draw_fit_range_artists()
         self._apply_limits()
+        self._update_export_enabled()
 
     def plot_dataset(self, dataset: MuonDataset) -> None:
         """Plot a dataset, optionally rebinned according to the bunch factor.
@@ -735,6 +736,7 @@ class PlotPanel(QWidget):
 
         # Apply the limits
         self._apply_limits()
+        self._update_export_enabled()
 
     def _apply_limits(self) -> None:
         """Apply the specified axis limits to the plot."""

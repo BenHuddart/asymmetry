@@ -67,7 +67,7 @@ class GroupingDialog(QDialog):
         """Create a shared grouping dialog for project datasets."""
         super().__init__(parent)
         self._datasets = [
-            ds for ds in datasets if ds.run is not None and bool(ds.run.histograms)
+            ds for ds in datasets if ds.run is not None
         ]
         self._selected_run_number = selected_run_number
         self._selected_run_numbers = (
@@ -81,7 +81,7 @@ class GroupingDialog(QDialog):
 
         if not self._datasets:
             layout = QVBoxLayout(self)
-            layout.addWidget(QLabel("No raw histograms are available in the active project."))
+            layout.addWidget(QLabel("No runs are available in the active project."))
             close_btn = QPushButton("Close")
             close_btn.clicked.connect(self.reject)
             layout.addWidget(close_btn)
@@ -124,6 +124,7 @@ class GroupingDialog(QDialog):
                 )
                 item.setCheckState(state)
             self._dataset_list.addItem(item)
+        self._dataset_list.setMaximumHeight(150)
 
         dataset_buttons = QHBoxLayout()
         select_all_btn = QPushButton("Select All")
@@ -147,6 +148,7 @@ class GroupingDialog(QDialog):
 
         self._group_table = QTableWidget(0, 2)
         self._group_table.setHorizontalHeaderLabels(["Group", "Detector Indices (1-based)"])
+        self._group_table.setMaximumHeight(140)
         root.addWidget(self._group_table)
         self._populate_group_table()
 
@@ -159,6 +161,8 @@ class GroupingDialog(QDialog):
             self._backward_combo.addItem(text, gid)
 
         grouping = self._run.grouping or {}
+        self._enforce_source_bunching = self._reference_is_wim_run()
+        self._source_bunching_factor = self._read_source_bunching_factor(grouping)
         self._set_combo_to_group(self._forward_combo, int(grouping.get("forward_group", 1)))
         self._set_combo_to_group(self._backward_combo, int(grouping.get("backward_group", 2)))
 
@@ -168,17 +172,23 @@ class GroupingDialog(QDialog):
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
 
         self._first_good_spin = QSpinBox()
-        self._first_good_spin.setRange(0, max(0, self._run.histograms[0].n_bins - 1))
+        max_bin = self._max_bin_index_for_reference_dataset()
+        self._first_good_spin.setRange(0, max_bin)
         self._first_good_spin.setValue(int(grouping.get("first_good_bin", 0)))
 
         self._last_good_spin = QSpinBox()
-        self._last_good_spin.setRange(0, max(0, self._run.histograms[0].n_bins - 1))
-        self._last_good_spin.setValue(int(grouping.get("last_good_bin", self._run.histograms[0].n_bins - 1)))
+        self._last_good_spin.setRange(0, max_bin)
+        self._last_good_spin.setValue(int(grouping.get("last_good_bin", max_bin)))
 
         self._bunch_spin = QSpinBox()
         self._bunch_spin.setRange(1, 10000)
-        self._bunch_spin.setValue(int(grouping.get("bunching_factor", 1)))
+        requested_bunching = int(grouping.get("bunching_factor", 1))
+        if self._enforce_source_bunching and requested_bunching < self._source_bunching_factor:
+            requested_bunching = self._source_bunching_factor
+        self._bunch_spin.setValue(requested_bunching)
         self._bunch_spin.setMaximumWidth(100)
+        self._bunch_source_hint = QLabel()
+        self._update_bunching_ui_hints()
 
         self._deadtime_checkbox = QCheckBox("Enable Deadtime Correction")
         self._deadtime_checkbox.setChecked(bool(grouping.get("deadtime_correction", False)))
@@ -222,6 +232,7 @@ class GroupingDialog(QDialog):
         form.addRow("First Good Bin", self._first_good_spin)
         form.addRow("Last Good Bin", self._last_good_spin)
         form.addRow("Bunching Factor", self._bunch_spin)
+        form.addRow("Bunching Rules", self._bunch_source_hint)
         form.addRow("Deadtime", self._deadtime_checkbox)
         form.addRow(self._period_mode_label, self._period_mode_widget)
         root.addLayout(form)
@@ -249,7 +260,7 @@ class GroupingDialog(QDialog):
         apply_btn = QPushButton("Apply")
         apply_btn.setAutoDefault(False)
         apply_btn.setDefault(False)
-        apply_btn.clicked.connect(self.accept)
+        apply_btn.clicked.connect(self._on_apply)
         buttons.addWidget(cancel_btn)
         buttons.addWidget(apply_btn)
         root.addLayout(buttons)
@@ -291,8 +302,21 @@ class GroupingDialog(QDialog):
             return groups
 
         n = len(run.histograms)
+        if n <= 0:
+            try:
+                n = int(run.metadata.get("histograms_count", 0))
+            except (TypeError, ValueError):
+                n = 0
+        if n <= 0:
+            n = 2
         split = max(1, n // 2)
         return {1: list(range(0, split)), 2: list(range(split, n)) or list(range(0, n))}
+
+    def _max_bin_index_for_reference_dataset(self) -> int:
+        """Return max index used by good-bin controls for the reference dataset."""
+        if self._run is not None and self._run.histograms:
+            return max(0, self._run.histograms[0].n_bins - 1)
+        return max(0, int(self._reference_dataset.n_points) - 1)
 
     def _set_combo_to_run(self, combo: QComboBox, run_number: int) -> None:
         """Set reference-run combo to the provided run number if it exists."""
@@ -313,12 +337,79 @@ class GroupingDialog(QDialog):
         self._populate_group_table()
 
         grouping = self._run.grouping or {}
+        self._enforce_source_bunching = self._reference_is_wim_run()
+        self._source_bunching_factor = self._read_source_bunching_factor(grouping)
         self._set_combo_to_group(self._forward_combo, int(grouping.get("forward_group", 1)))
         self._set_combo_to_group(self._backward_combo, int(grouping.get("backward_group", 2)))
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
+        max_bin = self._max_bin_index_for_reference_dataset()
+        self._first_good_spin.setRange(0, max_bin)
+        self._last_good_spin.setRange(0, max_bin)
+        self._first_good_spin.setValue(int(grouping.get("first_good_bin", 0)))
+        self._last_good_spin.setValue(int(grouping.get("last_good_bin", max_bin)))
+        requested_bunching = int(grouping.get("bunching_factor", 1))
+        if self._enforce_source_bunching and requested_bunching < self._source_bunching_factor:
+            requested_bunching = self._source_bunching_factor
+        self._bunch_spin.setValue(requested_bunching)
+        self._update_bunching_ui_hints()
         self._deadtime_checkbox.setChecked(bool(grouping.get("deadtime_correction", False)))
         self._set_period_mode(str(grouping.get("period_mode", PeriodMode.RED)))
         self._update_period_mode_visibility()
+
+    def _reference_is_wim_run(self) -> bool:
+        """Return ``True`` when the reference dataset was loaded from a ``.wim`` file."""
+        source_file = str(getattr(self._run, "source_file", "") or "")
+        return source_file.lower().endswith(".wim")
+
+    def _update_bunching_ui_hints(self) -> None:
+        """Refresh explanatory text shown next to bunching controls."""
+        if self._enforce_source_bunching:
+            base = int(self._source_bunching_factor)
+            self._bunch_source_hint.setText(
+                f"WIM baseline: {base}. Allowed values: {base}, {2 * base}, {3 * base}, ..."
+            )
+            self._bunch_spin.setToolTip(
+                "For this .wim dataset, bunching must be an integer multiple of "
+                f"{base}."
+            )
+            return
+
+        self._bunch_source_hint.setText("No file-imposed bunching constraint for this dataset type.")
+        self._bunch_spin.setToolTip("Set any bunching factor >= 1.")
+
+    def _read_source_bunching_factor(self, grouping: dict[str, Any]) -> int:
+        """Return the immutable source bunching baseline for the reference run."""
+        raw_value = grouping.get("source_bunching_factor", grouping.get("bunching_factor", 1))
+        try:
+            return max(1, int(raw_value))
+        except (TypeError, ValueError):
+            return 1
+
+    def _validate_bunching_factor(self, requested: int) -> str | None:
+        """Return validation error text for requested bunching, or ``None``."""
+        if not self._enforce_source_bunching:
+            return None
+        base = self._source_bunching_factor
+        if requested < base:
+            return (
+                "This run was loaded with bunching factor "
+                f"{base}, so you cannot decrease below {base}."
+            )
+        if requested % base != 0:
+            return (
+                "Bunching factor must be an integer multiple of the file value "
+                f"{base}. For example: {base}, {2 * base}, {3 * base}, ..."
+            )
+        return None
+
+    def _on_apply(self) -> None:
+        """Validate form values before accepting the dialog."""
+        requested = int(self._bunch_spin.value())
+        err = self._validate_bunching_factor(requested)
+        if err is not None:
+            QMessageBox.warning(self, "Invalid Bunching Factor", err)
+            return
+        self.accept()
 
     def _checked_run_numbers(self) -> list[int]:
         """Return run numbers selected for grouping application."""
@@ -454,6 +545,8 @@ class GroupingDialog(QDialog):
             "first_good_bin": int(self._first_good_spin.value()),
             "last_good_bin": int(self._last_good_spin.value()),
             "bunching_factor": int(self._bunch_spin.value()),
+            "source_bunching_factor": int(self._source_bunching_factor),
+            "enforce_source_bunching": bool(self._enforce_source_bunching),
             "deadtime_correction": bool(self._deadtime_checkbox.isChecked()),
             "period_mode": self._current_period_mode(),
         }
@@ -609,6 +702,311 @@ class GroupingDialog(QDialog):
             Returns ``None`` when no run histograms are available.
         """
         if self._run is None or not self._run.histograms:
+            return None
+        payload = self._current_grouping_payload()
+        payload["run_numbers"] = self._checked_run_numbers()
+        return payload
+
+
+class WimGroupingDialog(QDialog):
+    """WIM-specific grouping dialog.
+
+    This dialog is intentionally limited to bunching-factor edits. Other
+    grouping parameters parsed from ``.wim`` files are displayed as read-only
+    values for transparency.
+    """
+
+    def __init__(
+        self,
+        datasets: list[MuonDataset],
+        *,
+        selected_run_number: int | None = None,
+        selected_run_numbers: list[int] | None = None,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._datasets = [
+            ds
+            for ds in datasets
+            if ds.run is not None and str(getattr(ds.run, "source_file", "")).lower().endswith(".wim")
+        ]
+        self._selected_run_number = selected_run_number
+        self._selected_run_numbers = (
+            {int(v) for v in selected_run_numbers}
+            if selected_run_numbers is not None
+            else None
+        )
+
+        self.setWindowTitle("WIM Grouping")
+        self.resize(760, 520)
+
+        if not self._datasets:
+            layout = QVBoxLayout(self)
+            layout.addWidget(QLabel("No .wim runs are available in the active selection."))
+            close_btn = QPushButton("Close")
+            close_btn.setAutoDefault(False)
+            close_btn.setDefault(False)
+            close_btn.clicked.connect(self.reject)
+            layout.addWidget(close_btn)
+            return
+
+        self._reference_dataset = self._choose_reference_dataset()
+        self._run = self._reference_dataset.run
+        assert self._run is not None
+
+        root = QVBoxLayout(self)
+
+        top_row = QHBoxLayout()
+        top_row.addWidget(QLabel(f"WIM datasets: {len(self._datasets)}"))
+        self._reference_combo = QComboBox()
+        for ds in self._datasets:
+            self._reference_combo.addItem(ds.run_label, int(ds.run_number))
+        self._set_combo_to_run(self._reference_combo, int(self._reference_dataset.run_number))
+        self._reference_combo.currentIndexChanged.connect(self._on_reference_dataset_changed)
+        top_row.addWidget(QLabel("Reference run"))
+        top_row.addWidget(self._reference_combo)
+        top_row.addStretch()
+        root.addLayout(top_row)
+
+        self._dataset_list = QListWidget()
+        self._dataset_list.setMaximumHeight(150)
+        for ds in self._datasets:
+            item = QListWidgetItem(ds.run_label)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            run_number = int(ds.run_number)
+            item.setData(Qt.ItemDataRole.UserRole, run_number)
+            if self._selected_run_numbers is None:
+                item.setCheckState(Qt.CheckState.Checked)
+            else:
+                state = (
+                    Qt.CheckState.Checked
+                    if run_number in self._selected_run_numbers
+                    else Qt.CheckState.Unchecked
+                )
+                item.setCheckState(state)
+            self._dataset_list.addItem(item)
+        root.addWidget(self._dataset_list)
+
+        selection_buttons = QHBoxLayout()
+        select_all_btn = QPushButton("Select All")
+        select_all_btn.setAutoDefault(False)
+        select_all_btn.setDefault(False)
+        select_all_btn.clicked.connect(self._select_all_datasets)
+        select_reference_btn = QPushButton("Select Reference Run")
+        select_reference_btn.setAutoDefault(False)
+        select_reference_btn.setDefault(False)
+        select_reference_btn.clicked.connect(self._select_reference_dataset)
+        deselect_all_btn = QPushButton("Deselect All")
+        deselect_all_btn.setAutoDefault(False)
+        deselect_all_btn.setDefault(False)
+        deselect_all_btn.clicked.connect(self._deselect_all_datasets)
+        selection_buttons.addWidget(select_all_btn)
+        selection_buttons.addWidget(select_reference_btn)
+        selection_buttons.addWidget(deselect_all_btn)
+        selection_buttons.addStretch()
+        root.addLayout(selection_buttons)
+
+        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+        self._source_bunching_factor = self._read_source_bunching_factor(grouping)
+
+        read_only_form = QFormLayout()
+        self._forward_label = QLabel()
+        self._backward_label = QLabel()
+        self._alpha_label = QLabel()
+        self._first_good_label = QLabel()
+        self._last_good_label = QLabel()
+        self._deadtime_label = QLabel()
+        read_only_form.addRow("Forward Group", self._forward_label)
+        read_only_form.addRow("Backward Group", self._backward_label)
+        read_only_form.addRow("Alpha", self._alpha_label)
+        read_only_form.addRow("First Good Bin", self._first_good_label)
+        read_only_form.addRow("Last Good Bin", self._last_good_label)
+        read_only_form.addRow("Deadtime", self._deadtime_label)
+
+        self._bunch_spin = QSpinBox()
+        self._bunch_spin.setRange(1, 10000)
+        requested_bunching = int(grouping.get("bunching_factor", self._source_bunching_factor))
+        if requested_bunching < self._source_bunching_factor:
+            requested_bunching = self._source_bunching_factor
+        self._bunch_spin.setValue(requested_bunching)
+        self._bunch_spin.setMaximumWidth(120)
+        self._bunch_hint_label = QLabel()
+
+        bunch_form = QFormLayout()
+        bunch_form.addRow("Bunching Factor", self._bunch_spin)
+        bunch_form.addRow("Bunching Rules", self._bunch_hint_label)
+
+        root.addLayout(read_only_form)
+        root.addLayout(bunch_form)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setAutoDefault(False)
+        cancel_btn.setDefault(False)
+        cancel_btn.clicked.connect(self.reject)
+        apply_btn = QPushButton("Apply")
+        apply_btn.setAutoDefault(False)
+        apply_btn.setDefault(False)
+        apply_btn.clicked.connect(self._on_apply)
+        buttons.addWidget(cancel_btn)
+        buttons.addWidget(apply_btn)
+        root.addLayout(buttons)
+
+        self._refresh_read_only_fields()
+        self._update_bunching_ui_hints()
+
+    def _choose_reference_dataset(self) -> MuonDataset:
+        if self._selected_run_number is not None:
+            for ds in self._datasets:
+                if int(ds.run_number) == int(self._selected_run_number):
+                    return ds
+        return self._datasets[0]
+
+    def _set_combo_to_run(self, combo: QComboBox, run_number: int) -> None:
+        idx = combo.findData(run_number)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+
+    def _on_reference_dataset_changed(self) -> None:
+        run_number = int(self._reference_combo.currentData())
+        dataset = next((ds for ds in self._datasets if int(ds.run_number) == run_number), None)
+        if dataset is None or dataset.run is None:
+            return
+        self._reference_dataset = dataset
+        self._run = dataset.run
+        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+        self._source_bunching_factor = self._read_source_bunching_factor(grouping)
+        requested_bunching = int(grouping.get("bunching_factor", self._source_bunching_factor))
+        if requested_bunching < self._source_bunching_factor:
+            requested_bunching = self._source_bunching_factor
+        self._bunch_spin.setValue(requested_bunching)
+        self._refresh_read_only_fields()
+        self._update_bunching_ui_hints()
+
+    def _refresh_read_only_fields(self) -> None:
+        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+
+        def _fmt(key: str, default: str = "N/A") -> str:
+            value = grouping.get(key)
+            return default if value is None else str(value)
+
+        self._forward_label.setText(_fmt("forward_group"))
+        self._backward_label.setText(_fmt("backward_group"))
+        self._alpha_label.setText(_fmt("alpha"))
+        self._first_good_label.setText(_fmt("first_good_bin"))
+        self._last_good_label.setText(_fmt("last_good_bin"))
+        self._deadtime_label.setText("on" if bool(grouping.get("deadtime_correction", False)) else "off")
+
+    def _update_bunching_ui_hints(self) -> None:
+        base = int(self._source_bunching_factor)
+        self._bunch_hint_label.setText(
+            f"WIM baseline: {base}. Allowed values: {base}, {2 * base}, {3 * base}, ..."
+        )
+        self._bunch_spin.setToolTip(
+            "For this .wim dataset, bunching must be an integer multiple of "
+            f"{base}."
+        )
+
+    def _read_source_bunching_factor(self, grouping: dict[str, Any]) -> int:
+        raw_value = grouping.get("source_bunching_factor", grouping.get("bunching_factor", 1))
+        try:
+            return max(1, int(raw_value))
+        except (TypeError, ValueError):
+            return 1
+
+    def _validate_bunching_factor(self, requested: int) -> str | None:
+        base = self._source_bunching_factor
+        if requested < base:
+            return (
+                "This run was loaded with bunching factor "
+                f"{base}, so you cannot decrease below {base}."
+            )
+        if requested % base != 0:
+            return (
+                "Bunching factor must be an integer multiple of the file value "
+                f"{base}. For example: {base}, {2 * base}, {3 * base}, ..."
+            )
+        return None
+
+    def _on_apply(self) -> None:
+        requested = int(self._bunch_spin.value())
+        err = self._validate_bunching_factor(requested)
+        if err is not None:
+            QMessageBox.warning(self, "Invalid Bunching Factor", err)
+            return
+        self.accept()
+
+    def _checked_run_numbers(self) -> list[int]:
+        selected: list[int] = []
+        for i in range(self._dataset_list.count()):
+            item = self._dataset_list.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                selected.append(int(item.data(Qt.ItemDataRole.UserRole)))
+        return selected
+
+    def _set_all_dataset_checkstates(self, state: Qt.CheckState) -> None:
+        for i in range(self._dataset_list.count()):
+            self._dataset_list.item(i).setCheckState(state)
+
+    def _select_all_datasets(self) -> None:
+        self._set_all_dataset_checkstates(Qt.CheckState.Checked)
+
+    def _select_reference_dataset(self) -> None:
+        reference_run = self._reference_combo.currentData()
+        for i in range(self._dataset_list.count()):
+            item = self._dataset_list.item(i)
+            run_number = item.data(Qt.ItemDataRole.UserRole)
+            state = Qt.CheckState.Checked if run_number == reference_run else Qt.CheckState.Unchecked
+            item.setCheckState(state)
+
+    def _deselect_all_datasets(self) -> None:
+        self._set_all_dataset_checkstates(Qt.CheckState.Unchecked)
+
+    def _current_grouping_payload(self) -> dict[str, Any]:
+        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+        payload: dict[str, Any] = {
+            "forward_group": int(grouping.get("forward_group", 1)),
+            "backward_group": int(grouping.get("backward_group", 2)),
+            "alpha": float(grouping.get("alpha", 1.0)),
+            "first_good_bin": int(grouping.get("first_good_bin", 0)),
+            "last_good_bin": int(grouping.get("last_good_bin", max(0, self._reference_dataset.n_points - 1))),
+            "bunching_factor": int(self._bunch_spin.value()),
+            "source_bunching_factor": int(self._source_bunching_factor),
+            "enforce_source_bunching": True,
+            "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
+            "period_mode": str(grouping.get("period_mode", PeriodMode.RED)),
+        }
+
+        groups_raw = grouping.get("groups")
+        if isinstance(groups_raw, dict):
+            groups: dict[int, list[int]] = {}
+            for key, values in groups_raw.items():
+                try:
+                    gid = int(key)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(values, list):
+                    continue
+                detectors: list[int] = []
+                for value in values:
+                    try:
+                        detectors.append(int(value))
+                    except (TypeError, ValueError):
+                        continue
+                if detectors:
+                    groups[gid] = detectors
+            if groups:
+                payload["groups"] = groups
+
+        if "dead_time_us" in grouping and isinstance(grouping.get("dead_time_us"), list):
+            payload["dead_time_us"] = list(grouping.get("dead_time_us", []))
+        if "good_frames" in grouping:
+            payload["good_frames"] = grouping.get("good_frames")
+        return payload
+
+    def get_grouping_result(self) -> dict[str, Any] | None:
+        if self._run is None:
             return None
         payload = self._current_grouping_payload()
         payload["run_numbers"] = self._checked_run_numbers()

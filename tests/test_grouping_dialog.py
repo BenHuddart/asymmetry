@@ -11,11 +11,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
-from asymmetry.gui.windows.grouping_dialog import GroupingDialog
+from asymmetry.gui.windows.grouping_dialog import GroupingDialog, WimGroupingDialog
 
 
 @pytest.fixture(scope="module")
@@ -48,6 +48,75 @@ def _dataset_with_histograms() -> MuonDataset:
         asymmetry=np.zeros_like(t),
         error=np.full_like(t, 0.01),
         metadata={"run_number": 4001},
+        run=run,
+    )
+
+
+def _dataset_with_source_bunching(
+    run_number: int = 4301,
+    *,
+    source_bunching_factor: int = 10,
+    bunching_factor: int | None = None,
+    source_file: str | None = None,
+) -> MuonDataset:
+    if bunching_factor is None:
+        bunching_factor = source_bunching_factor
+
+    h1 = Histogram(counts=np.array([100.0, 100.0, 100.0, 100.0]), bin_width=0.01)
+    h2 = Histogram(counts=np.array([50.0, 50.0, 50.0, 50.0]), bin_width=0.01)
+    run = Run(
+        run_number=run_number,
+        histograms=[h1, h2],
+        metadata={"run_number": run_number, "title": "Grouping Test"},
+        source_file=source_file or f"/tmp/run_{run_number}.wim",
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": bunching_factor,
+            "source_bunching_factor": source_bunching_factor,
+        },
+    )
+    t = np.array([0.0, 0.01, 0.02, 0.03])
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number},
+        run=run,
+    )
+
+
+def _dataset_wim_without_histograms(
+    run_number: int = 4401,
+    *,
+    source_bunching_factor: int = 10,
+) -> MuonDataset:
+    run = Run(
+        run_number=run_number,
+        histograms=[],
+        metadata={"run_number": run_number, "histograms_count": 8},
+        source_file=f"/tmp/run_{run_number}.wim",
+        grouping={
+            "groups": {1: [1, 2], 2: [3, 4]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": source_bunching_factor,
+            "source_bunching_factor": source_bunching_factor,
+        },
+    )
+    t = np.array([0.0, 0.01, 0.02, 0.03])
+    return MuonDataset(
+        time=t,
+        asymmetry=np.array([0.1, 0.2, 0.1, 0.0]),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number},
         run=run,
     )
 
@@ -217,3 +286,123 @@ def test_period_mode_row_visible_for_two_period_reference(qapp: QApplication) ->
     assert not dialog._period_mode_label.isHidden()
     assert not dialog._period_mode_widget.isHidden()
     assert dialog._current_period_mode() == str(PeriodMode.GREEN)
+
+
+def test_source_bunching_factor_initializes_bunch_spin(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_source_bunching(source_bunching_factor=10)])
+    assert dialog._bunch_spin.value() == 10
+    assert dialog._source_bunching_factor == 10
+    assert "WIM baseline: 10" in dialog._bunch_source_hint.text()
+
+
+def test_apply_rejects_bunching_below_source_value(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = GroupingDialog([_dataset_with_source_bunching(source_bunching_factor=10)])
+    captured = {"title": "", "text": ""}
+
+    def _warn(_parent, title, text):
+        captured["title"] = title
+        captured["text"] = text
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.grouping_dialog.QMessageBox.warning",
+        _warn,
+    )
+
+    dialog._bunch_spin.setValue(5)
+    dialog._on_apply()
+
+    assert dialog.result() == 0
+    assert captured["title"] == "Invalid Bunching Factor"
+    assert "cannot decrease below 10" in captured["text"]
+
+
+def test_apply_rejects_bunching_not_multiple_of_source(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = GroupingDialog([_dataset_with_source_bunching(source_bunching_factor=10)])
+    captured = {"title": "", "text": ""}
+
+    def _warn(_parent, title, text):
+        captured["title"] = title
+        captured["text"] = text
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.grouping_dialog.QMessageBox.warning",
+        _warn,
+    )
+
+    dialog._bunch_spin.setValue(15)
+    dialog._on_apply()
+
+    assert dialog.result() == 0
+    assert captured["title"] == "Invalid Bunching Factor"
+    assert "integer multiple" in captured["text"]
+
+
+def test_apply_accepts_bunching_multiple_of_source(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_source_bunching(source_bunching_factor=10)])
+    dialog._bunch_spin.setValue(30)
+    dialog._on_apply()
+
+    assert dialog.result() == dialog.DialogCode.Accepted
+
+
+def test_nexus_reference_does_not_apply_wim_multiple_constraints(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = GroupingDialog(
+        [
+            _dataset_with_source_bunching(
+                source_bunching_factor=10,
+                source_file="/tmp/run_4301.nxs",
+            )
+        ]
+    )
+    captured = {"warned": False}
+
+    def _warn(*_args, **_kwargs):
+        captured["warned"] = True
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.grouping_dialog.QMessageBox.warning",
+        _warn,
+    )
+
+    dialog._bunch_spin.setValue(15)
+    dialog._on_apply()
+
+    assert dialog.result() == dialog.DialogCode.Accepted
+    assert captured["warned"] is False
+    assert "No file-imposed bunching constraint" in dialog._bunch_source_hint.text()
+
+
+def test_wim_without_histograms_still_shows_bunching_controls(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_wim_without_histograms(source_bunching_factor=10)])
+
+    assert dialog._bunch_spin.value() == 10
+    assert dialog._enforce_source_bunching is True
+    assert "WIM baseline: 10" in dialog._bunch_source_hint.text()
+
+
+def test_wim_grouping_dialog_only_modifies_bunching_payload(qapp: QApplication) -> None:
+    dataset = _dataset_wim_without_histograms(source_bunching_factor=10)
+    dialog = WimGroupingDialog([dataset])
+    dialog._bunch_spin.setValue(20)
+
+    result = dialog.get_grouping_result()
+    assert result is not None
+    assert result["bunching_factor"] == 20
+    assert result["enforce_source_bunching"] is True
+    # Read-only values should be preserved from the file grouping.
+    assert result["forward_group"] == 1
+    assert result["backward_group"] == 2
+    assert result["alpha"] == pytest.approx(1.0)
+    assert result["groups"] == {1: [1, 2], 2: [3, 4]}
