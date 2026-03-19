@@ -43,6 +43,7 @@ from asymmetry.core.project import (
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform import apply_grouping, compute_asymmetry
 from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.utils.constants import PeriodMode
 
 _MAX_RECENT_PROJECTS = 10
 _PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
@@ -790,6 +791,7 @@ class MainWindow(QMainWindow):
         last_good = int(grouping_result.get("last_good_bin", last_good_default))
         alpha = float(grouping_result.get("alpha", 1.0))
         bunch_factor = int(grouping_result.get("bunching_factor", 1))
+        period_mode = str(grouping_result.get("period_mode", PeriodMode.RED))
         enforce_source_bunching = bool(grouping_result.get("enforce_source_bunching", False))
         if "enforce_source_bunching" not in grouping_result:
             source_file = str(getattr(run, "source_file", "") or "")
@@ -841,6 +843,7 @@ class MainWindow(QMainWindow):
             run.grouping["last_good_bin"] = last_good
             run.grouping["bunching_factor"] = bunch_factor
             run.grouping["deadtime_correction"] = use_deadtime
+            run.grouping["period_mode"] = period_mode
             if enforce_source_bunching:
                 run.grouping["source_bunching_factor"] = source_bunch_factor
             return True, False
@@ -906,6 +909,7 @@ class MainWindow(QMainWindow):
                 "last_good_bin": last_good,
                 "bunching_factor": bunch_factor,
                 "deadtime_correction": use_deadtime,
+                "period_mode": period_mode,
             }
         )
         if enforce_source_bunching:

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QTextEdit,
     QVBoxLayout,
@@ -232,7 +233,11 @@ class PlotPanel(QWidget):
 
         self._add_label_btn = QPushButton("Add Annotation")
         self._add_label_btn.setCheckable(True)
-        self._add_label_btn.setMaximumWidth(110)
+        # Avoid clipping on platforms/themes where checkable button chrome
+        # adds extra horizontal padding around the label text.
+        min_btn_width = self._add_label_btn.fontMetrics().horizontalAdvance("Add Annotation") + 32
+        self._add_label_btn.setMinimumWidth(min_btn_width)
+        self._add_label_btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         row1.addWidget(self._add_label_btn)
 
         row1.addWidget(QLabel("Label:"))
@@ -486,17 +491,54 @@ class PlotPanel(QWidget):
         if index <= 0:
             return base_color
 
-        distinct_palette = [
-            "#1f77b4",  # blue
-            "#ff7f0e",  # orange
-            "#2ca02c",  # green
-            "#d62728",  # red
-            "#9467bd",  # purple
-            "#8c564b",  # brown
-            "#e377c2",  # pink
-            "#17becf",  # cyan
-            "#bcbd22",  # olive
-        ]
+        # Okabe-Ito style high-contrast palette with mode-specific exclusions
+        # so overlays remain visually distinct from the selected RG base color.
+        palette_by_base = {
+            "#c00000": [  # red mode
+                "#0072b2",  # blue
+                "#56b4e9",  # sky blue
+                "#009e73",  # bluish green
+                "#f0e442",  # yellow
+                "#cc79a7",  # magenta
+                "#000000",  # black
+                "#e69f00",  # orange
+            ],
+            "#008000": [  # green mode
+                "#0072b2",  # blue
+                "#56b4e9",  # sky blue
+                "#f0e442",  # yellow
+                "#cc79a7",  # magenta
+                "#000000",  # black
+                "#e69f00",  # orange
+                "#d55e00",  # vermillion
+            ],
+            "#0000c0": [  # G-R mode (blue)
+                "#e69f00",  # orange
+                "#f0e442",  # yellow
+                "#009e73",  # bluish green
+                "#cc79a7",  # magenta
+                "#000000",  # black
+                "#d55e00",  # vermillion
+            ],
+            "#800080": [  # G+R mode (purple)
+                "#0072b2",  # blue
+                "#56b4e9",  # sky blue
+                "#009e73",  # bluish green
+                "#f0e442",  # yellow
+                "#e69f00",  # orange
+                "#000000",  # black
+            ],
+        }
+        distinct_palette = palette_by_base.get(base_color.lower(), [
+            "#0072b2",  # blue
+            "#e69f00",  # orange
+            "#56b4e9",  # sky blue
+            "#f0e442",  # yellow
+            "#009e73",  # bluish green
+            "#cc79a7",  # magenta
+            "#000000",  # black
+            "#d55e00",  # vermillion
+        ])
         return distinct_palette[(index - 1) % len(distinct_palette)]
 
     def set_fit_range(self, x_min: float, x_max: float) -> None:
