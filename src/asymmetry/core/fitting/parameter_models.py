@@ -10,6 +10,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.fitting.diffusion import lambda_total
+from asymmetry.core.fitting.sc import models as sc_models
 from asymmetry.core.fitting.parameters import (
     ParamInfo,
     Parameter,
@@ -31,6 +32,7 @@ class ParameterModelComponentDefinition:
     param_defaults: dict[str, float]
     param_info: dict[str, ParamInfo]
     formula_template: str
+    latex_equation: str = ""
     scopes: tuple[str, ...] = ("common",)
 
 
@@ -160,6 +162,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_defaults={"c": 0.0},
         param_info={"c": get_param_info("c")},
         formula_template="{c}",
+        latex_equation=r"y(x) = c",
         scopes=("common",),
     ),
     "Linear": ParameterModelComponentDefinition(
@@ -170,6 +173,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_defaults={"m": 1.0, "b": 0.0},
         param_info={"m": get_param_info("m"), "b": get_param_info("b")},
         formula_template="{m}*x + {b}",
+        latex_equation=r"y(x) = m x + b",
         scopes=("common", "field", "temperature"),
     ),
     "PowerLaw": ParameterModelComponentDefinition(
@@ -184,6 +188,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
             "c": get_param_info("c"),
         },
         formula_template="{a}*|x|^{n} + {c}",
+        latex_equation=r"y(x) = a \lvert x \rvert^{n} + c",
         scopes=("common",),
     ),
     "ExponentialDecay": ParameterModelComponentDefinition(
@@ -198,6 +203,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
             "c": get_param_info("c"),
         },
         formula_template="{a}*exp(-x/{tau}) + {c}",
+        latex_equation=r"y(x) = a e^{-x/\tau} + c",
         scopes=("common",),
     ),
     "Arrhenius": ParameterModelComponentDefinition(
@@ -208,6 +214,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_defaults={"a": 1.0, "Ea": 1.0},
         param_info={"a": get_param_info("a"), "Ea": get_param_info("Ea")},
         formula_template="{a}*exp(-{Ea}/(k_B*T))",
+        latex_equation=r"y(T) = a e^{-E_a / (k_B T)}",
         scopes=("temperature",),
     ),
     "CriticalDivergence": ParameterModelComponentDefinition(
@@ -223,6 +230,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
             "c": get_param_info("c"),
         },
         formula_template="{a}*|x-{Tc}|^(-{nu}) + {c}",
+        latex_equation=r"y(T) = a \lvert T - T_c \rvert^{-\nu} + c",
         scopes=("temperature",),
     ),
     "Redfield": ParameterModelComponentDefinition(
@@ -237,6 +245,9 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
             "m": get_param_info("m"),
         },
         formula_template="(({D}^2)/4)*(2/{nu})/(1 + ((gamma_mu*x)/{nu})^{m})",
+        latex_equation=(
+            r"\lambda(B) = \frac{D^2}{4} \cdot \frac{2/\nu}{1 + (\gamma_\mu B / \nu)^m}"
+        ),
         scopes=("field",),
     ),
     "Lorentzian": ParameterModelComponentDefinition(
@@ -251,6 +262,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
             "c": get_param_info("c"),
         },
         formula_template="{a}/(1 + (x/{B0})^2) + {c}",
+        latex_equation=r"y(B) = \frac{a}{1 + (B/B_0)^2} + c",
         scopes=("field",),
     ),
     "GaussianLCR": ParameterModelComponentDefinition(
@@ -265,6 +277,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
             "Bwid": get_param_info("Bwid"),
         },
         formula_template="{f}*G(x; {B0}; {Bwid})",
+        latex_equation=r"\lambda_{LCR}(B) = f\,\exp\left(-\frac{(B-B_0)^2}{2 B_{wid}^2}\right)",
         scopes=("field",),
     ),
     "DiffusionLF_1D": ParameterModelComponentDefinition(
@@ -279,6 +292,9 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
             "D_perp": get_param_info("D_perp"),
         },
         formula_template="(({A}^2)/4)*J(x; n=1, D_2D={D_2D}, D_perp={D_perp})",
+        latex_equation=(
+            r"\lambda_{1D}(B) = \frac{A^2}{4} J\left(B; n=1, D_{2D}, D_{\perp}\right)"
+        ),
         scopes=("field",),
     ),
     "DiffusionLF_2D": ParameterModelComponentDefinition(
@@ -293,6 +309,9 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
             "D_perp": get_param_info("D_perp"),
         },
         formula_template="(({A}^2)/4)*J(x; n=2, D_2D={D_2D}, D_perp={D_perp})",
+        latex_equation=(
+            r"\lambda_{2D}(B) = \frac{A^2}{4} J\left(B; n=2, D_{2D}, D_{\perp}\right)"
+        ),
         scopes=("field",),
     ),
     "DiffusionLF_3D": ParameterModelComponentDefinition(
@@ -307,6 +326,9 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
             "D_perp": get_param_info("D_perp"),
         },
         formula_template="(({A}^2)/4)*J(x; n=3, D_2D={D_2D}, D_perp={D_perp})",
+        latex_equation=(
+            r"\lambda_{3D}(B) = \frac{A^2}{4} J\left(B; n=3, D_{2D}, D_{\perp}\right)"
+        ),
         scopes=("field",),
     ),
     "Lambda_bg": ParameterModelComponentDefinition(
@@ -317,9 +339,269 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_defaults={"lambda_BG": 0.0},
         param_info={"lambda_BG": get_param_info("lambda_BG")},
         formula_template="{lambda_BG}",
+        latex_equation=r"\lambda_{bg}(B) = \lambda_{BG}",
         scopes=("field",),
     ),
 }
+
+
+def _register_superconducting_components() -> None:
+    """Register superconducting sigma(T) components for temperature trending."""
+
+    PARAMETER_MODEL_COMPONENTS.update(
+        {
+            "SC_SWave": ParameterModelComponentDefinition(
+                name="SC_SWave",
+                description="sigma_0 * rho_s(T; s-wave) + sigma_bg",
+                function=sc_models.sc_s_wave,
+                param_names=["sigma_0", "Tc", "gap_ratio", "sigma_bg"],
+                param_defaults={"sigma_0": 1.0, "Tc": 20.0, "gap_ratio": 1.764, "sigma_bg": 0.0},
+                param_info={
+                    "sigma_0": get_param_info("sigma_0"),
+                    "Tc": get_param_info("Tc"),
+                    "gap_ratio": get_param_info("gap_ratio"),
+                    "sigma_bg": get_param_info("sigma_bg"),
+                },
+                formula_template="{sigma_0}*rho_s(x; Tc={Tc}, Delta0/kBTc={gap_ratio}) + {sigma_bg}",
+                latex_equation=(
+                    r"\sigma(T) = \sigma_0\,\rho_s\left(T; T_c, \Delta_0/(k_B T_c)\right) + \sigma_{bg}"
+                ),
+                scopes=("temperature",),
+            ),
+            "SC_DWave": ParameterModelComponentDefinition(
+                name="SC_DWave",
+                description="sigma_0 * rho_s(T; d-wave) + sigma_bg",
+                function=sc_models.sc_d_wave,
+                param_names=["sigma_0", "Tc", "gap_ratio", "sigma_bg"],
+                param_defaults={"sigma_0": 1.0, "Tc": 20.0, "gap_ratio": 2.14, "sigma_bg": 0.0},
+                param_info={
+                    "sigma_0": get_param_info("sigma_0"),
+                    "Tc": get_param_info("Tc"),
+                    "gap_ratio": get_param_info("gap_ratio"),
+                    "sigma_bg": get_param_info("sigma_bg"),
+                },
+                formula_template="{sigma_0}*rho_d(x; Tc={Tc}, Delta0/kBTc={gap_ratio}) + {sigma_bg}",
+                latex_equation=(
+                    r"\sigma(T) = \sigma_0\,\rho_d\left(T; T_c, \Delta_0/(k_B T_c)\right) + \sigma_{bg}"
+                ),
+                scopes=("temperature",),
+            ),
+            "SC_AnisotropicS_Cos4": ParameterModelComponentDefinition(
+                name="SC_AnisotropicS_Cos4",
+                description="sigma_0 * rho_s(T; g=1+a*cos(4phi)) + sigma_bg",
+                function=sc_models.sc_anisotropic_s_cos4,
+                param_names=["sigma_0", "Tc", "gap_ratio", "a_anis", "sigma_bg"],
+                param_defaults={
+                    "sigma_0": 1.0,
+                    "Tc": 20.0,
+                    "gap_ratio": 1.764,
+                    "a_anis": 0.2,
+                    "sigma_bg": 0.0,
+                },
+                param_info={
+                    "sigma_0": get_param_info("sigma_0"),
+                    "Tc": get_param_info("Tc"),
+                    "gap_ratio": get_param_info("gap_ratio"),
+                    "a_anis": get_param_info("a_anis"),
+                    "sigma_bg": get_param_info("sigma_bg"),
+                },
+                formula_template=(
+                    "{sigma_0}*rho_ani(x; Tc={Tc}, Delta0/kBTc={gap_ratio}, a={a_anis}) + {sigma_bg}"
+                ),
+                latex_equation=(
+                    r"\sigma(T) = \sigma_0\,\rho_{ani}\left(T; T_c, \Delta_0/(k_B T_c), a\right) + \sigma_{bg}"
+                ),
+                scopes=("temperature",),
+            ),
+            "SC_NonmonotonicD": ParameterModelComponentDefinition(
+                name="SC_NonmonotonicD",
+                description="sigma_0 * rho_s(T; beta*cos(2phi)+(1-beta)*cos(6phi)) + sigma_bg",
+                function=sc_models.sc_nonmonotonic_d,
+                param_names=["sigma_0", "Tc", "gap_ratio", "beta_nm", "sigma_bg"],
+                param_defaults={
+                    "sigma_0": 1.0,
+                    "Tc": 20.0,
+                    "gap_ratio": 2.14,
+                    "beta_nm": 0.8,
+                    "sigma_bg": 0.0,
+                },
+                param_info={
+                    "sigma_0": get_param_info("sigma_0"),
+                    "Tc": get_param_info("Tc"),
+                    "gap_ratio": get_param_info("gap_ratio"),
+                    "beta_nm": get_param_info("beta_nm"),
+                    "sigma_bg": get_param_info("sigma_bg"),
+                },
+                formula_template=(
+                    "{sigma_0}*rho_nm(x; Tc={Tc}, Delta0/kBTc={gap_ratio}, beta={beta_nm}) + {sigma_bg}"
+                ),
+                latex_equation=(
+                    r"\sigma(T) = \sigma_0\,\rho_{nm}\left(T; T_c, \Delta_0/(k_B T_c), \beta\right) + \sigma_{bg}"
+                ),
+                scopes=("temperature",),
+            ),
+            "SC_PWaveAxial": ParameterModelComponentDefinition(
+                name="SC_PWaveAxial",
+                description="sigma_0 * rho_s(T; p-wave axial) + sigma_bg",
+                function=sc_models.sc_p_wave_axial,
+                param_names=["sigma_0", "Tc", "gap_ratio", "sigma_bg"],
+                param_defaults={"sigma_0": 1.0, "Tc": 20.0, "gap_ratio": 2.0, "sigma_bg": 0.0},
+                param_info={
+                    "sigma_0": get_param_info("sigma_0"),
+                    "Tc": get_param_info("Tc"),
+                    "gap_ratio": get_param_info("gap_ratio"),
+                    "sigma_bg": get_param_info("sigma_bg"),
+                },
+                formula_template="{sigma_0}*rho_p(x; Tc={Tc}, Delta0/kBTc={gap_ratio}) + {sigma_bg}",
+                latex_equation=(
+                    r"\sigma(T) = \sigma_0\,\rho_p\left(T; T_c, \Delta_0/(k_B T_c)\right) + \sigma_{bg}"
+                ),
+                scopes=("temperature",),
+            ),
+            "SC_ExtendedS": ParameterModelComponentDefinition(
+                name="SC_ExtendedS",
+                description="sigma_0 * rho_s(T; extended s) + sigma_bg",
+                function=sc_models.sc_extended_s,
+                param_names=["sigma_0", "Tc", "gap_ratio", "signed_gap", "sigma_bg"],
+                param_defaults={
+                    "sigma_0": 1.0,
+                    "Tc": 20.0,
+                    "gap_ratio": 1.764,
+                    "signed_gap": 0.0,
+                    "sigma_bg": 0.0,
+                },
+                param_info={
+                    "sigma_0": get_param_info("sigma_0"),
+                    "Tc": get_param_info("Tc"),
+                    "gap_ratio": get_param_info("gap_ratio"),
+                    "signed_gap": get_param_info("signed_gap"),
+                    "sigma_bg": get_param_info("sigma_bg"),
+                },
+                formula_template=(
+                    "{sigma_0}*rho_ext(x; Tc={Tc}, Delta0/kBTc={gap_ratio}, signed={signed_gap}) + {sigma_bg}"
+                ),
+                latex_equation=(
+                    r"\sigma(T) = \sigma_0\,\rho_{ext}\left(T; T_c, \Delta_0/(k_B T_c), s\right) + \sigma_{bg}"
+                ),
+                scopes=("temperature",),
+            ),
+            "SC_AlphaModel": ParameterModelComponentDefinition(
+                name="SC_AlphaModel",
+                description="sigma_0 * rho_s(T; alpha model) + sigma_bg",
+                function=sc_models.sc_alpha_model,
+                param_names=["sigma_0", "Tc", "alpha_sc", "sigma_bg"],
+                param_defaults={"sigma_0": 1.0, "Tc": 20.0, "alpha_sc": 1.0, "sigma_bg": 0.0},
+                param_info={
+                    "sigma_0": get_param_info("sigma_0"),
+                    "Tc": get_param_info("Tc"),
+                    "alpha_sc": get_param_info("alpha_sc"),
+                    "sigma_bg": get_param_info("sigma_bg"),
+                },
+                formula_template="{sigma_0}*rho_alpha(x; Tc={Tc}, alpha={alpha_sc}) + {sigma_bg}",
+                latex_equation=(
+                    r"\sigma(T) = \sigma_0\,\rho_{\alpha}\left(T; T_c, \alpha\right) + \sigma_{bg}"
+                ),
+                scopes=("temperature",),
+            ),
+            "SC_TwoGap_SS": ParameterModelComponentDefinition(
+                name="SC_TwoGap_SS",
+                description="sigma_0 * [w*rho_1 + (1-w)*rho_2] + sigma_bg (s+s)",
+                function=sc_models.sc_two_gap_ss,
+                param_names=["sigma_0", "Tc", "gap_ratio_1", "gap_ratio_2", "weight", "sigma_bg"],
+                param_defaults={
+                    "sigma_0": 1.0,
+                    "Tc": 20.0,
+                    "gap_ratio_1": 1.2,
+                    "gap_ratio_2": 2.2,
+                    "weight": 0.5,
+                    "sigma_bg": 0.0,
+                },
+                param_info={
+                    "sigma_0": get_param_info("sigma_0"),
+                    "Tc": get_param_info("Tc"),
+                    "gap_ratio_1": get_param_info("gap_ratio_1"),
+                    "gap_ratio_2": get_param_info("gap_ratio_2"),
+                    "weight": get_param_info("weight"),
+                    "sigma_bg": get_param_info("sigma_bg"),
+                },
+                formula_template=(
+                    "{sigma_0}*({weight}*rho_1 + (1-{weight})*rho_2) + {sigma_bg}"
+                ),
+                latex_equation=(
+                    r"\sigma(T) = \sigma_0\left[w\rho_1(T) + (1-w)\rho_2(T)\right] + \sigma_{bg}"
+                ),
+                scopes=("temperature",),
+            ),
+            "SC_TwoGap_SD": ParameterModelComponentDefinition(
+                name="SC_TwoGap_SD",
+                description="sigma_0 * [w*rho_s + (1-w)*rho_d] + sigma_bg (s+d)",
+                function=sc_models.sc_two_gap_sd,
+                param_names=["sigma_0", "Tc", "gap_ratio_s", "gap_ratio_d", "weight", "sigma_bg"],
+                param_defaults={
+                    "sigma_0": 1.0,
+                    "Tc": 20.0,
+                    "gap_ratio_s": 1.764,
+                    "gap_ratio_d": 2.14,
+                    "weight": 0.5,
+                    "sigma_bg": 0.0,
+                },
+                param_info={
+                    "sigma_0": get_param_info("sigma_0"),
+                    "Tc": get_param_info("Tc"),
+                    "gap_ratio_s": get_param_info("gap_ratio_s"),
+                    "gap_ratio_d": get_param_info("gap_ratio_d"),
+                    "weight": get_param_info("weight"),
+                    "sigma_bg": get_param_info("sigma_bg"),
+                },
+                formula_template=(
+                    "{sigma_0}*({weight}*rho_s + (1-{weight})*rho_d) + {sigma_bg}"
+                ),
+                latex_equation=(
+                    r"\sigma(T) = \sigma_0\left[w\rho_s(T) + (1-w)\rho_d(T)\right] + \sigma_{bg}"
+                ),
+                scopes=("temperature",),
+            ),
+            "SC_SWave_Q": ParameterModelComponentDefinition(
+                name="SC_SWave_Q",
+                description="sqrt((sigma_sc*rho_s)^2 + sigma_nm^2)",
+                function=sc_models.sc_s_wave_q,
+                param_names=["sigma_sc", "sigma_nm", "Tc", "gap_ratio"],
+                param_defaults={"sigma_sc": 1.0, "sigma_nm": 0.1, "Tc": 20.0, "gap_ratio": 1.764},
+                param_info={
+                    "sigma_sc": get_param_info("sigma_sc"),
+                    "sigma_nm": get_param_info("sigma_nm"),
+                    "Tc": get_param_info("Tc"),
+                    "gap_ratio": get_param_info("gap_ratio"),
+                },
+                formula_template="sqrt(({sigma_sc}*rho_s)^2 + {sigma_nm}^2)",
+                latex_equation=(
+                    r"\sigma(T) = \sqrt{\left(\sigma_{sc}\rho_s(T)\right)^2 + \sigma_{nm}^2}"
+                ),
+                scopes=("temperature",),
+            ),
+            "SC_DWave_Q": ParameterModelComponentDefinition(
+                name="SC_DWave_Q",
+                description="sqrt((sigma_sc*rho_d)^2 + sigma_nm^2)",
+                function=sc_models.sc_d_wave_q,
+                param_names=["sigma_sc", "sigma_nm", "Tc", "gap_ratio"],
+                param_defaults={"sigma_sc": 1.0, "sigma_nm": 0.1, "Tc": 20.0, "gap_ratio": 2.14},
+                param_info={
+                    "sigma_sc": get_param_info("sigma_sc"),
+                    "sigma_nm": get_param_info("sigma_nm"),
+                    "Tc": get_param_info("Tc"),
+                    "gap_ratio": get_param_info("gap_ratio"),
+                },
+                formula_template="sqrt(({sigma_sc}*rho_d)^2 + {sigma_nm}^2)",
+                latex_equation=(
+                    r"\sigma(T) = \sqrt{\left(\sigma_{sc}\rho_d(T)\right)^2 + \sigma_{nm}^2}"
+                ),
+                scopes=("temperature",),
+            ),
+        }
+    )
+
+
+_register_superconducting_components()
 
 _ALLOWED_OPERATORS: frozenset[str] = frozenset({"+", "-", "*", "/"})
 

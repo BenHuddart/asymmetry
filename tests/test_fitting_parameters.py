@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
 
 
 def test_parameter_is_constrained_for_fixed_or_expression() -> None:
@@ -32,3 +32,12 @@ def test_parameter_set_basic_operations() -> None:
 
     ps.update_values({"A0": 3.5, "missing": 10.0})
     assert ps["A0"].value == 3.5
+
+
+def test_param_info_descriptions_and_index_propagation() -> None:
+    tc_info = get_param_info("Tc")
+    assert tc_info.description is not None
+    assert "critical temperature" in tc_info.description.lower()
+
+    indexed = get_param_info("Tc_3")
+    assert indexed.description == tc_info.description

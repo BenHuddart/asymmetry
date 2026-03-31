@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 import json
 import uuid
@@ -579,6 +580,69 @@ class DataBrowserPanel(QWidget):
                     QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
                 )
 
+    def _is_row_visible_for_selection(self, row: int) -> bool:
+        return 0 <= row < self._table.rowCount() and not self._table.isRowHidden(row)
+
+    def _next_visible_row(self, start_row: int, direction: int) -> int | None:
+        if direction == 0:
+            return start_row if self._is_row_visible_for_selection(start_row) else None
+
+        row = start_row + direction
+        while 0 <= row < self._table.rowCount():
+            if self._is_row_visible_for_selection(row):
+                return row
+            row += direction
+        return None
+
+    def _selection_anchor_for_row(self, fallback_row: int) -> int:
+        anchor_row = self._selection_anchor_row
+        if anchor_row is not None and self._is_row_visible_for_selection(anchor_row):
+            return anchor_row
+
+        current_row = self._table.currentRow()
+        if self._is_row_visible_for_selection(current_row):
+            return current_row
+
+        return fallback_row
+
+    def _select_visible_row_range(
+        self,
+        anchor_row: int,
+        target_row: int,
+        *,
+        add_to_selection: bool,
+    ) -> bool:
+        if not (
+            self._is_row_visible_for_selection(anchor_row)
+            and self._is_row_visible_for_selection(target_row)
+        ):
+            return False
+
+        selection_model = self._table.selectionModel()
+        if selection_model is None:
+            return False
+
+        start_row = min(anchor_row, target_row)
+        end_row = max(anchor_row, target_row)
+        visible_rows = [
+            row for row in range(start_row, end_row + 1) if self._is_row_visible_for_selection(row)
+        ]
+        if not visible_rows:
+            return False
+
+        for index, row in enumerate(visible_rows):
+            row_index = self._table.model().index(row, 0)
+            flags = QItemSelectionModel.SelectionFlag.Rows
+            if add_to_selection or index > 0:
+                flags |= QItemSelectionModel.SelectionFlag.Select
+            else:
+                flags |= QItemSelectionModel.SelectionFlag.ClearAndSelect
+            selection_model.select(row_index, flags)
+
+        current_index = self._table.model().index(target_row, 0)
+        selection_model.setCurrentIndex(current_index, QItemSelectionModel.SelectionFlag.NoUpdate)
+        return True
+
     def _resize_columns_to_content(self) -> None:
         self._table.resizeColumnsToContents()
         header = self._table.horizontalHeader()
@@ -788,6 +852,192 @@ class DataBrowserPanel(QWidget):
         """Return all datasets currently present in the browser."""
         return list(self._datasets.values())
 
+    def export_logbook_tsv(self, path: str) -> int:
+        """Export all runs to tab-separated text using current columns/grouping.
+
+        This export includes rows hidden by filters or collapsed groups.
+        """
+        headers = self._active_column_headers()
+        sections = self._export_sections()
+        exported_rows = 0
+
+        with open(path, "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+            for section_index, (section_name, run_numbers) in enumerate(sections):
+                writer.writerow(self._group_header_values(len(headers), section_name))
+                writer.writerow(headers)
+
+                for run_number in run_numbers:
+                    dataset = self._datasets.get(run_number)
+                    if dataset is None:
+                        continue
+                    writer.writerow(self._export_row_values(run_number, dataset))
+                    exported_rows += 1
+
+                if section_index < len(sections) - 1:
+                    writer.writerow([])
+
+        return exported_rows
+
+    def export_logbook_rtf(self, path: str) -> int:
+        """Export all runs to tab-separated RTF using current columns/grouping.
+
+        The export includes rows hidden in the table by filters or collapsed
+        groups so the file always reflects the full data browser contents.
+        """
+        headers = self._active_column_headers()
+        sections = self._export_sections()
+        exported_rows = 0
+        header_cells = [self._rtf_header_cell(header) for header in headers]
+        header_line = self._rtf_tabbed_line(header_cells, preescaped=True)
+
+        with open(path, "w", newline="", encoding="utf-8") as handle:
+            handle.write(r"{\rtf1\ansi\deff0\n")
+
+            for section_index, (section_name, run_numbers) in enumerate(sections):
+                group_header = self._group_header_values(len(headers), section_name)
+                group_cells = [self._rtf_escape(value) for value in group_header]
+                handle.write(self._rtf_tabbed_line(group_cells, preescaped=True))
+                handle.write("\n")
+                handle.write(header_line)
+                handle.write("\n")
+
+                for run_number in run_numbers:
+                    dataset = self._datasets.get(run_number)
+                    if dataset is None:
+                        continue
+                    handle.write(self._rtf_tabbed_line(self._export_row_values(run_number, dataset)))
+                    handle.write("\n")
+                    exported_rows += 1
+
+                if section_index < len(sections) - 1:
+                    handle.write(r"\par\n")
+
+            handle.write("}")
+
+        return exported_rows
+
+    def _rtf_tabbed_line(self, values: list[str], *, preescaped: bool = False) -> str:
+        escaped = values if preescaped else [self._rtf_escape(str(value)) for value in values]
+        return r"\tab ".join(escaped) + r"\par"
+
+    def _group_header_values(self, column_count: int, section_name: str) -> list[str]:
+        """Return a section-header row with the same width as the table."""
+        if column_count <= 0:
+            return [f"Data Group: {section_name}"]
+
+        row = [""] * column_count
+        row[0] = "Data Group"
+        if column_count >= 2:
+            row[1] = section_name
+        else:
+            row[0] = f"Data Group: {section_name}"
+        return row
+
+    def _rtf_header_cell(self, header: str) -> str:
+        """Return RTF-formatted header text for export table cells."""
+        if header == "𝑇 (K)":
+            return r"\i T\i0 (K)"
+        if header == "𝐵 (G)":
+            return r"\i B\i0 (G)"
+        return self._rtf_escape(header)
+
+    def _rtf_signed16(self, value: int) -> int:
+        return value if value < 0x8000 else value - 0x10000
+
+    def _rtf_escape(self, text: str) -> str:
+        sanitized = text.replace("\r", " ").replace("\n", " ")
+        if sanitized.isascii():
+            return sanitized.translate({
+                ord("\\"): r"\\",
+                ord("{"): r"\{",
+                ord("}"): r"\}",
+                ord("\t"): r"\tab ",
+            })
+
+        escaped: list[str] = []
+        for ch in sanitized:
+            if ch == "\\":
+                escaped.append(r"\\")
+                continue
+            if ch == "{":
+                escaped.append(r"\{")
+                continue
+            if ch == "}":
+                escaped.append(r"\}")
+                continue
+            if ch == "\t":
+                escaped.append(r"\tab ")
+                continue
+            if ch in ("\r", "\n"):
+                escaped.append(" ")
+                continue
+
+            codepoint = ord(ch)
+            if codepoint <= 0x7F:
+                escaped.append(ch)
+                continue
+
+            if codepoint <= 0xFFFF:
+                escaped.append(f"\\u{self._rtf_signed16(codepoint)}?")
+                continue
+
+            encoded = codepoint - 0x10000
+            high_surrogate = 0xD800 + (encoded >> 10)
+            low_surrogate = 0xDC00 + (encoded & 0x3FF)
+            escaped.append(f"\\u{self._rtf_signed16(high_surrogate)}?")
+            escaped.append(f"\\u{self._rtf_signed16(low_surrogate)}?")
+
+        return "".join(escaped)
+
+    def _active_column_headers(self) -> list[str]:
+        """Return visible/active data-browser column headers."""
+        headers: list[str] = []
+        for col in range(self._table.columnCount()):
+            header_item = self._table.horizontalHeaderItem(col)
+            headers.append(header_item.text() if header_item is not None else "")
+        return headers
+
+    def _export_sections(self) -> list[tuple[str, list[int]]]:
+        """Build export sections in display order with group headers."""
+        sections: list[tuple[str, list[int]]] = []
+        ungrouped_runs: list[int] = []
+
+        for entry in self._display_order:
+            if isinstance(entry, str):
+                group = self._groups.get(entry)
+                if group is None:
+                    continue
+                members = [int(rn) for rn in group.member_run_numbers if int(rn) in self._datasets]
+                sections.append((group.name, members))
+                continue
+
+            if entry in self._datasets:
+                ungrouped_runs.append(int(entry))
+
+        if ungrouped_runs or not sections:
+            sections.append(("Ungrouped", ungrouped_runs))
+
+        return sections
+
+    def _export_row_values(self, run_number: int, dataset: MuonDataset) -> list[str]:
+        """Return exported row values for one dataset in active-column order."""
+        meta = dataset.metadata
+        run_display = str(dataset.run_label)
+        if run_number in self._combined_datasets:
+            run_display = " + ".join(map(str, self._combined_datasets[run_number]))
+
+        row = [
+            run_display,
+            str(meta.get("title", "")),
+            f"{float(meta.get('temperature', 0.0)):.2f}",
+            f"{float(meta.get('field', 0.0)):.1f}",
+            str(meta.get("comment", "")),
+        ]
+        for field_key in self._extra_columns:
+            row.append(self._value_for_extra_column(dataset, field_key))
+        return row
+
     # ------------------------------------------------------------------
     # Editing and removal
     # ------------------------------------------------------------------
@@ -989,6 +1239,31 @@ class DataBrowserPanel(QWidget):
                 self._remove_selected_entries()
                 return True
 
+            if event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down) and bool(
+                event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+            ):
+                current_row = self._table.currentRow()
+                if current_row < 0:
+                    return False
+
+                direction = -1 if event.key() == Qt.Key.Key_Up else 1
+                target_row = self._next_visible_row(current_row, direction)
+                if target_row is None:
+                    return True
+
+                add_to_selection = bool(
+                    event.modifiers()
+                    & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier)
+                )
+                anchor_row = self._selection_anchor_for_row(current_row)
+                if self._select_visible_row_range(
+                    anchor_row,
+                    target_row,
+                    add_to_selection=add_to_selection,
+                ):
+                    self._selection_anchor_row = anchor_row
+                    return True
+
         if watched is self._table.viewport():
             if event.type() == QEvent.Type.MouseButtonDblClick and event.button() == Qt.MouseButton.LeftButton:
                 item = self._table.itemAt(event.position().toPoint())
@@ -1009,33 +1284,20 @@ class DataBrowserPanel(QWidget):
                     selection_model = self._table.selectionModel()
 
                     if bool(modifiers & Qt.KeyboardModifier.ShiftModifier):
-                        anchor_row = self._selection_anchor_row
-                        if anchor_row is None:
-                            anchor_row = self._table.currentRow()
-                        if anchor_row < 0:
-                            anchor_row = row
+                        anchor_row = self._selection_anchor_for_row(row)
 
                         if selection_model is not None:
-                            top_row = min(anchor_row, row)
-                            bottom_row = max(anchor_row, row)
-                            top_left = self._table.model().index(top_row, 0)
-                            bottom_right = self._table.model().index(
-                                bottom_row,
-                                self._table.columnCount() - 1,
-                            )
-                            selection = QItemSelection(top_left, bottom_right)
                             add_to_selection = bool(
                                 modifiers
                                 & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier)
                             )
-                            flags = QItemSelectionModel.SelectionFlag.Rows
-                            if add_to_selection:
-                                flags |= QItemSelectionModel.SelectionFlag.Select
-                            else:
-                                flags |= QItemSelectionModel.SelectionFlag.ClearAndSelect
-                            selection_model.select(selection, flags)
-                            selection_model.setCurrentIndex(index, QItemSelectionModel.SelectionFlag.NoUpdate)
-                            return True
+                            if self._select_visible_row_range(
+                                anchor_row,
+                                row,
+                                add_to_selection=add_to_selection,
+                            ):
+                                self._selection_anchor_row = anchor_row
+                                return True
                     else:
                         self._selection_anchor_row = row
                         if selection_model is not None:
@@ -1218,6 +1480,9 @@ class DataBrowserPanel(QWidget):
             if gid is None:
                 continue
             self._table.setRowHidden(row, not group_has_visible.get(gid, False))
+
+        if not self._is_row_visible_for_selection(self._selection_anchor_row or -1):
+            self._selection_anchor_row = None
 
         self.selection_changed.emit()
 

@@ -21,6 +21,7 @@ class ParamInfo:
     gle: str
     unit: str | None = None
     default_min: float | None = None  # None means no lower bound (-inf)
+    description: str | None = None
 
     def with_index(self, index: str) -> ParamInfo:
         """Return indexed metadata (e.g. ``A`` -> ``A_2``)."""
@@ -32,6 +33,7 @@ class ParamInfo:
             gle=f"{self.gle}_{{{index}}}",
             unit=self.unit,
             default_min=self.default_min,
+            description=self.description,
         )
 
     def plain_label(self, *, include_unit: bool = True) -> str:
@@ -97,6 +99,7 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "beta": ParamInfo("beta", "beta", "β", r"$\beta$", r"\beta", default_min=0.0),
     "phase": ParamInfo("phase", "phase", "φ", r"$\phi$", r"\phi", "rad"),
     "frequency": ParamInfo("frequency", "frequency", "f", r"$f$", r"{\it f}", "MHz", default_min=0.0),
+    "field": ParamInfo("field", "field", "B", r"$B$", r"{\it B}", "G"),
     "baseline": ParamInfo("baseline", "baseline", "baseline", "baseline", "baseline", "%"),
     "a": ParamInfo("a", "a", "a", r"$a$", r"{\it a}"),
     "b": ParamInfo("b", "b", "b", r"$b$", r"{\it b}"),
@@ -121,7 +124,120 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
         "lambda_0D", "lambda_0D", "λ_0D", r"$\lambda_{0D}$", r"\lambda_{0D}", "μs⁻¹", default_min=0.0
     ),
     "C": ParamInfo("C", "C", "C", r"$C$", r"{\it C}", "MHz", default_min=0.0),
+    "sigma_0": ParamInfo("sigma_0", "sigma_0", "σ_0", r"$\sigma_0$", r"\sigma_{0}", "μs⁻¹", default_min=0.0),
+    "sigma_bg": ParamInfo(
+        "sigma_bg", "sigma_bg", "σ_bg", r"$\sigma_{bg}$", r"\sigma_{bg}", "μs⁻¹", default_min=0.0
+    ),
+    "sigma_sc": ParamInfo(
+        "sigma_sc", "sigma_sc", "σ_sc", r"$\sigma_{sc}$", r"\sigma_{sc}", "μs⁻¹", default_min=0.0
+    ),
+    "sigma_nm": ParamInfo(
+        "sigma_nm", "sigma_nm", "σ_nm", r"$\sigma_{nm}$", r"\sigma_{nm}", "μs⁻¹", default_min=0.0
+    ),
+    "gap_ratio": ParamInfo(
+        "gap_ratio", "gap_ratio", "Δ0/kBTc", r"$\Delta_0/(k_B T_c)$", r"\Delta_{0}/(k_{B} T_{c})", default_min=0.0
+    ),
+    "gap_ratio_1": ParamInfo(
+        "gap_ratio_1",
+        "gap_ratio_1",
+        "Δ01/kBTc",
+        r"$\Delta_{01}/(k_B T_c)$",
+        r"\Delta_{01}/(k_{B} T_{c})",
+        default_min=0.0,
+    ),
+    "gap_ratio_2": ParamInfo(
+        "gap_ratio_2",
+        "gap_ratio_2",
+        "Δ02/kBTc",
+        r"$\Delta_{02}/(k_B T_c)$",
+        r"\Delta_{02}/(k_{B} T_{c})",
+        default_min=0.0,
+    ),
+    "gap_ratio_s": ParamInfo(
+        "gap_ratio_s",
+        "gap_ratio_s",
+        "Δ0s/kBTc",
+        r"$\Delta_{0s}/(k_B T_c)$",
+        r"\Delta_{0s}/(k_{B} T_{c})",
+        default_min=0.0,
+    ),
+    "gap_ratio_d": ParamInfo(
+        "gap_ratio_d",
+        "gap_ratio_d",
+        "Δ0d/kBTc",
+        r"$\Delta_{0d}/(k_B T_c)$",
+        r"\Delta_{0d}/(k_{B} T_{c})",
+        default_min=0.0,
+    ),
+    "a_anis": ParamInfo("a_anis", "a_anis", "a", r"$a$", r"{\it a}"),
+    "beta_nm": ParamInfo("beta_nm", "beta_nm", "β_nm", r"$\beta_{nm}$", r"\beta_{nm}"),
+    "alpha_sc": ParamInfo("alpha_sc", "alpha_sc", "α", r"$\alpha$", r"\alpha", default_min=0.0),
+    "weight": ParamInfo("weight", "weight", "w", r"$w$", r"{\it w}", default_min=0.0),
+    "signed_gap": ParamInfo("signed_gap", "signed_gap", "signed", "signed", "signed", default_min=0.0),
 }
+
+_PARAM_DESCRIPTIONS: dict[str, str] = {
+    "A": "Amplitude prefactor for a component contribution.",
+    "A0": "Initial asymmetry amplitude at t = 0.",
+    "A_bg": "Time-independent background asymmetry level.",
+    "Lambda": "Exponential relaxation rate constant.",
+    "sigma": "Gaussian relaxation rate related to field-distribution width.",
+    "Delta": "Static Gaussian field-distribution width in Kubo-Toyabe models.",
+    "beta": "Stretching exponent controlling deviation from simple exponential relaxation.",
+    "phase": "Phase offset of oscillatory precession.",
+    "frequency": "Muon spin precession frequency.",
+    "field": "Applied or effective magnetic field magnitude.",
+    "baseline": "Additive constant baseline contribution.",
+    "a": "Scale prefactor for the component term.",
+    "b": "Additive intercept term.",
+    "c": "Constant offset term.",
+    "n": "Power-law exponent controlling curvature.",
+    "tau": "Characteristic decay scale of x in the exponential term.",
+    "B0": "Characteristic field scale or resonance-center field.",
+    "Bwid": "Characteristic Gaussian field width around the resonance center.",
+    "Tc": "Critical temperature where the ordered/superconducting state emerges.",
+    "Ea": "Activation energy for thermally activated behavior.",
+    "D": "Dynamic coupling scale entering the Redfield relaxation contribution.",
+    "nu": "Fluctuation rate for local-field dynamics.",
+    "m": "Field-dependence exponent in generalized Redfield-like denominators.",
+    "f": "Amplitude of the Gaussian level-crossing resonance contribution.",
+    "D_2D": "In-plane diffusion rate used in diffusion-assisted LF relaxation models.",
+    "D_nD": "Effective n-dimensional diffusion rate.",
+    "D_perp": "Perpendicular (interlayer) diffusion rate component.",
+    "lambda_BG": "Field-independent background relaxation contribution.",
+    "lambda_0D": "Field-independent local (0D) dynamic relaxation contribution.",
+    "C": "Overall coupling prefactor in diffusion-based relaxation expressions.",
+    "sigma_0": "Zero-temperature superconducting contribution scale.",
+    "sigma_bg": "Non-superconducting background broadening term.",
+    "sigma_sc": "Superconducting-channel linewidth contribution.",
+    "sigma_nm": "Normal-state linewidth contribution.",
+    "gap_ratio": "Zero-temperature gap ratio Delta_0/(k_B T_c).",
+    "gap_ratio_1": "Gap ratio for band or component 1 in a two-gap model.",
+    "gap_ratio_2": "Gap ratio for band or component 2 in a two-gap model.",
+    "gap_ratio_s": "s-wave channel gap ratio in mixed-symmetry models.",
+    "gap_ratio_d": "d-wave channel gap ratio in mixed-symmetry models.",
+    "a_anis": "Fourfold anisotropy amplitude in anisotropic-gap models.",
+    "beta_nm": "Mixing weight between harmonic terms in nonmonotonic d-wave models.",
+    "alpha_sc": "Strong-coupling alpha scaling factor relative to weak-coupling BCS.",
+    "weight": "Mixing weight between two superconducting gap channels.",
+    "signed_gap": "Sign-preserving anisotropy control parameter in extended-s models.",
+}
+
+
+def _attach_description(info: ParamInfo) -> ParamInfo:
+    return ParamInfo(
+        name=info.name,
+        plain=info.plain,
+        unicode=info.unicode,
+        latex=info.latex,
+        gle=info.gle,
+        unit=info.unit,
+        default_min=info.default_min,
+        description=_PARAM_DESCRIPTIONS.get(info.name),
+    )
+
+
+PARAM_INFO_REGISTRY = {name: _attach_description(info) for name, info in PARAM_INFO_REGISTRY.items()}
 
 
 def get_param_info(name: str) -> ParamInfo:
@@ -131,7 +247,16 @@ def get_param_info(name: str) -> ParamInfo:
     if info is None:
         info = ParamInfo(base_name, base_name, base_name, f"${base_name}$", base_name)
     if index is None:
-        return ParamInfo(name, info.plain, info.unicode, info.latex, info.gle, info.unit, info.default_min)
+        return ParamInfo(
+            name,
+            info.plain,
+            info.unicode,
+            info.latex,
+            info.gle,
+            info.unit,
+            info.default_min,
+            info.description,
+        )
     return info.with_index(index)
 
 

@@ -33,3 +33,35 @@ Logbook
    :members:
    :undoc-members:
    :show-inheritance:
+
+Instrument Geometry
+-------------------
+
+.. autoclass:: asymmetry.core.instrument.DetectorSegment
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: asymmetry.core.instrument.BankLayout
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: asymmetry.core.instrument.GroupDefinition
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: asymmetry.core.instrument.PresetGrouping
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autoclass:: asymmetry.core.instrument.InstrumentLayout
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. autofunction:: asymmetry.core.instrument.get_instrument_layout
+
+.. autofunction:: asymmetry.core.instrument.detect_instrument

@@ -849,3 +849,13 @@ You can also build the same composite models directly from Python:
 
    print(model.formula_string())
    print(result.reduced_chi_squared)
+
+Superconducting Sigma(T) Models
+-------------------------------
+
+For TF-muSR vortex-state penetration-depth analysis, Asymmetry now includes
+dedicated superconducting sigma(T) components in the parameter-trending
+framework (for example ``SC_SWave``, ``SC_DWave``, and two-gap models).
+
+See :doc:`sc_penetration_depth` for the full physics conventions, equations,
+and usage guidance.

@@ -64,6 +64,7 @@ class PlotPanel(QWidget):
 
     bunch_factor_changed = Signal(int)
     fit_range_changed = Signal(float, float)
+    polarization_axis_changed = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -98,10 +99,26 @@ class PlotPanel(QWidget):
             self._alpha_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self._alpha_label.hide()
 
+            self._polarization_label = QLabel("Polarization:")
+            self._polarization_label.setAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            self._polarization_label.hide()
+
+            self._polarization_combo = QComboBox()
+            self._polarization_combo.setMinimumWidth(90)
+            self._polarization_combo.currentIndexChanged.connect(
+                self._on_polarization_axis_changed
+            )
+            self._polarization_combo.hide()
+
             alpha_row = QHBoxLayout()
             alpha_row.setContentsMargins(2, 0, 2, 0)
             alpha_row.setSpacing(0)
             alpha_row.addStretch()
+            alpha_row.addWidget(self._polarization_label)
+            alpha_row.addWidget(self._polarization_combo)
+            alpha_row.addSpacing(8)
             alpha_row.addWidget(self._alpha_label)
             layout.addLayout(alpha_row)
 
@@ -112,6 +129,10 @@ class PlotPanel(QWidget):
             self._current_dataset = None
             self._current_datasets: list[MuonDataset] = []
             self._limits_initialized = False
+            self._current_polarization_axis: str | None = None
+            self._y_limits_by_polarization: dict[str, tuple[float, float]] = {}
+            self._subplot_axes_by_polarization: dict[str, object] = {}
+            self._vector_subplot_datasets: dict[str, list[MuonDataset]] = {}
 
             # Legend label field preferences can be scoped per Data Group.
             self._active_label_group_id: str | None = None
@@ -204,10 +225,10 @@ class PlotPanel(QWidget):
         auto_x_btn.setMaximumWidth(65)
         row0.addWidget(auto_x_btn)
 
-        auto_y_btn = QPushButton("Auto Y")
-        auto_y_btn.clicked.connect(self._auto_y_limits)
-        auto_y_btn.setMaximumWidth(65)
-        row0.addWidget(auto_y_btn)
+        self._auto_y_btn = QPushButton("Auto Y")
+        self._auto_y_btn.clicked.connect(self._auto_y_limits)
+        self._auto_y_btn.setMaximumWidth(65)
+        row0.addWidget(self._auto_y_btn)
 
         row0.addStretch()
         self._limit_toolbar.addLayout(row0)
@@ -424,6 +445,9 @@ class PlotPanel(QWidget):
 
     def _redraw_current_view(self) -> None:
         """Redraw using the active single- or multi-dataset context."""
+        if self._current_polarization_axis == "ALL" and self._vector_subplot_datasets:
+            self.plot_vector_subplots(self._vector_subplot_datasets)
+            return
         if len(self._current_datasets) > 1:
             self.plot_datasets(self._current_datasets)
         elif self._current_dataset is not None:
@@ -439,6 +463,315 @@ class PlotPanel(QWidget):
         else:
             self._alpha_label.clear()
             self._alpha_label.hide()
+
+    def _axis_display_text(self, axis_key: str) -> str:
+        """Return UI label for canonical polarization keys."""
+        return {
+            "ALL": "All",
+            "P_x": "x",
+            "P_y": "y",
+            "P_z": "z",
+        }.get(str(axis_key), str(axis_key))
+
+    def _axis_canonical_key(self, axis_text: str | None) -> str | None:
+        """Normalize display/canonical axis text to canonical ``P_x`` form."""
+        if axis_text is None:
+            return None
+        token = str(axis_text).strip().lower().replace(" ", "")
+        token = token.replace("ₓ", "x").replace("ᵧ", "y").replace("ᶻ", "z")
+        token = token.replace("_", "")
+        if token in {"all", "pall"}:
+            return "ALL"
+        if token in {"px", "x"}:
+            return "P_x"
+        if token in {"py", "y"}:
+            return "P_y"
+        if token in {"pz", "z"}:
+            return "P_z"
+        return None
+
+    def get_current_polarization_axis(self) -> str | None:
+        """Return current polarization selector key (``P_*`` or ``ALL``)."""
+        return self._current_polarization_axis
+
+    def _cache_current_y_limits_for_axis(self) -> None:
+        """Store current y-limits under the active polarization axis, if any."""
+        axis = self._current_polarization_axis
+        if axis is None or axis == "ALL":
+            return
+        y0 = float(self._y_min.value())
+        y1 = float(self._y_max.value())
+        lo, hi = (y0, y1) if y0 <= y1 else (y1, y0)
+        self._y_limits_by_polarization[axis] = (lo, hi)
+
+    def _restore_y_limits_for_axis(self, axis: str | None) -> None:
+        """Restore cached y-limits for the selected polarization axis."""
+        if axis is None or axis == "ALL":
+            return
+        limits = self._y_limits_by_polarization.get(axis)
+        if limits is None:
+            return
+        self._y_min.setValue(float(limits[0]))
+        self._y_max.setValue(float(limits[1]))
+
+    def _on_polarization_axis_changed(self, _index: int) -> None:
+        """Emit polarization-axis changes from the plot header selector."""
+        axis = self._polarization_combo.currentData()
+        if axis is None:
+            axis = self._axis_canonical_key(self._polarization_combo.currentText())
+        if axis:
+            previous_axis = self._current_polarization_axis
+            if previous_axis != axis:
+                self._cache_current_y_limits_for_axis()
+                self._current_polarization_axis = str(axis)
+                self._restore_y_limits_for_axis(self._current_polarization_axis)
+                self._sync_y_controls_with_visible_axis()
+                self._update_y_limit_controls_for_axis(self._current_polarization_axis)
+                self._apply_limits()
+            self.polarization_axis_changed.emit(str(axis))
+
+    def _update_y_limit_controls_for_axis(self, axis: str | None) -> None:
+        """Enable per-axis Y editing except when in vector ALL mode."""
+        disable_y_edit = bool(self._subplot_axes_by_polarization) and axis == "ALL"
+        tooltip = (
+            "In All mode, Y limits are inherited from x, y, and z. "
+            "Select each polarization to set limits."
+            if disable_y_edit
+            else ""
+        )
+        self._y_min.setEnabled(not disable_y_edit)
+        self._y_max.setEnabled(not disable_y_edit)
+        self._y_min.setToolTip(tooltip)
+        self._y_max.setToolTip(tooltip)
+        if hasattr(self, "_auto_y_btn"):
+            self._auto_y_btn.setEnabled(not disable_y_edit)
+            self._auto_y_btn.setToolTip(tooltip)
+
+    def _all_mode_axes_order(self) -> list[str]:
+        """Return the axis order currently visible in ALL mode."""
+        if not self._subplot_axes_by_polarization:
+            return []
+        return [axis for axis in ("P_x", "P_y", "P_z") if axis in self._subplot_axes_by_polarization]
+
+    def _sync_y_controls_with_visible_axis(self) -> None:
+        """Keep Y controls aligned with currently visible polarization context."""
+        if not self._subplot_axes_by_polarization:
+            return
+
+        axis = self._current_polarization_axis
+        if axis in self._subplot_axes_by_polarization:
+            limits = self._y_limits_by_polarization.get(axis)
+            if limits is not None:
+                self._y_min.setValue(float(limits[0]))
+                self._y_max.setValue(float(limits[1]))
+            return
+
+        # For ALL, show a global y-range spanning all visible subplot axes.
+        ranges: list[tuple[float, float]] = []
+        for axis_key in self._all_mode_axes_order():
+            limits = self._y_limits_by_polarization.get(axis_key)
+            if limits is not None:
+                ranges.append((float(limits[0]), float(limits[1])))
+        if not ranges:
+            return
+        y_lo = min(lo for lo, _ in ranges)
+        y_hi = max(hi for _, hi in ranges)
+        self._y_min.setValue(y_lo)
+        self._y_max.setValue(y_hi)
+
+    def set_polarization_axes(
+        self,
+        axes: list[str],
+        current_axis: str | None = None,
+    ) -> None:
+        """Show/update the polarization selector or hide it when unavailable."""
+        if not hasattr(self, "_polarization_combo"):
+            return
+
+        cleaned = [str(a) for a in axes if str(a).strip()]
+        if not cleaned:
+            self._cache_current_y_limits_for_axis()
+            self._current_polarization_axis = None
+            self._vector_subplot_datasets = {}
+            self._polarization_combo.blockSignals(True)
+            self._polarization_combo.clear()
+            self._polarization_combo.blockSignals(False)
+            self._polarization_label.hide()
+            self._polarization_combo.hide()
+            self._update_y_limit_controls_for_axis(None)
+            return
+
+        selected = str(current_axis) if current_axis in cleaned else cleaned[0]
+        previous_axis = self._current_polarization_axis
+        if previous_axis != selected:
+            self._cache_current_y_limits_for_axis()
+
+        self._polarization_combo.blockSignals(True)
+        self._polarization_combo.clear()
+        for axis in cleaned:
+            self._polarization_combo.addItem(self._axis_display_text(axis), axis)
+        idx = self._polarization_combo.findData(selected)
+        if idx < 0:
+            idx = 0
+        self._polarization_combo.setCurrentIndex(idx)
+        self._polarization_combo.blockSignals(False)
+        self._polarization_label.show()
+        self._polarization_combo.show()
+        self._current_polarization_axis = selected
+
+        if previous_axis != selected:
+            self._restore_y_limits_for_axis(selected)
+            self._sync_y_controls_with_visible_axis()
+            self._update_y_limit_controls_for_axis(selected)
+            self._apply_limits()
+        else:
+            self._update_y_limit_controls_for_axis(selected)
+
+    def _polarization_ylabel(self, axis_key: str | None) -> str:
+        """Return y-axis label for the provided polarization component."""
+        if axis_key in {"P_x", "P_y", "P_z"}:
+            suffix = axis_key.split("_", 1)[1]
+            return rf"$a_0 P_{{{suffix}}}(t)$ (%)"
+        return "Asymmetry (%)"
+
+    def _ensure_single_axis_mode(self) -> None:
+        """Recreate a single-axis figure when leaving vector-subplot mode."""
+        if not self._subplot_axes_by_polarization:
+            return
+        self._figure.clf()
+        self._ax = self._figure.add_subplot(111)
+        self._subplot_axes_by_polarization = {}
+        self._vector_subplot_datasets = {}
+
+    def _plot_datasets_on_axis(self, ax, datasets: list[MuonDataset], axis_key: str | None) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
+        """Plot one or more datasets on ``ax`` and return flattened arrays for auto-y."""
+        all_times: list[np.ndarray] = []
+        all_asym: list[np.ndarray] = []
+        all_err: list[np.ndarray] = []
+        all_low: list[np.ndarray] = []
+        period_color_counts: dict[str, int] = {}
+
+        for i, dataset in enumerate(datasets):
+            color = f"C{i % 10}"
+            period_color = self._period_mode_color_for_dataset(dataset)
+            if period_color is not None:
+                variant_idx = period_color_counts.get(period_color, 0)
+                color = self._period_mode_color_variant(period_color, variant_idx)
+                period_color_counts[period_color] = variant_idx + 1
+            analysis_dataset = self.get_analysis_dataset(dataset)
+            if analysis_dataset is None:
+                continue
+
+            time = analysis_dataset.time
+            asymmetry = analysis_dataset.asymmetry
+            error = analysis_dataset.error
+            low_count_mask = self._low_count_mask_for_dataset(analysis_dataset)
+
+            finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
+            valid_low = finite_mask & low_count_mask
+            valid_main = finite_mask & ~low_count_mask
+
+            if np.any(valid_low):
+                ax.errorbar(
+                    time[valid_low],
+                    asymmetry[valid_low],
+                    yerr=error[valid_low],
+                    fmt=".",
+                    markersize=3,
+                    color="0.6",
+                    ecolor="0.6",
+                    label="_nolegend_",
+                )
+
+            draw_mask = valid_main if np.any(valid_main) else finite_mask
+            ax.errorbar(
+                time[draw_mask],
+                asymmetry[draw_mask],
+                yerr=error[draw_mask],
+                fmt=".",
+                markersize=3,
+                color=color,
+                label=self._dataset_label_for(dataset),
+            )
+
+            if np.any(finite_mask):
+                all_times.append(time[finite_mask])
+                all_asym.append(asymmetry[finite_mask])
+                all_err.append(error[finite_mask])
+                all_low.append(low_count_mask[finite_mask])
+
+        ax.set_ylabel(self._polarization_ylabel(axis_key))
+        if all_times:
+            return (
+                np.concatenate(all_times),
+                np.concatenate(all_asym),
+                np.concatenate(all_err),
+                np.concatenate(all_low),
+            )
+        return None, None, None, None
+
+    def plot_vector_subplots(self, datasets_by_axis: dict[str, list[MuonDataset]]) -> None:
+        """Render P_x/P_y/P_z as stacked subplots for vector ``ALL`` mode."""
+        if not self._has_mpl:
+            return
+
+        order = [axis for axis in ("P_x", "P_y", "P_z") if datasets_by_axis.get(axis)]
+        if not order:
+            return
+
+        self._set_alpha_label(None)
+        self._vector_subplot_datasets = {k: list(v) for k, v in datasets_by_axis.items() if v}
+        self._current_datasets = list(self._vector_subplot_datasets.get(order[0], []))
+        self._current_dataset = self._current_datasets[-1] if self._current_datasets else None
+
+        self._figure.clf()
+        self._subplot_axes_by_polarization = {}
+        shared_ax = None
+        last_arrays = (None, None, None, None)
+        for idx, axis_key in enumerate(order):
+            ax = self._figure.add_subplot(len(order), 1, idx + 1, sharex=shared_ax)
+            if shared_ax is None:
+                shared_ax = ax
+            self._subplot_axes_by_polarization[axis_key] = ax
+            self._ax = ax if idx == 0 else self._ax
+
+            t, a, e, low = self._plot_datasets_on_axis(ax, self._vector_subplot_datasets.get(axis_key, []), axis_key)
+            if axis_key in self._y_limits_by_polarization:
+                y0, y1 = self._y_limits_by_polarization[axis_key]
+                ax.set_ylim(y0, y1)
+            if idx == len(order) - 1:
+                ax.set_xlabel("Time (μs)")
+            else:
+                ax.tick_params(labelbottom=False)
+            if idx == 0:
+                ax.legend()
+            if t is not None:
+                last_arrays = (t, a, e, low)
+
+        self._last_plot_time = last_arrays[0]
+        self._last_plot_asymmetry = last_arrays[1]
+        self._last_plot_error = last_arrays[2]
+        self._last_low_count_mask = last_arrays[3]
+
+        if (not self._limits_initialized) and self._last_plot_time is not None:
+            x_min = float(np.min(self._last_plot_time))
+            x_max = float(np.max(self._last_plot_time))
+            xpad = (x_max - x_min) * 0.05
+            self._x_min.setValue(x_min - xpad)
+            self._x_max.setValue(x_max + xpad)
+            self._limits_initialized = True
+
+        if self._current_polarization_axis in self._subplot_axes_by_polarization:
+            y_limits = self._y_limits_by_polarization.get(self._current_polarization_axis)
+            if y_limits is not None:
+                self._y_min.setValue(float(y_limits[0]))
+                self._y_max.setValue(float(y_limits[1]))
+        else:
+            self._sync_y_controls_with_visible_axis()
+
+        self._update_y_limit_controls_for_axis(self._current_polarization_axis)
+
+        self._apply_limits()
 
     def _alpha_value_for_dataset(self, dataset: MuonDataset) -> float | None:
         """Return the asymmetry alpha value used for *dataset*, if available."""
@@ -564,6 +897,7 @@ class PlotPanel(QWidget):
             self.plot_dataset(datasets[0])
             return
 
+        self._ensure_single_axis_mode()
         self._set_alpha_label(None)
         self._current_dataset = datasets[-1]
         self._current_datasets = list(datasets)
@@ -635,7 +969,7 @@ class PlotPanel(QWidget):
                 all_low.append(low_count_mask[finite_mask])
 
         self._ax.set_xlabel("Time (μs)")
-        self._ax.set_ylabel("Asymmetry (%)")
+        self._ax.set_ylabel(self._polarization_ylabel(self._current_polarization_axis))
         self._draw_annotations()
         self._ax.legend()
 
@@ -681,6 +1015,7 @@ class PlotPanel(QWidget):
         if not self._has_mpl:
             return
 
+        self._ensure_single_axis_mode()
         # Store the original dataset
         self._current_dataset = dataset
         self._current_datasets = [dataset]
@@ -729,7 +1064,7 @@ class PlotPanel(QWidget):
             label=self._dataset_label_for(dataset),
         )
         self._ax.set_xlabel("Time (μs)")
-        self._ax.set_ylabel("Asymmetry (%)")
+        self._ax.set_ylabel(self._polarization_ylabel(self._current_polarization_axis))
         self._set_alpha_label(self._single_dataset_alpha_label_text(dataset))
 
         # Re-plot fit curve if it exists (check both single and global fits)
@@ -785,9 +1120,29 @@ class PlotPanel(QWidget):
         if not self._has_mpl:
             return
 
-        self._ax.set_xlim(self._x_min.value(), self._x_max.value())
+        x0 = float(self._x_min.value())
+        x1 = float(self._x_max.value())
+        y0 = float(self._y_min.value())
+        y1 = float(self._y_max.value())
 
-        self._ax.set_ylim(self._y_min.value(), self._y_max.value())
+        if self._subplot_axes_by_polarization:
+            for axis_key, axis_obj in self._subplot_axes_by_polarization.items():
+                axis_obj.set_xlim(x0, x1)
+                if self._current_polarization_axis == axis_key:
+                    lo, hi = (y0, y1) if y0 <= y1 else (y1, y0)
+                    self._y_limits_by_polarization[axis_key] = (lo, hi)
+                limits = self._y_limits_by_polarization.get(axis_key)
+                if limits is not None:
+                    axis_obj.set_ylim(float(limits[0]), float(limits[1]))
+                elif self._current_polarization_axis == "ALL":
+                    # Fallback for axes without cached limits yet.
+                    axis_obj.set_ylim(y0, y1)
+            self._canvas.draw()
+            return
+
+        self._ax.set_xlim(x0, x1)
+        self._ax.set_ylim(y0, y1)
+        self._cache_current_y_limits_for_axis()
         self._draw_fit_range_artists()
         self._canvas.draw()
 
@@ -821,6 +1176,10 @@ class PlotPanel(QWidget):
     def _auto_y_limits(self) -> None:
         """Auto-scale y-axis from visible, non-low-count points only."""
         if not self._has_mpl:
+            return
+
+        if self._subplot_axes_by_polarization and self._current_polarization_axis == "ALL":
+            # ALL mode inherits per-axis limits from individual polarization views.
             return
 
         if self._last_plot_time is None or self._last_plot_asymmetry is None or self._last_plot_error is None:
@@ -953,6 +1312,8 @@ class PlotPanel(QWidget):
     def _draw_fit_range_artists(self) -> None:
         """Draw highlight and edge handles for the selected fit range."""
         if not self._has_mpl:
+            return
+        if self._subplot_axes_by_polarization:
             return
 
         if self._fit_span_artist is not None:
@@ -1273,6 +1634,7 @@ class PlotPanel(QWidget):
         """Clear the plot and reset stored data."""
         if self._has_mpl:
             self._set_alpha_label(None)
+            self.set_polarization_axes([])
             self._ax.clear()
             self._canvas.draw()
             self._current_dataset = None
@@ -1298,6 +1660,10 @@ class PlotPanel(QWidget):
             self._fit_span_artist = None
             self._fit_min_handle = None
             self._fit_max_handle = None
+            self._current_polarization_axis = None
+            self._y_limits_by_polarization = {}
+            self._subplot_axes_by_polarization = {}
+            self._vector_subplot_datasets = {}
             self._update_export_enabled()
 
     def clear_fit(self) -> None:
@@ -1415,17 +1781,18 @@ class PlotPanel(QWidget):
         text = text.encode("ascii", "ignore").decode("ascii")
         return text or fallback
 
-    def get_current_plot_export_data(self) -> list[dict] | None:
+    def get_current_plot_export_data(self, datasets: list[MuonDataset] | None = None) -> list[dict] | None:
         """Return export payloads for all displayed datasets.
 
         Returns a list of dicts (one per displayed dataset), or *None* when
         nothing is available to export.
         """
-        if not self._current_datasets:
+        target_datasets = list(datasets) if datasets is not None else list(self._current_datasets)
+        if not target_datasets:
             return None
 
         payloads: list[dict] = []
-        for dataset in self._current_datasets:
+        for dataset in target_datasets:
             analysis = self.get_analysis_dataset(dataset)
             if analysis is None:
                 continue
@@ -1545,6 +1912,119 @@ class PlotPanel(QWidget):
             p["annotations"] = annotations
 
         return payloads
+
+    def _export_axis_suffix(self, axis_key: str | None) -> str:
+        """Return filename-safe suffix for per-axis exports."""
+        if axis_key in {"P_x", "P_y", "P_z"}:
+            return axis_key.lower().replace("_", "")
+        return "main"
+
+    def _export_axis_ylabel(self, axis_key: str | None) -> str:
+        """Return plain-text y-axis label for plot exports."""
+        if axis_key in {"P_x", "P_y", "P_z"}:
+            suffix = axis_key.split("_", 1)[1]
+            return f"a_0 P_{{{suffix}}}(t) (%)"
+        return "Asymmetry (%)"
+
+    def _plot_export_payloads_on_axis(
+        self,
+        ax,
+        payloads: list[dict],
+        *,
+        axis_key: str | None,
+        written_files: list[Path],
+        dat_writes: list[tuple[Path, dict, object]],
+        gle_path: Path,
+        colors: list[str],
+        show_legend: bool,
+    ) -> None:
+        """Draw export payloads on a provided axis with axis-specific naming."""
+        is_multi = len(payloads) > 1
+        axis_suffix = self._export_axis_suffix(axis_key)
+
+        for i, payload in enumerate(payloads):
+            label_text = payload.get("label", f"dataset_{i}")
+            safe_label = self._sanitize_gle_text(
+                label_text,
+                fallback=f"Run {payload.get('run_number', i)}",
+            )
+            token = self._safe_file_token(f"{label_text}_{axis_suffix}")
+            data_color = colors[i % len(colors)] if is_multi else "black"
+            fit_color = data_color if is_multi else "red"
+            suppress_subplot_labels = (
+                axis_key in {"P_x", "P_y", "P_z"}
+                and not show_legend
+            )
+            data_label = None if suppress_subplot_labels else safe_label
+
+            data = payload.get("data") or {}
+            fit = payload.get("fit") or {}
+            t_data = data.get("t")
+            y_data = data.get("y")
+            y_err = data.get("err")
+            t_fit = fit.get("t")
+            y_fit = fit.get("y")
+
+            dat_path = gle_path.parent / f"{token}.dat"
+            if t_data is not None and y_data is not None:
+                dat_writes.append((dat_path, payload, label_text))
+                written_files.append(dat_path)
+                ax.errorbar(
+                    t_data,
+                    y_data,
+                    yerr=y_err,
+                    fmt="none",
+                    marker="o",
+                    color=data_color,
+                    markersize=4,
+                    capsize=2,
+                    label=data_label,
+                    data_name=token,
+                )
+
+            fit_path = gle_path.parent / f"{token}.fit"
+            if t_fit is not None and y_fit is not None:
+                self._write_fit_file(fit_path, payload)
+                written_files.append(fit_path)
+
+                fit_label = fit.get("label", "Fit")
+                if is_multi or suppress_subplot_labels:
+                    fit_label = None
+                else:
+                    fit_label = self._sanitize_gle_text(fit_label, fallback="Fit")
+                ax.plot(
+                    t_fit,
+                    y_fit,
+                    color=fit_color,
+                    linewidth=1.6,
+                    label=fit_label,
+                    data_name=f"{token}_fit",
+                )
+
+        annotations = payloads[0].get("annotations") or []
+        for ann in annotations:
+            try:
+                x = float(ann.get("x", 0.0))
+                y = float(ann.get("y", 0.0))
+            except (TypeError, ValueError):
+                continue
+            text = str(ann.get("text", "")).strip()
+            text = self._sanitize_gle_text(text)
+            if text:
+                ax.text(x, y, text, color="black", ha="left")
+
+        ax.set_ylabel(self._export_axis_ylabel(axis_key))
+        if hasattr(ax, "set_xlim"):
+            ax.set_xlim(float(self._x_min.value()), float(self._x_max.value()))
+
+        if axis_key in self._y_limits_by_polarization and hasattr(ax, "set_ylim"):
+            y0, y1 = self._y_limits_by_polarization[axis_key]
+            ax.set_ylim(float(y0), float(y1))
+        elif hasattr(ax, "set_ylim"):
+            ax.set_ylim(float(self._y_min.value()), float(self._y_max.value()))
+
+        if show_legend:
+            ax.legend(loc="best")
 
     def _write_fit_file(self, fit_path: Path, payload: dict) -> None:
         """Write a .fit file with fit-curve data and metadata header."""
@@ -1865,6 +2345,18 @@ class PlotPanel(QWidget):
         dropdown value for each dataset.
         """
         payloads = self.get_current_plot_export_data()
+        if (
+            payloads is None
+            and self._current_polarization_axis == "ALL"
+            and self._vector_subplot_datasets
+        ):
+            first_axis_payloads = self.get_current_plot_export_data(
+                self._vector_subplot_datasets.get("P_x")
+                or self._vector_subplot_datasets.get("P_y")
+                or self._vector_subplot_datasets.get("P_z")
+                or []
+            )
+            payloads = first_axis_payloads
         if not payloads:
             QMessageBox.warning(
                 self, "Export unavailable",
@@ -1893,97 +2385,90 @@ class PlotPanel(QWidget):
 
         gle_path = Path(path)
         output_format = self._gle_format_combo.currentText().lower()
-        is_multi = len(payloads) > 1
         colors = [
             "black", "red", "blue", "green", "orange", "purple",
             "cyan", "magenta", "brown", "gray",
         ]
 
         fig = glp.figure(figsize=self._export_figure_size(len(payloads)))
-        ax = fig.add_subplot(111)
         written_files: list[Path] = []
         dat_writes: list[tuple[Path, dict, object]] = []
 
-        for i, payload in enumerate(payloads):
-            label_text = payload.get("label", f"dataset_{i}")
-            safe_label = self._sanitize_gle_text(
-                label_text,
-                fallback=f"Run {payload.get('run_number', i)}",
+        if self._current_polarization_axis == "ALL" and self._vector_subplot_datasets:
+            axis_order = [a for a in ("P_x", "P_y", "P_z") if self._vector_subplot_datasets.get(a)]
+            if axis_order:
+                axes_objs = None
+                if hasattr(glp, "subplots"):
+                    _fig_candidate, axes_candidate = glp.subplots(
+                        nrows=len(axis_order),
+                        ncols=1,
+                        figsize=(6.4, 2.8 * len(axis_order)),
+                        sharex=True,
+                    )
+                    fig = _fig_candidate
+                    if isinstance(axes_candidate, list):
+                        axes_objs = list(axes_candidate)
+                    else:
+                        axes_objs = [axes_candidate]
+
+                if axes_objs is None:
+                    fig = glp.figure(figsize=(6.4, 2.8 * len(axis_order)))
+                    axes_objs = []
+                    shared_ax = None
+                    for idx in range(len(axis_order)):
+                        ax = fig.add_subplot(len(axis_order), 1, idx + 1, sharex=shared_ax)
+                        if shared_ax is None:
+                            shared_ax = ax
+                        axes_objs.append(ax)
+
+                for idx, axis_key in enumerate(axis_order):
+                    ax = axes_objs[idx]
+                    axis_payloads = self.get_current_plot_export_data(self._vector_subplot_datasets.get(axis_key, []))
+                    if not axis_payloads:
+                        continue
+                    show_legend = idx == 0 and len(axis_payloads) > 1
+                    self._plot_export_payloads_on_axis(
+                        ax,
+                        axis_payloads,
+                        axis_key=axis_key,
+                        written_files=written_files,
+                        dat_writes=dat_writes,
+                        gle_path=gle_path,
+                        colors=colors,
+                        show_legend=show_legend,
+                    )
+                    if idx == len(axis_order) - 1:
+                        ax.set_xlabel("Time (µs)")
+
+                if hasattr(fig, "subplots_adjust"):
+                    # Keep y-axis labels and bottom x-label clear of clipping.
+                    fig.subplots_adjust(left=0.20, right=0.98, top=0.98, bottom=0.12, hspace=0.08)
+            else:
+                ax = fig.add_subplot(111)
+                self._plot_export_payloads_on_axis(
+                    ax,
+                    payloads,
+                    axis_key=None,
+                    written_files=written_files,
+                    dat_writes=dat_writes,
+                    gle_path=gle_path,
+                    colors=colors,
+                    show_legend=len(payloads) > 1,
+                )
+                ax.set_xlabel("Time (µs)")
+        else:
+            ax = fig.add_subplot(111)
+            self._plot_export_payloads_on_axis(
+                ax,
+                payloads,
+                axis_key=None,
+                written_files=written_files,
+                dat_writes=dat_writes,
+                gle_path=gle_path,
+                colors=colors,
+                show_legend=len(payloads) > 1,
             )
-            token = self._safe_file_token(label_text)
-            data_color = colors[i % len(colors)] if is_multi else "black"
-            fit_color = data_color if is_multi else "red"
-
-            data = payload.get("data") or {}
-            fit = payload.get("fit") or {}
-            t_data = data.get("t")
-            y_data = data.get("y")
-            y_err = data.get("err")
-            t_fit = fit.get("t")
-            y_fit = fit.get("y")
-
-            # Track .dat sidecar files; write after fig.savefig() because
-            # gleplot may regenerate data_name-matched .dat files during save.
-            dat_path = gle_path.parent / f"{token}.dat"
-            if t_data is not None and y_data is not None:
-                dat_writes.append((dat_path, payload, label_text))
-                written_files.append(dat_path)
-
-                ax.errorbar(
-                    t_data,
-                    y_data,
-                    yerr=y_err,
-                    fmt="none",
-                    marker="o",
-                    color=data_color,
-                    markersize=4,
-                    capsize=2,
-                    label=safe_label,
-                    data_name=token,
-                )
-
-            # Write .fit file with header info
-            fit_path = gle_path.parent / f"{token}.fit"
-            if t_fit is not None and y_fit is not None:
-                self._write_fit_file(fit_path, payload)
-                written_files.append(fit_path)
-
-                fit_label = fit.get("label", "Fit")
-                if is_multi:
-                    fit_label = None
-                else:
-                    fit_label = self._sanitize_gle_text(fit_label, fallback="Fit")
-                ax.plot(
-                    t_fit,
-                    y_fit,
-                    color=fit_color,
-                    linewidth=1.6,
-                    label=fit_label,
-                    data_name=f"{token}_fit",
-                )
-
-        # Add annotations
-        annotations = payloads[0].get("annotations") or []
-        for ann in annotations:
-            try:
-                x = float(ann.get("x", 0.0))
-                y = float(ann.get("y", 0.0))
-            except (TypeError, ValueError):
-                continue
-            text = str(ann.get("text", "")).strip()
-            text = self._sanitize_gle_text(text)
-            if text:
-                ax.text(x, y, text, color="black", ha="left")
-
-        ax.set_xlabel("Time (µs)")
-        ax.set_ylabel("Asymmetry (%)")
-        ax.legend(loc="best")
-
-        # Preserve the visible GUI window limits in the exported GLE plot.
-        if hasattr(ax, "set_xlim"):
-            ax.set_xlim(float(self._x_min.value()), float(self._x_max.value()))
-        if hasattr(ax, "set_ylim"):
-            ax.set_ylim(float(self._y_min.value()), float(self._y_max.value()))
+            ax.set_xlabel("Time (µs)")
 
         fig.savefig(str(gle_path))
 
@@ -2056,6 +2541,11 @@ class PlotPanel(QWidget):
             "x_max": self._x_max.value() if self._has_mpl else 10.0,
             "y_min": self._y_min.value() if self._has_mpl else -30.0,
             "y_max": self._y_max.value() if self._has_mpl else 30.0,
+            "polarization_axis": self._current_polarization_axis,
+            "y_limits_by_polarization": {
+                axis: [float(lim[0]), float(lim[1])]
+                for axis, lim in self._y_limits_by_polarization.items()
+            },
             "fit_curve": None,
             "fit_curve_run_number": self._fit_curve_run_number,
             "fit_curves": {},
@@ -2137,6 +2627,20 @@ class PlotPanel(QWidget):
                     self._label_field_by_group[str(group_id)] = str(field)
 
         self._active_label_group_id = None
+        self._current_polarization_axis = self._axis_canonical_key(state.get("polarization_axis"))
+        self._y_limits_by_polarization = {}
+        raw_y_limits_by_axis = state.get("y_limits_by_polarization", {})
+        if isinstance(raw_y_limits_by_axis, dict):
+            for raw_axis, raw_limits in raw_y_limits_by_axis.items():
+                axis = self._axis_canonical_key(raw_axis)
+                if axis is None or not isinstance(raw_limits, (list, tuple)) or len(raw_limits) != 2:
+                    continue
+                try:
+                    lo = float(raw_limits[0])
+                    hi = float(raw_limits[1])
+                except (TypeError, ValueError):
+                    continue
+                self._y_limits_by_polarization[axis] = (lo, hi)
 
         label_field = state.get("label_field", self._default_label_field)
         if label_field not in valid_label_fields:

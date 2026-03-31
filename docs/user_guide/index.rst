@@ -14,4 +14,5 @@ This guide covers the main features and workflows of Asymmetry.
    fitting
    composite_models
    parameter_trending
+   sc_penetration_depth
    project_files

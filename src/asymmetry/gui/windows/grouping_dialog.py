@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.instrument import detect_instrument, get_instrument_layout
 from asymmetry.core.transform import apply_grouping
 from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.utils.constants import PeriodMode
@@ -92,6 +93,7 @@ class GroupingDialog(QDialog):
         assert self._run is not None
 
         self._groups = self._load_groups(self._run)
+        self._group_names: dict[int, str] = self._load_group_names(self._run)
 
         root = QVBoxLayout(self)
 
@@ -146,21 +148,45 @@ class GroupingDialog(QDialog):
         root.addLayout(dataset_buttons)
         root.addWidget(self._dataset_list)
 
-        self._group_table = QTableWidget(0, 2)
-        self._group_table.setHorizontalHeaderLabels(["Group", "Detector Indices (1-based)"])
+        self._group_table = QTableWidget(0, 3)
+        self._group_table.setHorizontalHeaderLabels(["Group", "Name", "Detector Indices (1-based)"])
         self._group_table.setMaximumHeight(140)
         root.addWidget(self._group_table)
         self._populate_group_table()
 
+        detector_layout_btn = QPushButton("Detector Layout\u2026")
+        detector_layout_btn.setAutoDefault(False)
+        detector_layout_btn.setDefault(False)
+        detector_layout_btn.setToolTip(
+            "Open the interactive detector schematic editor to assign "
+            "detectors to groups visually."
+        )
+        detector_layout_btn.clicked.connect(self._on_detector_layout)
+        root.addWidget(detector_layout_btn)
+
         form = QFormLayout()
         self._forward_combo = QComboBox()
         self._backward_combo = QComboBox()
+        self._forward_combo.setMinimumWidth(220)
+        self._backward_combo.setMinimumWidth(220)
+        self._forward_combo.setMinimumContentsLength(18)
+        self._backward_combo.setMinimumContentsLength(18)
         for gid in sorted(self._groups):
             text = str(gid)
             self._forward_combo.addItem(text, gid)
             self._backward_combo.addItem(text, gid)
 
         grouping = self._run.grouping or {}
+        self._grouping_preset_name: str | None = (
+            str(grouping.get("grouping_preset")).strip()
+            if grouping.get("grouping_preset")
+            else None
+        )
+        self._detector_layout_instrument_name: str | None = (
+            str(grouping.get("instrument")).strip()
+            if grouping.get("instrument")
+            else None
+        )
         self._enforce_source_bunching = self._reference_is_wim_run()
         self._source_bunching_factor = self._read_source_bunching_factor(grouping)
         self._set_combo_to_group(self._forward_combo, int(grouping.get("forward_group", 1)))
@@ -274,6 +300,21 @@ class GroupingDialog(QDialog):
                     return ds
         return self._datasets[0]
 
+    def _load_group_names(self, run) -> dict[int, str]:
+        """Load group names from run metadata, returning an empty dict if absent."""
+        grouping = run.grouping or {}
+        raw = grouping.get("group_names")
+        if not isinstance(raw, dict):
+            return {}
+        result: dict[int, str] = {}
+        for key, val in raw.items():
+            try:
+                gid = int(key)
+                result[gid] = str(val)
+            except (TypeError, ValueError):
+                continue
+        return result
+
     def _load_groups(self, run) -> dict[int, list[int]]:
         """Load detector groups from run metadata or default half/half groups."""
         grouping = run.grouping or {}
@@ -337,8 +378,14 @@ class GroupingDialog(QDialog):
         self._populate_group_table()
 
         grouping = self._run.grouping or {}
+        self._grouping_preset_name = (
+            str(grouping.get("grouping_preset")).strip()
+            if grouping.get("grouping_preset")
+            else None
+        )
         self._enforce_source_bunching = self._reference_is_wim_run()
         self._source_bunching_factor = self._read_source_bunching_factor(grouping)
+        self._group_names = self._load_group_names(self._run)
         self._set_combo_to_group(self._forward_combo, int(grouping.get("forward_group", 1)))
         self._set_combo_to_group(self._backward_combo, int(grouping.get("backward_group", 2)))
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
@@ -447,9 +494,86 @@ class GroupingDialog(QDialog):
         self._group_table.setRowCount(len(self._groups))
         for row, gid in enumerate(sorted(self._groups)):
             self._group_table.setItem(row, 0, QTableWidgetItem(str(gid)))
+            name = self._group_names.get(gid, "")
+            self._group_table.setItem(row, 1, QTableWidgetItem(name))
             detectors = [str(idx + 1) for idx in self._groups[gid]]
-            self._group_table.setItem(row, 1, QTableWidgetItem(", ".join(detectors)))
+            self._group_table.setItem(row, 2, QTableWidgetItem(", ".join(detectors)))
         self._group_table.resizeColumnsToContents()
+
+    def _on_detector_layout(self) -> None:
+        """Open the interactive detector layout editor as a sub-dialog."""
+        from asymmetry.gui.windows.detector_layout_dialog import DetectorLayoutDialog
+
+        # Determine number of histograms for instrument auto-detection
+        n_histo = len(self._run.histograms) if self._run and self._run.histograms else 0
+        try:
+            instrument_name = self._detector_layout_instrument_name
+            if not instrument_name:
+                instrument_name = detect_instrument(
+                    n_histo,
+                    metadata=self._run.metadata if self._run else None,
+                    source_file=self._run.source_file if self._run else None,
+                )
+            if instrument_name is None:
+                instrument_name = "HiFi"  # safe fallback
+            instrument = get_instrument_layout(instrument_name)
+        except KeyError:
+            instrument = get_instrument_layout("HiFi")
+
+        grouping = self._run.grouping or {} if self._run else {}
+        forward_gid = int(grouping.get("forward_group", self._forward_combo.currentData() or 1))
+        backward_gid = int(grouping.get("backward_group", self._backward_combo.currentData() or 2))
+
+        # Convert internal 0-based indices to 1-based for the layout editor
+        groups_1based = {gid: [idx + 1 for idx in idxs] for gid, idxs in self._groups.items()}
+
+        dlg = DetectorLayoutDialog(
+            instrument=instrument,
+            groups=groups_1based,
+            group_names=dict(self._group_names),
+            initial_preset_name=self._grouping_preset_name,
+            forward_group=forward_gid,
+            backward_group=backward_gid,
+            parent=self,
+        )
+        if dlg.exec() != DetectorLayoutDialog.DialogCode.Accepted:
+            return
+
+        result = dlg.get_result()
+
+        # Write back: convert 1-based IDs back to 0-based internal indices
+        new_groups_0based: dict[int, list[int]] = {}
+        for gid, det_ids in result["groups"].items():
+            new_groups_0based[gid] = sorted(max(0, d - 1) for d in det_ids)
+
+        # Keep any previously defined groups that are not in the result
+        # (preserves groups beyond the 8 shown in the editor)
+        self._groups = new_groups_0based
+        self._group_names = result.get("group_names", {})
+        preset_name = result.get("grouping_preset")
+        self._grouping_preset_name = str(preset_name) if preset_name else None
+        instrument_name = result.get("instrument")
+        self._detector_layout_instrument_name = str(instrument_name) if instrument_name else None
+
+        # Update forward/backward combos
+        new_fwd = result.get("forward_group", forward_gid)
+        new_bwd = result.get("backward_group", backward_gid)
+
+        self._forward_combo.blockSignals(True)
+        self._backward_combo.blockSignals(True)
+        self._forward_combo.clear()
+        self._backward_combo.clear()
+        for gid in sorted(self._groups):
+            label = self._group_names.get(gid, str(gid))
+            display = f"{gid}: {label}" if label and label != str(gid) else str(gid)
+            self._forward_combo.addItem(display, gid)
+            self._backward_combo.addItem(display, gid)
+        self._set_combo_to_group(self._forward_combo, new_fwd)
+        self._set_combo_to_group(self._backward_combo, new_bwd)
+        self._forward_combo.blockSignals(False)
+        self._backward_combo.blockSignals(False)
+
+        self._populate_group_table()
 
     def _set_combo_to_group(self, combo: QComboBox, group_id: int) -> None:
         """Set combo box to a group ID if present, preserving defaults otherwise."""
@@ -537,6 +661,9 @@ class GroupingDialog(QDialog):
         backward_gid = int(self._backward_combo.currentData())
         return {
             "groups": {gid: [idx + 1 for idx in values] for gid, values in self._groups.items()},
+            "group_names": dict(self._group_names),
+            "grouping_preset": self._grouping_preset_name,
+            "instrument": self._detector_layout_instrument_name,
             "forward_group": forward_gid,
             "backward_group": backward_gid,
             "forward_indices": list(self._groups.get(forward_gid, [])),
@@ -609,12 +736,16 @@ class GroupingDialog(QDialog):
         self._forward_combo.blockSignals(False)
         self._backward_combo.blockSignals(False)
 
+        loaded_group_names = payload.get("group_names", {})
+        if isinstance(loaded_group_names, dict):
+            self._group_names = {int(k): str(v) for k, v in loaded_group_names.items()}
         self._alpha_spin.setValue(float(payload.get("alpha", 1.0)))
         self._first_good_spin.setValue(int(payload.get("first_good_bin", self._first_good_spin.value())))
         self._last_good_spin.setValue(int(payload.get("last_good_bin", self._last_good_spin.value())))
         self._bunch_spin.setValue(int(payload.get("bunching_factor", self._bunch_spin.value())))
         self._deadtime_checkbox.setChecked(bool(payload.get("deadtime_correction", False)))
         self._set_period_mode(str(payload.get("period_mode", PeriodMode.RED)))
+        self._populate_group_table()
 
     @staticmethod
     def serialize_grp(payload: dict[str, Any]) -> str:
@@ -639,10 +770,16 @@ class GroupingDialog(QDialog):
         ]
 
         groups = payload.get("groups", {})
+        group_names = payload.get("group_names", {})
         if isinstance(groups, dict):
             for gid in sorted(int(k) for k in groups.keys()):
                 detectors = [str(int(v)) for v in groups.get(gid, [])]
                 lines.append(f"group.{gid}={','.join(detectors)}")
+        if isinstance(group_names, dict):
+            for gid in sorted(int(k) for k in group_names.keys()):
+                name = str(group_names.get(gid, "")).strip()
+                if name:
+                    lines.append(f"group_name.{gid}={name}")
 
         return "\n".join(lines) + "\n"
 
@@ -651,6 +788,7 @@ class GroupingDialog(QDialog):
         """Parse line-based ``.grp`` text into a grouping payload dictionary."""
         payload: dict[str, Any] = {
             "groups": {},
+            "group_names": {},
             "forward_group": 1,
             "backward_group": 2,
             "alpha": 1.0,
@@ -668,6 +806,11 @@ class GroupingDialog(QDialog):
             key, value = line.split("=", 1)
             key = key.strip()
             value = value.strip()
+
+            if key.startswith("group_name."):
+                gid = int(key.split(".", 1)[1])
+                payload["group_names"][gid] = value
+                continue
 
             if key.startswith("group."):
                 gid = int(key.split(".", 1)[1])
@@ -1003,6 +1146,9 @@ class WimGroupingDialog(QDialog):
             payload["dead_time_us"] = list(grouping.get("dead_time_us", []))
         if "good_frames" in grouping:
             payload["good_frames"] = grouping.get("good_frames")
+        instrument_name = grouping.get("instrument")
+        if instrument_name:
+            payload["instrument"] = str(instrument_name)
         return payload
 
     def get_grouping_result(self) -> dict[str, Any] | None:

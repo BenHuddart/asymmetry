@@ -19,6 +19,58 @@ histogram metadata used by RG recomputation.
 
 Project files do not embed raw detector arrays.
 
+Grouping Overrides
+------------------
+
+Each dataset entry in the project JSON may contain a ``grouping_overrides``
+block that stores the full custom grouping applied in the current session.
+When present, it is re-applied to the dataset on project load so that the
+exact detector grouping is preserved without re-running the Grouping dialog.
+
+``grouping_overrides`` keys:
+
+``groups``
+    Mapping of group-slot index → list of detector channel indices.
+
+``group_names``
+    Mapping of group-slot index → display name string (e.g. ``"Pz Forward"``).
+
+``forward_group``
+    Group-slot index used as the forward detector sum.
+
+``backward_group``
+    Group-slot index used as the backward detector sum.
+
+``alpha``
+    Detector balance factor.
+
+``first_good_bin``
+    First bin index included in asymmetry computation.
+
+``last_good_bin``
+    Last bin index included in asymmetry computation.
+
+``bunching_factor``
+    Time-bin rebunching factor applied to the dataset.
+
+``deadtime_correction``
+    Boolean; whether per-detector deadtime correction is active.
+
+``grouping_preset``
+    Name of the last applied preset (e.g. ``"Vector Polarization"``).
+
+``instrument``
+    Instrument name set in the Detector Layout Editor (e.g. ``"EMU"``).
+    Saved so the correct detector schematic is shown on reopen without
+    re-running instrument detection.
+
+``vector_axis``
+    Active polarization axis at save time (``P_x``, ``P_y``, ``P_z``, or ``ALL``).
+
+``period_mode``
+    Two-period RG mode (``Red``, ``Green``, ``G minus R``, ``G plus R``).
+
+
 Save and Load
 -------------
 

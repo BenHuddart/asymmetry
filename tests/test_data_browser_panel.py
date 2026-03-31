@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import os
 
 import numpy as np
@@ -388,6 +389,33 @@ def test_shift_click_uses_latest_plain_click_as_anchor(qapp: QApplication) -> No
     assert [dataset.run_number for dataset in selected] == [93, 94, 95]
 
 
+def test_shift_arrow_selection_skips_filtered_out_rows(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for run_number in range(601, 606):
+        dataset = _dataset(run_number)
+        dataset.metadata["title"] = "hidden" if run_number == 603 else "visible"
+        panel.add_dataset(dataset)
+
+    panel._column_filters[1] = {"visible"}
+    panel._apply_row_visibility()
+
+    panel.show()
+    panel._table.setFocus()
+    qapp.processEvents()
+
+    panel._table.selectRow(1)
+    panel._selection_anchor_row = 1
+    qapp.processEvents()
+
+    QTest.keyClick(panel._table, Qt.Key.Key_Down, Qt.KeyboardModifier.ShiftModifier)
+    qapp.processEvents()
+    QTest.keyClick(panel._table, Qt.Key.Key_Down, Qt.KeyboardModifier.ShiftModifier)
+    qapp.processEvents()
+
+    selected = panel.get_selected_datasets()
+    assert [dataset.run_number for dataset in selected] == [602, 604, 605]
+
+
 def test_group_header_context_menu_shows_ungroup(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     panel.add_dataset(_dataset(101))
@@ -617,3 +645,79 @@ def test_default_group_name_tolerance_not_too_loose_for_low_temperature(qapp: QA
 
     name = panel._default_group_name([211, 212])
     assert name == "Group 1"
+
+
+def test_export_logbook_tsv_includes_hidden_rows_and_aligned_columns(
+    qapp: QApplication,
+    tmp_path,
+) -> None:
+    panel = DataBrowserPanel()
+
+    d1 = _dataset(401)
+    d2 = _dataset(402)
+    d3 = _dataset(403)
+    d1.metadata["title"] = "Grouped"
+    d2.metadata["title"] = "Grouped"
+    d3.metadata["title"] = "Other"
+    d1.metadata["nexus_fields"] = {"sample": {"shape": "rod"}}
+    d2.metadata["nexus_fields"] = {"sample": {"shape": "slab"}}
+    d3.metadata["nexus_fields"] = {"sample": {"shape": "powder"}}
+
+    panel.add_dataset(d1)
+    panel.add_dataset(d2)
+    panel.add_dataset(d3)
+    group_id = panel.create_data_group([401, 402], name="Grouped Runs")
+    assert group_id is not None
+
+    panel.add_extra_column("nexus_fields.sample.shape")
+
+    # Hide grouped members by collapsing and hide ungrouped member by filter.
+    panel._toggle_group_collapsed(group_id)
+    panel._column_filters[1] = {"Grouped"}
+    panel._apply_row_visibility()
+
+    run_403_row = None
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is not None and item.data(Qt.ItemDataRole.UserRole) == 403:
+            run_403_row = row
+            break
+
+    assert run_403_row is not None
+    assert panel._table.isRowHidden(run_403_row)
+
+    output_path = tmp_path / "logbook.tsv"
+    exported_count = panel.export_logbook_tsv(str(output_path))
+    assert exported_count == 3
+
+    with output_path.open("r", newline="", encoding="utf-8") as handle:
+        rows = list(csv.reader(handle, delimiter="\t"))
+
+    non_empty_rows = [row for row in rows if row]
+    assert non_empty_rows
+    expected_columns = 6
+
+    assert non_empty_rows[0][:2] == ["Data Group", "Grouped Runs"]
+    assert non_empty_rows[1][:6] == ["Run", "Title", "𝑇 (K)", "𝐵 (G)", "Comment", "Orientation"]
+    assert any(row[:2] == ["Data Group", "Ungrouped"] for row in non_empty_rows)
+
+    for row in non_empty_rows:
+        assert len(row) == expected_columns
+
+    exported_run_values = {row[0] for row in non_empty_rows if row[0].isdigit()}
+    assert exported_run_values == {"401", "402", "403"}
+
+
+def test_export_logbook_rtf_keeps_italic_temperature_and_field_headers(
+    qapp: QApplication,
+    tmp_path,
+) -> None:
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(501))
+
+    output_path = tmp_path / "logbook.rtf"
+    panel.export_logbook_rtf(str(output_path))
+
+    content = output_path.read_text(encoding="utf-8")
+    assert r"\i T\i0 (K)" in content
+    assert r"\i B\i0 (G)" in content

@@ -23,6 +23,7 @@ from asymmetry.core.fitting.models import (
     stretched_exponential,
 )
 from asymmetry.core.fitting.parameters import ParamInfo, get_param_info
+from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class ComponentDefinition:
     param_defaults: dict[str, float]
     param_info: dict[str, ParamInfo]
     formula_template: str
+    latex_equation: str = ""
 
 
 def _exp_component(t: NDArray, A: float, Lambda: float) -> NDArray[np.float64]:
@@ -52,6 +54,16 @@ def _oscillatory_component(
     frequency: float,
     phase: float,
 ) -> NDArray[np.float64]:
+    return A * np.cos(2.0 * np.pi * frequency * t + phase)
+
+
+def _oscillatory_field_component(
+    t: NDArray,
+    A: float,
+    field: float,
+    phase: float,
+) -> NDArray[np.float64]:
+    frequency = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * float(field)
     return A * np.cos(2.0 * np.pi * frequency * t + phase)
 
 
@@ -81,6 +93,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_defaults={"A": 25.0, "Lambda": 0.5},
         param_info={"A": get_param_info("A"), "Lambda": get_param_info("Lambda")},
         formula_template="{A}*exp(-{Lambda}*t)",
+        latex_equation=r"A(t) = A e^{-\Lambda t}",
     ),
     "Gaussian": ComponentDefinition(
         name="Gaussian",
@@ -90,6 +103,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_defaults={"A": 25.0, "sigma": 0.5},
         param_info={"A": get_param_info("A"), "sigma": get_param_info("sigma")},
         formula_template="{A}*exp(-({sigma}*t)^2)",
+        latex_equation=r"A(t) = A e^{-(\sigma t)^2}",
     ),
     "Oscillatory": ComponentDefinition(
         name="Oscillatory",
@@ -103,6 +117,21 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "phase": get_param_info("phase"),
         },
         formula_template="{A}*cos(2*pi*{frequency}*t + {phase})",
+        latex_equation=r"A(t) = A \cos(2\pi f t + \phi)",
+    ),
+    "OscillatoryField": ComponentDefinition(
+        name="OscillatoryField",
+        description="A cos(2 pi gamma_mu B t + phase)",
+        function=_oscillatory_field_component,
+        param_names=["A", "field", "phase"],
+        param_defaults={"A": 25.0, "field": 100.0, "phase": 0.0},
+        param_info={
+            "A": get_param_info("A"),
+            "field": get_param_info("field"),
+            "phase": get_param_info("phase"),
+        },
+        formula_template="{A}*cos(2*pi*gamma_mu*{field}*t + {phase})",
+        latex_equation=r"A(t) = A \cos(2\pi \gamma_\mu B t + \phi)",
     ),
     "StretchedExponential": ComponentDefinition(
         name="StretchedExponential",
@@ -116,6 +145,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "beta": get_param_info("beta"),
         },
         formula_template="{A}*exp(-(abs({Lambda})*t)^({beta}))",
+        latex_equation=r"A(t) = A \exp\left(-(\lvert \Lambda \rvert t)^\beta\right)",
     ),
     "StaticGKT_ZF": ComponentDefinition(
         name="StaticGKT_ZF",
@@ -127,6 +157,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template=(
             "{A}*(1/3 + 2/3*(1-({Delta}*t)^2)*exp(-({Delta}*t)^2/2))"
         ),
+        latex_equation=(
+            r"A(t) = A\left[\frac{1}{3} + \frac{2}{3}\left(1-(\Delta t)^2\right)e^{-(\Delta t)^2/2}\right]"
+        ),
     ),
     "Constant": ComponentDefinition(
         name="Constant",
@@ -136,17 +169,25 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_defaults={"A_bg": 0.0},
         param_info={"A_bg": get_param_info("A_bg")},
         formula_template="{A_bg}",
+        latex_equation=r"A(t) = A_{bg}",
     ),
 }
 
 
 _ALLOWED_OPERATORS: frozenset[str] = frozenset({"+", "-", "*", "/"})
+_UNIT_AMPLITUDE_SENTINEL = "__UNIT_AMPLITUDE__"
 
 
 class CompositeModel:
     """A flat composite model built from baseline-free components."""
 
-    def __init__(self, component_names: list[str], operators: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        component_names: list[str],
+        operators: list[str] | None = None,
+        open_parentheses: list[int] | None = None,
+        close_parentheses: list[int] | None = None,
+    ) -> None:
         if not component_names:
             raise ValueError("Composite model must contain at least one component")
 
@@ -162,9 +203,37 @@ class CompositeModel:
         if any(op not in _ALLOWED_OPERATORS for op in operators):
             raise ValueError("operators must be one of '+', '-', '*', '/'")
 
+        if open_parentheses is None:
+            open_parentheses = [0] * len(component_names)
+        if close_parentheses is None:
+            close_parentheses = [0] * len(component_names)
+        if len(open_parentheses) != len(component_names):
+            raise ValueError("open_parentheses length must be len(component_names)")
+        if len(close_parentheses) != len(component_names):
+            raise ValueError("close_parentheses length must be len(component_names)")
+        if any((not isinstance(v, int)) or v < 0 for v in open_parentheses):
+            raise ValueError("open_parentheses values must be non-negative integers")
+        if any((not isinstance(v, int)) or v < 0 for v in close_parentheses):
+            raise ValueError("close_parentheses values must be non-negative integers")
+
+        balance = 0
+        for open_count, close_count in zip(open_parentheses, close_parentheses, strict=True):
+            balance += open_count
+            balance -= close_count
+            if balance < 0:
+                raise ValueError("Invalid parentheses: closing before opening")
+        if balance != 0:
+            raise ValueError("Invalid parentheses: unbalanced expression")
+
         self.component_names = list(component_names)
         self.operators = list(operators)
+        self.open_parentheses = list(open_parentheses)
+        self.close_parentheses = list(close_parentheses)
         self.components = [COMPONENTS[name] for name in component_names]
+        self._uses_parentheses = any(self.open_parentheses) or any(self.close_parentheses)
+        # Keep legacy amplitude-sharing behavior for flat expressions.
+        self._share_chain_amplitude = not self._uses_parentheses
+        self._suppress_component_amplitude = self._identify_suppressed_amplitudes()
         self._param_mappings = self._build_param_mapping()
 
         param_names: list[str] = []
@@ -173,6 +242,8 @@ class CompositeModel:
         for mapping, component in zip(self._param_mappings, self.components, strict=True):
             for pname in component.param_names:
                 unique_name = mapping[pname]
+                if unique_name == _UNIT_AMPLITUDE_SENTINEL:
+                    continue
                 if unique_name not in defaults:
                     param_names.append(unique_name)
                     defaults[unique_name] = component.param_defaults[pname]
@@ -200,7 +271,10 @@ class CompositeModel:
         for idx, component in enumerate(self.components, start=1):
             mapping: dict[str, str] = {}
             for pname in component.param_names:
-                if pname == "A":
+                if self._is_scaling_parameter(pname) and self._suppress_component_amplitude[idx - 1]:
+                    mapping[pname] = _UNIT_AMPLITUDE_SENTINEL
+                    continue
+                if pname == "A" and self._share_chain_amplitude:
                     # Share one amplitude within each multiplicative/divisive chain.
                     mapping[pname] = f"{pname}_{amplitude_group_starts[idx - 1]}"
                 elif name_counts[pname] > 1:
@@ -210,9 +284,92 @@ class CompositeModel:
             mappings.append(mapping)
         return mappings
 
+    def _identify_suppressed_amplitudes(self) -> list[bool]:
+        """Return flags for components whose amplitude should be fixed to unity.
+
+        For parenthesized expressions, suppress amplitude on components that are
+        multiplied/divided by an additive grouped expression, e.g. ``a*(b+c)``.
+        """
+        suppress = [False] * len(self.components)
+        if not self._uses_parentheses:
+            return suppress
+
+        for op_index, op in enumerate(self.operators):
+            if op not in {"*", "/"}:
+                continue
+
+            lhs_index = op_index
+            rhs_index = op_index + 1
+            if rhs_index >= len(self.components):
+                continue
+
+            rhs_is_additive_group = (
+                self.open_parentheses[rhs_index] > 0
+                and self._rhs_group_contains_additive_operator(rhs_index)
+            )
+            lhs_is_additive_group = (
+                self.close_parentheses[lhs_index] > 0
+                and self._lhs_group_contains_additive_operator(lhs_index)
+            )
+
+            if rhs_is_additive_group and not lhs_is_additive_group:
+                if self._component_has_scaling_parameter(lhs_index):
+                    suppress[lhs_index] = True
+            if lhs_is_additive_group and not rhs_is_additive_group:
+                if self._component_has_scaling_parameter(rhs_index):
+                    suppress[rhs_index] = True
+
+        return suppress
+
+    def _rhs_group_contains_additive_operator(self, rhs_index: int) -> bool:
+        """Return True if a grouped RHS expression includes top-level + or -."""
+        # Track the first newly-opened parenthesis at rhs_index.
+        balance = 1
+        for k in range(rhs_index, len(self.components)):
+            if k == rhs_index:
+                balance += max(self.open_parentheses[k] - 1, 0)
+            else:
+                balance += self.open_parentheses[k]
+
+            if k > rhs_index and balance > 0 and self.operators[k - 1] in {"+", "-"}:
+                return True
+
+            balance -= self.close_parentheses[k]
+            if balance <= 0:
+                break
+        return False
+
+    def _is_scaling_parameter(self, pname: str) -> bool:
+        """Return True for parameters that act as component scale factors."""
+        return pname in {"A", "A_bg"}
+
+    def _component_has_scaling_parameter(self, idx: int) -> bool:
+        return any(self._is_scaling_parameter(pname) for pname in self.components[idx].param_names)
+
+    def _lhs_group_contains_additive_operator(self, lhs_index: int) -> bool:
+        """Return True if a grouped LHS expression includes top-level + or -."""
+        # Track the first newly-closed parenthesis at lhs_index.
+        balance = 1
+        for k in range(lhs_index, -1, -1):
+            if k == lhs_index:
+                balance += max(self.close_parentheses[k] - 1, 0)
+            else:
+                balance += self.close_parentheses[k]
+
+            if k < lhs_index and balance > 0 and self.operators[k] in {"+", "-"}:
+                return True
+
+            balance -= self.open_parentheses[k]
+            if balance <= 0:
+                break
+        return False
+
     def function(self, t: NDArray, **kwargs: float) -> NDArray[np.float64]:
         """Evaluate the composite function with standard arithmetic precedence."""
         t_arr = np.asarray(t, dtype=float)
+
+        if self._uses_parentheses:
+            return self._evaluate_parenthesized(t_arr, kwargs)
 
         values: list[NDArray[np.float64]] = []
         amplitudes: list[str | None] = []
@@ -268,6 +425,75 @@ class CompositeModel:
                 result = result - rhs
         return result
 
+    def _evaluate_parenthesized(
+        self,
+        t_arr: NDArray[np.float64],
+        kwargs: dict[str, float],
+    ) -> NDArray[np.float64]:
+        values: list[NDArray[np.float64]] = []
+        for component, mapping in zip(self.components, self._param_mappings, strict=True):
+            component_kwargs = self._extract_component_kwargs(component, mapping, kwargs)
+            values.append(np.asarray(component.function(t_arr, **component_kwargs), dtype=float))
+
+        if not values:
+            return np.zeros_like(t_arr)
+
+        value_stack: list[NDArray[np.float64]] = []
+        op_stack: list[str] = []
+
+        def precedence(op: str) -> int:
+            return 2 if op in {"*", "/"} else 1
+
+        def apply_top_operator() -> None:
+            if len(value_stack) < 2 or not op_stack:
+                raise ValueError("Invalid expression")
+            op = op_stack.pop()
+            rhs = value_stack.pop()
+            lhs = value_stack.pop()
+            if op == "+":
+                value_stack.append(lhs + rhs)
+            elif op == "-":
+                value_stack.append(lhs - rhs)
+            elif op == "*":
+                value_stack.append(lhs * rhs)
+            else:
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    out = np.full_like(lhs, 1e30, dtype=float)
+                    np.divide(lhs, rhs, out=out, where=np.abs(rhs) > 1e-30)
+                value_stack.append(out)
+
+        for idx, value in enumerate(values):
+            for _ in range(self.open_parentheses[idx]):
+                op_stack.append("(")
+
+            value_stack.append(value)
+
+            for _ in range(self.close_parentheses[idx]):
+                while op_stack and op_stack[-1] != "(":
+                    apply_top_operator()
+                if not op_stack or op_stack[-1] != "(":
+                    raise ValueError("Invalid parentheses in expression")
+                op_stack.pop()
+
+            if idx < len(self.operators):
+                op = self.operators[idx]
+                while (
+                    op_stack
+                    and op_stack[-1] != "("
+                    and precedence(op_stack[-1]) >= precedence(op)
+                ):
+                    apply_top_operator()
+                op_stack.append(op)
+
+        while op_stack:
+            if op_stack[-1] == "(":
+                raise ValueError("Invalid parentheses in expression")
+            apply_top_operator()
+
+        if len(value_stack) != 1:
+            raise ValueError("Invalid expression")
+        return value_stack[0]
+
     def _extract_component_kwargs(
         self,
         component: ComponentDefinition,
@@ -277,6 +503,9 @@ class CompositeModel:
         component_kwargs: dict[str, float] = {}
         for pname in component.param_names:
             unique_name = mapping[pname]
+            if unique_name == _UNIT_AMPLITUDE_SENTINEL:
+                component_kwargs[pname] = 1.0
+                continue
             if unique_name not in kwargs:
                 raise KeyError(f"Missing composite parameter '{unique_name}'")
             component_kwargs[pname] = float(kwargs[unique_name])
@@ -341,18 +570,40 @@ class CompositeModel:
         for idx, (component, mapping) in enumerate(
             zip(self.components, self._param_mappings, strict=True), start=1
         ):
-            fmt_values = {pname: mapping[pname] for pname in component.param_names}
-            if "A" in fmt_values and idx > 1 and self.operators[idx - 2] in {"*", "/"}:
+            fmt_values = {
+                pname: (
+                    "1" if mapping[pname] == _UNIT_AMPLITUDE_SENTINEL else mapping[pname]
+                )
+                for pname in component.param_names
+            }
+            if (
+                self._share_chain_amplitude
+                and "A" in fmt_values
+                and idx > 1
+                and self.operators[idx - 2] in {"*", "/"}
+            ):
                 fmt_values["A"] = "1"
             term = component.formula_template.format(**fmt_values)
             if fmt_values.get("A") == "1" and term.startswith("1*"):
                 term = term[2:]
+
+            if self.open_parentheses[idx - 1] > 0:
+                term = "(" * self.open_parentheses[idx - 1] + term
+            if self.close_parentheses[idx - 1] > 0:
+                term = term + ")" * self.close_parentheses[idx - 1]
             parts.append(term)
 
         if not parts:
             return ""
         expression = parts[0]
         for op, term in zip(self.operators, parts[1:], strict=True):
+            if op == "*" and term == "1":
+                continue
+            if op == "/" and term == "1":
+                continue
+            if op == "*" and expression == "1":
+                expression = term
+                continue
             expression = f"{expression} {op} {term}"
         return expression
 
@@ -372,6 +623,8 @@ class CompositeModel:
         return {
             "component_names": list(self.component_names),
             "operators": list(self.operators),
+            "open_parentheses": list(self.open_parentheses),
+            "close_parentheses": list(self.close_parentheses),
         }
 
     @classmethod
@@ -379,6 +632,8 @@ class CompositeModel:
         """Construct a CompositeModel from serialized data."""
         component_names = data.get("component_names")
         operators = data.get("operators")
+        open_parentheses = data.get("open_parentheses")
+        close_parentheses = data.get("close_parentheses")
         if not isinstance(component_names, list) or not all(
             isinstance(v, str) for v in component_names
         ):
@@ -386,4 +641,19 @@ class CompositeModel:
         if operators is not None:
             if not isinstance(operators, list) or not all(isinstance(v, str) for v in operators):
                 raise ValueError("Invalid composite model data: operators")
-        return cls(component_names=component_names, operators=operators)
+        if open_parentheses is not None:
+            if not isinstance(open_parentheses, list) or not all(
+                isinstance(v, int) for v in open_parentheses
+            ):
+                raise ValueError("Invalid composite model data: open_parentheses")
+        if close_parentheses is not None:
+            if not isinstance(close_parentheses, list) or not all(
+                isinstance(v, int) for v in close_parentheses
+            ):
+                raise ValueError("Invalid composite model data: close_parentheses")
+        return cls(
+            component_names=component_names,
+            operators=operators,
+            open_parentheses=open_parentheses,
+            close_parentheses=close_parentheses,
+        )

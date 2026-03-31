@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -290,6 +290,9 @@ class AdvancedRunInfoDialog(QDialog):
         self._search_bar = QLineEdit()
         self._search_bar.setPlaceholderText("Search fields...")
         self._search_bar.setClearButtonEnabled(True)
+        self._search_bar.setEnabled(True)
+        self._search_bar.setReadOnly(False)
+        self._search_bar.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._search_bar.textChanged.connect(self._filter_rows)
         root.addWidget(self._search_bar)
 
@@ -300,6 +303,7 @@ class AdvancedRunInfoDialog(QDialog):
         root.addWidget(self._table)
 
         self._table.setRowCount(len(rows))
+        self._row_search_tokens: list[str] = []
         for row, (label, value, field_key, series_path) in enumerate(rows):
             include_box = QCheckBox()
             include_box.setEnabled(bool(field_key))
@@ -322,7 +326,18 @@ class AdvancedRunInfoDialog(QDialog):
             else:
                 self._table.setItem(row, 3, QTableWidgetItem(""))
 
+            search_blob = " ".join(
+                token for token in (
+                    str(label),
+                    str(value),
+                    str(field_key or ""),
+                    str(series_path or ""),
+                ) if token
+            ).lower()
+            self._row_search_tokens.append(search_blob)
+
         self._table.resizeColumnsToContents()
+        self._search_bar.setFocus()
 
         controls = QHBoxLayout()
         controls.addStretch()
@@ -335,8 +350,5 @@ class AdvancedRunInfoDialog(QDialog):
         """Show only rows whose Field or Value contains the search text."""
         query = text.strip().lower()
         for row in range(self._table.rowCount()):
-            field_item = self._table.item(row, 1)
-            value_item = self._table.item(row, 2)
-            field_text = field_item.text().lower() if field_item else ""
-            value_text = value_item.text().lower() if value_item else ""
-            self._table.setRowHidden(row, bool(query) and query not in field_text and query not in value_text)
+            haystack = self._row_search_tokens[row] if row < len(self._row_search_tokens) else ""
+            self._table.setRowHidden(row, bool(query) and query not in haystack)

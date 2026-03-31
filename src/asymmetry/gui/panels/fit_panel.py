@@ -30,13 +30,35 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.models import MODELS
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
+from asymmetry.core.fitting.parameters import (
+    Parameter,
+    ParameterSet,
+    get_param_info,
+    split_parameter_name,
+)
+from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 
 
 def _format_param_label(name: str) -> str:
     """Return a display label with Greek symbols and units where applicable."""
     return get_param_info(name).unicode_label()
+
+
+def _field_value_overrides(model: CompositeModel, field_gauss: float) -> dict[str, float]:
+    """Return a dict overriding ``field`` parameter defaults with *field_gauss*.
+
+    Only overrides parameters whose base name is ``"field"`` and only when
+    *field_gauss* is non-zero.
+    """
+    if field_gauss == 0.0:
+        return {}
+    overrides: dict[str, float] = {}
+    for pname in model.param_names:
+        base_name, _index = split_parameter_name(pname)
+        if base_name == "field":
+            overrides[pname] = field_gauss
+    return overrides
 
 
 def _configure_formula_label(label: QLabel) -> None:
@@ -47,6 +69,45 @@ def _configure_formula_label(label: QLabel) -> None:
     label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
     line_height = label.fontMetrics().lineSpacing()
     label.setMinimumHeight(line_height * 2 + 8)
+
+
+def _fit_curve_sample_count(
+    model: CompositeModel,
+    param_values: dict[str, float],
+    t_min: float,
+    t_max: float,
+    *,
+    base_points: int = 500,
+    points_per_cycle: int = 40,
+    max_points: int = 20000,
+) -> int:
+    """Return a dense-enough sample count for plotting oscillatory models."""
+    duration = max(float(t_max) - float(t_min), 0.0)
+    if duration <= 0.0:
+        return base_points
+
+    max_frequency_mhz = 0.0
+    for name, value in param_values.items():
+        base_name, _index = split_parameter_name(name)
+        try:
+            numeric_value = abs(float(value))
+        except (TypeError, ValueError):
+            continue
+
+        if base_name == "frequency":
+            max_frequency_mhz = max(max_frequency_mhz, numeric_value)
+        elif base_name == "field":
+            field_frequency = (
+                MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * numeric_value
+            )
+            max_frequency_mhz = max(max_frequency_mhz, field_frequency)
+
+    if max_frequency_mhz <= 0.0:
+        return base_points
+
+    cycles = max_frequency_mhz * duration
+    required_points = int(np.ceil(cycles * points_per_cycle)) + 1
+    return int(max(base_points, min(max_points, required_points)))
 
 
 class GlobalFitWorker(QObject):
@@ -205,6 +266,13 @@ class SingleFitTab(QWidget):
         self._composite_model = model
         self._formula_label.setText(model.formula_string())
 
+        dataset_field = (
+            self._current_dataset.run.field
+            if self._current_dataset is not None and self._current_dataset.run is not None
+            else 0.0
+        )
+        field_overrides = _field_value_overrides(model, dataset_field)
+
         self._param_table.setRowCount(len(model.param_names))
         for i, pname in enumerate(model.param_names):
             # Name column (read-only)
@@ -213,8 +281,9 @@ class SingleFitTab(QWidget):
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._param_table.setItem(i, 0, name_item)
 
-            # Value column
-            value_item = QTableWidgetItem(str(model.param_defaults.get(pname, 0.0)))
+            # Value column — use dataset field for 'field' parameters if available
+            default_val = field_overrides.get(pname, model.param_defaults.get(pname, 0.0))
+            value_item = QTableWidgetItem(str(default_val))
             self._param_table.setItem(i, 1, value_item)
 
             # Fix checkbox column
@@ -297,14 +366,19 @@ class SingleFitTab(QWidget):
             )
             parameters.add(param)
 
+        param_dict = {p.name: p.value for p in parameters}
+        n_samples = _fit_curve_sample_count(
+            self._composite_model,
+            param_dict,
+            float(self._current_dataset.time.min()),
+            float(self._current_dataset.time.max()),
+        )
         # Generate fitted curve for plotting
-        import numpy as np
         t_fit = np.linspace(
             self._current_dataset.time.min(),
             self._current_dataset.time.max(),
-            500,
+            n_samples,
         )
-        param_dict = {p.name: p.value for p in parameters}
         y_fit = self._composite_model.function(t_fit, **param_dict)
 
         component_curves = self._composite_model.evaluate_components(
@@ -407,14 +481,20 @@ class SingleFitTab(QWidget):
                     fitted_value = result.parameters[param_name].value
                     self._param_table.item(i, 1).setText(f"{fitted_value:.6f}")
 
+            param_dict = {p.name: p.value for p in result.parameters}
+            n_samples = _fit_curve_sample_count(
+                self._composite_model,
+                param_dict,
+                float(self._current_dataset.time.min()),
+                float(self._current_dataset.time.max()),
+            )
+
             # Generate fitted curve for plotting
-            import numpy as np
             t_fit = np.linspace(
                 self._current_dataset.time.min(),
                 self._current_dataset.time.max(),
-                500,
+                n_samples,
             )
-            param_dict = {p.name: p.value for p in result.parameters}
             y_fit = self._composite_model.function(t_fit, **param_dict)
 
             component_curves = self._composite_model.evaluate_components(
@@ -769,6 +849,16 @@ class GlobalFitTab(QWidget):
         self._composite_model = model
         self._formula_label.setText(model.formula_string())
 
+        # Use the mean field across loaded datasets (if non-zero) as the default
+        # for any 'field' parameters.
+        dataset_fields = [
+            ds.run.field
+            for ds in self._datasets
+            if ds.run is not None and ds.run.field != 0.0
+        ]
+        mean_field = float(np.mean(dataset_fields)) if dataset_fields else 0.0
+        field_overrides = _field_value_overrides(model, mean_field)
+
         self._param_table.setRowCount(len(model.param_names))
         for i, pname in enumerate(model.param_names):
             # Parameter name
@@ -777,8 +867,9 @@ class GlobalFitTab(QWidget):
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._param_table.setItem(i, 0, name_item)
 
-            # Initial value
-            value_item = QTableWidgetItem(str(model.param_defaults.get(pname, 0.0)))
+            # Initial value — use dataset field for 'field' parameters if available
+            default_val = field_overrides.get(pname, model.param_defaults.get(pname, 0.0))
+            value_item = QTableWidgetItem(str(default_val))
             self._param_table.setItem(i, 1, value_item)
 
             # Type selection (Global/Local/Fixed dropdown)
@@ -1002,12 +1093,17 @@ class GlobalFitTab(QWidget):
             self._result_text.setHtml("<br>".join(lines))
 
             # Generate fitted curves for all datasets
-            import numpy as np
             results_with_curves = {}
             for ds in self._datasets:
                 result = results_dict[ds.run_number]
-                t_fit = np.linspace(ds.time.min(), ds.time.max(), 500)
                 param_dict = {p.name: p.value for p in result.parameters}
+                n_samples = _fit_curve_sample_count(
+                    model,
+                    param_dict,
+                    float(ds.time.min()),
+                    float(ds.time.max()),
+                )
+                t_fit = np.linspace(ds.time.min(), ds.time.max(), n_samples)
                 y_fit = model.function(t_fit, **param_dict)
                 component_curves = model.evaluate_components(
                     t_fit,

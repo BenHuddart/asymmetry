@@ -37,7 +37,7 @@ def test_dialog_add_component_updates_formula(qapp: QApplication) -> None:
     dialog = FitFunctionBuilderDialog()
     dialog._add_component_row("Constant", "+")
 
-    row_component = dialog._table.cellWidget(1, 1)
+    row_component = dialog._table.cellWidget(1, 2)
     assert isinstance(row_component, QComboBox)
     row_component.setCurrentText("Constant")
 
@@ -60,3 +60,26 @@ def test_dialog_prepopulate_model(qapp: QApplication) -> None:
     assert model is not None
     assert model.component_names == ["Gaussian", "Constant"]
     assert model.operators == ["+"]
+
+
+def test_dialog_builds_parenthesized_model(qapp: QApplication) -> None:
+    dialog = FitFunctionBuilderDialog()
+    dialog._add_component_row("Constant", op="+", open_count=1, close_count=1)
+
+    dialog._on_accept()
+    model = dialog.get_composite_model()
+
+    assert model is not None
+    assert model.open_parentheses == [0, 0, 1]
+    assert model.close_parentheses == [0, 0, 1]
+
+
+def test_dialog_has_info_column_and_button(qapp: QApplication) -> None:
+    dialog = FitFunctionBuilderDialog()
+
+    headers = [dialog._table.horizontalHeaderItem(i).text() for i in range(dialog._table.columnCount())]
+    assert headers == ["Op", "(", "Component", "Info", ")", "Remove"]
+
+    info_btn = dialog._table.cellWidget(0, 3)
+    assert info_btn is not None
+    assert info_btn.text() == "Info"

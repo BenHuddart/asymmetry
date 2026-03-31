@@ -18,9 +18,11 @@ from asymmetry.core.fitting.parameter_models import ModelFitRange, ParameterComp
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.model_fit_dialog import (
     ModelFitDialog,
+    ParameterModelBuilderDialog,
     _component_pool_for_context,
     _format_model_param_label,
 )
+from asymmetry.gui.widgets.component_info_dialog import build_component_info_html
 
 
 @pytest.fixture(scope="module")
@@ -246,3 +248,27 @@ def test_edit_model_to_redfield_resets_m_to_default(qapp: QApplication, monkeypa
 
     params = dlg.get_model_fit().ranges[0].parameters
     assert params["m"].value == pytest.approx(2.0)
+
+
+def test_parameter_model_builder_has_info_column(qapp: QApplication) -> None:
+    dialog = ParameterModelBuilderDialog(component_pool=["Linear", "Arrhenius"])
+
+    headers = [dialog._table.horizontalHeaderItem(i).text() for i in range(dialog._table.columnCount())]
+    assert headers == ["Op", "Component", "Info", "Remove"]
+
+    info_btn = dialog._table.cellWidget(0, 2)
+    assert info_btn is not None
+    assert info_btn.text() == "Info"
+
+
+def test_component_info_html_contains_equation_and_parameters() -> None:
+    from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
+
+    html_doc = build_component_info_html(PARAMETER_MODEL_COMPONENTS["Arrhenius"])
+
+    assert "Model Expression" in html_doc
+    assert "Applicability" in html_doc
+    assert "Ea" in html_doc
+    assert "Activation energy" in html_doc
+    assert "Availability" not in html_doc
+    assert "<i>" in html_doc

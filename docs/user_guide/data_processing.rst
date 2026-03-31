@@ -63,6 +63,11 @@ Combine detector histograms into logical groups:
    forward_counts = apply_grouping(histograms, grouping["forward"])
    backward_counts = apply_grouping(histograms, grouping["backward"])
 
+In the GUI, grouping is configured from the Grouping dialog. For supported ISIS
+instruments, the **Detector Layout...** editor provides an interactive detector
+schematic, preset groupings, and named group slots that are saved with project
+state and ``.grp`` files.
+
 Alpha Estimation and Asymmetry
 ------------------------------
 

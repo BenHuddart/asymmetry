@@ -97,3 +97,10 @@ Runnable Example
 ----------------
 
 See ``examples/parameter_trending.py`` for a complete executable script.
+
+Superconducting Gap Models
+--------------------------
+
+For TF-muSR superconducting penetration-depth analysis via
+temperature-dependent :math:`\sigma(T)`, see
+:doc:`sc_penetration_depth`.

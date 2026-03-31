@@ -64,6 +64,17 @@ The logbook stores metadata and collection definitions in JSON.
    ``load_metadata`` restores logbook entries and collections, not raw datasets.
    Reload source data files and re-add datasets when needed.
 
+GUI Export
+----------
+
+From the GUI Data Browser, use **Export logbook** on the main toolbar to export
+the browser logbook.
+
+* **TSV** is the default and recommended format for speed and column alignment.
+* **RTF** is also available for rich-text sharing.
+* Export uses active Data Browser columns and preserves data-group sections.
+* Hidden datasets (filtered/collapsed) are still included in the export file.
+
 Runnable Example
 ----------------
 

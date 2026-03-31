@@ -96,6 +96,29 @@ Parameter Trend Models
    The available parameter-trend component registry is exposed as
    ``asymmetry.core.fitting.parameter_models.PARAMETER_MODEL_COMPONENTS``.
 
+Superconductivity Models
+------------------------
+
+.. automodule:: asymmetry.core.fitting.sc.models
+   :members:
+   :undoc-members:
+
+.. automodule:: asymmetry.core.fitting.sc.kernel
+   :members:
+   :undoc-members:
+
+.. automodule:: asymmetry.core.fitting.sc.gaps
+   :members:
+   :undoc-members:
+
+.. automodule:: asymmetry.core.fitting.sc.bcs
+   :members:
+   :undoc-members:
+
+.. automodule:: asymmetry.core.fitting.sc.constants
+   :members:
+   :undoc-members:
+
 Parameters
 ----------
 

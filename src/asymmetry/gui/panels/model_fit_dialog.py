@@ -30,12 +30,14 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.fitting.parameter_models import (
     ModelFitRange,
+    PARAMETER_MODEL_COMPONENTS,
     ParameterCompositeModel,
     ParameterModelFit,
     component_names_for_x,
     fit_parameter_model,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.gui.widgets.component_info_dialog import show_component_info_dialog
 
 _OPERATOR_OPTIONS = ["+", "-", "*", "/"]
 
@@ -248,11 +250,12 @@ class ParameterModelBuilderDialog(QDialog):
         self._formula_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self._formula_label)
 
-        self._table = QTableWidget(0, 3)
-        self._table.setHorizontalHeaderLabels(["Op", "Component", "Remove"])
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["Op", "Component", "Info", "Remove"])
         self._table.setColumnWidth(0, 80)
-        self._table.setColumnWidth(1, 320)
-        self._table.setColumnWidth(2, 100)
+        self._table.setColumnWidth(1, 300)
+        self._table.setColumnWidth(2, 80)
+        self._table.setColumnWidth(3, 100)
         layout.addWidget(self._table)
 
         row_btn = QPushButton("Add Component")
@@ -297,9 +300,13 @@ class ParameterModelBuilderDialog(QDialog):
         comp_combo.currentTextChanged.connect(self._update_formula)
         self._table.setCellWidget(row, 1, comp_combo)
 
+        info_btn = QPushButton("Info")
+        info_btn.clicked.connect(lambda: self._show_component_info(row))
+        self._table.setCellWidget(row, 2, info_btn)
+
         remove_btn = QPushButton("Remove")
         remove_btn.clicked.connect(lambda: self._remove_row(row))
-        self._table.setCellWidget(row, 2, remove_btn)
+        self._table.setCellWidget(row, 3, remove_btn)
 
         self._refresh_row_bindings()
         self._update_formula()
@@ -318,7 +325,16 @@ class ParameterModelBuilderDialog(QDialog):
             op_combo = self._table.cellWidget(row, 0)
             if isinstance(op_combo, QComboBox):
                 op_combo.setEnabled(row > 0)
-            remove_btn = self._table.cellWidget(row, 2)
+
+            info_btn = self._table.cellWidget(row, 2)
+            if isinstance(info_btn, QPushButton):
+                try:
+                    info_btn.clicked.disconnect()
+                except RuntimeError:
+                    pass
+                info_btn.clicked.connect(lambda _checked=False, r=row: self._show_component_info(r))
+
+            remove_btn = self._table.cellWidget(row, 3)
             if isinstance(remove_btn, QPushButton):
                 try:
                     remove_btn.clicked.disconnect()
@@ -326,6 +342,20 @@ class ParameterModelBuilderDialog(QDialog):
                     pass
                 remove_btn.clicked.connect(lambda _checked=False, r=row: self._remove_row(r))
                 remove_btn.setEnabled(self._table.rowCount() > 1)
+
+    def _show_component_info(self, row: int) -> None:
+        if row < 0 or row >= self._table.rowCount():
+            return
+
+        comp_combo = self._table.cellWidget(row, 1)
+        if not isinstance(comp_combo, QComboBox):
+            return
+
+        component_name = comp_combo.currentText().strip()
+        component = PARAMETER_MODEL_COMPONENTS.get(component_name)
+        if component is None:
+            return
+        show_component_info_dialog(self, component)
 
     def _read_ui(self) -> tuple[list[str], list[str]]:
         component_names: list[str] = []

@@ -60,3 +60,33 @@ Log Panel
    :members:
    :undoc-members:
    :show-inheritance:
+
+Dialogs
+-------
+
+Grouping Dialog
+~~~~~~~~~~~~~~~
+
+.. autoclass:: asymmetry.gui.windows.grouping_dialog.GroupingDialog
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Detector Layout Dialog
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Widgets
+-------
+
+Detector Schematic
+~~~~~~~~~~~~~~~~~~
+
+.. autoclass:: asymmetry.gui.widgets.detector_schematic.DetectorSchematicWidget
+   :members:
+   :undoc-members:
+   :show-inheritance:

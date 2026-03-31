@@ -406,3 +406,148 @@ def test_wim_grouping_dialog_only_modifies_bunching_payload(qapp: QApplication) 
     assert result["backward_group"] == 2
     assert result["alpha"] == pytest.approx(1.0)
     assert result["groups"] == {1: [1, 2], 2: [3, 4]}
+
+
+# ---------------------------------------------------------------------------
+# group_names in payload
+# ---------------------------------------------------------------------------
+
+def test_current_grouping_payload_contains_group_names_key(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    payload = dialog._current_grouping_payload()
+    assert "group_names" in payload
+
+
+def test_current_grouping_payload_group_names_reflects_state(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog._group_names = {1: "Forward", 2: "Backward"}
+    payload = dialog._current_grouping_payload()
+    assert payload["group_names"] == {1: "Forward", 2: "Backward"}
+
+
+def test_current_grouping_payload_contains_grouping_preset(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog._grouping_preset_name = "Longitudinal"
+    payload = dialog._current_grouping_payload()
+    assert payload["grouping_preset"] == "Longitudinal"
+
+
+def test_current_grouping_payload_contains_instrument(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.grouping["instrument"] = "MuSR"
+
+    dialog = GroupingDialog([dataset])
+    payload = dialog._current_grouping_payload()
+
+    assert payload["instrument"] == "MuSR"
+
+
+def test_detector_layout_prefers_saved_instrument(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.grouping["instrument"] = "MuSR"
+
+    captured: dict[str, str] = {}
+
+    class _FakeDialog:
+        DialogCode = type("DialogCode", (), {"Accepted": 1})
+
+        def __init__(self, *args, instrument, **kwargs):
+            captured["instrument"] = instrument.name
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.grouping_dialog.detect_instrument",
+        lambda *_args, **_kwargs: "EMU",
+    )
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.grouping_dialog.get_instrument_layout",
+        lambda name: type("_Layout", (), {"name": name})(),
+    )
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
+        _FakeDialog,
+    )
+
+    dialog = GroupingDialog([dataset])
+    dialog._on_detector_layout()
+
+    assert captured["instrument"] == "MuSR"
+
+
+# ---------------------------------------------------------------------------
+# .grp format: group_name round-trip
+# ---------------------------------------------------------------------------
+
+def test_grp_round_trip_with_group_names() -> None:
+    payload = {
+        "groups": {1: [1, 2], 2: [3, 4]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "alpha": 1.0,
+        "first_good_bin": 0,
+        "last_good_bin": 2048,
+        "bunching_factor": 1,
+        "deadtime_correction": False,
+        "group_names": {1: "Forward", 2: "Backward"},
+    }
+    text = GroupingDialog.serialize_grp(payload)
+    assert "group_name.1=Forward" in text
+    assert "group_name.2=Backward" in text
+    parsed = GroupingDialog.parse_grp(text)
+    assert parsed.get("group_names", {}).get(1) == "Forward"
+    assert parsed.get("group_names", {}).get(2) == "Backward"
+
+
+def test_grp_round_trip_without_group_names_backwards_compat() -> None:
+    """Old .grp files without group_name lines must still parse cleanly."""
+    payload = {
+        "groups": {1: [1, 2], 2: [3, 4]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "alpha": 1.0,
+        "first_good_bin": 0,
+        "last_good_bin": 2048,
+        "bunching_factor": 1,
+        "deadtime_correction": False,
+    }
+    text = GroupingDialog.serialize_grp(payload)
+    parsed = GroupingDialog.parse_grp(text)
+    # Should produce empty dict, not raise
+    assert parsed.get("group_names", {}) == {}
+
+
+def test_serialize_grp_no_group_names_no_spurious_lines() -> None:
+    """serialize_grp with empty group_names must not emit group_name lines."""
+    payload = {
+        "groups": {1: [1]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "alpha": 1.0,
+        "first_good_bin": 0,
+        "last_good_bin": 10,
+        "bunching_factor": 1,
+        "deadtime_correction": False,
+        "group_names": {},
+    }
+    text = GroupingDialog.serialize_grp(payload)
+    assert "group_name" not in text
+
+
+# ---------------------------------------------------------------------------
+# "Detector Layout…" button exists in the GroupingDialog UI
+# ---------------------------------------------------------------------------
+
+def test_detector_layout_button_exists(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    # The button is connected to _on_detector_layout; verify it is present.
+    from PySide6.QtWidgets import QPushButton
+    buttons = dialog.findChildren(QPushButton)
+    labels = [b.text() for b in buttons]
+    assert any("Detector Layout" in lbl for lbl in labels)

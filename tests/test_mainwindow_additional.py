@@ -119,6 +119,92 @@ class TestMainWindowBasic:
         mainwindow._on_export_current_plot()
         assert called["count"] == 1
 
+    def test_on_export_logbook_delegates_to_data_browser(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ) -> None:
+        """Export logbook action should delegate to the data browser exporter."""
+        destination = tmp_path / "logbook.tsv"
+        monkeypatch.setattr(
+            mw_module.QFileDialog,
+            "getSaveFileName",
+            lambda *args, **kwargs: (str(destination), "Tab-separated values (*.tsv)"),
+        )
+
+        remembered: dict[str, str] = {}
+        monkeypatch.setattr(mw_module, "remember_export_path", lambda p: remembered.setdefault("path", p))
+
+        called: dict[str, str] = {}
+
+        def _export(path: str) -> int:
+            called["path"] = path
+            return 3
+
+        mainwindow._data_browser.get_all_datasets = lambda: [object()]
+        mainwindow._data_browser.export_logbook_tsv = _export
+        mainwindow._on_export_logbook()
+
+        assert called["path"] == str(destination)
+        assert remembered["path"] == str(destination)
+
+    def test_on_export_logbook_uses_rtf_export_when_rtf_selected(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ) -> None:
+        """Choosing RTF in the save dialog should route to RTF exporter."""
+        destination = tmp_path / "logbook"
+        monkeypatch.setattr(
+            mw_module.QFileDialog,
+            "getSaveFileName",
+            lambda *args, **kwargs: (str(destination), "Rich Text Format (*.rtf)"),
+        )
+
+        called: dict[str, str] = {}
+
+        def _export(path: str) -> int:
+            called["path"] = path
+            return 2
+
+        mainwindow._data_browser.get_all_datasets = lambda: [object()]
+        mainwindow._data_browser.export_logbook_rtf = _export
+        mainwindow._on_export_logbook()
+
+        assert called["path"].endswith(".rtf")
+
+    def test_on_export_logbook_uses_project_name_in_default_filename(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Default export name should include project stem when project is named."""
+        mainwindow._current_project_path = "/tmp/My Project.asymp"
+        mainwindow._data_browser.get_all_datasets = lambda: [object()]
+
+        captured: dict[str, str] = {}
+
+        def _fake_get_save_file_name(_parent, _title, default_path, _filters):
+            captured["default_path"] = str(default_path)
+            return "", ""
+
+        monkeypatch.setattr(mw_module.QFileDialog, "getSaveFileName", _fake_get_save_file_name)
+
+        mainwindow._on_export_logbook()
+
+        assert captured["default_path"].endswith("My_Project_logbook.tsv")
+
+    def test_toolbar_places_export_logbook_after_open(self, mainwindow: MainWindow) -> None:
+        """Toolbar should place Export logbook immediately after Open."""
+        toolbar = mainwindow.findChild(QToolBar)
+        assert toolbar is not None
+        texts = [action.text() for action in toolbar.actions()]
+        assert "Open" in texts
+        assert "Export logbook" in texts
+        assert texts.index("Export logbook") == texts.index("Open") + 1
+
     def test_toolbar_grouping_before_fit(self, mainwindow: MainWindow) -> None:
         """Toolbar should expose Grouping action before Fit for discoverability."""
         toolbar = mainwindow.findChild(QToolBar)
@@ -273,6 +359,248 @@ class TestMainWindowBasic:
         assert applied is True
         assert len(dataset.time) < original_points
         assert dataset.run.grouping["bunching_factor"] == 4
+
+    def test_vector_axis_pairs_detected_from_group_names(self, mainwindow: MainWindow) -> None:
+        groups = {
+            1: [1],
+            2: [2],
+            3: [1],
+            4: [2],
+            5: [1],
+            6: [2],
+        }
+        names = {
+            1: "Pz Forward",
+            2: "Pz Backward",
+            3: "Py Top",
+            4: "Py Bottom",
+            5: "Px Left",
+            6: "Px Right",
+        }
+
+        pairs = mainwindow._vector_axis_pairs_for_grouping(groups, names)
+
+        assert pairs["P_z"] == (1, 2)
+        assert pairs["P_y"] == (3, 4)
+        assert pairs["P_x"] == (5, 6)
+
+    def test_apply_grouping_vector_axis_overrides_forward_backward(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_dataset(7450, with_grouping=False)
+        payload = {
+            "groups": {
+                1: [1],
+                2: [2],
+                3: [1],
+                4: [2],
+                5: [1],
+                6: [2],
+            },
+            "group_names": {
+                1: "Pz Forward",
+                2: "Pz Backward",
+                3: "Py Top",
+                4: "Py Bottom",
+                5: "Px Left",
+                6: "Px Right",
+            },
+            "forward_group": 1,
+            "backward_group": 2,
+            "vector_axis": "P_x",
+            "instrument": "EMU",
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert dataset.run is not None
+        assert dataset.run.grouping["forward_group"] == 5
+        assert dataset.run.grouping["backward_group"] == 6
+        assert dataset.run.grouping["vector_axis"] == "P_x"
+        assert dataset.run.grouping["instrument"] == "EMU"
+
+    def test_extract_grouping_overrides_includes_vector_axis(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_dataset(7451, with_grouping=True)
+        assert dataset.run is not None
+        dataset.run.grouping["vector_axis"] = "P_y"
+        dataset.run.grouping["instrument"] = "MuSR"
+
+        payload = mainwindow._extract_grouping_overrides(dataset)
+
+        assert payload is not None
+        assert payload["vector_axis"] == "P_y"
+        assert payload["instrument"] == "MuSR"
+
+    def test_normalize_vector_axis_supports_all(self, mainwindow: MainWindow) -> None:
+        assert mainwindow._normalize_vector_axis("All") == "ALL"
+
+    def test_all_axis_selection_does_not_reapply_grouping(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls = {"render": 0, "apply": 0}
+        monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: calls.__setitem__("render", calls["render"] + 1))
+
+        def _unexpected_apply(*_args, **_kwargs):
+            calls["apply"] += 1
+            return True, False
+
+        monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _unexpected_apply)
+
+        mainwindow._on_plot_polarization_axis_changed("All")
+
+        assert calls["render"] == 1
+        assert calls["apply"] == 0
+
+    def test_update_selected_datasets_syncs_selected_runs_to_active_vector_axis(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ds1 = _make_dataset(7601, with_grouping=False)
+        ds2 = _make_dataset(7602, with_grouping=False)
+
+        for dataset in (ds1, ds2):
+            assert dataset.run is not None
+            dataset.run.grouping.update(
+                {
+                    "groups": {
+                        1: [1],
+                        2: [2],
+                        3: [1],
+                        4: [2],
+                        5: [1],
+                        6: [2],
+                    },
+                    "group_names": {
+                        1: "Pz Forward",
+                        2: "Pz Backward",
+                        3: "Py Top",
+                        4: "Py Bottom",
+                        5: "Px Left",
+                        6: "Px Right",
+                    },
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "vector_axis": "P_z",
+                }
+            )
+
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+        if hasattr(mainwindow._plot_panel, "get_current_polarization_axis"):
+            mainwindow._plot_panel.get_current_polarization_axis = lambda: "P_x"
+
+        monkeypatch.setattr(mainwindow._plot_panel, "plot_datasets", lambda _datasets: None)
+        if hasattr(mainwindow._plot_panel, "set_active_label_group"):
+            mainwindow._plot_panel.set_active_label_group = lambda _gid: None
+        if hasattr(mainwindow._data_browser, "get_selected_group_ids"):
+            mainwindow._data_browser.get_selected_group_ids = lambda: []
+        mainwindow._fit_panel.set_datasets = lambda _datasets: None
+
+        mainwindow._update_selected_datasets()
+
+        assert ds1.run is not None and ds2.run is not None
+        assert ds1.run.grouping.get("vector_axis") == "P_x"
+        assert ds2.run.grouping.get("vector_axis") == "P_x"
+
+    def test_dataset_selection_preserves_active_vector_axis(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_dataset(7701, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.grouping.update(
+            {
+                "groups": {
+                    1: [1],
+                    2: [2],
+                    3: [1],
+                    4: [2],
+                    5: [1],
+                    6: [2],
+                },
+                "group_names": {
+                    1: "Pz Forward",
+                    2: "Pz Backward",
+                    3: "Py Top",
+                    4: "Py Bottom",
+                    5: "Px Left",
+                    6: "Px Right",
+                },
+                "forward_group": 1,
+                "backward_group": 2,
+                "vector_axis": "P_z",
+            }
+        )
+
+        mainwindow._data_browser.get_dataset = lambda _run_number: dataset
+        if hasattr(mainwindow._plot_panel, "get_current_polarization_axis"):
+            mainwindow._plot_panel.get_current_polarization_axis = lambda: "P_x"
+
+        calls = {"render": 0}
+        monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: calls.__setitem__("render", calls["render"] + 1))
+        mainwindow._fit_panel.set_dataset = lambda _dataset: None
+
+        mainwindow._on_dataset_selected(7701)
+
+        assert dataset.run.grouping.get("vector_axis") == "P_x"
+        assert calls["render"] == 1
+
+    def test_dataset_selection_preserves_all_mode_rendering(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_dataset(7702, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.grouping.update(
+            {
+                "groups": {
+                    1: [1],
+                    2: [2],
+                    3: [1],
+                    4: [2],
+                    5: [1],
+                    6: [2],
+                },
+                "group_names": {
+                    1: "Pz Forward",
+                    2: "Pz Backward",
+                    3: "Py Top",
+                    4: "Py Bottom",
+                    5: "Px Left",
+                    6: "Px Right",
+                },
+                "forward_group": 1,
+                "backward_group": 2,
+                "vector_axis": "P_z",
+            }
+        )
+
+        mainwindow._data_browser.get_dataset = lambda _run_number: dataset
+        if hasattr(mainwindow._plot_panel, "get_current_polarization_axis"):
+            mainwindow._plot_panel.get_current_polarization_axis = lambda: "ALL"
+
+        calls = {"render": 0}
+        monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: calls.__setitem__("render", calls["render"] + 1))
+        mainwindow._fit_panel.set_dataset = lambda _dataset: None
+
+        mainwindow._on_dataset_selected(7702)
+
+        assert dataset.run.grouping.get("vector_axis") == "P_z"
+        assert calls["render"] == 1
 
     def test_run_info_inclusion_handler_updates_data_browser(self, mainwindow: MainWindow) -> None:
         """Run Info include/exclude signal should add/remove data-browser columns."""

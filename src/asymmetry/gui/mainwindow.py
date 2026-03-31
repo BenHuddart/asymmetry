@@ -19,6 +19,7 @@ Layout overview (mirroring WiMDA):
 
 from __future__ import annotations
 
+import copy
 import os
 from pathlib import Path
 
@@ -44,6 +45,7 @@ from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform import apply_grouping, compute_asymmetry
 from asymmetry.core.transform.rebin import rebin
 from asymmetry.core.utils.constants import PeriodMode
+from asymmetry.gui.export_paths import default_export_path, remember_export_path
 
 _MAX_RECENT_PROJECTS = 10
 _PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
@@ -211,6 +213,7 @@ class MainWindow(QMainWindow):
         self.addToolBar(tb)
 
         tb.addAction("Open", self._on_open)
+        tb.addAction("Export logbook", self._on_export_logbook)
         tb.addAction("Grouping", self._on_grouping_current)
         tb.addAction("Fit", self._on_fit)
         tb.addAction("FFT", self._on_fourier)
@@ -291,6 +294,10 @@ class MainWindow(QMainWindow):
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         if hasattr(self._plot_panel, "bunch_factor_changed"):
             self._plot_panel.bunch_factor_changed.connect(self._update_selected_datasets)
+        if hasattr(self._plot_panel, "polarization_axis_changed"):
+            self._plot_panel.polarization_axis_changed.connect(
+                self._on_plot_polarization_axis_changed
+            )
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
         if hasattr(self._fit_panel, "preview_requested"):
@@ -310,6 +317,285 @@ class MainWindow(QMainWindow):
 
         # Update selected datasets for global fitting whenever selection changes
         self._update_selected_datasets()
+
+    def _normalize_vector_axis(self, axis: object) -> str | None:
+        """Normalize polarization-axis labels to one of ``P_x``, ``P_y``, ``P_z``."""
+        if axis is None:
+            return None
+        token = str(axis).strip().lower().replace(" ", "").replace("_", "")
+        if token in {"all", "pall"}:
+            return "ALL"
+        if token in {"px", "x"}:
+            return "P_x"
+        if token in {"py", "y"}:
+            return "P_y"
+        if token in {"pz", "z"}:
+            return "P_z"
+        return None
+
+    def _vector_axis_pairs_for_grouping(
+        self,
+        groups: dict[int, list[int]],
+        group_names: dict[int, str] | None,
+    ) -> dict[str, tuple[int, int]]:
+        """Return vector-axis pair mapping for EMU-style group names when present."""
+        if not isinstance(groups, dict) or not groups:
+            return {}
+
+        names = group_names if isinstance(group_names, dict) else {}
+        by_name: dict[str, int] = {}
+        for gid, name in names.items():
+            try:
+                gid_int = int(gid)
+            except (TypeError, ValueError):
+                continue
+            by_name[str(name).strip().lower()] = gid_int
+
+        def _find(*candidates: str) -> int | None:
+            for cand in candidates:
+                gid = by_name.get(cand)
+                if gid in groups and groups.get(gid):
+                    return gid
+            return None
+
+        pz_f = _find("pz forward")
+        pz_b = _find("pz backward")
+        py_a = _find("py top", "py up")
+        py_b = _find("py bottom", "py down")
+        px_a = _find("px left")
+        px_b = _find("px right")
+
+        if None in {pz_f, pz_b, py_a, py_b, px_a, px_b}:
+            return {}
+
+        return {
+            "P_z": (int(pz_f), int(pz_b)),
+            "P_y": (int(py_a), int(py_b)),
+            "P_x": (int(px_a), int(px_b)),
+        }
+
+    def _vector_axis_state_for_dataset(self, dataset) -> tuple[dict[str, tuple[int, int]], str | None]:
+        """Return vector-axis pair mapping and currently selected axis for a dataset."""
+        run = getattr(dataset, "run", None)
+        grouping = getattr(run, "grouping", None)
+        if not isinstance(grouping, dict):
+            return {}, None
+
+        groups_raw = grouping.get("groups")
+        if not isinstance(groups_raw, dict):
+            return {}, None
+        groups: dict[int, list[int]] = {}
+        for k, vals in groups_raw.items():
+            try:
+                gid = int(k)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(vals, list) and vals:
+                det_ids: list[int] = []
+                for v in vals:
+                    try:
+                        det_ids.append(int(v))
+                    except (TypeError, ValueError):
+                        continue
+                if det_ids:
+                    groups[gid] = det_ids
+
+        pairs = self._vector_axis_pairs_for_grouping(groups, grouping.get("group_names"))
+        if not pairs:
+            return {}, None
+
+        axis = self._normalize_vector_axis(grouping.get("vector_axis"))
+        if axis not in pairs:
+            axis = "P_z"
+        return pairs, axis
+
+    def _refresh_vector_axis_selector(self) -> None:
+        """Show/hide and synchronize the plot polarization selector."""
+        if not hasattr(self._plot_panel, "set_polarization_axes"):
+            return
+
+        selected = list(self._data_browser.get_selected_datasets())
+        targets = selected if len(selected) > 1 else ([self._current_dataset] if self._current_dataset else [])
+        targets = [ds for ds in targets if ds is not None]
+        if not targets:
+            self._plot_panel.set_polarization_axes([])
+            return
+
+        first_pairs, first_axis = self._vector_axis_state_for_dataset(targets[0])
+        if not first_pairs:
+            self._plot_panel.set_polarization_axes([])
+            return
+
+        for dataset in targets[1:]:
+            pairs, _axis = self._vector_axis_state_for_dataset(dataset)
+            if pairs != first_pairs:
+                self._plot_panel.set_polarization_axes([])
+                return
+
+        axis_order = ["P_x", "P_y", "P_z"]
+        available = [axis for axis in axis_order if axis in first_pairs]
+        if available:
+            available = ["ALL", *available]
+
+        current = None
+        if hasattr(self._plot_panel, "get_current_polarization_axis"):
+            current = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
+        if current not in available:
+            current = first_axis if first_axis in available else (available[0] if available else None)
+        self._plot_panel.set_polarization_axes(available, current)
+
+    def _selected_or_current_datasets(self) -> list[MuonDataset]:
+        """Return selected datasets, or the current dataset when none are selected."""
+        selected = list(self._data_browser.get_selected_datasets())
+        if selected:
+            return selected
+        if self._current_dataset is not None:
+            return [self._current_dataset]
+        return []
+
+    def _build_vector_axis_datasets(
+        self,
+        datasets: list[MuonDataset],
+    ) -> dict[str, list[MuonDataset]]:
+        """Return per-axis cloned datasets for vector ``ALL`` subplot rendering."""
+        axis_map: dict[str, list[MuonDataset]] = {"P_x": [], "P_y": [], "P_z": []}
+        for axis in ("P_x", "P_y", "P_z"):
+            for dataset in datasets:
+                payload = self._extract_grouping_overrides(dataset)
+                if not isinstance(payload, dict):
+                    continue
+                run = getattr(dataset, "run", None)
+                if run is None:
+                    continue
+                groups = payload.get("groups", {})
+                names = payload.get("group_names")
+                pairs = self._vector_axis_pairs_for_grouping(groups, names)
+                if axis not in pairs:
+                    continue
+
+                payload["vector_axis"] = axis
+                clone_dataset = copy.deepcopy(dataset)
+                applied, _ = self._apply_grouping_settings_to_dataset(clone_dataset, payload)
+                if applied:
+                    axis_map[axis].append(clone_dataset)
+        return axis_map
+
+    def _synchronize_targets_to_axis(
+        self,
+        targets: list[MuonDataset],
+        axis: str | None,
+    ) -> int:
+        """Ensure *targets* use a consistent vector-axis component.
+
+        Returns the number of datasets updated.
+        """
+        if axis not in {"P_x", "P_y", "P_z"}:
+            return 0
+
+        updated = 0
+        for dataset in targets:
+            if dataset is None:
+                continue
+            run = getattr(dataset, "run", None)
+            grouping = getattr(run, "grouping", None)
+            if not isinstance(grouping, dict):
+                continue
+
+            current_axis = self._normalize_vector_axis(grouping.get("vector_axis"))
+            if current_axis == axis:
+                continue
+
+            payload = self._extract_grouping_overrides(dataset)
+            if not isinstance(payload, dict):
+                continue
+            pairs = self._vector_axis_pairs_for_grouping(
+                payload.get("groups", {}),
+                payload.get("group_names"),
+            )
+            if axis not in pairs:
+                continue
+
+            fwd_gid, bwd_gid = pairs[axis]
+            payload["forward_group"] = fwd_gid
+            payload["backward_group"] = bwd_gid
+            payload["vector_axis"] = axis
+
+            applied, _ = self._apply_grouping_settings_to_dataset(dataset, payload)
+            if applied:
+                updated += 1
+
+        return updated
+
+    def _render_current_selection_plot(self) -> None:
+        """Render current single/multi selection using active polarization settings."""
+        targets = self._selected_or_current_datasets()
+        if not targets:
+            return
+
+        active_axis = None
+        if hasattr(self._plot_panel, "get_current_polarization_axis"):
+            active_axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
+
+        if active_axis == "ALL" and hasattr(self._plot_panel, "plot_vector_subplots"):
+            axis_datasets = self._build_vector_axis_datasets(targets)
+            if all(axis_datasets.get(axis) for axis in ("P_x", "P_y", "P_z")):
+                self._plot_panel.plot_vector_subplots(axis_datasets)
+                return
+
+        if len(targets) > 1:
+            self._plot_panel.plot_datasets(targets)
+            return
+        self._plot_panel.plot_dataset(targets[0])
+
+    def _on_plot_polarization_axis_changed(self, axis_text: str) -> None:
+        """Recompute displayed datasets using the selected vector polarization axis."""
+        axis = self._normalize_vector_axis(axis_text)
+        if axis is None:
+            return
+
+        if axis == "ALL":
+            self._render_current_selection_plot()
+            self._refresh_vector_axis_selector()
+            self._log_panel.log("Set vector polarization axis to ALL.")
+            return
+
+        selected = list(self._data_browser.get_selected_datasets())
+        targets = selected if selected else ([self._current_dataset] if self._current_dataset else [])
+
+        updated = 0
+        for dataset in targets:
+            if dataset is None:
+                continue
+            run = getattr(dataset, "run", None)
+            grouping = getattr(run, "grouping", None)
+            if not isinstance(grouping, dict):
+                continue
+            payload = self._extract_grouping_overrides(dataset)
+            if not isinstance(payload, dict):
+                continue
+
+            pairs = self._vector_axis_pairs_for_grouping(
+                payload.get("groups", {}),
+                payload.get("group_names"),
+            )
+            if axis not in pairs:
+                continue
+            fwd_gid, bwd_gid = pairs[axis]
+            payload["forward_group"] = fwd_gid
+            payload["backward_group"] = bwd_gid
+            payload["vector_axis"] = axis
+
+            applied, _dt_applied = self._apply_grouping_settings_to_dataset(dataset, payload)
+            if applied:
+                updated += 1
+
+        if updated <= 0:
+            return
+
+        self._data_browser._rebuild_table()
+        self._render_current_selection_plot()
+        self._refresh_vector_axis_selector()
+        self._log_panel.log(f"Set vector polarization axis to {axis} for {updated} dataset(s).")
 
     # ── slots ──────────────────────────────────────────────────────────
 
@@ -333,6 +619,60 @@ class MainWindow(QMainWindow):
     def _on_export_current_plot(self) -> None:
         """Export the current main plot view to GLE/PDF/EPS."""
         self._plot_panel.export_current_plot()
+
+    def _on_export_logbook(self) -> None:
+        """Export the data-browser logbook table to TSV or RTF."""
+        if not self._data_browser.get_all_datasets():
+            self.statusBar().showMessage("No datasets available to export")
+            return
+
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export Logbook",
+            default_export_path(self._default_logbook_export_name()),
+            "Tab-separated values (*.tsv);;Rich Text Format (*.rtf);;All files (*)",
+        )
+        if not path:
+            return
+
+        path_obj = Path(path)
+        selected_filter_lower = (selected_filter or "").lower()
+        filter_wants_rtf = "rich text format" in selected_filter_lower
+        filter_wants_tsv = "tab-separated values" in selected_filter_lower
+
+        if not path_obj.suffix:
+            if filter_wants_rtf:
+                path_obj = path_obj.with_suffix(".rtf")
+            elif filter_wants_tsv:
+                path_obj = path_obj.with_suffix(".tsv")
+            else:
+                path_obj = path_obj.with_suffix(".tsv")
+        path = str(path_obj)
+
+        is_rtf = path_obj.suffix.lower() == ".rtf"
+
+        try:
+            if is_rtf:
+                exported_count = self._data_browser.export_logbook_rtf(path)
+                fmt = "RTF"
+            else:
+                exported_count = self._data_browser.export_logbook_tsv(path)
+                fmt = "TSV"
+            remember_export_path(path)
+            self._log_panel.log(f"Exported logbook ({fmt}) to {path} ({exported_count} datasets).")
+            self.statusBar().showMessage(f"Logbook exported: {Path(path).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "Export Failed", f"Could not export logbook:\n{e}")
+            self._log_panel.log(f"ERROR exporting logbook: {e}")
+
+    def _default_logbook_export_name(self) -> str:
+        """Return default logbook export filename, preferring project name."""
+        if self._current_project_path:
+            stem = Path(self._current_project_path).stem.strip()
+            safe_stem = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in stem).strip("_")
+            if safe_stem:
+                return f"{safe_stem}_logbook.tsv"
+        return "logbook.tsv"
 
     def _load_files(self, paths: list[str]) -> None:
         """Load multiple data files."""
@@ -387,7 +727,16 @@ class MainWindow(QMainWindow):
 
                     if auto_grouping_payload is not None:
                         auto_grouping_attempts += 1
-                        applied, _ = self._apply_grouping_settings_to_dataset(dataset, auto_grouping_payload)
+                        grouping_payload = dict(auto_grouping_payload)
+                        active_axis = None
+                        if hasattr(self._plot_panel, "get_current_polarization_axis"):
+                            active_axis = self._normalize_vector_axis(
+                                self._plot_panel.get_current_polarization_axis()
+                            )
+                        if active_axis in {"P_x", "P_y", "P_z"}:
+                            grouping_payload["vector_axis"] = active_axis
+
+                        applied, _ = self._apply_grouping_settings_to_dataset(dataset, grouping_payload)
                         if applied:
                             auto_grouping_applied += 1
 
@@ -671,13 +1020,8 @@ class MainWindow(QMainWindow):
 
         if updated > 0:
             self._data_browser._rebuild_table()
-            selected_after = self._data_browser.get_selected_datasets()
-            if len(selected_after) > 1:
-                self._plot_panel.plot_datasets(selected_after)
-            elif self._current_dataset is not None:
-                self._plot_panel.plot_dataset(self._current_dataset)
-            elif first_updated_dataset is not None:
-                self._plot_panel.plot_dataset(first_updated_dataset)
+            self._render_current_selection_plot()
+            self._refresh_vector_axis_selector()
 
         deadtime_msg = "off"
         if use_deadtime:
@@ -735,6 +1079,24 @@ class MainWindow(QMainWindow):
             "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
         }
 
+        vector_axis = self._normalize_vector_axis(grouping.get("vector_axis"))
+        if vector_axis is not None:
+            payload["vector_axis"] = vector_axis
+
+        group_names_raw = grouping.get("group_names")
+        if isinstance(group_names_raw, dict) and group_names_raw:
+            payload["group_names"] = {
+                int(k): str(v) for k, v in group_names_raw.items()
+            }
+
+        grouping_preset = grouping.get("grouping_preset")
+        if grouping_preset:
+            payload["grouping_preset"] = str(grouping_preset)
+
+        instrument_name = grouping.get("instrument")
+        if instrument_name:
+            payload["instrument"] = str(instrument_name)
+
         if "dead_time_us" in grouping and isinstance(grouping.get("dead_time_us"), list):
             payload["dead_time_us"] = list(grouping.get("dead_time_us", []))
         if "good_frames" in grouping:
@@ -779,6 +1141,18 @@ class MainWindow(QMainWindow):
             backward_gid = int(grouping_result.get("backward_group", 2))
         except (TypeError, ValueError):
             return False, False
+
+        group_names_for_axis = grouping_result.get("group_names")
+        if not isinstance(group_names_for_axis, dict) and isinstance(run.grouping, dict):
+            group_names_for_axis = run.grouping.get("group_names")
+        axis_pairs = self._vector_axis_pairs_for_grouping(groups, group_names_for_axis)
+        vector_axis = self._normalize_vector_axis(
+            grouping_result.get("vector_axis", run.grouping.get("vector_axis"))
+        )
+        if axis_pairs:
+            if vector_axis not in axis_pairs:
+                vector_axis = "P_z"
+            forward_gid, backward_gid = axis_pairs[vector_axis]
 
         forward_idx = [max(0, int(v) - 1) for v in groups.get(forward_gid, [])]
         backward_idx = [max(0, int(v) - 1) for v in groups.get(backward_gid, [])]
@@ -846,6 +1220,21 @@ class MainWindow(QMainWindow):
             run.grouping["period_mode"] = period_mode
             if enforce_source_bunching:
                 run.grouping["source_bunching_factor"] = source_bunch_factor
+            group_names = grouping_result.get("group_names")
+            if isinstance(group_names, dict) and group_names:
+                run.grouping["group_names"] = {int(k): str(v) for k, v in group_names.items()}
+            if vector_axis and axis_pairs:
+                run.grouping["vector_axis"] = vector_axis
+            preset_name = grouping_result.get("grouping_preset")
+            if preset_name:
+                run.grouping["grouping_preset"] = str(preset_name)
+            else:
+                run.grouping.pop("grouping_preset", None)
+            instrument_name = grouping_result.get("instrument")
+            if instrument_name:
+                run.grouping["instrument"] = str(instrument_name)
+            else:
+                run.grouping.pop("instrument", None)
             return True, False
 
         if not groups:
@@ -914,6 +1303,22 @@ class MainWindow(QMainWindow):
         )
         if enforce_source_bunching:
             run.grouping["source_bunching_factor"] = source_bunch_factor
+        # Persist group names if provided
+        group_names = grouping_result.get("group_names")
+        if isinstance(group_names, dict) and group_names:
+            run.grouping["group_names"] = {int(k): str(v) for k, v in group_names.items()}
+        if vector_axis and axis_pairs:
+            run.grouping["vector_axis"] = vector_axis
+        preset_name = grouping_result.get("grouping_preset")
+        if preset_name:
+            run.grouping["grouping_preset"] = str(preset_name)
+        else:
+            run.grouping.pop("grouping_preset", None)
+        instrument_name = grouping_result.get("instrument")
+        if instrument_name:
+            run.grouping["instrument"] = str(instrument_name)
+        else:
+            run.grouping.pop("instrument", None)
         return True, dt_applied
 
     def _prepare_grouping_histograms(self, histograms, grouping: dict, use_deadtime: bool):
@@ -1141,7 +1546,15 @@ class MainWindow(QMainWindow):
         dataset = self._data_browser.get_dataset(run_number)
         if dataset:
             self._current_dataset = dataset
-            self._plot_panel.plot_dataset(dataset)
+            active_axis = None
+            if hasattr(self._plot_panel, "get_current_polarization_axis"):
+                active_axis = self._normalize_vector_axis(
+                    self._plot_panel.get_current_polarization_axis()
+                )
+            if active_axis in {"P_x", "P_y", "P_z"}:
+                self._synchronize_targets_to_axis([dataset], active_axis)
+            self._render_current_selection_plot()
+            self._refresh_vector_axis_selector()
             self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
             self._log_panel.log(f"Selected run {run_number}")
             self.statusBar().showMessage(f"Viewing run {run_number}")
@@ -1406,6 +1819,16 @@ class MainWindow(QMainWindow):
     def _update_selected_datasets(self, *_args) -> None:
         """Update the fit panel with currently selected datasets."""
         selected = self._data_browser.get_selected_datasets()
+        active_axis = None
+        if hasattr(self._plot_panel, "get_current_polarization_axis"):
+            active_axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
+
+        if selected and active_axis in {"P_x", "P_y", "P_z"}:
+            updated = self._synchronize_targets_to_axis(selected, active_axis)
+            if updated > 0:
+                self._data_browser._rebuild_table()
+                selected = self._data_browser.get_selected_datasets()
+
         selected_group_ids = (
             self._data_browser.get_selected_group_ids()
             if hasattr(self._data_browser, "get_selected_group_ids")
@@ -1434,9 +1857,12 @@ class MainWindow(QMainWindow):
 
         # When multiple datasets are selected, overlay them all on the plot.
         if len(selected) > 1:
-            self._plot_panel.plot_datasets(selected)
+            self._render_current_selection_plot()
+            self._refresh_vector_axis_selector()
             run_labels = ", ".join(str(ds.run_label) for ds in selected)
             self.statusBar().showMessage(f"Viewing runs {run_labels}")
+        elif self._current_dataset is not None:
+            self._refresh_vector_axis_selector()
 
         analysis_datasets = [
             dataset
@@ -1805,6 +2231,14 @@ class MainWindow(QMainWindow):
         if current_dataset is not None:
             self._fit_panel.set_dataset(self._get_fit_dataset(current_dataset))
         self._update_selected_datasets()
+
+        restored_axis = self._normalize_vector_axis(plot_state.get("polarization_axis"))
+        if restored_axis == "ALL":
+            # restore_state redraws via plot_dataset(dataset), which is a single
+            # axis path. Force a selection-aware rerender so ALL mode shows
+            # stacked vector subplots immediately after project load.
+            self._render_current_selection_plot()
+            self._refresh_vector_axis_selector()
 
         # ── restore fit panel states (after dataset propagation) ──────
         single_fit_state = state.get("single_fit_state")

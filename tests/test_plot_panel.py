@@ -27,6 +27,7 @@ class _FakeAxis:
         self.ylim_calls: list[tuple[float, float]] = []
         self.xlabel_calls: list[str] = []
         self.ylabel_calls: list[str] = []
+        self.legend_call_count = 0
 
     def errorbar(self, *args, **kwargs) -> None:
         self.errorbar_calls.append({"args": args, "kwargs": kwargs})
@@ -44,6 +45,7 @@ class _FakeAxis:
         self.ylabel_calls.append(label)
 
     def legend(self, *_args, **_kwargs) -> None:
+        self.legend_call_count += 1
         return
 
     def set_xlim(self, xmin: float, xmax: float) -> None:
@@ -258,6 +260,57 @@ class TestPlotPanel:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
         panel.plot_dataset(sample_dataset)
+
+    def test_polarization_combo_uses_subscript_labels(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_x")
+        labels = [panel._polarization_combo.itemText(i) for i in range(panel._polarization_combo.count())]
+
+        assert labels == ["x", "y", "z"]
+
+    def test_polarization_combo_change_updates_current_axis_state(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_z")
+        idx = panel._polarization_combo.findData("P_x")
+        assert idx >= 0
+        panel._polarization_combo.setCurrentIndex(idx)
+
+        assert panel.get_current_polarization_axis() == "P_x"
+
+    def test_polarization_combo_supports_all_option(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
+        labels = [panel._polarization_combo.itemText(i) for i in range(panel._polarization_combo.count())]
+
+        assert labels[0] == "All"
+
+    def test_polarization_axis_remembers_separate_y_limits(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_x")
+        panel._y_min.setValue(-0.1)
+        panel._y_max.setValue(0.3)
+        panel._apply_limits()
+
+        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_y")
+        panel._y_min.setValue(-1.0)
+        panel._y_max.setValue(1.0)
+        panel._apply_limits()
+
+        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_x")
+        assert panel._y_min.value() == pytest.approx(-0.1)
+        assert panel._y_max.value() == pytest.approx(0.3)
+
+        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_y")
+        assert panel._y_min.value() == pytest.approx(-1.0)
+        assert panel._y_max.value() == pytest.approx(1.0)
         # Check if plot was created (canvas should have drawn something)
         assert panel._canvas is not None
 
@@ -1058,3 +1111,236 @@ class TestPlotPanel:
         assert second_data_color == second_fit_color
         assert axis.plot_calls[0]["kwargs"].get("label") is None
         assert axis.plot_calls[1]["kwargs"].get("label") is None
+
+    def test_export_current_plot_vector_all_generates_subplots(
+        self,
+        panel: PlotPanel,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 8.0, 50)
+        e = np.full_like(t, 0.01)
+        base = MuonDataset(time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 3001})
+
+        panel._current_polarization_axis = "ALL"
+        panel._vector_subplot_datasets = {
+            "P_x": [base],
+            "P_y": [MuonDataset(time=t, asymmetry=0.16 * np.exp(-0.25 * t), error=e, metadata={"run_number": 3001})],
+            "P_z": [MuonDataset(time=t, asymmetry=0.12 * np.exp(-0.2 * t), error=e, metadata={"run_number": 3001})],
+        }
+        panel._y_limits_by_polarization = {
+            "P_x": (-0.2, 0.4),
+            "P_y": (-0.1, 0.3),
+            "P_z": (-0.05, 0.2),
+        }
+
+        target_gle = tmp_path / "vector_all_export.gle"
+
+        class _MultiAxisFigure:
+            def __init__(self):
+                self.axes: list[_FakeAxis] = []
+                self.saved_paths: list[str] = []
+
+            def add_subplot(self, *_args, **_kwargs):
+                axis = _FakeAxis()
+                self.axes.append(axis)
+                return axis
+
+            def savefig(self, path: str) -> None:
+                self.saved_paths.append(path)
+                Path(path).write_text("! fake gle", encoding="utf-8")
+
+        fig = _MultiAxisFigure()
+        fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)
+
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
+        )
+        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
+        monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
+        monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
+
+        panel.export_current_plot()
+
+        assert len(fig.axes) == 3
+        y_labels = [axis.ylabel_calls[-1] for axis in fig.axes if axis.ylabel_calls]
+        assert "a_0 P_{x}(t) (%)" in y_labels
+        assert "a_0 P_{y}(t) (%)" in y_labels
+        assert "a_0 P_{z}(t) (%)" in y_labels
+
+        x_labels = [axis.xlabel_calls[-1] for axis in fig.axes if axis.xlabel_calls]
+        assert x_labels
+        assert x_labels[-1] == "Time (µs)"
+
+    def test_apply_limits_in_all_mode_preserves_per_axis_limits(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        ax_px = _FakeAxis()
+        ax_py = _FakeAxis()
+        ax_pz = _FakeAxis()
+        panel._subplot_axes_by_polarization = {"P_x": ax_px, "P_y": ax_py, "P_z": ax_pz}
+        panel._current_polarization_axis = "ALL"
+        panel._y_limits_by_polarization = {
+            "P_x": (-0.2, 0.4),
+            "P_y": (-1.0, 1.0),
+            "P_z": (-0.05, 0.2),
+        }
+
+        panel._x_min.setValue(0.5)
+        panel._x_max.setValue(8.5)
+        panel._y_min.setValue(-3.0)
+        panel._y_max.setValue(4.0)
+
+        panel._apply_limits()
+
+        assert panel._y_limits_by_polarization["P_x"] == pytest.approx((-0.2, 0.4))
+        assert panel._y_limits_by_polarization["P_y"] == pytest.approx((-1.0, 1.0))
+        assert panel._y_limits_by_polarization["P_z"] == pytest.approx((-0.05, 0.2))
+        assert ax_px.ylim_calls[-1] == pytest.approx((-0.2, 0.4))
+        assert ax_py.ylim_calls[-1] == pytest.approx((-1.0, 1.0))
+        assert ax_pz.ylim_calls[-1] == pytest.approx((-0.05, 0.2))
+
+    def test_all_mode_disables_y_controls_and_sets_tooltips(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel._subplot_axes_by_polarization = {
+            "P_x": _FakeAxis(),
+            "P_y": _FakeAxis(),
+            "P_z": _FakeAxis(),
+        }
+        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
+
+        assert not panel._y_min.isEnabled()
+        assert not panel._y_max.isEnabled()
+        assert not panel._auto_y_btn.isEnabled()
+        assert "x, y, and z" in panel._y_min.toolTip()
+        assert panel._y_min.toolTip() == panel._y_max.toolTip()
+        assert panel._y_min.toolTip() == panel._auto_y_btn.toolTip()
+
+        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "P_x")
+        assert panel._y_min.isEnabled()
+        assert panel._y_max.isEnabled()
+        assert panel._auto_y_btn.isEnabled()
+        assert panel._y_min.toolTip() == ""
+
+    def test_export_vector_all_uses_subplots_sharex_when_available(
+        self,
+        panel: PlotPanel,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 8.0, 50)
+        e = np.full_like(t, 0.01)
+        base = MuonDataset(time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 3002})
+
+        panel._current_polarization_axis = "ALL"
+        panel._vector_subplot_datasets = {
+            "P_x": [base],
+            "P_y": [MuonDataset(time=t, asymmetry=0.16 * np.exp(-0.25 * t), error=e, metadata={"run_number": 3002})],
+            "P_z": [MuonDataset(time=t, asymmetry=0.12 * np.exp(-0.2 * t), error=e, metadata={"run_number": 3002})],
+        }
+
+        target_gle = tmp_path / "vector_all_subplots_sharex.gle"
+
+        class _SubplotFigure:
+            def __init__(self):
+                self.saved_paths: list[str] = []
+                self.subplots_adjust_calls: list[dict[str, float]] = []
+
+            def savefig(self, path: str) -> None:
+                self.saved_paths.append(path)
+                Path(path).write_text("! fake gle", encoding="utf-8")
+
+            def subplots_adjust(self, **kwargs) -> None:
+                self.subplots_adjust_calls.append(kwargs)
+
+        subplot_fig = _SubplotFigure()
+        axes = [_FakeAxis(), _FakeAxis(), _FakeAxis()]
+        subplots_calls: list[dict[str, object]] = []
+
+        def _subplots(**kwargs):
+            subplots_calls.append(kwargs)
+            return subplot_fig, axes
+
+        fake_glp = SimpleNamespace(figure=lambda **_kwargs: _SubplotFigure(), subplots=_subplots)
+
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
+        )
+        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
+        monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
+        monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
+
+        panel.export_current_plot()
+
+        assert subplots_calls
+        assert subplots_calls[0]["nrows"] == 3
+        assert subplots_calls[0]["ncols"] == 1
+        assert subplots_calls[0]["sharex"] is True
+        assert subplot_fig.subplots_adjust_calls
+
+    def test_export_vector_all_single_series_does_not_add_legend(
+        self,
+        panel: PlotPanel,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 8.0, 50)
+        e = np.full_like(t, 0.01)
+        base = MuonDataset(time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 3003})
+
+        panel._current_polarization_axis = "ALL"
+        panel._vector_subplot_datasets = {
+            "P_x": [base],
+            "P_y": [MuonDataset(time=t, asymmetry=0.16 * np.exp(-0.25 * t), error=e, metadata={"run_number": 3003})],
+            "P_z": [MuonDataset(time=t, asymmetry=0.12 * np.exp(-0.2 * t), error=e, metadata={"run_number": 3003})],
+        }
+
+        target_gle = tmp_path / "vector_all_single_no_legend.gle"
+
+        class _MultiAxisFigure:
+            def __init__(self):
+                self.axes: list[_FakeAxis] = []
+
+            def add_subplot(self, *_args, **_kwargs):
+                axis = _FakeAxis()
+                self.axes.append(axis)
+                return axis
+
+            def savefig(self, path: str) -> None:
+                Path(path).write_text("! fake gle", encoding="utf-8")
+
+        fig = _MultiAxisFigure()
+        fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)
+
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
+        )
+        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
+        monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
+        monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
+
+        panel.export_current_plot()
+
+        assert len(fig.axes) == 3
+        assert all(axis.legend_call_count == 0 for axis in fig.axes)

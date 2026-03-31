@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
+from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
 
 def test_single_component_matches_baseline_free_model() -> None:
@@ -144,3 +145,175 @@ def test_formula_string_shows_single_amplitude_for_multiplicative_chain() -> Non
     assert "A_1*exp(-Lambda*t)" in formula
     assert "exp(-(sigma*t)^2)" in formula
     assert "1*exp(-(sigma*t)^2)" not in formula
+
+
+def test_oscillatory_field_matches_frequency_component() -> None:
+    t = np.linspace(0.0, 6.0, 200)
+    field_gauss = 750.0
+    amplitude = 0.7
+    phase = 0.2
+
+    frequency_mhz = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * field_gauss
+
+    by_field = COMPONENTS["OscillatoryField"].function(
+        t,
+        A=amplitude,
+        field=field_gauss,
+        phase=phase,
+    )
+    by_frequency = COMPONENTS["Oscillatory"].function(
+        t,
+        A=amplitude,
+        frequency=frequency_mhz,
+        phase=phase,
+    )
+
+    assert np.allclose(by_field, by_frequency)
+
+
+def test_parenthesized_expression_changes_evaluation_order() -> None:
+    t = np.linspace(0.0, 1.0, 10)
+
+    # Under suppression rules for multiplied singletons: 1 * (3 + 4) = 7
+    model = CompositeModel(
+        ["Constant", "Constant", "Constant"],
+        operators=["*", "+"],
+        open_parentheses=[0, 1, 0],
+        close_parentheses=[0, 0, 1],
+    )
+    out = model.function(t, A_bg_2=3.0, A_bg_3=4.0)
+
+    assert np.allclose(out, np.full_like(t, 7.0))
+
+
+def test_parenthesized_model_serialization_round_trip() -> None:
+    model = CompositeModel(
+        ["Exponential", "Constant", "Gaussian"],
+        operators=["*", "+"],
+        open_parentheses=[0, 1, 0],
+        close_parentheses=[0, 0, 1],
+    )
+
+    restored = CompositeModel.from_dict(model.to_dict())
+    assert restored.component_names == model.component_names
+    assert restored.operators == model.operators
+    assert restored.open_parentheses == model.open_parentheses
+    assert restored.close_parentheses == model.close_parentheses
+
+
+def test_parenthesized_product_suppresses_leading_amplitude() -> None:
+    model = CompositeModel(
+        ["Exponential", "Exponential", "Exponential"],
+        operators=["*", "+"],
+        open_parentheses=[0, 1, 0],
+        close_parentheses=[0, 0, 1],
+    )
+
+    assert "A_1" not in model.param_names
+    assert "A_2" in model.param_names
+    assert "A_3" in model.param_names
+
+    t = np.linspace(0.0, 1.0, 5)
+    kwargs = {
+        "Lambda_1": 0.2,
+        "A_2": 2.0,
+        "Lambda_2": 0.3,
+        "A_3": 3.0,
+        "Lambda_3": 0.4,
+    }
+    out = model.function(t, **kwargs)
+    exp1 = np.exp(-0.2 * t)
+    exp2 = np.exp(-0.3 * t)
+    exp3 = np.exp(-0.4 * t)
+    expected = exp1 * (2.0 * exp2 + 3.0 * exp3)
+    assert np.allclose(out, expected)
+
+
+def test_parenthesized_product_suppresses_trailing_amplitude() -> None:
+    model = CompositeModel(
+        ["Exponential", "Exponential", "Exponential"],
+        operators=["+", "*"],
+        open_parentheses=[1, 0, 0],
+        close_parentheses=[0, 1, 0],
+    )
+
+    assert "A_1" in model.param_names
+    assert "A_2" in model.param_names
+    assert "A_3" not in model.param_names
+
+    t = np.linspace(0.0, 1.0, 5)
+    kwargs = {
+        "A_1": 2.0,
+        "Lambda_1": 0.2,
+        "A_2": 3.0,
+        "Lambda_2": 0.3,
+        "Lambda_3": 0.4,
+    }
+    out = model.function(t, **kwargs)
+    exp1 = np.exp(-0.2 * t)
+    exp2 = np.exp(-0.3 * t)
+    exp3 = np.exp(-0.4 * t)
+    expected = (2.0 * exp1 + 3.0 * exp2) * exp3
+    assert np.allclose(out, expected)
+
+
+def test_multiplying_two_additive_groups_keeps_group_amplitudes() -> None:
+    model = CompositeModel(
+        ["Exponential", "Exponential", "Exponential", "Exponential"],
+        operators=["+", "*", "+"],
+        open_parentheses=[1, 0, 1, 0],
+        close_parentheses=[0, 1, 0, 1],
+    )
+
+    assert "A_1" in model.param_names
+    assert "A_2" in model.param_names
+    assert "A_3" in model.param_names
+    assert "A_4" in model.param_names
+
+
+def test_lhs_additive_group_with_constant_suppresses_rhs_amplitude() -> None:
+    model = CompositeModel(
+        ["Gaussian", "Constant", "OscillatoryField"],
+        operators=["+", "*"],
+        open_parentheses=[1, 0, 0],
+        close_parentheses=[0, 1, 0],
+    )
+
+    assert "A_1" in model.param_names
+    assert "A_bg" in model.param_names
+    assert "A_3" not in model.param_names
+
+    formula = model.formula_string()
+    assert "(A_1*exp(-(sigma*t)^2) + A_bg) * cos(2*pi*gamma_mu*field*t + phase)" in formula
+
+
+def test_lhs_additive_group_suppresses_rhs_constant_amplitude() -> None:
+    model = CompositeModel(
+        ["Gaussian", "Constant", "Constant"],
+        operators=["+", "*"],
+        open_parentheses=[1, 0, 0],
+        close_parentheses=[0, 1, 0],
+    )
+
+    assert "A" in model.param_names
+    assert "A_bg_2" in model.param_names
+    assert "A_bg_3" not in model.param_names
+
+    formula = model.formula_string()
+    assert "* 1" not in formula
+
+
+def test_rhs_additive_group_suppresses_lhs_constant_amplitude() -> None:
+    model = CompositeModel(
+        ["Constant", "Gaussian", "Constant"],
+        operators=["*", "+"],
+        open_parentheses=[0, 1, 0],
+        close_parentheses=[0, 0, 1],
+    )
+
+    assert "A_bg_1" not in model.param_names
+    assert "A" in model.param_names
+    assert "A_bg_3" in model.param_names
+
+    formula = model.formula_string()
+    assert "1 *" not in formula

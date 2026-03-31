@@ -75,3 +75,4 @@ select = ["E", "F", "W", "I", "N", "UP"]
 [tool.ruff.lint.per-file-ignores]
 "src/asymmetry/core/fitting/models.py" = ["N803"]  # Physics parameter names (A0, Lambda, Delta)
 "src/asymmetry/core/fitting/diffusion.py" = ["N803"]  # Physics parameter names (D_nD, D_perp)
+"src/asymmetry/core/fitting/sc/models.py" = ["N803"]  # Physics parameter names (Tc)

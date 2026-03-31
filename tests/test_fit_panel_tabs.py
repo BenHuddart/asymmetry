@@ -107,6 +107,35 @@ def test_single_fit_success_emits_and_updates_table(
     assert len(emitted["curve"][0]) == 500
 
 
+def test_single_fit_preview_upsamples_high_frequency_models(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    tab = SingleFitTab()
+    tab.set_dataset(dataset)
+    tab._set_composite_model(CompositeModel(["Oscillatory"], operators=[]))
+
+    row_by_name: dict[str, int] = {}
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        assert name_item is not None
+        pname = name_item.data(Qt.ItemDataRole.UserRole)
+        row_by_name[str(pname)] = row
+
+    tab._param_table.item(row_by_name["A_1"], 1).setText("1.0")
+    tab._param_table.item(row_by_name["frequency"], 1).setText("50.0")
+    tab._param_table.item(row_by_name["phase"], 1).setText("0.0")
+
+    emitted: dict[str, object] = {}
+    tab.preview_requested.connect(lambda _r, curve, _c: emitted.update({"curve": curve}))
+    tab._on_preview()
+
+    assert "curve" in emitted
+    curve = emitted["curve"]
+    assert isinstance(curve, tuple)
+    assert len(curve[0]) > 500
+
+
 def test_single_fit_uses_dataset_object_it_was_given(
     qapp: QApplication, dataset: MuonDataset
 ) -> None:

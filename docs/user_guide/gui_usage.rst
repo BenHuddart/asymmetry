@@ -142,6 +142,34 @@ To remove a dataset from the browser:
 
 This removes the dataset(s) from the browser; they can be reloaded via **File → Open**.
 
+Exporting the Logbook
+~~~~~~~~~~~~~~~~~~~~~
+
+Use the **Export logbook** toolbar button (immediately after **Open**) to write
+the current Data Browser contents to a file.
+
+Export behavior:
+
+* Exports the currently active Data Browser columns, including dynamic columns
+   added from **Run Info**.
+* Preserves data-group organization by writing a section header for each group.
+* Includes datasets hidden by filters and collapsed groups.
+* Writes section headers and data rows with a consistent column count so header
+   labels and values align cleanly.
+
+Formats:
+
+* **TSV (recommended, default)**: Fastest export path and best choice for large
+   logbooks. Opens directly in spreadsheet tools with clear column alignment.
+* **RTF**: Rich text output with italicized **T** and **B** header labels.
+   Useful for report-style sharing, but slower than TSV for large tables.
+
+Default filename:
+
+* If the current project has a name (for example ``My_Project.asymp``), the
+   default export filename is ``My_Project_logbook.tsv``.
+* If no project name is available, the default is ``logbook.tsv``.
+
 Plot Panel Controls
 -------------------
 
@@ -264,6 +292,83 @@ bunching.
 
 Changing bunching in either dialog refreshes both the displayed curve and the
 dataset passed to the fitting panel.
+
+Detector Layout Editor
+~~~~~~~~~~~~~~~~~~~~~~
+
+The full Grouping dialog includes a **Detector Layout...** button that opens a
+visual grouping editor for ISIS instruments **HiFi**, **MuSR**, and **EMU**.
+
+The editor has three panels:
+
+* **Detector schematic** (left): click detector sectors to toggle membership in
+   the currently active group.
+* **Group slots** (centre): eight group buttons (**Group 1** to **Group 8**),
+   each with an editable name field.
+* **Presets** (right): instrument selector plus a preset dropdown with
+   **Apply Grouping**.
+
+Key behavior:
+
+* A detector can belong to multiple groups at the same time.
+* Instrument is identified using the following priority when opening the editor:
+
+  1. **Saved instrument** — if a previous session already set the instrument for
+     this dataset, that choice is restored directly.
+  2. **Run metadata** — fields such as ``instrument``, ``instrument_name``,
+     ``beamline``, or ``spectrometer`` in the file's embedded metadata.
+  3. **Source filename** — if the filename contains a recognisable instrument
+     token (e.g. ``emu``, ``hifi``, ``musr``).
+  4. **Histogram count** — 64 histograms → HiFi; 96 histograms → EMU;
+     other counts → no automatic selection.
+
+  The instrument can always be overridden from the instrument dropdown, and the
+  chosen instrument is saved with the dataset so it survives project reloads.
+* Group names are saved in project grouping payloads and in ``.grp`` files via
+   ``group_name.N=...`` entries.
+
+Preset highlights:
+
+* **HiFi** and **MuSR** include longitudinal/transverse-style presets.
+* **EMU** includes a **Vector Polarization** preset with six groups:
+   ``Pz Forward``, ``Pz Backward``, ``Py Top``, ``Py Bottom``, ``Px Left``, and
+   ``Px Right``.
+
+.. note::
+
+   Vector polarization mode is not exclusive to EMU.  Any dataset whose six
+   group names follow the canonical pattern
+   (``Pz Forward`` / ``Pz Backward``, ``Py Top`` / ``Py Bottom``,
+   ``Px Left`` / ``Px Right``) will activate vector-mode features in the main
+   plot regardless of the instrument field.
+
+When vector grouping is active, the main plot header shows a
+**Polarization** dropdown near the alpha display. You can select:
+
+* **x** — display the :math:`P_x` pair (Left / Right detectors).
+* **y** — display the :math:`P_y` pair (Top / Bottom detectors).
+* **z** — display the :math:`P_z` pair (Forward / Backward detectors).
+* **All** — display all three polarization components as stacked subplots
+   sharing the same time axis.  Each subplot carries its own Y-axis label and
+   colour-matched error bars.
+
+All of these are available without reopening the Grouping dialog.
+
+The main-plot Y limits are remembered separately for each polarization axis,
+so changing between axes restores your previous Y-range for that axis.
+In **All** mode the Y-axis controls are read-only; adjust the limits for each
+component individually by switching to that axis first.
+
+.. note::
+
+    When a project is saved with **All** mode active, all three subplots are
+    rendered immediately on the next project load — no manual axis switch is
+    required.
+
+In the Detector Layout Editor, the preset panel shows a status line under the
+preset dropdown, for example ``(Current: Vector Polarization)``. This remains
+until the grouping is edited away from the applied preset, then changes to
+``(Current: Custom)``.
 
 Two-Period RG Mode
 ~~~~~~~~~~~~~~~~~~

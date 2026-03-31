@@ -184,3 +184,45 @@ def test_advanced_dialog_shows_plot_for_time_series_rows(qapp: QApplication) -> 
     if dialog._advanced_dialog is not None:
         dialog._advanced_dialog.close()
     dialog.close()
+
+
+def test_advanced_dialog_search_bar_is_enabled(qapp: QApplication) -> None:
+    dialog = RunInfoDialog(_dataset())
+    dialog._open_advanced_dialog()
+    advanced = dialog._advanced_dialog
+    assert advanced is not None
+
+    assert advanced._search_bar.isEnabled()
+    assert not advanced._search_bar.isReadOnly()
+
+    if dialog._advanced_dialog is not None:
+        dialog._advanced_dialog.close()
+    dialog.close()
+
+
+def test_advanced_dialog_search_filters_rows(qapp: QApplication) -> None:
+    dialog = RunInfoDialog(_dataset())
+    dialog._open_advanced_dialog()
+    advanced = dialog._advanced_dialog
+    assert advanced is not None
+
+    advanced._filter_rows("sample/Temp_Sample")
+
+    visible_rows = [
+        row
+        for row in range(advanced._table.rowCount())
+        if not advanced._table.isRowHidden(row)
+    ]
+    assert visible_rows
+    assert len(visible_rows) < advanced._table.rowCount()
+
+    for row in visible_rows:
+        field_item = advanced._table.item(row, 1)
+        value_item = advanced._table.item(row, 2)
+        field_text = field_item.text() if field_item is not None else ""
+        value_text = value_item.text() if value_item is not None else ""
+        assert "sample/temp_sample" in (field_text + " " + value_text).lower()
+
+    if dialog._advanced_dialog is not None:
+        dialog._advanced_dialog.close()
+    dialog.close()

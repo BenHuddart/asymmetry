@@ -787,6 +787,111 @@ class TestMainWindowProjectState:
         assert "global_parameter_fit_window_state" in state
         assert "fourier_state" in state
 
+    def test_restore_project_state_all_mode_renders_subplots_immediately(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
+    ) -> None:
+        source_file = tmp_path / "run6101.wim"
+        source_file.write_bytes(b"\x00")
+
+        def _make_vector_dataset() -> MuonDataset:
+            from asymmetry.core.data.dataset import Run
+
+            h0 = Histogram(counts=np.array([12.0, 11.0, 10.0, 9.0]), bin_width=1.0)
+            h1 = Histogram(counts=np.array([8.0, 7.0, 6.0, 5.0]), bin_width=1.0)
+            run = Run(
+                run_number=6101,
+                histograms=[h0, h1],
+                source_file=str(source_file),
+                grouping={
+                    "groups": {
+                        1: [1],
+                        2: [2],
+                        3: [1],
+                        4: [2],
+                        5: [1],
+                        6: [2],
+                    },
+                    "group_names": {
+                        1: "Pz Forward",
+                        2: "Pz Backward",
+                        3: "Py Top",
+                        4: "Py Bottom",
+                        5: "Px Left",
+                        6: "Px Right",
+                    },
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "vector_axis": "P_z",
+                    "alpha": 1.0,
+                    "first_good_bin": 0,
+                    "last_good_bin": 3,
+                    "bunching_factor": 1,
+                    "deadtime_correction": False,
+                },
+            )
+            t = np.array([0.0, 1.0, 2.0, 3.0], dtype=float)
+            return MuonDataset(
+                time=t,
+                asymmetry=np.zeros_like(t),
+                error=np.ones_like(t),
+                metadata={"run_number": 6101, "field": 100.0},
+                run=run,
+            )
+
+        def _stub_load_file(self_inner, path_str: str):
+            assert path_str == str(source_file)
+            return _make_vector_dataset()
+
+        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+
+        window = mw_module.MainWindow()
+        if not getattr(window._plot_panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+
+        grouping_payload = {
+            "groups": {
+                1: [1],
+                2: [2],
+                3: [1],
+                4: [2],
+                5: [1],
+                6: [2],
+            },
+            "group_names": {
+                1: "Pz Forward",
+                2: "Pz Backward",
+                3: "Py Top",
+                4: "Py Bottom",
+                5: "Px Left",
+                6: "Px Right",
+            },
+            "forward_group": 1,
+            "backward_group": 2,
+            "vector_axis": "P_z",
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+
+        state = _minimal_state()
+        state["datasets"] = [
+            {
+                "run_number": 6101,
+                "source_file": str(source_file),
+                "metadata_overrides": {"field": 100.0},
+                "grouping_overrides": grouping_payload,
+            }
+        ]
+        state["plot_state"]["current_run_number"] = 6101
+        state["plot_state"]["polarization_axis"] = "ALL"
+
+        window.restore_project_state(state, str(tmp_path / "project.asymp"))
+
+        assert window._plot_panel.get_current_polarization_axis() == "ALL"
+        assert len(window._plot_panel._subplot_axes_by_polarization) == 3
+
     def test_collect_project_state_includes_global_parameter_fit_window_state(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication
     ) -> None:
@@ -874,6 +979,7 @@ class TestMainWindowProjectState:
                     "last_good_bin": 55,
                     "bunching_factor": 4,
                     "deadtime_correction": True,
+                    "instrument": "MuSR",
                 }
                 self._datasets = {4042: ds}
 
@@ -893,6 +999,7 @@ class TestMainWindowProjectState:
         assert grouping["forward_group"] == 1
         assert grouping["backward_group"] == 2
         assert grouping["bunching_factor"] == 4
+        assert grouping["instrument"] == "MuSR"
 
     def test_restore_project_state_selects_matching_dataset_from_multiperiod_load(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
@@ -947,6 +1054,7 @@ class TestMainWindowProjectState:
             "groups": {1: [1], 2: [2]},
             "forward_group": 1,
             "backward_group": 2,
+            "instrument": "HiFi",
             "alpha": 1.0,
             "first_good_bin": 0,
             "last_good_bin": 10,
