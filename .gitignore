@@ -48,6 +48,11 @@ Thumbs.db
 *.png
 *.dat
 
+# Keep packaged/documentation logo assets versioned.
+!src/asymmetry/resources/
+!src/asymmetry/resources/*.png
+!docs/logo.png
+
 # Keep user-guide detector diagrams versioned.
 !docs/user_guide/images/
 !docs/user_guide/images/*.png

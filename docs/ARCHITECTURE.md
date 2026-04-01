@@ -198,7 +198,7 @@ The GUI is a separate, optional install target. It wraps the core API and provid
 | NF-2 | Core dependencies: `numpy`, `scipy`, `h5py`, `lmfit`. Optional: `uproot` (ROOT I/O), `iminuit`, `matplotlib`. |
 | NF-3 | GUI dependencies: `PySide6`, `matplotlib` (for embedded plots). |
 | NF-4 | Cross-platform: Linux, macOS, Windows. |
-| NF-5 | Installable via `pip install asymmetry` (core) and `pip install asymmetry[gui]` (with GUI). |
+| NF-5 | Installable from the Git repository via pip, with optional extras for GUI and I/O/export features. |
 | NF-6 | Test suite with ≥ 80 % line coverage on the core; pytest as test runner. |
 | NF-7 | Documentation: API reference (Sphinx/autodoc) and user guide (tutorials, examples). |
 | NF-8 | Semantic versioning; changelog maintained per release. |

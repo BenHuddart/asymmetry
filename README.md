@@ -44,19 +44,31 @@ git clone https://github.com/BenHuddart/asymmetry.git
 cd asymmetry
 ```
 
-### Install from the checked-out repository
+### Recommended user install (full functionality, no dev tools)
+
+```bash
+python -m pip install -c constraints.txt ".[gui,hdf5,root,gle]"
+```
+
+This installs the full end-user feature set (GUI + optional file/export support) without
+development dependencies.
+
+### Other install options from the checked-out repository
 
 ```bash
 # Core library only
-python -m pip install -c constraints.txt -e .
+python -m pip install -c constraints.txt .
 
 # With GUI support
-python -m pip install -c constraints.txt -e ".[gui]"
+python -m pip install -c constraints.txt ".[gui]"
 
 # With GUI and optional file/export support
-python -m pip install -c constraints.txt -e ".[gui,hdf5,root,gle]"
+python -m pip install -c constraints.txt ".[gui,hdf5,root,gle]"
 
 # Everything, including development dependencies
+python -m pip install -c constraints.txt ".[all]"
+
+# Editable install for contributors
 python -m pip install -c constraints.txt -e ".[all]"
 ```
 
@@ -66,8 +78,8 @@ python -m pip install -c constraints.txt -e ".[all]"
 # Core library
 python -m pip install "git+https://github.com/BenHuddart/asymmetry.git"
 
-# GUI extras
-python -m pip install "asymmetry[gui] @ git+https://github.com/BenHuddart/asymmetry.git"
+# Full end-user feature set (no development extras)
+python -m pip install "asymmetry[gui,hdf5,root,gle] @ git+https://github.com/BenHuddart/asymmetry.git"
 ```
 
 Using [constraints.txt](constraints.txt) is recommended for local installs so the scientific Python

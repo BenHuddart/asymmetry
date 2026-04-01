@@ -36,7 +36,9 @@ Installation
 
 .. code-block:: bash
 
-   pip install asymmetry[gui]
+   git clone https://github.com/BenHuddart/asymmetry.git
+   cd asymmetry
+   python -m pip install -c constraints.txt ".[gui,hdf5,root,gle]"
 
 Loading Data
 ~~~~~~~~~~~~

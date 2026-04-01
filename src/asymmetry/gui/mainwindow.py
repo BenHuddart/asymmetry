@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -73,24 +73,26 @@ def _load_window_icon() -> QIcon | None:
     """
     # Try importlib.resources (preferred for installed packages)
     try:
-        from importlib.resources import as_file, files
+        from importlib.resources import files
 
-        resources = files("asymmetry").joinpath("resources")
-        logo = resources.joinpath("logo_256x256.png")
-        with as_file(logo) as icon_path:
-            if icon_path.exists():
-                return QIcon(str(icon_path))
-    except (ImportError, ModuleNotFoundError, TypeError, AttributeError):
+        logo = files("asymmetry.resources").joinpath("logo_256x256.png")
+        if logo.is_file():
+            pixmap = QPixmap()
+            if pixmap.loadFromData(logo.read_bytes(), "PNG"):
+                icon = QIcon(pixmap)
+                if not icon.isNull():
+                    return icon
+    except (ImportError, ModuleNotFoundError, TypeError, AttributeError, OSError):
         pass
 
     # Fallback: try direct path (for development)
     try:
-        from pathlib import Path
-
         resources_dir = Path(__file__).parent.parent / "resources"
         icon_path = resources_dir / "logo_256x256.png"
         if icon_path.exists():
-            return QIcon(str(icon_path))
+            icon = QIcon(str(icon_path))
+            if not icon.isNull():
+                return icon
     except (OSError, ValueError):
         pass
 

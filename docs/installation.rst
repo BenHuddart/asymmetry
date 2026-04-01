@@ -1,6 +1,8 @@
 Installation
 ============
 
+Asymmetry is not currently published on PyPI. Install from the Git repository.
+
 Requirements
 ------------
 
@@ -39,31 +41,40 @@ For GLE export support:
 Installation Methods
 --------------------
 
-From PyPI (Recommended)
-~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: bash
-
-   # Minimal installation
-   pip install asymmetry
-
-   # With GUI support
-   pip install asymmetry[gui]
-
-   # With GUI + GLE export support
-   pip install asymmetry[gui,gle]
-
-   # With all optional dependencies
-   pip install asymmetry[all]
-
-From Source
-~~~~~~~~~~~
+From a local repository checkout (recommended)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
    git clone https://github.com/BenHuddart/asymmetry.git
    cd asymmetry
-   pip install -c constraints.txt -e ".[gui,gle,dev]"
+
+   # Full end-user feature set (GUI + optional I/O/export support)
+   python -m pip install -c constraints.txt ".[gui,hdf5,root,gle]"
+
+Other options from the same checkout:
+
+.. code-block:: bash
+
+   # Core library only
+   python -m pip install -c constraints.txt .
+
+   # GUI support only
+   python -m pip install -c constraints.txt ".[gui]"
+
+   # All optional dependencies, including development tools
+   python -m pip install -c constraints.txt ".[all]"
+
+Install directly from GitHub with pip
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # Core library
+   python -m pip install "git+https://github.com/BenHuddart/asymmetry.git"
+
+   # Full end-user feature set (no development extras)
+   python -m pip install "asymmetry[gui,hdf5,root,gle] @ git+https://github.com/BenHuddart/asymmetry.git"
 
 Development Installation
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -72,10 +83,12 @@ For development work:
 
 .. code-block:: bash
 
-   pip install -e ".[dev]"
-   
+   git clone https://github.com/BenHuddart/asymmetry.git
+   cd asymmetry
+   python -m pip install -c constraints.txt -e ".[all]"
+
    # Run tests
-   pytest
+   python -m pytest
 
 Verifying Installation
 ----------------------
