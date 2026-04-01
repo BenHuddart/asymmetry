@@ -11,7 +11,7 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 3)
+Current schema (version 4)
 --------------------------
 ::
 
@@ -74,9 +74,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 3
+CURRENT_SCHEMA_VERSION: int = 4
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4})
 
 
 class UnsupportedSchemaVersion(ValueError):
@@ -117,6 +117,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 2
     if version == 2:
         migrated = _migrate_v2_to_v3(migrated)
+        version = 3
+    if version == 3:
+        migrated = _migrate_v3_to_v4(migrated)
     return migrated
 
 
@@ -149,6 +152,70 @@ def _migrate_v2_to_v3(data: dict) -> dict:
     browser_state.setdefault("extra_columns", [])
     migrated["browser_state"] = browser_state
     return migrated
+
+
+def _migrate_v3_to_v4(data: dict) -> dict:
+    """Migrate schema v3 project state to v4.
+
+    v4 adds optional per-axis alpha values (``alpha_x``, ``alpha_y``,
+    ``alpha_z``) to vector-polarization grouping payloads.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 4
+
+    datasets = migrated.get("datasets")
+    if not isinstance(datasets, list):
+        return migrated
+
+    updated_datasets: list[dict] = []
+    for item in datasets:
+        if not isinstance(item, dict):
+            continue
+        ds = dict(item)
+        grouping = ds.get("grouping_overrides")
+        if isinstance(grouping, dict) and _is_vector_grouping_payload(grouping):
+            ds["grouping_overrides"] = _migrate_grouping_alpha_fields(grouping)
+        updated_datasets.append(ds)
+
+    migrated["datasets"] = updated_datasets
+    return migrated
+
+
+def _migrate_grouping_alpha_fields(grouping: dict) -> dict:
+    """Populate per-axis alpha fields from a scalar alpha value."""
+    result = dict(grouping)
+    alpha = _coerce_float(result.get("alpha", 1.0), 1.0)
+    result["alpha_x"] = _coerce_float(result.get("alpha_x", result.get("alpha_px", alpha)), alpha)
+    result["alpha_y"] = _coerce_float(result.get("alpha_y", result.get("alpha_py", alpha)), alpha)
+    result["alpha_z"] = _coerce_float(result.get("alpha_z", result.get("alpha_pz", alpha)), alpha)
+    return result
+
+
+def _is_vector_grouping_payload(grouping: dict) -> bool:
+    """Return True when grouping payload matches vector-polarization naming."""
+    axis_token = str(grouping.get("vector_axis", "")).strip().lower().replace("_", "")
+    if axis_token in {"px", "py", "pz"}:
+        return True
+
+    names_raw = grouping.get("group_names")
+    if not isinstance(names_raw, dict):
+        return False
+    names = {str(v).strip().lower() for v in names_raw.values()}
+
+    has_pz = "pz forward" in names and "pz backward" in names
+    has_py = ("py top" in names and "py bottom" in names) or (
+        "py up" in names and "py down" in names
+    )
+    has_px = "px left" in names and "px right" in names
+    return has_pz and has_py and has_px
+
+
+def _coerce_float(value: object, default: float) -> float:
+    """Return *value* as float, or *default* if conversion fails."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
 
 
 def validate(data: dict) -> None:

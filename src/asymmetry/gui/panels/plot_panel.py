@@ -777,6 +777,24 @@ class PlotPanel(QWidget):
         """Return the asymmetry alpha value used for *dataset*, if available."""
         run = dataset.run
         if run is not None and isinstance(run.grouping, dict):
+            axis = self._axis_canonical_key(run.grouping.get("vector_axis"))
+            axis_key = {
+                "P_x": "alpha_x",
+                "P_y": "alpha_y",
+                "P_z": "alpha_z",
+            }.get(axis)
+            legacy_axis_key = {
+                "P_x": "alpha_px",
+                "P_y": "alpha_py",
+                "P_z": "alpha_pz",
+            }.get(axis)
+            if axis_key is not None:
+                alpha = run.grouping.get(axis_key, run.grouping.get(legacy_axis_key))
+                try:
+                    return float(alpha)
+                except (TypeError, ValueError):
+                    pass
+
             alpha = run.grouping.get("alpha")
             try:
                 return float(alpha)

@@ -68,6 +68,9 @@ instruments, the **Detector Layout...** editor provides an interactive detector
 schematic, preset groupings, and named group slots that are saved with project
 state and ``.grp`` files.
 
+For detector-by-detector instrument layouts and grouping workflows, see
+:doc:`detector_grouping`.
+
 Alpha Estimation and Asymmetry
 ------------------------------
 
@@ -109,6 +112,10 @@ Asymmetry and uncertainty handling follows Mantid-style behavior:
 
 In low-count late-time tails, this naturally produces large fluctuations and
 large uncertainties.
+
+In vector polarization mode, axis-specific alpha values (``alpha_x``,
+``alpha_y``, ``alpha_z``) are used for ``P_x``, ``P_y``, and ``P_z``
+respectively. See :doc:`vector_polarization` for setup and UI behavior.
 
 Co-adding Datasets
 ------------------

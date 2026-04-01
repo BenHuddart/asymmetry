@@ -48,6 +48,10 @@ Thumbs.db
 *.png
 *.dat
 
+# Keep user-guide detector diagrams versioned.
+!docs/user_guide/images/
+!docs/user_guide/images/*.png
+
 # Except example data
 !example*.dat
 !test*.dat

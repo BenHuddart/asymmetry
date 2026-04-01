@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -94,6 +95,11 @@ class GroupingDialog(QDialog):
 
         self._groups = self._load_groups(self._run)
         self._group_names: dict[int, str] = self._load_group_names(self._run)
+        self._vector_axis_pairs: dict[str, tuple[int, int]] = {}
+        self._vector_alpha_spins: dict[str, QDoubleSpinBox] = {}
+        self._vector_forward_labels: dict[str, QLabel] = {}
+        self._vector_backward_labels: dict[str, QLabel] = {}
+        self._vector_estimate_buttons: dict[str, QPushButton] = {}
 
         root = QVBoxLayout(self)
 
@@ -171,10 +177,7 @@ class GroupingDialog(QDialog):
         self._backward_combo.setMinimumWidth(220)
         self._forward_combo.setMinimumContentsLength(18)
         self._backward_combo.setMinimumContentsLength(18)
-        for gid in sorted(self._groups):
-            text = str(gid)
-            self._forward_combo.addItem(text, gid)
-            self._backward_combo.addItem(text, gid)
+        self._refresh_group_combo_items()
 
         grouping = self._run.grouping or {}
         self._grouping_preset_name: str | None = (
@@ -247,13 +250,64 @@ class GroupingDialog(QDialog):
         estimate_btn.setDefault(False)
         estimate_btn.clicked.connect(self._estimate_alpha)
 
-        form.addRow("Forward Group", self._forward_combo)
-        form.addRow("Backward Group", self._backward_combo)
+        self._forward_row_label = QLabel("Forward Group")
+        self._backward_row_label = QLabel("Backward Group")
+        self._alpha_row_label = QLabel("Alpha")
 
-        alpha_row = QHBoxLayout()
+        form.addRow(self._forward_row_label, self._forward_combo)
+        form.addRow(self._backward_row_label, self._backward_combo)
+
+        self._single_alpha_widget = QWidget()
+        alpha_row = QHBoxLayout(self._single_alpha_widget)
+        alpha_row.setContentsMargins(0, 0, 0, 0)
         alpha_row.addWidget(self._alpha_spin)
         alpha_row.addWidget(estimate_btn)
-        form.addRow("Alpha", alpha_row)
+        form.addRow(self._alpha_row_label, self._single_alpha_widget)
+
+        self._vector_alpha_label = QLabel("Vector Grouping")
+        self._vector_alpha_widget = QWidget()
+        vector_layout = QGridLayout(self._vector_alpha_widget)
+        vector_layout.setContentsMargins(0, 0, 0, 0)
+        vector_layout.setHorizontalSpacing(8)
+        vector_layout.setVerticalSpacing(4)
+        vector_layout.addWidget(QLabel(""), 0, 0)
+        for col, axis in enumerate(("P_x", "P_y", "P_z"), start=1):
+            vector_layout.addWidget(QLabel(axis), 0, col)
+
+        vector_layout.addWidget(QLabel("Forward Group"), 1, 0)
+        vector_layout.addWidget(QLabel("Backward Group"), 2, 0)
+        vector_layout.addWidget(QLabel("Alpha"), 3, 0)
+
+        grouping_alpha = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+        for col, axis in enumerate(("P_x", "P_y", "P_z"), start=1):
+            fwd_label = QLabel("-")
+            bwd_label = QLabel("-")
+            vector_layout.addWidget(fwd_label, 1, col)
+            vector_layout.addWidget(bwd_label, 2, col)
+            self._vector_forward_labels[axis] = fwd_label
+            self._vector_backward_labels[axis] = bwd_label
+
+            spin = QDoubleSpinBox()
+            spin.setDecimals(6)
+            spin.setRange(0.01, 1000.0)
+            spin.setValue(self._alpha_value_for_axis(grouping_alpha, axis, float(self._alpha_spin.value())))
+            vector_layout.addWidget(spin, 3, col)
+            self._vector_alpha_spins[axis] = spin
+
+            btn = QPushButton("Estimate α")
+            btn.setAutoDefault(False)
+            btn.setDefault(False)
+            btn.clicked.connect(lambda _checked=False, axis_key=axis: self._estimate_alpha_for_axis(axis_key))
+            vector_layout.addWidget(btn, 4, col)
+            self._vector_estimate_buttons[axis] = btn
+
+        self._estimate_all_btn = QPushButton("Estimate All α")
+        self._estimate_all_btn.setAutoDefault(False)
+        self._estimate_all_btn.setDefault(False)
+        self._estimate_all_btn.clicked.connect(self._estimate_all_alpha)
+        vector_layout.addWidget(self._estimate_all_btn, 5, 1, 1, 3)
+
+        form.addRow(self._vector_alpha_label, self._vector_alpha_widget)
 
         form.addRow("First Good Bin", self._first_good_spin)
         form.addRow("Last Good Bin", self._last_good_spin)
@@ -262,6 +316,7 @@ class GroupingDialog(QDialog):
         form.addRow("Deadtime", self._deadtime_checkbox)
         form.addRow(self._period_mode_label, self._period_mode_widget)
         root.addLayout(form)
+        self._update_vector_mode_controls(grouping)
 
         file_buttons = QHBoxLayout()
         load_btn = QPushButton("Load .grp")
@@ -386,8 +441,10 @@ class GroupingDialog(QDialog):
         self._enforce_source_bunching = self._reference_is_wim_run()
         self._source_bunching_factor = self._read_source_bunching_factor(grouping)
         self._group_names = self._load_group_names(self._run)
-        self._set_combo_to_group(self._forward_combo, int(grouping.get("forward_group", 1)))
-        self._set_combo_to_group(self._backward_combo, int(grouping.get("backward_group", 2)))
+        self._refresh_group_combo_items(
+            forward_gid=int(grouping.get("forward_group", 1)),
+            backward_gid=int(grouping.get("backward_group", 2)),
+        )
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
         max_bin = self._max_bin_index_for_reference_dataset()
         self._first_good_spin.setRange(0, max_bin)
@@ -401,6 +458,7 @@ class GroupingDialog(QDialog):
         self._update_bunching_ui_hints()
         self._deadtime_checkbox.setChecked(bool(grouping.get("deadtime_correction", False)))
         self._set_period_mode(str(grouping.get("period_mode", PeriodMode.RED)))
+        self._update_vector_mode_controls(grouping)
         self._update_period_mode_visibility()
 
     def _reference_is_wim_run(self) -> bool:
@@ -500,6 +558,159 @@ class GroupingDialog(QDialog):
             self._group_table.setItem(row, 2, QTableWidgetItem(", ".join(detectors)))
         self._group_table.resizeColumnsToContents()
 
+    def _detect_vector_axis_pairs(self) -> dict[str, tuple[int, int]]:
+        """Return vector-axis group pairs if canonical vector group names exist."""
+        if not self._groups or not isinstance(self._group_names, dict):
+            return {}
+
+        by_name: dict[str, int] = {}
+        for gid, name in self._group_names.items():
+            try:
+                gid_int = int(gid)
+            except (TypeError, ValueError):
+                continue
+            by_name[str(name).strip().lower()] = gid_int
+
+        def _find(*candidates: str) -> int | None:
+            for cand in candidates:
+                gid = by_name.get(cand)
+                if gid in self._groups and self._groups.get(gid):
+                    return gid
+            return None
+
+        pz_f = _find("pz forward")
+        pz_b = _find("pz backward")
+        py_t = _find("py top", "py up")
+        py_b = _find("py bottom", "py down")
+        px_l = _find("px left")
+        px_r = _find("px right")
+        if None in {pz_f, pz_b, py_t, py_b, px_l, px_r}:
+            return {}
+        return {
+            "P_x": (int(px_l), int(px_r)),
+            "P_y": (int(py_t), int(py_b)),
+            "P_z": (int(pz_f), int(pz_b)),
+        }
+
+    def _vector_alpha_key(self, axis: str) -> str:
+        """Return grouping payload key for a canonical vector axis."""
+        return {
+            "P_x": "alpha_x",
+            "P_y": "alpha_y",
+            "P_z": "alpha_z",
+        }.get(axis, "alpha")
+
+    def _legacy_vector_alpha_key(self, axis: str) -> str:
+        """Return legacy payload key for backward compatibility."""
+        return {
+            "P_x": "alpha_px",
+            "P_y": "alpha_py",
+            "P_z": "alpha_pz",
+        }.get(axis, "alpha")
+
+    def _alpha_value_for_axis(self, grouping: dict[str, Any], axis: str, fallback: float) -> float:
+        """Return best alpha value for *axis* from grouping payload/state."""
+        key = self._vector_alpha_key(axis)
+        legacy_key = self._legacy_vector_alpha_key(axis)
+        try:
+            return float(
+                grouping.get(
+                    key,
+                    grouping.get(legacy_key, grouping.get("alpha", fallback)),
+                )
+            )
+        except (TypeError, ValueError):
+            return float(fallback)
+
+    def _group_display_name(self, gid: int) -> str:
+        """Return display text for a group ID with optional group name."""
+        label = str(self._group_names.get(gid, "")).strip()
+        if label and label != str(gid):
+            return f"{gid}: {label}"
+        return str(gid)
+
+    def _refresh_group_combo_items(
+        self,
+        *,
+        forward_gid: int | None = None,
+        backward_gid: int | None = None,
+    ) -> None:
+        """Rebuild forward/backward group combo entries from current group state."""
+        if forward_gid is None:
+            try:
+                forward_gid = int(self._forward_combo.currentData())
+            except (TypeError, ValueError):
+                forward_gid = 1
+        if backward_gid is None:
+            try:
+                backward_gid = int(self._backward_combo.currentData())
+            except (TypeError, ValueError):
+                backward_gid = 2
+
+        self._forward_combo.blockSignals(True)
+        self._backward_combo.blockSignals(True)
+        self._forward_combo.clear()
+        self._backward_combo.clear()
+        for gid in sorted(self._groups):
+            display = self._group_display_name(gid)
+            self._forward_combo.addItem(display, gid)
+            self._backward_combo.addItem(display, gid)
+        self._set_combo_to_group(self._forward_combo, int(forward_gid))
+        self._set_combo_to_group(self._backward_combo, int(backward_gid))
+        self._forward_combo.blockSignals(False)
+        self._backward_combo.blockSignals(False)
+
+    def _update_vector_mode_controls(self, grouping_values: dict[str, Any] | None = None) -> None:
+        """Toggle between single-alpha and vector-alpha controls."""
+        if grouping_values is None:
+            grouping_values = {}
+
+        pairs = self._detect_vector_axis_pairs()
+        self._vector_axis_pairs = pairs
+        vector_mode = bool(pairs)
+
+        self._forward_row_label.setVisible(not vector_mode)
+        self._forward_combo.setVisible(not vector_mode)
+        self._backward_row_label.setVisible(not vector_mode)
+        self._backward_combo.setVisible(not vector_mode)
+        self._alpha_row_label.setVisible(not vector_mode)
+        self._single_alpha_widget.setVisible(not vector_mode)
+        self._vector_alpha_label.setVisible(vector_mode)
+        self._vector_alpha_widget.setVisible(vector_mode)
+
+        if not vector_mode:
+            if "alpha" in grouping_values:
+                try:
+                    self._alpha_spin.setValue(float(grouping_values.get("alpha", 1.0)))
+                except (TypeError, ValueError):
+                    pass
+            return
+
+        fallback = float(self._alpha_spin.value())
+        for axis in ("P_x", "P_y", "P_z"):
+            fwd_gid, bwd_gid = pairs.get(axis, (None, None))
+            if fwd_gid is not None:
+                self._vector_forward_labels[axis].setText(self._group_display_name(int(fwd_gid)))
+            else:
+                self._vector_forward_labels[axis].setText("-")
+            if bwd_gid is not None:
+                self._vector_backward_labels[axis].setText(self._group_display_name(int(bwd_gid)))
+            else:
+                self._vector_backward_labels[axis].setText("-")
+
+            spin = self._vector_alpha_spins[axis]
+            try:
+                value = float(grouping_values.get(self._vector_alpha_key(axis), grouping_values.get("alpha", spin.value())))
+            except (TypeError, ValueError):
+                value = self._alpha_value_for_axis(grouping_values, axis, fallback)
+            spin.setValue(value)
+
+        if "P_z" in pairs:
+            pz_fwd, pz_bwd = pairs["P_z"]
+            self._set_combo_to_group(self._forward_combo, pz_fwd)
+            self._set_combo_to_group(self._backward_combo, pz_bwd)
+            self._alpha_spin.setValue(float(self._vector_alpha_spins["P_z"].value()))
+
     def _on_detector_layout(self) -> None:
         """Open the interactive detector layout editor as a sub-dialog."""
         from asymmetry.gui.windows.detector_layout_dialog import DetectorLayoutDialog
@@ -558,22 +769,10 @@ class GroupingDialog(QDialog):
         # Update forward/backward combos
         new_fwd = result.get("forward_group", forward_gid)
         new_bwd = result.get("backward_group", backward_gid)
-
-        self._forward_combo.blockSignals(True)
-        self._backward_combo.blockSignals(True)
-        self._forward_combo.clear()
-        self._backward_combo.clear()
-        for gid in sorted(self._groups):
-            label = self._group_names.get(gid, str(gid))
-            display = f"{gid}: {label}" if label and label != str(gid) else str(gid)
-            self._forward_combo.addItem(display, gid)
-            self._backward_combo.addItem(display, gid)
-        self._set_combo_to_group(self._forward_combo, new_fwd)
-        self._set_combo_to_group(self._backward_combo, new_bwd)
-        self._forward_combo.blockSignals(False)
-        self._backward_combo.blockSignals(False)
+        self._refresh_group_combo_items(forward_gid=int(new_fwd), backward_gid=int(new_bwd))
 
         self._populate_group_table()
+        self._update_vector_mode_controls()
 
     def _set_combo_to_group(self, combo: QComboBox, group_id: int) -> None:
         """Set combo box to a group ID if present, preserving defaults otherwise."""
@@ -589,37 +788,62 @@ class GroupingDialog(QDialog):
         """
         forward_gid = int(self._forward_combo.currentData())
         backward_gid = int(self._backward_combo.currentData())
+        alpha = self._estimate_alpha_for_group_ids(forward_gid, backward_gid)
+        if alpha is not None:
+            self._alpha_spin.setValue(float(alpha))
+
+    def _estimate_alpha_for_group_ids(self, forward_gid: int, backward_gid: int) -> float | None:
+        """Estimate alpha for the provided group IDs using the reference run."""
         if forward_gid == backward_gid:
             QMessageBox.warning(self, "Invalid Grouping", "Forward and backward groups must differ.")
-            return
+            return None
 
         forward_indices = self._groups.get(forward_gid, [])
         backward_indices = self._groups.get(backward_gid, [])
         if not forward_indices or not backward_indices:
             QMessageBox.warning(self, "Invalid Grouping", "Selected groups are empty.")
-            return
+            return None
 
         if self._run is None or not self._run.histograms:
             QMessageBox.warning(self, "Estimate Failed", "Reference run has no histograms.")
-            return
+            return None
 
         if max(forward_indices, default=-1) >= len(self._run.histograms):
             QMessageBox.warning(self, "Estimate Failed", "Forward group exceeds detector count for reference run.")
-            return
+            return None
         if max(backward_indices, default=-1) >= len(self._run.histograms):
             QMessageBox.warning(self, "Estimate Failed", "Backward group exceeds detector count for reference run.")
-            return
+            return None
 
         forward_counts = apply_grouping(self._run.histograms, forward_indices)
         backward_counts = apply_grouping(self._run.histograms, backward_indices)
 
-        alpha = estimate_alpha(
+        return float(
+            estimate_alpha(
             forward_counts,
             backward_counts,
             first_good_bin=int(self._first_good_spin.value()),
             last_good_bin=int(self._last_good_spin.value()),
         )
-        self._alpha_spin.setValue(float(alpha))
+        )
+
+    def _estimate_alpha_for_axis(self, axis: str) -> None:
+        """Estimate alpha for one vector polarization axis pair."""
+        pair = self._vector_axis_pairs.get(axis)
+        if pair is None:
+            QMessageBox.warning(self, "Estimate Failed", f"No vector grouping pair is available for {axis}.")
+            return
+        alpha = self._estimate_alpha_for_group_ids(int(pair[0]), int(pair[1]))
+        if alpha is not None:
+            self._vector_alpha_spins[axis].setValue(alpha)
+            if axis == "P_z":
+                self._alpha_spin.setValue(alpha)
+
+    def _estimate_all_alpha(self) -> None:
+        """Estimate alpha for all vector polarization axes."""
+        for axis in ("P_x", "P_y", "P_z"):
+            if axis in self._vector_axis_pairs:
+                self._estimate_alpha_for_axis(axis)
 
     def _reference_has_two_period_data(self) -> bool:
         """Return True when the reference run contains two-period histograms."""
@@ -659,6 +883,16 @@ class GroupingDialog(QDialog):
         """Build the current grouping payload from UI controls."""
         forward_gid = int(self._forward_combo.currentData())
         backward_gid = int(self._backward_combo.currentData())
+        vector_mode = bool(self._vector_axis_pairs)
+        if vector_mode and "P_z" in self._vector_axis_pairs:
+            forward_gid, backward_gid = self._vector_axis_pairs["P_z"]
+            self._set_combo_to_group(self._forward_combo, int(forward_gid))
+            self._set_combo_to_group(self._backward_combo, int(backward_gid))
+
+        alpha_value = float(self._alpha_spin.value())
+        if vector_mode:
+            alpha_value = float(self._vector_alpha_spins["P_z"].value())
+
         return {
             "groups": {gid: [idx + 1 for idx in values] for gid, values in self._groups.items()},
             "group_names": dict(self._group_names),
@@ -668,7 +902,7 @@ class GroupingDialog(QDialog):
             "backward_group": backward_gid,
             "forward_indices": list(self._groups.get(forward_gid, [])),
             "backward_indices": list(self._groups.get(backward_gid, [])),
-            "alpha": float(self._alpha_spin.value()),
+            "alpha": alpha_value,
             "first_good_bin": int(self._first_good_spin.value()),
             "last_good_bin": int(self._last_good_spin.value()),
             "bunching_factor": int(self._bunch_spin.value()),
@@ -676,7 +910,15 @@ class GroupingDialog(QDialog):
             "enforce_source_bunching": bool(self._enforce_source_bunching),
             "deadtime_correction": bool(self._deadtime_checkbox.isChecked()),
             "period_mode": self._current_period_mode(),
-        }
+        } | (
+            {
+                "alpha_x": float(self._vector_alpha_spins["P_x"].value()),
+                "alpha_y": float(self._vector_alpha_spins["P_y"].value()),
+                "alpha_z": float(self._vector_alpha_spins["P_z"].value()),
+            }
+            if vector_mode
+            else {}
+        )
 
     def _save_grp_file(self) -> None:
         """Save current grouping configuration to a ``.grp`` file."""
@@ -722,30 +964,38 @@ class GroupingDialog(QDialog):
 
         self._groups = groups
         self._populate_group_table()
-
-        self._forward_combo.blockSignals(True)
-        self._backward_combo.blockSignals(True)
-        self._forward_combo.clear()
-        self._backward_combo.clear()
-        for gid in sorted(self._groups):
-            text = str(gid)
-            self._forward_combo.addItem(text, gid)
-            self._backward_combo.addItem(text, gid)
-        self._set_combo_to_group(self._forward_combo, int(payload.get("forward_group", 1)))
-        self._set_combo_to_group(self._backward_combo, int(payload.get("backward_group", 2)))
-        self._forward_combo.blockSignals(False)
-        self._backward_combo.blockSignals(False)
+        self._refresh_group_combo_items(
+            forward_gid=int(payload.get("forward_group", 1)),
+            backward_gid=int(payload.get("backward_group", 2)),
+        )
 
         loaded_group_names = payload.get("group_names", {})
         if isinstance(loaded_group_names, dict):
             self._group_names = {int(k): str(v) for k, v in loaded_group_names.items()}
+            self._refresh_group_combo_items(
+                forward_gid=int(payload.get("forward_group", 1)),
+                backward_gid=int(payload.get("backward_group", 2)),
+            )
         self._alpha_spin.setValue(float(payload.get("alpha", 1.0)))
+        if "alpha_x" in payload or "alpha_px" in payload:
+            self._vector_alpha_spins["P_x"].setValue(
+                float(payload.get("alpha_x", payload.get("alpha_px", payload.get("alpha", 1.0))))
+            )
+        if "alpha_y" in payload or "alpha_py" in payload:
+            self._vector_alpha_spins["P_y"].setValue(
+                float(payload.get("alpha_y", payload.get("alpha_py", payload.get("alpha", 1.0))))
+            )
+        if "alpha_z" in payload or "alpha_pz" in payload:
+            self._vector_alpha_spins["P_z"].setValue(
+                float(payload.get("alpha_z", payload.get("alpha_pz", payload.get("alpha", 1.0))))
+            )
         self._first_good_spin.setValue(int(payload.get("first_good_bin", self._first_good_spin.value())))
         self._last_good_spin.setValue(int(payload.get("last_good_bin", self._last_good_spin.value())))
         self._bunch_spin.setValue(int(payload.get("bunching_factor", self._bunch_spin.value())))
         self._deadtime_checkbox.setChecked(bool(payload.get("deadtime_correction", False)))
         self._set_period_mode(str(payload.get("period_mode", PeriodMode.RED)))
         self._populate_group_table()
+        self._update_vector_mode_controls(payload)
 
     @staticmethod
     def serialize_grp(payload: dict[str, Any]) -> str:
@@ -762,6 +1012,9 @@ class GroupingDialog(QDialog):
             f"forward_group={int(payload.get('forward_group', 1))}",
             f"backward_group={int(payload.get('backward_group', 2))}",
             f"alpha={float(payload.get('alpha', 1.0)):.12g}",
+            f"alpha_x={float(payload.get('alpha_x', payload.get('alpha', 1.0))):.12g}",
+            f"alpha_y={float(payload.get('alpha_y', payload.get('alpha', 1.0))):.12g}",
+            f"alpha_z={float(payload.get('alpha_z', payload.get('alpha', 1.0))):.12g}",
             f"first_good_bin={int(payload.get('first_good_bin', 0))}",
             f"last_good_bin={int(payload.get('last_good_bin', 0))}",
             f"bunching_factor={int(payload.get('bunching_factor', 1))}",
@@ -820,7 +1073,7 @@ class GroupingDialog(QDialog):
 
             if key in {"forward_group", "backward_group", "first_good_bin", "last_good_bin", "bunching_factor"}:
                 payload[key] = int(float(value))
-            elif key == "alpha":
+            elif key in {"alpha", "alpha_x", "alpha_y", "alpha_z", "alpha_px", "alpha_py", "alpha_pz"}:
                 payload[key] = float(value)
             elif key == "deadtime_correction":
                 payload[key] = value.strip().lower() in {"1", "true", "yes", "on"}
@@ -832,6 +1085,11 @@ class GroupingDialog(QDialog):
                     str(PeriodMode.GREEN_PLUS_RED),
                 }:
                     payload[key] = value
+
+        alpha_scalar = float(payload.get("alpha", 1.0))
+        payload.setdefault("alpha_x", float(payload.get("alpha_px", alpha_scalar)))
+        payload.setdefault("alpha_y", float(payload.get("alpha_py", alpha_scalar)))
+        payload.setdefault("alpha_z", float(payload.get("alpha_pz", alpha_scalar)))
 
         return payload
 

@@ -352,6 +352,16 @@ When vector grouping is active, the main plot header shows a
    sharing the same time axis.  Each subplot carries its own Y-axis label and
    colour-matched error bars.
 
+When vector grouping is active, the Grouping dialog replaces the single alpha
+control with per-axis alpha controls:
+
+* ``alpha_x`` for ``P_x``
+* ``alpha_y`` for ``P_y``
+* ``alpha_z`` for ``P_z``
+
+Each axis has its own **Estimate alpha** button, and an **Estimate All alpha**
+button is available to update all three axis values in one step.
+
 All of these are available without reopening the Grouping dialog.
 
 The main-plot Y limits are remembered separately for each polarization axis,
@@ -364,6 +374,11 @@ component individually by switching to that axis first.
     When a project is saved with **All** mode active, all three subplots are
     rendered immediately on the next project load — no manual axis switch is
     required.
+
+.. note::
+
+   The alpha value shown in the main plot header is axis-specific in ``x``,
+   ``y``, and ``z`` modes, and hidden in **All** mode.
 
 In the Detector Layout Editor, the preset panel shows a status line under the
 preset dropdown, for example ``(Current: Vector Polarization)``. This remains
@@ -423,6 +438,9 @@ Main Plot Labels and Export
 
 The main plot now supports interactive labels and direct GLE export for the
 currently displayed dataset or dataset overlay.
+
+For full detector schematics and vector grouping reference material, see
+:doc:`detector_grouping` and :doc:`vector_polarization`.
 
 **Interactive labels**
 

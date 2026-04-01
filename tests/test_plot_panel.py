@@ -334,6 +334,53 @@ class TestPlotPanel:
         assert not panel._alpha_label.isHidden()
         assert panel._alpha_label.text() == "(alpha = 1.2345)"
 
+    def test_single_dataset_uses_axis_specific_alpha_in_vector_mode(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0, 10, 100)
+        a = 0.2 * np.exp(-0.5 * t)
+        e = np.full_like(t, 0.01)
+        run = Run(
+            run_number=4322,
+            grouping={
+                "alpha": 1.0,
+                "alpha_x": 1.1,
+                "alpha_y": 1.2,
+                "alpha_z": 1.3,
+                "vector_axis": "P_y",
+            },
+        )
+        ds = MuonDataset(
+            time=t,
+            asymmetry=a,
+            error=e,
+            metadata={"run_number": 4322},
+            run=run,
+        )
+
+        panel.plot_dataset(ds)
+        assert not panel._alpha_label.isHidden()
+        assert panel._alpha_label.text() == "(alpha = 1.2)"
+
+    def test_vector_all_mode_hides_alpha_label(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 5.0, 40)
+        e = np.full_like(t, 0.01)
+        base = MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-0.3 * t),
+            error=e,
+            metadata={"run_number": 9991},
+            run=Run(run_number=9991, grouping={"alpha": 1.5}),
+        )
+
+        panel.plot_vector_subplots({"P_x": [base], "P_y": [base], "P_z": [base]})
+        assert panel._alpha_label.isHidden()
+        assert panel._alpha_label.text() == ""
+
     def test_period_mode_color_mapping(self, panel: PlotPanel) -> None:
         red_hist = Histogram(counts=np.array([1.0, 2.0, 3.0]), bin_width=0.01)
         run = Run(

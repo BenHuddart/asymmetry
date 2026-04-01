@@ -9,6 +9,8 @@ This guide covers the main features and workflows of Asymmetry.
    loading_data
    logbook
    data_processing
+   detector_grouping
+   vector_polarization
    gui_usage
    fourier_analysis
    fitting

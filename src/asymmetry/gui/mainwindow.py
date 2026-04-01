@@ -333,6 +333,51 @@ class MainWindow(QMainWindow):
             return "P_z"
         return None
 
+    def _vector_alpha_key(self, axis: str | None) -> str | None:
+        """Return grouping alpha key for a canonical vector axis."""
+        return {
+            "P_x": "alpha_x",
+            "P_y": "alpha_y",
+            "P_z": "alpha_z",
+        }.get(str(axis) if axis is not None else "")
+
+    def _legacy_vector_alpha_key(self, axis: str | None) -> str | None:
+        """Return legacy vector-alpha key for backward compatibility."""
+        return {
+            "P_x": "alpha_px",
+            "P_y": "alpha_py",
+            "P_z": "alpha_pz",
+        }.get(str(axis) if axis is not None else "")
+
+    def _resolve_vector_alpha_values(
+        self,
+        grouping_result: dict,
+        existing_grouping: dict | None,
+    ) -> dict[str, float]:
+        """Resolve per-axis alpha values with backward-compatible fallback."""
+        existing = existing_grouping if isinstance(existing_grouping, dict) else {}
+        try:
+            base_alpha = float(grouping_result.get("alpha", existing.get("alpha", 1.0)))
+        except (TypeError, ValueError):
+            base_alpha = 1.0
+
+        resolved: dict[str, float] = {}
+        for axis in ("P_x", "P_y", "P_z"):
+            key = self._vector_alpha_key(axis)
+            legacy_key = self._legacy_vector_alpha_key(axis)
+            raw = grouping_result.get(
+                key,
+                grouping_result.get(
+                    legacy_key,
+                    existing.get(key, existing.get(legacy_key, base_alpha)),
+                ),
+            )
+            try:
+                resolved[axis] = float(raw)
+            except (TypeError, ValueError):
+                resolved[axis] = base_alpha
+        return resolved
+
     def _vector_axis_pairs_for_grouping(
         self,
         groups: dict[int, list[int]],
@@ -1079,6 +1124,19 @@ class MainWindow(QMainWindow):
             "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
         }
 
+        for axis in ("P_x", "P_y", "P_z"):
+            key = self._vector_alpha_key(axis)
+            legacy_key = self._legacy_vector_alpha_key(axis)
+            if key is None:
+                continue
+            try:
+                if key in grouping:
+                    payload[key] = float(grouping.get(key))
+                elif legacy_key in grouping:
+                    payload[key] = float(grouping.get(legacy_key))
+            except (TypeError, ValueError):
+                continue
+
         vector_axis = self._normalize_vector_axis(grouping.get("vector_axis"))
         if vector_axis is not None:
             payload["vector_axis"] = vector_axis
@@ -1114,6 +1172,7 @@ class MainWindow(QMainWindow):
         run = dataset.run
         if run is None:
             return False, False
+        existing_grouping = run.grouping if isinstance(run.grouping, dict) else {}
 
         groups_raw = grouping_result.get("groups", {})
         if not isinstance(groups_raw, dict):
@@ -1143,16 +1202,18 @@ class MainWindow(QMainWindow):
             return False, False
 
         group_names_for_axis = grouping_result.get("group_names")
-        if not isinstance(group_names_for_axis, dict) and isinstance(run.grouping, dict):
-            group_names_for_axis = run.grouping.get("group_names")
+        if not isinstance(group_names_for_axis, dict) and isinstance(existing_grouping, dict):
+            group_names_for_axis = existing_grouping.get("group_names")
         axis_pairs = self._vector_axis_pairs_for_grouping(groups, group_names_for_axis)
         vector_axis = self._normalize_vector_axis(
-            grouping_result.get("vector_axis", run.grouping.get("vector_axis"))
+            grouping_result.get("vector_axis", existing_grouping.get("vector_axis"))
         )
         if axis_pairs:
             if vector_axis not in axis_pairs:
                 vector_axis = "P_z"
             forward_gid, backward_gid = axis_pairs[vector_axis]
+
+        vector_alphas = self._resolve_vector_alpha_values(grouping_result, existing_grouping)
 
         forward_idx = [max(0, int(v) - 1) for v in groups.get(forward_gid, [])]
         backward_idx = [max(0, int(v) - 1) for v in groups.get(backward_gid, [])]
@@ -1163,7 +1224,13 @@ class MainWindow(QMainWindow):
         else:
             last_good_default = len(dataset.time) - 1
         last_good = int(grouping_result.get("last_good_bin", last_good_default))
-        alpha = float(grouping_result.get("alpha", 1.0))
+        if axis_pairs and vector_axis in vector_alphas:
+            alpha = float(vector_alphas[vector_axis])
+        else:
+            try:
+                alpha = float(grouping_result.get("alpha", existing_grouping.get("alpha", 1.0)))
+            except (TypeError, ValueError):
+                alpha = 1.0
         bunch_factor = int(grouping_result.get("bunching_factor", 1))
         period_mode = str(grouping_result.get("period_mode", PeriodMode.RED))
         enforce_source_bunching = bool(grouping_result.get("enforce_source_bunching", False))
@@ -1213,6 +1280,10 @@ class MainWindow(QMainWindow):
                 run.grouping["forward_group"] = forward_gid
                 run.grouping["backward_group"] = backward_gid
             run.grouping["alpha"] = float(alpha if alpha > 0 else 1.0)
+            if axis_pairs:
+                run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run.grouping["alpha"]))
+                run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run.grouping["alpha"]))
+                run.grouping["alpha_z"] = float(vector_alphas.get("P_z", run.grouping["alpha"]))
             run.grouping["first_good_bin"] = first_good
             run.grouping["last_good_bin"] = last_good
             run.grouping["bunching_factor"] = bunch_factor
@@ -1301,6 +1372,10 @@ class MainWindow(QMainWindow):
                 "period_mode": period_mode,
             }
         )
+        if axis_pairs:
+            run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run_alpha))
+            run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run_alpha))
+            run.grouping["alpha_z"] = float(vector_alphas.get("P_z", run_alpha))
         if enforce_source_bunching:
             run.grouping["source_bunching_factor"] = source_bunch_factor
         # Persist group names if provided

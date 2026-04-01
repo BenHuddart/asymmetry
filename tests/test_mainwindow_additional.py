@@ -411,6 +411,9 @@ class TestMainWindowBasic:
             "vector_axis": "P_x",
             "instrument": "EMU",
             "alpha": 1.0,
+            "alpha_x": 1.7,
+            "alpha_y": 1.3,
+            "alpha_z": 1.1,
             "first_good_bin": 0,
             "last_good_bin": 3,
             "bunching_factor": 1,
@@ -425,6 +428,10 @@ class TestMainWindowBasic:
         assert dataset.run.grouping["backward_group"] == 6
         assert dataset.run.grouping["vector_axis"] == "P_x"
         assert dataset.run.grouping["instrument"] == "EMU"
+        assert dataset.run.grouping["alpha"] == pytest.approx(1.7)
+        assert dataset.run.grouping["alpha_x"] == pytest.approx(1.7)
+        assert dataset.run.grouping["alpha_y"] == pytest.approx(1.3)
+        assert dataset.run.grouping["alpha_z"] == pytest.approx(1.1)
 
     def test_extract_grouping_overrides_includes_vector_axis(
         self,
@@ -434,12 +441,59 @@ class TestMainWindowBasic:
         assert dataset.run is not None
         dataset.run.grouping["vector_axis"] = "P_y"
         dataset.run.grouping["instrument"] = "MuSR"
+        dataset.run.grouping["alpha_x"] = 1.05
+        dataset.run.grouping["alpha_y"] = 1.15
+        dataset.run.grouping["alpha_z"] = 1.25
 
         payload = mainwindow._extract_grouping_overrides(dataset)
 
         assert payload is not None
         assert payload["vector_axis"] == "P_y"
         assert payload["instrument"] == "MuSR"
+        assert payload["alpha_x"] == pytest.approx(1.05)
+        assert payload["alpha_y"] == pytest.approx(1.15)
+        assert payload["alpha_z"] == pytest.approx(1.25)
+
+    def test_apply_grouping_vector_axis_falls_back_to_scalar_alpha_when_axis_keys_missing(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_dataset(7452, with_grouping=False)
+        payload = {
+            "groups": {
+                1: [1],
+                2: [2],
+                3: [1],
+                4: [2],
+                5: [1],
+                6: [2],
+            },
+            "group_names": {
+                1: "Pz Forward",
+                2: "Pz Backward",
+                3: "Py Top",
+                4: "Py Bottom",
+                5: "Px Left",
+                6: "Px Right",
+            },
+            "forward_group": 1,
+            "backward_group": 2,
+            "vector_axis": "P_y",
+            "alpha": 1.4,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert dataset.run is not None
+        assert dataset.run.grouping["alpha"] == pytest.approx(1.4)
+        assert dataset.run.grouping["alpha_x"] == pytest.approx(1.4)
+        assert dataset.run.grouping["alpha_y"] == pytest.approx(1.4)
+        assert dataset.run.grouping["alpha_z"] == pytest.approx(1.4)
 
     def test_normalize_vector_axis_supports_all(self, mainwindow: MainWindow) -> None:
         assert mainwindow._normalize_vector_axis("All") == "ALL"
@@ -973,6 +1027,82 @@ class TestMainWindowBasic:
 
         assert calls["multi"] == 1
         assert calls["single"] == 0
+
+    def test_grouping_apply_vector_alphas_to_multiple_selected_runs(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Vector alpha_x/y/z values should be applied to all selected target runs."""
+        ds1 = _make_dataset(8111, with_grouping=False)
+        ds2 = _make_dataset(8112, with_grouping=False)
+        ds3 = _make_dataset(8113, with_grouping=False)
+        mainwindow._data_browser.add_dataset(ds1)
+        mainwindow._data_browser.add_dataset(ds2)
+        mainwindow._data_browser.add_dataset(ds3)
+        mainwindow._current_dataset = ds1
+
+        class _StubGroupingDialog:
+            class DialogCode:
+                Accepted = 1
+
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def exec(self):
+                return self.DialogCode.Accepted
+
+            def get_grouping_result(self):
+                return {
+                    "run_numbers": [8111, 8112],
+                    "groups": {
+                        1: [1],
+                        2: [2],
+                        3: [1],
+                        4: [2],
+                        5: [1],
+                        6: [2],
+                    },
+                    "group_names": {
+                        1: "Pz Forward",
+                        2: "Pz Backward",
+                        3: "Py Top",
+                        4: "Py Bottom",
+                        5: "Px Left",
+                        6: "Px Right",
+                    },
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "vector_axis": "P_y",
+                    "alpha": 1.0,
+                    "alpha_x": 1.11,
+                    "alpha_y": 1.22,
+                    "alpha_z": 1.33,
+                    "first_good_bin": 0,
+                    "last_good_bin": 3,
+                    "bunching_factor": 1,
+                    "deadtime_correction": False,
+                }
+
+        monkeypatch.setattr(mw_module, "GroupingDialog", _StubGroupingDialog)
+        monkeypatch.setattr(mainwindow._data_browser, "_rebuild_table", lambda: None)
+        monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: None)
+        monkeypatch.setattr(mainwindow, "_refresh_vector_axis_selector", lambda: None)
+
+        mainwindow._open_shared_grouping_dialog(selected_run_number=8111)
+
+        assert ds1.run is not None and ds2.run is not None and ds3.run is not None
+        assert ds1.run.grouping.get("alpha_x") == pytest.approx(1.11)
+        assert ds1.run.grouping.get("alpha_y") == pytest.approx(1.22)
+        assert ds1.run.grouping.get("alpha_z") == pytest.approx(1.33)
+        assert ds2.run.grouping.get("alpha_x") == pytest.approx(1.11)
+        assert ds2.run.grouping.get("alpha_y") == pytest.approx(1.22)
+        assert ds2.run.grouping.get("alpha_z") == pytest.approx(1.33)
+
+        # Unselected run should remain unchanged.
+        assert "alpha_x" not in ds3.run.grouping
+        assert "alpha_y" not in ds3.run.grouping
+        assert "alpha_z" not in ds3.run.grouping
 
     def test_on_grouping_current_passes_selected_runs_to_dialog(
         self,
