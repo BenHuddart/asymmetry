@@ -1,191 +1,158 @@
 # Asymmetry
 
-A Python library for muon-spin spectroscopy (μSR) data analysis.
+A Python toolkit for muon-spin spectroscopy (μSR) data reduction, fitting, and visualization.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-430%20passed-brightgreen.svg)](tests/)
-[![Coverage](https://img.shields.io/badge/coverage-71%25-yellowgreen.svg)](htmlcov/)
 
 ## Overview
 
-Asymmetry provides a modular core engine for μSR data reduction, fitting, and
-Fourier analysis, together with an interactive graphical front-end inspired by
-[WiMDA](https://shadow.nd.rl.ac.uk/wimda/) for visualization and experiment
-management.
+Asymmetry combines a pure-Python analysis library with a PySide6 desktop application inspired by
+[WiMDA](https://shadow.nd.rl.ac.uk/wimda/). The project is aimed at day-to-day μSR analysis:
+loading raw or reduced data, applying detector grouping and asymmetry transforms, fitting time-
+domain signals, exploring parameter trends, and saving full GUI sessions for later reuse.
 
-### Key features
+## Main functionality
 
-- **Data I/O** — Load WiMDA (`.wim`) files with automatic asymmetry calculation
-  and metadata extraction (temperature, field, title, comments).
-- **Data browser** — Sortable run table with Excel-style column filters and
-  multi-selection for co-adding or global fitting. Right-click for context
-  menu actions: co-add selected runs, separate combined datasets, or delete.
-- **Interactive plotting** — Matplotlib-based plot panel with adjustable axis
-  limits, grouping-aware alpha display for single-run views, and error-bar
-  display.
-- **Single-dataset fitting** — Build composite `A(t)` models from
-  μSR components (exponential, Gaussian, oscillatory, stretched exponential,
-  static Gaussian Kubo-Toyabe, constant background) with ``+``, ``-``, ``*``,
-  ``/`` operators, then fit with
-  [iminuit](https://scikit-hep.org/iminuit/) using parameter bounds and fixing.
-- **Physics-style composite amplitudes** — Multiplicative/divisive component
-  chains share one amplitude parameter, so damped products like
-  ``Exponential * Oscillatory`` use a single overall asymmetry term.
-- **Default explicit background** — New fits start with
-  ``A(t) = Exponential + A_bg`` so constant background is always visible and
-  editable from the start.
-- **Global (simultaneous) fitting** — Fit multiple datasets at once with shared
-  and per-dataset parameters. Suited for temperature or field series analysis.
-- **Fitted-parameter trends** — After a global fit, inspect how varying
-  parameters depend on field, temperature, or run number. Supports logarithmic
-  axes and export to CSV.
-- **GLE export** — Generate publication-quality vector figures of parameter
-  trends via [gleplot](https://github.com/bhuddart/gleplot) and the
-  [GLE Graphics Layout Engine](http://glx.sourceforge.io/). Data files include
-  headers and global parameters as comments. Output formats: PDF, EPS.
-- **Main plot export to GLE** — Export fitted single- or multi-dataset main
-  plot overlays directly from the plot toolbar. Produces label-based
-  ``.dat`` sidecars for plotted datasets and optional ``.fit`` sidecars when
-  fit curves are present, preserves run/grouping metadata headers, includes
-  plot annotations, and compiles to PDF/EPS via GLE when available.
-- **Fourier analysis** — FFT with configurable apodization windows (Hann,
-  Hamming, Blackman, Bartlett) and zero-padding.
-- **Co-adding** — Average selected datasets with correct error propagation.
-- **Command-line interface** — `asymmetry info` for quick environment checks.
-- **Responsive parameter-model fitting UI** — Parameter-model and cross-group
-  parameter fits run in the background with clear in-progress feedback.
+- **Data loading**: load WiMDA `.wim` files and ISIS muon NeXus `.nxs` / `.nexus` files through a
+  common API, including multi-period NeXus runs.
+- **Core data workflows**: apply grouping, estimate alpha, compute asymmetry, rebin data, and
+  co-add compatible datasets with propagated uncertainties.
+- **Time-domain fitting**: fit single datasets or simultaneous multi-dataset series using built-in
+  μSR models and composite expressions assembled with arithmetic operators.
+- **Parameter-model fitting**: fit field-, temperature-, or run-dependent parameter trends,
+  including superconducting penetration-depth workflows.
+- **Fourier analysis**: compute FFT spectra with selectable windows and zero padding.
+- **Logbook and metadata handling**: inspect run metadata, build searchable run logbooks, and use
+  metadata columns inside the GUI browser.
+- **Interactive GUI**: browse loaded runs, inspect plots, adjust grouping, run fits, trend fitted
+  parameters, and export plots.
+- **Project persistence**: save and reopen `.asymp` project files containing datasets, browser
+  state, plot state, fit state, and Fourier settings.
+- **Extensible I/O**: register custom loaders at runtime for additional file formats.
+- **Optional publication export**: export trend and plot data for GLE-based figure generation.
 
 ## Installation
 
+Asymmetry requires Python 3.10 or later. For local or development use, installing from the Git
+repository is the recommended path.
+
+### Clone the repository
+
 ```bash
-# Core library only
-pip install -c constraints.txt -e .
-
-# With GUI
-pip install -c constraints.txt -e ".[gui]"
-
-# Everything (GUI + optional formats + dev tools)
-pip install -c constraints.txt -e ".[all]"
+git clone https://github.com/BenHuddart/asymmetry.git
+cd asymmetry
 ```
 
-To avoid environment drift (for example incompatible NumPy/Numba combinations),
-use the shared [constraints.txt](constraints.txt) file for local installs.
+### Install from the checked-out repository
 
-### Dependencies
+```bash
+# Core library only
+python -m pip install -c constraints.txt -e .
 
-| Component | Requirements |
+# With GUI support
+python -m pip install -c constraints.txt -e ".[gui]"
+
+# With GUI and optional file/export support
+python -m pip install -c constraints.txt -e ".[gui,hdf5,root,gle]"
+
+# Everything, including development dependencies
+python -m pip install -c constraints.txt -e ".[all]"
+```
+
+### Install directly with pip from GitHub
+
+```bash
+# Core library
+python -m pip install "git+https://github.com/BenHuddart/asymmetry.git"
+
+# GUI extras
+python -m pip install "asymmetry[gui] @ git+https://github.com/BenHuddart/asymmetry.git"
+```
+
+Using [constraints.txt](constraints.txt) is recommended for local installs so the scientific Python
+stack stays within the versions tested by the project.
+
+### Optional dependencies
+
+| Component | Requirement |
 |-----------|-------------|
-| Core | Python ≥ 3.10, NumPy, iminuit ≥ 2.0 |
-| GUI | PySide6 ≥ 6.5, Matplotlib ≥ 3.7 |
-| GLE export | gleplot, GLE (compiled from source or binary) |
-| Dev | pytest, ruff, Sphinx |
+| Core | NumPy, SciPy, iminuit |
+| GUI | PySide6, Matplotlib |
+| NeXus / HDF5 | h5py |
+| ROOT import | uproot |
+| GLE export | `gleplot` plus a local GLE installation |
+| Development | pytest, pytest-cov, ruff, Sphinx |
 
 ## Quick start
 
-### Scripting
+### Load a dataset in Python
 
 ```python
 from asymmetry.core.io import load
 
-# Load a .wim file
-dataset = load("data/EMU00012345.wim")
+dataset_or_periods = load("data/EMU00012345.wim")
+dataset = dataset_or_periods[0] if isinstance(dataset_or_periods, list) else dataset_or_periods
 
-print(f"Run:  {dataset.run_number}")
-print(f"T =   {dataset.metadata['temperature']} K")
-print(f"B =   {dataset.metadata['field']} G")
-
-# Plot the asymmetry
-import matplotlib.pyplot as plt
-plt.errorbar(dataset.time, dataset.asymmetry, yerr=dataset.error, fmt=".")
-plt.xlabel("Time (μs)")
-plt.ylabel("Asymmetry")
-plt.show()
+print(dataset.summary())
 ```
 
-### GUI
+The same `load(...)` entry point works for WiMDA and ISIS muon NeXus files.
+
+### Launch the GUI
 
 ```bash
-# Launch the graphical interface
 asymmetry-gui
-```
-
-Or from Python:
-
-```python
-from asymmetry.gui.app import main
-main()
 ```
 
 ## Documentation
 
-Full documentation is available in the `docs/` directory and can be built with Sphinx:
+The Sphinx documentation source lives in [docs](docs). The intended GitHub Pages site for the
+project is:
+
+- [https://benhuddart.github.io/asymmetry/](https://benhuddart.github.io/asymmetry/)
+
+To build the documentation locally:
 
 ```bash
-cd docs
-pip install -r requirements.txt
-make html
+python -m pip install -c constraints.txt -r docs/requirements.txt
+make -C docs html
 ```
 
-Then open `docs/_build/html/index.html` in your browser.
+Then open `docs/_build/html/index.html` in a browser.
 
-The documentation includes:
-
-- **Installation guide**: Detailed setup instructions
-- **User guide**: Tutorials for data loading, processing, GUI usage, fitting
-  (single and global), Fourier analysis, and GLE export (including main-plot
-  export with label-based ``.dat``/``.fit`` files)
-- **API reference**: Complete API documentation auto-generated from docstrings
-- **Architecture**: Design principles and project structure (see `docs/ARCHITECTURE.md`)
-
-For composite fitting examples, see `docs/user_guide/composite_models.rst` and
-`examples/composite_models.py`.
-
-See `docs/README.md` for more information about the documentation system.
+The documentation covers installation, data loading, detector grouping, vector-polarization
+workflows, fitting, parameter trending, superconducting analysis, project files, and the API
+reference.
 
 ## Project structure
 
-```
+```text
 src/asymmetry/
-├── core/           # Pure-Python analysis engine (no GUI dependencies)
-│   ├── data/       # Data model: MuonDataset, Run, Histogram, Logbook
-│   ├── io/         # File I/O loaders (plugin-based; WiMDA supported)
-│   ├── transform/  # Asymmetry calculation, grouping, rebinning
-│   ├── fitting/    # Fitting engine with built-in μSR models & global fits
-│   ├── fourier/    # FFT, apodization windows
-│   └── utils/      # Physical constants (γ_μ, τ_μ)
-├── gui/            # PySide6 graphical front-end
-│   ├── app.py      # GUI entry point
-│   ├── mainwindow.py
-│   ├── panels/
-│   └── windows/
-├── cli.py          # Command-line interface
-└── __main__.py     # `python -m asymmetry`
+├── core/           # Analysis engine, data model, loaders, transforms, fitting, Fourier tools
+├── gui/            # PySide6 application, panels, dialogs, and windows
+├── cli.py          # Command-line entry point
+└── __main__.py     # python -m asymmetry
 ```
+
+Runnable examples live in [examples](examples), including data loading, transforms, composite
+models, parameter trending, project files, and custom loader registration.
 
 ## Testing
 
-Asymmetry has a comprehensive test suite with 430 tests and 71% coverage:
-
 ```bash
-# Run all tests
-python -m pytest tests/
-
-# Run with coverage report
-python -m pytest tests/ --cov=src/asymmetry --cov-report=term
-
-# Run specific test file
-python -m pytest tests/test_fitting_engine.py -v
+python -m pytest
+python -m pytest --cov=src/asymmetry --cov-report=term
 ```
 
 ## Contributing
 
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for version history and release notes.
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License. See [LICENSE](LICENSE).

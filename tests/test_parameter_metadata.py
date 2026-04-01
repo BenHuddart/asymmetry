@@ -17,6 +17,14 @@ def test_get_param_info_known_parameter_has_rich_formats() -> None:
     assert info.unit == "μs⁻¹"
 
 
+def test_get_param_info_shape_factor_a_has_expected_defaults() -> None:
+    info = get_param_info("shape_factor_a")
+    assert info.plain == "shape_factor_a"
+    assert info.latex == r"$a_{\mathrm{shape}}$"
+    assert info.default_min == 0.0
+    assert info.description is not None
+
+
 def test_get_param_info_indexed_parameter_preserves_formats() -> None:
     info = get_param_info("A0_2")
     assert info.plain == "A0_2"

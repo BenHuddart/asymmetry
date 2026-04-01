@@ -15,7 +15,19 @@ def loader() -> NexusLoader:
     return NexusLoader()
 
 
-def _write_v2_file(path, *, multiperiod: bool = False) -> None:
+def _write_v2_file(
+    path,
+    *,
+    multiperiod: bool = False,
+    include_corrected_time: bool = False,
+    time_zero_us: float = 0.0,
+    t0_bin_attr: int | None = None,
+) -> None:
+    """Create a synthetic V2 NeXus file used by loader unit tests.
+
+    Parameters control whether the file carries a pre-corrected time axis and
+    whether ``t0_bin`` is provided explicitly as an attribute.
+    """
     with h5py.File(path, "w") as f:
         entry = f.create_group("raw_data_1")
         entry.create_dataset("definition", data=np.bytes_("muonTD"))
@@ -56,11 +68,17 @@ def _write_v2_file(path, *, multiperiod: bool = False) -> None:
         counts_ds = detector.create_dataset("counts", data=counts)
         counts_ds.attrs["first_good_bin"] = np.bytes_("0")
         counts_ds.attrs["last_good_bin"] = np.bytes_("3")
+        if t0_bin_attr is not None:
+            counts_ds.attrs["t0_bin"] = np.int32(t0_bin_attr)
 
-        detector.create_dataset("raw_time", data=np.array([0.0, 0.02, 0.04, 0.06], dtype=np.float64))
+        raw_time = np.array([0.0, 0.02, 0.04, 0.06, 0.08], dtype=np.float64)
+        detector.create_dataset("raw_time", data=raw_time)
+        if include_corrected_time:
+            corrected_time = 0.5 * (raw_time[:-1] + raw_time[1:]) - float(time_zero_us)
+            detector.create_dataset("corrected_time", data=np.asarray(corrected_time, dtype=np.float64))
         detector.create_dataset("grouping", data=np.array([1, 2], dtype=np.int32))
         detector.create_dataset("dead_time", data=np.array([0.01, 0.02], dtype=np.float64))
-        detector.create_dataset("time_zero", data=np.array([0.0, 0.0], dtype=np.float64))
+        detector.create_dataset("time_zero", data=np.array([time_zero_us, time_zero_us], dtype=np.float64))
         detector.create_dataset("orientation", data=np.bytes_("L"))
 
         sample = entry.create_group("sample")
@@ -169,3 +187,44 @@ def test_load_v1_single_period(tmp_path, loader: NexusLoader) -> None:
     assert ds.run is not None
     assert ds.run.grouping.get("dead_time_us") == pytest.approx([0.015, 0.025])
     assert ds.run.grouping.get("good_frames") == pytest.approx(100000.0)
+
+
+def test_load_v2_prefers_corrected_time_axis_when_present(tmp_path, loader: NexusLoader) -> None:
+    """Use corrected_time directly when available instead of re-deriving from raw_time."""
+    path = tmp_path / "run_v2_corrected_time.nxs"
+    _write_v2_file(
+        path,
+        include_corrected_time=True,
+        time_zero_us=0.04,
+        t0_bin_attr=2,
+    )
+
+    result = loader.load(str(path))
+    assert not isinstance(result, list)
+
+    ds = result
+    assert ds.time == pytest.approx([-0.03, -0.01, 0.01, 0.03])
+    assert ds.run is not None
+    assert ds.run.histograms[0].t0_bin == 2
+    assert ds.run.histograms[1].t0_bin == 2
+
+
+def test_load_v2_raw_time_fallback_applies_time_zero_correction(tmp_path, loader: NexusLoader) -> None:
+    """Fall back to raw_time centres and subtract t0 when corrected_time is absent."""
+    path = tmp_path / "run_v2_raw_time_only.nxs"
+    _write_v2_file(
+        path,
+        include_corrected_time=False,
+        time_zero_us=0.04,
+        t0_bin_attr=None,
+    )
+
+    result = loader.load(str(path))
+    assert not isinstance(result, list)
+
+    ds = result
+    assert ds.time == pytest.approx([-0.03, -0.01, 0.01, 0.03])
+    assert ds.run is not None
+    # With 0.02 us bins and time_zero=0.04 us, t0 maps to bin index 2.
+    assert ds.run.histograms[0].t0_bin == 2
+    assert ds.run.histograms[1].t0_bin == 2

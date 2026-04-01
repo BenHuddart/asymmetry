@@ -106,13 +106,14 @@ class CrossGroupFitDialog(ModelFitDialog):
         roles = self._range_roles[0] if self._range_roles else {}
         rows: list[dict[str, object]] = []
         for p in fit_range.parameters:
+            default_role = "Fixed" if p.fixed else "Global"
             rows.append(
                 {
                     "name": p.name,
                     "initial": float(p.value),
                     "min": float(p.min),
                     "max": float(p.max),
-                    "type": roles.get(p.name, "Global"),
+                    "type": roles.get(p.name, default_role),
                 }
             )
 
@@ -150,7 +151,13 @@ class CrossGroupFitDialog(ModelFitDialog):
                 old = fit_range.parameters[pname]
                 new_params.add(Parameter(name=pname, value=old.value, min=old.min, max=old.max, fixed=old.fixed))
             else:
-                new_params.add(Parameter(name=pname, value=float(model.param_defaults[pname])))
+                new_params.add(
+                    Parameter(
+                        name=pname,
+                        value=float(model.param_defaults[pname]),
+                        fixed=(pname == "shape_factor_a"),
+                    )
+                )
         fit_range.parameters = new_params
         self._refresh_range_selector()
         self._select_range(0)
@@ -181,7 +188,13 @@ class CrossGroupFitDialog(ModelFitDialog):
                         old = fit_range.parameters[pname]
                         new_params.add(Parameter(name=pname, value=old.value, min=old.min, max=old.max, fixed=old.fixed))
                     else:
-                        new_params.add(Parameter(name=pname, value=float(model.param_defaults[pname])))
+                        new_params.add(
+                            Parameter(
+                                name=pname,
+                                value=float(model.param_defaults[pname]),
+                                fixed=(pname == "shape_factor_a"),
+                            )
+                        )
                 fit_range.parameters = new_params
 
         fit_x_min = config.get("fit_x_min")
@@ -298,7 +311,8 @@ class CrossGroupFitDialog(ModelFitDialog):
 
             type_combo = QComboBox()
             type_combo.addItems(["Global", "Local", "Fixed"])
-            type_combo.setCurrentText(roles.get(param.name, "Global"))
+            default_role = "Fixed" if param.fixed else "Global"
+            type_combo.setCurrentText(roles.get(param.name, default_role))
             type_combo.currentTextChanged.connect(self._on_param_table_edited)
             self._param_table.setCellWidget(row, 4, type_combo)
 
@@ -395,7 +409,8 @@ class CrossGroupFitDialog(ModelFitDialog):
             pname = p.name
             initial_params[pname] = float(p.value)
             parameter_bounds[pname] = (float(p.min), float(p.max))
-            role = roles.get(pname, "Global")
+            default_role = "Fixed" if p.fixed else "Global"
+            role = roles.get(pname, default_role)
             if role == "Local":
                 local_params.append(pname)
             elif role == "Fixed":

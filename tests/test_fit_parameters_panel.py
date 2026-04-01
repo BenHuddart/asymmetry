@@ -1154,6 +1154,39 @@ def test_cross_group_fit_success_updates_each_group_model_fit(panel: FitParamete
     assert fit_b.ranges[0].result.parameters["m"].value == pytest.approx(0.002)
 
 
+def test_build_cross_group_group_model_fit_defaults_shape_factor_a_to_fixed(
+    panel: FitParametersPanel,
+) -> None:
+    model = ParameterCompositeModel(["SC_PWaveAxial"])
+    fit_result = CrossGroupFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=0.5,
+        global_parameters=ParameterSet([Parameter("sigma_0", value=1.0)]),
+        local_parameters={"g1": ParameterSet([Parameter("Tc", value=20.0)])},
+        fixed_parameters=ParameterSet(
+            [
+                Parameter("gap_ratio", value=2.0, fixed=True),
+                Parameter("sigma_bg", value=0.0, fixed=True),
+            ]
+        ),
+    )
+
+    fit = panel._build_cross_group_group_model_fit(
+        parameter_name="Lambda",
+        x_key="temperature",
+        group_id="g1",
+        model=model,
+        fit_result=fit_result,
+        fit_x_min=1.0,
+        fit_x_max=30.0,
+    )
+
+    shape_factor = fit.ranges[0].parameters["shape_factor_a"]
+    assert shape_factor.value == 0.0
+    assert shape_factor.fixed is True
+
+
 def test_set_fit_results_copies_global_params_per_group(panel: FitParametersPanel) -> None:
     shared_global = ParameterSet([Parameter("A0", value=0.25, min=0.0, max=1.0, fixed=False)])
 

@@ -198,11 +198,14 @@ class NexusLoader(BaseLoader):
 
         return self._build_period_datasets(
             counts_periods=counts_periods,
-            corrected_time=corrected_time,
+            time_axis_source=corrected_time,
+            axis_needs_time_zero_correction=False,
             grouping_array=grouping_array,
             good_frames_values=good_frames_values,
             dead_time_values=dead_time_values,
             time_zero_values=time_zero_values,
+            time_zero_is_microseconds=False,
+            t0_bin_values=None,
             metadata_base=metadata_base,
             run_number=run_number,
             first_good_bin=first_good_bin,
@@ -211,7 +214,18 @@ class NexusLoader(BaseLoader):
         )
 
     def _load_v2(self, handle: Any, entry_name: str, source_file: str) -> list[MuonDataset]:
-        """Read modern V2 muon NeXus content and reduce to asymmetry."""
+        """Read modern V2 muon NeXus content and reduce to asymmetry.
+
+        V2 files may contain both ``raw_time`` and ``corrected_time``.
+        Mantid's loading flow uses ``raw_time`` and applies ``time_zero`` as a
+        separate correction. To align user-visible behaviour with both Mantid
+        and files that already provide corrected centres:
+
+        * Prefer ``corrected_time`` when it has a shape compatible with counts.
+        * Otherwise, build from ``raw_time`` and subtract ``time_zero``.
+        * For per-histogram metadata, prefer ``counts.attrs['t0_bin']`` when
+          present, otherwise derive ``t0_bin`` from ``time_zero / bin_width``.
+        """
         entry = handle[entry_name]
         detector = self._require_group(self._require_group(entry, "instrument"), "detector_1")
 
@@ -221,6 +235,7 @@ class NexusLoader(BaseLoader):
         raw_time = np.asarray(self._read_optional(detector, "raw_time", default=[]), dtype=np.float64)
         if raw_time.size == 0:
             raw_time = np.asarray(self._read_optional(detector, "time_of_flight", default=[]), dtype=np.float64)
+        corrected_time = np.asarray(self._read_optional(detector, "corrected_time", default=[]), dtype=np.float64)
 
         grouping_array = np.asarray(self._read_optional(detector, "grouping", default=[]), dtype=np.int64)
         good_frames_values = np.asarray(
@@ -264,6 +279,25 @@ class NexusLoader(BaseLoader):
         field_direction = self._normalise_orientation(orientation_raw)
 
         counts_ds = detector.get("counts")
+        n_bins = int(counts_periods[0].shape[-1])
+        use_corrected_time = corrected_time.size in {n_bins, n_bins + 1}
+        time_axis_source = corrected_time if use_corrected_time else raw_time
+        axis_needs_time_zero_correction = not use_corrected_time
+
+        t0_bin_values: np.ndarray | None = None
+        if counts_ds is not None:
+            t0_bin_attr = getattr(counts_ds, "attrs", {}).get("t0_bin")
+            if t0_bin_attr is not None:
+                t0_bin_array = np.asarray(t0_bin_attr, dtype=np.float64).ravel()
+                if t0_bin_array.size == 1 and np.isfinite(t0_bin_array[0]):
+                    t0_bin_values = np.full(
+                        counts_periods[0].shape[0],
+                        int(round(float(t0_bin_array[0]))),
+                        dtype=np.int64,
+                    )
+                elif t0_bin_array.size == counts_periods[0].shape[0]:
+                    t0_bin_values = np.rint(t0_bin_array).astype(np.int64)
+
         first_good_bin = self._safe_attr_int(counts_ds, "first_good_bin", default=0)
         last_good_bin_default = counts_periods[0].shape[-1] - 1
         last_good_bin = self._safe_attr_int(counts_ds, "last_good_bin", default=last_good_bin_default)
@@ -296,11 +330,14 @@ class NexusLoader(BaseLoader):
 
         return self._build_period_datasets(
             counts_periods=counts_periods,
-            corrected_time=raw_time,
+            time_axis_source=time_axis_source,
+            axis_needs_time_zero_correction=axis_needs_time_zero_correction,
             grouping_array=grouping_array,
             good_frames_values=good_frames_values,
             dead_time_values=dead_time_values,
             time_zero_values=time_zero_values,
+            time_zero_is_microseconds=True,
+            t0_bin_values=t0_bin_values,
             metadata_base=metadata_base,
             run_number=run_number,
             first_good_bin=first_good_bin,
@@ -312,18 +349,39 @@ class NexusLoader(BaseLoader):
         self,
         *,
         counts_periods: list[np.ndarray],
-        corrected_time: np.ndarray,
+        time_axis_source: np.ndarray,
+        axis_needs_time_zero_correction: bool,
         grouping_array: np.ndarray,
         good_frames_values: np.ndarray,
         dead_time_values: np.ndarray,
         time_zero_values: np.ndarray,
+        time_zero_is_microseconds: bool,
+        t0_bin_values: np.ndarray | None,
         metadata_base: dict[str, Any],
         run_number: int,
         first_good_bin: int,
         last_good_bin: int,
         source_file: str,
     ) -> list[MuonDataset]:
-        """Construct one :class:`MuonDataset` per period from detector counts."""
+        """Construct one :class:`MuonDataset` per period from detector counts.
+
+        Parameters
+        ----------
+        time_axis_source
+            Axis array used to build the dataset time values. For V1 this is
+            ``corrected_time`` from file. For V2 this is either file
+            ``corrected_time`` (when trustworthy) or ``raw_time``.
+        axis_needs_time_zero_correction
+            If ``True``, subtract the global ``time_zero`` value from the
+            built axis so V2 raw-time paths align with Mantid behaviour.
+        time_zero_is_microseconds
+            Controls interpretation of ``time_zero_values`` when deriving
+            histogram ``t0_bin`` values.
+        t0_bin_values
+            Optional explicit per-detector t0 bins (for example from
+            ``counts.attrs['t0_bin']``). When provided these values take
+            precedence over conversion from ``time_zero_values``.
+        """
         datasets: list[MuonDataset] = []
         n_periods = len(counts_periods)
 
@@ -343,7 +401,10 @@ class NexusLoader(BaseLoader):
                 raise ValueError("Detector counts must be 2D [n_detectors, n_bins] per period")
 
             n_detectors, n_bins = period_counts.shape
-            time_axis, bin_width = self._build_time_axis(corrected_time, n_bins)
+            time_axis, bin_width = self._build_time_axis(time_axis_source, n_bins)
+            if axis_needs_time_zero_correction:
+                time_zero_us = self._global_time_zero_value(time_zero_values)
+                time_axis = time_axis - time_zero_us
 
             grouping = self._resolve_grouping(grouping_array, n_detectors)
             forward = apply_grouping(
@@ -373,6 +434,8 @@ class NexusLoader(BaseLoader):
                 period_counts,
                 bin_width,
                 time_zero_values,
+                time_zero_is_microseconds=time_zero_is_microseconds,
+                t0_bin_values=t0_bin_values,
                 first_good_bin=first_good_bin,
                 last_good_bin=last_good_bin,
             )
@@ -507,17 +570,37 @@ class NexusLoader(BaseLoader):
         bin_width: float,
         time_zero_values: np.ndarray,
         *,
+        time_zero_is_microseconds: bool,
+        t0_bin_values: np.ndarray | None,
         first_good_bin: int,
         last_good_bin: int,
     ) -> list[Histogram]:
-        """Create per-detector :class:`Histogram` objects for a period."""
+        """Create per-detector :class:`Histogram` objects for a period.
+
+        ``time_zero`` may be stored either as a bin index (legacy V1) or as a
+        time value in microseconds (V2). This method supports both forms and
+        accepts an explicit ``t0_bin_values`` override from NeXus attributes
+        when available.
+        """
         histograms: list[Histogram] = []
         for i in range(period_counts.shape[0]):
             t0_bin = 0
-            if time_zero_values.size == period_counts.shape[0]:
-                t0_bin = int(round(float(time_zero_values[i])))
-            elif time_zero_values.size > 0:
-                t0_bin = int(round(float(time_zero_values.flat[0])))
+
+            if t0_bin_values is not None and t0_bin_values.size == period_counts.shape[0]:
+                t0_bin = int(t0_bin_values[i])
+            else:
+                t0_value = 0.0
+                if time_zero_values.size == period_counts.shape[0]:
+                    t0_value = float(time_zero_values[i])
+                elif time_zero_values.size > 0:
+                    t0_value = float(time_zero_values.flat[0])
+
+                if np.isfinite(t0_value):
+                    if time_zero_is_microseconds:
+                        if np.isfinite(bin_width) and bin_width != 0.0:
+                            t0_bin = int(round(t0_value / bin_width))
+                    else:
+                        t0_bin = int(round(t0_value))
 
             histograms.append(
                 Histogram(
@@ -546,6 +629,19 @@ class NexusLoader(BaseLoader):
         if not np.isfinite(bin_width) or bin_width == 0.0:
             bin_width = 1.0
         return np.asarray(axis, dtype=np.float64), float(bin_width)
+
+    def _global_time_zero_value(self, time_zero_values: np.ndarray) -> float:
+        """Return a single global t0 value in microseconds.
+
+        For grouped asymmetry a single axis is used, so this method selects the
+        first available ``time_zero`` value when present and falls back to 0.0.
+        """
+        if time_zero_values.size == 0:
+            return 0.0
+        candidate = float(time_zero_values.flat[0])
+        if not np.isfinite(candidate):
+            return 0.0
+        return candidate
 
     def _resolve_grouping(self, grouping_array: np.ndarray, n_detectors: int) -> _GroupingSelection:
         """Resolve forward/backward detector sets from file grouping or defaults."""

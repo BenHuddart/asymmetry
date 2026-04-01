@@ -12,7 +12,8 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QCheckBox, QDialog
 
 from asymmetry.core.fitting.parameter_models import ModelFitRange, ParameterCompositeModel, ParameterModelFit
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -252,6 +253,62 @@ def test_edit_model_to_redfield_resets_m_to_default(qapp: QApplication, monkeypa
     assert params["m"].value == pytest.approx(2.0)
 
 
+def test_edit_model_to_sc_component_keeps_shape_factor_a_fixed_by_default(
+    qapp: QApplication, monkeypatch
+) -> None:
+    x = np.linspace(1.0, 10.0, 20)
+    y = 0.01 * x + 0.2
+    yerr = np.full_like(x, 0.01)
+
+    fit = ParameterModelFit(
+        parameter_name="Lambda",
+        x_key="temperature",
+        ranges=[
+            ModelFitRange(
+                x_min=1.0,
+                x_max=10.0,
+                model=ParameterCompositeModel(["Linear"], []),
+                parameters=ParameterSet([Parameter("m", 0.01), Parameter("b", 0.2)]),
+            )
+        ],
+    )
+    dlg = ModelFitDialog(
+        parameter_name="Lambda",
+        x_key="temperature",
+        x_values=x,
+        y_values=y,
+        y_errors=yerr,
+        existing_fit=fit,
+    )
+
+    class _FakeBuilder:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def get_model(self):
+            return ParameterCompositeModel(["SC_PWaveAxial"], [])
+
+    monkeypatch.setattr("asymmetry.gui.panels.model_fit_dialog.ParameterModelBuilderDialog", _FakeBuilder)
+    dlg._edit_model(0)
+
+    params = dlg.get_model_fit().ranges[0].parameters
+    assert params["shape_factor_a"].fixed is True
+    assert params["shape_factor_a"].value == 0.0
+
+    row_by_name = {
+        dlg._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(dlg._param_table.rowCount())
+    }
+    fixed_container = dlg._param_table.cellWidget(row_by_name["shape_factor_a"], 4)
+    assert fixed_container is not None
+    checkboxes = fixed_container.findChildren(QCheckBox)
+    assert len(checkboxes) == 1
+    assert checkboxes[0].isChecked() is True
+
+
 def test_parameter_model_builder_has_info_column(qapp: QApplication) -> None:
     dialog = ParameterModelBuilderDialog(component_pool=["Linear", "Arrhenius"])
 
@@ -307,3 +364,22 @@ def test_component_info_html_contains_sc_kernel_and_gap_function() -> None:
     assert "Measured Linewidth Convention" in html_doc
     assert "normalized superfluid density" in html_doc
     assert "Single-gap BCS shape" in html_doc
+
+
+def test_component_info_html_explains_shape_factor_a_fallbacks() -> None:
+    from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
+
+    ani_html = build_component_info_html(PARAMETER_MODEL_COMPONENTS["SC_AnisotropicS_Cos4"])
+    p_html = build_component_info_html(PARAMETER_MODEL_COMPONENTS["SC_PWaveAxial"])
+    ext_html = build_component_info_html(PARAMETER_MODEL_COMPONENTS["SC_ExtendedS"])
+
+    assert "shape_factor_a" in ani_html
+    assert "Carrington-Manzano" in ani_html
+    assert "positive fixed value or allows it to vary" in ani_html
+
+    assert "shape_factor_a" in p_html
+    assert "Carrington-Manzano" in p_html
+    assert "positive fixed or fitted value" in p_html
+
+    assert "a = 4/3" in ext_html
+    assert "Carrington-Manzano" in ext_html

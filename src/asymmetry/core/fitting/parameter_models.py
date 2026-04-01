@@ -390,12 +390,13 @@ def _register_superconducting_components() -> None:
                 name="SC_AnisotropicS_Cos4",
                 description="Anisotropic s-wave: sigma_0*rho(T; g=1+a*cos(4phi))+sigma_bg",
                 function=sc_models.sc_anisotropic_s_cos4,
-                param_names=["sigma_0", "Tc", "gap_ratio", "a_anis", "sigma_bg"],
+                param_names=["sigma_0", "Tc", "gap_ratio", "a_anis", "shape_factor_a", "sigma_bg"],
                 param_defaults={
                     "sigma_0": 1.0,
                     "Tc": 20.0,
                     "gap_ratio": 1.764,
                     "a_anis": 0.2,
+                    "shape_factor_a": 0.0,
                     "sigma_bg": 0.0,
                 },
                 param_info={
@@ -403,13 +404,14 @@ def _register_superconducting_components() -> None:
                     "Tc": get_param_info("Tc"),
                     "gap_ratio": get_param_info("gap_ratio"),
                     "a_anis": get_param_info("a_anis"),
+                    "shape_factor_a": get_param_info("shape_factor_a"),
                     "sigma_bg": get_param_info("sigma_bg"),
                 },
                 formula_template=(
-                    "{sigma_0}*rho_ani(x; Tc={Tc}, Delta0/kBTc={gap_ratio}, a={a_anis}) + {sigma_bg}"
+                    "{sigma_0}*rho_ani(x; Tc={Tc}, Delta0/kBTc={gap_ratio}, a={a_anis}, a_shape={shape_factor_a}) + {sigma_bg}"
                 ),
                 latex_equation=(
-                    r"\sigma(T) = \sigma_0\,\rho_{ani}\left(T; T_c, \Delta_0/(k_B T_c), a\right) + \sigma_{bg}"
+                    r"\sigma(T) = \sigma_0\,\rho_{ani}\left(T; T_c, \Delta_0/(k_B T_c), a, a_{\mathrm{shape}}\right) + \sigma_{bg}"
                 ),
                 scopes=("temperature",),
             ),
@@ -444,17 +446,26 @@ def _register_superconducting_components() -> None:
                 name="SC_PWaveAxial",
                 description="2D axial p-wave example: sigma_0*rho_p(T; g=cos(phi))+sigma_bg",
                 function=sc_models.sc_p_wave_axial,
-                param_names=["sigma_0", "Tc", "gap_ratio", "sigma_bg"],
-                param_defaults={"sigma_0": 1.0, "Tc": 20.0, "gap_ratio": 2.0, "sigma_bg": 0.0},
+                param_names=["sigma_0", "Tc", "gap_ratio", "shape_factor_a", "sigma_bg"],
+                param_defaults={
+                    "sigma_0": 1.0,
+                    "Tc": 20.0,
+                    "gap_ratio": 2.0,
+                    "shape_factor_a": 0.0,
+                    "sigma_bg": 0.0,
+                },
                 param_info={
                     "sigma_0": get_param_info("sigma_0"),
                     "Tc": get_param_info("Tc"),
                     "gap_ratio": get_param_info("gap_ratio"),
+                    "shape_factor_a": get_param_info("shape_factor_a"),
                     "sigma_bg": get_param_info("sigma_bg"),
                 },
-                formula_template="{sigma_0}*rho_p(x; Tc={Tc}, Delta0/kBTc={gap_ratio}) + {sigma_bg}",
+                formula_template=(
+                    "{sigma_0}*rho_p(x; Tc={Tc}, Delta0/kBTc={gap_ratio}, a_shape={shape_factor_a}) + {sigma_bg}"
+                ),
                 latex_equation=(
-                    r"\sigma(T) = \sigma_0\,\rho_p\left(T; T_c, \Delta_0/(k_B T_c)\right) + \sigma_{bg}"
+                    r"\sigma(T) = \sigma_0\,\rho_p\left(T; T_c, \Delta_0/(k_B T_c), a_{\mathrm{shape}}\right) + \sigma_{bg}"
                 ),
                 scopes=("temperature",),
             ),
@@ -466,7 +477,7 @@ def _register_superconducting_components() -> None:
                 param_defaults={
                     "sigma_0": 1.0,
                     "Tc": 20.0,
-                    "gap_ratio": 1.764,
+                    "gap_ratio": 2.14,
                     "signed_gap": 0.0,
                     "sigma_bg": 0.0,
                 },

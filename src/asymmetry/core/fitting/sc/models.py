@@ -38,10 +38,43 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.fitting.sc import gaps
-from asymmetry.core.fitting.sc.bcs import resolve_gap_ratio
+from asymmetry.core.fitting.sc.bcs import delta_generalized, resolve_gap_ratio
 from asymmetry.core.fitting.sc.kernel import superfluid_density, superfluid_density_3d
 
 ArrayLikeFloat = NDArray[np.float64]
+
+_D_WAVE_SHAPE_FACTOR = 4.0 / 3.0
+_S_PLUS_G_SHAPE_FACTOR = 2.0
+_EXTENDED_S_SHAPE_FACTOR = _D_WAVE_SHAPE_FACTOR
+
+
+def _make_generalized_reduced_gap(
+    *,
+    gap_ratio: float,
+    shape_factor: float,
+) -> Callable[[ArrayLikeFloat], ArrayLikeFloat]:
+    def reduced_gap(t_reduced: ArrayLikeFloat) -> ArrayLikeFloat:
+        return delta_generalized(
+            t_reduced,
+            gap_ratio=gap_ratio,
+            shape_factor=shape_factor,
+        )
+
+    return reduced_gap
+
+
+def _optional_generalized_reduced_gap(
+    *,
+    gap_ratio: float,
+    shape_factor_a: float,
+) -> Callable[[ArrayLikeFloat], ArrayLikeFloat] | None:
+    shape_factor = float(shape_factor_a)
+    if not np.isfinite(shape_factor) or shape_factor <= 0.0:
+        return None
+    return _make_generalized_reduced_gap(
+        gap_ratio=gap_ratio,
+        shape_factor=shape_factor,
+    )
 
 
 def _as_temperature_array(T: NDArray[np.float64] | list[float] | float) -> ArrayLikeFloat:
@@ -117,6 +150,8 @@ def rho_d_wave(
 
     This model has line nodes and therefore stronger low-temperature variation
     than isotropic s-wave, typically close to linear-in-T in clean limits [1].
+    The reduced gap amplitude uses the generalized weak-coupling form with the
+    d-wave shape factor :math:`a=4/3`.
     """
     ratio = resolve_gap_ratio(tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
     return superfluid_density(
@@ -126,6 +161,10 @@ def rho_d_wave(
         gap_function=gaps.d_wave,
         n_phi=n_phi,
         n_energy=n_energy,
+        reduced_gap_function=_make_generalized_reduced_gap(
+            gap_ratio=ratio,
+            shape_factor=_D_WAVE_SHAPE_FACTOR,
+        ),
     )
 
 
@@ -135,6 +174,7 @@ def rho_anisotropic_s_cos4(
     Tc: float,
     gap_ratio: float = 1.764,
     a_anis: float = 0.2,
+    shape_factor_a: float = 0.0,
     gap_mev: float | None = None,
     n_phi: int = 64,
     n_energy: int = 48,
@@ -143,6 +183,9 @@ def rho_anisotropic_s_cos4(
 
     ``a_anis`` controls anisotropy. For ``abs(a_anis) < 1`` the gap remains
     nodeless; accidental nodes may appear when ``abs(a_anis) >= 1``.
+    If ``shape_factor_a > 0``, use the generalized weak-coupling reduced-gap
+    law with that value; otherwise fall back to the Carrington-Manzano
+    interpolation.
     """
     ratio = resolve_gap_ratio(tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
     return superfluid_density(
@@ -153,6 +196,10 @@ def rho_anisotropic_s_cos4(
         gap_params={"a_anis": float(a_anis)},
         n_phi=n_phi,
         n_energy=n_energy,
+        reduced_gap_function=_optional_generalized_reduced_gap(
+            gap_ratio=ratio,
+            shape_factor_a=shape_factor_a,
+        ),
     )
 
 
@@ -173,7 +220,9 @@ def rho_nonmonotonic_d(
          g(\phi)=\beta\cos(2\phi)+(1-\beta)\cos(6\phi).
 
      This form is commonly used as a phenomenological extension when a monotonic
-     :math:`\cos(2\phi)` d-wave is insufficient [1].
+     :math:`\cos(2\phi)` d-wave is insufficient [1]. The temperature-dependent
+     gap amplitude uses the same d-wave weak-coupling shape factor
+     :math:`a=4/3` as :func:`rho_d_wave`.
     """
     ratio = resolve_gap_ratio(tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
     return superfluid_density(
@@ -184,6 +233,10 @@ def rho_nonmonotonic_d(
         gap_params={"beta_nm": float(beta_nm)},
         n_phi=n_phi,
         n_energy=n_energy,
+        reduced_gap_function=_make_generalized_reduced_gap(
+            gap_ratio=ratio,
+            shape_factor=_D_WAVE_SHAPE_FACTOR,
+        ),
     )
 
 
@@ -192,11 +245,17 @@ def rho_p_wave_axial(
     *,
     Tc: float,
     gap_ratio: float = 2.0,
+    shape_factor_a: float = 0.0,
     gap_mev: float | None = None,
     n_phi: int = 64,
     n_energy: int = 48,
 ) -> ArrayLikeFloat:
-    r"""Return :math:`\rho_s(T)` for 2D axial p-wave, :math:`g(\phi)=\cos\phi`."""
+    r"""Return :math:`\rho_s(T)` for 2D axial p-wave, :math:`g(\phi)=\cos\phi`.
+
+    If ``shape_factor_a > 0``, use the generalized weak-coupling reduced-gap
+    law with that value; otherwise fall back to the Carrington-Manzano
+    interpolation.
+    """
     ratio = resolve_gap_ratio(tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
     return superfluid_density(
         T,
@@ -205,6 +264,10 @@ def rho_p_wave_axial(
         gap_function=gaps.p_wave_axial_2d,
         n_phi=n_phi,
         n_energy=n_energy,
+        reduced_gap_function=_optional_generalized_reduced_gap(
+            gap_ratio=ratio,
+            shape_factor_a=shape_factor_a,
+        ),
     )
 
 
@@ -212,7 +275,7 @@ def rho_extended_s(
     T: NDArray[np.float64] | list[float] | float,
     *,
     Tc: float,
-    gap_ratio: float = 1.764,
+    gap_ratio: float = 2.14,
     signed: bool = False,
     gap_mev: float | None = None,
     n_phi: int = 64,
@@ -222,7 +285,9 @@ def rho_extended_s(
 
     Set ``signed=True`` to preserve sign of :math:`\cos(2\phi)`. The default
     uses magnitude because the quasiparticle excitation energy depends on
-    :math:`|\Delta|`.
+    :math:`|\Delta|`. The reduced gap amplitude uses the generalized
+    weak-coupling form with :math:`a=4/3`, consistent with the
+    :math:`\cos(2\phi)` basis tabulated in Ref. [1].
     """
     ratio = resolve_gap_ratio(tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
     return superfluid_density(
@@ -233,6 +298,10 @@ def rho_extended_s(
         gap_params={"signed": bool(signed)},
         n_phi=n_phi,
         n_energy=n_energy,
+        reduced_gap_function=_make_generalized_reduced_gap(
+            gap_ratio=ratio,
+            shape_factor=_EXTENDED_S_SHAPE_FACTOR,
+        ),
     )
 
 
@@ -241,6 +310,7 @@ def rho_p_wave_polar_3d(
     *,
     Tc: float,
     gap_ratio: float = 2.0,
+    shape_factor_a: float = 0.0,
     gap_mev: float | None = None,
     n_theta: int = 24,
     n_phi: int = 48,
@@ -249,6 +319,9 @@ def rho_p_wave_polar_3d(
     r"""Return :math:`\rho_s(T)` for 3D polar p-wave line-node example.
 
     Uses :math:`g(\theta)=\sin\theta` with spherical angular averaging.
+    If ``shape_factor_a > 0``, use the generalized weak-coupling reduced-gap
+    law with that value; otherwise fall back to the Carrington-Manzano
+    interpolation.
     """
     ratio = resolve_gap_ratio(tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
     return superfluid_density_3d(
@@ -259,6 +332,10 @@ def rho_p_wave_polar_3d(
         n_theta=n_theta,
         n_phi=n_phi,
         n_energy=n_energy,
+        reduced_gap_function=_optional_generalized_reduced_gap(
+            gap_ratio=ratio,
+            shape_factor_a=shape_factor_a,
+        ),
     )
 
 
@@ -279,7 +356,8 @@ def rho_s_plus_g(
        g(\theta,\phi)=\frac{1-\sin^4\theta\cos(4\phi)}{2}.
 
     The default ``gap_ratio=2.77`` follows the weak-coupling tabulation used
-    in Ref. [1].
+    in Ref. [1]. The reduced gap amplitude uses the generalized weak-coupling
+    form with the s+g shape factor :math:`a=2`.
 
     Parameters
     ----------
@@ -307,6 +385,10 @@ def rho_s_plus_g(
         n_theta=n_theta,
         n_phi=n_phi,
         n_energy=n_energy,
+        reduced_gap_function=_make_generalized_reduced_gap(
+            gap_ratio=ratio,
+            shape_factor=_S_PLUS_G_SHAPE_FACTOR,
+        ),
     )
 
 
@@ -347,6 +429,7 @@ def sc_anisotropic_s_cos4(
     Tc: float,
     gap_ratio: float = 1.764,
     a_anis: float = 0.2,
+    shape_factor_a: float = 0.0,
     sigma_bg: float = 0.0,
     gap_mev: float | None = None,
 ) -> ArrayLikeFloat:
@@ -356,6 +439,7 @@ def sc_anisotropic_s_cos4(
         Tc=Tc,
         gap_ratio=gap_ratio,
         a_anis=a_anis,
+        shape_factor_a=shape_factor_a,
         gap_mev=gap_mev,
     )
     return _sigma_additive(rho, sigma_0=sigma_0, sigma_bg=sigma_bg)
@@ -386,11 +470,12 @@ def sc_p_wave_axial(
     sigma_0: float,
     Tc: float,
     gap_ratio: float = 2.0,
+    shape_factor_a: float = 0.0,
     sigma_bg: float = 0.0,
     gap_mev: float | None = None,
 ) -> ArrayLikeFloat:
     r"""Additive 2D axial p-wave model for measured :math:`\sigma(T)`."""
-    rho = rho_p_wave_axial(T, Tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
+    rho = rho_p_wave_axial(T, Tc=Tc, gap_ratio=gap_ratio, shape_factor_a=shape_factor_a, gap_mev=gap_mev)
     return _sigma_additive(rho, sigma_0=sigma_0, sigma_bg=sigma_bg)
 
 
@@ -398,7 +483,7 @@ def sc_extended_s(
     T: NDArray[np.float64] | list[float] | float,
     sigma_0: float,
     Tc: float,
-    gap_ratio: float = 1.764,
+    gap_ratio: float = 2.14,
     signed_gap: float = 0.0,
     sigma_bg: float = 0.0,
     gap_mev: float | None = None,

@@ -122,6 +122,8 @@ Gap-amplitude approximations and convention helpers:
 
 .. autofunction:: asymmetry.core.fitting.sc.bcs.delta_bcs
 
+.. autofunction:: asymmetry.core.fitting.sc.bcs.delta_generalized
+
 .. autofunction:: asymmetry.core.fitting.sc.bcs.gap_ratio_from_mev
 
 .. autofunction:: asymmetry.core.fitting.sc.bcs.resolve_gap_ratio
@@ -176,6 +178,16 @@ Additional unconventional examples:
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_p_wave_axial
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_p_wave_polar_3d
+
+.. note::
+
+   ``rho_extended_s`` uses the generalized weak-coupling reduced-gap law with
+   ``a = 4/3`` by default. For ``rho_anisotropic_s_cos4``,
+   ``sc_anisotropic_s_cos4``, ``rho_p_wave_axial``, ``sc_p_wave_axial``, and
+   ``rho_p_wave_polar_3d``, the optional ``shape_factor_a`` parameter can be
+   supplied when a symmetry-specific weak-coupling shape factor is known or is
+   to be fitted. If ``shape_factor_a`` is omitted or left at ``0``, these
+   models fall back to the Carrington-Manzano interpolation.
 
 Two-Gap And Alpha Models
 ^^^^^^^^^^^^^^^^^^^^^^^^

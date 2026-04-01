@@ -902,7 +902,11 @@ class FitParametersPanel(QWidget):
                 src = fixed_params[pname]
                 err = None
             else:
-                src = Parameter(name=pname, value=float(model.param_defaults.get(pname, 0.0)), fixed=False)
+                src = Parameter(
+                    name=pname,
+                    value=float(model.param_defaults.get(pname, 0.0)),
+                    fixed=(pname == "shape_factor_a"),
+                )
                 err = None
 
             fit_param = Parameter(

@@ -143,6 +143,32 @@ def test_cross_group_dialog_redfield_m_is_unitless() -> None:
     assert app is not None
 
 
+def test_cross_group_dialog_sc_shape_factor_a_defaults_to_fixed() -> None:
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="temperature",
+        groups=_groups(),
+        parent=None,
+    )
+
+    dlg._model = ParameterCompositeModel(["SC_PWaveAxial"], [])
+    dlg._rebuild_param_table()
+
+    row_by_name = {
+        dlg._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(dlg._param_table.rowCount())
+    }
+    shape_row = row_by_name["shape_factor_a"]
+    type_combo = dlg._param_table.cellWidget(shape_row, 4)
+
+    assert type_combo is not None
+    assert type_combo.currentText() == "Fixed"
+    assert dlg._fit.ranges[0].parameters["shape_factor_a"].fixed is True
+    assert dlg._fit.ranges[0].parameters["shape_factor_a"].value == 0.0
+    assert app is not None
+
+
 def test_cross_group_dialog_shows_inherited_source_in_banner() -> None:
     app = QApplication.instance() or QApplication([])
     dlg = CrossGroupFitDialog(

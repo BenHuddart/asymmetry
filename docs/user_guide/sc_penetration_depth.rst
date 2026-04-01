@@ -89,46 +89,51 @@ Gauss-Legendre quadrature and enforces stable limits
 Gap-Amplitude Approximations
 ----------------------------
 
-The code uses the Carrington-Manzano approximation [2]
+The implementation does not apply one temperature-amplitude law to every
+symmetry.
+
+For isotropic s-wave-derived channels, the reduced gap uses the
+Carrington-Manzano interpolation [2]
 
 .. math::
 
-   \delta_{BCS}(t)=\tanh\left(1.82[1.018(1/t-1)]^{0.51}\right),\quad t=T/T_c,
+    \delta_{CM}(t)=\tanh\left(1.82[1.018(1/t-1)]^{0.51}\right),\quad t=T/T_c,
 
-while a common generalized form discussed in the review literature is [1]
+while models with tabulated symmetry-dependent weak-coupling shape factors use
+the generalized Gross-style form discussed in the review literature [1]
 
 .. math::
 
-   \Delta_0(T)=\Delta_0(0)
-   \tanh\left[
-   \frac{\pi T_c}{\Delta_0(0)}\sqrt{a\left(\frac{T_c}{T}-1\right)}
-   \right].
+    \delta_{gen}(t)=\tanh\left[
+    \frac{\pi}{\Delta_0(0)/(k_B T_c)}\sqrt{a\left(\frac{1}{t}-1\right)}
+    \right],\quad t=T/T_c.
 
-Representative weak-coupling values from Ref. [1]:
+This reduced form is algebraically equivalent to the review expression once
+energies are written in units of :math:`k_B T_c`.
 
-.. list-table:: Symmetry-Dependent Reference Parameters
-   :header-rows: 1
+The current code paths are:
 
-   * - Symmetry
-     - :math:`g(\mathbf{k})`
-     - :math:`\Delta_0(0)/(k_B T_c)`
-     - :math:`a`
-   * - Isotropic s-wave
-     - :math:`1`
-     - 1.76
-     - 1.0
-   * - :math:`d_{x^2-y^2}`
-     - :math:`\cos(2\phi)`
-     - 2.14
-     - :math:`4/3`
-   * - s+g
-     - :math:`(1-\sin^4\theta\cos 4\phi)/2`
-     - 2.77
-     - 2.0
-   * - Nonmonotonic d-wave
-     - :math:`1.43\cos 2\phi + 0.43\cos 6\phi`
-     - 1.19
-     - 0.38
+- Isotropic s-wave, alpha model, and s-wave channels in two-gap models:
+   :math:`\Delta_0(0)/(k_B T_c)=1.764`, Carrington-Manzano.
+- d-wave and nonmonotonic d-wave channels:
+   default :math:`\Delta_0(0)/(k_B T_c)=2.14`, generalized form with
+   :math:`a=4/3`.
+- extended s-wave channel (implemented with :math:`g(\phi)=\cos(2\phi)` or
+  :math:`|cos(2\phi)|`):
+   default :math:`\Delta_0(0)/(k_B T_c)=2.14`, generalized form with
+   :math:`a=4/3`.
+- s+g channel:
+   default :math:`\Delta_0(0)/(k_B T_c)=2.77`, generalized form with
+   :math:`a=2`.
+- Anisotropic s-wave and p-wave examples:
+   model-dependent gap ratio; use the generalized form only when the user
+   supplies a positive ``shape_factor_a``. Otherwise these channels fall back to
+   the Carrington-Manzano interpolation.
+
+In the GUI, ``shape_factor_a`` may be left at ``0`` to indicate that no
+symmetry-specific weak-coupling value is being supplied. A positive fixed value
+uses the generalized amplitude law directly, while a positive free value allows
+the fit to determine :math:`a`.
 
 Model Selection At A Glance
 ---------------------------
@@ -212,7 +217,10 @@ Anisotropic s-wave (cos4)
    g(\phi)=1+a\cos(4\phi).
 
 Use when an s-wave baseline is too rigid but a strict nodal d-wave model is
-not yet justified. For :math:`|a|<1` the model remains nodeless.
+not yet justified. For :math:`|a|<1` the model remains nodeless. If
+``shape_factor_a`` is left at ``0``, the model uses the Carrington-Manzano
+temperature dependence; if ``shape_factor_a > 0``, it switches to the
+generalized weak-coupling reduced-gap law with that value.
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_anisotropic_s_cos4
    :no-index:
@@ -252,17 +260,28 @@ cuprate-like nonmonotonic form is physically plausible [1].
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_nonmonotonic_d
    :no-index:
 
-Extended s-wave and p-wave examples
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Extended s-wave
+^^^^^^^^^^^^^^^
 
-These are phenomenological alternatives for anisotropic or unconventional
-scenarios when domain-specific theory suggests them.
+The extended-s channel is implemented from the :math:`\cos(2\phi)` basis
+(:math:`\cos(2\phi)` or :math:`|\cos(2\phi)|`) and uses the generalized
+weak-coupling reduced-gap form with :math:`a=4/3`, consistent with the same
+angular basis used for the d-wave tabulation in Ref. [1].
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_extended_s
    :no-index:
 
 .. autofunction:: asymmetry.core.fitting.sc.models.sc_extended_s
    :no-index:
+
+p-wave examples
+^^^^^^^^^^^^^^^
+
+These are phenomenological alternatives for anisotropic or unconventional
+scenarios when domain-specific theory suggests them. If ``shape_factor_a`` is
+left at ``0``, the model uses the Carrington-Manzano temperature dependence; if
+``shape_factor_a > 0``, it switches to the generalized weak-coupling
+reduced-gap law with that value.
 
 .. autofunction:: asymmetry.core.fitting.sc.models.rho_p_wave_axial
    :no-index:
@@ -342,6 +361,12 @@ Shared Parameter Semantics
 
 ``a_anis``, ``beta_nm``
    Angular anisotropy controls for anisotropic-s and nonmonotonic-d models.
+
+``shape_factor_a``
+   Optional weak-coupling shape-factor parameter for anisotropic-s and p-wave
+   channels. In the GUI, ``0`` means "not supplied" and keeps the
+   Carrington-Manzano fallback; any positive fixed or free value enables the
+   generalized reduced-gap law.
 
 ``alpha_sc``
    Scaling factor multiplying the weak-coupling s-wave ratio.
@@ -427,4 +452,6 @@ References
 
 [3] J. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. 72, 769 (2000).
 
-[4] R. Prozorov, M. A. Tanatar, R. T. Gordon et al., Physica C 469, 582 (2009).
+[4] R. Prozorov, M. A. Tanatar, R. T. Gordon, C. Martin, H. Kim, V. G. Kogan,
+N. Ni, M. E. Tillman, S. L. Bud'ko, and P. C. Canfield, Physica C 469, 582
+(2009).

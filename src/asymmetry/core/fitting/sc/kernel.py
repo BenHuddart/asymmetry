@@ -9,7 +9,7 @@ Implemented kernel
      \frac{\partial f}{\partial E}\frac{E\,dE}{\sqrt{E^2-\Delta^2(T,k)}}
      \right\rangle_{FS}
 
-with :math:`\Delta(T,k)=\Delta_0\,\delta_{BCS}(T/T_c)\,g(k)`.
+with :math:`\Delta(T,k)=\Delta_0\,\delta(T/T_c)\,g(k)`.
 
 Numerical strategy
 ------------------
@@ -32,6 +32,7 @@ from numpy.typing import NDArray
 from asymmetry.core.fitting.sc.bcs import delta_bcs
 
 ArrayLikeFloat = NDArray[np.float64]
+ReducedGapFunction = Callable[[ArrayLikeFloat], ArrayLikeFloat]
 
 
 @lru_cache(maxsize=16)
@@ -188,6 +189,7 @@ def superfluid_density_2d(
     gap_params: dict[str, float] | None = None,
     n_phi: int = 128,
     n_energy: int = 96,
+    reduced_gap_function: ReducedGapFunction | None = None,
     normalize_g: bool = False,
     normalization: str = "rms",
 ) -> ArrayLikeFloat:
@@ -203,6 +205,9 @@ def superfluid_density_2d(
         Dimensionless gap ratio :math:`\Delta_0/(k_B T_c)`.
     gap_function
         Callable returning angular form factor ``g(phi, **gap_params)``.
+    reduced_gap_function
+        Optional helper returning the reduced temperature dependence
+        :math:`\delta(T/T_c)`. Defaults to :func:`asymmetry.core.fitting.sc.bcs.delta_bcs`.
     normalize_g
         If True, normalize ``|g|`` before integration.
     normalization
@@ -225,6 +230,7 @@ def superfluid_density_2d(
 
     phi, w_phi = _angular_grid_2d(int(n_phi))
     gap_kwargs = gap_params or {}
+    gap_scale = delta_bcs if reduced_gap_function is None else reduced_gap_function
 
     g_raw = np.asarray(gap_function(phi, **gap_kwargs), dtype=float)
     g_abs = np.asarray(np.abs(g_raw), dtype=float)
@@ -235,7 +241,7 @@ def superfluid_density_2d(
         normalization=normalization,
     )
 
-    delta_t = np.abs(float(gap_ratio)) * delta_bcs(t_reduced[mask])
+    delta_t = np.abs(float(gap_ratio)) * np.asarray(gap_scale(t_reduced[mask]), dtype=float)
 
     rho_vals: list[float] = []
     for tt, dt in zip(t_reduced[mask], delta_t, strict=True):
@@ -259,6 +265,7 @@ def superfluid_density_3d(
     n_theta: int = 32,
     n_phi: int = 64,
     n_energy: int = 96,
+    reduced_gap_function: ReducedGapFunction | None = None,
     normalize_g: bool = False,
     normalization: str = "rms",
 ) -> ArrayLikeFloat:
@@ -282,6 +289,9 @@ def superfluid_density_3d(
         Number of Gauss-Legendre nodes in azimuthal angle.
     n_energy
         Number of Gauss-Legendre nodes used in the thermal energy integral.
+    reduced_gap_function
+        Optional helper returning the reduced temperature dependence
+        :math:`\delta(T/T_c)`. Defaults to :func:`asymmetry.core.fitting.sc.bcs.delta_bcs`.
     normalize_g
         If ``True``, normalize :math:`|g|` before integration.
     normalization
@@ -312,6 +322,7 @@ def superfluid_density_3d(
     w_flat = np.asarray(w_mesh.ravel(), dtype=float)
 
     gap_kwargs = gap_params or {}
+    gap_scale = delta_bcs if reduced_gap_function is None else reduced_gap_function
     g_raw = np.asarray(gap_function(theta_mesh, phi_mesh, **gap_kwargs), dtype=float)
     g_abs = np.asarray(np.abs(g_raw).ravel(), dtype=float)
     g_eff = _normalize_gap_form_factor(
@@ -321,7 +332,7 @@ def superfluid_density_3d(
         normalization=normalization,
     )
 
-    delta_t = np.abs(float(gap_ratio)) * delta_bcs(t_reduced[mask])
+    delta_t = np.abs(float(gap_ratio)) * np.asarray(gap_scale(t_reduced[mask]), dtype=float)
 
     rho_vals: list[float] = []
     for tt, dt in zip(t_reduced[mask], delta_t, strict=True):
@@ -344,6 +355,7 @@ def superfluid_density(
     gap_params: dict[str, float] | None = None,
     n_phi: int = 128,
     n_energy: int = 96,
+    reduced_gap_function: ReducedGapFunction | None = None,
     normalize_g: bool = False,
     normalization: str = "rms",
 ) -> ArrayLikeFloat:
@@ -360,6 +372,7 @@ def superfluid_density(
         gap_params=gap_params,
         n_phi=n_phi,
         n_energy=n_energy,
+        reduced_gap_function=reduced_gap_function,
         normalize_g=normalize_g,
         normalization=normalization,
     )

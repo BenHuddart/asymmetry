@@ -28,6 +28,14 @@ For ROOT file support:
 
 * uproot >= 5.0
 
+For GLE export support:
+
+* gleplot installed from GitHub:
+
+   .. code-block:: bash
+
+       pip install "gleplot @ git+https://github.com/BenHuddart/gleplot.git"
+
 Installation Methods
 --------------------
 
@@ -42,6 +50,9 @@ From PyPI (Recommended)
    # With GUI support
    pip install asymmetry[gui]
 
+   # With GUI + GLE export support
+   pip install asymmetry[gui,gle]
+
    # With all optional dependencies
    pip install asymmetry[all]
 
@@ -50,9 +61,9 @@ From Source
 
 .. code-block:: bash
 
-   git clone https://github.com/your-org/asymmetry.git
+   git clone https://github.com/BenHuddart/asymmetry.git
    cd asymmetry
-   pip install -e ".[gui,dev]"
+   pip install -c constraints.txt -e ".[gui,gle,dev]"
 
 Development Installation
 ~~~~~~~~~~~~~~~~~~~~~~~~

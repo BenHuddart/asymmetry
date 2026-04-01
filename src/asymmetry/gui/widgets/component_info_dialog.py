@@ -71,7 +71,10 @@ _SC_GAP_MODEL_TEXT: dict[str, str] = {
         "and nodal quasiparticles are expected."
     ),
     "SC_AnisotropicS_Cos4": (
-        "Fourfold anisotropic s-wave model. It is nodeless for |a| < 1 and can develop accidental nodes for larger |a|."
+        "Fourfold anisotropic s-wave model. It is nodeless for |a| < 1 and can develop accidental nodes for larger |a|. "
+        "The optional shape_factor_a parameter controls the generalized weak-coupling reduced-gap law: if "
+        "shape_factor_a is left at 0, the model falls back to the Carrington-Manzano interpolation; if the user sets "
+        "a positive fixed value or allows it to vary, that positive value is used instead."
     ),
     "SC_NonmonotonicD": (
         "Nonmonotonic d-wave extension that mixes harmonics to capture curvature not reproduced by a simple cos(2phi) form."
@@ -80,10 +83,15 @@ _SC_GAP_MODEL_TEXT: dict[str, str] = {
         "Anisotropic singlet s+g form used when pure isotropic s-wave and pure d-wave are both too restrictive."
     ),
     "SC_PWaveAxial": (
-        "Axial p-wave example for unconventional/odd-parity scenarios motivated by symmetry or complementary probes."
+        "Axial p-wave example for unconventional/odd-parity scenarios motivated by symmetry or complementary probes. "
+        "The optional shape_factor_a parameter controls the reduced-gap amplitude law: if shape_factor_a is left at 0, "
+        "the model uses the Carrington-Manzano interpolation; a positive fixed or fitted value switches to the "
+        "generalized weak-coupling form."
     ),
     "SC_ExtendedS": (
-        "Extended-s phenomenology useful for data that sit between simple isotropic s-wave and nodal alternatives."
+        "Extended-s phenomenology useful for data that sit between simple isotropic s-wave and nodal alternatives. "
+        "In this implementation the cos(2phi) basis uses the generalized weak-coupling reduced-gap form with the "
+        "d-wave-like shape factor a = 4/3, rather than the Carrington-Manzano interpolation."
     ),
     "SC_AlphaModel": (
         "Single-gap BCS shape with adjustable coupling strength. The alpha parameter rescales the weak-coupling gap ratio."

@@ -626,7 +626,7 @@ class ModelFitDialog(QDialog):
                 default_val = max(1e-6, default_val)
             elif pname.startswith("D"):
                 default_val = max(1e-6, default_val)
-            params.add(Parameter(name=pname, value=float(default_val)))
+            params.add(Parameter(name=pname, value=float(default_val), fixed=(pname == "shape_factor_a")))
 
         return ModelFitRange(x_min=x_min, x_max=x_max, model=model, parameters=params)
 
@@ -785,7 +785,13 @@ class ModelFitDialog(QDialog):
                 old = fit_range.parameters[pname]
                 new_params.add(Parameter(name=pname, value=old.value, min=old.min, max=old.max, fixed=old.fixed))
             else:
-                new_params.add(Parameter(name=pname, value=float(model.param_defaults[pname])))
+                new_params.add(
+                    Parameter(
+                        name=pname,
+                        value=float(model.param_defaults[pname]),
+                        fixed=(pname == "shape_factor_a"),
+                    )
+                )
         fit_range.parameters = new_params
         fit_range.result = None
 

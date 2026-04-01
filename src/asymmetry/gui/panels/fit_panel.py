@@ -291,6 +291,8 @@ class SingleFitTab(QWidget):
             fix_layout = QHBoxLayout(fix_widget)
             fix_layout.setContentsMargins(0, 0, 0, 0)
             fix_checkbox = QCheckBox()
+            if pname == "shape_factor_a":
+                fix_checkbox.setChecked(True)
             fix_layout.addWidget(fix_checkbox)
             fix_layout.setAlignment(fix_checkbox, Qt.AlignmentFlag.AlignCenter)
             self._param_table.setCellWidget(i, 2, fix_widget)
