@@ -44,6 +44,13 @@ def test_gap_functions_reference_values() -> None:
     np.testing.assert_allclose(g_p, [1.0, np.sqrt(2.0) / 2.0, 0.0], atol=1e-12)
 
 
+def test_s_plus_g_gap_function_reference_values() -> None:
+    theta = np.array([0.0, np.pi / 2.0])
+    phi = np.array([0.0, np.pi / 4.0])
+    g = gaps.s_plus_g(theta, phi)
+    np.testing.assert_allclose(g, [0.5, 1.0], atol=1e-12)
+
+
 def test_anisotropic_s_nodes_depend_on_a_parameter() -> None:
     phi = np.linspace(0.0, 2.0 * np.pi, 2001)
 
@@ -65,13 +72,17 @@ def test_superfluid_density_limit_values() -> None:
 
     rho_s = models.rho_s_wave(temp_arr, Tc=tc)
     rho_d = models.rho_d_wave(temp_arr, Tc=tc)
+    rho_sg = models.rho_s_plus_g(temp_arr, Tc=tc)
 
     assert np.isclose(rho_s[0], 1.0)
     assert np.isclose(rho_d[0], 1.0)
+    assert np.isclose(rho_sg[0], 1.0)
     assert rho_s[-1] == 0.0
     assert rho_d[-1] == 0.0
+    assert rho_sg[-1] == 0.0
     assert np.all((rho_s >= 0.0) & (rho_s <= 1.0))
     assert np.all((rho_d >= 0.0) & (rho_d <= 1.0))
+    assert np.all((rho_sg >= 0.0) & (rho_sg <= 1.0))
 
 
 def test_d_wave_has_stronger_low_t_variation_than_s_wave() -> None:
@@ -147,12 +158,35 @@ def test_sc_components_are_registered_for_temperature_scope() -> None:
         "SC_DWave",
         "SC_AnisotropicS_Cos4",
         "SC_NonmonotonicD",
+        "SC_SPlusG",
         "SC_PWaveAxial",
         "SC_TwoGap_SS",
         "SC_TwoGap_SD",
         "SC_SWave_Q",
+        "SC_SPlusG_Q",
     ]:
         assert required in names
+
+
+def test_sc_s_plus_g_returns_finite_curve() -> None:
+    tc = 28.0
+    temp = np.linspace(0.0, tc, 16)
+    sigma = models.sc_s_plus_g(temp, sigma_0=1.2, Tc=tc, gap_ratio=2.77, sigma_bg=0.03)
+
+    assert sigma.shape == temp.shape
+    assert np.all(np.isfinite(sigma))
+    assert sigma[0] >= sigma[-1]
+
+
+def test_sc_s_plus_g_quadrature_respects_sigma_nm_floor() -> None:
+    tc = 26.0
+    temp = np.linspace(0.0, tc, 16)
+    sigma_nm = 0.11
+    sigma = models.sc_s_plus_g_q(temp, sigma_sc=1.1, sigma_nm=sigma_nm, Tc=tc, gap_ratio=2.77)
+
+    assert sigma.shape == temp.shape
+    assert np.all(np.isfinite(sigma))
+    assert np.all(sigma >= sigma_nm)
 
 
 def test_parameter_composite_sc_component_callable() -> None:

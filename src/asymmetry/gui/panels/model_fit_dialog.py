@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -78,6 +79,62 @@ _PARAM_UNITS = {
 _NON_NEGATIVE_PARAMS = {"D", "D_2D", "D_nD", "D_perp", "lambda_BG", "lambda_0D", "f"}
 _STRICTLY_POSITIVE_PARAMS = {"tau", "B0", "Bwid", "nu", "m"}
 _POSITIVE_EPS = 1e-12
+_SC_COMPONENT_MENU_TITLE = "Superconducting Gap Models"
+
+
+class _ComponentSelectorButton(QPushButton):
+    """Menu-backed component selector with a superconducting submenu."""
+
+    currentTextChanged = Signal(str)
+
+    def __init__(self, component_pool: list[str], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._component_pool = sorted(component_pool)
+        self._current_text = self._component_pool[0] if self._component_pool else ""
+        self.setText(self._current_text or "Select component")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet("text-align: left; padding: 2px 8px;")
+        self.clicked.connect(self._open_component_menu)
+
+    def currentText(self) -> str:
+        return self._current_text
+
+    def setCurrentText(self, name: str) -> None:
+        if name not in self._component_pool:
+            return
+        changed = name != self._current_text
+        self._current_text = name
+        self.setText(name)
+        if changed:
+            self.currentTextChanged.emit(name)
+
+    def _open_component_menu(self) -> None:
+        menu = self._build_component_menu()
+        if menu is None:
+            return
+        menu.exec(self.mapToGlobal(self.rect().bottomLeft()))
+
+    def _build_component_menu(self) -> QMenu | None:
+        if not self._component_pool:
+            return None
+
+        menu = QMenu(self)
+        regular_components = [name for name in self._component_pool if not name.startswith("SC_")]
+        sc_components = [name for name in self._component_pool if name.startswith("SC_")]
+
+        for name in regular_components:
+            action = menu.addAction(name)
+            action.triggered.connect(lambda _checked=False, n=name: self.setCurrentText(n))
+
+        if sc_components:
+            if regular_components:
+                menu.addSeparator()
+            sc_menu = menu.addMenu(_SC_COMPONENT_MENU_TITLE)
+            for name in sc_components:
+                action = sc_menu.addAction(name)
+                action.triggered.connect(lambda _checked=False, n=name: self.setCurrentText(n))
+
+        return menu
 
 
 def _base_param_name(name: str) -> str:
@@ -293,12 +350,11 @@ class ParameterModelBuilderDialog(QDialog):
         op_combo.currentTextChanged.connect(self._update_formula)
         self._table.setCellWidget(row, 0, op_combo)
 
-        comp_combo = QComboBox()
-        comp_combo.addItems(self._component_pool)
+        comp_selector = _ComponentSelectorButton(self._component_pool)
         if component_name and component_name in self._component_pool:
-            comp_combo.setCurrentText(component_name)
-        comp_combo.currentTextChanged.connect(self._update_formula)
-        self._table.setCellWidget(row, 1, comp_combo)
+            comp_selector.setCurrentText(component_name)
+        comp_selector.currentTextChanged.connect(self._update_formula)
+        self._table.setCellWidget(row, 1, comp_selector)
 
         info_btn = QPushButton("Info")
         info_btn.clicked.connect(lambda: self._show_component_info(row))
@@ -347,11 +403,11 @@ class ParameterModelBuilderDialog(QDialog):
         if row < 0 or row >= self._table.rowCount():
             return
 
-        comp_combo = self._table.cellWidget(row, 1)
-        if not isinstance(comp_combo, QComboBox):
+        comp_widget = self._table.cellWidget(row, 1)
+        if not isinstance(comp_widget, (QComboBox, _ComponentSelectorButton)):
             return
 
-        component_name = comp_combo.currentText().strip()
+        component_name = comp_widget.currentText().strip()
         component = PARAMETER_MODEL_COMPONENTS.get(component_name)
         if component is None:
             return
@@ -362,10 +418,10 @@ class ParameterModelBuilderDialog(QDialog):
         operators: list[str] = []
 
         for row in range(self._table.rowCount()):
-            comp_combo = self._table.cellWidget(row, 1)
-            if not isinstance(comp_combo, QComboBox):
+            comp_widget = self._table.cellWidget(row, 1)
+            if not isinstance(comp_widget, (QComboBox, _ComponentSelectorButton)):
                 continue
-            component_names.append(comp_combo.currentText())
+            component_names.append(comp_widget.currentText())
             if row > 0:
                 op_combo = self._table.cellWidget(row, 0)
                 op = op_combo.currentText() if isinstance(op_combo, QComboBox) else "+"

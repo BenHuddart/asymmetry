@@ -2,7 +2,8 @@ Superconducting Penetration Depth Models
 ========================================
 
 This page documents the superconducting sigma(T) models used for TF-muSR
-vortex-state analysis.
+vortex-state analysis and interleaves the core theory with the API for each
+model family.
 
 Scope and Terminology
 ---------------------
@@ -19,22 +20,22 @@ The superconducting workflow is:
 3. Interpret the fitted model in terms of :math:`\rho_s(T)` and optionally
    convert to :math:`\lambda_L(T)`.
 
-Context: sigma(T), lambda(T), and superfluid density
-----------------------------------------------------
+Core Equations
+--------------
 
-In transverse-field muSR on a vortex lattice, the Gaussian relaxation rate
-``sigma`` tracks the second moment of the field distribution. In the London
-limit for a triangular lattice, the superconducting contribution follows
+In the London limit for a triangular vortex lattice,
 
 .. math::
 
    \sigma_{sc}(T) \propto \lambda_L^{-2}(T) \propto \rho_s(T),
 
-where :math:`\lambda_L` is the London penetration depth and
-:math:`\rho_s(T) = \lambda^2(0)/\lambda^2(T)` is normalized superfluid density.
+with normalized superfluid density
 
-The module in :mod:`asymmetry.core.fitting.sc` computes :math:`\rho_s(T)` from
-gap-symmetry models and returns ``sigma(T)`` through either
+.. math::
+
+   \rho_s(T) = \left[\frac{\lambda(0)}{\lambda(T)}\right]^2.
+
+The code returns ``sigma(T)`` through either
 
 .. math::
 
@@ -46,166 +47,289 @@ or the quadrature convention
 
    \sigma^2(T) = \sigma_{sc}^2\,\rho_s^2(T) + \sigma_{nm}^2.
 
-Conventions Implemented in Code
--------------------------------
+The quadrature form is motivated when superconducting and non-superconducting
+linewidth channels are treated as statistically independent Gaussian
+contributions to the field-distribution second moment [3].
 
-- Canonical internal quantity: normalized superfluid density
-
-   .. math::
-
-       \rho_s(T) = \frac{\lambda^2(0)}{\lambda^2(T)}
-       = \frac{\lambda^{-2}(T)}{\lambda^{-2}(0)}.
-
-- Gap factorization:
-
-   .. math::
-
-       \Delta(T,\mathbf{k}) = \Delta_0\,\delta_{BCS}(T/T_c)\,g(\mathbf{k}).
-
-- Angular variable for quasi-2D models: :math:`\phi \in [0, 2\pi)`.
-- 3D optional models average over :math:`(\theta,\phi)` on a sphere.
-- Observables use :math:`|g(\mathbf{k})|` by default, because the quasiparticle
-   excitation energy depends on :math:`|\Delta|`. Signed conventions are
-   available where relevant.
-
-Thermal Kernel
---------------
-
-The implemented kernel is
+The gap is factorized as
 
 .. math::
 
-   \rho_s(T) = 1 + 2\left\langle
+   \Delta(T,\mathbf{k}) = \Delta_0\,\delta(T/T_c)\,g(\mathbf{k}).
+
+Normalized Superfluid-Density Integral
+--------------------------------------
+
+The semiclassical response tensor form used in the literature is [1]
+
+.. math::
+
+   R_{ij}(T) = \frac{e^2}{4\pi^3\hbar c}
+   \int_{FS} dS_k\,\frac{v_{Fi}v_{Fj}}{|v_F|}
+   \left[
+   1 + 2\int_{\Delta(\mathbf{k},T)}^{\infty}
+   \frac{\partial f}{\partial E}
+   \frac{E\,dE}{\sqrt{E^2-\Delta^2(\mathbf{k},T)}}
+   \right].
+
+With :math:`\rho_{ii}(T)=R_{ii}(T)/R_{ii}(0)`, the practical fitting form is
+
+.. math::
+
+   \rho_s(T)=1+2\left\langle
    \int_{\Delta(T,\mathbf{k})}^{\infty}
    \frac{\partial f}{\partial E}
    \frac{E\,dE}{\sqrt{E^2-\Delta^2(T,\mathbf{k})}}
-   \right\rangle_{FS},
+   \right\rangle_{FS}.
 
-with
+The implementation evaluates the energy and angular integrals with
+Gauss-Legendre quadrature and enforces stable limits
+:math:`\rho_s(0)=1`, :math:`\rho_s(T\ge T_c)=0`.
+
+Gap-Amplitude Approximations
+----------------------------
+
+The code uses the Carrington-Manzano approximation [2]
 
 .. math::
 
-   \Delta(T,\mathbf{k}) = \Delta_0\,\delta_{BCS}(T/T_c)\,g(\mathbf{k}).
+   \delta_{BCS}(t)=\tanh\left(1.82[1.018(1/t-1)]^{0.51}\right),\quad t=T/T_c,
 
-The reduced BCS gap :math:`\delta_{BCS}` uses the Carrington-Manzano analytic
-approximation, accurate for fitting workflows and stable near both
-:math:`T=0` and :math:`T=T_c`.
+while a common generalized form discussed in the review literature is [1]
 
-Numerical method
+.. math::
+
+   \Delta_0(T)=\Delta_0(0)
+   \tanh\left[
+   \frac{\pi T_c}{\Delta_0(0)}\sqrt{a\left(\frac{T_c}{T}-1\right)}
+   \right].
+
+Representative weak-coupling values from Ref. [1]:
+
+.. list-table:: Symmetry-Dependent Reference Parameters
+   :header-rows: 1
+
+   * - Symmetry
+     - :math:`g(\mathbf{k})`
+     - :math:`\Delta_0(0)/(k_B T_c)`
+     - :math:`a`
+   * - Isotropic s-wave
+     - :math:`1`
+     - 1.76
+     - 1.0
+   * - :math:`d_{x^2-y^2}`
+     - :math:`\cos(2\phi)`
+     - 2.14
+     - :math:`4/3`
+   * - s+g
+     - :math:`(1-\sin^4\theta\cos 4\phi)/2`
+     - 2.77
+     - 2.0
+   * - Nonmonotonic d-wave
+     - :math:`1.43\cos 2\phi + 0.43\cos 6\phi`
+     - 1.19
+     - 0.38
+
+Model Selection At A Glance
+---------------------------
+
+.. list-table:: Physical Appropriateness Guide
+   :header-rows: 1
+
+   * - Model
+     - Node Structure
+     - Typical Low-T Trend
+     - Use When
+   * - ``SC_SWave``
+     - Fully gapped
+     - Activated/exponential
+     - Baseline nodeless BCS scenario
+   * - ``SC_DWave``
+     - Line nodes
+     - Approximately linear (clean)
+     - Cuprate-like nodal behavior is expected
+   * - ``SC_AnisotropicS_Cos4``
+     - Nodeless for :math:`|a|<1`
+     - Weaker than nodal d-wave
+     - Fourfold anisotropy without committed nodal symmetry
+   * - ``SC_SPlusG``
+     - Strong anisotropy, can be near-nodal
+     - Intermediate between simple s and d
+     - Anisotropic singlet systems not captured by pure d-wave
+   * - ``SC_NonmonotonicD``
+     - d-wave with shifted angular maximum
+     - Can show sub-linear curvature
+     - Electron-doped cuprate phenomenology
+   * - ``SC_TwoGap_SS``
+     - Two nodeless gaps
+     - Curvature from two energy scales
+     - MgB2-style multiband superconductivity [2]
+   * - ``SC_TwoGap_SD``
+     - Mixed nodal and nodeless
+     - Interpolates between s and d signatures
+     - One band appears nodal and another appears nodeless
+
+Superconducting Gap Models
+--------------------------
+
+Isotropic s-wave
 ^^^^^^^^^^^^^^^^
 
-- Energy integral and angular averages are evaluated with Gauss-Legendre
-   quadrature.
-- The implementation explicitly handles limiting cases:
+.. math::
 
-   - :math:`T \to 0`: :math:`\rho_s \to 1`
-   - :math:`T \ge T_c`: :math:`\rho_s = 0`
-   - nodal points where :math:`\Delta(T,\mathbf{k})=0`
+   g(\phi)=1,\qquad \Delta_0(0)/(k_B T_c)\approx 1.764.
 
-- Exponential arguments are clipped for numerical stability.
+Use when low-T behavior is exponentially activated and no nodal signatures are
+required [1].
 
-BCS Gap Temperature Dependence
-------------------------------
+.. autofunction:: asymmetry.core.fitting.sc.models.rho_s_wave
+   :no-index:
 
-The reduced gap helper follows the Carrington-Manzano interpolation:
+.. autofunction:: asymmetry.core.fitting.sc.models.sc_s_wave
+   :no-index:
+
+d_{x^2-y^2} d-wave
+^^^^^^^^^^^^^^^^^^
 
 .. math::
 
-    \delta_{BCS}(t)
-    = \tanh\!\left(1.82\,[1.018(1/t-1)]^{0.51}\right),\quad t=T/T_c.
+   g(\phi)=\cos(2\phi),\qquad \Delta_0(0)/(k_B T_c)\approx 2.14.
 
-The code accepts two equivalent gap-magnitude conventions:
+Use when line nodes are physically expected (for example cuprate-like systems)
+and low-T data are inconsistent with activated behavior [1].
 
-- Dimensionless ratio :math:`\Delta_0/(k_B T_c)` (``gap_ratio``).
-- Gap magnitude in meV (``gap_mev``), converted internally to
-   :math:`\Delta_0/(k_B T_c)`.
+.. autofunction:: asymmetry.core.fitting.sc.models.rho_d_wave
+   :no-index:
 
-This makes literature comparisons straightforward when papers quote either
-ratio values or meV values.
+.. autofunction:: asymmetry.core.fitting.sc.models.sc_d_wave
+   :no-index:
 
-Gap Symmetry Models
--------------------
+Anisotropic s-wave (cos4)
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The following representative models are available as parameter-trend
-components (``x_key='temperature'``):
+.. math::
 
-- ``SC_SWave``: isotropic s-wave, :math:`g(\phi)=1`
-- ``SC_DWave``: nodal d-wave, :math:`g(\phi)=\cos(2\phi)`
-- ``SC_AnisotropicS_Cos4``: :math:`g(\phi)=1+a\cos(4\phi)`
-- ``SC_NonmonotonicD``: :math:`g(\phi)=\beta\cos(2\phi)+(1-\beta)\cos(6\phi)`
-- ``SC_PWaveAxial``: 2D axial p-wave, :math:`g(\phi)=\cos(\phi)`
-- ``SC_ExtendedS``: extended s-wave using :math:`\cos(2\phi)`
-   (signed or absolute-value convention)
-- ``SC_AlphaModel``: alpha-model scaling of weak-coupling s-wave
-- ``SC_TwoGap_SS``: weighted two-gap isotropic model
-- ``SC_TwoGap_SD``: weighted mixed-symmetry model
-- ``SC_SWave_Q`` / ``SC_DWave_Q``: quadrature sigma conventions
+   g(\phi)=1+a\cos(4\phi).
 
-Model-by-model physics interpretation
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Use when an s-wave baseline is too rigid but a strict nodal d-wave model is
+not yet justified. For :math:`|a|<1` the model remains nodeless.
 
-``SC_SWave``
-   :math:`g(\phi)=1`, fully gapped. Low-temperature behavior is exponentially
-   activated.
+.. autofunction:: asymmetry.core.fitting.sc.models.rho_anisotropic_s_cos4
+   :no-index:
 
-``SC_DWave``
-   :math:`g(\phi)=\cos(2\phi)`, line nodes. Low-temperature behavior is
-   stronger and approximately power-law/linear in clean limits.
+.. autofunction:: asymmetry.core.fitting.sc.models.sc_anisotropic_s_cos4
+   :no-index:
 
-``SC_AnisotropicS_Cos4``
-   :math:`g(\phi)=1+a\cos(4\phi)`.
-   Nodeless for :math:`|a|<1`; accidental nodes may appear for
-   :math:`|a|\ge 1`.
+s+g anisotropic singlet
+^^^^^^^^^^^^^^^^^^^^^^^
 
-``SC_NonmonotonicD``
-   :math:`g(\phi)=\beta\cos(2\phi)+(1-\beta)\cos(6\phi)`.
-   Useful when simple monotonic d-wave does not capture angular anisotropy.
+.. math::
 
-``SC_PWaveAxial``
-   2D p-wave example :math:`g(\phi)=\cos(\phi)`.
+   g(\theta,\phi)=\frac{1-\sin^4\theta\cos(4\phi)}{2}.
 
-``SC_ExtendedS``
-   Based on :math:`\cos(2\phi)`, with signed or absolute-value convention.
+Use when strong anisotropy is indicated but pure
+:math:`d_{x^2-y^2}` does not capture the observed shape [1].
 
-``SC_AlphaModel``
-   Isotropic model that scales weak-coupling s-wave by ``alpha_sc``:
-   :math:`\Delta_0/(k_B T_c)=\alpha_{sc}\times 1.764`.
+.. autofunction:: asymmetry.core.fitting.sc.models.rho_s_plus_g
+   :no-index:
 
-``SC_TwoGap_SS`` and ``SC_TwoGap_SD``
-   Weighted sums:
+.. autofunction:: asymmetry.core.fitting.sc.models.sc_s_plus_g
+   :no-index:
 
-   .. math::
-
-      \rho_s(T)=w\,\rho_1(T)+(1-w)\,\rho_2(T),\quad 0\le w\le 1.
-
-   ``SC_TwoGap_SS`` uses two isotropic gaps; ``SC_TwoGap_SD`` mixes isotropic
-   and d-wave bands.
-
-``SC_SWave_Q`` / ``SC_DWave_Q``
-   Quadrature convention for combining superconducting and nuclear
-   contributions.
-
-Node behavior notes
+Nonmonotonic d-wave
 ^^^^^^^^^^^^^^^^^^^
 
-- ``SC_SWave`` is fully gapped.
-- ``SC_DWave`` has line nodes and stronger low-T variation.
-- ``SC_AnisotropicS_Cos4`` is nodeless for :math:`|a|<1`, and can develop
-  accidental nodes for :math:`|a|\ge 1`.
-- Mixed and two-gap models interpolate between constituent behaviors through
-  weight ``w``.
+.. math::
 
-Parameter Semantics
--------------------
+   g(\phi)=\beta\cos(2\phi)+(1-\beta)\cos(6\phi).
+
+Use when monotonic d-wave cannot reproduce curvature and an electron-doped
+cuprate-like nonmonotonic form is physically plausible [1].
+
+.. autofunction:: asymmetry.core.fitting.sc.models.rho_nonmonotonic_d
+   :no-index:
+
+.. autofunction:: asymmetry.core.fitting.sc.models.sc_nonmonotonic_d
+   :no-index:
+
+Extended s-wave and p-wave examples
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+These are phenomenological alternatives for anisotropic or unconventional
+scenarios when domain-specific theory suggests them.
+
+.. autofunction:: asymmetry.core.fitting.sc.models.rho_extended_s
+   :no-index:
+
+.. autofunction:: asymmetry.core.fitting.sc.models.sc_extended_s
+   :no-index:
+
+.. autofunction:: asymmetry.core.fitting.sc.models.rho_p_wave_axial
+   :no-index:
+
+.. autofunction:: asymmetry.core.fitting.sc.models.sc_p_wave_axial
+   :no-index:
+
+.. autofunction:: asymmetry.core.fitting.sc.models.rho_p_wave_polar_3d
+   :no-index:
+
+MgB2-style two-gap weighted sums
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The standard multiband weighted-sum form is [2]
+
+.. math::
+
+   \rho_{tot}(T)=w\rho_1(T)+(1-w)\rho_2(T),\qquad 0\le w\le 1.
+
+For ``SC_TwoGap_SS`` both channels are isotropic s-wave. For ``SC_TwoGap_SD``
+one channel is isotropic s-wave and one is d-wave.
+
+.. autofunction:: asymmetry.core.fitting.sc.models.sc_two_gap_ss
+   :no-index:
+
+.. autofunction:: asymmetry.core.fitting.sc.models.sc_two_gap_sd
+   :no-index:
+
+Alpha-model and quadrature conventions
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``SC_AlphaModel`` rescales the weak-coupling s-wave ratio,
+:math:`\Delta_0/(k_B T_c)=\alpha_{sc}\times 1.764`.
+
+``SC_SWave_Q`` and ``SC_DWave_Q`` use
+
+.. math::
+
+   \sigma(T)=\sqrt{(\sigma_{sc}\rho_s(T))^2+\sigma_{nm}^2}.
+
+Use quadrature models when the non-superconducting linewidth contribution is
+best represented as an independent Gaussian channel that combines at the
+second-moment level rather than by direct addition.
+
+.. autofunction:: asymmetry.core.fitting.sc.models.sc_alpha_model
+   :no-index:
+
+.. autofunction:: asymmetry.core.fitting.sc.models.sc_s_wave_q
+   :no-index:
+
+.. autofunction:: asymmetry.core.fitting.sc.models.sc_d_wave_q
+   :no-index:
+
+.. autofunction:: asymmetry.core.fitting.sc.models.sc_s_plus_g_q
+   :no-index:
+
+Shared Parameter Semantics
+--------------------------
 
 ``sigma_0``
-   Superconducting scale factor at :math:`T=0` in additive models.
+   Additive superconducting scale in :math:`\mu s^{-1}`.
 
 ``sigma_bg``
-   Additive non-superconducting background term in :math:`\mu s^{-1}`.
+   Additive background term in :math:`\mu s^{-1}`.
 
 ``sigma_sc``, ``sigma_nm``
-   Superconducting and nuclear terms in quadrature models.
+   Superconducting and normal/nuclear terms in the quadrature convention.
 
 ``Tc``
    Critical temperature in K.
@@ -214,13 +338,26 @@ Parameter Semantics
    Dimensionless :math:`\Delta_0/(k_B T_c)` values.
 
 ``weight``
-   Band weight with physical bounds :math:`0\le w\le 1`.
+   Band weight constrained to :math:`0\le w\le 1`.
 
 ``a_anis``, ``beta_nm``
-   Angular anisotropy parameters for anisotropic-s and nonmonotonic-d forms.
+   Angular anisotropy controls for anisotropic-s and nonmonotonic-d models.
 
 ``alpha_sc``
-   Alpha-model scaling relative to weak-coupling s-wave.
+   Scaling factor multiplying the weak-coupling s-wave ratio.
+
+``signed_gap``
+   Extended-s convention control (signed versus magnitude form).
+
+Info Helpers For Trend Components
+---------------------------------
+
+Each model component shown in parameter-trend fitting (for example
+``SC_SWave``, ``SC_DWave``, ``SC_SPlusG``, ``SC_TwoGap_SS``) has a concise
+physics summary in
+:mod:`asymmetry.core.fitting.parameter_models.PARAMETER_MODEL_COMPONENTS` via
+the ``description`` field. Parameter-level helper text is provided by
+:func:`asymmetry.core.fitting.get_param_info`.
 
 Assumptions and Limitations
 ---------------------------
@@ -228,53 +365,37 @@ Assumptions and Limitations
 The current implementation is intended for practical experimental fitting and
 follows standard approximations:
 
-- London-limit treatment (vortex-lattice field-distribution details are not
-  explicitly re-fit).
+- London-limit treatment.
 - Clean-limit-like thermal kernel without explicit impurity self-energy.
-- Isotropic Fermi-velocity weighting in angular averaging.
+- Isotropic angular weighting by default.
 - No explicit field-dependent nonlinear Meissner corrections.
 
-Interpret fitted parameters in this approximation framework, especially when
-comparing to strongly disordered, strongly anisotropic, or very low-field data.
-
-If your system requires impurity-driven crossovers (for example dirty d-wave
-behavior), treat this as a baseline model and extend the component set.
-
-Practical Fitting Guidance
---------------------------
-
-1. Start with ``SC_SWave`` and ``SC_DWave`` as baseline hypotheses.
-2. Add ``SC_AnisotropicS_Cos4`` when low-T deviations are present but a full
-   nodal model is not required.
-3. Use ``SC_TwoGap_SS`` for known multiband materials (for example MgB2-like
-   behavior).
-4. Use ``SC_TwoGap_SD`` if one band appears nodal and another nodeless.
-5. Apply bounds to keep physically meaningful parameters, for example
-   ``0 <= weight <= 1`` and positive gap ratios.
-6. Compare competing models with reduced :math:`\chi^2`, AIC/BIC-like criteria,
-   and residual structure, not just visual overlap.
-7. Validate limiting behavior of the best-fit model:
-
-   - :math:`\rho_s(0) \approx 1`
-   - :math:`\rho_s(T_c) \approx 0`
-   - expected low-T trend (activated vs nodal power-law)
+Treat fitted parameters accordingly when comparing strongly disordered,
+strongly anisotropic, or very low-field datasets.
 
 Working with lambda(T) and lambda^{-2}(T)
 ------------------------------------------
 
-The trend components fit :math:`\sigma(T)` directly, but the same
-:math:`\rho_s(T)` can be mapped to penetration-depth observables:
+The same :math:`\rho_s(T)` can be mapped to penetration-depth observables:
 
 .. math::
 
-   \lambda^{-2}(T) = \rho_s(T)\,\lambda^{-2}(0),
-   \qquad
-   \lambda(T) = \frac{\lambda(0)}{\sqrt{\rho_s(T)}}.
+   \lambda^{-2}(T)=\rho_s(T)\lambda^{-2}(0),\qquad
+   \lambda(T)=\frac{\lambda(0)}{\sqrt{\rho_s(T)}}.
 
-Helper functions in :mod:`asymmetry.core.fitting.sc.models` provide these
-conversions for post-fit interpretation.
+.. autofunction:: asymmetry.core.fitting.sc.models.rho_to_lambda_inv_sq
+   :no-index:
 
-Example: fit sigma(T) with an s-wave model
+.. autofunction:: asymmetry.core.fitting.sc.models.rho_to_lambda
+   :no-index:
+
+.. autofunction:: asymmetry.core.fitting.sc.models.lambda_inv_sq_from_model
+   :no-index:
+
+.. autofunction:: asymmetry.core.fitting.sc.models.lambda_from_model
+   :no-index:
+
+Example: Fit sigma(T) with an s-wave model
 ------------------------------------------
 
 .. code-block:: python
@@ -293,33 +414,17 @@ Example: fit sigma(T) with an s-wave model
        Parameter("sigma_bg", value=0.0, min=0.0),
    ])
 
-   # Replace y/yerr with sigma(T) extracted from per-run TF-muSR time-domain fits.
    y = model.function(T, sigma_0=1.2, Tc=24.0, gap_ratio=1.9, sigma_bg=0.03)
    yerr = np.full_like(T, 0.02)
-
    result = fit_parameter_model(T, y, yerr, model, params)
-   print(result.success, result.reduced_chi_squared)
-
-Brandt conversion helpers
--------------------------
-
-Use conversion helpers for approximate absolute penetration-depth estimates:
-
-.. code-block:: python
-
-   from asymmetry.core.fitting.sc.constants import sigma_to_lambda_nm
-
-   lambda_nm = sigma_to_lambda_nm(0.8)
-
-The conversion uses the common Brandt proportionality constant for a
-triangular vortex lattice in the London limit. Treat absolute values as model-
-dependent estimates unless your field regime and vortex-lattice conditions are
-well controlled.
 
 References
 ----------
 
-- R. Prozorov and R. W. Giannetta, Supercond. Sci. Technol. 19, R41 (2006).
-- A. Carrington and F. Manzano, Physica C 385, 205 (2003).
-- J. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. 72, 769 (2000).
-- R. Prozorov et al., Phys. Rev. B 78, 224506 (2008) and related 122/1111 studies.
+[1] R. Prozorov and R. W. Giannetta, Supercond. Sci. Technol. 19, R41 (2006).
+
+[2] A. Carrington and F. Manzano, Physica C 385, 205 (2003).
+
+[3] J. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. 72, 769 (2000).
+
+[4] R. Prozorov, M. A. Tanatar, R. T. Gordon et al., Physica C 469, 582 (2009).

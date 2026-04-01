@@ -19,6 +19,8 @@ from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.model_fit_dialog import (
     ModelFitDialog,
     ParameterModelBuilderDialog,
+    _ComponentSelectorButton,
+    _SC_COMPONENT_MENU_TITLE,
     _component_pool_for_context,
     _format_model_param_label,
 )
@@ -261,6 +263,27 @@ def test_parameter_model_builder_has_info_column(qapp: QApplication) -> None:
     assert info_btn.text() == "Info"
 
 
+def test_parameter_model_builder_groups_sc_models_in_submenu(qapp: QApplication) -> None:
+    dialog = ParameterModelBuilderDialog(component_pool=["Linear", "SC_SWave", "SC_DWave"])
+
+    selector = dialog._table.cellWidget(0, 1)
+    assert isinstance(selector, _ComponentSelectorButton)
+
+    menu = selector._build_component_menu()
+    assert menu is not None
+
+    top_actions = menu.actions()
+    assert any(action.text() == "Linear" and action.menu() is None for action in top_actions)
+
+    sc_action = next(
+        (action for action in top_actions if action.menu() is not None and action.text() == _SC_COMPONENT_MENU_TITLE),
+        None,
+    )
+    assert sc_action is not None
+    sc_items = [action.text() for action in sc_action.menu().actions()]
+    assert sc_items == ["SC_DWave", "SC_SWave"]
+
+
 def test_component_info_html_contains_equation_and_parameters() -> None:
     from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
 
@@ -272,3 +295,15 @@ def test_component_info_html_contains_equation_and_parameters() -> None:
     assert "Activation energy" in html_doc
     assert "Availability" not in html_doc
     assert "<i>" in html_doc
+
+
+def test_component_info_html_contains_sc_kernel_and_gap_function() -> None:
+    from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
+
+    html_doc = build_component_info_html(PARAMETER_MODEL_COMPONENTS["SC_AlphaModel"])
+
+    assert "Superfluid-Density Kernel" in html_doc
+    assert "Gap Function / Model Form" in html_doc
+    assert "Measured Linewidth Convention" in html_doc
+    assert "normalized superfluid density" in html_doc
+    assert "Single-gap BCS shape" in html_doc

@@ -262,7 +262,37 @@ def superfluid_density_3d(
     normalize_g: bool = False,
     normalization: str = "rms",
 ) -> ArrayLikeFloat:
-    r"""Compute :math:`\rho_s(T)` for a 3D gap function ``g(theta, phi)``."""
+    r"""Compute :math:`\rho_s(T)` for a 3D gap function ``g(theta, phi)``.
+
+    Parameters
+    ----------
+    t_values
+        Temperature values in K.
+    tc
+        Critical temperature in K.
+    gap_ratio
+        Dimensionless gap ratio :math:`\Delta_0/(k_B T_c)`.
+    gap_function
+        Callable returning angular form factor ``g(theta, phi, **gap_params)``.
+    gap_params
+        Optional keyword arguments forwarded to ``gap_function``.
+    n_theta
+        Number of Gauss-Legendre nodes in polar angle.
+    n_phi
+        Number of Gauss-Legendre nodes in azimuthal angle.
+    n_energy
+        Number of Gauss-Legendre nodes used in the thermal energy integral.
+    normalize_g
+        If ``True``, normalize :math:`|g|` before integration.
+    normalization
+        Either ``"rms"`` or ``"mean_abs"``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Normalized superfluid density clipped to ``[0, 1]`` with limiting values
+        ``rho_s(0)=1`` and ``rho_s(T>=Tc)=0`` imposed for numerical stability.
+    """
     tc_value = float(tc)
     if tc_value <= 0.0:
         raise ValueError("Tc must be > 0")
@@ -317,7 +347,11 @@ def superfluid_density(
     normalize_g: bool = False,
     normalization: str = "rms",
 ) -> ArrayLikeFloat:
-    """Alias for :func:`superfluid_density_2d` with identical semantics."""
+    """Alias for :func:`superfluid_density_2d` with identical semantics.
+
+    This convenience wrapper keeps older call sites concise when only quasi-2D
+    angular averaging is required.
+    """
     return superfluid_density_2d(
         t_values,
         tc=tc,

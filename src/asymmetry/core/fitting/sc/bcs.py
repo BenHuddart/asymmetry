@@ -8,6 +8,15 @@ The key helper returns :math:`\delta_{BCS}(T)=\Delta(T)/\Delta(0)` for use in
 
 This module also resolves gap magnitude conventions between
 ``gap_ratio = Delta0/(k_B Tc)`` and ``gap_mev`` inputs.
+
+The implementation uses the Carrington-Manzano interpolation [2], while the
+user guide also documents the Gross-style approximation [1] commonly used for
+symmetry-dependent weak-coupling parameterizations.
+
+References
+----------
+[1] R. Prozorov and R. W. Giannetta, Supercond. Sci. Technol. 19, R41 (2006).
+[2] A. Carrington and F. Manzano, Physica C 385, 205 (2003).
 """
 
 from __future__ import annotations
@@ -32,6 +41,18 @@ def delta_bcs(t_reduced: NDArray[np.float64] | list[float] | float) -> ArrayLike
     The function is pinned to:
     - delta = 1 at t <= 0
     - delta = 0 at t >= 1
+
+    Notes
+    -----
+    A frequently cited alternative is a Gross-type form [1],
+
+    .. math::
+
+        \Delta_0(T)=\Delta_0(0)\tanh\left[\frac{\pi T_c}{\Delta_0(0)}
+        \sqrt{a\left(\frac{T_c}{T}-1\right)}\right],
+
+    where ``a`` is symmetry-dependent. In practice, the Carrington-Manzano
+    interpolation used here provides stable and accurate fitting behavior.
     """
     t_arr = np.asarray(t_reduced, dtype=float)
     out = np.zeros_like(t_arr, dtype=float)
@@ -52,7 +73,15 @@ def delta_bcs(t_reduced: NDArray[np.float64] | list[float] | float) -> ArrayLike
 
 
 def gap_ratio_from_mev(gap_mev: float, tc: float) -> float:
-    """Convert ``Delta0`` in meV to ``Delta0/(k_B Tc)``."""
+    """Convert ``Delta0`` in meV to ``Delta0/(k_B Tc)``.
+
+    Parameters
+    ----------
+    gap_mev
+        Zero-temperature gap magnitude in meV.
+    tc
+        Critical temperature in K.
+    """
     tc_safe = max(float(tc), 1e-12)
     return float(gap_mev) / (BOLTZMANN_CONSTANT_MEV_PER_K * tc_safe)
 
@@ -63,9 +92,14 @@ def resolve_gap_ratio(
     gap_ratio: float | None = None,
     gap_mev: float | None = None,
 ) -> float:
-    """Resolve gap ratio from either explicit ratio or meV input.
+    r"""Resolve gap ratio from either explicit ratio or meV input.
 
     If both are provided, ``gap_mev`` takes precedence.
+
+    Returns
+    -------
+    float
+        Dimensionless ratio :math:`\Delta_0/(k_B T_c)`.
     """
     if gap_mev is not None:
         return gap_ratio_from_mev(gap_mev=float(gap_mev), tc=float(tc))

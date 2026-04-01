@@ -71,6 +71,10 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
         "Use for non-monotonic d-wave scenarios with mixed angular harmonics in the gap function. "
         "The beta term adjusts the relative weight of harmonics and can capture shape changes in rho(T)."
     ),
+    "SC_SPlusG": (
+        "Use for anisotropic singlet s+g phenomenology when pure isotropic s-wave and pure d-wave are both too restrictive. "
+        "This model captures strong angular modulation while retaining a single superconducting channel."
+    ),
     "SC_PWaveAxial": (
         "Use for candidate odd-parity axial p-wave superconducting states. "
         "Apply when symmetry arguments or complementary probes motivate an axial p-wave gap structure."
@@ -98,6 +102,10 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
     "SC_DWave_Q": (
         "Use when superconducting and normal contributions combine in quadrature with a d-wave kernel. "
         "It captures nodal-gap temperature dependence while preserving quadrature mixing assumptions."
+    ),
+    "SC_SPlusG_Q": (
+        "Use when an s+g anisotropic gap is required and superconducting/non-superconducting linewidth channels "
+        "are modeled as independent Gaussian contributions that add in quadrature."
     ),
 }
 

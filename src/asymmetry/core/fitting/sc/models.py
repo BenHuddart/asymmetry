@@ -23,6 +23,11 @@ Quadrature convention:
 
 Gap magnitude can be supplied either as ``gap_ratio = Delta0/(k_B Tc)`` or as
 ``gap_mev``. If both are supplied, ``gap_mev`` takes precedence.
+
+References
+----------
+[1] R. Prozorov and R. W. Giannetta, Supercond. Sci. Technol. 19, R41 (2006).
+[2] A. Carrington and F. Manzano, Physica C 385, 205 (2003).
 """
 
 from __future__ import annotations
@@ -78,6 +83,15 @@ def rho_s_wave(
         Dimensionless ratio :math:`\Delta_0/(k_B T_c)`.
     gap_mev
         Optional :math:`\Delta_0` in meV. Overrides ``gap_ratio`` when given.
+    n_phi
+        Number of angular quadrature points for Fermi-surface averaging.
+    n_energy
+        Number of Gauss-Legendre nodes for the energy integral.
+
+    Returns
+    -------
+    numpy.ndarray
+        Normalized superfluid density :math:`\rho_s(T)`.
     """
     ratio = resolve_gap_ratio(tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
     return superfluid_density(
@@ -102,7 +116,7 @@ def rho_d_wave(
     r"""Return :math:`\rho_s(T)` for d-wave :math:`g(\phi)=\cos(2\phi)`.
 
     This model has line nodes and therefore stronger low-temperature variation
-    than isotropic s-wave.
+    than isotropic s-wave, typically close to linear-in-T in clean limits [1].
     """
     ratio = resolve_gap_ratio(tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
     return superfluid_density(
@@ -154,7 +168,12 @@ def rho_nonmonotonic_d(
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for nonmonotonic d-wave.
 
-    g(phi)=beta*cos(2phi)+(1-beta)*cos(6phi)
+     .. math::
+
+         g(\phi)=\beta\cos(2\phi)+(1-\beta)\cos(6\phi).
+
+     This form is commonly used as a phenomenological extension when a monotonic
+     :math:`\cos(2\phi)` d-wave is insufficient [1].
     """
     ratio = resolve_gap_ratio(tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
     return superfluid_density(
@@ -237,6 +256,54 @@ def rho_p_wave_polar_3d(
         tc=float(Tc),
         gap_ratio=ratio,
         gap_function=lambda theta, _phi: gaps.line_node_3d(theta),
+        n_theta=n_theta,
+        n_phi=n_phi,
+        n_energy=n_energy,
+    )
+
+
+def rho_s_plus_g(
+    T: NDArray[np.float64] | list[float] | float,
+    *,
+    Tc: float,
+    gap_ratio: float = 2.77,
+    gap_mev: float | None = None,
+    n_theta: int = 24,
+    n_phi: int = 48,
+    n_energy: int = 48,
+) -> ArrayLikeFloat:
+    r"""Return :math:`\rho_s(T)` for s+g-wave anisotropic singlet gap.
+
+    .. math::
+
+       g(\theta,\phi)=\frac{1-\sin^4\theta\cos(4\phi)}{2}.
+
+    The default ``gap_ratio=2.77`` follows the weak-coupling tabulation used
+    in Ref. [1].
+
+    Parameters
+    ----------
+    T
+        Temperature in K.
+    Tc
+        Critical temperature in K.
+    gap_ratio
+        Dimensionless ratio :math:`\Delta_0/(k_B T_c)`.
+    gap_mev
+        Optional :math:`\Delta_0` in meV. Overrides ``gap_ratio`` when given.
+    n_theta
+        Number of polar-angle quadrature points.
+    n_phi
+        Number of azimuthal-angle quadrature points.
+    n_energy
+        Number of Gauss-Legendre nodes for the energy integral.
+    """
+    ratio = resolve_gap_ratio(tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
+    return superfluid_density_3d(
+        T,
+        tc=float(Tc),
+        gap_ratio=ratio,
+        gap_function=gaps.s_plus_g,
         n_theta=n_theta,
         n_phi=n_phi,
         n_energy=n_energy,
@@ -347,6 +414,24 @@ def sc_extended_s(
     return _sigma_additive(rho, sigma_0=sigma_0, sigma_bg=sigma_bg)
 
 
+def sc_s_plus_g(
+    T: NDArray[np.float64] | list[float] | float,
+    sigma_0: float,
+    Tc: float,
+    gap_ratio: float = 2.77,
+    sigma_bg: float = 0.0,
+    gap_mev: float | None = None,
+) -> ArrayLikeFloat:
+    r"""Additive s+g model for measured :math:`\sigma(T)`.
+
+    .. math::
+
+       \sigma(T) = \sigma_0\,\rho_{s+g}(T) + \sigma_{bg}.
+    """
+    rho = rho_s_plus_g(T, Tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
+    return _sigma_additive(rho, sigma_0=sigma_0, sigma_bg=sigma_bg)
+
+
 def sc_alpha_model(
     T: NDArray[np.float64] | list[float] | float,
     sigma_0: float,
@@ -376,7 +461,10 @@ def sc_two_gap_ss(
 
     .. math::
 
-       \rho_s(T) = w\rho_1(T) + (1-w)\rho_2(T),\quad 0\le w\le 1
+         \rho_s(T) = w\rho_1(T) + (1-w)\rho_2(T),\quad 0\le w\le 1.
+
+     This is the standard MgB2-style alpha-model decomposition for multiband
+     superconductors [2].
     """
     w = np.clip(float(weight), 0.0, 1.0)
     rho_1 = rho_s_wave(T, Tc=Tc, gap_ratio=gap_ratio_1)
@@ -410,7 +498,12 @@ def sc_s_wave_q(
     gap_ratio: float = 1.764,
     gap_mev: float | None = None,
 ) -> ArrayLikeFloat:
-    r"""Quadrature s-wave model for measured :math:`\sigma(T)`."""
+    r"""Quadrature s-wave model for measured :math:`\sigma(T)`.
+
+    Use this convention when independent Gaussian broadening channels combine
+    at the second-moment level, motivating
+    :math:`\sigma^2=(\sigma_{sc}\rho_s)^2+\sigma_{nm}^2`.
+    """
     rho = rho_s_wave(T, Tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
     return _sigma_quadrature(rho, sigma_sc=sigma_sc, sigma_nm=sigma_nm)
 
@@ -425,6 +518,24 @@ def sc_d_wave_q(
 ) -> ArrayLikeFloat:
     r"""Quadrature d-wave model for measured :math:`\sigma(T)`."""
     rho = rho_d_wave(T, Tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
+    return _sigma_quadrature(rho, sigma_sc=sigma_sc, sigma_nm=sigma_nm)
+
+
+def sc_s_plus_g_q(
+    T: NDArray[np.float64] | list[float] | float,
+    sigma_sc: float,
+    sigma_nm: float,
+    Tc: float,
+    gap_ratio: float = 2.77,
+    gap_mev: float | None = None,
+) -> ArrayLikeFloat:
+    r"""Quadrature s+g model for measured :math:`\sigma(T)`.
+
+    This is useful when superconducting and non-superconducting linewidth
+    channels are treated as independent Gaussian contributions that add in
+    quadrature.
+    """
+    rho = rho_s_plus_g(T, Tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
     return _sigma_quadrature(rho, sigma_sc=sigma_sc, sigma_nm=sigma_nm)
 
 

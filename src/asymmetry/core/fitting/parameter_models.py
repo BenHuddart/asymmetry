@@ -352,7 +352,7 @@ def _register_superconducting_components() -> None:
         {
             "SC_SWave": ParameterModelComponentDefinition(
                 name="SC_SWave",
-                description="sigma_0 * rho_s(T; s-wave) + sigma_bg",
+                description="Isotropic s-wave (fully gapped): sigma_0*rho_s(T; g=1)+sigma_bg",
                 function=sc_models.sc_s_wave,
                 param_names=["sigma_0", "Tc", "gap_ratio", "sigma_bg"],
                 param_defaults={"sigma_0": 1.0, "Tc": 20.0, "gap_ratio": 1.764, "sigma_bg": 0.0},
@@ -370,7 +370,7 @@ def _register_superconducting_components() -> None:
             ),
             "SC_DWave": ParameterModelComponentDefinition(
                 name="SC_DWave",
-                description="sigma_0 * rho_s(T; d-wave) + sigma_bg",
+                description="d_{x^2-y^2} line-node gap: sigma_0*rho_d(T; g=cos(2phi))+sigma_bg",
                 function=sc_models.sc_d_wave,
                 param_names=["sigma_0", "Tc", "gap_ratio", "sigma_bg"],
                 param_defaults={"sigma_0": 1.0, "Tc": 20.0, "gap_ratio": 2.14, "sigma_bg": 0.0},
@@ -388,7 +388,7 @@ def _register_superconducting_components() -> None:
             ),
             "SC_AnisotropicS_Cos4": ParameterModelComponentDefinition(
                 name="SC_AnisotropicS_Cos4",
-                description="sigma_0 * rho_s(T; g=1+a*cos(4phi)) + sigma_bg",
+                description="Anisotropic s-wave: sigma_0*rho(T; g=1+a*cos(4phi))+sigma_bg",
                 function=sc_models.sc_anisotropic_s_cos4,
                 param_names=["sigma_0", "Tc", "gap_ratio", "a_anis", "sigma_bg"],
                 param_defaults={
@@ -415,7 +415,7 @@ def _register_superconducting_components() -> None:
             ),
             "SC_NonmonotonicD": ParameterModelComponentDefinition(
                 name="SC_NonmonotonicD",
-                description="sigma_0 * rho_s(T; beta*cos(2phi)+(1-beta)*cos(6phi)) + sigma_bg",
+                description="Nonmonotonic d-wave: sigma_0*rho(T; beta*cos(2phi)+(1-beta)*cos(6phi))+sigma_bg",
                 function=sc_models.sc_nonmonotonic_d,
                 param_names=["sigma_0", "Tc", "gap_ratio", "beta_nm", "sigma_bg"],
                 param_defaults={
@@ -442,7 +442,7 @@ def _register_superconducting_components() -> None:
             ),
             "SC_PWaveAxial": ParameterModelComponentDefinition(
                 name="SC_PWaveAxial",
-                description="sigma_0 * rho_s(T; p-wave axial) + sigma_bg",
+                description="2D axial p-wave example: sigma_0*rho_p(T; g=cos(phi))+sigma_bg",
                 function=sc_models.sc_p_wave_axial,
                 param_names=["sigma_0", "Tc", "gap_ratio", "sigma_bg"],
                 param_defaults={"sigma_0": 1.0, "Tc": 20.0, "gap_ratio": 2.0, "sigma_bg": 0.0},
@@ -460,7 +460,7 @@ def _register_superconducting_components() -> None:
             ),
             "SC_ExtendedS": ParameterModelComponentDefinition(
                 name="SC_ExtendedS",
-                description="sigma_0 * rho_s(T; extended s) + sigma_bg",
+                description="Extended s-wave from cos(2phi): sigma_0*rho_ext(T)+sigma_bg",
                 function=sc_models.sc_extended_s,
                 param_names=["sigma_0", "Tc", "gap_ratio", "signed_gap", "sigma_bg"],
                 param_defaults={
@@ -485,9 +485,27 @@ def _register_superconducting_components() -> None:
                 ),
                 scopes=("temperature",),
             ),
+            "SC_SPlusG": ParameterModelComponentDefinition(
+                name="SC_SPlusG",
+                description="s+g anisotropic singlet: sigma_0*rho(T; g=(1-sin^4(theta)cos(4phi))/2)+sigma_bg",
+                function=sc_models.sc_s_plus_g,
+                param_names=["sigma_0", "Tc", "gap_ratio", "sigma_bg"],
+                param_defaults={"sigma_0": 1.0, "Tc": 20.0, "gap_ratio": 2.77, "sigma_bg": 0.0},
+                param_info={
+                    "sigma_0": get_param_info("sigma_0"),
+                    "Tc": get_param_info("Tc"),
+                    "gap_ratio": get_param_info("gap_ratio"),
+                    "sigma_bg": get_param_info("sigma_bg"),
+                },
+                formula_template="{sigma_0}*rho_sg(x; Tc={Tc}, Delta0/kBTc={gap_ratio}) + {sigma_bg}",
+                latex_equation=(
+                    r"\sigma(T) = \sigma_0\,\rho_{s+g}\left(T; T_c, \Delta_0/(k_B T_c)\right) + \sigma_{bg}"
+                ),
+                scopes=("temperature",),
+            ),
             "SC_AlphaModel": ParameterModelComponentDefinition(
                 name="SC_AlphaModel",
-                description="sigma_0 * rho_s(T; alpha model) + sigma_bg",
+                description="Alpha model (scaled s-wave ratio): sigma_0*rho_alpha(T)+sigma_bg",
                 function=sc_models.sc_alpha_model,
                 param_names=["sigma_0", "Tc", "alpha_sc", "sigma_bg"],
                 param_defaults={"sigma_0": 1.0, "Tc": 20.0, "alpha_sc": 1.0, "sigma_bg": 0.0},
@@ -505,7 +523,7 @@ def _register_superconducting_components() -> None:
             ),
             "SC_TwoGap_SS": ParameterModelComponentDefinition(
                 name="SC_TwoGap_SS",
-                description="sigma_0 * [w*rho_1 + (1-w)*rho_2] + sigma_bg (s+s)",
+                description="Two-gap s+s (MgB2-style): sigma_0*[w*rho_1+(1-w)*rho_2]+sigma_bg",
                 function=sc_models.sc_two_gap_ss,
                 param_names=["sigma_0", "Tc", "gap_ratio_1", "gap_ratio_2", "weight", "sigma_bg"],
                 param_defaults={
@@ -534,7 +552,7 @@ def _register_superconducting_components() -> None:
             ),
             "SC_TwoGap_SD": ParameterModelComponentDefinition(
                 name="SC_TwoGap_SD",
-                description="sigma_0 * [w*rho_s + (1-w)*rho_d] + sigma_bg (s+d)",
+                description="Two-gap mixed s+d: sigma_0*[w*rho_s+(1-w)*rho_d]+sigma_bg",
                 function=sc_models.sc_two_gap_sd,
                 param_names=["sigma_0", "Tc", "gap_ratio_s", "gap_ratio_d", "weight", "sigma_bg"],
                 param_defaults={
@@ -563,7 +581,7 @@ def _register_superconducting_components() -> None:
             ),
             "SC_SWave_Q": ParameterModelComponentDefinition(
                 name="SC_SWave_Q",
-                description="sqrt((sigma_sc*rho_s)^2 + sigma_nm^2)",
+                description="Quadrature isotropic s-wave: sqrt((sigma_sc*rho_s)^2 + sigma_nm^2)",
                 function=sc_models.sc_s_wave_q,
                 param_names=["sigma_sc", "sigma_nm", "Tc", "gap_ratio"],
                 param_defaults={"sigma_sc": 1.0, "sigma_nm": 0.1, "Tc": 20.0, "gap_ratio": 1.764},
@@ -581,7 +599,7 @@ def _register_superconducting_components() -> None:
             ),
             "SC_DWave_Q": ParameterModelComponentDefinition(
                 name="SC_DWave_Q",
-                description="sqrt((sigma_sc*rho_d)^2 + sigma_nm^2)",
+                description="Quadrature d-wave: sqrt((sigma_sc*rho_d)^2 + sigma_nm^2)",
                 function=sc_models.sc_d_wave_q,
                 param_names=["sigma_sc", "sigma_nm", "Tc", "gap_ratio"],
                 param_defaults={"sigma_sc": 1.0, "sigma_nm": 0.1, "Tc": 20.0, "gap_ratio": 2.14},
@@ -594,6 +612,26 @@ def _register_superconducting_components() -> None:
                 formula_template="sqrt(({sigma_sc}*rho_d)^2 + {sigma_nm}^2)",
                 latex_equation=(
                     r"\sigma(T) = \sqrt{\left(\sigma_{sc}\rho_d(T)\right)^2 + \sigma_{nm}^2}"
+                ),
+                scopes=("temperature",),
+            ),
+            "SC_SPlusG_Q": ParameterModelComponentDefinition(
+                name="SC_SPlusG_Q",
+                description=(
+                    "Quadrature s+g: sqrt((sigma_sc*rho_s+g)^2 + sigma_nm^2); use when linewidth channels add in quadrature"
+                ),
+                function=sc_models.sc_s_plus_g_q,
+                param_names=["sigma_sc", "sigma_nm", "Tc", "gap_ratio"],
+                param_defaults={"sigma_sc": 1.0, "sigma_nm": 0.1, "Tc": 20.0, "gap_ratio": 2.77},
+                param_info={
+                    "sigma_sc": get_param_info("sigma_sc"),
+                    "sigma_nm": get_param_info("sigma_nm"),
+                    "Tc": get_param_info("Tc"),
+                    "gap_ratio": get_param_info("gap_ratio"),
+                },
+                formula_template="sqrt(({sigma_sc}*rho_sg)^2 + {sigma_nm}^2)",
+                latex_equation=(
+                    r"\sigma(T) = \sqrt{\left(\sigma_{sc}\rho_{s+g}(T)\right)^2 + \sigma_{nm}^2}"
                 ),
                 scopes=("temperature",),
             ),
