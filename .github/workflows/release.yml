@@ -1,0 +1,288 @@
+name: Build and Release Executables
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-macos-intel:
+    name: Build macOS DMG (x86_64)
+    runs-on: macos-13
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: meta
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints.txt -e ".[gui,gle,hdf5,root]"
+          pip install pyinstaller
+
+      - name: Generate macOS icon (.icns)
+        shell: bash
+        run: |
+          mkdir -p build/icons/Asymmetry.iconset
+          SRC="src/asymmetry/resources/logo_512x512.png"
+          ICONSET="build/icons/Asymmetry.iconset"
+
+          sips -z 16 16 "$SRC" --out "$ICONSET/icon_16x16.png" >/dev/null
+          sips -z 32 32 "$SRC" --out "$ICONSET/icon_16x16@2x.png" >/dev/null
+          sips -z 32 32 "$SRC" --out "$ICONSET/icon_32x32.png" >/dev/null
+          sips -z 64 64 "$SRC" --out "$ICONSET/icon_32x32@2x.png" >/dev/null
+          sips -z 128 128 "$SRC" --out "$ICONSET/icon_128x128.png" >/dev/null
+          sips -z 256 256 "$SRC" --out "$ICONSET/icon_128x128@2x.png" >/dev/null
+          sips -z 256 256 "$SRC" --out "$ICONSET/icon_256x256.png" >/dev/null
+          sips -z 512 512 "$SRC" --out "$ICONSET/icon_256x256@2x.png" >/dev/null
+          sips -z 512 512 "$SRC" --out "$ICONSET/icon_512x512.png" >/dev/null
+          sips -z 1024 1024 "$SRC" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
+
+          iconutil -c icns "$ICONSET" -o build/icons/Asymmetry.icns
+
+      - name: Build application with PyInstaller
+        env:
+          PYI_ICON_PATH: ${{ github.workspace }}/build/icons/Asymmetry.icns
+        shell: bash
+        run: pyinstaller --clean --noconfirm packaging/asymmetry.spec
+
+      - name: Smoke-test packaged app
+        shell: bash
+        run: |
+          test -x dist/Asymmetry.app/Contents/MacOS/Asymmetry
+          dist/Asymmetry.app/Contents/MacOS/Asymmetry --smoke-test
+
+      - name: Install DMG packaging tool
+        shell: bash
+        run: brew install create-dmg
+
+      - name: Build DMG
+        shell: bash
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          DMG_PATH="dist/Asymmetry-${VERSION}-macos-x86_64.dmg"
+
+          test -d dist/Asymmetry.app
+
+          create-dmg \
+            --volname "Asymmetry" \
+            --window-pos 200 120 \
+            --window-size 800 420 \
+            --icon-size 100 \
+            --icon "Asymmetry.app" 220 210 \
+            --hide-extension "Asymmetry.app" \
+            --app-drop-link 580 210 \
+            "$DMG_PATH" \
+            "dist/"
+
+      - name: Upload macOS x86_64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: asymmetry-macos-x86_64
+          path: dist/Asymmetry-${{ steps.meta.outputs.version }}-macos-x86_64.dmg
+          if-no-files-found: error
+
+  build-macos-arm:
+    name: Build macOS DMG (arm64)
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: meta
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints.txt -e ".[gui,gle,hdf5,root]"
+          pip install pyinstaller
+
+      - name: Generate macOS icon (.icns)
+        shell: bash
+        run: |
+          mkdir -p build/icons/Asymmetry.iconset
+          SRC="src/asymmetry/resources/logo_512x512.png"
+          ICONSET="build/icons/Asymmetry.iconset"
+
+          sips -z 16 16 "$SRC" --out "$ICONSET/icon_16x16.png" >/dev/null
+          sips -z 32 32 "$SRC" --out "$ICONSET/icon_16x16@2x.png" >/dev/null
+          sips -z 32 32 "$SRC" --out "$ICONSET/icon_32x32.png" >/dev/null
+          sips -z 64 64 "$SRC" --out "$ICONSET/icon_32x32@2x.png" >/dev/null
+          sips -z 128 128 "$SRC" --out "$ICONSET/icon_128x128.png" >/dev/null
+          sips -z 256 256 "$SRC" --out "$ICONSET/icon_128x128@2x.png" >/dev/null
+          sips -z 256 256 "$SRC" --out "$ICONSET/icon_256x256.png" >/dev/null
+          sips -z 512 512 "$SRC" --out "$ICONSET/icon_256x256@2x.png" >/dev/null
+          sips -z 512 512 "$SRC" --out "$ICONSET/icon_512x512.png" >/dev/null
+          sips -z 1024 1024 "$SRC" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
+
+          iconutil -c icns "$ICONSET" -o build/icons/Asymmetry.icns
+
+      - name: Build application with PyInstaller
+        env:
+          PYI_ICON_PATH: ${{ github.workspace }}/build/icons/Asymmetry.icns
+        shell: bash
+        run: pyinstaller --clean --noconfirm packaging/asymmetry.spec
+
+      - name: Smoke-test packaged app
+        shell: bash
+        run: |
+          test -x dist/Asymmetry.app/Contents/MacOS/Asymmetry
+          dist/Asymmetry.app/Contents/MacOS/Asymmetry --smoke-test
+
+      - name: Install DMG packaging tool
+        shell: bash
+        run: brew install create-dmg
+
+      - name: Build DMG
+        shell: bash
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          DMG_PATH="dist/Asymmetry-${VERSION}-macos-arm64.dmg"
+
+          test -d dist/Asymmetry.app
+
+          create-dmg \
+            --volname "Asymmetry" \
+            --window-pos 200 120 \
+            --window-size 800 420 \
+            --icon-size 100 \
+            --icon "Asymmetry.app" 220 210 \
+            --hide-extension "Asymmetry.app" \
+            --app-drop-link 580 210 \
+            "$DMG_PATH" \
+            "dist/"
+
+      - name: Upload macOS arm64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: asymmetry-macos-arm64
+          path: dist/Asymmetry-${{ steps.meta.outputs.version }}-macos-arm64.dmg
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows installer (x64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: meta
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = $tag.Substring(1)
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints.txt -e ".[gui,gle,hdf5,root]"
+          pip install pyinstaller Pillow
+
+      - name: Generate Windows icon (.ico)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build/icons | Out-Null
+          python -c "from PIL import Image; img = Image.open('src/asymmetry/resources/logo_512x512.png'); img.save('build/icons/Asymmetry.ico', sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+
+      - name: Build application with PyInstaller
+        env:
+          PYI_ICON_PATH: ${{ github.workspace }}\build\icons\Asymmetry.ico
+        shell: pwsh
+        run: pyinstaller --clean --noconfirm packaging/asymmetry.spec
+
+      - name: Smoke-test packaged app
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist\Asymmetry\Asymmetry.exe")) {
+            throw "Packaged executable not found at dist\\Asymmetry\\Asymmetry.exe"
+          }
+          & "dist\Asymmetry\Asymmetry.exe" --smoke-test
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: Build NSIS installer
+        shell: pwsh
+        run: |
+          $version = "${{ steps.meta.outputs.version }}"
+          $distDir = "$env:GITHUB_WORKSPACE\dist\Asymmetry"
+          $iconFile = "$env:GITHUB_WORKSPACE\build\icons\Asymmetry.ico"
+          $outputFile = "$env:GITHUB_WORKSPACE\dist\Asymmetry-$version-windows-x64-setup.exe"
+
+          makensis /V2 /DVERSION=$version /DDIST_DIR=$distDir /DICON_FILE=$iconFile /DOUTPUT_FILE=$outputFile packaging\installer.nsi
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: asymmetry-windows-x64
+          path: dist/Asymmetry-${{ steps.meta.outputs.version }}-windows-x64-setup.exe
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    needs:
+      - build-macos-intel
+      - build-macos-arm
+      - build-windows
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Create release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            release-assets/**/*.dmg
+            release-assets/**/*.exe

@@ -157,6 +157,32 @@ python -m pytest
 python -m pytest --cov=src/asymmetry --cov-report=term
 ```
 
+## Executable releases
+
+Executable GUI releases are built in GitHub Actions and attached to GitHub Releases.
+
+- Workflow: [.github/workflows/release.yml](.github/workflows/release.yml)
+- Trigger: push a git tag matching `v*` (for example `v0.1.0`)
+- Runners:
+  - `macos-13` for Intel macOS DMG
+  - `macos-14` for Apple Silicon macOS DMG
+  - `windows-latest` for NSIS installer
+- Packaging:
+  - PyInstaller `onedir` build for fast startup
+  - macOS DMG output per architecture
+  - Windows NSIS installer with desktop/start-menu shortcuts and uninstaller
+
+Release artifacts are built on shared runners and uploaded to the GitHub Release page; executables are not committed to the repository.
+
+### Trigger a release build
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Pre-release tags are also supported (for example `v0.1.0-rc.1`).
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.

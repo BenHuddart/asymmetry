@@ -9,6 +9,7 @@ Launch with::
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -52,6 +53,12 @@ def _load_app_icon() -> QIcon | None:
 
 
 def main() -> None:
+    smoke_test = "--smoke-test" in sys.argv
+    if smoke_test:
+        # Force a headless backend so this check can run on CI runners.
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        sys.argv = [arg for arg in sys.argv if arg != "--smoke-test"]
+
     app = QApplication(sys.argv)
     app.setApplicationName("Asymmetry")
     app.setOrganizationName("Asymmetry")
@@ -63,6 +70,11 @@ def main() -> None:
 
     window = MainWindow()
     window.show()
+
+    if smoke_test:
+        app.processEvents()
+        window.close()
+        return
 
     sys.exit(app.exec())
 
