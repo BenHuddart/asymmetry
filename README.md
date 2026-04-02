@@ -164,7 +164,7 @@ Executable GUI releases are built in GitHub Actions and attached to GitHub Relea
 - Workflow: [.github/workflows/release.yml](.github/workflows/release.yml)
 - Trigger: push a git tag matching `v*` (for example `v0.1.0`)
 - Runners:
-  - `macos-13` for Intel macOS DMG
+  - `macos-15-intel` for Intel macOS DMG
   - `macos-14` for Apple Silicon macOS DMG
   - `windows-latest` for NSIS installer
 - Packaging:

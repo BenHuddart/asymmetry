@@ -15,7 +15,7 @@ concurrency:
 jobs:
   build-macos-intel:
     name: Build macOS DMG (x86_64)
-    runs-on: macos-13
+    runs-on: macos-15-intel
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
