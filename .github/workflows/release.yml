@@ -253,7 +253,25 @@ jobs:
           $iconFile = "$env:GITHUB_WORKSPACE\build\icons\Asymmetry.ico"
           $outputFile = "$env:GITHUB_WORKSPACE\dist\Asymmetry-$version-windows-x64-setup.exe"
 
-          makensis /V2 /DVERSION=$version /DDIST_DIR=$distDir /DICON_FILE=$iconFile /DOUTPUT_FILE=$outputFile packaging\installer.nsi
+          $makensis = (Get-Command makensis -ErrorAction SilentlyContinue).Source
+          if (-not $makensis) {
+            $candidates = @(
+              "$env:ProgramFiles\NSIS\makensis.exe",
+              "${env:ProgramFiles(x86)}\NSIS\makensis.exe",
+              "C:\ProgramData\chocolatey\bin\makensis.exe"
+            )
+            foreach ($candidate in $candidates) {
+              if (Test-Path $candidate) {
+                $makensis = $candidate
+                break
+              }
+            }
+          }
+          if (-not $makensis) {
+            throw "Unable to locate makensis.exe after NSIS installation"
+          }
+
+          & $makensis /V2 /DVERSION=$version /DDIST_DIR=$distDir /DICON_FILE=$iconFile /DOUTPUT_FILE=$outputFile packaging\installer.nsi
 
       - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v4
