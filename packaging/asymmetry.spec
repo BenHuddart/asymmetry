@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 
 
-project_root = Path(SPECPATH).resolve().parent.parent
+# SPECPATH points to the directory containing this spec file.
+project_root = Path(SPECPATH).resolve().parent
 src_dir = project_root / "src"
 entry_script = src_dir / "asymmetry" / "gui" / "app.py"
 resources_dir = src_dir / "asymmetry" / "resources"
