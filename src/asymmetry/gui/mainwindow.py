@@ -1112,13 +1112,49 @@ class MainWindow(QMainWindow):
         if not groups:
             return None
 
+        t0_default = 0
+        if run is not None and getattr(run, "histograms", None):
+            try:
+                t0_default = int(run.histograms[0].t0_bin)
+            except (TypeError, ValueError, IndexError):
+                t0_default = 0
+
+        try:
+            t0_bin = int(grouping.get("t0_bin", t0_default))
+        except (TypeError, ValueError):
+            t0_bin = t0_default
+
+        raw_t_good = grouping.get("t_good_offset")
+        if raw_t_good is None:
+            try:
+                raw_t_good = int(grouping.get("first_good_bin", t0_bin)) - t0_bin
+            except (TypeError, ValueError):
+                raw_t_good = 0
+        try:
+            t_good_offset = max(0, int(raw_t_good))
+        except (TypeError, ValueError):
+            t_good_offset = 0
+
+        first_good_bin = max(0, t0_bin + t_good_offset)
+        try:
+            last_good_bin = int(grouping.get("last_good_bin", 0))
+        except (TypeError, ValueError):
+            last_good_bin = 0
+        try:
+            bin_index_base = 1 if int(grouping.get("bin_index_base", 0)) == 1 else 0
+        except (TypeError, ValueError):
+            bin_index_base = 0
+
         payload = {
             "groups": groups,
             "forward_group": int(grouping.get("forward_group", 1)),
             "backward_group": int(grouping.get("backward_group", 2)),
             "alpha": float(grouping.get("alpha", 1.0)),
-            "first_good_bin": int(grouping.get("first_good_bin", 0)),
-            "last_good_bin": int(grouping.get("last_good_bin", 0)),
+            "t0_bin": t0_bin,
+            "t_good_offset": t_good_offset,
+            "first_good_bin": first_good_bin,
+            "last_good_bin": last_good_bin,
+            "bin_index_base": bin_index_base,
             "bunching_factor": int(grouping.get("bunching_factor", 1)),
             "source_bunching_factor": int(
                 grouping.get("source_bunching_factor", grouping.get("bunching_factor", 1))
@@ -1220,12 +1256,48 @@ class MainWindow(QMainWindow):
         forward_idx = [max(0, int(v) - 1) for v in groups.get(forward_gid, [])]
         backward_idx = [max(0, int(v) - 1) for v in groups.get(backward_gid, [])]
 
-        first_good = int(grouping_result.get("first_good_bin", 0))
         if run.histograms:
-            last_good_default = len(run.histograms[0].counts) - 1
+            max_bin = len(run.histograms[0].counts) - 1
+            t0_default = int(run.histograms[0].t0_bin)
         else:
-            last_good_default = len(dataset.time) - 1
-        last_good = int(grouping_result.get("last_good_bin", last_good_default))
+            max_bin = len(dataset.time) - 1
+            t0_default = int(existing_grouping.get("t0_bin", 0))
+
+        try:
+            t0_bin = int(grouping_result.get("t0_bin", existing_grouping.get("t0_bin", t0_default)))
+        except (TypeError, ValueError):
+            t0_bin = t0_default
+        t0_bin = max(0, min(max_bin, t0_bin))
+
+        raw_t_good_offset = grouping_result.get("t_good_offset")
+        if raw_t_good_offset is None:
+            try:
+                raw_first_good = int(
+                    grouping_result.get(
+                        "first_good_bin",
+                        existing_grouping.get("first_good_bin", t0_bin),
+                    )
+                )
+                raw_t_good_offset = raw_first_good - t0_bin
+            except (TypeError, ValueError):
+                raw_t_good_offset = 0
+        try:
+            t_good_offset = int(raw_t_good_offset)
+        except (TypeError, ValueError):
+            t_good_offset = 0
+        t_good_offset = max(0, min(max_bin - t0_bin, t_good_offset))
+        first_good = t0_bin + t_good_offset
+
+        try:
+            bin_index_base = 1 if int(grouping_result.get("bin_index_base", existing_grouping.get("bin_index_base", 0))) == 1 else 0
+        except (TypeError, ValueError):
+            bin_index_base = 0
+
+        try:
+            last_good_raw = int(grouping_result.get("last_good_bin", max_bin))
+        except (TypeError, ValueError):
+            last_good_raw = max_bin
+        last_good = max(first_good, min(max_bin, last_good_raw))
         if axis_pairs and vector_axis in vector_alphas:
             alpha = float(vector_alphas[vector_axis])
         else:
@@ -1286,8 +1358,11 @@ class MainWindow(QMainWindow):
                 run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run.grouping["alpha"]))
                 run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run.grouping["alpha"]))
                 run.grouping["alpha_z"] = float(vector_alphas.get("P_z", run.grouping["alpha"]))
+            run.grouping["t0_bin"] = t0_bin
+            run.grouping["t_good_offset"] = t_good_offset
             run.grouping["first_good_bin"] = first_good
             run.grouping["last_good_bin"] = last_good
+            run.grouping["bin_index_base"] = bin_index_base
             run.grouping["bunching_factor"] = bunch_factor
             run.grouping["deadtime_correction"] = use_deadtime
             run.grouping["period_mode"] = period_mode
@@ -1321,6 +1396,21 @@ class MainWindow(QMainWindow):
 
         if not isinstance(run.grouping, dict):
             run.grouping = {}
+
+        # Keep histogram time-zero consistent with grouping metadata so edited
+        # t0 values immediately propagate to the displayed time axis.
+        if run.histograms and any(int(hist.t0_bin) != t0_bin for hist in run.histograms):
+            run.histograms = [
+                Histogram(
+                    counts=hist.counts,
+                    bin_width=hist.bin_width,
+                    t0_bin=t0_bin,
+                    good_bin_start=hist.good_bin_start,
+                    good_bin_end=hist.good_bin_end,
+                )
+                for hist in run.histograms
+            ]
+
         if isinstance(grouping_result.get("dead_time_us"), list):
             run.grouping["dead_time_us"] = list(grouping_result.get("dead_time_us", []))
         if "good_frames" in grouping_result:
@@ -1367,8 +1457,11 @@ class MainWindow(QMainWindow):
                 "forward_group": forward_gid,
                 "backward_group": backward_gid,
                 "alpha": float(run_alpha),
+                "t0_bin": t0_bin,
+                "t_good_offset": t_good_offset,
                 "first_good_bin": first_good,
                 "last_good_bin": last_good,
+                "bin_index_base": bin_index_base,
                 "bunching_factor": bunch_factor,
                 "deadtime_correction": use_deadtime,
                 "period_mode": period_mode,

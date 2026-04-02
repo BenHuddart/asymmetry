@@ -329,6 +329,36 @@ class TestMainWindowBasic:
 
         assert applied is True
 
+    def test_apply_grouping_updates_t0_and_t_good_offset(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Applying grouping should persist and apply edited t0/offset controls."""
+        dataset = _make_dataset(7406, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.grouping["bin_index_base"] = 1
+
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "t0_bin": 1,
+            "t_good_offset": 2,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert dataset.run.grouping["t0_bin"] == 1
+        assert dataset.run.grouping["t_good_offset"] == 2
+        assert dataset.run.grouping["first_good_bin"] == 3
+        assert dataset.run.grouping["bin_index_base"] == 1
+        assert all(hist.t0_bin == 1 for hist in dataset.run.histograms)
+
     def test_apply_grouping_wim_without_histograms_updates_bunching(
         self,
         mainwindow: MainWindow,
@@ -453,6 +483,23 @@ class TestMainWindowBasic:
         assert payload["alpha_x"] == pytest.approx(1.05)
         assert payload["alpha_y"] == pytest.approx(1.15)
         assert payload["alpha_z"] == pytest.approx(1.25)
+
+    def test_extract_grouping_overrides_includes_t0_and_t_good_offset(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_dataset(7453, with_grouping=True)
+        assert dataset.run is not None
+        dataset.run.grouping["t0_bin"] = 2
+        dataset.run.grouping["t_good_offset"] = 3
+        dataset.run.grouping["first_good_bin"] = 5
+
+        payload = mainwindow._extract_grouping_overrides(dataset)
+
+        assert payload is not None
+        assert payload["t0_bin"] == 2
+        assert payload["t_good_offset"] == 3
+        assert payload["first_good_bin"] == 5
 
     def test_apply_grouping_vector_axis_falls_back_to_scalar_alpha_when_axis_keys_missing(
         self,

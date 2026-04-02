@@ -45,10 +45,10 @@ exact detector grouping is preserved without re-running the Grouping dialog.
     Detector balance factor.
 
 ``first_good_bin``
-    First bin index included in asymmetry computation.
+    Integer index of the first bin included in asymmetry computation.
 
 ``last_good_bin``
-    Last bin index included in asymmetry computation.
+    Integer index of the last bin included in asymmetry computation.
 
 ``bunching_factor``
     Time-bin rebunching factor applied to the dataset.

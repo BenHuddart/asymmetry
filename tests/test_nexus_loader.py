@@ -22,6 +22,10 @@ def _write_v2_file(
     include_corrected_time: bool = False,
     time_zero_us: float = 0.0,
     t0_bin_attr: int | None = None,
+    first_good_bin_attr: int | None = 0,
+    last_good_bin_attr: int | None = 3,
+    first_good_time_us: float | None = None,
+    last_good_time_us: float | None = None,
 ) -> None:
     """Create a synthetic V2 NeXus file used by loader unit tests.
 
@@ -66,8 +70,10 @@ def _write_v2_file(
             )
 
         counts_ds = detector.create_dataset("counts", data=counts)
-        counts_ds.attrs["first_good_bin"] = np.bytes_("0")
-        counts_ds.attrs["last_good_bin"] = np.bytes_("3")
+        if first_good_bin_attr is not None:
+            counts_ds.attrs["first_good_bin"] = np.bytes_(str(first_good_bin_attr))
+        if last_good_bin_attr is not None:
+            counts_ds.attrs["last_good_bin"] = np.bytes_(str(last_good_bin_attr))
         if t0_bin_attr is not None:
             counts_ds.attrs["t0_bin"] = np.int32(t0_bin_attr)
 
@@ -76,6 +82,10 @@ def _write_v2_file(
         if include_corrected_time:
             corrected_time = 0.5 * (raw_time[:-1] + raw_time[1:]) - float(time_zero_us)
             detector.create_dataset("corrected_time", data=np.asarray(corrected_time, dtype=np.float64))
+        if first_good_time_us is not None:
+            detector.create_dataset("first_good_time", data=float(first_good_time_us))
+        if last_good_time_us is not None:
+            detector.create_dataset("last_good_time", data=float(last_good_time_us))
         detector.create_dataset("grouping", data=np.array([1, 2], dtype=np.int32))
         detector.create_dataset("dead_time", data=np.array([0.01, 0.02], dtype=np.float64))
         detector.create_dataset("time_zero", data=np.array([time_zero_us, time_zero_us], dtype=np.float64))
@@ -228,3 +238,105 @@ def test_load_v2_raw_time_fallback_applies_time_zero_correction(tmp_path, loader
     # With 0.02 us bins and time_zero=0.04 us, t0 maps to bin index 2.
     assert ds.run.histograms[0].t0_bin == 2
     assert ds.run.histograms[1].t0_bin == 2
+
+
+def test_load_v2_prefers_bin_attributes_over_explicit_good_times(tmp_path, loader: NexusLoader) -> None:
+    """Keep integer bin metadata canonical when both forms are present."""
+    path = tmp_path / "run_v2_good_times.nxs"
+    _write_v2_file(
+        path,
+        include_corrected_time=True,
+        time_zero_us=0.04,
+        t0_bin_attr=2,
+        first_good_bin_attr=2,
+        last_good_bin_attr=3,
+        first_good_time_us=-0.01,
+        last_good_time_us=0.03,
+    )
+
+    result = loader.load(str(path))
+    assert not isinstance(result, list)
+
+    ds = result
+    assert ds.time == pytest.approx([0.01, 0.03])
+    assert ds.n_points == 2
+    assert ds.run is not None
+    assert ds.run.grouping["first_good_bin"] == 2
+
+
+def test_load_v2_uses_good_times_when_bin_attributes_missing(tmp_path, loader: NexusLoader) -> None:
+    """Use good-time metadata only when integer good-bin attributes are absent."""
+    path = tmp_path / "run_v2_good_times_only.nxs"
+    _write_v2_file(
+        path,
+        include_corrected_time=True,
+        time_zero_us=0.04,
+        t0_bin_attr=2,
+        first_good_bin_attr=None,
+        last_good_bin_attr=None,
+        first_good_time_us=-0.01,
+        last_good_time_us=0.03,
+    )
+
+    result = loader.load(str(path))
+    assert not isinstance(result, list)
+
+    ds = result
+    assert ds.time == pytest.approx([-0.01, 0.01, 0.03])
+    assert ds.n_points == 3
+    assert ds.run is not None
+    assert ds.run.grouping["first_good_bin"] == 0
+
+
+def test_load_v2_normalizes_one_based_bin_attributes(tmp_path, loader: NexusLoader) -> None:
+    """Normalize 1-based V2 t0/first-good bin attributes to array indices."""
+    path = tmp_path / "run_v2_one_based_bins.nxs"
+
+    with h5py.File(path, "w") as f:
+        entry = f.create_group("raw_data_1")
+        entry.create_dataset("definition", data=np.bytes_("muonTD"))
+        entry.create_dataset("IDF_version", data=2)
+        entry.create_dataset("run_number", data=206601)
+        entry.create_dataset("good_frames", data=np.array([50391], dtype=np.int32))
+        entry.create_dataset("title", data=np.bytes_("HIFI Test"))
+        entry.create_dataset("start_time", data=np.bytes_("2026-03-15T10:00:00"))
+        entry.create_dataset("end_time", data=np.bytes_("2026-03-15T11:00:00"))
+        entry.create_dataset("name", data=np.bytes_("HIFI"))
+
+        instrument = entry.create_group("instrument")
+        detector = instrument.create_group("detector_1")
+
+        counts = np.array(
+            [
+                [100, 101, 102, 103, 104, 105, 106, 107, 108, 109],
+                [80, 81, 82, 83, 84, 85, 86, 87, 88, 89],
+            ],
+            dtype=np.float64,
+        )
+        counts_ds = detector.create_dataset("counts", data=counts)
+        counts_ds.attrs["first_good_bin"] = np.int32(8)
+        counts_ds.attrs["last_good_bin"] = np.int32(10)
+        counts_ds.attrs["t0_bin"] = np.int32(2)
+
+        raw_time = np.arange(11, dtype=np.float64) * 0.016
+        corrected_time = 0.5 * (raw_time[:-1] + raw_time[1:]) - 0.024
+        detector.create_dataset("raw_time", data=raw_time)
+        detector.create_dataset("corrected_time", data=corrected_time)
+        detector.create_dataset("grouping", data=np.array([1, 2], dtype=np.int32))
+        detector.create_dataset("dead_time", data=np.array([0.01, 0.02], dtype=np.float64))
+        detector.create_dataset("time_zero", data=np.array([0.024], dtype=np.float64))
+        detector.create_dataset("orientation", data=np.bytes_("L"))
+
+        sample = entry.create_group("sample")
+        sample.create_dataset("temperature", data=12.5)
+        sample.create_dataset("magnetic_field", data=150.0)
+
+    result = loader.load(str(path))
+    assert not isinstance(result, list)
+
+    ds = result
+    assert ds.time[0] == pytest.approx(0.096)
+    assert ds.run is not None
+    assert ds.run.grouping["first_good_bin"] == 7
+    assert ds.run.grouping["bin_index_base"] == 1
+    assert ds.run.histograms[0].t0_bin == 1

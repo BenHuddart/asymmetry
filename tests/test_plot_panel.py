@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 # Import PySide6 conditionally
 pyside6 = pytest.importorskip("PySide6")
@@ -108,7 +111,10 @@ def qapp() -> QApplication:
 @pytest.fixture
 def panel(qapp: QApplication) -> PlotPanel:
     """Create a PlotPanel for testing."""
-    return PlotPanel()
+    widget = PlotPanel()
+    yield widget
+    widget.close()
+    widget.deleteLater()
 
 
 @pytest.fixture
@@ -138,10 +144,49 @@ class TestPlotPanel:
         assert "Auto" not in button_texts
         assert "Auto X" in button_texts
         assert "Auto Y" in button_texts
+        assert "Pan" in button_texts
+        assert "Zoom" in button_texts
 
         labels = panel.findChildren(QLabel)
         label_texts = {lbl.text() for lbl in labels}
         assert "Bunch:" not in label_texts
+
+    def test_pan_and_zoom_buttons_toggle_matplotlib_navigation_mode(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel._set_navigation_mode("none")
+        assert panel._current_navigation_mode() == "none"
+
+        panel._pan_btn.click()
+        assert panel._current_navigation_mode() == "pan"
+        assert panel._pan_btn.isChecked()
+        assert not panel._zoom_btn.isChecked()
+
+        panel._zoom_btn.click()
+        assert panel._current_navigation_mode() == "zoom"
+        assert panel._zoom_btn.isChecked()
+        assert not panel._pan_btn.isChecked()
+
+        panel._zoom_btn.click()
+        assert panel._current_navigation_mode() == "none"
+        assert not panel._pan_btn.isChecked()
+        assert not panel._zoom_btn.isChecked()
+
+    def test_limit_spinboxes_follow_axis_limit_changes(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+
+        panel._ax.set_xlim(1.1, 3.9)
+        panel._ax.set_ylim(-0.15, 0.25)
+        panel._canvas.draw()
+
+        assert panel._x_min.value() == pytest.approx(1.1)
+        assert panel._x_max.value() == pytest.approx(3.9)
+        assert panel._y_min.value() == pytest.approx(-0.15)
+        assert panel._y_max.value() == pytest.approx(0.25)
 
     def test_auto_x_and_auto_y_change_only_their_axes(
         self, panel: PlotPanel, sample_dataset: MuonDataset
@@ -1277,6 +1322,33 @@ class TestPlotPanel:
         assert panel._y_max.isEnabled()
         assert panel._auto_y_btn.isEnabled()
         assert panel._y_min.toolTip() == ""
+
+    def test_switching_from_all_mode_preserves_zoomed_x_limits(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 8.0, 80)
+        e = np.full_like(t, 0.01)
+        datasets_by_axis = {
+            "P_x": [MuonDataset(time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 4101})],
+            "P_y": [MuonDataset(time=t, asymmetry=0.16 * np.exp(-0.25 * t), error=e, metadata={"run_number": 4101})],
+            "P_z": [MuonDataset(time=t, asymmetry=0.12 * np.exp(-0.2 * t), error=e, metadata={"run_number": 4101})],
+        }
+
+        panel._current_polarization_axis = "ALL"
+        panel.plot_vector_subplots(datasets_by_axis)
+        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
+
+        panel._x_min.setValue(1.5)
+        panel._x_max.setValue(5.5)
+        panel._apply_limits()
+
+        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "P_x")
+        panel.plot_dataset(datasets_by_axis["P_x"][0])
+
+        assert panel._x_min.value() == pytest.approx(1.5)
+        assert panel._x_max.value() == pytest.approx(5.5)
+        assert panel._ax.get_xlim() == pytest.approx((1.5, 5.5))
 
     def test_export_vector_all_uses_subplots_sharex_when_available(
         self,

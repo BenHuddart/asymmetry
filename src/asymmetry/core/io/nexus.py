@@ -210,6 +210,7 @@ class NexusLoader(BaseLoader):
             run_number=run_number,
             first_good_bin=first_good_bin,
             last_good_bin=last_good_bin,
+            bin_index_base=0,
             source_file=source_file,
         )
 
@@ -298,9 +299,24 @@ class NexusLoader(BaseLoader):
                 elif t0_bin_array.size == counts_periods[0].shape[0]:
                     t0_bin_values = np.rint(t0_bin_array).astype(np.int64)
 
-        first_good_bin = self._safe_attr_int(counts_ds, "first_good_bin", default=0)
+        first_good_bin_raw: int | None = None
+        last_good_bin_raw: int | None = None
+        if counts_ds is not None:
+            attrs = getattr(counts_ds, "attrs", {})
+            first_good_bin_raw = self._safe_int(attrs.get("first_good_bin"), default=None)
+            last_good_bin_raw = self._safe_int(attrs.get("last_good_bin"), default=None)
+
+        first_good_bin = 0 if first_good_bin_raw is None else int(first_good_bin_raw)
         last_good_bin_default = counts_periods[0].shape[-1] - 1
-        last_good_bin = self._safe_attr_int(counts_ds, "last_good_bin", default=last_good_bin_default)
+        last_good_bin = last_good_bin_default if last_good_bin_raw is None else int(last_good_bin_raw)
+        first_good_time = self._safe_float(
+            self._read_optional(detector, "first_good_time"),
+            default=None,
+        )
+        last_good_time = self._safe_float(
+            self._read_optional(detector, "last_good_time"),
+            default=None,
+        )
 
         metadata_base = {
             "run_number": run_number,
@@ -323,6 +339,23 @@ class NexusLoader(BaseLoader):
                 default=len(counts_periods),
             )
 
+        reference_axis, _ = self._build_time_axis(time_axis_source, n_bins)
+        if axis_needs_time_zero_correction:
+            reference_axis = reference_axis - self._global_time_zero_value(time_zero_values)
+
+        index_offset = self._infer_v2_bin_index_offset(reference_axis, t0_bin_values)
+        if index_offset:
+            if t0_bin_values is not None:
+                t0_bin_values = np.maximum(0, t0_bin_values - index_offset)
+            first_good_bin = max(0, first_good_bin - index_offset)
+            last_good_bin = max(0, last_good_bin - index_offset)
+
+        # Keep integer bin metadata as the canonical source of the good-data
+        # window. Floating-point good-time values are used only as a fallback
+        # when the file does not provide usable integer bin attributes.
+        use_first_good_time = first_good_bin_raw is None and first_good_time is not None
+        use_last_good_time = last_good_bin_raw is None and last_good_time is not None
+
         nexus_fields = self._extract_tree(entry)
         time_series = self._extract_time_series(entry)
         metadata_base["nexus_fields"] = nexus_fields
@@ -342,6 +375,11 @@ class NexusLoader(BaseLoader):
             run_number=run_number,
             first_good_bin=first_good_bin,
             last_good_bin=last_good_bin,
+            first_good_time=first_good_time,
+            last_good_time=last_good_time,
+            use_first_good_time=use_first_good_time,
+            use_last_good_time=use_last_good_time,
+            bin_index_base=int(index_offset),
             source_file=source_file,
         )
 
@@ -361,6 +399,11 @@ class NexusLoader(BaseLoader):
         run_number: int,
         first_good_bin: int,
         last_good_bin: int,
+        first_good_time: float | None = None,
+        last_good_time: float | None = None,
+        use_first_good_time: bool = False,
+        use_last_good_time: bool = False,
+        bin_index_base: int = 0,
         source_file: str,
     ) -> list[MuonDataset]:
         """Construct one :class:`MuonDataset` per period from detector counts.
@@ -423,8 +466,16 @@ class NexusLoader(BaseLoader):
             asymmetry = asymmetry * 100.0
             error = error * 100.0
 
-            lo = max(0, int(first_good_bin))
-            hi = min(len(asymmetry) - 1, int(last_good_bin))
+            lo, hi = self._resolve_good_bin_range(
+                time_axis,
+                len(asymmetry),
+                first_good_bin=first_good_bin,
+                last_good_bin=last_good_bin,
+                first_good_time=first_good_time,
+                last_good_time=last_good_time,
+                use_first_good_time=use_first_good_time,
+                use_last_good_time=use_last_good_time,
+            )
             if lo <= hi:
                 time_axis = time_axis[lo : hi + 1]
                 asymmetry = asymmetry[lo : hi + 1]
@@ -464,6 +515,9 @@ class NexusLoader(BaseLoader):
                     "alpha": alpha,
                     "first_good_bin": int(first_good_bin),
                     "last_good_bin": int(last_good_bin),
+                    "t0_bin": int(histograms[0].t0_bin) if histograms else 0,
+                    "t_good_offset": max(0, int(first_good_bin) - int(histograms[0].t0_bin)) if histograms else 0,
+                    "bin_index_base": 1 if int(bin_index_base) == 1 else 0,
                     "bunching_factor": 1,
                     "deadtime_correction": False,
                     "good_frames": float(good_frames_periods[period_idx - 1]),
@@ -642,6 +696,83 @@ class NexusLoader(BaseLoader):
         if not np.isfinite(candidate):
             return 0.0
         return candidate
+
+    def _resolve_good_bin_range(
+        self,
+        time_axis: np.ndarray,
+        n_bins: int,
+        *,
+        first_good_bin: int,
+        last_good_bin: int,
+        first_good_time: float | None,
+        last_good_time: float | None,
+        use_first_good_time: bool,
+        use_last_good_time: bool,
+    ) -> tuple[int, int]:
+        """Resolve inclusive good-bin limits for a reduced dataset.
+
+        Integer bin metadata is canonical. Floating-point good-time metadata is
+        used only when the corresponding bin attribute is missing.
+        """
+        lo = max(0, int(first_good_bin))
+        hi = min(n_bins - 1, int(last_good_bin))
+        if time_axis.size != n_bins:
+            return lo, hi
+
+        tol = 1e-12
+        if n_bins >= 2:
+            step = float(np.nanmedian(np.diff(time_axis)))
+            if np.isfinite(step) and step != 0.0:
+                tol = max(1e-12, abs(step) * 1e-6)
+
+        if use_first_good_time and first_good_time is not None and np.isfinite(first_good_time):
+            lo = int(np.searchsorted(time_axis, float(first_good_time) - tol, side="left"))
+            lo = max(0, min(lo, n_bins - 1))
+
+        if use_last_good_time and last_good_time is not None and np.isfinite(last_good_time):
+            hi = int(np.searchsorted(time_axis, float(last_good_time) + tol, side="right") - 1)
+            hi = max(0, min(hi, n_bins - 1))
+
+        return lo, hi
+
+    def _infer_v2_bin_index_offset(self, time_axis: np.ndarray, t0_bin_values: np.ndarray | None) -> int:
+        """Infer whether V2 integer bin metadata is 1-based.
+
+        Some files encode ``t0_bin``/``first_good_bin`` using 1-based center-bin
+        numbering. When the explicit ``t0_bin`` points one sample past the value
+        closest to ``t = 0``, normalize all integer bin metadata by one.
+        """
+        if t0_bin_values is None or time_axis.size == 0:
+            return 0
+
+        flat = np.asarray(t0_bin_values, dtype=np.int64).ravel()
+        if flat.size == 0:
+            return 0
+
+        tol = 1e-12
+        if time_axis.size >= 2:
+            step = float(np.nanmedian(np.diff(time_axis)))
+            if np.isfinite(step) and step != 0.0:
+                tol = max(1e-12, abs(step) * 1e-6)
+
+        votes_for_one_based = 0
+        votes_considered = 0
+        for raw_idx in flat[: min(8, flat.size)]:
+            idx = int(raw_idx)
+            if idx <= 0 or idx >= time_axis.size:
+                continue
+
+            current = abs(float(time_axis[idx]))
+            shifted = abs(float(time_axis[idx - 1]))
+            if shifted + tol < current:
+                votes_for_one_based += 1
+                votes_considered += 1
+            elif current + tol < shifted:
+                votes_considered += 1
+
+        if votes_considered > 0 and votes_for_one_based == votes_considered:
+            return 1
+        return 0
 
     def _resolve_grouping(self, grouping_array: np.ndarray, n_detectors: int) -> _GroupingSelection:
         """Resolve forward/backward detector sets from file grouping or defaults."""
@@ -954,7 +1085,7 @@ class NexusLoader(BaseLoader):
         except (TypeError, ValueError):
             return default
 
-    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+    def _safe_float(self, value: Any, default: float | None = 0.0) -> float | None:
         """Best-effort float conversion for HDF5 scalar values."""
         if value is None:
             return default

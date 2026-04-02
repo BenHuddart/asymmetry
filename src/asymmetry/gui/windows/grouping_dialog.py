@@ -200,14 +200,28 @@ class GroupingDialog(QDialog):
         self._alpha_spin.setRange(0.01, 1000.0)
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
 
-        self._first_good_spin = QSpinBox()
         max_bin = self._max_bin_index_for_reference_dataset()
-        self._first_good_spin.setRange(0, max_bin)
-        self._first_good_spin.setValue(int(grouping.get("first_good_bin", 0)))
+        index_base = self._bin_index_base(grouping)
+        default_t0_internal = self._default_t0_bin(grouping, max_bin)
+        default_t_good = self._default_t_good_offset(grouping, default_t0_internal, max_bin)
+
+        self._t0_spin = QSpinBox()
+        self._t0_spin.setRange(index_base, max_bin + index_base)
+        self._t0_spin.setValue(default_t0_internal + index_base)
+
+        self._t_good_offset_spin = QSpinBox()
+        self._t_good_offset_spin.setRange(0, max_bin)
+        self._t_good_offset_spin.setValue(default_t_good)
+        self._t0_spin.valueChanged.connect(self._on_t0_changed)
+        self._on_t0_changed()
 
         self._last_good_spin = QSpinBox()
-        self._last_good_spin.setRange(0, max_bin)
-        self._last_good_spin.setValue(int(grouping.get("last_good_bin", max_bin)))
+        self._last_good_spin.setRange(index_base, max_bin + index_base)
+        default_first_good = min(max_bin, default_t0_internal + default_t_good)
+        default_last_good = int(grouping.get("last_good_bin", max_bin))
+        if default_last_good < default_first_good:
+            default_last_good = default_first_good
+        self._last_good_spin.setValue(default_last_good + index_base)
 
         self._bunch_spin = QSpinBox()
         self._bunch_spin.setRange(1, 10000)
@@ -309,7 +323,8 @@ class GroupingDialog(QDialog):
 
         form.addRow(self._vector_alpha_label, self._vector_alpha_widget)
 
-        form.addRow("First Good Bin", self._first_good_spin)
+        form.addRow("t0 Bin", self._t0_spin)
+        form.addRow("t_good Offset", self._t_good_offset_spin)
         form.addRow("Last Good Bin", self._last_good_spin)
         form.addRow("Bunching Factor", self._bunch_spin)
         form.addRow("Bunching Rules", self._bunch_source_hint)
@@ -414,6 +429,60 @@ class GroupingDialog(QDialog):
             return max(0, self._run.histograms[0].n_bins - 1)
         return max(0, int(self._reference_dataset.n_points) - 1)
 
+    def _bin_index_base(self, grouping: dict[str, Any] | None = None) -> int:
+        """Return displayed index base (0- or 1-based) for bin controls."""
+        if grouping is None:
+            grouping = self._run.grouping if self._run is not None and isinstance(self._run.grouping, dict) else {}
+        raw_base = grouping.get("bin_index_base", 0)
+        try:
+            return 1 if int(raw_base) == 1 else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def _default_t0_bin(self, grouping: dict[str, Any], max_bin: int) -> int:
+        """Return initial internal t0 bin from grouping metadata or histograms."""
+        raw_t0 = grouping.get("t0_bin")
+        if raw_t0 is None and self._run is not None and self._run.histograms:
+            raw_t0 = self._run.histograms[0].t0_bin
+        try:
+            return max(0, min(max_bin, int(raw_t0)))
+        except (TypeError, ValueError):
+            return 0
+
+    def _default_t_good_offset(self, grouping: dict[str, Any], t0_bin: int, max_bin: int) -> int:
+        """Return initial t_good offset from grouping metadata."""
+        raw_offset = grouping.get("t_good_offset")
+        if raw_offset is None:
+            raw_first = grouping.get("first_good_bin", t0_bin)
+            try:
+                raw_offset = int(raw_first) - int(t0_bin)
+            except (TypeError, ValueError):
+                raw_offset = 0
+        try:
+            return max(0, min(max_bin, int(raw_offset)))
+        except (TypeError, ValueError):
+            return 0
+
+    def _on_t0_changed(self) -> None:
+        """Constrain t_good offset so t0 + offset remains in the histogram range."""
+        max_bin = self._max_bin_index_for_reference_dataset()
+        base = self._bin_index_base()
+        t0_bin = max(0, min(max_bin, int(self._t0_spin.value()) - base))
+        max_offset = max(0, max_bin - t0_bin)
+        self._t_good_offset_spin.setMaximum(max_offset)
+        if int(self._t_good_offset_spin.value()) > max_offset:
+            self._t_good_offset_spin.setValue(max_offset)
+
+    def _resolve_good_bin_limits_from_controls(self) -> tuple[int, int, int, int]:
+        """Return validated ``(t0_bin, t_good_offset, first_good_bin, last_good_bin)``."""
+        max_bin = self._max_bin_index_for_reference_dataset()
+        base = self._bin_index_base()
+        t0_bin = max(0, min(max_bin, int(self._t0_spin.value()) - base))
+        t_good_offset = max(0, int(self._t_good_offset_spin.value()))
+        first_good_bin = t0_bin + t_good_offset
+        last_good_bin = max(0, min(max_bin, int(self._last_good_spin.value()) - base))
+        return t0_bin, t_good_offset, first_good_bin, last_good_bin
+
     def _set_combo_to_run(self, combo: QComboBox, run_number: int) -> None:
         """Set reference-run combo to the provided run number if it exists."""
         idx = combo.findData(run_number)
@@ -447,10 +516,20 @@ class GroupingDialog(QDialog):
         )
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
         max_bin = self._max_bin_index_for_reference_dataset()
-        self._first_good_spin.setRange(0, max_bin)
-        self._last_good_spin.setRange(0, max_bin)
-        self._first_good_spin.setValue(int(grouping.get("first_good_bin", 0)))
-        self._last_good_spin.setValue(int(grouping.get("last_good_bin", max_bin)))
+        index_base = self._bin_index_base(grouping)
+        self._t0_spin.setRange(index_base, max_bin + index_base)
+        self._t_good_offset_spin.setRange(0, max_bin)
+        self._last_good_spin.setRange(index_base, max_bin + index_base)
+        default_t0_internal = self._default_t0_bin(grouping, max_bin)
+        default_t_good = self._default_t_good_offset(grouping, default_t0_internal, max_bin)
+        self._t0_spin.setValue(default_t0_internal + index_base)
+        self._t_good_offset_spin.setValue(default_t_good)
+        self._on_t0_changed()
+        default_first_good = min(max_bin, default_t0_internal + default_t_good)
+        default_last_good = int(grouping.get("last_good_bin", max_bin))
+        if default_last_good < default_first_good:
+            default_last_good = default_first_good
+        self._last_good_spin.setValue(default_last_good + index_base)
         requested_bunching = int(grouping.get("bunching_factor", 1))
         if self._enforce_source_bunching and requested_bunching < self._source_bunching_factor:
             requested_bunching = self._source_bunching_factor
@@ -513,6 +592,23 @@ class GroupingDialog(QDialog):
         err = self._validate_bunching_factor(requested)
         if err is not None:
             QMessageBox.warning(self, "Invalid Bunching Factor", err)
+            return
+
+        t0_bin, t_good_offset, first_good_bin, last_good_bin = self._resolve_good_bin_limits_from_controls()
+        max_bin = self._max_bin_index_for_reference_dataset()
+        if first_good_bin > max_bin:
+            QMessageBox.warning(
+                self,
+                "Invalid Good-Data Window",
+                "t_good offset places first good bin beyond the histogram range.",
+            )
+            return
+        if last_good_bin < first_good_bin:
+            QMessageBox.warning(
+                self,
+                "Invalid Good-Data Window",
+                "Last good bin must be greater than or equal to t0 + t_good offset.",
+            )
             return
         self.accept()
 
@@ -818,13 +914,14 @@ class GroupingDialog(QDialog):
         forward_counts = apply_grouping(self._run.histograms, forward_indices)
         backward_counts = apply_grouping(self._run.histograms, backward_indices)
 
+        _t0_bin, _t_good_offset, first_good_bin, last_good_bin = self._resolve_good_bin_limits_from_controls()
         return float(
             estimate_alpha(
-            forward_counts,
-            backward_counts,
-            first_good_bin=int(self._first_good_spin.value()),
-            last_good_bin=int(self._last_good_spin.value()),
-        )
+                forward_counts,
+                backward_counts,
+                first_good_bin=first_good_bin,
+                last_good_bin=last_good_bin,
+            )
         )
 
     def _estimate_alpha_for_axis(self, axis: str) -> None:
@@ -883,6 +980,7 @@ class GroupingDialog(QDialog):
         """Build the current grouping payload from UI controls."""
         forward_gid = int(self._forward_combo.currentData())
         backward_gid = int(self._backward_combo.currentData())
+        t0_bin, t_good_offset, first_good_bin, last_good_bin = self._resolve_good_bin_limits_from_controls()
         vector_mode = bool(self._vector_axis_pairs)
         if vector_mode and "P_z" in self._vector_axis_pairs:
             forward_gid, backward_gid = self._vector_axis_pairs["P_z"]
@@ -903,13 +1001,16 @@ class GroupingDialog(QDialog):
             "forward_indices": list(self._groups.get(forward_gid, [])),
             "backward_indices": list(self._groups.get(backward_gid, [])),
             "alpha": alpha_value,
-            "first_good_bin": int(self._first_good_spin.value()),
-            "last_good_bin": int(self._last_good_spin.value()),
+            "t0_bin": int(t0_bin),
+            "t_good_offset": int(t_good_offset),
+            "first_good_bin": int(first_good_bin),
+            "last_good_bin": int(last_good_bin),
             "bunching_factor": int(self._bunch_spin.value()),
             "source_bunching_factor": int(self._source_bunching_factor),
             "enforce_source_bunching": bool(self._enforce_source_bunching),
             "deadtime_correction": bool(self._deadtime_checkbox.isChecked()),
             "period_mode": self._current_period_mode(),
+            "bin_index_base": self._bin_index_base(),
         } | (
             {
                 "alpha_x": float(self._vector_alpha_spins["P_x"].value()),
@@ -951,6 +1052,10 @@ class GroupingDialog(QDialog):
         with open(path, "r", encoding="utf-8") as handle:
             payload = self.parse_grp(handle.read())
 
+        loaded_index_base = 1 if int(payload.get("bin_index_base", self._bin_index_base())) == 1 else 0
+        if isinstance(self._run.grouping, dict):
+            self._run.grouping["bin_index_base"] = loaded_index_base
+
         loaded_groups = payload.get("groups", {})
         if not isinstance(loaded_groups, dict) or len(loaded_groups) < 2:
             QMessageBox.warning(self, "Invalid Grouping", "Loaded .grp file does not define at least two groups.")
@@ -989,8 +1094,30 @@ class GroupingDialog(QDialog):
             self._vector_alpha_spins["P_z"].setValue(
                 float(payload.get("alpha_z", payload.get("alpha_pz", payload.get("alpha", 1.0))))
             )
-        self._first_good_spin.setValue(int(payload.get("first_good_bin", self._first_good_spin.value())))
-        self._last_good_spin.setValue(int(payload.get("last_good_bin", self._last_good_spin.value())))
+
+        max_bin = self._max_bin_index_for_reference_dataset()
+        index_base = loaded_index_base
+        self._t0_spin.setRange(index_base, max_bin + index_base)
+        self._last_good_spin.setRange(index_base, max_bin + index_base)
+
+        t0_bin = int(payload.get("t0_bin", self._t0_spin.value() - index_base))
+        t0_bin = max(0, min(max_bin, t0_bin))
+        self._t0_spin.setValue(t0_bin + index_base)
+        self._on_t0_changed()
+
+        raw_offset = payload.get("t_good_offset")
+        if raw_offset is None:
+            try:
+                raw_offset = int(payload.get("first_good_bin", t0_bin)) - t0_bin
+            except (TypeError, ValueError):
+                raw_offset = self._t_good_offset_spin.value()
+        t_good_offset = max(0, int(raw_offset))
+        t_good_offset = min(t_good_offset, int(self._t_good_offset_spin.maximum()))
+        self._t_good_offset_spin.setValue(t_good_offset)
+
+        last_good_bin = int(payload.get("last_good_bin", self._last_good_spin.value() - index_base))
+        last_good_bin = max(0, min(max_bin, last_good_bin))
+        self._last_good_spin.setValue(last_good_bin + index_base)
         self._bunch_spin.setValue(int(payload.get("bunching_factor", self._bunch_spin.value())))
         self._deadtime_checkbox.setChecked(bool(payload.get("deadtime_correction", False)))
         self._set_period_mode(str(payload.get("period_mode", PeriodMode.RED)))
@@ -1015,9 +1142,12 @@ class GroupingDialog(QDialog):
             f"alpha_x={float(payload.get('alpha_x', payload.get('alpha', 1.0))):.12g}",
             f"alpha_y={float(payload.get('alpha_y', payload.get('alpha', 1.0))):.12g}",
             f"alpha_z={float(payload.get('alpha_z', payload.get('alpha', 1.0))):.12g}",
+            f"t0_bin={int(payload.get('t0_bin', 0))}",
+            f"t_good_offset={int(payload.get('t_good_offset', int(payload.get('first_good_bin', 0)) - int(payload.get('t0_bin', 0))))}",
             f"first_good_bin={int(payload.get('first_good_bin', 0))}",
             f"last_good_bin={int(payload.get('last_good_bin', 0))}",
             f"bunching_factor={int(payload.get('bunching_factor', 1))}",
+            f"bin_index_base={1 if int(payload.get('bin_index_base', 0)) == 1 else 0}",
             f"deadtime_correction={1 if bool(payload.get('deadtime_correction', False)) else 0}",
             f"period_mode={str(payload.get('period_mode', PeriodMode.RED))}",
         ]
@@ -1045,12 +1175,16 @@ class GroupingDialog(QDialog):
             "forward_group": 1,
             "backward_group": 2,
             "alpha": 1.0,
+            "t0_bin": 0,
+            "t_good_offset": 0,
             "first_good_bin": 0,
             "last_good_bin": 0,
             "bunching_factor": 1,
             "deadtime_correction": False,
             "period_mode": str(PeriodMode.RED),
+            "bin_index_base": 0,
         }
+        saw_t_good_offset = False
 
         for raw in text.splitlines():
             line = raw.strip()
@@ -1071,8 +1205,19 @@ class GroupingDialog(QDialog):
                 payload["groups"][gid] = dets
                 continue
 
-            if key in {"forward_group", "backward_group", "first_good_bin", "last_good_bin", "bunching_factor"}:
+            if key in {
+                "forward_group",
+                "backward_group",
+                "t0_bin",
+                "t_good_offset",
+                "first_good_bin",
+                "last_good_bin",
+                "bunching_factor",
+                "bin_index_base",
+            }:
                 payload[key] = int(float(value))
+                if key == "t_good_offset":
+                    saw_t_good_offset = True
             elif key in {"alpha", "alpha_x", "alpha_y", "alpha_z", "alpha_px", "alpha_py", "alpha_pz"}:
                 payload[key] = float(value)
             elif key == "deadtime_correction":
@@ -1090,6 +1235,13 @@ class GroupingDialog(QDialog):
         payload.setdefault("alpha_x", float(payload.get("alpha_px", alpha_scalar)))
         payload.setdefault("alpha_y", float(payload.get("alpha_py", alpha_scalar)))
         payload.setdefault("alpha_z", float(payload.get("alpha_pz", alpha_scalar)))
+        t0_bin = int(payload.get("t0_bin", 0))
+        if saw_t_good_offset:
+            payload["t_good_offset"] = max(0, int(payload.get("t_good_offset", 0)))
+        else:
+            payload["t_good_offset"] = max(0, int(payload.get("first_good_bin", 0)) - t0_bin)
+        payload["first_good_bin"] = max(0, t0_bin + int(payload.get("t_good_offset", 0)))
+        payload["bin_index_base"] = 1 if int(payload.get("bin_index_base", 0)) == 1 else 0
 
         return payload
 
@@ -1214,12 +1366,16 @@ class WimGroupingDialog(QDialog):
         self._forward_label = QLabel()
         self._backward_label = QLabel()
         self._alpha_label = QLabel()
+        self._t0_label = QLabel()
+        self._t_good_offset_label = QLabel()
         self._first_good_label = QLabel()
         self._last_good_label = QLabel()
         self._deadtime_label = QLabel()
         read_only_form.addRow("Forward Group", self._forward_label)
         read_only_form.addRow("Backward Group", self._backward_label)
         read_only_form.addRow("Alpha", self._alpha_label)
+        read_only_form.addRow("t0 Bin", self._t0_label)
+        read_only_form.addRow("t_good Offset", self._t_good_offset_label)
         read_only_form.addRow("First Good Bin", self._first_good_label)
         read_only_form.addRow("Last Good Bin", self._last_good_label)
         read_only_form.addRow("Deadtime", self._deadtime_label)
@@ -1295,8 +1451,35 @@ class WimGroupingDialog(QDialog):
         self._forward_label.setText(_fmt("forward_group"))
         self._backward_label.setText(_fmt("backward_group"))
         self._alpha_label.setText(_fmt("alpha"))
-        self._first_good_label.setText(_fmt("first_good_bin"))
-        self._last_good_label.setText(_fmt("last_good_bin"))
+        index_base = 1 if int(grouping.get("bin_index_base", 0)) == 1 else 0
+        t0_bin = grouping.get("t0_bin")
+        if t0_bin is None and self._run is not None and self._run.histograms:
+            t0_bin = int(self._run.histograms[0].t0_bin)
+        try:
+            t0_bin_int = int(t0_bin)
+        except (TypeError, ValueError):
+            t0_bin_int = 0
+
+        first_good_bin = grouping.get("first_good_bin")
+        try:
+            first_good_int = int(first_good_bin)
+        except (TypeError, ValueError):
+            first_good_int = t0_bin_int
+
+        t_good_offset = grouping.get("t_good_offset")
+        try:
+            t_good_offset_int = int(t_good_offset) if t_good_offset is not None else first_good_int - t0_bin_int
+        except (TypeError, ValueError):
+            t_good_offset_int = first_good_int - t0_bin_int
+
+        self._t0_label.setText(str(t0_bin_int + index_base))
+        self._t_good_offset_label.setText(str(max(0, t_good_offset_int)))
+        self._first_good_label.setText(str(first_good_int + index_base))
+        last_good_raw = grouping.get("last_good_bin")
+        try:
+            self._last_good_label.setText(str(int(last_good_raw) + index_base))
+        except (TypeError, ValueError):
+            self._last_good_label.setText("-")
         self._deadtime_label.setText("on" if bool(grouping.get("deadtime_correction", False)) else "off")
 
     def _update_bunching_ui_hints(self) -> None:
@@ -1370,6 +1553,13 @@ class WimGroupingDialog(QDialog):
             "forward_group": int(grouping.get("forward_group", 1)),
             "backward_group": int(grouping.get("backward_group", 2)),
             "alpha": float(grouping.get("alpha", 1.0)),
+            "t0_bin": int(grouping.get("t0_bin", 0)),
+            "t_good_offset": int(
+                grouping.get(
+                    "t_good_offset",
+                    int(grouping.get("first_good_bin", 0)) - int(grouping.get("t0_bin", 0)),
+                )
+            ),
             "first_good_bin": int(grouping.get("first_good_bin", 0)),
             "last_good_bin": int(grouping.get("last_good_bin", max(0, self._reference_dataset.n_points - 1))),
             "bunching_factor": int(self._bunch_spin.value()),
@@ -1377,6 +1567,7 @@ class WimGroupingDialog(QDialog):
             "enforce_source_bunching": True,
             "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
             "period_mode": str(grouping.get("period_mode", PeriodMode.RED)),
+            "bin_index_base": 1 if int(grouping.get("bin_index_base", 0)) == 1 else 0,
         }
 
         groups_raw = grouping.get("groups")

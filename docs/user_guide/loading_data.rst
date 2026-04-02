@@ -17,6 +17,11 @@ ISIS Muon NeXus (.nxs, .nexus)
 Asymmetry supports ISIS muon NeXus files (legacy V1 and modern V2), including
 multi-period runs. Multi-period files return a list of ``MuonDataset`` values.
 
+For NeXus good-data windows, Asymmetry treats integer bin metadata as
+canonical (``first_good_bin``, ``last_good_bin``, and ``t0_bin``). When
+``first_good_time`` / ``last_good_time`` are present, they are used only as a
+fallback if the corresponding integer bin attributes are missing.
+
 Grouping behavior by format
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

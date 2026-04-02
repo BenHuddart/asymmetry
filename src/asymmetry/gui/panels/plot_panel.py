@@ -73,12 +73,17 @@ class PlotPanel(QWidget):
         layout.setSpacing(2)
 
         try:
-            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
             from matplotlib.figure import Figure
 
             self._figure = Figure(tight_layout=True)
             self._canvas = FigureCanvasQTAgg(self._figure)
             self._ax = self._figure.add_subplot(111)
+            self._nav_toolbar = NavigationToolbar2QT(self._canvas, self)
+            self._nav_toolbar.hide()
+            self._axis_limit_callback_ids: list[tuple[object, int, int]] = []
+            self._syncing_limits_from_axes = False
+            self._connect_axis_limit_callbacks([self._ax])
             self._ax.set_xlabel("Time (μs)")
             self._ax.set_ylabel("Asymmetry (%)")
 
@@ -93,6 +98,7 @@ class PlotPanel(QWidget):
 
             # Add plot limit controls toolbar
             self._create_limit_controls()
+            self._sync_navigation_buttons()
             layout.addLayout(self._limit_toolbar)
 
             self._alpha_label = QLabel("")
@@ -167,6 +173,7 @@ class PlotPanel(QWidget):
             self._canvas.mpl_connect("button_press_event", self._on_canvas_button_press)
             self._canvas.mpl_connect("motion_notify_event", self._on_canvas_motion_notify)
             self._canvas.mpl_connect("button_release_event", self._on_canvas_button_release)
+            self._canvas.mpl_connect("draw_event", self._on_canvas_draw_event)
         except ImportError:
             layout.addWidget(QLabel("matplotlib not installed — plotting disabled"))
             self._has_mpl = False
@@ -230,6 +237,18 @@ class PlotPanel(QWidget):
         self._auto_y_btn.setMaximumWidth(65)
         row0.addWidget(self._auto_y_btn)
 
+        self._pan_btn = QPushButton("Pan")
+        self._pan_btn.setCheckable(True)
+        self._pan_btn.setMaximumWidth(60)
+        self._pan_btn.clicked.connect(self._on_pan_button_clicked)
+        row0.addWidget(self._pan_btn)
+
+        self._zoom_btn = QPushButton("Zoom")
+        self._zoom_btn.setCheckable(True)
+        self._zoom_btn.setMaximumWidth(60)
+        self._zoom_btn.clicked.connect(self._on_zoom_button_clicked)
+        row0.addWidget(self._zoom_btn)
+
         row0.addStretch()
         self._limit_toolbar.addLayout(row0)
 
@@ -283,6 +302,188 @@ class PlotPanel(QWidget):
         row1.addWidget(self._gle_format_combo)
 
         self._limit_toolbar.addLayout(row1)
+
+    def _current_navigation_mode(self) -> str:
+        """Return active Matplotlib nav mode as ``none``, ``pan``, or ``zoom``."""
+        toolbar = getattr(self, "_nav_toolbar", None)
+        if toolbar is None:
+            return "none"
+
+        mode = getattr(toolbar, "mode", None)
+        if mode is None:
+            return "none"
+
+        name = getattr(mode, "name", None)
+        if isinstance(name, str):
+            lowered = name.lower()
+            if "pan" in lowered:
+                return "pan"
+            if "zoom" in lowered:
+                return "zoom"
+            return "none"
+
+        mode_text = str(mode).strip().lower()
+        if "pan" in mode_text:
+            return "pan"
+        if "zoom" in mode_text:
+            return "zoom"
+        return "none"
+
+    def _sync_navigation_buttons(self) -> None:
+        """Mirror current Matplotlib nav mode on Pan/Zoom toggle buttons."""
+        if not hasattr(self, "_pan_btn") or not hasattr(self, "_zoom_btn"):
+            return
+
+        mode = self._current_navigation_mode()
+        self._pan_btn.blockSignals(True)
+        self._zoom_btn.blockSignals(True)
+        self._pan_btn.setChecked(mode == "pan")
+        self._zoom_btn.setChecked(mode == "zoom")
+        self._pan_btn.blockSignals(False)
+        self._zoom_btn.blockSignals(False)
+
+    def _set_navigation_mode(self, mode: str) -> None:
+        """Activate/deactivate Matplotlib pan/zoom mode."""
+        toolbar = getattr(self, "_nav_toolbar", None)
+        if toolbar is None:
+            self._sync_navigation_buttons()
+            return
+
+        target = mode.lower().strip()
+        current = self._current_navigation_mode()
+
+        if target == "pan":
+            if current == "zoom":
+                toolbar.zoom()
+                current = self._current_navigation_mode()
+            if current != "pan":
+                toolbar.pan()
+        elif target == "zoom":
+            if current == "pan":
+                toolbar.pan()
+                current = self._current_navigation_mode()
+            if current != "zoom":
+                toolbar.zoom()
+        else:
+            if current == "pan":
+                toolbar.pan()
+            elif current == "zoom":
+                toolbar.zoom()
+
+        self._sync_navigation_buttons()
+
+    def _on_pan_button_clicked(self, checked: bool) -> None:
+        """Toggle Matplotlib pan mode from toolbar button."""
+        self._set_navigation_mode("pan" if checked else "none")
+
+    def _on_zoom_button_clicked(self, checked: bool) -> None:
+        """Toggle Matplotlib zoom mode from toolbar button."""
+        self._set_navigation_mode("zoom" if checked else "none")
+
+    def _connect_axis_limit_callbacks(self, axes: list[object]) -> None:
+        """Attach x/y-limit listeners used to mirror interactive nav updates."""
+        self._disconnect_axis_limit_callbacks()
+        self._axis_limit_callback_ids = []
+
+        for axis_obj in axes:
+            callbacks = getattr(axis_obj, "callbacks", None)
+            if callbacks is None:
+                continue
+            connect = getattr(callbacks, "connect", None)
+            if connect is None:
+                continue
+            x_cid = connect("xlim_changed", self._on_axis_limits_changed)
+            y_cid = connect("ylim_changed", self._on_axis_limits_changed)
+            self._axis_limit_callback_ids.append((axis_obj, x_cid, y_cid))
+
+    def _disconnect_axis_limit_callbacks(self) -> None:
+        """Disconnect previously attached x/y-limit listeners."""
+        callback_ids = getattr(self, "_axis_limit_callback_ids", None)
+        if not callback_ids:
+            return
+
+        for axis_obj, x_cid, y_cid in callback_ids:
+            callbacks = getattr(axis_obj, "callbacks", None)
+            disconnect = getattr(callbacks, "disconnect", None)
+            if disconnect is None:
+                continue
+            for cid in (x_cid, y_cid):
+                try:
+                    disconnect(cid)
+                except Exception:
+                    continue
+
+    def _set_limit_spinbox_value(self, spinbox: QDoubleSpinBox, value: float) -> None:
+        """Set a limit spinbox value without signal churn."""
+        spinbox.blockSignals(True)
+        spinbox.setValue(float(value))
+        spinbox.blockSignals(False)
+
+    def _sync_limits_from_axes(self, source_axis: object | None = None) -> None:
+        """Update x/y spinboxes from current Matplotlib axis limits."""
+        if not self._has_mpl or self._syncing_limits_from_axes:
+            return
+
+        self._syncing_limits_from_axes = True
+        try:
+            if self._subplot_axes_by_polarization:
+                axis_obj = None
+                if source_axis in self._subplot_axes_by_polarization.values():
+                    axis_obj = source_axis
+                else:
+                    ordered = self._all_mode_axes_order()
+                    if ordered:
+                        axis_obj = self._subplot_axes_by_polarization.get(ordered[0])
+                    if axis_obj is None:
+                        axis_obj = next(iter(self._subplot_axes_by_polarization.values()), None)
+
+                if axis_obj is None or not hasattr(axis_obj, "get_xlim"):
+                    return
+
+                x0, x1 = axis_obj.get_xlim()
+                self._set_limit_spinbox_value(self._x_min, x0)
+                self._set_limit_spinbox_value(self._x_max, x1)
+
+                for axis_key, subplot_axis in self._subplot_axes_by_polarization.items():
+                    if not hasattr(subplot_axis, "get_ylim"):
+                        continue
+                    y0, y1 = subplot_axis.get_ylim()
+                    lo, hi = (float(y0), float(y1)) if y0 <= y1 else (float(y1), float(y0))
+                    self._y_limits_by_polarization[axis_key] = (lo, hi)
+
+                current_axis = self._current_polarization_axis
+                if current_axis in self._subplot_axes_by_polarization:
+                    current_obj = self._subplot_axes_by_polarization[current_axis]
+                    if hasattr(current_obj, "get_ylim"):
+                        y0, y1 = current_obj.get_ylim()
+                        self._set_limit_spinbox_value(self._y_min, y0)
+                        self._set_limit_spinbox_value(self._y_max, y1)
+                else:
+                    self._sync_y_controls_with_visible_axis()
+                return
+
+            if not hasattr(self._ax, "get_xlim") or not hasattr(self._ax, "get_ylim"):
+                return
+
+            x0, x1 = self._ax.get_xlim()
+            y0, y1 = self._ax.get_ylim()
+            self._set_limit_spinbox_value(self._x_min, x0)
+            self._set_limit_spinbox_value(self._x_max, x1)
+            self._set_limit_spinbox_value(self._y_min, y0)
+            self._set_limit_spinbox_value(self._y_max, y1)
+            self._cache_current_y_limits_for_axis()
+        finally:
+            self._syncing_limits_from_axes = False
+
+    def _on_axis_limits_changed(self, axis_obj) -> None:
+        """Sync limit controls when Matplotlib axes change via pan/zoom."""
+        self._sync_limits_from_axes(source_axis=axis_obj)
+
+    def _on_canvas_draw_event(self, _event) -> None:
+        """Keep nav buttons and limit controls aligned after Matplotlib redraws."""
+        self._sync_navigation_buttons()
+        if self._current_navigation_mode() != "none":
+            self._sync_limits_from_axes()
 
     def _dataset_label_for(self, dataset: MuonDataset) -> str:
         """Return the legend label for *dataset* using the selected label field."""
@@ -638,6 +839,7 @@ class PlotPanel(QWidget):
         """Recreate a single-axis figure when leaving vector-subplot mode."""
         if not self._subplot_axes_by_polarization:
             return
+        self._disconnect_axis_limit_callbacks()
         self._figure.clf()
         self._ax = self._figure.add_subplot(111)
         self._subplot_axes_by_polarization = {}
@@ -772,6 +974,7 @@ class PlotPanel(QWidget):
         self._update_y_limit_controls_for_axis(self._current_polarization_axis)
 
         self._apply_limits()
+        self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
 
     def _alpha_value_for_dataset(self, dataset: MuonDataset) -> float | None:
         """Return the asymmetry alpha value used for *dataset*, if available."""
@@ -1022,6 +1225,7 @@ class PlotPanel(QWidget):
         self._draw_fit_range_artists()
         self._apply_limits()
         self._update_export_enabled()
+        self._connect_axis_limit_callbacks([self._ax])
 
     def plot_dataset(self, dataset: MuonDataset) -> None:
         """Plot a dataset, optionally rebinned according to the bunch factor.
@@ -1132,6 +1336,7 @@ class PlotPanel(QWidget):
         # Apply the limits
         self._apply_limits()
         self._update_export_enabled()
+        self._connect_axis_limit_callbacks([self._ax])
 
     def _apply_limits(self) -> None:
         """Apply the specified axis limits to the plot."""
@@ -1449,6 +1654,8 @@ class PlotPanel(QWidget):
         """Capture left-clicks on fit-range handles for drag/edit."""
         if not self._has_mpl:
             return
+        if self._current_navigation_mode() != "none":
+            return
 
         if event.button == 3:
             ann_idx = self._detect_annotation_hit(event)
@@ -1476,6 +1683,9 @@ class PlotPanel(QWidget):
 
     def _on_canvas_motion_notify(self, event) -> None:
         """Drag the active fit-range handle while the mouse moves."""
+        if self._current_navigation_mode() != "none":
+            return
+
         if (
             self._active_fit_handle is not None
             and event.inaxes == self._ax
@@ -1504,6 +1714,9 @@ class PlotPanel(QWidget):
 
     def _on_canvas_button_release(self, event) -> None:
         """End drag and open numeric editor on click without drag."""
+        if self._current_navigation_mode() != "none":
+            return
+
         if self._active_fit_handle is not None:
             handle = self._active_fit_handle
             was_drag = self._drag_started
@@ -1651,6 +1864,7 @@ class PlotPanel(QWidget):
     def clear(self) -> None:
         """Clear the plot and reset stored data."""
         if self._has_mpl:
+            self._set_navigation_mode("none")
             self._set_alpha_label(None)
             self.set_polarization_axes([])
             self._ax.clear()
@@ -2167,7 +2381,13 @@ class PlotPanel(QWidget):
         forward_group = _safe_int(grouping.get("forward_group"))
         backward_group = _safe_int(grouping.get("backward_group"))
         alpha = _fmt_float(grouping.get("alpha"), 4)
+        t0_bin = _safe_int(grouping.get("t0_bin"))
+        if t0_bin is None:
+            t0_bin = 0
+        t_good_offset = _safe_int(grouping.get("t_good_offset"))
         first_good_bin = _safe_int(grouping.get("first_good_bin"))
+        if t_good_offset is None and first_good_bin is not None:
+            t_good_offset = max(0, first_good_bin - t0_bin)
         last_good_bin = _safe_int(grouping.get("last_good_bin"))
         bunching_factor = _safe_int(grouping.get("bunching_factor"))
         deadtime_correction = bool(grouping.get("deadtime_correction", False))
@@ -2221,8 +2441,8 @@ class PlotPanel(QWidget):
                 )
             elif isinstance(grouping.get("forward"), list) or isinstance(grouping.get("backward"), list):
                 f.write(f"!  Forward Group = forward, Backward Group = backward, Alpha = {alpha}\n")
-            if first_good_bin is not None or last_good_bin is not None:
-                fg_text = "" if first_good_bin is None else str(first_good_bin)
+            if t_good_offset is not None or last_good_bin is not None:
+                fg_text = "" if t_good_offset is None else str(t_good_offset)
                 lg_text = "" if last_good_bin is None else str(last_good_bin)
                 f.write(f"!  Offset to first good bin = {fg_text}, Last good bin = {lg_text}\n")
             if bunching_factor is not None:

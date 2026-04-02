@@ -387,6 +387,8 @@ def test_grp_round_trip_parser_and_serializer() -> None:
         "forward_group": 1,
         "backward_group": 2,
         "alpha": 1.2345,
+        "t0_bin": 2,
+        "t_good_offset": 7,
         "first_good_bin": 9,
         "last_good_bin": 2048,
         "bunching_factor": 5,
@@ -401,6 +403,8 @@ def test_grp_round_trip_parser_and_serializer() -> None:
     assert parsed["forward_group"] == 1
     assert parsed["backward_group"] == 2
     assert parsed["alpha"] == pytest.approx(1.2345)
+    assert parsed["t0_bin"] == 2
+    assert parsed["t_good_offset"] == 7
     assert parsed["first_good_bin"] == 9
     assert parsed["last_good_bin"] == 2048
     assert parsed["bunching_factor"] == 5
@@ -429,6 +433,56 @@ def test_grp_round_trip_parser_and_serializer_with_vector_alphas() -> None:
     assert parsed["alpha_x"] == pytest.approx(1.1)
     assert parsed["alpha_y"] == pytest.approx(1.2)
     assert parsed["alpha_z"] == pytest.approx(1.3)
+
+
+def test_parse_grp_legacy_first_good_derives_t_good_offset() -> None:
+    text = "\n".join(
+        [
+            "forward_group=1",
+            "backward_group=2",
+            "t0_bin=3",
+            "first_good_bin=11",
+            "last_good_bin=50",
+            "group.1=1",
+            "group.2=2",
+        ]
+    )
+    parsed = GroupingDialog.parse_grp(text)
+    assert parsed["t0_bin"] == 3
+    assert parsed["first_good_bin"] == 11
+    assert parsed["t_good_offset"] == 8
+
+
+def test_current_payload_uses_t0_and_t_good_offset(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog._t0_spin.setValue(1)
+    dialog._t_good_offset_spin.setValue(2)
+    dialog._last_good_spin.setValue(3)
+
+    payload = dialog._current_grouping_payload()
+
+    assert payload["t0_bin"] == 1
+    assert payload["t_good_offset"] == 2
+    assert payload["first_good_bin"] == 3
+    assert payload["last_good_bin"] == 3
+
+
+def test_one_based_bin_index_base_displays_file_facing_t0(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.histograms[0].t0_bin = 1
+    dataset.run.grouping["t0_bin"] = 1
+    dataset.run.grouping["first_good_bin"] = 3
+    dataset.run.grouping["last_good_bin"] = 3
+    dataset.run.grouping["bin_index_base"] = 1
+
+    dialog = GroupingDialog([dataset])
+
+    # Display should match one-based file metadata while payload stays internal.
+    assert dialog._t0_spin.value() == 2
+    payload = dialog._current_grouping_payload()
+    assert payload["t0_bin"] == 1
+    assert payload["bin_index_base"] == 1
 
 
 def test_period_mode_row_visible_for_two_period_reference(qapp: QApplication) -> None:
