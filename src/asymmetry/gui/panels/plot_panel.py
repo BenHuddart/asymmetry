@@ -194,12 +194,23 @@ class PlotPanel(QWidget):
 
         # X-axis limits
         row0.addWidget(QLabel("X:"))
+
+        def _finalize_limit_spinbox_width(
+            spinbox: QDoubleSpinBox, *, min_width: int, sample_text: str
+        ) -> None:
+            """Set a fixed width that accounts for platform/style-specific button chrome."""
+            spinbox.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            text_width = spinbox.fontMetrics().horizontalAdvance(sample_text)
+            # Reserve additional room for frame + up/down button chrome.
+            control_padding = 58 if os.name == "nt" else 46
+            spinbox.setFixedWidth(max(min_width, text_width + control_padding))
+
         self._x_min = QDoubleSpinBox()
         self._x_min.setRange(-1e6, 1e6)
         self._x_min.setDecimals(3)
         self._x_min.setValue(0.0)
         self._x_min.setSuffix(" μs")
-        self._x_min.setMaximumWidth(80)
+        _finalize_limit_spinbox_width(self._x_min, min_width=95, sample_text="-1234.567 μs")
         row0.addWidget(self._x_min)
         row0.addWidget(QLabel("–"))
         self._x_max = QDoubleSpinBox()
@@ -207,7 +218,7 @@ class PlotPanel(QWidget):
         self._x_max.setDecimals(3)
         self._x_max.setValue(10.0)
         self._x_max.setSuffix(" μs")
-        self._x_max.setMaximumWidth(80)
+        _finalize_limit_spinbox_width(self._x_max, min_width=95, sample_text="-1234.567 μs")
         row0.addWidget(self._x_max)
 
         # Y-axis limits
@@ -216,14 +227,14 @@ class PlotPanel(QWidget):
         self._y_min.setRange(-1e6, 1e6)
         self._y_min.setDecimals(3)
         self._y_min.setValue(-30.0)
-        self._y_min.setMaximumWidth(80)
+        _finalize_limit_spinbox_width(self._y_min, min_width=90, sample_text="-1234.567")
         row0.addWidget(self._y_min)
         row0.addWidget(QLabel("–"))
         self._y_max = QDoubleSpinBox()
         self._y_max.setRange(-1e6, 1e6)
         self._y_max.setDecimals(3)
         self._y_max.setValue(30.0)
-        self._y_max.setMaximumWidth(80)
+        _finalize_limit_spinbox_width(self._y_max, min_width=90, sample_text="-1234.567")
         row0.addWidget(self._y_max)
 
         # Separate axis auto-scale controls.
