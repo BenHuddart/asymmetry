@@ -296,6 +296,8 @@ class MainWindow(QMainWindow):
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         if hasattr(self._plot_panel, "bunch_factor_changed"):
             self._plot_panel.bunch_factor_changed.connect(self._update_selected_datasets)
+        if hasattr(self._plot_panel, "overlay_toggled"):
+            self._plot_panel.overlay_toggled.connect(self._on_overlay_toggled)
         if hasattr(self._plot_panel, "polarization_axis_changed"):
             self._plot_panel.polarization_axis_changed.connect(
                 self._on_plot_polarization_axis_changed
@@ -462,7 +464,10 @@ class MainWindow(QMainWindow):
             return
 
         selected = list(self._data_browser.get_selected_datasets())
-        targets = selected if len(selected) > 1 else ([self._current_dataset] if self._current_dataset else [])
+        if len(selected) > 1 and self._overlay_enabled():
+            targets = selected
+        else:
+            targets = [self._current_dataset] if self._current_dataset else []
         targets = [ds for ds in targets if ds is not None]
         if not targets:
             self._plot_panel.set_polarization_axes([])
@@ -499,6 +504,72 @@ class MainWindow(QMainWindow):
         if self._current_dataset is not None:
             return [self._current_dataset]
         return []
+
+    def _overlay_enabled(self) -> bool:
+        """Return whether multi-selection overlays should be shown."""
+        if hasattr(self._plot_panel, "is_overlay_enabled"):
+            return bool(self._plot_panel.is_overlay_enabled())
+        return True
+
+    @staticmethod
+    def _run_numbers_match(dataset_a: MuonDataset | None, dataset_b: MuonDataset | None) -> bool:
+        """Return True when both datasets represent the same run number."""
+        if dataset_a is None or dataset_b is None:
+            return False
+        try:
+            return int(dataset_a.run_number) == int(dataset_b.run_number)
+        except (TypeError, ValueError):
+            return False
+
+    def _select_non_overlay_target(self, targets: list[MuonDataset]) -> MuonDataset | None:
+        """Return the dataset that should remain visible when overlay is disabled."""
+        if not targets:
+            return None
+
+        selected_group_ids = (
+            self._data_browser.get_selected_group_ids()
+            if hasattr(self._data_browser, "get_selected_group_ids")
+            else []
+        )
+        single_group_selected = bool(
+            hasattr(self._data_browser, "is_single_group_selected")
+            and self._data_browser.is_single_group_selected()
+        )
+
+        if single_group_selected and len(selected_group_ids) == 1:
+            group_id = selected_group_ids[0]
+            group_member_runs = (
+                self._data_browser.get_group_member_run_numbers(group_id)
+                if hasattr(self._data_browser, "get_group_member_run_numbers")
+                else []
+            )
+            run_map = {int(ds.run_number): ds for ds in targets}
+            ordered_group_targets = [run_map[rn] for rn in group_member_runs if rn in run_map]
+            if not ordered_group_targets:
+                ordered_group_targets = targets
+
+            if self._current_dataset is not None:
+                for dataset in ordered_group_targets:
+                    if self._run_numbers_match(self._current_dataset, dataset):
+                        return dataset
+            return ordered_group_targets[0]
+
+        current_selected = (
+            self._data_browser.get_current_dataset()
+            if hasattr(self._data_browser, "get_current_dataset")
+            else None
+        )
+        if current_selected is not None:
+            for dataset in targets:
+                if self._run_numbers_match(current_selected, dataset):
+                    return dataset
+
+        if self._current_dataset is not None:
+            for dataset in targets:
+                if self._run_numbers_match(self._current_dataset, dataset):
+                    return dataset
+
+        return targets[-1]
 
     def _build_vector_axis_datasets(
         self,
@@ -579,6 +650,15 @@ class MainWindow(QMainWindow):
         if not targets:
             return
 
+        if not self._overlay_enabled() and len(targets) > 1:
+            chosen = self._select_non_overlay_target(targets)
+            if chosen is None:
+                return
+            targets = [chosen]
+
+        if len(targets) == 1:
+            self._current_dataset = targets[0]
+
         active_axis = None
         if hasattr(self._plot_panel, "get_current_polarization_axis"):
             active_axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
@@ -594,6 +674,22 @@ class MainWindow(QMainWindow):
             return
         self._plot_panel.plot_dataset(targets[0])
 
+    def _update_fit_block_state(self) -> None:
+        """Disable ambiguous fitting workflows when vector ALL mode is active."""
+        if not hasattr(self._fit_panel, "set_fit_blocked"):
+            return
+
+        active_axis = None
+        if hasattr(self._plot_panel, "get_current_polarization_axis"):
+            active_axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
+
+        blocked = active_axis == "ALL"
+        reason = (
+            "Vector All mode is ambiguous for fitting. "
+            "Select x, y, or z before running a fit."
+        )
+        self._fit_panel.set_fit_blocked(blocked, reason if blocked else "")
+
     def _on_plot_polarization_axis_changed(self, axis_text: str) -> None:
         """Recompute displayed datasets using the selected vector polarization axis."""
         axis = self._normalize_vector_axis(axis_text)
@@ -603,6 +699,7 @@ class MainWindow(QMainWindow):
         if axis == "ALL":
             self._render_current_selection_plot()
             self._refresh_vector_axis_selector()
+            self._update_fit_block_state()
             self._log_panel.log("Set vector polarization axis to ALL.")
             return
 
@@ -642,6 +739,7 @@ class MainWindow(QMainWindow):
         self._data_browser._rebuild_table()
         self._render_current_selection_plot()
         self._refresh_vector_axis_selector()
+        self._update_fit_block_state()
         self._log_panel.log(f"Set vector polarization axis to {axis} for {updated} dataset(s).")
 
     # ── slots ──────────────────────────────────────────────────────────
@@ -1725,6 +1823,7 @@ class MainWindow(QMainWindow):
                 self._synchronize_targets_to_axis([dataset], active_axis)
             self._render_current_selection_plot()
             self._refresh_vector_axis_selector()
+            self._update_fit_block_state()
             self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
             self._log_panel.log(f"Selected run {run_number}")
             self.statusBar().showMessage(f"Viewing run {run_number}")
@@ -1741,6 +1840,12 @@ class MainWindow(QMainWindow):
         if hasattr(self._plot_panel, "set_active_label_group"):
             self._plot_panel.set_active_label_group(group_id)
         self.statusBar().showMessage(f"Selected group: {group_name}")
+
+    def _on_overlay_toggled(self, enabled: bool) -> None:
+        """Refresh plotting and fit context when overlay mode changes."""
+        self._update_selected_datasets()
+        mode = "enabled" if enabled else "disabled"
+        self._log_panel.log(f"Plot overlay {mode}.")
 
     def _on_fit_range_changed(self, _x_min: float, _x_max: float) -> None:
         """Refresh fit inputs when the selected fit x-range changes."""
@@ -1861,6 +1966,15 @@ class MainWindow(QMainWindow):
         fit_curves = {}
         for run_number, (result, fitted_curve, component_curves) in normalized_payloads.items():
             t_fit, y_fit = fitted_curve
+            axis_key = None
+            dataset = self._data_browser.get_dataset(run_number)
+            if dataset is not None:
+                run = getattr(dataset, "run", None)
+                grouping = getattr(run, "grouping", None)
+                if isinstance(grouping, dict):
+                    axis_key = self._normalize_vector_axis(grouping.get("vector_axis"))
+                    if axis_key == "ALL":
+                        axis_key = None
             fit_curves[run_number] = (
                 t_fit,
                 y_fit,
@@ -1868,6 +1982,7 @@ class MainWindow(QMainWindow):
                 component_curves,
                 result,
                 global_fit_function,
+                axis_key,
             )
 
         self._fit_panel.register_global_fit_results(normalized_payloads)
@@ -2025,14 +2140,21 @@ class MainWindow(QMainWindow):
                 self._plot_panel.clear()
                 self._fit_panel.set_dataset(None)
 
-        # When multiple datasets are selected, overlay them all on the plot.
+        # Multi-selection render mode depends on the plot-panel Overlay toggle.
         if len(selected) > 1:
             self._render_current_selection_plot()
             self._refresh_vector_axis_selector()
-            run_labels = ", ".join(str(ds.run_label) for ds in selected)
-            self.statusBar().showMessage(f"Viewing runs {run_labels}")
+            self._update_fit_block_state()
+            if self._overlay_enabled():
+                run_labels = ", ".join(str(ds.run_label) for ds in selected)
+                self.statusBar().showMessage(f"Viewing runs {run_labels}")
+            elif self._current_dataset is not None:
+                self.statusBar().showMessage(f"Viewing run {self._current_dataset.run_label}")
         elif self._current_dataset is not None:
             self._refresh_vector_axis_selector()
+            self._update_fit_block_state()
+        else:
+            self._update_fit_block_state()
 
         analysis_datasets = [
             dataset

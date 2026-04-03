@@ -22,6 +22,11 @@ from asymmetry.core.fitting.models import (
     static_gkt_zf,
     stretched_exponential,
 )
+from asymmetry.core.fitting.muon_fluorine.polarization import (
+    general_fmuf_polarization,
+    linear_fmuf_polarization,
+    mu_f_polarization,
+)
 from asymmetry.core.fitting.parameters import ParamInfo, get_param_info
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
@@ -38,6 +43,7 @@ class ComponentDefinition:
     param_info: dict[str, ParamInfo]
     formula_template: str
     latex_equation: str = ""
+    category: str = "General"
 
 
 def _exp_component(t: NDArray, A: float, Lambda: float) -> NDArray[np.float64]:
@@ -82,6 +88,28 @@ def _gkt_component(t: NDArray, A: float, Delta: float) -> NDArray[np.float64]:
 
 def _constant_component(t: NDArray, A_bg: float) -> NDArray[np.float64]:
     return np.full_like(np.asarray(t, dtype=float), fill_value=A_bg, dtype=float)
+
+
+def _muf_component(t: NDArray, A: float, r_muF: float) -> NDArray[np.float64]:
+    return A * mu_f_polarization(t, r_muF)
+
+
+def _linear_fmuf_component(t: NDArray, A: float, r_muF: float) -> NDArray[np.float64]:
+    return A * linear_fmuf_polarization(t, r_muF)
+
+
+def _general_fmuf_component(
+    t: NDArray,
+    A: float,
+    r1: float,
+    r2: float,
+    theta: float,
+) -> NDArray[np.float64]:
+    try:
+        return A * general_fmuf_polarization(t, r1, r2, theta)
+    except ValueError:
+        # Keep minimization alive for transient invalid trial points.
+        return np.full_like(np.asarray(t, dtype=float), fill_value=1.0e3, dtype=float)
 
 
 COMPONENTS: dict[str, ComponentDefinition] = {
@@ -160,6 +188,50 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         latex_equation=(
             r"A(t) = A\left[\frac{1}{3} + \frac{2}{3}\left(1-(\Delta t)^2\right)e^{-(\Delta t)^2/2}\right]"
         ),
+    ),
+    "MuF": ComponentDefinition(
+        name="MuF",
+        description="Analytical mu-F polarization function D_z(t)",
+        function=_muf_component,
+        param_names=["A", "r_muF"],
+        param_defaults={"A": 25.0, "r_muF": 1.17},
+        param_info={"A": get_param_info("A"), "r_muF": get_param_info("r_muF")},
+        formula_template="{A}*Dz_muF(t,{r_muF})",
+        latex_equation=(
+            r"A(t)=A\frac{1}{6}\left[1+2\cos\left(\frac{\omega_d t}{2}\right)+\cos(\omega_d t)+2\cos\left(\frac{3\omega_d t}{2}\right)\right]"
+        ),
+        category="Muon-Fluorine",
+    ),
+    "FmuF_Linear": ComponentDefinition(
+        name="FmuF_Linear",
+        description="Analytical collinear F-mu-F polarization function",
+        function=_linear_fmuf_component,
+        param_names=["A", "r_muF"],
+        param_defaults={"A": 25.0, "r_muF": 1.17},
+        param_info={"A": get_param_info("A"), "r_muF": get_param_info("r_muF")},
+        formula_template="{A}*G_FmuF_linear(t,{r_muF})",
+        latex_equation=(
+            r"A(t)=A\,G_{F\mu F}(t)"
+        ),
+        category="Muon-Fluorine",
+    ),
+    "FmuF_General": ComponentDefinition(
+        name="FmuF_General",
+        description="Numerical powder-averaged F-mu-F polarization (r1, r2, theta)",
+        function=_general_fmuf_component,
+        param_names=["A", "r1", "r2", "theta"],
+        param_defaults={"A": 25.0, "r1": 1.17, "r2": 1.17, "theta": 180.0},
+        param_info={
+            "A": get_param_info("A"),
+            "r1": get_param_info("r1"),
+            "r2": get_param_info("r2"),
+            "theta": get_param_info("theta"),
+        },
+        formula_template="{A}*Dz_FmuF_general(t,{r1},{r2},{theta})",
+        latex_equation=(
+            r"A(t)=A\,D_z^{\mathrm{powder}}\!(t;r_1,r_2,\theta)"
+        ),
+        category="Muon-Fluorine",
     ),
     "Constant": ComponentDefinition(
         name="Constant",

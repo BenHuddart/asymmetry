@@ -818,6 +818,28 @@ class DataBrowserPanel(QWidget):
     def get_selected_group_ids(self) -> list[str]:
         return self._get_selected_group_ids()
 
+    def get_current_selection_key(self) -> int | str | None:
+        """Return the key for the current row, if any."""
+        row = self._table.currentRow()
+        if row < 0:
+            return None
+        item = self._table.item(row, 0)
+        if item is None:
+            return None
+        key = item.data(self._GROUP_ROLE)
+        return key if isinstance(key, (int, str)) else None
+
+    def get_current_dataset(self) -> MuonDataset | None:
+        """Return dataset on the current table row when that row is a run."""
+        key = self.get_current_selection_key()
+        if not isinstance(key, int):
+            return None
+        return self._datasets.get(key)
+
+    def is_single_group_selected(self) -> bool:
+        """Return True when the selection contains exactly one group header row."""
+        return len(self._selected_keys()) == 1 and len(self._get_selected_group_ids()) == 1
+
     def get_group_name(self, group_id: str) -> str | None:
         group = self._groups.get(group_id)
         return None if group is None else group.name

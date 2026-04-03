@@ -15,6 +15,7 @@ This guide covers the main features and workflows of Asymmetry.
    fourier_analysis
    fitting
    composite_models
+   muon_fluorine
    parameter_trending
    sc_penetration_depth
    project_files

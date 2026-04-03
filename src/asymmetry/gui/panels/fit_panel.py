@@ -179,6 +179,8 @@ class SingleFitTab(QWidget):
         layout = QVBoxLayout(self)
 
         self._current_dataset: MuonDataset | None = None
+        self._fit_blocked = False
+        self._fit_block_reason = ""
         self._fit_engine = FitEngine()
         self._composite_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
 
@@ -247,9 +249,21 @@ class SingleFitTab(QWidget):
     def set_dataset(self, dataset: MuonDataset | None) -> None:
         """Set the current dataset to fit."""
         self._current_dataset = dataset
-        self._fit_btn.setEnabled(dataset is not None)
-        self._preview_btn.setEnabled(dataset is not None)
+        enabled = dataset is not None and (not self._fit_blocked)
+        self._fit_btn.setEnabled(enabled)
+        self._preview_btn.setEnabled(enabled)
         self._share_group_btn.setEnabled(dataset is not None)
+
+    def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
+        """Enable/disable single-fit actions while preserving the active dataset."""
+        self._fit_blocked = bool(blocked)
+        self._fit_block_reason = str(reason)
+        enabled = self._current_dataset is not None and (not self._fit_blocked)
+        self._fit_btn.setEnabled(enabled)
+        self._preview_btn.setEnabled(enabled)
+        tooltip = self._fit_block_reason if self._fit_blocked else ""
+        self._fit_btn.setToolTip(tooltip)
+        self._preview_btn.setToolTip(tooltip)
 
     def _on_share_function_with_group(self) -> None:
         """Request sharing the active single-fit function with the current data group."""
@@ -321,6 +335,9 @@ class SingleFitTab(QWidget):
 
     def _on_preview(self) -> None:
         """Generate and emit a preview fit curve with current parameters."""
+        if self._fit_blocked:
+            return
+
         if self._current_dataset is None:
             return
 
@@ -395,6 +412,11 @@ class SingleFitTab(QWidget):
 
     def _run_fit(self) -> None:
         """Execute the fit."""
+        if self._fit_blocked:
+            message = self._fit_block_reason or "Fit is unavailable for the current selection."
+            self._result_label.setText(f"ERROR: {message}")
+            return
+
         if self._current_dataset is None:
             self._result_label.setText("ERROR: No dataset selected")
             return
@@ -618,6 +640,8 @@ class GlobalFitTab(QWidget):
 
         self._fit_engine = FitEngine()
         self._datasets = []  # Will be set by parent
+        self._fit_blocked = False
+        self._fit_block_reason = ""
         self._composite_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
         # Successful single-fit seeds keyed by run number.
         self._single_fit_seed_by_run: dict[int, dict[str, object]] = {}
@@ -735,7 +759,8 @@ class GlobalFitTab(QWidget):
         """Set the datasets for global fitting."""
         self._datasets = datasets
         n = len(datasets)
-        self._fit_btn.setEnabled(n > 1)
+        self._fit_btn.setEnabled((n > 1) and (not self._fit_blocked))
+        self._fit_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
         if n == 0:
             self._result_text.setText(
                 "No datasets selected.\n"
@@ -752,6 +777,13 @@ class GlobalFitTab(QWidget):
                 "Configure parameters and click Run Global Fit."
             )
         self._refresh_inherited_single_fit_defaults()
+
+    def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
+        """Enable/disable global-fit execution while preserving selected datasets."""
+        self._fit_blocked = bool(blocked)
+        self._fit_block_reason = str(reason)
+        self._fit_btn.setEnabled((len(self._datasets) > 1) and (not self._fit_blocked))
+        self._fit_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
 
     def _refresh_inherited_single_fit_defaults(self) -> None:
         """Apply single-fit seeds when every selected dataset shares one model."""
@@ -897,6 +929,12 @@ class GlobalFitTab(QWidget):
 
     def _run_global_fit(self) -> None:
         """Execute global fit on all datasets."""
+        if self._fit_blocked:
+            self._result_text.setText(
+                self._fit_block_reason or "Global fit is unavailable for the current selection."
+            )
+            return
+
         if len(self._datasets) < 2:
             self._result_text.setText("Error: Need at least 2 datasets for global fitting")
             return
@@ -1316,6 +1354,11 @@ class FitPanel(QWidget):
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting tab."""
         self._global_tab.set_datasets(datasets)
+
+    def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
+        """Apply fit-action blocking to both single and global tabs."""
+        self._single_tab.set_fit_blocked(blocked, reason)
+        self._global_tab.set_fit_blocked(blocked, reason)
 
     def single_fit_formula_string(self) -> str | None:
         """Return the active single-fit formula string, if available."""

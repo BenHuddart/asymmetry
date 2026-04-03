@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from collections import defaultdict
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -23,6 +26,73 @@ _OPERATOR_OPTIONS = ["+", "-", "*", "/"]
 _PARENTHESIS_COUNT_OPTIONS = ["0", "1", "2", "3"]
 
 
+class _ComponentSelectorButton(QPushButton):
+    """Menu-backed component selector with category submenus."""
+
+    currentTextChanged = Signal(str)
+
+    def __init__(
+        self,
+        component_pool: list[str],
+        components_by_category: dict[str, list[str]],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._component_pool = sorted(component_pool)
+        self._components_by_category = {
+            key: list(value) for key, value in components_by_category.items()
+        }
+        self._current_text = self._component_pool[0] if self._component_pool else ""
+        self.setText(self._current_text or "Select component")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet("text-align: left; padding: 2px 8px;")
+        self.clicked.connect(self._open_component_menu)
+
+    def currentText(self) -> str:
+        return self._current_text
+
+    def setCurrentText(self, name: str) -> None:
+        if name not in self._component_pool:
+            return
+        changed = name != self._current_text
+        self._current_text = name
+        self.setText(name)
+        if changed:
+            self.currentTextChanged.emit(name)
+
+    def _open_component_menu(self) -> None:
+        menu = self._build_component_menu()
+        if menu is None:
+            return
+        menu.exec(self.mapToGlobal(self.rect().bottomLeft()))
+
+    def _build_component_menu(self) -> QMenu | None:
+        if not self._component_pool:
+            return None
+
+        menu = QMenu(self)
+        regular_components = self._components_by_category.get("General", [])
+        for name in regular_components:
+            action = menu.addAction(name)
+            action.triggered.connect(lambda _checked=False, n=name: self.setCurrentText(n))
+
+        submenu_categories = [
+            cat for cat in sorted(self._components_by_category)
+            if cat != "General"
+        ]
+        if submenu_categories and regular_components:
+            menu.addSeparator()
+
+        for category in submenu_categories:
+            names = self._components_by_category[category]
+            submenu = menu.addMenu(category)
+            for name in names:
+                action = submenu.addAction(name)
+                action.triggered.connect(lambda _checked=False, n=name: self.setCurrentText(n))
+
+        return menu
+
+
 class FitFunctionBuilderDialog(QDialog):
     """Compose a custom fit function from predefined components."""
 
@@ -35,7 +105,12 @@ class FitFunctionBuilderDialog(QDialog):
         self.setWindowTitle("Build Fit Function")
         self.setMinimumWidth(720)
 
-        self._component_names = sorted(COMPONENTS.keys())
+        self._components_by_category = self._build_components_by_category()
+        self._component_names = [
+            name
+            for category in sorted(self._components_by_category)
+            for name in self._components_by_category[category]
+        ]
         self._model: CompositeModel | None = None
 
         layout = QVBoxLayout(self)
@@ -118,12 +193,13 @@ class FitFunctionBuilderDialog(QDialog):
         open_combo.currentTextChanged.connect(self._update_formula_preview)
         self._table.setCellWidget(row, 1, open_combo)
 
-        component_combo = QComboBox()
-        component_combo.addItems(self._component_names)
-        if component_name in self._component_names:
-            component_combo.setCurrentText(component_name)
-        component_combo.currentTextChanged.connect(self._update_formula_preview)
-        self._table.setCellWidget(row, 2, component_combo)
+        component_selector = _ComponentSelectorButton(
+            self._component_names,
+            self._components_by_category,
+        )
+        component_selector.setCurrentText(component_name)
+        component_selector.currentTextChanged.connect(self._update_formula_preview)
+        self._table.setCellWidget(row, 2, component_selector)
 
         info_btn = QPushButton("Info")
         info_btn.clicked.connect(lambda: self._show_component_info(row))
@@ -178,15 +254,25 @@ class FitFunctionBuilderDialog(QDialog):
         if row < 0 or row >= self._table.rowCount():
             return
 
-        component_combo = self._table.cellWidget(row, 2)
-        if not isinstance(component_combo, QComboBox):
+        component_widget = self._table.cellWidget(row, 2)
+        if not isinstance(component_widget, (QComboBox, _ComponentSelectorButton)):
             return
 
-        component_name = component_combo.currentText().strip()
+        component_name = component_widget.currentText().strip()
         component = COMPONENTS.get(component_name)
         if component is None:
             return
         show_component_info_dialog(self, component)
+
+    def _build_components_by_category(self) -> dict[str, list[str]]:
+        grouped: dict[str, list[str]] = defaultdict(list)
+        for name, definition in COMPONENTS.items():
+            category = (definition.category or "General").strip() or "General"
+            grouped[category].append(name)
+
+        for names in grouped.values():
+            names.sort()
+        return dict(sorted(grouped.items(), key=lambda item: item[0]))
 
     def _read_ui(self) -> tuple[list[str], list[str], list[int], list[int]]:
         component_names: list[str] = []
@@ -195,10 +281,13 @@ class FitFunctionBuilderDialog(QDialog):
         close_parentheses: list[int] = []
 
         for row in range(self._table.rowCount()):
-            component_combo = self._table.cellWidget(row, 2)
-            if not isinstance(component_combo, QComboBox):
+            component_widget = self._table.cellWidget(row, 2)
+            if not isinstance(component_widget, (QComboBox, _ComponentSelectorButton)):
                 continue
-            component_names.append(component_combo.currentText())
+            component_name = component_widget.currentText().strip()
+            if not component_name:
+                continue
+            component_names.append(component_name)
 
             open_combo = self._table.cellWidget(row, 1)
             open_count = int(open_combo.currentText()) if isinstance(open_combo, QComboBox) else 0

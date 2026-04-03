@@ -40,6 +40,17 @@ Composite Models
    :members:
    :undoc-members:
 
+Muon-Fluorine Models
+--------------------
+
+.. automodule:: asymmetry.core.fitting.muon_fluorine.dipolar
+   :members:
+   :undoc-members:
+
+.. automodule:: asymmetry.core.fitting.muon_fluorine.polarization
+   :members:
+   :undoc-members:
+
 Parameter Trend Models
 ----------------------
 

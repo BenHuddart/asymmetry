@@ -15,6 +15,7 @@ from asymmetry.core.fitting.parameters import ParamInfo, get_param_info
 from asymmetry.gui.utils.latex_renderer import render_latex_to_html_image
 
 ComponentDocDefinition = ComponentDefinition | ParameterModelComponentDefinition
+LatexBlock = str | tuple[str, ...]
 
 
 _SC_KERNEL_LATEX = (
@@ -136,6 +137,87 @@ _SC_SIGMA_MIXING_TEXT: dict[str, str] = {
     ),
 }
 
+_MUON_FLUORINE_HAMILTONIAN_LATEX = (
+    r"H = \sum_{i>j} H_{ij}, \quad"
+    r"H_{ij}=\omega_{ij}\left[\mathbf{S}_i\cdot\mathbf{S}_j - 3(\mathbf{S}_i\cdot\hat{r}_{ij})(\mathbf{S}_j\cdot\hat{r}_{ij})\right]"
+)
+
+_MUON_FLUORINE_FREQUENCY_LATEX = r"\omega_{ij}=\frac{\mu_0}{4\pi}\gamma_i\gamma_j\hbar\,r_{ij}^{-3}"
+
+_MUON_FLUORINE_CASE_LATEX: dict[str, str] = {
+    "MuF": (
+        r"D_z(t)=\frac{1}{6}\left[1+2\cos\left(\frac{\omega_d t}{2}\right)+\cos(\omega_d t)"
+        r"+2\cos\left(\frac{3\omega_d t}{2}\right)\right]"
+    ),
+    "FmuF_Linear": (
+        r"G_{F\mu F}(t)=\frac{1}{6}\left[3+\cos(\sqrt{3}\,\omega_d t)"
+        r"+\left(1-\frac{1}{\sqrt{3}}\right)\cos\left(\frac{3-\sqrt{3}}{2}\omega_d t\right)"
+        r"+\left(1+\frac{1}{\sqrt{3}}\right)\cos\left(\frac{3+\sqrt{3}}{2}\omega_d t\right)\right]"
+    ),
+    "FmuF_General": (
+        r"D_z(t)=\frac{1}{N}\sum_{m,n}\left|\langle m|\sigma_z^{\mu}|n\rangle\right|^2"
+        r"\cos\left[(\omega_m-\omega_n)t\right]"
+    ),
+}
+
+_MUON_FLUORINE_CASE_TEXT: dict[str, str] = {
+    "MuF": (
+        "Single-fluorine stopping state: the muon is localized near one dominant 19F nucleus, producing the three-frequency signature of a two-spin mu-F pair. "
+        "This corresponds to Case I in Lancaster et al. and is relevant when a symmetric two-fluorine site is chemically disfavored."
+    ),
+    "FmuF_Linear": (
+        "Collinear three-spin F-mu-F center: the muon sits approximately midway between two equivalent fluorines in a hydrogen-bond-like configuration. "
+        "This is the classic ionic-fluoride scenario of Brewer et al., where the closed-form powder-averaged expression is available."
+    ),
+    "FmuF_General": (
+        "Distorted three-spin F-mu-F geometry: two fluorines couple to the muon with unequal distances and/or a bent bond angle. "
+        "The polarization is obtained numerically from the three-spin dipolar eigenspectrum and powder averaged over orientations."
+    ),
+}
+
+_MUON_FLUORINE_MEASURED_ASYMMETRY_LATEX: dict[str, str] = {
+    "MuF": (
+        r"A(t)=A_0\left[p_1 D_z(t)e^{-\lambda t}+p_2 e^{-\sigma^2 t^2}\right]+A_{bg}"
+    ),
+    "FmuF_Linear": (
+        r"A(t)=A_0\,G_{F\mu F}(t)\times \text{(empirical envelope/background terms)}"
+    ),
+    "FmuF_General": (
+        r"A(t)=A_0\left[p_1 D_z(t)e^{-\lambda t}+p_2 e^{-\sigma^2 t^2}\right]+A_{bg}"
+    ),
+}
+
+_MUON_FLUORINE_MEASURED_ASYMMETRY_TEXT: dict[str, str] = {
+    "MuF": (
+        "In the PRL molecular-magnet analysis, the polarization function enters one part of a larger measured asymmetry with additional exponential/Gaussian relaxation channels and background."
+    ),
+    "FmuF_Linear": (
+        "In practice this component is usually multiplied by a phenomenological relaxation envelope and combined with a background term, rather than used as a complete measured asymmetry by itself."
+    ),
+    "FmuF_General": (
+        "As for the single-fluorine molecular-magnet fits, the three-spin polarization is typically one channel inside a larger asymmetry model with additional relaxation/background terms."
+    ),
+}
+
+_MUON_FLUORINE_LIMITS_TEXT: dict[str, str] = {
+    "MuF": "Does not describe signals where two fluorines contribute comparably or where a third nearby nucleus materially changes the entangled-state spectrum.",
+    "FmuF_Linear": "Assumes two equivalent fluorines in a nearly collinear geometry, so it should not be used for bent or strongly asymmetric molecular stopping states.",
+    "FmuF_General": "Covers bent/asymmetric three-spin F-mu-F geometries, but the current implementation does not include extra nuclei such as the proton-coupled HF2- Case III configuration discussed in Lancaster et al.",
+}
+
+_MUON_FLUORINE_REFERENCES: dict[str, tuple[str, ...]] = {
+    "MuF": (
+        "T. Lancaster et al., Phys. Rev. Lett. 99, 267601 (2007).",
+    ),
+    "FmuF_Linear": (
+        "J. H. Brewer et al., Phys. Rev. B 33, 7813 (1986).",
+    ),
+    "FmuF_General": (
+        "T. Lancaster et al., Phys. Rev. Lett. 99, 267601 (2007).",
+        "J. H. Brewer et al., Phys. Rev. B 33, 7813 (1986).",
+    ),
+}
+
 
 def _param_info(component: ComponentDocDefinition, pname: str) -> ParamInfo:
     return component.param_info.get(pname, get_param_info(pname))
@@ -153,17 +235,53 @@ def _equation_html(component: ComponentDocDefinition, *, render_latex_images: bo
     return f"<code>{html.escape(equation)}</code>"
 
 
-def _latex_block_html(latex: str, *, render_latex_images: bool, font_size: int = 15) -> str:
-    if not latex.strip():
+def _latex_block_html(latex: LatexBlock, *, render_latex_images: bool, font_size: int = 15) -> str:
+    blocks = (latex,) if isinstance(latex, str) else tuple(block for block in latex if block.strip())
+    if not blocks:
         return ""
-    if render_latex_images:
-        image_html = render_latex_to_html_image(latex, font_size=font_size, dpi=170)
-        if image_html is not None:
-            return image_html
-    return f"<code>{html.escape(latex)}</code>"
+
+    rendered_blocks: list[str] = []
+    for block in blocks:
+        if render_latex_images:
+            image_html = render_latex_to_html_image(block, font_size=font_size, dpi=170)
+            if image_html is not None:
+                rendered_blocks.append(image_html)
+                continue
+        rendered_blocks.append(f"<code>{html.escape(block)}</code>")
+
+    return "".join(rendered_blocks)
 
 
-def _physics_payload(component_name: str) -> tuple[tuple[str, str, str], ...]:
+def _physics_payload(component_name: str) -> tuple[tuple[str, LatexBlock, str], ...]:
+    if component_name in {"MuF", "FmuF_Linear", "FmuF_General"}:
+        return (
+            (
+                "Dipolar Hamiltonian",
+                _MUON_FLUORINE_HAMILTONIAN_LATEX,
+                "These models describe entangled evolution of the muon spin with nearby fluorine-19 nuclear spins through the magnetic dipole-dipole interaction.",
+            ),
+            (
+                "Dipolar Frequency",
+                _MUON_FLUORINE_FREQUENCY_LATEX,
+                "For the MuF and FmuF models the characteristic oscillation frequencies scale as r^-3, so the fitted muon-fluorine distances directly set the entangled-state spectrum.",
+            ),
+            (
+                "Stopping-State Scenario",
+                _MUON_FLUORINE_CASE_LATEX[component_name],
+                _MUON_FLUORINE_CASE_TEXT[component_name],
+            ),
+            (
+                "Measured Asymmetry Context",
+                _MUON_FLUORINE_MEASURED_ASYMMETRY_LATEX[component_name],
+                _MUON_FLUORINE_MEASURED_ASYMMETRY_TEXT[component_name],
+            ),
+            (
+                "Model Limits",
+                "",
+                _MUON_FLUORINE_LIMITS_TEXT[component_name],
+            ),
+        )
+
     if not component_name.startswith("SC_"):
         return tuple()
 
@@ -190,6 +308,10 @@ def _physics_payload(component_name: str) -> tuple[tuple[str, str, str], ...]:
         )
 
     return tuple(payload)
+
+
+def _references_payload(component_name: str) -> tuple[str, ...]:
+    return _MUON_FLUORINE_REFERENCES.get(component_name, tuple())
 
 
 def _availability_text(component: ComponentDocDefinition) -> str:
@@ -229,6 +351,7 @@ def _build_component_info_html_cached(
         applicability,
         row_payload,
         physics_payload,
+        references_payload,
     ) = cache_key
 
     rows = ""
@@ -270,6 +393,13 @@ def _build_component_info_html_cached(
             f"<p>{html.escape(explainer)}</p>"
         )
 
+    references_html = ""
+    if references_payload:
+        references_html = "<h3>References</h3><ul>"
+        for entry in references_payload:
+            references_html += f"<li>{html.escape(entry)}</li>"
+        references_html += "</ul>"
+
     return (
         f"<h2>{html.escape(name)}</h2>"
         "<h3>Model Expression</h3>"
@@ -279,6 +409,7 @@ def _build_component_info_html_cached(
         f"{physics_html}"
         "<h3>Applicability</h3>"
         f"<p>{html.escape(applicability)}</p>"
+        f"{references_html}"
         f"<p style='margin-top: 1.0em;'><i>{html.escape(availability)}</i></p>"
     )
 
@@ -305,6 +436,7 @@ def build_component_info_html(
         get_component_applicability(component.name),
         tuple(row_payload),
         _physics_payload(component.name),
+        _references_payload(component.name),
     )
     return _build_component_info_html_cached(cache_key, render_latex_images=render_latex_images)
 

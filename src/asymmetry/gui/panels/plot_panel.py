@@ -22,6 +22,7 @@ import numpy as np
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -39,6 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.transform.grouping import apply_grouping
 from asymmetry.core.transform.rebin import rebin
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
@@ -65,6 +67,7 @@ class PlotPanel(QWidget):
     bunch_factor_changed = Signal(int)
     fit_range_changed = Signal(float, float)
     polarization_axis_changed = Signal(str)
+    overlay_toggled = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -149,13 +152,16 @@ class PlotPanel(QWidget):
             self._fit_curve = None  # (t_fit, y_fit, label) for single fits
             self._fit_curve_run_number = None
             self._fit_curves = {}   # {run_number: (t_fit, y_fit, label)} for global fits
+            self._fit_curves_by_key: dict[tuple[int, str | None], tuple] = {}
 
             # Per-fit additive component curves for shading.
             self._fit_components = None  # list[(name, y_component)] for single fit
             self._fit_components_by_run = {}  # {run_number: list[(name, y_component)]}
+            self._fit_components_by_key: dict[tuple[int, str | None], list[tuple[str, object]]] = {}
 
             # Per-run fit metadata for export headers.
             self._fit_metadata: dict[int, dict] = {}  # {run_number: {formula, chi2, ...}}
+            self._fit_metadata_by_key: dict[tuple[int, str | None], dict] = {}
 
             # Interactive plot labels (text annotations).
             self._default_annotations: list[dict] = []
@@ -282,6 +288,22 @@ class PlotPanel(QWidget):
         row1 = QHBoxLayout()
         row1.setSpacing(4)
 
+        row1.addWidget(QLabel("Label:"))
+        self._label_field_combo = QComboBox()
+        for display, key in _LABEL_FIELDS:
+            self._label_field_combo.addItem(display, userData=key)
+        self._label_field_combo.setMaximumWidth(140)
+        self._label_field_combo.currentIndexChanged.connect(self._on_label_field_changed)
+        row1.addWidget(self._label_field_combo)
+
+        self._overlay_checkbox = QCheckBox("Overlay")
+        # Default off: overlays disabled by default
+        self._overlay_checkbox.setChecked(False)
+        self._overlay_checkbox.toggled.connect(self.overlay_toggled.emit)
+        row1.addWidget(self._overlay_checkbox)
+
+        row1.addStretch()
+
         self._add_label_btn = QPushButton("Add Annotation")
         self._add_label_btn.setCheckable(True)
         # Avoid clipping on platforms/themes where checkable button chrome
@@ -291,14 +313,6 @@ class PlotPanel(QWidget):
         self._add_label_btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         row1.addWidget(self._add_label_btn)
 
-        row1.addWidget(QLabel("Label:"))
-        self._label_field_combo = QComboBox()
-        for display, key in _LABEL_FIELDS:
-            self._label_field_combo.addItem(display, userData=key)
-        self._label_field_combo.setMaximumWidth(140)
-        self._label_field_combo.currentIndexChanged.connect(self._on_label_field_changed)
-        row1.addWidget(self._label_field_combo)
-
         # Export controls (right side of row 1)
         self._export_gle_btn = QPushButton("Export Plot(s) to GLE")
         self._export_gle_btn.setEnabled(False)
@@ -307,7 +321,6 @@ class PlotPanel(QWidget):
         self._gle_format_combo.addItems(["PDF", "EPS"])
         self._gle_format_combo.setEnabled(False)
 
-        row1.addStretch()
         row1.addWidget(self._export_gle_btn)
         row1.addWidget(QLabel("Format:"))
         row1.addWidget(self._gle_format_combo)
@@ -438,6 +451,10 @@ class PlotPanel(QWidget):
         self._syncing_limits_from_axes = True
         try:
             if self._subplot_axes_by_polarization:
+                subplot_axes = list(self._subplot_axes_by_polarization.values())
+                if source_axis is not None and not any(source_axis is axis for axis in subplot_axes):
+                    return
+
                 axis_obj = None
                 if source_axis in self._subplot_axes_by_polarization.values():
                     axis_obj = source_axis
@@ -474,6 +491,8 @@ class PlotPanel(QWidget):
                 return
 
             if not hasattr(self._ax, "get_xlim") or not hasattr(self._ax, "get_ylim"):
+                return
+            if source_axis is not None and source_axis is not self._ax:
                 return
 
             x0, x1 = self._ax.get_xlim()
@@ -531,7 +550,23 @@ class PlotPanel(QWidget):
 
         if not self._has_mpl or not self._current_datasets:
             return
-        self.plot_datasets(self._current_datasets)
+        self._redraw_current_view()
+
+    def is_overlay_enabled(self) -> bool:
+        """Return whether multi-selection overlays are currently enabled."""
+        if not self._has_mpl:
+            return True
+        return bool(getattr(self, "_overlay_checkbox", None).isChecked())
+
+    def set_overlay_enabled(self, enabled: bool, *, emit_signal: bool = False) -> None:
+        """Set overlay mode from state restore or external UI events."""
+        if not self._has_mpl or not hasattr(self, "_overlay_checkbox"):
+            return
+
+        checkbox = self._overlay_checkbox
+        previous = checkbox.blockSignals(not emit_signal)
+        checkbox.setChecked(bool(enabled))
+        checkbox.blockSignals(previous)
 
     def set_active_label_group(self, group_id: str | None) -> None:
         """Switch legend label-field context between ungrouped and Data Group views."""
@@ -660,10 +695,14 @@ class PlotPanel(QWidget):
         if self._current_polarization_axis == "ALL" and self._vector_subplot_datasets:
             self.plot_vector_subplots(self._vector_subplot_datasets)
             return
+        # Preserve explicit multi-dataset views (for example, after
+        # plot_datasets()) even if the overlay checkbox is currently off.
         if len(self._current_datasets) > 1:
             self.plot_datasets(self._current_datasets)
         elif self._current_dataset is not None:
             self.plot_dataset(self._current_dataset)
+        elif self._current_datasets:
+            self.plot_dataset(self._current_datasets[-1])
 
     def _set_alpha_label(self, text: str | None) -> None:
         """Show or hide the alpha label above the plot."""
@@ -705,6 +744,169 @@ class PlotPanel(QWidget):
     def get_current_polarization_axis(self) -> str | None:
         """Return current polarization selector key (``P_*`` or ``ALL``)."""
         return self._current_polarization_axis
+
+    def _axis_key_for_dataset(
+        self,
+        dataset: MuonDataset | None,
+        *,
+        axis_override: str | None = None,
+    ) -> str | None:
+        """Return canonical polarization axis for *dataset* when available."""
+        if axis_override is not None:
+            return self._axis_canonical_key(axis_override)
+        if dataset is None:
+            return None
+
+        run = getattr(dataset, "run", None)
+        grouping = getattr(run, "grouping", None)
+        if isinstance(grouping, dict):
+            axis = self._axis_canonical_key(grouping.get("vector_axis"))
+            if axis in {"P_x", "P_y", "P_z"}:
+                return axis
+
+        grouping_meta = dataset.metadata.get("grouping")
+        if isinstance(grouping_meta, dict):
+            axis = self._axis_canonical_key(grouping_meta.get("vector_axis"))
+            if axis in {"P_x", "P_y", "P_z"}:
+                return axis
+
+        return None
+
+    @staticmethod
+    def _encode_fit_storage_key(run_number: int, axis_key: str | None) -> str:
+        """Encode ``(run_number, axis_key)`` to a serialisable key string."""
+        return f"{int(run_number)}|{axis_key or ''}"
+
+    def _decode_fit_storage_key(self, value: object) -> tuple[int, str | None] | None:
+        """Decode serialised fit key values."""
+        if not isinstance(value, str) or "|" not in value:
+            return None
+        run_token, axis_token = value.split("|", 1)
+        try:
+            run_number = int(run_token)
+        except (TypeError, ValueError):
+            return None
+        axis_key = self._axis_canonical_key(axis_token) if axis_token else None
+        if axis_key == "ALL":
+            axis_key = None
+        return run_number, axis_key
+
+    def _fit_storage_key_for_dataset(
+        self,
+        dataset: MuonDataset | None,
+        *,
+        axis_override: str | None = None,
+    ) -> tuple[int, str | None] | None:
+        """Return axis-aware fit storage key for *dataset*."""
+        if dataset is None:
+            return None
+        try:
+            run_number = int(dataset.run_number)
+        except (TypeError, ValueError):
+            return None
+        axis_key = self._axis_key_for_dataset(dataset, axis_override=axis_override)
+        return run_number, axis_key
+
+    def _fit_curve_for_dataset(
+        self,
+        dataset: MuonDataset | None,
+        *,
+        axis_override: str | None = None,
+    ) -> tuple | None:
+        """Return best-matching fit curve payload for *dataset*."""
+        storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
+        if storage_key is not None:
+            fit_data = self._fit_curves_by_key.get(storage_key)
+            if fit_data is not None:
+                return fit_data
+
+            run_number, axis_key = storage_key
+            if axis_key is not None:
+                has_axis_specific_fit = any(
+                    key_run == run_number and key_axis in {"P_x", "P_y", "P_z"}
+                    for key_run, key_axis in self._fit_curves_by_key
+                )
+                if has_axis_specific_fit:
+                    return None
+
+                fit_data = self._fit_curves_by_key.get((run_number, None))
+                if fit_data is not None:
+                    return fit_data
+
+            fit_data = self._fit_curves.get(run_number)
+            if fit_data is not None:
+                return fit_data
+
+            if self._fit_curve is not None and self._fit_curve_run_number == run_number:
+                return self._fit_curve
+
+        return None
+
+    def _fit_components_for_dataset(
+        self,
+        dataset: MuonDataset | None,
+        *,
+        axis_override: str | None = None,
+    ) -> list[tuple[str, object]]:
+        """Return best-matching additive component curves for *dataset*."""
+        storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
+        if storage_key is not None:
+            components = self._fit_components_by_key.get(storage_key)
+            if components:
+                return list(components)
+
+            run_number, axis_key = storage_key
+            if axis_key is not None:
+                has_axis_specific_components = any(
+                    key_run == run_number and key_axis in {"P_x", "P_y", "P_z"}
+                    for key_run, key_axis in self._fit_components_by_key
+                )
+                if has_axis_specific_components:
+                    return []
+
+                components = self._fit_components_by_key.get((run_number, None))
+                if components:
+                    return list(components)
+
+            components = self._fit_components_by_run.get(run_number)
+            if components:
+                return list(components)
+
+            if self._fit_components and self._fit_curve_run_number == run_number:
+                return list(self._fit_components)
+
+        return []
+
+    def _fit_metadata_for_dataset(
+        self,
+        dataset: MuonDataset | None,
+        *,
+        axis_override: str | None = None,
+    ) -> dict:
+        """Return best-matching fit metadata for *dataset*."""
+        storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
+        if storage_key is None:
+            return {}
+
+        meta = self._fit_metadata_by_key.get(storage_key)
+        if isinstance(meta, dict):
+            return meta
+
+        run_number, axis_key = storage_key
+        if axis_key is not None:
+            has_axis_specific_meta = any(
+                key_run == run_number and key_axis in {"P_x", "P_y", "P_z"}
+                for key_run, key_axis in self._fit_metadata_by_key
+            )
+            if has_axis_specific_meta:
+                return {}
+
+            meta = self._fit_metadata_by_key.get((run_number, None))
+            if isinstance(meta, dict):
+                return meta
+
+        meta = self._fit_metadata.get(run_number)
+        return meta if isinstance(meta, dict) else {}
 
     def _cache_current_y_limits_for_axis(self) -> None:
         """Store current y-limits under the active polarization axis, if any."""
@@ -878,7 +1080,10 @@ class PlotPanel(QWidget):
             time = analysis_dataset.time
             asymmetry = analysis_dataset.asymmetry
             error = analysis_dataset.error
-            low_count_mask = self._low_count_mask_for_dataset(analysis_dataset)
+            low_count_mask = self._low_count_mask_for_dataset(
+                analysis_dataset,
+                source_dataset=dataset,
+            )
 
             finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
             valid_low = finite_mask & low_count_mask
@@ -906,6 +1111,16 @@ class PlotPanel(QWidget):
                 color=color,
                 label=self._dataset_label_for(dataset),
             )
+
+            fit_to_plot = self._fit_curve_for_dataset(dataset, axis_override=axis_key)
+            if fit_to_plot is not None:
+                t_fit, y_fit, _fit_label = fit_to_plot
+                fit_color = self._fit_line_color_for_dataset(
+                    dataset,
+                    default_color=color,
+                    variant_index=i,
+                )
+                ax.plot(t_fit, y_fit, '-', color=fit_color, linewidth=2, label="_nolegend_")
 
             if np.any(finite_mask):
                 all_times.append(time[finite_mask])
@@ -937,6 +1152,9 @@ class PlotPanel(QWidget):
         self._current_datasets = list(self._vector_subplot_datasets.get(order[0], []))
         self._current_dataset = self._current_datasets[-1] if self._current_datasets else None
 
+        # Stop listening to old axes before clearing the figure; stale callbacks
+        # can otherwise push default [0, 1] limits into the spinboxes.
+        self._disconnect_axis_limit_callbacks()
         self._figure.clf()
         self._subplot_axes_by_polarization = {}
         shared_ax = None
@@ -1106,6 +1324,22 @@ class PlotPanel(QWidget):
         ])
         return distinct_palette[(index - 1) % len(distinct_palette)]
 
+    def _fit_line_color_for_dataset(
+        self,
+        dataset: MuonDataset,
+        *,
+        default_color: str,
+        variant_index: int = 0,
+    ) -> str:
+        """Return a fit-line color with improved visibility in period mode."""
+        if self._period_mode_color_for_dataset(dataset) is None:
+            return default_color
+
+        # Neutral dark tones remain visible against strong period-mode colors,
+        # especially when red points are active.
+        fit_palette = ["#111111", "#3f3f3f", "#636363", "#2a2a2a"]
+        return fit_palette[int(variant_index) % len(fit_palette)]
+
     def set_fit_range(self, x_min: float, x_max: float) -> None:
         """Set fit range limits and refresh visual handles."""
         self._set_fit_range(x_min, x_max, emit_signal=True, redraw=True)
@@ -1114,8 +1348,9 @@ class PlotPanel(QWidget):
         """Plot multiple datasets on the same axes with per-dataset colours.
 
         Each dataset is assigned a colour from matplotlib's default cycle
-        (C0, C1, …).  Any stored fit curve for a run is drawn in the same
-        colour.  Low-count (grey) points are still drawn at reduced opacity.
+        (C0, C1, …). Any stored fit curve for a run is drawn in a matching
+        style, with high-contrast overrides for period-mode datasets.
+        Low-count (grey) points are still drawn at reduced opacity.
         The axes limits are initialised from the combined data extent on the
         first call, then held fixed on subsequent redraws.
 
@@ -1155,7 +1390,10 @@ class PlotPanel(QWidget):
             time = analysis_dataset.time
             asymmetry = analysis_dataset.asymmetry
             error = analysis_dataset.error
-            low_count_mask = self._low_count_mask_for_dataset(analysis_dataset)
+            low_count_mask = self._low_count_mask_for_dataset(
+                analysis_dataset,
+                source_dataset=dataset,
+            )
 
             finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
             valid_low = finite_mask & low_count_mask
@@ -1185,13 +1423,15 @@ class PlotPanel(QWidget):
             )
 
             # Overlay fit curve in same colour; excluded from legend by "_" prefix.
-            fit_to_plot = self._fit_curves.get(dataset.run_number)
-            if fit_to_plot is None:
-                if self._fit_curve is not None and self._fit_curve_run_number == dataset.run_number:
-                    fit_to_plot = self._fit_curve
+            fit_to_plot = self._fit_curve_for_dataset(dataset)
             if fit_to_plot is not None:
                 t_fit, y_fit, fit_label = fit_to_plot
-                self._ax.plot(t_fit, y_fit, '-', color=color, linewidth=2,
+                fit_color = self._fit_line_color_for_dataset(
+                    dataset,
+                    default_color=color,
+                    variant_index=i,
+                )
+                self._ax.plot(t_fit, y_fit, '-', color=fit_color, linewidth=2,
                               label="_nolegend_")
 
             if np.any(finite_mask):
@@ -1259,7 +1499,10 @@ class PlotPanel(QWidget):
         time = analysis_dataset.time
         asymmetry = analysis_dataset.asymmetry
         error = analysis_dataset.error
-        low_count_mask = self._low_count_mask_for_dataset(analysis_dataset)
+        low_count_mask = self._low_count_mask_for_dataset(
+            analysis_dataset,
+            source_dataset=dataset,
+        )
 
         self._last_plot_time = time
         self._last_plot_asymmetry = asymmetry
@@ -1301,15 +1544,22 @@ class PlotPanel(QWidget):
         self._set_alpha_label(self._single_dataset_alpha_label_text(dataset))
 
         # Re-plot fit curve if it exists (check both single and global fits)
-        fit_to_plot = None
-        if dataset.run_number in self._fit_curves:
-            fit_to_plot = self._fit_curves[dataset.run_number]
-        elif self._fit_curve is not None and self._fit_curve_run_number == dataset.run_number:
-            fit_to_plot = self._fit_curve
+        fit_to_plot = self._fit_curve_for_dataset(dataset)
 
         if fit_to_plot is not None:
             t_fit, y_fit, fit_label = fit_to_plot
-            self._ax.plot(t_fit, y_fit, 'r-', linewidth=2, label=fit_label)
+            fit_color = self._fit_line_color_for_dataset(
+                dataset,
+                default_color='r',
+            )
+            self._ax.plot(
+                t_fit,
+                y_fit,
+                '-',
+                color=fit_color,
+                linewidth=2,
+                label=fit_label,
+            )
 
         self._draw_annotations()
 
@@ -1462,10 +1712,22 @@ class PlotPanel(QWidget):
 
         self._apply_limits()
 
-    def _low_count_mask_for_dataset(self, dataset: MuonDataset) -> np.ndarray:
+    def _low_count_mask_for_dataset(
+        self,
+        dataset: MuonDataset,
+        *,
+        source_dataset: MuonDataset | None = None,
+    ) -> np.ndarray:
         """Return mask of low-count bins (plotted gray) for *dataset* points."""
         time = np.asarray(dataset.time, dtype=float)
         mask = np.zeros_like(time, dtype=bool)
+
+        low_confidence = self._low_confidence_mask_for_dataset(
+            dataset,
+            source_dataset=source_dataset,
+        )
+        if low_confidence is not None and low_confidence.shape == mask.shape:
+            mask |= low_confidence
 
         run = dataset.run
         if run is None or not isinstance(getattr(run, "grouping", None), dict):
@@ -1478,31 +1740,253 @@ class PlotPanel(QWidget):
             return mask
 
         histograms = getattr(run, "histograms", None)
-        if not histograms:
-            return mask
-
-        hist0 = histograms[0]
-        axis = np.asarray(hist0.time_axis, dtype=float)
-        if axis.size == 0:
-            return mask
+        axis = np.asarray([], dtype=float)
+        if histograms:
+            hist0 = histograms[0]
+            axis = np.asarray(hist0.time_axis, dtype=float)
 
         try:
             lo_idx = max(0, int(first_good))
-            hi_idx = min(int(last_good), axis.size - 1)
+            hi_idx = int(last_good)
         except (TypeError, ValueError):
             return mask
 
         if lo_idx > hi_idx:
             return mask
 
-        good_t_min = float(axis[lo_idx])
-        good_t_max = float(axis[hi_idx])
-        return (time < good_t_min) | (time > good_t_max)
+        # Prefer histogram time-axis boundaries when available. This keeps the
+        # masking consistent for rebinned analysis datasets.
+        if axis.size > 0:
+            hi_axis_idx = min(hi_idx, axis.size - 1)
+            if lo_idx > hi_axis_idx:
+                return mask
+
+            good_t_min = float(axis[lo_idx])
+            good_t_max = float(axis[hi_axis_idx])
+            if good_t_min > good_t_max:
+                good_t_min, good_t_max = good_t_max, good_t_min
+            tol = 1e-12
+            if axis.size >= 2:
+                step = float(np.nanmedian(np.diff(axis)))
+                if np.isfinite(step) and step != 0.0:
+                    tol = max(1e-12, abs(step) * 1e-6)
+            mask |= (time < (good_t_min - tol)) | (time > (good_t_max + tol))
+            return mask
+
+        # Fallback for datasets that carry grouping metadata but no raw
+        # histograms (for example imported WiMDA asymmetry tables). Use the
+        # source, pre-rebinning time axis when available.
+        reference_time = np.asarray(
+            source_dataset.time if source_dataset is not None else dataset.time,
+            dtype=float,
+        )
+        if reference_time.size == 0:
+            return mask
+
+        max_idx = reference_time.size - 1
+        if lo_idx > max_idx:
+            return mask
+        hi_ref_idx = min(hi_idx, max_idx)
+        if lo_idx > hi_ref_idx:
+            return mask
+
+        good_t_min = float(reference_time[lo_idx])
+        good_t_max = float(reference_time[hi_ref_idx])
+        if good_t_min > good_t_max:
+            good_t_min, good_t_max = good_t_max, good_t_min
+
+        tol = 1e-12
+        if reference_time.size >= 2:
+            step = float(np.nanmedian(np.diff(reference_time)))
+            if np.isfinite(step) and step != 0.0:
+                tol = max(1e-12, abs(step) * 1e-6)
+
+        mask |= (time < (good_t_min - tol)) | (time > (good_t_max + tol))
+
+        return mask
+
+    def _low_confidence_mask_for_dataset(
+        self,
+        dataset: MuonDataset,
+        *,
+        source_dataset: MuonDataset | None = None,
+    ) -> np.ndarray | None:
+        """Return low-confidence mask from grouped-count reliability checks.
+
+        Historical behavior marks saturated ±100% bins and bins with
+        non-positive grouped denominator as low-confidence, rendered in gray.
+        """
+        reference_dataset = source_dataset if source_dataset is not None else dataset
+        reference_asym = np.asarray(reference_dataset.asymmetry, dtype=float)
+        if reference_asym.size == 0:
+            return np.zeros_like(dataset.time, dtype=bool)
+
+        saturated = np.isclose(np.abs(reference_asym), 100.0, atol=1e-12)
+
+        run = reference_dataset.run
+        if run is None or not run.histograms or not isinstance(getattr(run, "grouping", None), dict):
+            return self._project_source_mask_to_analysis_dataset(
+                source_mask=saturated,
+                source_dataset=reference_dataset,
+                analysis_dataset=dataset,
+            )
+
+        grouping = run.grouping
+        groups = grouping.get("groups")
+        if not isinstance(groups, dict):
+            return self._project_source_mask_to_analysis_dataset(
+                source_mask=saturated,
+                source_dataset=reference_dataset,
+                analysis_dataset=dataset,
+            )
+
+        try:
+            forward_gid = int(grouping.get("forward_group", 1))
+            backward_gid = int(grouping.get("backward_group", 2))
+        except (TypeError, ValueError):
+            return self._project_source_mask_to_analysis_dataset(
+                source_mask=saturated,
+                source_dataset=reference_dataset,
+                analysis_dataset=dataset,
+            )
+
+        def _to_indices(values) -> list[int]:
+            out: list[int] = []
+            for val in values:
+                try:
+                    out.append(max(0, int(val) - 1))
+                except (TypeError, ValueError):
+                    continue
+            return out
+
+        forward_idx = _to_indices(groups.get(forward_gid, []))
+        backward_idx = _to_indices(groups.get(backward_gid, []))
+        if not forward_idx or not backward_idx:
+            return self._project_source_mask_to_analysis_dataset(
+                source_mask=saturated,
+                source_dataset=reference_dataset,
+                analysis_dataset=dataset,
+            )
+
+        if max(forward_idx, default=-1) >= len(run.histograms):
+            return self._project_source_mask_to_analysis_dataset(
+                source_mask=saturated,
+                source_dataset=reference_dataset,
+                analysis_dataset=dataset,
+            )
+        if max(backward_idx, default=-1) >= len(run.histograms):
+            return self._project_source_mask_to_analysis_dataset(
+                source_mask=saturated,
+                source_dataset=reference_dataset,
+                analysis_dataset=dataset,
+            )
+
+        forward = apply_grouping(run.histograms, forward_idx)
+        backward = apply_grouping(run.histograms, backward_idx)
+        try:
+            alpha = float(grouping.get("alpha", 1.0))
+        except (TypeError, ValueError):
+            alpha = 1.0
+
+        denominator = np.asarray(forward + alpha * backward, dtype=float)
+        if denominator.size == 0:
+            return self._project_source_mask_to_analysis_dataset(
+                source_mask=saturated,
+                source_dataset=reference_dataset,
+                analysis_dataset=dataset,
+            )
+
+        lo_default = 0
+        hi_default = denominator.size - 1
+        try:
+            lo = int(grouping.get("first_good_bin", lo_default))
+        except (TypeError, ValueError):
+            lo = lo_default
+        try:
+            hi = int(grouping.get("last_good_bin", hi_default))
+        except (TypeError, ValueError):
+            hi = hi_default
+
+        lo = max(0, min(lo, hi_default))
+        hi = max(0, min(hi, hi_default))
+        if lo > hi:
+            return self._project_source_mask_to_analysis_dataset(
+                source_mask=saturated,
+                source_dataset=reference_dataset,
+                analysis_dataset=dataset,
+            )
+
+        denominator = denominator[lo : hi + 1]
+        reliable = denominator > 0.0
+        source_low = saturated.copy()
+        if reliable.shape == source_low.shape:
+            source_low |= ~reliable
+
+        return self._project_source_mask_to_analysis_dataset(
+            source_mask=source_low,
+            source_dataset=reference_dataset,
+            analysis_dataset=dataset,
+        )
+
+    def _project_source_mask_to_analysis_dataset(
+        self,
+        *,
+        source_mask: np.ndarray,
+        source_dataset: MuonDataset,
+        analysis_dataset: MuonDataset,
+    ) -> np.ndarray:
+        """Project source-bin boolean mask onto the plotted analysis dataset."""
+        source_mask = np.asarray(source_mask, dtype=bool)
+        source_time = np.asarray(source_dataset.time, dtype=float)
+        target_time = np.asarray(analysis_dataset.time, dtype=float)
+
+        if target_time.size == 0:
+            return np.zeros(0, dtype=bool)
+        if source_mask.size == 0 or source_time.size == 0:
+            return np.zeros_like(target_time, dtype=bool)
+
+        if source_mask.size != source_time.size:
+            n = min(source_mask.size, source_time.size)
+            source_mask = source_mask[:n]
+            source_time = source_time[:n]
+            if n == 0:
+                return np.zeros_like(target_time, dtype=bool)
+
+        if source_time.size == target_time.size:
+            return source_mask.copy()
+
+        bunch_factor = int(self._bunch_factor.value()) if hasattr(self, "_bunch_factor") else 1
+        if bunch_factor > 1 and source_time.size >= target_time.size:
+            trimmed = (source_time.size // bunch_factor) * bunch_factor
+            if trimmed > 0 and (trimmed // bunch_factor) == target_time.size:
+                return source_mask[:trimmed].reshape(target_time.size, bunch_factor).any(axis=1)
+
+        if source_time.size == 1:
+            return np.full(target_time.size, bool(source_mask[0]), dtype=bool)
+
+        edges = np.empty(target_time.size + 1, dtype=float)
+        if target_time.size == 1:
+            edges[0] = -np.inf
+            edges[1] = np.inf
+        else:
+            edges[1:-1] = 0.5 * (target_time[:-1] + target_time[1:])
+            edges[0] = -np.inf
+            edges[-1] = np.inf
+
+        projected = np.zeros(target_time.size, dtype=bool)
+        for i in range(target_time.size):
+            if i == target_time.size - 1:
+                in_bucket = (source_time >= edges[i]) & (source_time <= edges[i + 1])
+            else:
+                in_bucket = (source_time >= edges[i]) & (source_time < edges[i + 1])
+            if np.any(in_bucket):
+                projected[i] = bool(np.any(source_mask[in_bucket]))
+
+        return projected
 
     def _on_bunch_changed(self) -> None:
         """Re-plot and refresh fit inputs when the bunch factor changes."""
-        if self._current_dataset is not None:
-            self.plot_dataset(self._current_dataset)
+        self._redraw_current_view()
         self.bunch_factor_changed.emit(self._bunch_factor.value())
 
     def _set_fit_range(
@@ -1802,18 +2286,27 @@ class PlotPanel(QWidget):
         # Store fit curve data for persistence across redraws (single fit)
         self._fit_curve = (t_fit, y_fit, label)
         run_number = None
+        axis_key = None
         if self._current_dataset is not None:
             try:
                 run_number = int(self._current_dataset.run_number)
             except (TypeError, ValueError):
                 run_number = None
+            axis_key = self._axis_key_for_dataset(self._current_dataset)
         self._fit_curve_run_number = run_number
 
         if run_number is not None:
             self._fit_curves[run_number] = (t_fit, y_fit, label)
+            self._fit_curves_by_key[(run_number, axis_key)] = (t_fit, y_fit, label)
             self._fit_components_by_run[run_number] = list(component_curves or [])
+            self._fit_components_by_key[(run_number, axis_key)] = list(component_curves or [])
             if fit_result is not None or fit_function:
-                self._store_fit_metadata(run_number, fit_result, fit_function=fit_function)
+                self._store_fit_metadata(
+                    run_number,
+                    fit_result,
+                    fit_function=fit_function,
+                    axis_key=axis_key,
+                )
 
         self._fit_components = list(component_curves or [])
 
@@ -1834,15 +2327,21 @@ class PlotPanel(QWidget):
         fit_curves_dict : dict
             Dictionary mapping run_number -> (t_fit, y_fit, label, component_curves),
             (t_fit, y_fit, label, component_curves, fit_result), or
-            (t_fit, y_fit, label, component_curves, fit_result, fit_function).
+            (t_fit, y_fit, label, component_curves, fit_result, fit_function), or
+            (t_fit, y_fit, label, component_curves, fit_result, fit_function, axis_key).
         """
         if not self._has_mpl:
             return
 
         # Update fit curves, preserving results from other groups
         for run_number, payload in fit_curves_dict.items():
+            axis_key = None
             if len(payload) >= 6:
                 t_fit, y_fit, label, component_curves, fit_result, fit_function = payload[:6]
+                if len(payload) >= 7:
+                    axis_key = self._axis_canonical_key(payload[6])
+                    if axis_key == "ALL":
+                        axis_key = None
             elif len(payload) >= 5:
                 t_fit, y_fit, label, component_curves, fit_result = payload[:5]
                 fit_function = None
@@ -1855,10 +2354,21 @@ class PlotPanel(QWidget):
                 component_curves = []
                 fit_result = None
                 fit_function = None
-            self._fit_curves[run_number] = (t_fit, y_fit, label)
-            self._fit_components_by_run[run_number] = list(component_curves or [])
+            try:
+                run_key = int(run_number)
+            except (TypeError, ValueError):
+                continue
+            self._fit_curves[run_key] = (t_fit, y_fit, label)
+            self._fit_curves_by_key[(run_key, axis_key)] = (t_fit, y_fit, label)
+            self._fit_components_by_run[run_key] = list(component_curves or [])
+            self._fit_components_by_key[(run_key, axis_key)] = list(component_curves or [])
             if fit_result is not None or fit_function:
-                self._store_fit_metadata(run_number, fit_result, fit_function=fit_function)
+                self._store_fit_metadata(
+                    run_key,
+                    fit_result,
+                    fit_function=fit_function,
+                    axis_key=axis_key,
+                )
         # Clear single fit curve
         self._fit_curve = None
         self._fit_curve_run_number = None
@@ -1867,10 +2377,7 @@ class PlotPanel(QWidget):
         self._update_export_enabled()
 
         # Redraw current view while preserving multi-selection overlays.
-        if len(self._current_datasets) > 1:
-            self.plot_datasets(self._current_datasets)
-        elif self._current_dataset is not None:
-            self.plot_dataset(self._current_dataset)
+        self._redraw_current_view()
 
     def clear(self) -> None:
         """Clear the plot and reset stored data."""
@@ -1885,9 +2392,12 @@ class PlotPanel(QWidget):
             self._fit_curve = None
             self._fit_curve_run_number = None
             self._fit_curves = {}
+            self._fit_curves_by_key = {}
             self._fit_components = None
             self._fit_components_by_run = {}
+            self._fit_components_by_key = {}
             self._fit_metadata = {}
+            self._fit_metadata_by_key = {}
             self._limits_initialized = False
             self._last_plot_time = None
             self._last_plot_asymmetry = None
@@ -1917,9 +2427,12 @@ class PlotPanel(QWidget):
         self._fit_curve = None
         self._fit_curve_run_number = None
         self._fit_curves = {}
+        self._fit_curves_by_key = {}
         self._fit_components = None
         self._fit_components_by_run = {}
+        self._fit_components_by_key = {}
         self._fit_metadata = {}
+        self._fit_metadata_by_key = {}
         self._update_export_enabled()
         self._redraw_current_view()
 
@@ -1945,6 +2458,26 @@ class PlotPanel(QWidget):
             self._fit_components_by_run.pop(run_number, None)
             self._fit_metadata.pop(run_number, None)
 
+        removed_curve_keys = [
+            key for key in self._fit_curves_by_key
+            if key[0] in normalized_runs
+        ]
+        removed_component_keys = [
+            key for key in self._fit_components_by_key
+            if key[0] in normalized_runs
+        ]
+        removed_metadata_keys = [
+            key for key in self._fit_metadata_by_key
+            if key[0] in normalized_runs
+        ]
+
+        for key in removed_curve_keys:
+            self._fit_curves_by_key.pop(key, None)
+        for key in removed_component_keys:
+            self._fit_components_by_key.pop(key, None)
+        for key in removed_metadata_keys:
+            self._fit_metadata_by_key.pop(key, None)
+
         if self._fit_curve_run_number in normalized_runs:
             self._fit_curve = None
             self._fit_curve_run_number = None
@@ -1953,10 +2486,7 @@ class PlotPanel(QWidget):
 
         if removed > 0:
             self._update_export_enabled()
-            if len(self._current_datasets) > 1:
-                self.plot_datasets(self._current_datasets)
-            elif self._current_dataset is not None:
-                self.plot_dataset(self._current_dataset)
+            self._redraw_current_view()
 
         return removed
 
@@ -1965,6 +2495,7 @@ class PlotPanel(QWidget):
         run_number: int,
         fit_result: object | None,
         fit_function: str | None = None,
+        axis_key: str | None = None,
     ) -> None:
         """Extract and store fit metadata from a FitResult for export headers."""
         meta: dict = {}
@@ -1994,6 +2525,7 @@ class PlotPanel(QWidget):
         if fit_function_value:
             meta["fit_function"] = str(fit_function_value)
         self._fit_metadata[int(run_number)] = meta
+        self._fit_metadata_by_key[(int(run_number), axis_key)] = meta
 
     def _update_export_enabled(self) -> None:
         """Enable export controls when there is plotted data to export."""
@@ -2109,19 +2641,14 @@ class PlotPanel(QWidget):
                                 histogram_info["events_grouped"] = grouped_total
 
             rn = dataset.run_number
-            fit_data = self._fit_curves.get(rn)
-            if fit_data is None:
-                if self._fit_curve is not None and self._fit_curve_run_number == rn:
-                    fit_data = self._fit_curve
+            fit_data = self._fit_curve_for_dataset(dataset)
 
             t_fit = None
             y_fit = None
             fit_label = "Fit"
             if fit_data is not None:
                 t_fit, y_fit, fit_label = fit_data
-            component_data = self._fit_components_by_run.get(rn) or []
-            if not component_data and self._fit_components and self._fit_curve_run_number == rn:
-                component_data = self._fit_components or []
+            component_data = self._fit_components_for_dataset(dataset)
 
             label_text = self._dataset_label_for(dataset)
 
@@ -2137,7 +2664,7 @@ class PlotPanel(QWidget):
                 "components": [
                     {"name": name, "y": y_vals} for name, y_vals in component_data
                 ],
-                "fit_metadata": self._fit_metadata.get(rn, {}),
+                "fit_metadata": self._fit_metadata_for_dataset(dataset),
                 "grouping": grouping,
                 "run_metadata": run_metadata,
                 "histogram_info": histogram_info,
@@ -2785,6 +3312,7 @@ class PlotPanel(QWidget):
             "label_field": self._label_field_combo.currentData() if self._has_mpl else "run",
             "default_label_field": self._default_label_field,
             "label_field_by_group": dict(self._label_field_by_group),
+            "overlay_enabled": self.is_overlay_enabled(),
             "bunch_factor": self._bunch_factor.value() if self._has_mpl else 1,
             "x_min": self._x_min.value() if self._has_mpl else 0.0,
             "x_max": self._x_max.value() if self._has_mpl else 10.0,
@@ -2798,8 +3326,10 @@ class PlotPanel(QWidget):
             "fit_curve": None,
             "fit_curve_run_number": self._fit_curve_run_number,
             "fit_curves": {},
+            "fit_curves_by_key": {},
             "fit_components": None,
             "fit_components_by_run": {},
+            "fit_components_by_key": {},
             "annotations": [],
             "annotations_by_group": {},
             "fit_x_min": self._fit_x_min,
@@ -2820,6 +3350,12 @@ class PlotPanel(QWidget):
                     "y": list(y_fit),
                     "label": label,
                 }
+            for (run_number, axis_key), (t_fit, y_fit, label) in self._fit_curves_by_key.items():
+                state["fit_curves_by_key"][self._encode_fit_storage_key(run_number, axis_key)] = {
+                    "t": list(t_fit),
+                    "y": list(y_fit),
+                    "label": label,
+                }
             if self._fit_components is not None:
                 state["fit_components"] = [
                     {"name": name, "y": list(y_vals)}
@@ -2830,6 +3366,11 @@ class PlotPanel(QWidget):
                     {"name": name, "y": list(y_vals)}
                     for name, y_vals in curves
                 ]
+            for (run_number, axis_key), curves in self._fit_components_by_key.items():
+                state["fit_components_by_key"][self._encode_fit_storage_key(run_number, axis_key)] = [
+                    {"name": name, "y": list(y_vals)}
+                    for name, y_vals in curves
+                ]
             state["annotations"] = self._serialize_annotations(self._default_annotations)
             state["annotations_by_group"] = {
                 str(group_id): self._serialize_annotations(annotations)
@@ -2837,6 +3378,10 @@ class PlotPanel(QWidget):
             }
             state["fit_metadata"] = {
                 str(rn): meta for rn, meta in self._fit_metadata.items()
+            }
+            state["fit_metadata_by_key"] = {
+                self._encode_fit_storage_key(run_number, axis_key): meta
+                for (run_number, axis_key), meta in self._fit_metadata_by_key.items()
             }
 
         return state
@@ -2905,6 +3450,8 @@ class PlotPanel(QWidget):
             if selected_field in valid_label_fields:
                 self._default_label_field = str(selected_field)
 
+        self.set_overlay_enabled(bool(state.get("overlay_enabled", True)), emit_signal=False)
+
         # Keep bunch factor at default in restored projects; control is hidden.
         self._bunch_factor.blockSignals(True)
         self._bunch_factor.setValue(1)
@@ -2935,8 +3482,10 @@ class PlotPanel(QWidget):
         self._fit_curve = None
         self._fit_curve_run_number = None
         self._fit_curves = {}
+        self._fit_curves_by_key = {}
         self._fit_components = None
         self._fit_components_by_run = {}
+        self._fit_components_by_key = {}
 
         fit_curve_data = state.get("fit_curve")
         if fit_curve_data:
@@ -2959,6 +3508,23 @@ class PlotPanel(QWidget):
                 curve_data.get("label", "Global Fit"),
             )
 
+        raw_fit_curves_by_key = state.get("fit_curves_by_key", {})
+        if isinstance(raw_fit_curves_by_key, dict):
+            for storage_key, curve_data in raw_fit_curves_by_key.items():
+                decoded = self._decode_fit_storage_key(storage_key)
+                if decoded is None or not isinstance(curve_data, dict):
+                    continue
+                self._fit_curves_by_key[decoded] = (
+                    np.array(curve_data.get("t", [])),
+                    np.array(curve_data.get("y", [])),
+                    curve_data.get("label", "Global Fit"),
+                )
+            for (run_number, _axis_key), curve_data in self._fit_curves_by_key.items():
+                self._fit_curves.setdefault(run_number, curve_data)
+        else:
+            for run_number, curve_data in self._fit_curves.items():
+                self._fit_curves_by_key[(run_number, None)] = curve_data
+
         fit_components = state.get("fit_components")
         if isinstance(fit_components, list):
             self._fit_components = [
@@ -2976,6 +3542,23 @@ class PlotPanel(QWidget):
                 if isinstance(entry, dict)
             ]
 
+        raw_fit_components_by_key = state.get("fit_components_by_key", {})
+        if isinstance(raw_fit_components_by_key, dict):
+            for storage_key, entries in raw_fit_components_by_key.items():
+                decoded = self._decode_fit_storage_key(storage_key)
+                if decoded is None or not isinstance(entries, list):
+                    continue
+                self._fit_components_by_key[decoded] = [
+                    (entry.get("name", "Component"), np.array(entry.get("y", []), dtype=float))
+                    for entry in entries
+                    if isinstance(entry, dict)
+                ]
+            for (run_number, _axis_key), curves in self._fit_components_by_key.items():
+                self._fit_components_by_run.setdefault(run_number, list(curves))
+        else:
+            for run_number, curves in self._fit_components_by_run.items():
+                self._fit_components_by_key[(run_number, None)] = list(curves)
+
         self._default_annotations = self._deserialize_annotations(state.get("annotations", []))
         raw_annotations_by_group = state.get("annotations_by_group", {})
         self._annotations_by_group = {}
@@ -2988,6 +3571,7 @@ class PlotPanel(QWidget):
 
         # Restore fit metadata.
         self._fit_metadata = {}
+        self._fit_metadata_by_key = {}
         raw_fit_metadata = state.get("fit_metadata", {})
         if isinstance(raw_fit_metadata, dict):
             for rn_str, meta in raw_fit_metadata.items():
@@ -2996,6 +3580,19 @@ class PlotPanel(QWidget):
                         self._fit_metadata[int(rn_str)] = meta
                     except (TypeError, ValueError):
                         pass
+
+        raw_fit_metadata_by_key = state.get("fit_metadata_by_key", {})
+        if isinstance(raw_fit_metadata_by_key, dict):
+            for storage_key, meta in raw_fit_metadata_by_key.items():
+                decoded = self._decode_fit_storage_key(storage_key)
+                if decoded is None or not isinstance(meta, dict):
+                    continue
+                self._fit_metadata_by_key[decoded] = meta
+            for (run_number, _axis_key), meta in self._fit_metadata_by_key.items():
+                self._fit_metadata.setdefault(run_number, meta)
+        else:
+            for run_number, meta in self._fit_metadata.items():
+                self._fit_metadata_by_key[(run_number, None)] = meta
 
         self._update_export_enabled()
 

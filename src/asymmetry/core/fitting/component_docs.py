@@ -138,6 +138,26 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "Use for a time-independent background term from non-relaxing or spectrometer-background contributions. "
         "It is typically included additively with dynamic or oscillatory components."
     ),
+    "MuF": (
+        "Use for Case I muon-fluorine stopping states where the muon is strongly coupled to one dominant 19F nucleus, "
+        "giving the characteristic three-frequency oscillation of a two-spin mu-F pair. This is the appropriate starting "
+        "model for fluorine-containing molecular materials where a symmetric site between two fluorines is not favored, as in "
+        "the CuF2(H2O)2(pyz) example discussed by Lancaster et al. It should not be used when the data clearly require two comparable "
+        "fluorine couplings or an additional nearby spin such as a proton."
+    ),
+    "FmuF_Linear": (
+        "Use for the classic hydrogen-bond-like linear F-mu-F center found in simple ionic fluorides, where the muon sits approximately "
+        "midway between two equivalent fluorines and the zero-field polarization is described by the analytical collinear three-spin form. "
+        "This is the natural model for LiF, NaF, CaF2, and BaF2 type systems and for any material where a nearly symmetric two-fluorine site "
+        "is expected. It is not the right model for crooked or asymmetric molecular geometries, because its closed form assumes equal mu-F distances "
+        "and the collinear powder-averaged geometry of the Brewer et al. treatment."
+    ),
+    "FmuF_General": (
+        "Use for distorted or asymmetric three-spin F-mu-F stopping states where the muon couples to two fluorines with inequivalent distances and/or "
+        "a bent bond angle. This is the relevant model for Case II molecular-magnet scenarios such as the crooked F-mu-F geometry identified in "
+        "[Cu(NO3)(pyz)2]PF6, where a linear FmuF model is too restrictive. The present implementation still assumes only three coupled spins "
+        "(F-mu-F); it is therefore not intended for Case III situations that require an additional nearby nucleus, such as the proton in HF2-."
+    ),
 }
 
 

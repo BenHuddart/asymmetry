@@ -209,6 +209,21 @@ def test_group_lookup_helpers_return_group_and_members(qapp: QApplication) -> No
     assert members == [61, 62]
 
 
+def test_get_current_dataset_tracks_last_clicked_row_in_multi_selection(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    d1 = _dataset(64)
+    d2 = _dataset(65)
+    panel.add_dataset(d1)
+    panel.add_dataset(d2)
+
+    _click_row(panel, 0)
+    _click_row(panel, 1, Qt.KeyboardModifier.ControlModifier)
+
+    current = panel.get_current_dataset()
+    assert current is not None
+    assert int(current.run_number) == 65
+
+
 def test_context_menu_shows_separate_for_combined_dataset(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     d1 = _dataset(51)

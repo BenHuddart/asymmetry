@@ -16,6 +16,9 @@ class PeriodMode(StrEnum):
 # Muon gyromagnetic ratio  γ_μ / (2π)  in MHz/T
 MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = 135.538817
 
+# Fluorine-19 gyromagnetic ratio  γ_F / (2π)  in MHz/T
+FLUORINE_19_GYROMAGNETIC_RATIO_MHZ_PER_T = 40.053
+
 # Muon lifetime in microseconds
 MUON_LIFETIME_US = 2.1969811
 

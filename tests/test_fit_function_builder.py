@@ -12,7 +12,10 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QComboBox
 
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
+from asymmetry.gui.panels.fit_function_builder import (
+    FitFunctionBuilderDialog,
+    _ComponentSelectorButton,
+)
 
 
 @pytest.fixture(scope="module")
@@ -38,7 +41,7 @@ def test_dialog_add_component_updates_formula(qapp: QApplication) -> None:
     dialog._add_component_row("Constant", "+")
 
     row_component = dialog._table.cellWidget(1, 2)
-    assert isinstance(row_component, QComboBox)
+    assert isinstance(row_component, _ComponentSelectorButton)
     row_component.setCurrentText("Constant")
 
     row_op = dialog._table.cellWidget(1, 0)
@@ -83,3 +86,32 @@ def test_dialog_has_info_column_and_button(qapp: QApplication) -> None:
     info_btn = dialog._table.cellWidget(0, 3)
     assert info_btn is not None
     assert info_btn.text() == "Info"
+
+
+def test_component_selector_includes_muon_fluorine_submenu(qapp: QApplication) -> None:
+    dialog = FitFunctionBuilderDialog()
+    component_widget = dialog._table.cellWidget(0, 2)
+
+    assert isinstance(component_widget, _ComponentSelectorButton)
+    menu = component_widget._build_component_menu()
+    assert menu is not None
+
+    submenu_titles = [
+        action.text()
+        for action in menu.actions()
+        if action.menu() is not None
+    ]
+    assert "Muon-Fluorine" in submenu_titles
+
+    muon_items: list[str] = []
+    for action in menu.actions():
+        submenu = action.menu()
+        if submenu is None or action.text() != "Muon-Fluorine":
+            continue
+        muon_items = [sub_action.text() for sub_action in submenu.actions() if sub_action.isEnabled()]
+        break
+
+    assert muon_items
+    assert "MuF" in muon_items
+    assert "FmuF_Linear" in muon_items
+    assert "FmuF_General" in muon_items

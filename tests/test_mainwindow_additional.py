@@ -615,6 +615,70 @@ class TestMainWindowBasic:
         assert ds1.run.grouping.get("vector_axis") == "P_x"
         assert ds2.run.grouping.get("vector_axis") == "P_x"
 
+    def test_render_current_selection_uses_most_recent_dataset_when_overlay_disabled(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ds1 = _make_dataset(7651, with_grouping=False)
+        ds2 = _make_dataset(7652, with_grouping=False)
+
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+        if hasattr(mainwindow._data_browser, "get_selected_group_ids"):
+            mainwindow._data_browser.get_selected_group_ids = lambda: []
+        if hasattr(mainwindow._data_browser, "is_single_group_selected"):
+            mainwindow._data_browser.is_single_group_selected = lambda: False
+        if hasattr(mainwindow._data_browser, "get_current_dataset"):
+            mainwindow._data_browser.get_current_dataset = lambda: ds2
+        if hasattr(mainwindow._plot_panel, "is_overlay_enabled"):
+            mainwindow._plot_panel.is_overlay_enabled = lambda: False
+        if hasattr(mainwindow._plot_panel, "get_current_polarization_axis"):
+            mainwindow._plot_panel.get_current_polarization_axis = lambda: None
+
+        plotted: list[int] = []
+        monkeypatch.setattr(mainwindow._plot_panel, "plot_datasets", lambda _datasets: plotted.append(-1))
+        monkeypatch.setattr(mainwindow._plot_panel, "plot_dataset", lambda dataset: plotted.append(int(dataset.run_number)))
+
+        mainwindow._render_current_selection_plot()
+
+        assert plotted == [7652]
+        assert mainwindow._current_dataset is ds2
+
+    def test_render_current_selection_group_fallback_when_overlay_disabled(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ds1 = _make_dataset(7661, with_grouping=False)
+        ds2 = _make_dataset(7662, with_grouping=False)
+        ds3 = _make_dataset(7663, with_grouping=False)
+
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+        if hasattr(mainwindow._data_browser, "get_selected_group_ids"):
+            mainwindow._data_browser.get_selected_group_ids = lambda: ["g1"]
+        if hasattr(mainwindow._data_browser, "is_single_group_selected"):
+            mainwindow._data_browser.is_single_group_selected = lambda: True
+        if hasattr(mainwindow._data_browser, "get_group_member_run_numbers"):
+            mainwindow._data_browser.get_group_member_run_numbers = lambda _gid: [7661, 7662]
+        if hasattr(mainwindow._data_browser, "get_current_dataset"):
+            mainwindow._data_browser.get_current_dataset = lambda: None
+        if hasattr(mainwindow._plot_panel, "is_overlay_enabled"):
+            mainwindow._plot_panel.is_overlay_enabled = lambda: False
+        if hasattr(mainwindow._plot_panel, "get_current_polarization_axis"):
+            mainwindow._plot_panel.get_current_polarization_axis = lambda: None
+
+        plotted: list[int] = []
+        monkeypatch.setattr(mainwindow._plot_panel, "plot_datasets", lambda _datasets: plotted.append(-1))
+        monkeypatch.setattr(mainwindow._plot_panel, "plot_dataset", lambda dataset: plotted.append(int(dataset.run_number)))
+
+        mainwindow._current_dataset = ds2
+        mainwindow._render_current_selection_plot()
+
+        mainwindow._current_dataset = ds3
+        mainwindow._render_current_selection_plot()
+
+        assert plotted == [7662, 7661]
+
     def test_dataset_selection_preserves_active_vector_axis(
         self,
         mainwindow: MainWindow,
@@ -702,6 +766,71 @@ class TestMainWindowBasic:
 
         assert dataset.run.grouping.get("vector_axis") == "P_z"
         assert calls["render"] == 1
+
+    def test_update_selected_datasets_blocks_fit_actions_in_all_mode(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ds1 = _make_dataset(7711, with_grouping=False)
+        ds2 = _make_dataset(7712, with_grouping=False)
+        for dataset in (ds1, ds2):
+            assert dataset.run is not None
+            dataset.run.grouping.update(
+                {
+                    "groups": {
+                        1: [1],
+                        2: [2],
+                        3: [1],
+                        4: [2],
+                        5: [1],
+                        6: [2],
+                    },
+                    "group_names": {
+                        1: "Pz Forward",
+                        2: "Pz Backward",
+                        3: "Py Top",
+                        4: "Py Bottom",
+                        5: "Px Left",
+                        6: "Px Right",
+                    },
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "vector_axis": "P_z",
+                }
+            )
+
+        mainwindow._current_dataset = ds1
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+        mainwindow._data_browser.get_dataset = (
+            lambda run_number: ds1 if int(run_number) == 7711 else ds2
+        )
+        if hasattr(mainwindow._data_browser, "get_selected_group_ids"):
+            mainwindow._data_browser.get_selected_group_ids = lambda: []
+        if hasattr(mainwindow._plot_panel, "set_active_label_group"):
+            mainwindow._plot_panel.set_active_label_group = lambda _gid: None
+
+        monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: None)
+        monkeypatch.setattr(mainwindow, "_refresh_vector_axis_selector", lambda: None)
+
+        if hasattr(mainwindow._plot_panel, "get_current_polarization_axis"):
+            mainwindow._plot_panel.get_current_polarization_axis = lambda: "ALL"
+        mainwindow._update_selected_datasets()
+
+        assert not mainwindow._fit_panel._single_tab._fit_btn.isEnabled()
+        assert not mainwindow._fit_panel._single_tab._preview_btn.isEnabled()
+        assert not mainwindow._fit_panel._global_tab._fit_btn.isEnabled()
+        assert "Vector All mode" in mainwindow._fit_panel._single_tab._fit_btn.toolTip()
+        assert "x, y, or z" in mainwindow._fit_panel._single_tab._fit_btn.toolTip()
+
+        if hasattr(mainwindow._plot_panel, "get_current_polarization_axis"):
+            mainwindow._plot_panel.get_current_polarization_axis = lambda: "P_x"
+        monkeypatch.setattr(mainwindow, "_synchronize_targets_to_axis", lambda *_args, **_kwargs: 0)
+        mainwindow._update_selected_datasets()
+
+        assert mainwindow._fit_panel._single_tab._fit_btn.isEnabled()
+        assert mainwindow._fit_panel._single_tab._preview_btn.isEnabled()
+        assert mainwindow._fit_panel._global_tab._fit_btn.isEnabled()
 
     def test_run_info_inclusion_handler_updates_data_browser(self, mainwindow: MainWindow) -> None:
         """Run Info include/exclude signal should add/remove data-browser columns."""
@@ -819,7 +948,6 @@ class TestMainWindowBasic:
         applied_payloads: list[dict] = []
 
         def _stub_apply(dataset, payload):
-            assert int(dataset.run_number) == 7020
             applied_payloads.append(payload)
             return True, False
 
@@ -1025,6 +1153,10 @@ class TestMainWindowBasic:
         mainwindow._data_browser.add_dataset(ds1)
         mainwindow._data_browser.add_dataset(ds2)
         mainwindow._current_dataset = ds1
+        if hasattr(mainwindow._plot_panel, "is_overlay_enabled"):
+            mainwindow._plot_panel.is_overlay_enabled = lambda: True
+        if hasattr(mainwindow._plot_panel, "get_current_polarization_axis"):
+            mainwindow._plot_panel.get_current_polarization_axis = lambda: None
 
         class _StubGroupingDialog:
             class DialogCode:

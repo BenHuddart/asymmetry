@@ -86,7 +86,13 @@ Multi-Selection
 * Shift+Click to select a range
 
 When more than one dataset is selected, the main plot overlays all selected
-runs on the same axes using distinct colours.
+runs on the same axes using distinct colours when **Overlay** is enabled
+(default).
+
+If **Overlay** is disabled, only the most recently selected dataset is shown.
+For a single selected Data Group, Asymmetry keeps the most recently displayed
+dataset if it belongs to that group; otherwise it shows the first dataset in
+the group.
 
 Viewing Data
 ~~~~~~~~~~~~
@@ -195,7 +201,7 @@ with 5% padding.
 Legend Label Field
 ~~~~~~~~~~~~~~~~~~
 
-Use the **Label** dropdown in the plot toolbar to choose how each selected run
+Use the **Label** dropdown (left side of toolbar row 2) to choose how each selected run
 is labelled in the legend:
 
 * **Run** (default)
@@ -205,6 +211,10 @@ is labelled in the legend:
 
 If the selected metadata value is unavailable for a run, Asymmetry
 automatically falls back to the run label.
+
+**Overlay** (to the right of **Label**) controls whether multi-selection and
+group selections are drawn together on one set of axes, or reduced to one
+dataset view as described above in **Multi-Selection**.
 
 For single-dataset views, the main plot also shows the active grouping
 ``alpha`` value above the canvas when one is available. The overlay is hidden
@@ -444,7 +454,7 @@ For full detector schematics and vector grouping reference material, see
 
 **Interactive labels**
 
-* Click **Add Label**, then click on the plot to place text at that data
+* Click **Add Annotation**, then click on the plot to place text at that data
    coordinate.
 * Drag a label with the mouse to reposition it.
 * Double-click a label to edit its text.
@@ -532,6 +542,9 @@ Available components in the builder:
 * **Oscillatory**: :math:`A\cos(2\pi f t + \phi)`
 * **StretchedExponential**: :math:`A e^{-(|\lambda|t)^\beta}`
 * **StaticGKT_ZF**: Static Gaussian Kubo-Toyabe
+* **Muon-Fluorine / MuF**: Analytical single-``mu-F`` polarization
+* **Muon-Fluorine / FmuF_Linear**: Analytical collinear ``F-mu-F`` polarization
+* **Muon-Fluorine / FmuF_General**: Numerical powder-averaged ``F-mu-F`` polarization
 * **Constant**: :math:`A_{\mathrm{bg}}`
 
 .. note::

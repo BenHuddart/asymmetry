@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath('../src'))
 project = 'Asymmetry'
 copyright = '2026, Asymmetry Contributors'
 author = 'Asymmetry Contributors'
-release = '0.1.0'
+release = '0.2.0'
 
 # -- General configuration ---------------------------------------------------
 extensions = [

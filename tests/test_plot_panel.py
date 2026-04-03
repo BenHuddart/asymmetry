@@ -151,6 +151,30 @@ class TestPlotPanel:
         label_texts = {lbl.text() for lbl in labels}
         assert "Bunch:" not in label_texts
 
+    def test_overlay_checkbox_defaults_to_disabled(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        assert panel.is_overlay_enabled() is False
+        assert panel._overlay_checkbox.text() == "Overlay"
+
+    def test_second_toolbar_row_places_label_overlay_then_annotation_export(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        row1 = panel._limit_toolbar.itemAt(1).layout()
+        assert row1 is not None
+
+        label_combo_pos = row1.indexOf(panel._label_field_combo)
+        overlay_pos = row1.indexOf(panel._overlay_checkbox)
+        annotation_pos = row1.indexOf(panel._add_label_btn)
+        export_pos = row1.indexOf(panel._export_gle_btn)
+
+        assert label_combo_pos >= 0
+        assert overlay_pos > label_combo_pos
+        assert annotation_pos > overlay_pos
+        assert export_pos > annotation_pos
+
     def test_pan_and_zoom_buttons_toggle_matplotlib_navigation_mode(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
@@ -248,6 +272,186 @@ class TestPlotPanel:
 
         assert panel._y_max.value() < 1.0
         assert panel._y_min.value() > -1.0
+
+    def test_plot_dataset_draws_low_count_points_gray_without_histograms(
+        self,
+        panel: PlotPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        time = np.arange(20, dtype=float)
+        asym = np.linspace(0.25, 0.05, time.size)
+        err = np.full_like(time, 0.01)
+        run = Run(
+            run_number=322,
+            grouping={"first_good_bin": 5, "last_good_bin": 14},
+        )
+        ds = MuonDataset(
+            time=time,
+            asymmetry=asym,
+            error=err,
+            metadata={"run_number": 322},
+            run=run,
+        )
+
+        errorbar_calls: list[dict[str, object]] = []
+        original_errorbar = panel._ax.errorbar
+
+        def _capture_errorbar(*args, **kwargs):
+            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
+            return original_errorbar(*args, **kwargs)
+
+        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+
+        panel.plot_dataset(ds)
+
+        assert len(errorbar_calls) >= 2
+        low_call = errorbar_calls[0]
+        main_call = errorbar_calls[1]
+        low_x = np.asarray(low_call["args"][0], dtype=float)
+        main_x = np.asarray(main_call["args"][0], dtype=float)
+
+        assert low_call["kwargs"].get("color") == "0.6"
+        assert np.all((low_x < 5.0) | (low_x > 14.0))
+        assert np.all((main_x >= 5.0) & (main_x <= 14.0))
+
+    def test_plot_dataset_low_count_mask_uses_source_time_when_rebinned_without_histograms(
+        self,
+        panel: PlotPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel._bunch_factor.setValue(2)
+
+        time = np.arange(20, dtype=float)
+        asym = np.linspace(0.3, 0.1, time.size)
+        err = np.full_like(time, 0.01)
+        run = Run(
+            run_number=323,
+            grouping={"first_good_bin": 5, "last_good_bin": 14},
+        )
+        ds = MuonDataset(
+            time=time,
+            asymmetry=asym,
+            error=err,
+            metadata={"run_number": 323},
+            run=run,
+        )
+
+        errorbar_calls: list[dict[str, object]] = []
+        original_errorbar = panel._ax.errorbar
+
+        def _capture_errorbar(*args, **kwargs):
+            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
+            return original_errorbar(*args, **kwargs)
+
+        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+
+        panel.plot_dataset(ds)
+
+        assert len(errorbar_calls) >= 2
+        low_call = errorbar_calls[0]
+        main_call = errorbar_calls[1]
+        low_x = np.asarray(low_call["args"][0], dtype=float)
+        main_x = np.asarray(main_call["args"][0], dtype=float)
+
+        assert low_call["kwargs"].get("color") == "0.6"
+        assert np.all((low_x < 5.0) | (low_x > 14.0))
+        assert np.all((main_x >= 5.0) & (main_x <= 14.0))
+
+    def test_low_count_mask_marks_saturated_and_zero_denominator_bins_in_good_window(
+        self,
+        panel: PlotPanel,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        f_counts = np.array([80, 70, 60, 50, 40, 2, 1, 0, 0, 0], dtype=float)
+        b_counts = np.array([80, 70, 60, 50, 40, 0, 0, 1, 0, 0], dtype=float)
+        denominator = f_counts + b_counts
+        asym = np.zeros_like(denominator)
+        safe = denominator > 0.0
+        asym[safe] = ((f_counts[safe] - b_counts[safe]) / denominator[safe]) * 100.0
+        err = np.ones_like(asym)
+
+        run = Run(
+            run_number=324,
+            histograms=[
+                Histogram(counts=f_counts, bin_width=1.0, t0_bin=0),
+                Histogram(counts=b_counts, bin_width=1.0, t0_bin=0),
+            ],
+            grouping={
+                "groups": {1: [1], 2: [2]},
+                "forward_group": 1,
+                "backward_group": 2,
+                "alpha": 1.0,
+                "first_good_bin": 0,
+                "last_good_bin": 9,
+            },
+        )
+        ds = MuonDataset(
+            time=np.arange(10, dtype=float),
+            asymmetry=asym,
+            error=err,
+            metadata={"run_number": 324},
+            run=run,
+        )
+
+        mask = panel._low_count_mask_for_dataset(ds, source_dataset=ds)
+
+        assert mask.shape == (10,)
+        assert np.array_equal(mask, np.array([False, False, False, False, False, True, True, True, True, True]))
+
+    def test_low_count_mask_projects_saturated_source_bins_after_rebin(
+        self,
+        panel: PlotPanel,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel._bunch_factor.setValue(2)
+
+        f_counts = np.array([80, 70, 60, 50, 40, 2, 1, 0, 0, 0], dtype=float)
+        b_counts = np.array([80, 70, 60, 50, 40, 0, 0, 1, 0, 0], dtype=float)
+        denominator = f_counts + b_counts
+        asym = np.zeros_like(denominator)
+        safe = denominator > 0.0
+        asym[safe] = ((f_counts[safe] - b_counts[safe]) / denominator[safe]) * 100.0
+        err = np.ones_like(asym)
+
+        run = Run(
+            run_number=325,
+            histograms=[
+                Histogram(counts=f_counts, bin_width=1.0, t0_bin=0),
+                Histogram(counts=b_counts, bin_width=1.0, t0_bin=0),
+            ],
+            grouping={
+                "groups": {1: [1], 2: [2]},
+                "forward_group": 1,
+                "backward_group": 2,
+                "alpha": 1.0,
+                "first_good_bin": 0,
+                "last_good_bin": 9,
+            },
+        )
+        ds = MuonDataset(
+            time=np.arange(10, dtype=float),
+            asymmetry=asym,
+            error=err,
+            metadata={"run_number": 325},
+            run=run,
+        )
+
+        analysis_ds = panel.get_analysis_dataset(ds)
+        assert analysis_ds is not None
+
+        mask = panel._low_count_mask_for_dataset(analysis_ds, source_dataset=ds)
+
+        assert np.array_equal(mask, np.array([False, False, True, True, True]))
 
     def test_axis_limits_persist_across_redraw_and_dataset_switch(
         self, panel: PlotPanel, sample_dataset: MuonDataset
@@ -426,6 +630,102 @@ class TestPlotPanel:
         assert panel._alpha_label.isHidden()
         assert panel._alpha_label.text() == ""
 
+    def test_axis_specific_fits_persist_separately_per_run(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 8.0, 80)
+        e = np.full_like(t, 0.01)
+        y_px = 0.21 * np.exp(-0.30 * t)
+        y_py = 0.16 * np.exp(-0.24 * t)
+
+        run_px = Run(run_number=9901, grouping={"vector_axis": "P_x"})
+        run_py = Run(run_number=9901, grouping={"vector_axis": "P_y"})
+        ds_px = MuonDataset(time=t, asymmetry=y_px, error=e, metadata={"run_number": 9901}, run=run_px)
+        ds_py = MuonDataset(time=t, asymmetry=y_py, error=e, metadata={"run_number": 9901}, run=run_py)
+
+        fit_px = 0.20 * np.exp(-0.28 * t)
+        fit_py = 0.15 * np.exp(-0.22 * t)
+
+        panel.plot_dataset(ds_px)
+        panel.plot_fit(t, fit_px, label="Fit Px")
+
+        panel.plot_dataset(ds_py)
+        panel.plot_fit(t, fit_py, label="Fit Py")
+
+        assert (9901, "P_x") in panel._fit_curves_by_key
+        assert (9901, "P_y") in panel._fit_curves_by_key
+        np.testing.assert_allclose(panel._fit_curves_by_key[(9901, "P_x")][1], fit_px)
+        np.testing.assert_allclose(panel._fit_curves_by_key[(9901, "P_y")][1], fit_py)
+
+    def test_all_mode_axis_plotting_uses_matching_axis_fit_curve(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 8.0, 80)
+        e = np.full_like(t, 0.01)
+        run_px = Run(run_number=9902, grouping={"vector_axis": "P_x"})
+        run_py = Run(run_number=9902, grouping={"vector_axis": "P_y"})
+        ds_px = MuonDataset(
+            time=t,
+            asymmetry=0.22 * np.exp(-0.30 * t),
+            error=e,
+            metadata={"run_number": 9902},
+            run=run_px,
+        )
+        ds_py = MuonDataset(
+            time=t,
+            asymmetry=0.17 * np.exp(-0.24 * t),
+            error=e,
+            metadata={"run_number": 9902},
+            run=run_py,
+        )
+
+        fit_px = 0.21 * np.exp(-0.27 * t)
+        fit_py = 0.14 * np.exp(-0.20 * t)
+
+        panel._fit_curves_by_key[(9902, "P_x")] = (t, fit_px, "Fit Px")
+        panel._fit_curves_by_key[(9902, "P_y")] = (t, fit_py, "Fit Py")
+
+        ax_px = _FakeAxis()
+        ax_py = _FakeAxis()
+        panel._plot_datasets_on_axis(ax_px, [ds_px], "P_x")
+        panel._plot_datasets_on_axis(ax_py, [ds_py], "P_y")
+
+        assert ax_px.plot_calls
+        assert ax_py.plot_calls
+        np.testing.assert_allclose(np.asarray(ax_px.plot_calls[-1]["args"][1], dtype=float), fit_px)
+        np.testing.assert_allclose(np.asarray(ax_py.plot_calls[-1]["args"][1], dtype=float), fit_py)
+
+    def test_axis_specific_fit_does_not_leak_to_other_polarization(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 8.0, 80)
+        e = np.full_like(t, 0.01)
+        ds_pz = MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-0.3 * t),
+            error=e,
+            metadata={"run_number": 9903},
+            run=Run(run_number=9903, grouping={"vector_axis": "P_z"}),
+        )
+        ds_py = MuonDataset(
+            time=t,
+            asymmetry=0.18 * np.exp(-0.25 * t),
+            error=e,
+            metadata={"run_number": 9903},
+            run=Run(run_number=9903, grouping={"vector_axis": "P_y"}),
+        )
+
+        fit_pz = 0.19 * np.exp(-0.22 * t)
+        panel._fit_curves_by_key[(9903, "P_z")] = (t, fit_pz, "Fit Pz")
+        # Legacy run-only cache should not override axis-specific separation.
+        panel._fit_curves[9903] = (t, fit_pz, "Fit")
+
+        assert panel._fit_curve_for_dataset(ds_pz) is not None
+        assert panel._fit_curve_for_dataset(ds_py) is None
+
     def test_period_mode_color_mapping(self, panel: PlotPanel) -> None:
         red_hist = Histogram(counts=np.array([1.0, 2.0, 3.0]), bin_width=0.01)
         run = Run(
@@ -492,6 +792,52 @@ class TestPlotPanel:
         assert labels[0] == str(ds1.run_label)
         assert labels[1] == str(ds2.run_label)
 
+    def test_period_mode_fit_line_uses_contrast_color(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.array([0.0, 0.01, 0.02, 0.03])
+        err = np.full_like(t, 0.01)
+        red_hist = Histogram(counts=np.array([40.0, 41.0, 39.0, 38.0]), bin_width=0.01)
+        run = Run(
+            run_number=9103,
+            histograms=[red_hist],
+            grouping={
+                "period_histograms": [[red_hist], [red_hist]],
+                "period_mode": str(PeriodMode.RED),
+            },
+        )
+        ds = MuonDataset(
+            time=t,
+            asymmetry=np.array([0.1, 0.09, 0.11, 0.1]),
+            error=err,
+            metadata={"run_number": 9103},
+            run=run,
+        )
+
+        panel.plot_dataset(ds)
+        point_color = panel._period_mode_color_for_dataset(ds)
+        assert point_color is not None
+
+        original_plot = panel._ax.plot
+        plot_calls: list[dict[str, object]] = []
+
+        def _capture_plot(*args, **kwargs):
+            plot_calls.append(kwargs)
+            return original_plot(*args, **kwargs)
+
+        panel._ax.plot = _capture_plot
+        try:
+            fit_y = 0.095 * np.exp(-0.1 * t)
+            panel.plot_fit(t, fit_y, label="Fit")
+        finally:
+            panel._ax.plot = original_plot
+
+        assert plot_calls
+        fit_color = plot_calls[-1].get("color")
+        assert isinstance(fit_color, str)
+        assert fit_color != point_color
+
     def test_plot_multiple_datasets(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test plotting multiple datasets."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -509,6 +855,7 @@ class TestPlotPanel:
     def test_multi_dataset_legend_labels_follow_selected_label_field(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
+        panel.set_overlay_enabled(True)
 
         t = np.linspace(0, 5, 50)
         err = np.full_like(t, 0.01)
@@ -570,6 +917,7 @@ class TestPlotPanel:
     ) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
+        panel.set_overlay_enabled(True)
 
         t = np.linspace(0, 5, 50)
         err = np.full_like(t, 0.01)
@@ -619,6 +967,46 @@ class TestPlotPanel:
         restored.restore_state(state, dataset=None)
 
         assert restored._label_field_combo.currentData() == "temperature"
+
+    def test_overlay_selection_persists_in_panel_state(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.set_overlay_enabled(False)
+        state = panel.get_state()
+
+        restored = PlotPanel()
+        if not hasattr(restored, "_has_mpl") or not restored._has_mpl:
+            pytest.skip("matplotlib not available")
+        restored.restore_state(state, dataset=None)
+
+        assert restored.is_overlay_enabled() is False
+
+    def test_axis_specific_fit_curves_round_trip_in_panel_state(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.array([0.0, 0.5, 1.0], dtype=float)
+        fit_px = np.array([0.2, 0.15, 0.1], dtype=float)
+        fit_py = np.array([0.18, 0.12, 0.08], dtype=float)
+
+        panel._fit_curves_by_key[(1101, "P_x")] = (t, fit_px, "Fit Px")
+        panel._fit_curves_by_key[(1101, "P_y")] = (t, fit_py, "Fit Py")
+        panel._fit_components_by_key[(1101, "P_x")] = [("Component", fit_px)]
+        panel._fit_metadata_by_key[(1101, "P_x")] = {"fit_function": "A0*exp(-lambda*t)"}
+
+        state = panel.get_state()
+
+        restored = PlotPanel()
+        if not hasattr(restored, "_has_mpl") or not restored._has_mpl:
+            pytest.skip("matplotlib not available")
+        restored.restore_state(state, dataset=None)
+
+        assert (1101, "P_x") in restored._fit_curves_by_key
+        assert (1101, "P_y") in restored._fit_curves_by_key
+        np.testing.assert_allclose(restored._fit_curves_by_key[(1101, "P_x")][1], fit_px)
+        np.testing.assert_allclose(restored._fit_curves_by_key[(1101, "P_y")][1], fit_py)
+        assert restored._fit_metadata_by_key[(1101, "P_x")]["fit_function"] == "A0*exp(-lambda*t)"
 
     def test_label_field_selection_is_tracked_per_data_group(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -1349,6 +1737,36 @@ class TestPlotPanel:
         assert panel._x_min.value() == pytest.approx(1.5)
         assert panel._x_max.value() == pytest.approx(5.5)
         assert panel._ax.get_xlim() == pytest.approx((1.5, 5.5))
+
+    def test_stale_axis_limit_callback_does_not_reset_all_mode_x_limits(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 8.0, 80)
+        e = np.full_like(t, 0.01)
+        datasets_by_axis = {
+            "P_x": [MuonDataset(time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 4201})],
+            "P_y": [MuonDataset(time=t, asymmetry=0.16 * np.exp(-0.25 * t), error=e, metadata={"run_number": 4201})],
+            "P_z": [MuonDataset(time=t, asymmetry=0.12 * np.exp(-0.2 * t), error=e, metadata={"run_number": 4201})],
+        }
+
+        panel._current_polarization_axis = "ALL"
+        panel.plot_vector_subplots(datasets_by_axis)
+        stale_axis = panel._subplot_axes_by_polarization["P_x"]
+
+        panel._x_min.setValue(1.2)
+        panel._x_max.setValue(6.4)
+        panel._apply_limits()
+
+        # Rebuild ALL-mode subplots as happens when moving between datasets.
+        panel.plot_vector_subplots(datasets_by_axis)
+        assert all(stale_axis is not ax for ax in panel._subplot_axes_by_polarization.values())
+
+        # Simulate a late callback from an axis that is no longer active.
+        panel._on_axis_limits_changed(stale_axis)
+
+        assert panel._x_min.value() == pytest.approx(1.2)
+        assert panel._x_max.value() == pytest.approx(6.4)
 
     def test_export_vector_all_uses_subplots_sharex_when_available(
         self,
