@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import csv
 from dataclasses import dataclass
 import json
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QInputDialog,
     QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QTableWidget,
@@ -26,7 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import MuonDataset, Run
 
 
 _GROUP_TEMP_ABS_TOL_K = 5e-3
@@ -874,6 +876,210 @@ class DataBrowserPanel(QWidget):
         """Return all datasets currently present in the browser."""
         return list(self._datasets.values())
 
+    def is_combined_dataset(self, run_number: int) -> bool:
+        """Return ``True`` when *run_number* refers to a combined row."""
+        try:
+            return int(run_number) in self._combined_datasets
+        except (TypeError, ValueError):
+            return False
+
+    def get_combined_source_datasets(self, run_number: int) -> list[MuonDataset]:
+        """Return hidden source datasets for a combined row."""
+        try:
+            combined_rn = int(run_number)
+        except (TypeError, ValueError):
+            return []
+        return list(self._combined_source_datasets.get(combined_rn, []))
+
+    def rebuild_combined_dataset(self, run_number: int) -> MuonDataset | None:
+        """Recompute one combined dataset from its hidden source datasets."""
+        try:
+            combined_rn = int(run_number)
+        except (TypeError, ValueError):
+            return None
+
+        source_datasets = self._combined_source_datasets.get(combined_rn, [])
+        if len(source_datasets) < 2:
+            return None
+
+        source_run_numbers = self._combined_datasets.get(
+            combined_rn,
+            [int(ds.run_number) for ds in source_datasets],
+        )
+        rebuilt = self._coadd_datasets(
+            source_datasets,
+            source_run_numbers,
+            combined_run_number=combined_rn,
+            existing_dataset=self._datasets.get(combined_rn),
+        )
+        self._datasets[combined_rn] = rebuilt
+        return rebuilt
+
+    def _grouping_workflow_family(self, dataset: MuonDataset) -> str | None:
+        """Return grouping-workflow family for *dataset*."""
+        run = getattr(dataset, "run", None)
+        if run is None:
+            return None
+        source_file = str(getattr(run, "source_file", "") or "").strip().lower()
+        if not source_file:
+            return None
+        return "wim" if source_file.endswith(".wim") else "standard"
+
+    def _normalize_grouping_value(self, value):
+        """Return a deterministic representation for grouping comparisons."""
+        if isinstance(value, dict):
+            normalized: dict[str, object] = {}
+            for key in sorted(value, key=lambda item: str(item)):
+                try:
+                    norm_key = str(int(key))
+                except (TypeError, ValueError):
+                    norm_key = str(key)
+                normalized[norm_key] = self._normalize_grouping_value(value[key])
+            return normalized
+        if isinstance(value, (list, tuple)):
+            return [self._normalize_grouping_value(v) for v in value]
+        if isinstance(value, np.ndarray):
+            return [self._normalize_grouping_value(v) for v in value.tolist()]
+        if isinstance(value, (np.integer, int)) and not isinstance(value, bool):
+            return int(value)
+        if isinstance(value, (np.floating, float)):
+            val = float(value)
+            if not np.isfinite(val):
+                return str(val)
+            return round(val, 12)
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    def _grouping_signature(self, dataset: MuonDataset):
+        """Return normalized grouping payload for co-add compatibility checks."""
+        run = getattr(dataset, "run", None)
+        grouping = getattr(run, "grouping", None)
+        if run is None or not isinstance(grouping, dict):
+            return None
+
+        groups = grouping.get("groups")
+        if not isinstance(groups, dict) or not groups:
+            return None
+
+        histograms = getattr(run, "histograms", None) or []
+        t0_default = 0
+        last_good_default = max(0, dataset.n_points - 1)
+        if histograms:
+            try:
+                t0_default = int(histograms[0].t0_bin)
+            except (TypeError, ValueError, IndexError):
+                t0_default = 0
+            try:
+                last_good_default = max(0, len(histograms[0].counts) - 1)
+            except (TypeError, ValueError, IndexError):
+                last_good_default = max(0, dataset.n_points - 1)
+
+        try:
+            t0_bin = int(grouping.get("t0_bin", t0_default))
+        except (TypeError, ValueError):
+            t0_bin = t0_default
+
+        raw_t_good = grouping.get("t_good_offset")
+        if raw_t_good is None:
+            try:
+                raw_t_good = int(grouping.get("first_good_bin", t0_bin)) - t0_bin
+            except (TypeError, ValueError):
+                raw_t_good = 0
+        try:
+            t_good_offset = max(0, int(raw_t_good))
+        except (TypeError, ValueError):
+            t_good_offset = 0
+
+        first_good_bin = max(0, t0_bin + t_good_offset)
+        try:
+            last_good_bin = int(grouping.get("last_good_bin", last_good_default))
+        except (TypeError, ValueError):
+            last_good_bin = last_good_default
+
+        try:
+            bin_index_base = 1 if int(grouping.get("bin_index_base", 0)) == 1 else 0
+        except (TypeError, ValueError):
+            bin_index_base = 0
+
+        try:
+            bunching_factor = int(grouping.get("bunching_factor", 1))
+        except (TypeError, ValueError):
+            bunching_factor = 1
+        try:
+            source_bunching_factor = int(
+                grouping.get("source_bunching_factor", bunching_factor)
+            )
+        except (TypeError, ValueError):
+            source_bunching_factor = bunching_factor
+
+        signature = {
+            "groups": groups,
+            "forward_group": int(grouping.get("forward_group", 1)),
+            "backward_group": int(grouping.get("backward_group", 2)),
+            "alpha": float(grouping.get("alpha", 1.0)),
+            "alpha_x": grouping.get("alpha_x"),
+            "alpha_y": grouping.get("alpha_y"),
+            "alpha_z": grouping.get("alpha_z"),
+            "vector_axis": grouping.get("vector_axis"),
+            "group_names": grouping.get("group_names", {}),
+            "t0_bin": t0_bin,
+            "t_good_offset": t_good_offset,
+            "first_good_bin": first_good_bin,
+            "last_good_bin": last_good_bin,
+            "bin_index_base": bin_index_base,
+            "bunching_factor": bunching_factor,
+            "source_bunching_factor": source_bunching_factor,
+            "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
+            "dead_time_us": grouping.get("dead_time_us"),
+            "good_frames": grouping.get("good_frames"),
+            "period_mode": grouping.get("period_mode"),
+            "period_dead_time_us": grouping.get("period_dead_time_us"),
+            "period_good_frames": grouping.get("period_good_frames"),
+        }
+        return self._normalize_grouping_value(signature)
+
+    def _coadd_compatibility_error(self, datasets: list[MuonDataset]) -> str | None:
+        """Return a user-facing error when selected datasets cannot be co-added."""
+        if len(datasets) < 2:
+            return "Select at least two grouped datasets to co-add."
+
+        families = [self._grouping_workflow_family(ds) for ds in datasets]
+        if any(family is None for family in families):
+            return (
+                "Co-add requires grouped source datasets with valid source-file metadata. "
+                "Please load runs normally and align their grouping first."
+            )
+
+        if len(set(families)) != 1:
+            return (
+                "Co-add requires identical grouping and a single grouping workflow family. "
+                "Mixed .wim and non-WIM selections cannot be co-added."
+            )
+
+        signatures = [self._grouping_signature(ds) for ds in datasets]
+        if any(signature is None for signature in signatures):
+            return (
+                "Co-add requires identical grouping on every selected dataset. "
+                "Apply grouping to each source run before combining them."
+            )
+
+        first_signature = signatures[0]
+        if any(signature != first_signature for signature in signatures[1:]):
+            return (
+                "Co-add requires identical grouping on every selected dataset. "
+                "Align groups, alpha, good-bin limits, bunching, and deadtime settings first."
+            )
+        return None
+
+    def _mirrored_grouping_for_combined_dataset(self, dataset: MuonDataset) -> dict:
+        """Return grouping metadata mirrored onto a combined dataset."""
+        run = getattr(dataset, "run", None)
+        grouping = getattr(run, "grouping", None)
+        if not isinstance(grouping, dict):
+            return {}
+        return copy.deepcopy(grouping)
+
     def export_logbook_tsv(self, path: str) -> int:
         """Export all runs to tab-separated text using current columns/grouping.
 
@@ -1146,6 +1352,7 @@ class DataBrowserPanel(QWidget):
 
         if len(regular_runs) >= 2 and not combined_runs:
             menu.addAction("Co-add Selected", self._coadd_selected)
+        if len(expanded_selected_runs) >= 2 and not selected_group_ids:
             menu.addAction("Form Data Group", self._form_data_group)
         if len(selected_runs) == 1 and not selected_group_ids:
             selected_run = selected_runs[0]
@@ -1215,7 +1422,7 @@ class DataBrowserPanel(QWidget):
         menu.popup(global_pos)
 
     def _form_data_group(self) -> None:
-        run_numbers = [rn for rn in self._get_selected_run_numbers() if rn not in self._combined_datasets]
+        run_numbers = self._get_selected_run_numbers()
         if len(run_numbers) < 2:
             return
 
@@ -1530,7 +1737,7 @@ class DataBrowserPanel(QWidget):
         if len(run_numbers) < 2:
             return
 
-        datasets_to_combine = []
+        datasets_to_combine: list[MuonDataset] = []
         for rn in run_numbers:
             if rn in self._combined_datasets:
                 return
@@ -1541,17 +1748,24 @@ class DataBrowserPanel(QWidget):
         if len(datasets_to_combine) < 2:
             return
 
-        insert_index = min(self._display_index_for_run(rn) for rn in run_numbers)
+        incompatibility = self._coadd_compatibility_error(datasets_to_combine)
+        if incompatibility is not None:
+            QMessageBox.warning(self, "Cannot Co-add Selected Datasets", incompatibility)
+            return
 
-        combined_dataset = self._coadd_datasets(datasets_to_combine, run_numbers)
+        insert_index = min(self._display_index_for_run(rn) for rn in run_numbers)
         combined_rn = self._next_combined_id
         self._next_combined_id -= 1
+        source_datasets = [self._datasets[rn] for rn in run_numbers if rn in self._datasets]
+        combined_dataset = self._coadd_datasets(
+            source_datasets,
+            run_numbers,
+            combined_run_number=combined_rn,
+        )
 
         self._datasets[combined_rn] = combined_dataset
         self._combined_datasets[combined_rn] = list(run_numbers)
-        self._combined_source_datasets[combined_rn] = [
-            self._datasets[rn] for rn in run_numbers if rn in self._datasets
-        ]
+        self._combined_source_datasets[combined_rn] = source_datasets
 
         for rn in run_numbers:
             self._remove_run_number(rn)
@@ -1563,6 +1777,9 @@ class DataBrowserPanel(QWidget):
         self,
         datasets: list[MuonDataset],
         run_numbers: list[int],
+        *,
+        combined_run_number: int,
+        existing_dataset: MuonDataset | None = None,
     ) -> MuonDataset:
         time_grid = datasets[0].time
 
@@ -1593,16 +1810,35 @@ class DataBrowserPanel(QWidget):
             "title": combined_title,
             "temperature": np.mean([d.metadata.get("temperature", 0) for d in datasets]),
             "field": np.mean([d.metadata.get("field", 0) for d in datasets]),
-            "run_number": self._next_combined_id,
+            "run_number": combined_run_number,
             "run_label": " + ".join(map(str, run_numbers)),
-            "combined_from": run_numbers,
+            "combined_from": list(run_numbers),
         }
+        mirrored_grouping = self._mirrored_grouping_for_combined_dataset(datasets[0])
+        run = Run(
+            run_number=combined_run_number,
+            histograms=[],
+            metadata=dict(metadata),
+            grouping=mirrored_grouping,
+            source_file="",
+        )
+
+        if existing_dataset is not None:
+            existing_dataset.time = time_grid.copy()
+            existing_dataset.asymmetry = combined_asymmetry
+            existing_dataset.error = combined_error
+            existing_dataset.metadata = metadata
+            existing_dataset.run = run
+            if hasattr(existing_dataset, "_grouping_source_arrays_cache"):
+                delattr(existing_dataset, "_grouping_source_arrays_cache")
+            return existing_dataset
 
         return MuonDataset(
             time=time_grid.copy(),
             asymmetry=combined_asymmetry,
             error=combined_error,
             metadata=metadata,
+            run=run,
         )
 
     def _separate_combined(self) -> None:
@@ -1614,18 +1850,36 @@ class DataBrowserPanel(QWidget):
         for rn in combined_items:
             insert_index = self._display_index_for_run(rn)
             source_datasets = self._combined_source_datasets.get(rn, [])
+            group_id = self._run_to_group.get(rn)
+            group = self._groups.get(group_id) if group_id is not None else None
 
             self._datasets.pop(rn, None)
             self._combined_datasets.pop(rn, None)
             self._combined_source_datasets.pop(rn, None)
+            if group is not None:
+                try:
+                    member_index = group.member_run_numbers.index(rn)
+                except ValueError:
+                    member_index = len(group.member_run_numbers)
+                group.member_run_numbers = [member for member in group.member_run_numbers if member != rn]
+                self._run_to_group.pop(rn, None)
+
+                for offset, dataset in enumerate(source_datasets):
+                    source_rn = int(dataset.run_number)
+                    self._datasets[source_rn] = dataset
+                    group.member_run_numbers.insert(member_index + offset, source_rn)
+                    self._run_to_group[source_rn] = group.group_id
+            else:
+                self._run_to_group.pop(rn, None)
             if rn in self._display_order:
                 self._display_order.remove(rn)
 
-            for offset, dataset in enumerate(source_datasets):
-                source_rn = int(dataset.run_number)
-                self._datasets[source_rn] = dataset
-                if source_rn not in self._display_order:
-                    self._display_order.insert(insert_index + offset, source_rn)
+            if group is None:
+                for offset, dataset in enumerate(source_datasets):
+                    source_rn = int(dataset.run_number)
+                    self._datasets[source_rn] = dataset
+                    if source_rn not in self._display_order:
+                        self._display_order.insert(insert_index + offset, source_rn)
 
         self._rebuild_table()
 
@@ -1659,15 +1913,22 @@ class DataBrowserPanel(QWidget):
         if len(datasets_to_combine) < 2:
             return None
 
-        combined_dataset = self._coadd_datasets(datasets_to_combine, source_run_numbers)
+        incompatibility = self._coadd_compatibility_error(datasets_to_combine)
+        if incompatibility is not None:
+            return None
+
         combined_rn = self._next_combined_id
         self._next_combined_id -= 1
+        source_datasets = [self._datasets[rn] for rn in source_run_numbers if rn in self._datasets]
+        combined_dataset = self._coadd_datasets(
+            source_datasets,
+            source_run_numbers,
+            combined_run_number=combined_rn,
+        )
 
         self._datasets[combined_rn] = combined_dataset
         self._combined_datasets[combined_rn] = source_run_numbers
-        self._combined_source_datasets[combined_rn] = [
-            self._datasets[rn] for rn in source_run_numbers if rn in self._datasets
-        ]
+        self._combined_source_datasets[combined_rn] = source_datasets
 
         insert_index = min(self._display_index_for_run(rn) for rn in source_run_numbers)
         for rn in source_run_numbers:

@@ -4,11 +4,13 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath('../src'))
 
+from asymmetry import __version__
+
 # -- Project information -----------------------------------------------------
 project = 'Asymmetry'
 copyright = '2026, Asymmetry Contributors'
 author = 'Asymmetry Contributors'
-release = '0.2.0'
+release = __version__
 
 # -- General configuration ---------------------------------------------------
 extensions = [

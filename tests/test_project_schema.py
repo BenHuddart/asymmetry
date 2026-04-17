@@ -350,8 +350,21 @@ class TestDataBrowserPanelState:
         from asymmetry.gui.panels.data_browser import DataBrowserPanel
 
         panel = DataBrowserPanel()
-        panel.add_dataset(_make_dataset(10))
-        panel.add_dataset(_make_dataset(11))
+        ds1 = _make_dataset(10)
+        ds2 = _make_dataset(11)
+        ds1.run.grouping = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 99,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+        ds2.run.grouping = dict(ds1.run.grouping)
+        panel.add_dataset(ds1)
+        panel.add_dataset(ds2)
 
         combined_rn = panel.add_combined_dataset([10, 11])
         assert combined_rn is not None
@@ -366,7 +379,18 @@ class TestDataBrowserPanelState:
         from asymmetry.gui.panels.data_browser import DataBrowserPanel
 
         panel = DataBrowserPanel()
-        panel.add_dataset(_make_dataset(10))
+        ds1 = _make_dataset(10)
+        ds1.run.grouping = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 99,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+        panel.add_dataset(ds1)
         # Run 99 doesn't exist
         result = panel.add_combined_dataset([10, 99])
         assert result is None
@@ -849,6 +873,94 @@ class TestMainWindowProjectState:
         assert window2._plot_panel._x_max.value() == pytest.approx(2.75)
         assert window2._plot_panel._y_min.value() == pytest.approx(20.0)
         assert window2._plot_panel._y_max.value() == pytest.approx(45.0)
+
+    def test_project_round_trip_restores_wim_grouping_bunching(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
+    ) -> None:
+        source_file = tmp_path / "run6002.wim"
+        source_file.write_bytes(b"\x00")
+
+        def _make_wim_dataset() -> MuonDataset:
+            from asymmetry.core.data.dataset import Run
+
+            run = Run(
+                run_number=6002,
+                histograms=[],
+                source_file=str(source_file),
+                grouping={
+                    "groups": {
+                        1: [(1, 100), (2, 100)],
+                        2: [(3, 100), (4, 100)],
+                    },
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "alpha": 1.0,
+                    "first_good_bin": 0,
+                    "last_good_bin": 3,
+                    "bunching_factor": 2,
+                    "source_bunching_factor": 2,
+                    "deadtime_correction": False,
+                },
+            )
+            run.metadata["field"] = 50.0
+            t = np.array([0.0, 1.0, 2.0, 3.0], dtype=float)
+            a = np.array([10.0, 20.0, 30.0, 40.0], dtype=float)
+            e = np.full_like(t, 1.0)
+            return MuonDataset(
+                time=t,
+                asymmetry=a,
+                error=e,
+                metadata={"title": "Run 6002", "temperature": 5.0, "field": 50.0, "comment": ""},
+                run=run,
+            )
+
+        window1 = mw_module.MainWindow()
+        ds = _make_wim_dataset()
+        window1._data_browser.add_dataset(ds)
+        window1._current_dataset = ds
+
+        grouping_payload = {
+            "groups": {
+                1: [(1, 100), (2, 100)],
+                2: [(3, 100), (4, 100)],
+            },
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 4,
+            "source_bunching_factor": 2,
+            "enforce_source_bunching": True,
+            "deadtime_correction": False,
+        }
+        applied, _ = window1._apply_grouping_settings_to_dataset(ds, grouping_payload)
+        assert applied is True
+        assert len(ds.time) == 2
+
+        state = window1.collect_project_state()
+        path = tmp_path / "roundtrip_wim.asymp"
+        save_project(state, path)
+        loaded_state = load_project(path)
+
+        def _stub_load_file(self_inner, path_str: str):
+            assert path_str == str(source_file)
+            return _make_wim_dataset()
+
+        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        window2 = mw_module.MainWindow()
+        window2.restore_project_state(loaded_state, str(path))
+
+        restored = window2._data_browser.get_dataset(6002)
+        assert restored is not None
+        assert len(restored.time) == 2
+        assert restored.run is not None
+        assert restored.run.grouping["bunching_factor"] == 4
+        assert restored.run.grouping["source_bunching_factor"] == 2
+        assert restored.run.grouping["groups"] == {
+            1: [(1, 100), (2, 100)],
+            2: [(3, 100), (4, 100)],
+        }
 
     def test_collect_project_state_structure(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication

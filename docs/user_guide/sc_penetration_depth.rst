@@ -114,21 +114,21 @@ energies are written in units of :math:`k_B T_c`.
 The current code paths are:
 
 - Isotropic s-wave, alpha model, and s-wave channels in two-gap models:
-   :math:`\Delta_0(0)/(k_B T_c)=1.764`, Carrington-Manzano.
+  use :math:`\Delta_0(0)/(k_B T_c)=1.764`, following Carrington-Manzano.
 - d-wave and nonmonotonic d-wave channels:
-   default :math:`\Delta_0(0)/(k_B T_c)=2.14`, generalized form with
-   :math:`a=4/3`.
-- extended s-wave channel (implemented with :math:`g(\phi)=\cos(2\phi)` or
-  :math:`|cos(2\phi)|`):
-   default :math:`\Delta_0(0)/(k_B T_c)=2.14`, generalized form with
-   :math:`a=4/3`.
+  default :math:`\Delta_0(0)/(k_B T_c)=2.14`, generalized form with
+  :math:`a=4/3`.
+- extended s-wave channel with :math:`g(\phi)=\cos(2\phi)` or
+  :math:`|\cos(2\phi)|`:
+  default :math:`\Delta_0(0)/(k_B T_c)=2.14`, generalized form with
+  :math:`a=4/3`.
 - s+g channel:
-   default :math:`\Delta_0(0)/(k_B T_c)=2.77`, generalized form with
-   :math:`a=2`.
+  default :math:`\Delta_0(0)/(k_B T_c)=2.77`, generalized form with
+  :math:`a=2`.
 - Anisotropic s-wave and p-wave examples:
-   model-dependent gap ratio; use the generalized form only when the user
-   supplies a positive ``shape_factor_a``. Otherwise these channels fall back to
-   the Carrington-Manzano interpolation.
+  model-dependent gap ratio; use the generalized form only when the user
+  supplies a positive ``shape_factor_a``. Otherwise these channels fall back to
+  the Carrington-Manzano interpolation.
 
 In the GUI, ``shape_factor_a`` may be left at ``0`` to indicate that no
 symmetry-specific weak-coupling value is being supplied. A positive fixed value

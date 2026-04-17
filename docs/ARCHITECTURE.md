@@ -48,6 +48,7 @@ asymmetry/
 │   │   ├── __init__.py
 │   │   ├── engine.py         # Fit driver: single-run & global
 │   │   ├── composite.py      # Composite A(t) builder primitives
+│   │   ├── fit_wizard.py     # Single-spectrum fit fingerprinting and model comparison
 │   │   ├── models.py         # Built-in μSR fit functions
 │   │   ├── parameters.py     # Parameter objects with bounds & linking
 │   │   ├── minimizers.py     # Minimizer backends (scipy, lmfit, iminuit)
@@ -80,6 +81,9 @@ asymmetry/
 │   ├── plotting/             # Plot helpers and renderers
 │   │   ├── __init__.py
 │   │   └── mpl_canvas.py     # Matplotlib canvas integration
+│   ├── windows/              # Top-level analysis windows
+│   │   ├── fit_wizard_window.py      # Guided single-spectrum fit wizard
+│   │   └── ...
 │   └── resources/            # Icons, stylesheets, etc.
 │
 ├── cli.py              # Optional command-line interface
@@ -94,6 +98,45 @@ The core has **zero** GUI dependencies. It depends only on the scientific Python
 ### 3.2 GUI (`asymmetry.gui`)
 
 The GUI is a separate, optional install target. It wraps the core API and provides interactive visualization, fitting dialogs, and logbook management.
+
+### 3.3 Fit Wizard Boundary
+
+The single-spectrum Fit Wizard is intentionally split across the core and GUI
+layers.
+
+- `asymmetry.core.fitting.fit_wizard` owns the deterministic, testable analysis
+  pipeline: spectrum fingerprinting, curated candidate selection, multi-start
+  fitting, AIC/AICc/BIC calculation, residual diagnostics, and recommendation
+  payloads.
+- `asymmetry.gui.windows.fit_wizard_window` owns presentation: the four-step
+  workflow, plots, metric explainers, residual warnings, and applying an
+  accepted candidate back into the single-fit tab.
+
+This separation keeps the recommendation logic usable outside Qt, makes the
+feature straightforward to test with synthetic spectra, and leaves room to add
+future comparison back-ends such as Bayesian evidence without redesigning the
+window workflow.
+
+### 3.4 Global Fit Wizard Boundary
+
+The Global Fit Wizard follows the same split, but with one extra concern:
+parameter sharing across an ordered series.
+
+- `asymmetry.core.fitting.global_fit_wizard` owns the reusable analysis logic:
+  ordered-axis inference, candidate shortlisting, staged `Global` versus
+  `Local` parameter-role search, information-criterion scoring, per-run
+  residual diagnostics, continuity warnings, and reusable recommendation
+  payloads.
+- `asymmetry.gui.windows.global_fit_wizard_window` owns the non-modal workflow:
+  the five-page comparison UI, metric explainers, warning summaries, and
+  applying a selected recommendation back into the global-fit tab.
+- `asymmetry.gui.panels.fit_panel.GlobalFitTab` remains the integration point
+  for the real fit state. It opens the wizard, provides the current model and
+  role configuration as context, and reuses the wizard's computed fit bundle to
+  refresh plots and fitted-parameter views without rerunning the fit.
+
+This keeps the recommendation engine scriptable and testable while avoiding a
+second, UI-only implementation of the global-fit logic.
 
 **Toolkit candidates** (to be evaluated in a prototype phase):
 
@@ -154,6 +197,7 @@ The GUI is a separate, optional install target. It wraps the core API and provid
 | FT-7 | Provide multiple minimizer back-ends: least-squares (Levenberg-Marquardt), Nelder-Mead, differential evolution, and (optionally) Minuit via `iminuit`. |
 | FT-8 | Report fit statistics: $\chi^2$, $\chi^2_\text{red}$, parameter uncertainties, covariance matrix. |
 | FT-9 | Visualize fit residuals. |
+| FT-10 | Guide single-spectrum time-domain fitting with a wizard that fingerprints the active dataset, compares a curated portfolio of supported composite models, and applies the chosen result back into the fit panel. |
 
 ### 4.4 Fourier Analysis — Frequency Domain
 

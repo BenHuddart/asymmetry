@@ -14,6 +14,8 @@ This guide covers the main features and workflows of Asymmetry.
    gui_usage
    fourier_analysis
    fitting
+   fit_wizard
+   global_fit_wizard
    composite_models
    muon_fluorine
    parameter_trending

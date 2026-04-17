@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QItemSelectionModel, Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
@@ -43,15 +43,31 @@ def _dataset(run_number: int, t_shift: float = 0.0) -> MuonDataset:
     )
 
 
-def _dataset_with_run(run_number: int) -> MuonDataset:
-    ds = _dataset(run_number)
+def _dataset_with_run(
+    run_number: int,
+    *,
+    t_shift: float = 0.0,
+    source_file: str | None = None,
+    grouping: dict | None = None,
+) -> MuonDataset:
+    ds = _dataset(run_number, t_shift=t_shift)
     h0 = Histogram(counts=np.array([10.0, 20.0, 30.0]), bin_width=0.5)
     h1 = Histogram(counts=np.array([5.0, 10.0, 15.0]), bin_width=0.5)
     run = Run(
         run_number=run_number,
         histograms=[h0, h1],
         metadata={"run_number": run_number},
-        grouping={"groups": {1: [1], 2: [2]}, "forward_group": 1, "backward_group": 2},
+        grouping=grouping or {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 2,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        },
+        source_file=source_file or f"/tmp/run_{run_number}.nxs",
     )
     ds.run = run
     return ds
@@ -93,8 +109,8 @@ def test_add_select_and_get_selected_datasets(qapp: QApplication) -> None:
 
 def test_coadd_and_separate_roundtrip(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
-    d1 = _dataset(10)
-    d2 = _dataset(11, t_shift=0.1)  # force interpolation path
+    d1 = _dataset_with_run(10)
+    d2 = _dataset_with_run(11, t_shift=0.1)  # force interpolation path
 
     panel.add_dataset(d1)
     panel.add_dataset(d2)
@@ -111,6 +127,11 @@ def test_coadd_and_separate_roundtrip(qapp: QApplication) -> None:
     assert len(combined_runs) == 1
     combined_rn = combined_runs[0]
     assert combined_rn in panel._combined_datasets
+    combined_ds = panel.get_dataset(combined_rn)
+    assert combined_ds is not None
+    assert combined_ds.run is not None
+    assert combined_ds.run.grouping["forward_group"] == 1
+    assert combined_ds.run.grouping["backward_group"] == 2
 
     # Select combined row and separate back.
     for row in range(panel._table.rowCount()):
@@ -226,8 +247,8 @@ def test_get_current_dataset_tracks_last_clicked_row_in_multi_selection(qapp: QA
 
 def test_context_menu_shows_separate_for_combined_dataset(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
-    d1 = _dataset(51)
-    d2 = _dataset(52, t_shift=0.1)
+    d1 = _dataset_with_run(51)
+    d2 = _dataset_with_run(52, t_shift=0.1)
 
     panel.add_dataset(d1)
     panel.add_dataset(d2)
@@ -256,6 +277,51 @@ def test_context_menu_shows_separate_for_combined_dataset(qapp: QApplication) ->
     action_texts = [a.text() for a in actions]
     assert "Separate Combined" in action_texts
     assert "Remove Entry" in action_texts
+
+
+def test_context_menu_shows_form_group_for_combined_and_regular_selection(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    d1 = _dataset_with_run(53)
+    d2 = _dataset_with_run(54, t_shift=0.1)
+    d3 = _dataset_with_run(55)
+
+    panel.add_dataset(d1)
+    panel.add_dataset(d2)
+    panel.add_dataset(d3)
+
+    panel._table.selectRow(0)
+    idx = panel._table.model().index(1, 0)
+    panel._table.selectionModel().select(
+        idx, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    )
+    panel._coadd_selected()
+
+    combined_rn = next(rn for rn in panel._datasets if rn < 0)
+    combined_row = None
+    regular_row = None
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is None:
+            continue
+        run_number = item.data(Qt.ItemDataRole.UserRole)
+        if run_number == combined_rn:
+            combined_row = row
+        elif run_number == 55:
+            regular_row = row
+
+    assert combined_row is not None
+    assert regular_row is not None
+    panel._table.clearSelection()
+    panel._table.selectRow(combined_row)
+    idx = panel._table.model().index(regular_row, 0)
+    panel._table.selectionModel().select(
+        idx, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    )
+
+    menu = panel._create_table_context_menu()
+    assert menu is not None
+    action_texts = [a.text() for a in menu.actions() if not a.isSeparator()]
+    assert "Form Data Group" in action_texts
 
 
 def test_extra_column_roundtrip_in_state(qapp: QApplication) -> None:
@@ -310,9 +376,9 @@ def test_run_info_synthetic_extra_columns_render_values(qapp: QApplication) -> N
 
 def test_coadd_inserts_at_first_selected_position(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
-    d1 = _dataset(61)
-    d2 = _dataset(62)
-    d3 = _dataset(63)
+    d1 = _dataset_with_run(61)
+    d2 = _dataset_with_run(62)
+    d3 = _dataset_with_run(63)
 
     panel.add_dataset(d1)
     panel.add_dataset(d2)
@@ -341,9 +407,9 @@ def test_coadd_inserts_at_first_selected_position(qapp: QApplication) -> None:
 
 def test_separate_inserts_at_combined_dataset_position(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
-    d1 = _dataset(71)
-    d2 = _dataset(72, t_shift=0.1)
-    d3 = _dataset(73)
+    d1 = _dataset_with_run(71)
+    d2 = _dataset_with_run(72, t_shift=0.1)
+    d3 = _dataset_with_run(73)
 
     panel.add_dataset(d1)
     panel.add_dataset(d2)
@@ -370,6 +436,163 @@ def test_separate_inserts_at_combined_dataset_position(qapp: QApplication) -> No
     assert row_0_item.data(Qt.ItemDataRole.UserRole) in [71, 72]
     assert row_1_item.data(Qt.ItemDataRole.UserRole) in [71, 72]
     assert row_2_item.data(Qt.ItemDataRole.UserRole) == 73
+
+
+def test_form_data_group_accepts_combined_dataset(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+    panel = DataBrowserPanel()
+    d1 = _dataset_with_run(74)
+    d2 = _dataset_with_run(75, t_shift=0.1)
+    d3 = _dataset_with_run(76)
+
+    panel.add_dataset(d1)
+    panel.add_dataset(d2)
+    panel.add_dataset(d3)
+
+    panel._table.selectRow(0)
+    idx = panel._table.model().index(1, 0)
+    panel._table.selectionModel().select(
+        idx, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    )
+    panel._coadd_selected()
+    combined_rn = next(rn for rn in panel._datasets if rn < 0)
+
+    combined_row = None
+    regular_row = None
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is None:
+            continue
+        run_number = item.data(Qt.ItemDataRole.UserRole)
+        if run_number == combined_rn:
+            combined_row = row
+        elif run_number == 76:
+            regular_row = row
+
+    assert combined_row is not None
+    assert regular_row is not None
+    panel._table.clearSelection()
+    panel._table.selectRow(combined_row)
+    idx = panel._table.model().index(regular_row, 0)
+    panel._table.selectionModel().select(
+        idx, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    )
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_a, **_k: ("Mixed Group", True))
+    panel._form_data_group()
+
+    group = next(iter(panel._groups.values()))
+    assert group.member_run_numbers == [combined_rn, 76]
+    assert panel._run_to_group[combined_rn] == group.group_id
+    assert panel._run_to_group[76] == group.group_id
+
+
+def test_separate_combined_inside_group_replaces_group_member_runs(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    d1 = _dataset_with_run(77)
+    d2 = _dataset_with_run(78, t_shift=0.1)
+    d3 = _dataset_with_run(79)
+
+    panel.add_dataset(d1)
+    panel.add_dataset(d2)
+    panel.add_dataset(d3)
+
+    panel._table.selectRow(0)
+    idx = panel._table.model().index(1, 0)
+    panel._table.selectionModel().select(
+        idx, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    )
+    panel._coadd_selected()
+    combined_rn = next(rn for rn in panel._datasets if rn < 0)
+
+    gid = panel.create_data_group([combined_rn, 79], name="Grouped Combined")
+    assert gid is not None
+
+    combined_row = None
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is not None and item.data(Qt.ItemDataRole.UserRole) == combined_rn:
+            combined_row = row
+            break
+
+    assert combined_row is not None
+    panel._table.clearSelection()
+    panel._table.selectRow(combined_row)
+    panel._separate_combined()
+
+    group = panel._groups[gid]
+    assert group.member_run_numbers == [77, 78, 79]
+    assert panel._run_to_group[77] == gid
+    assert panel._run_to_group[78] == gid
+    assert panel._run_to_group[79] == gid
+    assert combined_rn not in panel._run_to_group
+    assert combined_rn not in panel._datasets
+
+
+def test_coadd_blocks_different_grouping(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+    panel = DataBrowserPanel()
+    d1 = _dataset_with_run(101)
+    d2 = _dataset_with_run(
+        102,
+        grouping={
+            "groups": {5: [1], 6: [2]},
+            "forward_group": 5,
+            "backward_group": 6,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 2,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        },
+    )
+    panel.add_dataset(d1)
+    panel.add_dataset(d2)
+
+    captured = {"title": "", "text": ""}
+
+    def _stub_warning(_parent, title, text):
+        captured["title"] = title
+        captured["text"] = text
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "warning", _stub_warning)
+
+    panel._table.selectRow(0)
+    idx = panel._table.model().index(1, 0)
+    panel._table.selectionModel().select(
+        idx, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    )
+    panel._coadd_selected()
+
+    assert "identical grouping" in captured["text"]
+    assert 101 in panel._datasets
+    assert 102 in panel._datasets
+    assert not any(rn < 0 for rn in panel._datasets)
+
+
+def test_coadd_blocks_mixed_wim_and_non_wim(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+    panel = DataBrowserPanel()
+    d1 = _dataset_with_run(111, source_file="/tmp/run_111.wim")
+    d2 = _dataset_with_run(112, source_file="/tmp/run_112.nxs")
+    panel.add_dataset(d1)
+    panel.add_dataset(d2)
+
+    captured = {"text": ""}
+
+    def _stub_warning(_parent, _title, text):
+        captured["text"] = text
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(QMessageBox, "warning", _stub_warning)
+
+    panel._table.selectRow(0)
+    idx = panel._table.model().index(1, 0)
+    panel._table.selectionModel().select(
+        idx, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    )
+    panel._coadd_selected()
+
+    assert "Mixed .wim and non-WIM" in captured["text"]
+    assert not any(rn < 0 for rn in panel._datasets)
 
 
 def test_shift_click_selects_full_range_from_anchor(qapp: QApplication) -> None:

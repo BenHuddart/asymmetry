@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-04-17
+
+### Changed
+- Co-add now requires grouping-compatible source datasets from a single workflow family (`.wim`-only or non-WIM-only); incompatible selections are blocked with a warning instead of averaging mismatched grouped data.
+- Combined datasets now mirror the grouping state of their hidden source datasets, and grouping edits on a combined row update the hidden sources before rebuilding the combined result.
+
+### Documentation
+- Documented the stricter co-add grouping rules, mixed-source restriction, and the way grouping edits on combined datasets propagate back to their source runs.
+
+### Tests
+- Added regression coverage for grouping-compatible co-adds, blocked mismatched/mixed-family co-add attempts, and grouping edits applied through combined datasets.
+
 ## [0.2.0] - 2026-04-03
 
 ### Added

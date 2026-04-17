@@ -125,7 +125,15 @@ The co-added dataset:
 * Uses the first dataset's time grid
 * Averages asymmetry values
 * Propagates errors correctly: σ_combined = √(Σσ²) / N
+* Requires identical grouping on every selected source dataset
+* Does not allow mixed ``.wim`` and non-WIM source selections
+* Mirrors the shared grouping state of its source datasets
 * Can be plotted and analyzed like any other dataset
+
+If the selected datasets do not share the same grouping (groups, alpha,
+good-bin limits, bunching, deadtime settings, and related grouped-data
+controls), co-add is blocked and the browser leaves all source rows unchanged.
+Align grouping first, then retry the co-add.
 
 Separating Combined Data
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -135,7 +143,12 @@ To remove a co-added dataset:
 1. Select the combined dataset (display shows combined run numbers)
 2. Right-click and choose "Separate Combined"
 3. The combined entry is replaced by its source datasets at the same position
-4. Original datasets are restored
+4. Source datasets are restored with the current grouping of the combined view
+
+Grouping a combined dataset edits its hidden source datasets behind the scenes,
+then rebuilds the combined row from those updated sources. Separating the
+combined dataset therefore returns single runs with the same grouping that was
+active on the combined entry.
 
 Deleting Datasets
 ~~~~~~~~~~~~~~~~~

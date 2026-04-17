@@ -1,5 +1,5 @@
 Muon-Fluorine Polarization Models
-================================
+=================================
 
 Asymmetry includes three polarization components for muon-fluorine entangled
 states:

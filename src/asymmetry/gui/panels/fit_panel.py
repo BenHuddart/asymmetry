@@ -24,11 +24,19 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QSizePolicy,
+    QMessageBox,
 )
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine
+from asymmetry.core.fitting.global_fit_wizard import (
+    GlobalCandidateAssessment,
+    GlobalFitWizardRecommendation,
+    deserialize_global_fit_wizard_recommendation,
+    serialize_global_fit_wizard_recommendation,
+)
+from asymmetry.core.fitting.fit_wizard import CandidateAssessment, FitWizardRecommendation
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.parameters import (
     Parameter,
@@ -38,6 +46,8 @@ from asymmetry.core.fitting.parameters import (
 )
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
+from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
+from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 
 
 def _format_param_label(name: str) -> str:
@@ -69,6 +79,17 @@ def _configure_formula_label(label: QLabel) -> None:
     label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
     line_height = label.fontMetrics().lineSpacing()
     label.setMinimumHeight(line_height * 2 + 8)
+
+
+def _format_bounds_pair(min_val: float, max_val: float) -> str:
+    def _format(value: float) -> str:
+        if value == float("inf"):
+            return "inf"
+        if value == -float("inf"):
+            return "-inf"
+        return f"{float(value):.6g}"
+
+    return f"{_format(min_val)}, {_format(max_val)}"
 
 
 def _fit_curve_sample_count(
@@ -183,6 +204,7 @@ class SingleFitTab(QWidget):
         self._fit_block_reason = ""
         self._fit_engine = FitEngine()
         self._composite_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+        self._fit_wizard_window: FitWizardWindow | None = None
 
         # Model selection
         model_group = QGroupBox("Model")
@@ -191,13 +213,17 @@ class SingleFitTab(QWidget):
         _configure_formula_label(self._formula_label)
         self._edit_model_btn = QPushButton("Edit Function...")
         self._edit_model_btn.clicked.connect(self._edit_function)
+        self._fit_wizard_btn = QPushButton("Fit Wizard...")
+        self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
+        self._fit_wizard_btn.setEnabled(False)
         self._share_group_btn = QPushButton("Share Function With Data Group")
         self._share_group_btn.clicked.connect(self._on_share_function_with_group)
         self._share_group_btn.setEnabled(False)
         
-        # Button row for Edit and Share
+        # Button row for Edit, Wizard, and Share
         model_button_layout = QHBoxLayout()
         model_button_layout.addWidget(self._edit_model_btn)
+        model_button_layout.addWidget(self._fit_wizard_btn)
         model_button_layout.addWidget(self._share_group_btn)
         model_button_layout.addStretch()
         
@@ -252,6 +278,7 @@ class SingleFitTab(QWidget):
         enabled = dataset is not None and (not self._fit_blocked)
         self._fit_btn.setEnabled(enabled)
         self._preview_btn.setEnabled(enabled)
+        self._fit_wizard_btn.setEnabled(enabled)
         self._share_group_btn.setEnabled(dataset is not None)
 
     def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
@@ -261,9 +288,11 @@ class SingleFitTab(QWidget):
         enabled = self._current_dataset is not None and (not self._fit_blocked)
         self._fit_btn.setEnabled(enabled)
         self._preview_btn.setEnabled(enabled)
+        self._fit_wizard_btn.setEnabled(enabled)
         tooltip = self._fit_block_reason if self._fit_blocked else ""
         self._fit_btn.setToolTip(tooltip)
         self._preview_btn.setToolTip(tooltip)
+        self._fit_wizard_btn.setToolTip(tooltip)
 
     def _on_share_function_with_group(self) -> None:
         """Request sharing the active single-fit function with the current data group."""
@@ -329,9 +358,118 @@ class SingleFitTab(QWidget):
             if new_model is not None:
                 self._set_composite_model(new_model)
 
+    def _open_fit_wizard(self) -> None:
+        """Launch or refresh the non-modal fit wizard window."""
+        if self._current_dataset is None:
+            QMessageBox.information(self, "Fit Wizard", "Select a dataset before opening the fit wizard.")
+            return
+        if self._fit_blocked:
+            message = self._fit_block_reason or "Fit actions are unavailable for the current selection."
+            QMessageBox.information(self, "Fit Wizard", message)
+            return
+
+        if self._fit_wizard_window is None:
+            self._fit_wizard_window = FitWizardWindow(self)
+            self._fit_wizard_window.apply_assessment_requested.connect(
+                self._apply_fit_wizard_assessment
+            )
+
+        self._fit_wizard_window.set_analysis_context(
+            self._current_dataset,
+            current_model=self._composite_model,
+        )
+        self._fit_wizard_window.show()
+        self._fit_wizard_window.raise_()
+        self._fit_wizard_window.activateWindow()
+
     def _reset_parameters(self) -> None:
         """Reset parameters to model defaults."""
         self._set_composite_model(self._composite_model)
+
+    def _apply_fit_wizard_assessment(
+        self,
+        assessment: CandidateAssessment,
+        recommendation: FitWizardRecommendation,
+    ) -> None:
+        """Apply a fit-wizard assessment back into the single-fit tab."""
+        if self._current_dataset is None:
+            return
+        if not isinstance(assessment, CandidateAssessment):
+            return
+
+        result = assessment.fit_result
+        if not result.success:
+            self._result_label.setText(f"<b>Fit Wizard failed:</b> {result.message}")
+            return
+
+        self._set_composite_model(assessment.template.model)
+        fitted_by_name = {parameter.name: parameter for parameter in result.parameters}
+
+        for row in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(row, 0)
+            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(param_name, str):
+                continue
+            fitted = fitted_by_name.get(param_name)
+            if fitted is None:
+                continue
+
+            value_item = self._param_table.item(row, 1)
+            if value_item is not None:
+                value_item.setText(f"{fitted.value:.6f}")
+
+            min_item = self._param_table.item(row, 3)
+            if min_item is not None:
+                min_item.setText("-inf" if not np.isfinite(fitted.min) else f"{fitted.min:g}")
+
+            max_item = self._param_table.item(row, 4)
+            if max_item is not None:
+                max_item.setText("inf" if not np.isfinite(fitted.max) else f"{fitted.max:g}")
+
+            fix_widget = self._param_table.cellWidget(row, 2)
+            fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
+            if fix_checkbox is not None:
+                fix_checkbox.setChecked(bool(fitted.fixed))
+
+        lines = [
+            f"<b>Fit Wizard — {assessment.template.title}</b>",
+            f"<b>χ² = {result.chi_squared:.4f}</b>",
+            f"<b>χ²ᵣ = {result.reduced_chi_squared:.4f}</b>",
+            f"<b>{recommendation.metric.value} = {assessment.metric_value(recommendation.metric):.4f}</b>",
+        ]
+        if assessment.residual_gate_reasons:
+            lines.append("<br><b>Residual warnings:</b>")
+            for reason in assessment.residual_gate_reasons:
+                lines.append(f"  {reason}")
+        else:
+            lines.append("<b>Residual gate passed</b>")
+        lines.append("<br><b>Parameters:</b>")
+        for parameter in result.parameters:
+            unc = result.uncertainties.get(parameter.name, 0.0)
+            lines.append(
+                f"  {_format_param_label(parameter.name)} = {parameter.value:.6f} ± {unc:.6f}"
+            )
+        self._result_label.setText("<br>".join(lines))
+
+        param_dict = {parameter.name: parameter.value for parameter in result.parameters}
+        n_samples = _fit_curve_sample_count(
+            self._composite_model,
+            param_dict,
+            float(self._current_dataset.time.min()),
+            float(self._current_dataset.time.max()),
+        )
+        t_fit = np.linspace(
+            self._current_dataset.time.min(),
+            self._current_dataset.time.max(),
+            n_samples,
+        )
+        y_fit = self._composite_model.function(t_fit, **param_dict)
+        component_curves = self._composite_model.evaluate_components(
+            t_fit,
+            additive_only=True,
+            **param_dict,
+        )
+        self.fit_completed.emit(result, (t_fit, y_fit), component_curves)
 
     def _on_preview(self) -> None:
         """Generate and emit a preview fit curve with current parameters."""
@@ -648,6 +786,11 @@ class GlobalFitTab(QWidget):
         # Inherited seed cache for current dataset selection.
         self._inherited_seed_by_run: dict[int, dict[str, float]] = {}
         self._inherited_model_dict: dict[str, object] | None = None
+        self._fit_wizard_window: GlobalFitWizardWindow | None = None
+        self._cached_wizard_recommendation: GlobalFitWizardRecommendation | None = None
+        self._cached_wizard_signature: dict[str, object] | None = None
+        self._cached_wizard_log_text = ""
+        self._fit_wizard_search_strategy = "legacy"
 
         # Model selection
         model_group = QGroupBox("Model")
@@ -656,8 +799,15 @@ class GlobalFitTab(QWidget):
         _configure_formula_label(self._formula_label)
         self._edit_model_btn = QPushButton("Edit Function...")
         self._edit_model_btn.clicked.connect(self._edit_function)
+        self._fit_wizard_btn = QPushButton("Global Fit Wizard...")
+        self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
+        self._fit_wizard_btn.setEnabled(False)
+        model_button_layout = QHBoxLayout()
+        model_button_layout.addWidget(self._edit_model_btn)
+        model_button_layout.addWidget(self._fit_wizard_btn)
+        model_button_layout.addStretch()
         model_layout.addRow("A(t):", self._formula_label)
-        model_layout.addRow("", self._edit_model_btn)
+        model_layout.addRow("", model_button_layout)
         layout.addWidget(model_group)
 
         # Parameter classification table
@@ -758,9 +908,12 @@ class GlobalFitTab(QWidget):
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting."""
         self._datasets = datasets
+        self._invalidate_wizard_cache_if_stale()
         n = len(datasets)
         self._fit_btn.setEnabled((n > 1) and (not self._fit_blocked))
         self._fit_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
+        self._fit_wizard_btn.setEnabled((n > 1) and (not self._fit_blocked))
+        self._fit_wizard_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
         if n == 0:
             self._result_text.setText(
                 "No datasets selected.\n"
@@ -778,12 +931,60 @@ class GlobalFitTab(QWidget):
             )
         self._refresh_inherited_single_fit_defaults()
 
+    def _invalidate_wizard_cache_if_stale(self) -> None:
+        signature = self._cached_wizard_signature
+        if not isinstance(signature, dict):
+            return
+        cached_runs = signature.get("run_numbers")
+        current_runs = [
+            int(dataset.run_number)
+            for dataset in self._datasets
+            if getattr(dataset, "run_number", None) is not None
+        ]
+        if cached_runs != current_runs:
+            self._cached_wizard_recommendation = None
+            self._cached_wizard_signature = None
+            self._cached_wizard_log_text = ""
+
+    def _wizard_context_signature(self, parsed: dict[str, object]) -> dict[str, object]:
+        search_strategy = self._fit_wizard_search_strategy
+        if self._fit_wizard_window is not None and hasattr(
+            self._fit_wizard_window,
+            "current_search_strategy",
+        ):
+            search_strategy = self._fit_wizard_window.current_search_strategy()
+        return {
+            "run_numbers": [int(dataset.run_number) for dataset in self._datasets],
+            "model": self._composite_model.to_dict(),
+            "types": {str(key): str(value) for key, value in dict(parsed["types"]).items()},
+            "values": {str(key): float(value) for key, value in dict(parsed["values"]).items()},
+            "bounds": {
+                str(key): [float(bounds[0]), float(bounds[1])]
+                for key, bounds in dict(parsed["bounds"]).items()
+            },
+            "search_strategy": str(search_strategy),
+        }
+
+    def _cache_wizard_analysis(
+        self,
+        recommendation: GlobalFitWizardRecommendation,
+        *,
+        signature: dict[str, object],
+        log_text: str = "",
+    ) -> None:
+        self._cached_wizard_recommendation = recommendation
+        self._cached_wizard_signature = copy.deepcopy(signature)
+        self._cached_wizard_log_text = str(log_text)
+        self._fit_wizard_search_strategy = str(signature.get("search_strategy", "legacy"))
+
     def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
         """Enable/disable global-fit execution while preserving selected datasets."""
         self._fit_blocked = bool(blocked)
         self._fit_block_reason = str(reason)
         self._fit_btn.setEnabled((len(self._datasets) > 1) and (not self._fit_blocked))
         self._fit_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
+        self._fit_wizard_btn.setEnabled((len(self._datasets) > 1) and (not self._fit_blocked))
+        self._fit_wizard_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
 
     def _refresh_inherited_single_fit_defaults(self) -> None:
         """Apply single-fit seeds when every selected dataset shares one model."""
@@ -927,6 +1128,211 @@ class GlobalFitTab(QWidget):
             if new_model is not None:
                 self._set_composite_model(new_model)
 
+    def _open_fit_wizard(self) -> None:
+        """Launch or refresh the non-modal global fit wizard window."""
+        if self._fit_blocked:
+            self._result_text.setText(
+                self._fit_block_reason or "Global fit is unavailable for the current selection."
+            )
+            return
+        if len(self._datasets) < 2:
+            self._result_text.setText("Global fit wizard requires at least 2 datasets.")
+            return
+
+        try:
+            parsed = self._parse_parameter_configuration()
+        except ValueError as exc:
+            self._result_text.setText(str(exc))
+            return
+
+        if self._fit_wizard_window is None:
+            self._fit_wizard_window = GlobalFitWizardWindow(self)
+            self._fit_wizard_window.apply_assessment_requested.connect(
+                self._apply_fit_wizard_assessment
+            )
+            self._fit_wizard_window.analysis_cached.connect(self._on_fit_wizard_analysis_cached)
+            self._fit_wizard_window.parameter_setup_applied.connect(
+                self._on_fit_wizard_parameter_setup_applied
+            )
+        self._fit_wizard_window.set_search_strategy(self._fit_wizard_search_strategy)
+
+        signature = self._wizard_context_signature(parsed)
+
+        self._fit_wizard_window.set_analysis_context(
+            self._datasets,
+            current_model=self._composite_model,
+            current_parameter_types=parsed["types"],
+            current_values=parsed["values"],
+            parameter_bounds=parsed["bounds"],
+        )
+        if (
+            self._cached_wizard_recommendation is not None
+            and self._wizard_base_signature_matches(
+                self._cached_wizard_signature,
+                signature,
+            )
+        ):
+            self._fit_wizard_window.set_cached_recommendation(
+                self._cached_wizard_recommendation,
+                signature=self._cached_wizard_signature,
+                log_text=self._cached_wizard_log_text,
+            )
+        self._fit_wizard_window.show()
+        self._fit_wizard_window.raise_()
+        self._fit_wizard_window.activateWindow()
+
+    def _on_fit_wizard_analysis_cached(
+        self,
+        recommendation: GlobalFitWizardRecommendation,
+        log_text: str,
+        signature: object,
+    ) -> None:
+        if not isinstance(signature, dict):
+            return
+        self._cache_wizard_analysis(
+            recommendation,
+            signature=signature,
+            log_text=log_text,
+        )
+
+    def _on_fit_wizard_parameter_setup_applied(self, config: object) -> None:
+        if not isinstance(config, dict):
+            return
+        types = config.get("types")
+        bounds = config.get("bounds")
+        if not isinstance(types, dict) or not isinstance(bounds, dict):
+            return
+
+        for row in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(row, 0)
+            pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(pname, str):
+                pname = name_item.text() if name_item else ""
+
+            if pname in types:
+                type_combo = self._param_table.cellWidget(row, 2)
+                if isinstance(type_combo, QComboBox):
+                    idx = type_combo.findText(str(types[pname]))
+                    if idx >= 0:
+                        type_combo.setCurrentIndex(idx)
+
+            raw_bounds = bounds.get(pname)
+            if not isinstance(raw_bounds, tuple | list) or len(raw_bounds) != 2:
+                continue
+            try:
+                min_val = float(raw_bounds[0])
+                max_val = float(raw_bounds[1])
+            except (TypeError, ValueError):
+                continue
+
+            bounds_item = self._param_table.item(row, 3)
+            if bounds_item is not None:
+                bounds_item.setText(_format_bounds_pair(min_val, max_val))
+
+            value_item = self._param_table.item(row, 1)
+            if value_item is None:
+                continue
+            try:
+                value = float(value_item.text())
+            except (TypeError, ValueError):
+                continue
+            clipped = float(np.clip(value, min_val, max_val))
+            if clipped != value:
+                value_item.setText(f"{clipped:.6g}")
+
+    def _parse_parameter_configuration(self) -> dict[str, object]:
+        """Return validated parameter values, roles, and bounds from the table."""
+        global_params: list[str] = []
+        local_params: list[str] = []
+        fixed_params: dict[str, float] = {}
+        param_values: dict[str, float] = {}
+        param_bounds: dict[str, tuple[float, float]] = {}
+        param_types: dict[str, str] = {}
+
+        for i in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(i, 0)
+            pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(pname, str):
+                pname = name_item.text() if name_item else f"param_{i}"
+
+            try:
+                value = float(self._param_table.item(i, 1).text())
+            except (ValueError, AttributeError):
+                raise ValueError(f"Error: Invalid value for {_format_param_label(pname)}") from None
+
+            if not np.isfinite(value):
+                raise ValueError(
+                    f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
+                )
+            param_values[pname] = value
+
+            bounds_text = self._param_table.item(i, 3).text()
+            try:
+                parts = bounds_text.split(",")
+                lo = parts[0].strip()
+                hi = parts[1].strip()
+                min_val = float(lo) if lo != "-inf" else -float("inf")
+                max_val = float(hi) if hi != "inf" else float("inf")
+            except (ValueError, IndexError):
+                min_val, max_val = -float("inf"), float("inf")
+
+            if np.isfinite(min_val) and np.isfinite(max_val) and min_val > max_val:
+                raise ValueError(
+                    f"Error: Parameter {_format_param_label(pname)} has invalid bounds: {min_val} > {max_val}"
+                )
+            if np.isfinite(min_val) and value < min_val:
+                raise ValueError(
+                    f"Error: Parameter {_format_param_label(pname)} value {value} is below minimum {min_val}"
+                )
+            if np.isfinite(max_val) and value > max_val:
+                raise ValueError(
+                    f"Error: Parameter {_format_param_label(pname)} value {value} is above maximum {max_val}"
+                )
+
+            param_bounds[pname] = (min_val, max_val)
+            type_combo = self._param_table.cellWidget(i, 2)
+            type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Local"
+            param_types[pname] = type_text
+
+            if type_text == "Global":
+                global_params.append(pname)
+            elif type_text == "Local":
+                local_params.append(pname)
+            else:
+                fixed_params[pname] = value
+
+        return {
+            "global": global_params,
+            "local": local_params,
+            "fixed": fixed_params,
+            "values": param_values,
+            "bounds": param_bounds,
+            "types": param_types,
+        }
+
+    def _wizard_base_signature_matches(
+        self,
+        cached_signature: dict[str, object] | None,
+        base_signature: dict[str, object],
+    ) -> bool:
+        if not isinstance(cached_signature, dict):
+            return False
+        for key in ("run_numbers", "model", "values", "search_strategy"):
+            if cached_signature.get(key) != base_signature.get(key):
+                return False
+        cached_types = cached_signature.get("types")
+        base_types = base_signature.get("types")
+        if not isinstance(cached_types, dict) or cached_types != base_types:
+            return False
+        cached_bounds = cached_signature.get("bounds")
+        base_bounds = base_signature.get("bounds")
+        if not isinstance(cached_bounds, dict):
+            return False
+        for name, bounds in base_bounds.items():
+            if cached_bounds.get(name) != bounds:
+                return False
+        return True
+
     def _run_global_fit(self) -> None:
         """Execute global fit on all datasets."""
         if self._fit_blocked:
@@ -944,6 +1350,12 @@ class GlobalFitTab(QWidget):
             return
         model = self._composite_model
 
+        try:
+            parsed = self._parse_parameter_configuration()
+        except ValueError as exc:
+            self._result_text.setText(str(exc))
+            return
+
         inherited_seed_by_run: dict[int, dict[str, float]] = {}
         inherited_averages: dict[str, float] = {}
         if self._inherited_model_dict == model.to_dict() and self._inherited_seed_by_run:
@@ -957,83 +1369,11 @@ class GlobalFitTab(QWidget):
                     inherited_seed_by_run,
                     model.param_names,
                 )
-
-        # Parse parameter classification
-        global_params = []
-        local_params = []
-        fixed_params = {}
-        param_values = {}
-        param_bounds = {}
-
-        for i in range(self._param_table.rowCount()):
-            name_item = self._param_table.item(i, 0)
-            pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(pname, str):
-                pname = name_item.text() if name_item else f"param_{i}"
-
-            # Parse value
-            try:
-                value = float(self._param_table.item(i, 1).text())
-            except (ValueError, AttributeError):
-                self._result_text.setText(
-                    f"Error: Invalid value for {_format_param_label(pname)}"
-                )
-                return
-
-            # Validate value is finite
-            if not np.isfinite(value):
-                self._result_text.setText(
-                    f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
-                )
-                return
-
-            param_values[pname] = value
-
-            # Parse bounds
-            bounds_text = self._param_table.item(i, 3).text()
-            try:
-                parts = bounds_text.split(",")
-                lo = parts[0].strip()
-                hi = parts[1].strip()
-                min_val = float(lo) if lo != "-inf" else -float("inf")
-                max_val = float(hi) if hi != "inf" else float("inf")
-            except (ValueError, IndexError):
-                min_val, max_val = -float("inf"), float("inf")
-
-            # Validate bounds
-            if np.isfinite(min_val) and np.isfinite(max_val) and min_val > max_val:
-                self._result_text.setText(
-                    f"Error: Parameter {_format_param_label(pname)}"
-                    f" has invalid bounds: {min_val} > {max_val}"
-                )
-                return
-
-            # Check value is within bounds
-            if np.isfinite(min_val) and value < min_val:
-                self._result_text.setText(
-                    f"Error: Parameter {_format_param_label(pname)}"
-                    f" value {value} is below minimum {min_val}"
-                )
-                return
-            if np.isfinite(max_val) and value > max_val:
-                self._result_text.setText(
-                    f"Error: Parameter {_format_param_label(pname)}"
-                    f" value {value} is above maximum {max_val}"
-                )
-                return
-
-            param_bounds[pname] = (min_val, max_val)
-
-            # Check which type is selected
-            type_combo = self._param_table.cellWidget(i, 2)
-            type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Local"
-
-            if type_text == "Global":
-                global_params.append(pname)
-            elif type_text == "Local":
-                local_params.append(pname)
-            else:  # Fixed
-                fixed_params[pname] = value
+        global_params = list(parsed["global"])
+        local_params = list(parsed["local"])
+        fixed_params = dict(parsed["fixed"])
+        param_values = dict(parsed["values"])
+        param_bounds = dict(parsed["bounds"])
 
         # Build initial parameter sets for each dataset
         initial_params = {}
@@ -1095,6 +1435,183 @@ class GlobalFitTab(QWidget):
         # Start the thread
         self._fit_thread.start()
 
+    def _render_global_fit_success(
+        self,
+        *,
+        results_dict: dict[int, FitResult],
+        fitted_global: ParameterSet,
+        global_param_names: list[str],
+    ) -> None:
+        lines = ["<b>Global Fit Successful!</b><br>"]
+        lines.append("<b>Global Parameters:</b>")
+        for parameter in fitted_global:
+            if parameter.name not in global_param_names:
+                continue
+            first_result = next(iter(results_dict.values()))
+            unc = first_result.uncertainties.get(parameter.name, 0.0)
+            lines.append(
+                f"  {_format_param_label(parameter.name)} = {parameter.value:.6f} ± {unc:.6f}"
+            )
+
+        total_chi2 = sum(result.chi_squared for result in results_dict.values())
+        avg_red_chi2 = sum(result.reduced_chi_squared for result in results_dict.values()) / len(results_dict)
+        lines.append(f"<br><b>Total χ² = {total_chi2:.2f}</b>")
+        lines.append(f"<b>Average χ²ᵣ = {avg_red_chi2:.3f}</b>")
+        lines.append(f"<br>Fitted {len(results_dict)} datasets")
+        self._result_text.setHtml("<br>".join(lines))
+
+    def _results_with_curves(
+        self,
+        model: CompositeModel,
+        results_dict: dict[int, FitResult],
+    ) -> dict[int, tuple[FitResult, tuple[np.ndarray, np.ndarray], tuple[tuple[str, np.ndarray], ...]]]:
+        results_with_curves = {}
+        for dataset in self._datasets:
+            result = results_dict[int(dataset.run_number)]
+            param_dict = {parameter.name: parameter.value for parameter in result.parameters}
+            n_samples = _fit_curve_sample_count(
+                model,
+                param_dict,
+                float(dataset.time.min()),
+                float(dataset.time.max()),
+            )
+            t_fit = np.linspace(dataset.time.min(), dataset.time.max(), n_samples)
+            y_fit = model.function(t_fit, **param_dict)
+            component_curves = tuple(
+                model.evaluate_components(
+                    t_fit,
+                    additive_only=True,
+                    **param_dict,
+                )
+            )
+            results_with_curves[int(dataset.run_number)] = (
+                result,
+                (t_fit, y_fit),
+                component_curves,
+            )
+        return results_with_curves
+
+    def _emit_global_fit_success(
+        self,
+        *,
+        model: CompositeModel,
+        results_dict: dict[int, FitResult],
+        fitted_global: ParameterSet,
+        global_param_names: list[str],
+    ) -> None:
+        self._render_global_fit_success(
+            results_dict=results_dict,
+            fitted_global=fitted_global,
+            global_param_names=global_param_names,
+        )
+        self.global_fit_completed.emit(
+            self._results_with_curves(model, results_dict),
+            fitted_global,
+        )
+
+    def _apply_fit_wizard_assessment(
+        self,
+        assessment: GlobalCandidateAssessment,
+        recommendation: GlobalFitWizardRecommendation,
+    ) -> None:
+        """Apply a global-fit wizard assessment back into the global tab."""
+        if not isinstance(assessment, GlobalCandidateAssessment):
+            return
+        if not assessment.is_successful:
+            self._result_text.setText("<b>Global Fit Wizard failed</b>")
+            return
+        try:
+            parsed = self._parse_parameter_configuration()
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            log_text = (
+                self._fit_wizard_window.current_log_text()
+                if self._fit_wizard_window is not None
+                else self._cached_wizard_log_text
+            )
+            self._cache_wizard_analysis(
+                recommendation,
+                signature=self._wizard_context_signature(parsed),
+                log_text=log_text,
+            )
+
+        self._set_composite_model(assessment.template.model)
+        role_by_name = {name: "Global" for name in assessment.global_param_names}
+        role_by_name.update({name: "Local" for name in assessment.local_param_names})
+        role_by_name.update(
+            {
+                parameter.name: parameter.recommended_role
+                for parameter in assessment.parameter_recommendations
+            }
+        )
+
+        representative_run = self._datasets[0].run_number if self._datasets else None
+        representative_result = (
+            assessment.fit_results_by_run.get(int(representative_run))
+            if representative_run is not None
+            else None
+        )
+        fitted_by_name = {
+            parameter.name: parameter
+            for parameter in (representative_result.parameters if representative_result is not None else [])
+        }
+
+        for row in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(row, 0)
+            pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(pname, str):
+                continue
+
+            type_combo = self._param_table.cellWidget(row, 2)
+            if isinstance(type_combo, QComboBox):
+                if pname in assessment.fixed_param_names:
+                    type_combo.setCurrentText("Fixed")
+                else:
+                    type_combo.setCurrentText(role_by_name.get(pname, "Global"))
+
+            value_item = self._param_table.item(row, 1)
+            fitted = fitted_by_name.get(pname)
+            if value_item is not None and fitted is not None:
+                value_item.setText(f"{fitted.value:.6g}")
+
+            bounds_item = self._param_table.item(row, 3)
+            if bounds_item is not None and fitted is not None:
+                min_text = "-inf" if not np.isfinite(fitted.min) else f"{float(fitted.min):g}"
+                max_text = "inf" if not np.isfinite(fitted.max) else f"{float(fitted.max):g}"
+                bounds_item.setText(f"{min_text}, {max_text}")
+
+        self._current_model = assessment.template.model
+        self._current_global_params = list(assessment.global_param_names)
+        self._status_text_from_global_wizard(assessment, recommendation)
+        self.global_fit_completed.emit(
+            {
+                run_number: (
+                    result,
+                    assessment.fitted_curves_by_run[run_number],
+                    assessment.component_curves_by_run[run_number],
+                )
+                for run_number, result in assessment.fit_results_by_run.items()
+            },
+            assessment.global_parameters,
+        )
+
+    def _status_text_from_global_wizard(
+        self,
+        assessment: GlobalCandidateAssessment,
+        recommendation: GlobalFitWizardRecommendation,
+    ) -> None:
+        lines = [
+            f"<b>Global Fit Wizard — {assessment.template.title}</b>",
+            f"<b>{recommendation.metric.value} = {assessment.metric_value(recommendation.metric):.4f}</b>",
+            f"<b>Global:</b> {', '.join(assessment.global_param_names) or 'None'}",
+            f"<b>Local:</b> {', '.join(assessment.local_param_names) or 'None'}",
+        ]
+        if assessment.series_warnings:
+            lines.append("<br><b>Warnings:</b>")
+            lines.extend(f"  {warning}" for warning in assessment.series_warnings)
+        self._result_text.setHtml("<br>".join(lines))
+
     def _on_fit_finished(self, results_dict: dict, fitted_global: list) -> None:
         """Handle successful fit completion."""
         self._fit_btn.setEnabled(True)
@@ -1104,60 +1621,12 @@ class GlobalFitTab(QWidget):
 
         # Display results
         if all(r.success for r in results_dict.values()):
-            # Build results summary
-            lines = ["<b>Global Fit Successful!</b><br>"]
-
-            # Global parameters
-            lines.append("<b>Global Parameters:</b>")
-            for p in fitted_global:
-                if p.name in global_params:
-                    # Find uncertainty from first dataset result
-                    # (global params have same uncertainty)
-                    first_result = next(iter(results_dict.values()))
-                    unc = first_result.uncertainties.get(p.name, 0.0)
-                    lines.append(
-                        f"  {_format_param_label(p.name)} = {p.value:.6f} ± {unc:.6f}"
-                    )
-
-            # Summary statistics
-            total_chi2 = sum(
-                r.chi_squared for r in results_dict.values()
+            self._emit_global_fit_success(
+                model=model,
+                results_dict=results_dict,
+                fitted_global=fitted_global,
+                global_param_names=global_params,
             )
-            avg_red_chi2 = sum(
-                r.reduced_chi_squared for r in results_dict.values()
-            ) / len(results_dict)
-            lines.append(f"<br><b>Total χ² = {total_chi2:.2f}</b>")
-            lines.append(f"<b>Average χ²ᵣ = {avg_red_chi2:.3f}</b>")
-            lines.append(f"<br>Fitted {len(results_dict)} datasets")
-
-            self._result_text.setHtml("<br>".join(lines))
-
-            # Generate fitted curves for all datasets
-            results_with_curves = {}
-            for ds in self._datasets:
-                result = results_dict[ds.run_number]
-                param_dict = {p.name: p.value for p in result.parameters}
-                n_samples = _fit_curve_sample_count(
-                    model,
-                    param_dict,
-                    float(ds.time.min()),
-                    float(ds.time.max()),
-                )
-                t_fit = np.linspace(ds.time.min(), ds.time.max(), n_samples)
-                y_fit = model.function(t_fit, **param_dict)
-                component_curves = model.evaluate_components(
-                    t_fit,
-                    additive_only=True,
-                    **param_dict,
-                )
-                results_with_curves[ds.run_number] = (
-                    result,
-                    (t_fit, y_fit),
-                    component_curves,
-                )
-
-            # Emit signal with all results
-            self.global_fit_completed.emit(results_with_curves, fitted_global)
         else:
             failed = [run for run, r in results_dict.items() if not r.success]
             run_label_by_number = {ds.run_number: ds.run_label for ds in self._datasets}
@@ -1185,6 +1654,22 @@ class GlobalFitTab(QWidget):
 
     def get_state(self) -> dict:
         """Return a serialisable snapshot of the global-fit tab state."""
+        if self._fit_wizard_window is not None:
+            recommendation = self._fit_wizard_window.current_recommendation()
+            signature = self._cached_wizard_signature
+            if recommendation is not None and signature is None:
+                try:
+                    parsed = self._parse_parameter_configuration()
+                except ValueError:
+                    parsed = None
+                if parsed is not None:
+                    signature = self._wizard_context_signature(parsed)
+            if recommendation is not None and signature is not None:
+                self._cache_wizard_analysis(
+                    recommendation,
+                    signature=signature,
+                    log_text=self._fit_wizard_window.current_log_text(),
+                )
         params = []
         for i in range(self._param_table.rowCount()):
             name_item = self._param_table.item(i, 0)
@@ -1219,12 +1704,24 @@ class GlobalFitTab(QWidget):
                 "bounds": bounds_text,
             })
 
-        return {
+        state = {
             "model_name": "Composite",
             "composite_model": self._composite_model.to_dict(),
             "parameters": params,
             "result_html": self._result_text.toHtml(),
         }
+        if (
+            self._cached_wizard_recommendation is not None
+            and self._cached_wizard_signature is not None
+        ):
+            state["wizard_state"] = {
+                "signature": copy.deepcopy(self._cached_wizard_signature),
+                "recommendation": serialize_global_fit_wizard_recommendation(
+                    self._cached_wizard_recommendation
+                ),
+                "log_text": self._cached_wizard_log_text,
+            }
+        return state
 
     def restore_state(self, state: dict) -> None:
         """Restore global-fit tab state from a saved dict."""
@@ -1268,6 +1765,18 @@ class GlobalFitTab(QWidget):
         result_html = state.get("result_html")
         if isinstance(result_html, str) and result_html:
             self._result_text.setHtml(result_html)
+
+        wizard_state = state.get("wizard_state")
+        if isinstance(wizard_state, dict):
+            recommendation = deserialize_global_fit_wizard_recommendation(
+                wizard_state.get("recommendation")
+            )
+            signature = wizard_state.get("signature")
+            if recommendation is not None and isinstance(signature, dict):
+                self._cached_wizard_recommendation = recommendation
+                self._cached_wizard_signature = copy.deepcopy(signature)
+                self._cached_wizard_log_text = str(wizard_state.get("log_text", ""))
+                self._fit_wizard_search_strategy = str(signature.get("search_strategy", "legacy"))
 
 
 class FitPanel(QWidget):

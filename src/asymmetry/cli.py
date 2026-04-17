@@ -2,13 +2,15 @@
 
 import argparse
 
+from asymmetry import __version__
+
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="asymmetry",
         description="Asymmetry — μSR data analysis",
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     sub = parser.add_subparsers(dest="command")
 

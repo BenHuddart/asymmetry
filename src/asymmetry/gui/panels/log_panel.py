@@ -23,3 +23,9 @@ class LogPanel(QWidget):
     def log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
         self._text.appendPlainText(f"[{timestamp}] {message}")
+
+    def clear(self) -> None:
+        self._text.clear()
+
+    def to_plain_text(self) -> str:
+        return self._text.toPlainText()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -17,6 +18,19 @@ from PySide6.QtWidgets import QApplication, QComboBox
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.global_fit_wizard import (
+    GlobalCandidateAssessment,
+    GlobalFitWizardRecommendation,
+    GlobalParameterRecommendation,
+    RunResidualDiagnostic,
+)
+from asymmetry.core.fitting.fit_wizard import (
+    CandidateAssessment,
+    CandidateTemplate,
+    FitWizardRecommendation,
+    SelectionMetric,
+    SpectrumFingerprint,
+)
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels import fit_panel as fit_panel_module
 from asymmetry.gui.panels.fit_panel import FitPanel, GlobalFitTab, SingleFitTab
@@ -38,11 +52,326 @@ def dataset() -> MuonDataset:
     return MuonDataset(time=t, asymmetry=a, error=e, metadata={"run_number": 101})
 
 
+def _wizard_payload_for_dataset(dataset: MuonDataset) -> tuple[CandidateAssessment, FitWizardRecommendation]:
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    parameters = ParameterSet(
+        [
+            Parameter("A_1", 0.2, min=0.0, max=1.0),
+            Parameter("Lambda", 0.4, min=0.0, max=5.0),
+            Parameter("A_bg", 0.01, min=-0.5, max=0.5),
+        ]
+    )
+    curve = model.function(dataset.time, A_1=0.2, Lambda=0.4, A_bg=0.01)
+    result = FitResult(
+        success=True,
+        chi_squared=5.0,
+        reduced_chi_squared=0.1,
+        parameters=parameters,
+        uncertainties={"A_1": 0.01, "Lambda": 0.02, "A_bg": 0.001},
+        residuals=np.asarray(dataset.asymmetry - curve, dtype=float),
+    )
+    template = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="Baseline candidate",
+        model=model,
+    )
+    assessment = CandidateAssessment(
+        template=template,
+        fit_result=result,
+        aic=8.0,
+        aicc=8.2,
+        bic=10.0,
+        selected_score=8.2,
+        residual_rms=0.9,
+        runs_z_score=0.2,
+        max_abs_autocorrelation=0.1,
+        residual_fft_peak_snr=1.2,
+        residual_gate_passed=True,
+        residual_gate_reasons=(),
+        bound_hits=(),
+        fitted_time=np.asarray(dataset.time, dtype=float).copy(),
+        fitted_curve=np.asarray(curve, dtype=float),
+        component_curves=tuple(
+            model.evaluate_components(dataset.time, additive_only=True, A_1=0.2, Lambda=0.4, A_bg=0.01)
+        ),
+    )
+    recommendation = FitWizardRecommendation(
+        fingerprint=SpectrumFingerprint(
+            tail_estimate=0.01,
+            initial_amplitude_estimate=0.2,
+            zero_crossings=0,
+            smoothed_zero_crossings=0,
+            smoothed_turning_points=0,
+            dominant_fft_frequency_mhz=0.0,
+            dominant_fft_snr=0.0,
+            dominant_fft_cycles_in_window=0.0,
+            monotonic_decay_fraction=1.0,
+            early_time_curvature=-0.1,
+            semilog_slope_ratio=1.0,
+            late_time_dip_recovery_score=0.0,
+            oscillatory_hint=False,
+            kt_like_hint=False,
+            multi_rate_hint=False,
+        ),
+        templates=(template,),
+        assessments=(assessment,),
+        metric=SelectionMetric.AICC,
+        recommended_key="exp_constant",
+        comparable_keys=(),
+        summary="Recommended: Exponential + Constant by AICc.",
+    )
+    return assessment, recommendation
+
+
+def _global_wizard_recommendation_for_dataset(dataset: MuonDataset) -> GlobalFitWizardRecommendation:
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    fitted_curves = {
+        int(dataset.run_number): (
+            np.asarray(dataset.time, dtype=float),
+            np.asarray(model.function(dataset.time, A_1=0.2, Lambda=0.4, A_bg=0.01), dtype=float),
+        ),
+        102: (
+            np.asarray(dataset.time, dtype=float),
+            np.asarray(model.function(dataset.time, A_1=0.2, Lambda=0.6, A_bg=0.01), dtype=float),
+        ),
+    }
+    component_curves = {
+        run_number: tuple(
+            model.evaluate_components(
+                dataset.time,
+                additive_only=True,
+                A_1=0.2,
+                Lambda=(0.4 if run_number == int(dataset.run_number) else 0.6),
+                A_bg=0.01,
+            )
+        )
+        for run_number in fitted_curves
+    }
+    fit_results = {}
+    for run_number, lambda_value in ((int(dataset.run_number), 0.4), (102, 0.6)):
+        fit_results[run_number] = FitResult(
+            success=True,
+            chi_squared=5.0,
+            reduced_chi_squared=0.1,
+            parameters=ParameterSet(
+                [
+                    Parameter("A_1", 0.2, min=0.0, max=1.0),
+                    Parameter("Lambda", lambda_value, min=0.0, max=5.0),
+                    Parameter("A_bg", 0.01, min=-0.5, max=0.5),
+                ]
+            ),
+            uncertainties={"A_1": 0.01, "Lambda": 0.02, "A_bg": 0.001},
+        )
+
+    template = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="Baseline candidate",
+        model=model,
+    )
+    assessment = GlobalCandidateAssessment(
+        template=template,
+        fit_results_by_run=fit_results,
+        global_parameters=ParameterSet([Parameter("A_1", 0.2), Parameter("A_bg", 0.01)]),
+        global_param_names=("A_1", "A_bg"),
+        local_param_names=("Lambda",),
+        fixed_param_names=(),
+        parameter_recommendations=(
+            GlobalParameterRecommendation(
+                name="A_1",
+                recommended_role="Global",
+                global_score=10.0,
+                local_score=12.0,
+                score_delta=2.0,
+                total_variation=0.0,
+                roughness=0.0,
+                rationale="Shared amplitude is sufficient.",
+            ),
+            GlobalParameterRecommendation(
+                name="Lambda",
+                recommended_role="Local",
+                global_score=15.0,
+                local_score=10.0,
+                score_delta=5.0,
+                total_variation=0.2,
+                roughness=0.1,
+                rationale="Local relaxation rates improve the score.",
+            ),
+            GlobalParameterRecommendation(
+                name="A_bg",
+                recommended_role="Global",
+                global_score=10.0,
+                local_score=11.0,
+                score_delta=1.0,
+                total_variation=0.0,
+                roughness=0.0,
+                rationale="Background remains stable.",
+            ),
+        ),
+        run_diagnostics=(
+            RunResidualDiagnostic(
+                run_number=int(dataset.run_number),
+                run_label=dataset.run_label,
+                axis_value=0.0,
+                residual_rms=0.8,
+                runs_z_score=0.1,
+                max_abs_autocorrelation=0.1,
+                residual_fft_peak_snr=1.0,
+                gate_passed=True,
+                gate_reasons=(),
+            ),
+            RunResidualDiagnostic(
+                run_number=102,
+                run_label="102",
+                axis_value=100.0,
+                residual_rms=0.8,
+                runs_z_score=0.1,
+                max_abs_autocorrelation=0.1,
+                residual_fft_peak_snr=1.0,
+                gate_passed=True,
+                gate_reasons=(),
+            ),
+        ),
+        series_warnings=(),
+        aic=10.0,
+        aicc=10.2,
+        bic=12.0,
+        selected_score=10.2,
+        fitted_curves_by_run=fitted_curves,
+        component_curves_by_run=component_curves,
+    )
+    return GlobalFitWizardRecommendation(
+        series_axis_key="field",
+        series_axis_label="Field (G)",
+        mixed_axes_warning=None,
+        fingerprints_by_run={},
+        dataset_order=(int(dataset.run_number), 102),
+        templates=(assessment.template,),
+        assessments=(assessment,),
+        metric=SelectionMetric.AICC,
+        recommended_key="exp_constant",
+        comparable_keys=(),
+        summary="Recommended: Exponential + Constant by AICc.",
+    )
+
+
 def test_single_fit_requires_dataset(qapp: QApplication) -> None:
     tab = SingleFitTab()
     tab._current_dataset = None
     tab._run_fit()
     assert "No dataset selected" in tab._result_label.text()
+
+
+def test_single_fit_fit_wizard_button_tracks_dataset_and_block_state(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    tab = SingleFitTab()
+    assert tab._fit_wizard_btn.isEnabled() is False
+
+    tab.set_dataset(dataset)
+    assert tab._fit_wizard_btn.isEnabled() is True
+
+    tab.set_fit_blocked(True, "blocked")
+    assert tab._fit_wizard_btn.isEnabled() is False
+
+
+def test_single_fit_open_fit_wizard_without_dataset_shows_message(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tab = SingleFitTab()
+    captured = {}
+
+    monkeypatch.setattr(
+        fit_panel_module.QMessageBox,
+        "information",
+        lambda *_args: captured.setdefault("shown", True),
+    )
+
+    tab._open_fit_wizard()
+
+    assert captured["shown"] is True
+
+
+def test_single_fit_open_fit_wizard_uses_active_dataset_and_model(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received = {}
+
+    class _FakeWizard:
+        def __init__(self, _parent) -> None:
+            self.apply_assessment_requested = SimpleNamespace(connect=lambda _cb: None)
+
+        def set_analysis_context(self, dataset_arg, current_model=None) -> None:
+            received["dataset"] = dataset_arg
+            received["model"] = current_model
+
+        def show(self) -> None:
+            received["show"] = True
+
+        def raise_(self) -> None:
+            received["raise"] = True
+
+        def activateWindow(self) -> None:
+            received["activate"] = True
+
+    monkeypatch.setattr(fit_panel_module, "FitWizardWindow", _FakeWizard)
+    tab = SingleFitTab()
+    tab.set_dataset(dataset)
+    tab._set_composite_model(CompositeModel(["Gaussian", "Constant"], operators=["+"]))
+
+    tab._open_fit_wizard()
+
+    assert received["dataset"] is dataset
+    assert received["model"].component_names == ["Gaussian", "Constant"]
+
+
+def test_single_fit_apply_fit_wizard_assessment_emits_fit_completed(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    tab = SingleFitTab()
+    tab.set_dataset(dataset)
+    assessment, recommendation = _wizard_payload_for_dataset(dataset)
+
+    emitted = {}
+    tab.fit_completed.connect(
+        lambda result, curve, components: emitted.update(
+            {"result": result, "curve": curve, "components": components}
+        )
+    )
+
+    tab._apply_fit_wizard_assessment(assessment, recommendation)
+
+    assert "Fit Wizard" in tab._result_label.text()
+    assert emitted["result"].success is True
+    assert tab._composite_model.component_names == ["Exponential", "Constant"]
+
+
+def test_fit_panel_forwards_fit_wizard_apply_via_normal_fit_completed_signal(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+    assessment, recommendation = _wizard_payload_for_dataset(dataset)
+
+    emitted = {}
+    panel.fit_completed.connect(
+        lambda result, curve, components: emitted.update(
+            {"result": result, "curve": curve, "components": components}
+        )
+    )
+
+    panel._single_tab._apply_fit_wizard_assessment(assessment, recommendation)
+
+    assert emitted["result"].success is True
+    assert len(emitted["curve"][0]) >= 500
 
 
 def test_fit_panel_forwards_single_tab_preview(
@@ -567,3 +896,244 @@ def test_fit_panel_clear_fits_for_runs_removes_cached_fit_state(
     assert 101 not in panel._global_tab._single_fit_seed_by_run
     assert 102 in panel._single_state_by_run
     assert 102 in panel._global_tab._single_fit_seed_by_run
+
+
+def test_global_fit_wizard_button_tracks_dataset_and_block_state(qapp: QApplication, dataset: MuonDataset) -> None:
+    tab = GlobalFitTab()
+    assert tab._fit_wizard_btn.isEnabled() is False
+
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    tab.set_datasets([dataset, d2])
+    assert tab._fit_wizard_btn.isEnabled() is True
+
+    tab.set_fit_blocked(True, "blocked")
+    assert tab._fit_wizard_btn.isEnabled() is False
+
+
+def test_global_fit_apply_fit_wizard_assessment_updates_roles_and_emits(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    tab = GlobalFitTab()
+    d2 = MuonDataset(
+        dataset.time,
+        0.2 * np.exp(-0.6 * dataset.time) + 0.01,
+        dataset.error,
+        {"run_number": 102, "run_label": "102", "field": 100.0},
+    )
+    tab.set_datasets([dataset, d2])
+
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    fit_results: dict[int, FitResult] = {}
+    fitted_curves: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    component_curves: dict[int, tuple[tuple[str, np.ndarray], ...]] = {}
+    for run_number, lam, ds in ((int(dataset.run_number), 0.25, dataset), (102, 0.6, d2)):
+        params = ParameterSet(
+            [
+                Parameter("A_1", value=0.2, min=0.0, max=1.0),
+                Parameter("Lambda", value=lam, min=0.0, max=5.0),
+                Parameter("A_bg", value=0.01, min=-0.5, max=0.5),
+            ]
+        )
+        curve = model.function(ds.time, A_1=0.2, Lambda=lam, A_bg=0.01)
+        fit_results[run_number] = FitResult(
+            success=True,
+            chi_squared=5.0,
+            reduced_chi_squared=0.1,
+            parameters=params,
+            uncertainties={"A_1": 0.01, "Lambda": 0.02, "A_bg": 0.001},
+            residuals=np.asarray(ds.asymmetry - curve, dtype=float),
+        )
+        fitted_curves[run_number] = (np.asarray(ds.time, dtype=float).copy(), np.asarray(curve, dtype=float))
+        component_curves[run_number] = tuple(
+            model.evaluate_components(ds.time, additive_only=True, A_1=0.2, Lambda=lam, A_bg=0.01)
+        )
+
+    assessment = GlobalCandidateAssessment(
+        template=CandidateTemplate(
+            key="exp_constant",
+            title="Exponential + Constant",
+            category="General",
+            rationale="Baseline candidate",
+            model=model,
+        ),
+        fit_results_by_run=fit_results,
+        global_parameters=ParameterSet(
+            [
+                Parameter("A_1", value=0.2, min=0.0, max=1.0),
+                Parameter("A_bg", value=0.01, min=-0.5, max=0.5),
+            ]
+        ),
+        global_param_names=("A_1", "A_bg"),
+        local_param_names=("Lambda",),
+        fixed_param_names=(),
+        parameter_recommendations=(
+            GlobalParameterRecommendation(
+                name="A_1",
+                recommended_role="Global",
+                global_score=10.0,
+                local_score=12.0,
+                score_delta=2.0,
+                total_variation=0.0,
+                roughness=0.0,
+                rationale="Shared amplitude is adequate.",
+            ),
+            GlobalParameterRecommendation(
+                name="Lambda",
+                recommended_role="Local",
+                global_score=14.0,
+                local_score=8.0,
+                score_delta=6.0,
+                total_variation=1.5,
+                roughness=0.1,
+                rationale="Rate variation is strongly supported.",
+            ),
+            GlobalParameterRecommendation(
+                name="A_bg",
+                recommended_role="Global",
+                global_score=10.0,
+                local_score=11.0,
+                score_delta=1.0,
+                total_variation=0.0,
+                roughness=0.0,
+                rationale="Background remains stable.",
+            ),
+        ),
+        run_diagnostics=(
+            RunResidualDiagnostic(
+                run_number=int(dataset.run_number),
+                run_label=dataset.run_label,
+                axis_value=0.0,
+                residual_rms=0.8,
+                runs_z_score=0.1,
+                max_abs_autocorrelation=0.1,
+                residual_fft_peak_snr=1.0,
+                gate_passed=True,
+                gate_reasons=(),
+            ),
+            RunResidualDiagnostic(
+                run_number=102,
+                run_label="102",
+                axis_value=100.0,
+                residual_rms=0.8,
+                runs_z_score=0.1,
+                max_abs_autocorrelation=0.1,
+                residual_fft_peak_snr=1.0,
+                gate_passed=True,
+                gate_reasons=(),
+            ),
+        ),
+        series_warnings=(),
+        aic=10.0,
+        aicc=10.2,
+        bic=12.0,
+        selected_score=10.2,
+        fitted_curves_by_run=fitted_curves,
+        component_curves_by_run=component_curves,
+    )
+    recommendation = GlobalFitWizardRecommendation(
+        series_axis_key="field",
+        series_axis_label="Field (G)",
+        mixed_axes_warning=None,
+        fingerprints_by_run={},
+        dataset_order=(int(dataset.run_number), 102),
+        templates=(assessment.template,),
+        assessments=(assessment,),
+        metric=SelectionMetric.AICC,
+        recommended_key="exp_constant",
+        comparable_keys=(),
+        summary="Recommended: Exponential + Constant by AICc.",
+    )
+
+    emitted: dict[str, object] = {}
+    tab.global_fit_completed.connect(
+        lambda results, global_params: emitted.update({"results": results, "global": global_params})
+    )
+
+    tab._apply_fit_wizard_assessment(assessment, recommendation)
+
+    lambda_row = 1
+    lambda_combo = tab._param_table.cellWidget(lambda_row, 2)
+    assert isinstance(lambda_combo, QComboBox)
+    assert lambda_combo.currentText() == "Local"
+    assert "Global Fit Wizard" in tab._result_text.toPlainText()
+    assert "results" in emitted
+
+
+def test_global_tab_state_roundtrip_preserves_cached_wizard_results(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    tab = GlobalFitTab()
+    dataset_102 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    tab.set_datasets([dataset, dataset_102])
+
+    recommendation = _global_wizard_recommendation_for_dataset(dataset)
+    signature = {
+        "run_numbers": [int(dataset.run_number), 102],
+        "model": tab._composite_model.to_dict(),
+        "types": {"A_1": "Global", "Lambda": "Local", "A_bg": "Global"},
+        "values": {"A_1": 0.2, "Lambda": 0.4, "A_bg": 0.01},
+        "bounds": {"A_1": [0.0, 1.0], "Lambda": [0.0, 5.0], "A_bg": [-0.5, 0.5]},
+        "search_strategy": "staged_v1",
+    }
+    tab._cache_wizard_analysis(recommendation, signature=signature, log_text="cached log")
+
+    saved = tab.get_state()
+
+    restored = GlobalFitTab()
+    restored.set_datasets([dataset, dataset_102])
+    restored.restore_state(saved)
+
+    assert restored._cached_wizard_recommendation is not None
+    assert restored._cached_wizard_recommendation.summary == recommendation.summary
+    assert restored._cached_wizard_signature == signature
+    assert restored._cached_wizard_log_text == "cached log"
+    assert restored._fit_wizard_search_strategy == "staged_v1"
+
+
+def test_global_tab_apply_fit_wizard_assessment_uses_assignment_roles_without_detailed_retests(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    tab = GlobalFitTab()
+    dataset_102 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    tab.set_datasets([dataset, dataset_102])
+
+    recommendation = _global_wizard_recommendation_for_dataset(dataset)
+    assessment = recommendation.recommended_assessment
+    assert assessment is not None
+    assessment = replace(assessment, parameter_recommendations=())
+    recommendation = replace(recommendation, assessments=(assessment,))
+
+    tab._apply_fit_wizard_assessment(assessment, recommendation)
+
+    lambda_row = 1
+    lambda_combo = tab._param_table.cellWidget(lambda_row, 2)
+    assert isinstance(lambda_combo, QComboBox)
+    assert lambda_combo.currentText() == "Local"
+
+
+def test_global_tab_get_state_persists_active_window_recommendation_without_cached_signature(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    tab = GlobalFitTab()
+    dataset_102 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    tab.set_datasets([dataset, dataset_102])
+
+    recommendation = _global_wizard_recommendation_for_dataset(dataset)
+    tab._fit_wizard_window = SimpleNamespace(
+        current_recommendation=lambda: recommendation,
+        current_log_text=lambda: "window log",
+    )
+    tab._cached_wizard_signature = None
+    tab._cached_wizard_recommendation = None
+
+    saved = tab.get_state()
+
+    assert "wizard_state" in saved
+    assert saved["wizard_state"]["log_text"] == "window log"
+    assert saved["wizard_state"]["signature"]["run_numbers"] == [int(dataset.run_number), 102]
+    assert tab._cached_wizard_recommendation is not None
+    assert tab._cached_wizard_signature is not None

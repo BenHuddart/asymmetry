@@ -1086,14 +1086,17 @@ class MainWindow(QMainWindow):
             if hasattr(self._data_browser, "get_all_datasets")
             else []
         )
-        reference_dataset = None
-        if selected_run_number is not None:
-            reference_dataset = next(
-                (ds for ds in all_datasets if int(ds.run_number) == int(selected_run_number)),
-                None,
-            )
-        if reference_dataset is None:
-            reference_dataset = self._current_dataset
+        (
+            dialog_datasets,
+            reference_dataset,
+            dialog_selected_run_number,
+            dialog_selected_run_numbers,
+            combined_target_run_number,
+        ) = self._resolve_grouping_dialog_context(
+            all_datasets=all_datasets,
+            selected_run_number=selected_run_number,
+            selected_run_numbers=selected_run_numbers,
+        )
 
         use_wim_dialog = False
         if reference_dataset is not None and reference_dataset.run is not None:
@@ -1101,31 +1104,31 @@ class MainWindow(QMainWindow):
             use_wim_dialog = source_file.lower().endswith(".wim")
 
         if use_wim_dialog:
-            dialog_datasets = [
+            wim_dialog_datasets = [
                 ds
-                for ds in all_datasets
+                for ds in dialog_datasets
                 if ds.run is not None
                 and str(getattr(ds.run, "source_file", "") or "").lower().endswith(".wim")
             ]
             filtered_selected = None
-            if selected_run_numbers is not None:
-                selected_set = {int(v) for v in selected_run_numbers}
+            if dialog_selected_run_numbers is not None:
+                selected_set = {int(v) for v in dialog_selected_run_numbers}
                 filtered_selected = [
                     int(ds.run_number)
-                    for ds in dialog_datasets
+                    for ds in wim_dialog_datasets
                     if int(ds.run_number) in selected_set
                 ]
             dialog = WimGroupingDialog(
-                dialog_datasets,
-                selected_run_number=selected_run_number,
+                wim_dialog_datasets,
+                selected_run_number=dialog_selected_run_number,
                 selected_run_numbers=filtered_selected,
                 parent=self,
             )
         else:
             dialog = GroupingDialog(
-                all_datasets,
-                selected_run_number=selected_run_number,
-                selected_run_numbers=selected_run_numbers,
+                dialog_datasets,
+                selected_run_number=dialog_selected_run_number,
+                selected_run_numbers=dialog_selected_run_numbers,
                 parent=self,
             )
         if dialog.exec() != dialog.DialogCode.Accepted:
@@ -1145,7 +1148,7 @@ class MainWindow(QMainWindow):
         deadtime_missing = 0
         first_updated_dataset = None
 
-        for dataset in all_datasets:
+        for dataset in dialog_datasets:
             if run_numbers and int(dataset.run_number) not in run_numbers:
                 continue
             applied, dt_applied = self._apply_grouping_settings_to_dataset(dataset, grouping_result)
@@ -1163,6 +1166,23 @@ class MainWindow(QMainWindow):
                 first_updated_dataset = dataset
             updated += 1
 
+        rebuilt_combined_dataset = None
+        if updated > 0 and combined_target_run_number is not None and hasattr(
+            self._data_browser,
+            "rebuild_combined_dataset",
+        ):
+            rebuilt_combined_dataset = self._data_browser.rebuild_combined_dataset(
+                combined_target_run_number
+            )
+            if rebuilt_combined_dataset is not None:
+                first_updated_dataset = rebuilt_combined_dataset
+                if (
+                    self._current_dataset is not None
+                    and int(self._current_dataset.run_number) == int(combined_target_run_number)
+                ):
+                    self._current_dataset = rebuilt_combined_dataset
+                    self._fit_panel.set_dataset(self._get_fit_dataset(rebuilt_combined_dataset))
+
         if updated > 0:
             self._data_browser._rebuild_table()
             self._render_current_selection_plot()
@@ -1179,6 +1199,52 @@ class MainWindow(QMainWindow):
             f"deadtime={deadtime_msg}"
         )
 
+    def _resolve_grouping_dialog_context(
+        self,
+        *,
+        all_datasets: list,
+        selected_run_number: int | None,
+        selected_run_numbers: list[int] | None,
+    ) -> tuple[list, object | None, int | None, list[int] | None, int | None]:
+        """Return grouping dialog datasets plus any combined-row target context."""
+        reference_dataset = None
+        if selected_run_number is not None:
+            reference_dataset = next(
+                (ds for ds in all_datasets if int(ds.run_number) == int(selected_run_number)),
+                None,
+            )
+        if reference_dataset is None:
+            reference_dataset = self._current_dataset
+
+        dialog_datasets = list(all_datasets)
+        dialog_selected_run_number = selected_run_number
+        dialog_selected_run_numbers = list(selected_run_numbers) if selected_run_numbers is not None else None
+        combined_target_run_number = None
+
+        if (
+            reference_dataset is not None
+            and hasattr(self._data_browser, "is_combined_dataset")
+            and self._data_browser.is_combined_dataset(int(reference_dataset.run_number))
+            and hasattr(self._data_browser, "get_combined_source_datasets")
+        ):
+            combined_target_run_number = int(reference_dataset.run_number)
+            source_datasets = self._data_browser.get_combined_source_datasets(
+                combined_target_run_number
+            )
+            if source_datasets:
+                dialog_datasets = source_datasets
+                reference_dataset = source_datasets[0]
+                dialog_selected_run_number = int(reference_dataset.run_number)
+                dialog_selected_run_numbers = [int(ds.run_number) for ds in source_datasets]
+
+        return (
+            dialog_datasets,
+            reference_dataset,
+            dialog_selected_run_number,
+            dialog_selected_run_numbers,
+            combined_target_run_number,
+        )
+
     def _extract_grouping_overrides(self, dataset) -> dict | None:
         """Return grouping settings that should persist in project files."""
         run = getattr(dataset, "run", None)
@@ -1190,22 +1256,15 @@ class MainWindow(QMainWindow):
         if not isinstance(groups_raw, dict):
             return None
 
-        groups: dict[int, list[int]] = {}
+        groups: dict[int, list[object]] = {}
         for key, values in groups_raw.items():
             try:
                 gid = int(key)
             except (TypeError, ValueError):
                 continue
-            if not isinstance(values, list):
-                continue
-            detectors: list[int] = []
-            for value in values:
-                try:
-                    detectors.append(int(value))
-                except (TypeError, ValueError):
-                    continue
-            if detectors:
-                groups[gid] = detectors
+            entries = self._normalize_group_entries(values)
+            if entries:
+                groups[gid] = entries
 
         if not groups:
             return None
@@ -1297,6 +1356,63 @@ class MainWindow(QMainWindow):
             payload["good_frames"] = grouping.get("good_frames")
         return payload
 
+    def _normalize_group_entries(self, values) -> list[object]:
+        """Return grouping entries preserving detector/t0 pairs when present."""
+        if not isinstance(values, list):
+            return []
+
+        entries: list[object] = []
+        for value in values:
+            if isinstance(value, (list, tuple)):
+                parsed: list[int] = []
+                for item in list(value)[:2]:
+                    try:
+                        parsed.append(int(item))
+                    except (TypeError, ValueError):
+                        parsed = []
+                        break
+                if not parsed:
+                    continue
+                entries.append(parsed[0] if len(parsed) == 1 else tuple(parsed))
+                continue
+
+            try:
+                entries.append(int(value))
+            except (TypeError, ValueError):
+                continue
+
+        return entries
+
+    def _group_detector_indices(self, values) -> list[int]:
+        """Return zero-based detector indices for one grouping entry list."""
+        indices: list[int] = []
+        for value in self._normalize_group_entries(values):
+            detector = value[0] if isinstance(value, tuple) else value
+            indices.append(max(0, int(detector) - 1))
+        return indices
+
+    def _grouping_source_arrays(
+        self,
+        dataset,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return immutable source arrays for regrouping datasets without histograms.
+
+        ``.wim`` datasets only carry processed asymmetry arrays, so repeated
+        bunching edits must always start from the original loaded data rather
+        than the most recently rebinned view.
+        """
+        cached = getattr(dataset, "_grouping_source_arrays_cache", None)
+        if isinstance(cached, tuple) and len(cached) == 3:
+            return cached
+
+        cached = (
+            np.asarray(dataset.time, dtype=float).copy(),
+            np.asarray(dataset.asymmetry, dtype=float).copy(),
+            np.asarray(dataset.error, dtype=float).copy(),
+        )
+        setattr(dataset, "_grouping_source_arrays_cache", cached)
+        return cached
+
     def _apply_grouping_settings_to_dataset(self, dataset, grouping_result: dict) -> tuple[bool, bool]:
         """Apply grouping settings to one dataset and recompute asymmetry.
 
@@ -1314,22 +1430,15 @@ class MainWindow(QMainWindow):
         if not isinstance(groups_raw, dict):
             groups_raw = {}
 
-        groups: dict[int, list[int]] = {}
+        groups: dict[int, list[object]] = {}
         for key, values in groups_raw.items():
             try:
                 gid = int(key)
             except (TypeError, ValueError):
                 continue
-            if not isinstance(values, list):
-                continue
-            detectors: list[int] = []
-            for value in values:
-                try:
-                    detectors.append(int(value))
-                except (TypeError, ValueError):
-                    continue
-            if detectors:
-                groups[gid] = detectors
+            entries = self._normalize_group_entries(values)
+            if entries:
+                groups[gid] = entries
 
         try:
             forward_gid = int(grouping_result.get("forward_group", 1))
@@ -1351,14 +1460,15 @@ class MainWindow(QMainWindow):
 
         vector_alphas = self._resolve_vector_alpha_values(grouping_result, existing_grouping)
 
-        forward_idx = [max(0, int(v) - 1) for v in groups.get(forward_gid, [])]
-        backward_idx = [max(0, int(v) - 1) for v in groups.get(backward_gid, [])]
+        forward_idx = self._group_detector_indices(groups.get(forward_gid, []))
+        backward_idx = self._group_detector_indices(groups.get(backward_gid, []))
 
         if run.histograms:
             max_bin = len(run.histograms[0].counts) - 1
             t0_default = int(run.histograms[0].t0_bin)
         else:
-            max_bin = len(dataset.time) - 1
+            source_time, source_asymmetry, source_error = self._grouping_source_arrays(dataset)
+            max_bin = max(0, len(source_time) - 1)
             t0_default = int(existing_grouping.get("t0_bin", 0))
 
         try:
@@ -1428,12 +1538,13 @@ class MainWindow(QMainWindow):
         use_deadtime = bool(grouping_result.get("deadtime_correction", False))
 
         if not run.histograms:
+            source_last_bin = len(source_time) - 1
             lo = max(0, first_good)
-            hi = min(len(dataset.time) - 1, last_good)
+            hi = min(source_last_bin, last_good)
             if lo <= hi:
-                time_out = dataset.time[lo : hi + 1].copy()
-                asym_out = dataset.asymmetry[lo : hi + 1].copy()
-                err_out = dataset.error[lo : hi + 1].copy()
+                time_out = source_time[lo : hi + 1].copy()
+                asym_out = source_asymmetry[lo : hi + 1].copy()
+                err_out = source_error[lo : hi + 1].copy()
                 if additional_bunch_factor > 1:
                     time_out, asym_out, err_out = rebin(
                         time_out,
@@ -1797,10 +1908,12 @@ class MainWindow(QMainWindow):
 
     def _on_about(self) -> None:
         """Show the About dialog with version information."""
+        from asymmetry import __version__
+
         QMessageBox.about(
             self,
             "About Asymmetry",
-            "Asymmetry v0.1.0\n\nA Python library for μSR data analysis.",
+            f"Asymmetry v{__version__}\n\nA Python library for μSR data analysis.",
         )
 
     def _reset_layout(self) -> None:

@@ -10,6 +10,56 @@ If you want to fit the full-resolution data and only simplify the view
 afterwards, run the fit with ``Bunch = 1`` and then increase the bunch factor;
 the fit curve remains overlaid on the plot.
 
+Fit Wizard
+----------
+
+The single-fit tab also provides a non-modal ``Fit Wizard...`` window for
+guided model selection on one time-domain asymmetry spectrum. The wizard uses
+the same rebinned dataset and fit range already active in the fit tab, extracts
+deterministic fingerprint features from the spectrum, fits a curated portfolio
+of candidate composite models, and ranks them with ``AIC``, ``AICc``, or
+``BIC`` together with residual checks. After one analysis finishes you can
+switch the ranking metric instantly inside the wizard or use ``Refresh
+Analysis`` if the fit context has changed.
+
+When you accept a wizard result, the chosen composite model and fitted
+parameters are written back into the single-fit tab and the normal fit-update
+path is triggered, so plots and downstream panels refresh exactly as they would
+after a manual fit.
+
+See :doc:`fit_wizard` for the full step-by-step workflow, the candidate model
+families considered in version 1, and the recommendation rules used by the
+wizard.
+
+Global Fit Wizard
+-----------------
+
+The global-fit tab now also provides a non-modal ``Global Fit Wizard...``
+window for ordered field or temperature series. The wizard reuses the same
+candidate-model portfolio, scoring metrics, seeding heuristics, and residual
+checks as the single-spectrum wizard, then adds a second stage that recommends
+which parameters should stay shared across the whole series and which should be
+allowed to vary run-by-run. Before the expensive search starts, the wizard
+shows a parameter-setup dialog so you can review the combined parameter list,
+choose expected ``Global``/``Local``/``Fixed`` behaviour, and adjust bounds.
+
+Version 1 assumes one dominant ordered sweep axis at a time. If the selected
+datasets vary materially in both field and temperature, the wizard reports that
+it cannot make an automatic recommendation instead of silently comparing an
+ill-defined mixed grid.
+
+When you apply a global-wizard result, the global-fit tab updates the composite
+function, parameter values, bounds, and ``Global``/``Local`` roles directly,
+then reuses the wizard's already-computed fit bundle so that the normal plots
+and fitted-parameter views refresh immediately without rerunning the fit.
+
+Completed global-wizard analyses are cached for the current tab context and are
+included in project state, so reopening the wizard or saving the project does
+not force you to recompute an unchanged finished analysis.
+
+See :doc:`global_fit_wizard` for the detailed workflow, recommendation policy,
+and current limitations.
+
 Basic Fitting Workflow
 -----------------------
 

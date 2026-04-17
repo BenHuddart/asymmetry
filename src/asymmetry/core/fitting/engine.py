@@ -16,6 +16,41 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 
+def _minuit_status_message(minuit, *, success_message: str, failure_prefix: str) -> str:
+    if getattr(minuit, "valid", False):
+        return success_message
+
+    details: list[str] = []
+    fmin = getattr(minuit, "fmin", None)
+    if fmin is not None:
+        if getattr(fmin, "has_reached_call_limit", False):
+            details.append("call limit reached")
+        if getattr(fmin, "is_above_max_edm", False):
+            details.append("EDM above threshold")
+        if getattr(fmin, "has_parameters_at_limit", False):
+            details.append("parameters at limit")
+        if not getattr(fmin, "has_valid_parameters", True):
+            details.append("invalid parameters")
+        if getattr(fmin, "hesse_failed", False):
+            details.append("hesse failed")
+        if not getattr(fmin, "is_valid", True):
+            details.append("minimum invalid")
+
+    if not details:
+        return failure_prefix
+    return f"{failure_prefix}: {', '.join(details)}"
+
+
+def _clamp_minuit_step_size(step: float, lower: float, upper: float) -> float:
+    clipped = abs(float(step))
+    if not np.isfinite(clipped) or clipped <= 0.0:
+        return 0.0
+    if np.isfinite(lower) and np.isfinite(upper) and upper > lower:
+        width = float(upper - lower)
+        return float(np.clip(clipped, max(width * 1e-6, 1e-8), max(width * 0.5, 1e-6)))
+    return float(max(clipped, 1e-8))
+
+
 @dataclass
 class FitResult:
     """Container for the outcome of a fit."""
@@ -28,6 +63,11 @@ class FitResult:
     covariance: NDArray[np.float64] | None = None
     residuals: NDArray[np.float64] | None = None
     message: str = ""
+    function_calls: int = 0
+    gradient_calls: int = 0
+    hessian_calls: int = 0
+    edm: float | None = None
+    covariance_accurate: bool = False
 
 
 class FitEngine:
@@ -152,6 +192,8 @@ class FitEngine:
         ndata = len(ds.time)
         nfree = len(free)
         red_chi2 = m.fval / max(ndata - nfree, 1)
+        fitted_values = model_fn(ds.time, **{p.name: p.value for p in result_params})
+        residuals = np.asarray(ds.asymmetry, dtype=float) - np.asarray(fitted_values, dtype=float)
 
         return FitResult(
             success=m.valid,
@@ -160,7 +202,12 @@ class FitEngine:
             parameters=result_params,
             uncertainties=uncertainties,
             covariance=m.covariance if m.valid else None,
-            message="Fit successful" if m.valid else "Fit failed",
+            residuals=residuals,
+            message=_minuit_status_message(
+                m,
+                success_message="Fit successful",
+                failure_prefix="Fit failed",
+            ),
         )
 
     # --- global fit -----------------------------------------------------
@@ -176,6 +223,11 @@ class FitEngine:
         t_max: float | None = None,
         method: str = "migrad",
         max_calls: int = 10000,
+        migrad_iterations: int = 5,
+        use_simplex_rescue: bool = True,
+        minuit_strategy: int | None = None,
+        minuit_tol: float | None = None,
+        initial_step_sizes: dict[str, float] | None = None,
     ) -> tuple[dict[str, FitResult], ParameterSet]:
         """Simultaneous fit of multiple datasets with shared and local parameters.
 
@@ -341,6 +393,11 @@ class FitEngine:
         except Exception as e:
             raise RuntimeError(f"Failed to create Minuit cost function: {str(e)}")
 
+        if minuit_strategy is not None:
+            m.strategy = int(minuit_strategy)
+        if minuit_tol is not None:
+            m.tol = float(minuit_tol)
+
         # Set parameter limits
         for i, (min_val, max_val) in enumerate(param_bounds):
             if min_val != -float("inf"):
@@ -348,12 +405,25 @@ class FitEngine:
             if max_val != float("inf"):
                 m.limits[i] = (m.limits[i][0], max_val)
 
+        if initial_step_sizes:
+            for i, name in enumerate(param_names):
+                hint = initial_step_sizes.get(name)
+                if hint is None:
+                    continue
+                step_size = _clamp_minuit_step_size(hint, *param_bounds[i])
+                if step_size > 0.0:
+                    m.errors[i] = step_size
+
         # Run minimization with error handling
         try:
             if method == "simplex":
                 m.simplex(ncall=max_calls)
             else:
-                m.migrad(ncall=max_calls)
+                m.migrad(
+                    ncall=max_calls,
+                    iterate=max(1, int(migrad_iterations)),
+                    use_simplex=bool(use_simplex_rescue),
+                )
         except Exception as e:
             # If fitting fails, return error results
             error_result = FitResult(
@@ -365,6 +435,13 @@ class FitEngine:
         # Extract fitted global parameters
         fitted_global = ParameterSet()
         global_uncertainties = {}
+        fmin = getattr(m, "fmin", None)
+        function_calls = int(getattr(m, "nfcn", 0) or 0)
+        gradient_calls = int(getattr(m, "ngrad", 0) or 0)
+        hessian_calls = int(getattr(m, "nhessian", 0) or 0)
+        edm = getattr(fmin, "edm", None)
+        edm_value = float(edm) if edm is not None and np.isfinite(edm) else None
+        covariance_accurate = bool(getattr(m, "accurate", False))
         global_idx = 0
         for pname in global_params:
             p = first_params[pname]
@@ -414,6 +491,7 @@ class FitEngine:
             # Compute chi-squared for this dataset
             param_dict = {p.name: p.value for p in result_params}
             model_vals = model_fn(ds.time, **param_dict)
+            residuals = np.asarray(ds.asymmetry, dtype=float) - np.asarray(model_vals, dtype=float)
             dataset_chi2 = np.sum(((ds.asymmetry - model_vals) / ds.error) ** 2)
 
             ndata = len(ds.time)
@@ -430,8 +508,17 @@ class FitEngine:
                 reduced_chi_squared=red_chi2,
                 parameters=result_params,
                 uncertainties=uncertainties,
-                message="Global fit successful" if m.valid else "Global fit failed",
+                residuals=residuals,
+                message=_minuit_status_message(
+                    m,
+                    success_message="Global fit successful",
+                    failure_prefix="Global fit failed",
+                ),
+                function_calls=function_calls,
+                gradient_calls=gradient_calls,
+                hessian_calls=hessian_calls,
+                edm=edm_value,
+                covariance_accurate=covariance_accurate,
             )
 
         return results, fitted_global
-

@@ -390,6 +390,51 @@ class TestMainWindowBasic:
         assert len(dataset.time) < original_points
         assert dataset.run.grouping["bunching_factor"] == 4
 
+    def test_apply_grouping_wim_without_histograms_restores_source_when_bunching_reduced(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Reducing WIM bunching should rebuild from the original source arrays."""
+        dataset = _make_dataset(7406, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.source_file = "/tmp/run_7406.wim"
+        dataset.run.histograms = []
+        dataset.run.grouping["source_bunching_factor"] = 2
+        original_time = dataset.time.copy()
+        original_asymmetry = dataset.asymmetry.copy()
+        original_error = dataset.error.copy()
+
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "source_bunching_factor": 2,
+            "enforce_source_bunching": True,
+            "deadtime_correction": False,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(
+            dataset,
+            {**payload, "bunching_factor": 4},
+        )
+
+        assert applied is True
+        assert len(dataset.time) < len(original_time)
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(
+            dataset,
+            {**payload, "bunching_factor": 2},
+        )
+
+        assert applied is True
+        np.testing.assert_array_equal(dataset.time, original_time)
+        np.testing.assert_array_equal(dataset.asymmetry, original_asymmetry)
+        np.testing.assert_array_equal(dataset.error, original_error)
+        assert dataset.run.grouping["bunching_factor"] == 2
+
     def test_vector_axis_pairs_detected_from_group_names(self, mainwindow: MainWindow) -> None:
         groups = {
             1: [1],
@@ -500,6 +545,31 @@ class TestMainWindowBasic:
         assert payload["t0_bin"] == 2
         assert payload["t_good_offset"] == 3
         assert payload["first_good_bin"] == 5
+
+    def test_extract_grouping_overrides_preserves_wim_hist_t0_pairs(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_dataset(7454, with_grouping=True)
+        assert dataset.run is not None
+        dataset.run.source_file = "/tmp/run_7454.wim"
+        dataset.run.histograms = []
+        dataset.run.grouping["groups"] = {
+            1: [(1, 100), (2, 100)],
+            2: [(3, 100), (4, 100)],
+        }
+        dataset.run.grouping["source_bunching_factor"] = 2
+        dataset.run.grouping["bunching_factor"] = 4
+
+        payload = mainwindow._extract_grouping_overrides(dataset)
+
+        assert payload is not None
+        assert payload["groups"] == {
+            1: [(1, 100), (2, 100)],
+            2: [(3, 100), (4, 100)],
+        }
+        assert payload["source_bunching_factor"] == 2
+        assert payload["bunching_factor"] == 4
 
     def test_apply_grouping_vector_axis_falls_back_to_scalar_alpha_when_axis_keys_missing(
         self,
@@ -1327,6 +1397,168 @@ class TestMainWindowBasic:
 
         monkeypatch.setattr(mainwindow._data_browser, "get_all_datasets", lambda: [ds])
         monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds])
+
+        calls = {"wim": 0, "normal": 0}
+
+        class _StubWimGroupingDialog:
+            class DialogCode:
+                Accepted = 1
+
+            def __init__(self, *_args, **_kwargs):
+                calls["wim"] += 1
+
+            def exec(self):
+                return 0
+
+        class _StubGroupingDialog:
+            class DialogCode:
+                Accepted = 1
+
+            def __init__(self, *_args, **_kwargs):
+                calls["normal"] += 1
+
+            def exec(self):
+                return 0
+
+        monkeypatch.setattr(mw_module, "WimGroupingDialog", _StubWimGroupingDialog)
+        monkeypatch.setattr(mw_module, "GroupingDialog", _StubGroupingDialog)
+
+        mainwindow._on_grouping_current()
+
+        assert calls["wim"] == 1
+        assert calls["normal"] == 0
+
+    def test_grouping_current_for_combined_dataset_uses_hidden_sources(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ds1 = _make_dataset(8401, with_grouping=True)
+        ds2 = _make_dataset(8402, with_grouping=True)
+        assert ds1.run is not None and ds2.run is not None
+        ds1.run.source_file = "/tmp/run_8401.nxs"
+        ds2.run.source_file = "/tmp/run_8402.nxs"
+        mainwindow._data_browser.add_dataset(ds1)
+        mainwindow._data_browser.add_dataset(ds2)
+        combined_rn = mainwindow._data_browser.add_combined_dataset([8401, 8402])
+        assert combined_rn is not None
+        combined_ds = mainwindow._data_browser.get_dataset(combined_rn)
+        assert combined_ds is not None
+
+        mainwindow._current_dataset = combined_ds
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [combined_ds])
+
+        captured = {
+            "run_numbers": None,
+            "selected_run_number": None,
+            "selected_run_numbers": None,
+        }
+
+        class _StubGroupingDialog:
+            class DialogCode:
+                Accepted = 1
+
+            def __init__(self, datasets, **kwargs):
+                captured["run_numbers"] = [int(ds.run_number) for ds in datasets]
+                captured["selected_run_number"] = kwargs.get("selected_run_number")
+                captured["selected_run_numbers"] = kwargs.get("selected_run_numbers")
+
+            def exec(self):
+                return 0
+
+        monkeypatch.setattr(mw_module, "GroupingDialog", _StubGroupingDialog)
+
+        mainwindow._on_grouping_current()
+
+        assert captured["run_numbers"] == [8401, 8402]
+        assert captured["selected_run_number"] == 8401
+        assert captured["selected_run_numbers"] == [8401, 8402]
+
+    def test_grouping_apply_from_combined_dataset_updates_sources_and_rebuilds(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ds1 = _make_dataset(8411, with_grouping=True)
+        ds2 = _make_dataset(8412, with_grouping=True)
+        assert ds1.run is not None and ds2.run is not None
+        ds1.run.source_file = "/tmp/run_8411.nxs"
+        ds2.run.source_file = "/tmp/run_8412.nxs"
+        mainwindow._data_browser.add_dataset(ds1)
+        mainwindow._data_browser.add_dataset(ds2)
+        combined_rn = mainwindow._data_browser.add_combined_dataset([8411, 8412])
+        assert combined_rn is not None
+        combined_ds = mainwindow._data_browser.get_dataset(combined_rn)
+        assert combined_ds is not None
+
+        mainwindow._current_dataset = combined_ds
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [combined_ds])
+        monkeypatch.setattr(mainwindow._data_browser, "_rebuild_table", lambda: None)
+        monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: None)
+        monkeypatch.setattr(mainwindow, "_refresh_vector_axis_selector", lambda: None)
+
+        class _StubGroupingDialog:
+            class DialogCode:
+                Accepted = 1
+
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def exec(self):
+                return self.DialogCode.Accepted
+
+            def get_grouping_result(self):
+                return {
+                    "run_numbers": [8411, 8412],
+                    "groups": {1: [1], 2: [2]},
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "alpha": 2.5,
+                    "first_good_bin": 0,
+                    "last_good_bin": 3,
+                    "bunching_factor": 1,
+                    "deadtime_correction": False,
+                }
+
+        monkeypatch.setattr(mw_module, "GroupingDialog", _StubGroupingDialog)
+
+        mainwindow._on_grouping_current()
+
+        assert ds1.run.grouping["alpha"] == pytest.approx(2.5)
+        assert ds2.run.grouping["alpha"] == pytest.approx(2.5)
+        assert combined_ds.run is not None
+        assert combined_ds.run.grouping["alpha"] == pytest.approx(2.5)
+        assert mainwindow._current_dataset is combined_ds
+
+        monkeypatch.setattr(mainwindow._data_browser, "_get_selected_run_numbers", lambda: [combined_rn])
+        mainwindow._data_browser._separate_combined()
+
+        restored_1 = mainwindow._data_browser.get_dataset(8411)
+        restored_2 = mainwindow._data_browser.get_dataset(8412)
+        assert restored_1 is ds1
+        assert restored_2 is ds2
+        assert restored_1.run.grouping["alpha"] == pytest.approx(2.5)
+        assert restored_2.run.grouping["alpha"] == pytest.approx(2.5)
+
+    def test_grouping_request_uses_wim_dialog_for_combined_wim_sources(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ds1 = _make_dataset(8421, with_grouping=True)
+        ds2 = _make_dataset(8422, with_grouping=True)
+        assert ds1.run is not None and ds2.run is not None
+        ds1.run.source_file = "/tmp/run_8421.wim"
+        ds2.run.source_file = "/tmp/run_8422.wim"
+        mainwindow._data_browser.add_dataset(ds1)
+        mainwindow._data_browser.add_dataset(ds2)
+        combined_rn = mainwindow._data_browser.add_combined_dataset([8421, 8422])
+        assert combined_rn is not None
+        combined_ds = mainwindow._data_browser.get_dataset(combined_rn)
+        assert combined_ds is not None
+
+        mainwindow._current_dataset = combined_ds
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [combined_ds])
 
         calls = {"wim": 0, "normal": 0}
 

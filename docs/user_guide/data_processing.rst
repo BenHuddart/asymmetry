@@ -143,7 +143,19 @@ Average multiple datasets with proper error propagation:
    avg_error = np.sqrt(np.sum([e**2 for e in errors], axis=0)) / len(datasets)
 
 The GUI provides automatic co-adding via the context menu: select 2+ datasets,
-right-click, and choose "Co-add Selected" to combine them with proper error propagation.
+right-click, and choose "Co-add Selected" to combine them with proper error
+propagation.
+
+In the GUI, co-add is intentionally strict:
+
+* every selected dataset must already have equivalent grouping settings,
+* mixed ``.wim`` and non-WIM selections are rejected, and
+* the resulting combined dataset mirrors that shared grouping state.
+
+When you later edit grouping on a combined dataset, Asymmetry applies the
+change to the hidden source datasets and rebuilds the combined row from those
+updated sources. Separating the combined dataset restores those source runs
+with the same grouping that was active on the combined entry.
 
 Windowing for Fourier Analysis
 -------------------------------
