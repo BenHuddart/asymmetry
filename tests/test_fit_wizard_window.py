@@ -298,3 +298,57 @@ def test_fit_wizard_window_shows_progress_while_analysis_runs(
     assert window._progress_bar.isHidden() is False
     _wait_for(lambda: window._analysis_in_progress is False and window._analysis_thread is None, qapp)
     assert window._progress_bar.isHidden() is True
+
+
+def test_fit_wizard_window_emits_cached_analysis_payload(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC: _fake_recommendation(dataset),
+    )
+    window = FitWizardWindow()
+    payload: dict[str, object] = {}
+    window.analysis_cached.connect(
+        lambda recommendation, log_text, signature: payload.update(
+            {
+                "recommendation": recommendation,
+                "log_text": log_text,
+                "signature": signature,
+            }
+        )
+    )
+
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    _wait_for(lambda: _analysis_complete(window), qapp)
+
+    assert isinstance(payload.get("recommendation"), FitWizardRecommendation)
+    assert payload.get("log_text") == ""
+    assert payload.get("signature") == {
+        "run_number": int(dataset.run_number),
+        "model": None,
+    }
+
+
+def test_fit_wizard_window_accepts_cached_recommendation(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    window = FitWizardWindow()
+    recommendation = _fake_recommendation(dataset)
+
+    window.set_analysis_context(dataset)
+    window.set_cached_recommendation(
+        recommendation,
+        signature={"run_number": int(dataset.run_number), "model": None},
+        log_text="cached log",
+    )
+
+    assert window.current_recommendation() is recommendation
+    assert window.current_log_text() == "cached log"
+    assert window._compare_table.rowCount() == 2
+    assert window._apply_parameters_table.rowCount() == 3

@@ -42,7 +42,11 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.gui.export_paths import default_export_path, remember_export_path
+from asymmetry.gui.export_paths import (
+    default_export_path,
+    remember_export_path,
+    resolve_gle_export_paths,
+)
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 
 
@@ -1886,7 +1890,7 @@ class GlobalParameterFitWindow(QMainWindow):
             self,
             title,
             default_export_path(default_name),
-            "GLE files (*.gle)",
+            "GLE export folders (*.gleplot)",
         )
         if not path:
             return
@@ -1894,19 +1898,26 @@ class GlobalParameterFitWindow(QMainWindow):
 
         try:
             glp = importlib.import_module("gleplot")
-            gle_path = Path(path)
+            requested_gle_path = Path(path)
+            gle_path, export_dir = resolve_gle_export_paths(requested_gle_path, folder=True)
+            export_dir.mkdir(parents=True, exist_ok=True)
             fig = builder(glp, gle_path)
-            fig.savefig(str(gle_path))
+            fig.savefig(str(requested_gle_path), folder=True)
             self._compile_and_preview_gle(gle_path, output_format)
         except ImportError:
             QMessageBox.warning(self, "gleplot not available", "Install gleplot to export GLE plots.")
+        except TypeError as exc:
+            if "folder" in str(exc):
+                QMessageBox.warning(self, "gleplot update required", "Please update gleplot to a newer version.")
+                return
+            QMessageBox.warning(self, "Export failed", f"Could not export GLE: {exc}")
         except Exception as exc:
             QMessageBox.warning(self, "Export failed", f"Could not export GLE: {exc}")
 
     def _export_fit_subplot_gle(self) -> None:
         self._export_plot_gle(
             title="Export Fit Subplots to GLE",
-            default_name="global_parameter_fit_subplots.gle",
+            default_name="global_parameter_fit_subplots.gleplot",
             builder=self._build_fit_subplot_gle_figure,
             output_format=self._fit_gle_format_combo.currentText().lower(),
         )
@@ -1914,7 +1925,7 @@ class GlobalParameterFitWindow(QMainWindow):
     def _export_local_parameters_gle(self) -> None:
         self._export_plot_gle(
             title="Export Local Parameters Plot to GLE",
-            default_name="global_parameter_fit_local_parameters.gle",
+            default_name="global_parameter_fit_local_parameters.gleplot",
             builder=self._build_local_parameter_gle_figure,
             output_format=self._local_gle_format_combo.currentText().lower(),
         )

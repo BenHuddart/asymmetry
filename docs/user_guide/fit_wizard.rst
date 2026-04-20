@@ -17,6 +17,11 @@ using at the time you open it. That means the current bunching state and fit
 range are preserved, so the wizard compares models on exactly the same points
 that a manual fit would use.
 
+Completed wizard analyses are cached per dataset in the normal fit-panel state.
+That cache is reused when you reopen the wizard for the same run and model
+context, persisted in project files, and can also be consumed by the Global Fit
+Wizard as the first-stage comparison table for ordered series analysis.
+
 Quick Start
 -----------
 
@@ -167,6 +172,10 @@ updates the single-fit tab:
 - the fit summary label is updated with the wizard statistics
 - the standard ``fit_completed`` update path is emitted so plots and downstream
   views refresh normally
+
+Even if you do not apply a candidate immediately, the comparison table itself
+is still preserved. This matters for later global analysis, because the Global
+Fit Wizard can reuse those stored per-run tables instead of recomputing them.
 
 Worked Example
 --------------

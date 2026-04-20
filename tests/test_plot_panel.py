@@ -6,6 +6,7 @@ import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton  # 
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
+from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.panels.plot_panel import PlotPanel
 
 
@@ -68,19 +70,27 @@ class _FakeFigure:
     ) -> None:
         self._axis = axis
         self.saved_paths: list[str] = []
+        self.saved_kwargs: list[dict[str, object]] = []
         self.figsize = figsize
         self.generate_data_files = generate_data_files
 
     def add_subplot(self, *_args, **_kwargs) -> _FakeAxis:
         return self._axis
 
-    def savefig(self, path: str) -> None:
-        self.saved_paths.append(path)
-        Path(path).write_text("! fake gle", encoding="utf-8")
+    def savefig(self, path: str, **kwargs) -> None:
+        self.saved_kwargs.append(dict(kwargs))
+        output_path = Path(path)
+        if kwargs.get("folder"):
+            output_path, export_dir = resolve_gle_export_paths(output_path, folder=True)
+            export_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.saved_paths.append(str(output_path))
+        output_path.write_text("! fake gle", encoding="utf-8")
         if not self.generate_data_files:
             return
 
-        out_dir = Path(path).parent
+        out_dir = output_path.parent
         for call in self._axis.errorbar_calls:
             kwargs = call.get("kwargs", {})
             data_name = kwargs.get("data_name")
@@ -362,6 +372,101 @@ class TestPlotPanel:
         assert low_call["kwargs"].get("color") == "0.6"
         assert np.all((low_x < 5.0) | (low_x > 14.0))
         assert np.all((main_x >= 5.0) & (main_x <= 14.0))
+
+    def test_plot_dataset_wim_without_histograms_keeps_early_points_main(
+        self,
+        panel: PlotPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        time = np.arange(20, dtype=float)
+        asym = np.linspace(0.25, 0.05, time.size)
+        err = np.full_like(time, 0.01)
+        run = Run(
+            run_number=324,
+            grouping={"first_good_bin": 5, "last_good_bin": 14},
+            source_file="/tmp/run_324.wim",
+        )
+        ds = MuonDataset(
+            time=time,
+            asymmetry=asym,
+            error=err,
+            metadata={"run_number": 324},
+            run=run,
+        )
+
+        errorbar_calls: list[dict[str, object]] = []
+        original_errorbar = panel._ax.errorbar
+
+        def _capture_errorbar(*args, **kwargs):
+            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
+            return original_errorbar(*args, **kwargs)
+
+        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+
+        panel.plot_dataset(ds)
+
+        assert len(errorbar_calls) >= 2
+        low_call = errorbar_calls[0]
+        main_call = errorbar_calls[1]
+        low_x = np.asarray(low_call["args"][0], dtype=float)
+        main_x = np.asarray(main_call["args"][0], dtype=float)
+
+        assert low_call["kwargs"].get("color") == "0.6"
+        assert np.all(low_x > 14.0)
+        assert np.all(main_x <= 14.0)
+        assert np.any(main_x < 5.0)
+
+    def test_plot_dataset_coadded_wim_keeps_early_points_main(
+        self,
+        panel: PlotPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        time = np.arange(20, dtype=float)
+        asym = np.linspace(0.25, 0.05, time.size)
+        err = np.full_like(time, 0.01)
+        run = Run(
+            run_number=-1,
+            grouping={
+                "first_good_bin": 5,
+                "last_good_bin": 14,
+                "informational_first_good_bin": True,
+            },
+        )
+        ds = MuonDataset(
+            time=time,
+            asymmetry=asym,
+            error=err,
+            metadata={"run_number": -1, "combined_from": [1, 2]},
+            run=run,
+        )
+
+        errorbar_calls: list[dict[str, object]] = []
+        original_errorbar = panel._ax.errorbar
+
+        def _capture_errorbar(*args, **kwargs):
+            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
+            return original_errorbar(*args, **kwargs)
+
+        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+
+        panel.plot_dataset(ds)
+
+        assert len(errorbar_calls) >= 2
+        low_call = errorbar_calls[0]
+        main_call = errorbar_calls[1]
+        low_x = np.asarray(low_call["args"][0], dtype=float)
+        main_x = np.asarray(main_call["args"][0], dtype=float)
+
+        assert low_call["kwargs"].get("color") == "0.6"
+        assert np.all(low_x > 14.0)
+        assert np.all(main_x <= 14.0)
+        assert np.any(main_x < 5.0)
 
     def test_low_count_mask_marks_saturated_and_zero_denominator_bins_in_good_window(
         self,
@@ -1193,6 +1298,65 @@ class TestPlotPanel:
         assert np.all(fit_ds.time <= 4.0)
         assert len(fit_ds.time) < len(sample_dataset.time)
 
+    def test_fit_range_can_extend_beyond_data_extent(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """Out-of-data fit bounds should be preserved without dropping overlap."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        panel.set_fit_range(-1.0, 12.0)
+
+        x_min, x_max = panel.get_fit_range()
+        assert x_min == pytest.approx(-1.0)
+        assert x_max == pytest.approx(12.0)
+        assert panel._x_min.value() == pytest.approx(-1.0)
+        assert panel._x_max.value() == pytest.approx(12.0)
+
+        fit_ds = panel.get_fit_dataset(sample_dataset)
+        assert fit_ds is not None
+        assert len(fit_ds.time) == len(sample_dataset.time)
+        assert fit_ds.time[0] == pytest.approx(float(sample_dataset.time.min()))
+        assert fit_ds.time[-1] == pytest.approx(float(sample_dataset.time.max()))
+
+    def test_fit_range_outside_data_survives_dataset_replot(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """Replotting should not snap an out-of-data fit range back to the data extent."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        panel.set_fit_range(-1.0, 12.0)
+        panel.plot_dataset(sample_dataset)
+
+        x_min, x_max = panel.get_fit_range()
+        assert x_min == pytest.approx(-1.0)
+        assert x_max == pytest.approx(12.0)
+        assert panel._x_min.value() == pytest.approx(-1.0)
+        assert panel._x_max.value() == pytest.approx(12.0)
+
+    def test_fit_range_prompt_allows_min_below_dataset_extent(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """The exact-value fit-range dialog should allow bounds below the data minimum."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+
+        with patch(
+            "asymmetry.gui.panels.plot_panel.QInputDialog.getDouble",
+            return_value=(-1.0, True),
+        ):
+            panel._prompt_handle_value_edit("min")
+
+        x_min, x_max = panel.get_fit_range()
+        assert x_min == pytest.approx(-1.0)
+        assert x_max == pytest.approx(float(sample_dataset.time.max()))
+        assert panel._x_min.value() == pytest.approx(-1.0)
+
     def test_get_current_plot_export_data_available_with_plotted_data(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
@@ -1314,6 +1478,7 @@ class TestPlotPanel:
         panel._annotations = [{"x": 2.0, "y": 0.09, "text": "note", "artist": None}]
 
         target_gle = tmp_path / "asymmetry_plot.gle"
+        resolved_gle, _ = resolve_gle_export_paths(target_gle, folder=True)
         axis = _FakeAxis()
         fig = _FakeFigure(axis)
         fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)
@@ -1350,7 +1515,7 @@ class TestPlotPanel:
 
         panel.export_current_plot()
 
-        assert target_gle.exists()
+        assert resolved_gle.exists()
         assert axis.errorbar_calls
         assert axis.plot_calls
         assert axis.text_calls
@@ -1358,19 +1523,20 @@ class TestPlotPanel:
         assert axis.ylim_calls
         assert axis.xlim_calls[-1] == (1.25, 8.75)
         assert axis.ylim_calls[-1] == (-0.3, 0.4)
+        assert fig.saved_kwargs[-1]["folder"] is True
         assert axis.xlabel_calls[-1] == "Time (µs)"
         assert subprocess_calls
         assert subprocess_calls[0][:3] == ["gle", "-d", "pdf"]
-        assert str(target_gle) in subprocess_calls[0]
+        assert str(resolved_gle) in subprocess_calls[0]
 
-        fit_files = sorted(tmp_path.glob("*.fit"))
+        fit_files = sorted(resolved_gle.parent.glob("*.fit"))
         assert fit_files
         fit_text = fit_files[0].read_text(encoding="utf-8")
         assert f"! fit_function: {fit_function}" in fit_text
         assert dialogs
         assert dialogs[0][0] == "Export Successful"
         assert "Data/fit files:" in dialogs[0][2]
-        assert previews == [str(target_gle)]
+        assert previews == [str(resolved_gle)]
 
     def test_export_current_plot_sanitizes_gle_text(
         self,
@@ -1448,6 +1614,7 @@ class TestPlotPanel:
         panel.plot_dataset(ds)
 
         target_gle = tmp_path / "grouping_export.gle"
+        resolved_gle, _ = resolve_gle_export_paths(target_gle, folder=True)
         axis = _FakeAxis()
         fig = _FakeFigure(axis)
         fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)
@@ -1464,7 +1631,7 @@ class TestPlotPanel:
 
         panel.export_current_plot()
 
-        dat_files = sorted(tmp_path.glob("*.dat"))
+        dat_files = sorted(resolved_gle.parent.glob("*.dat"))
         assert dat_files
         dat_text = dat_files[0].read_text(encoding="utf-8")
         assert "! START OF RUN INFORMATION" in dat_text
@@ -1504,6 +1671,7 @@ class TestPlotPanel:
         panel.plot_dataset(ds)
 
         target_gle = tmp_path / "overwrite_export.gle"
+        resolved_gle, _ = resolve_gle_export_paths(target_gle, folder=True)
         axis = _FakeAxis()
         fig = _FakeFigure(axis, generate_data_files=True)
         fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)
@@ -1520,7 +1688,7 @@ class TestPlotPanel:
 
         panel.export_current_plot()
 
-        dat_files = sorted(tmp_path.glob("*.dat"))
+        dat_files = sorted(resolved_gle.parent.glob("*.dat"))
         assert dat_files
         dat_text = dat_files[0].read_text(encoding="utf-8")
         assert dat_text.startswith("! START OF RUN INFORMATION")
@@ -1629,9 +1797,15 @@ class TestPlotPanel:
                 self.axes.append(axis)
                 return axis
 
-            def savefig(self, path: str) -> None:
-                self.saved_paths.append(path)
-                Path(path).write_text("! fake gle", encoding="utf-8")
+            def savefig(self, path: str, **kwargs) -> None:
+                output_path = Path(path)
+                if kwargs.get("folder"):
+                    output_path, export_dir = resolve_gle_export_paths(output_path, folder=True)
+                    export_dir.mkdir(parents=True, exist_ok=True)
+                else:
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                self.saved_paths.append(str(output_path))
+                output_path.write_text("! fake gle", encoding="utf-8")
 
         fig = _MultiAxisFigure()
         fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)
@@ -1795,9 +1969,15 @@ class TestPlotPanel:
                 self.saved_paths: list[str] = []
                 self.subplots_adjust_calls: list[dict[str, float]] = []
 
-            def savefig(self, path: str) -> None:
-                self.saved_paths.append(path)
-                Path(path).write_text("! fake gle", encoding="utf-8")
+            def savefig(self, path: str, **kwargs) -> None:
+                output_path = Path(path)
+                if kwargs.get("folder"):
+                    output_path, export_dir = resolve_gle_export_paths(output_path, folder=True)
+                    export_dir.mkdir(parents=True, exist_ok=True)
+                else:
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                self.saved_paths.append(str(output_path))
+                output_path.write_text("! fake gle", encoding="utf-8")
 
             def subplots_adjust(self, **kwargs) -> None:
                 self.subplots_adjust_calls.append(kwargs)
@@ -1861,8 +2041,14 @@ class TestPlotPanel:
                 self.axes.append(axis)
                 return axis
 
-            def savefig(self, path: str) -> None:
-                Path(path).write_text("! fake gle", encoding="utf-8")
+            def savefig(self, path: str, **kwargs) -> None:
+                output_path = Path(path)
+                if kwargs.get("folder"):
+                    output_path, export_dir = resolve_gle_export_paths(output_path, folder=True)
+                    export_dir.mkdir(parents=True, exist_ok=True)
+                else:
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_text("! fake gle", encoding="utf-8")
 
         fig = _MultiAxisFigure()
         fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)

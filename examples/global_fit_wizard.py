@@ -9,7 +9,9 @@ import numpy as np
 from asymmetry.core.data import MuonDataset
 from asymmetry.core.fitting import (
     CompositeModel,
+    build_global_fit_wizard_screening_recommendation,
     build_global_fit_wizard_recommendation,
+    merge_global_fit_wizard_recommendations,
 )
 
 
@@ -43,8 +45,6 @@ def _synthetic_dataset(
 
 
 def main() -> None:
-    strategy = sys.argv[1] if len(sys.argv) > 1 else "legacy"
-    instrumentation: dict[str, object] = {}
     datasets = [
         _synthetic_dataset(
             4100 + index,
@@ -55,21 +55,28 @@ def main() -> None:
         for index, lambda_value in enumerate((0.15, 0.25, 0.55, 0.90))
     ]
 
-    recommendation = build_global_fit_wizard_recommendation(
+    screening = build_global_fit_wizard_screening_recommendation(
         datasets,
-        search_strategy=strategy,
-        instrumentation=instrumentation,
     )
+    top_screening = screening.sorted_prescreen_assessments()[:2]
+    selected_keys = tuple(assessment.template.key for assessment in top_screening)
+
+    optimized = build_global_fit_wizard_recommendation(
+        datasets,
+        selected_template_keys=selected_keys,
+    )
+    recommendation = merge_global_fit_wizard_recommendations(screening, optimized)
     assessment = recommendation.recommended_assessment
 
-    print(f"strategy = {strategy}")
     print(f"axis = {recommendation.series_axis_label}")
+    print("screening:")
+    for candidate in screening.sorted_prescreen_assessments()[:5]:
+        print(
+            f"  {candidate.template.title}: {screening.metric.value}={candidate.metric_value(screening.metric):.3f} "
+            f"[{screening.optimization_status_for_key(candidate.template.key)}]"
+        )
+    print(f"selected for optimisation = {selected_keys}")
     print(f"summary = {recommendation.summary}")
-    counters = instrumentation.get("counters")
-    if isinstance(counters, dict):
-        print("counters:")
-        for key in sorted(counters):
-            print(f"  {key} = {counters[key]}")
     if assessment is None:
         return
 

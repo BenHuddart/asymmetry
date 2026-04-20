@@ -480,7 +480,8 @@ Main-plot export is now driven directly from the plot toolbar, using:
 * **Export Plot(s) to GLE** button
 * **Format** dropdown (PDF or EPS)
 
-The export writes a ``.gle`` script and per-dataset sidecar files for the
+The export writes a self-contained ``<name>.gleplot`` folder by default. That
+folder contains the ``.gle`` script plus the per-dataset sidecar files for the
 currently displayed datasets. This works for:
 
 * Single-dataset views
@@ -492,8 +493,9 @@ What is exported:
 * Fit curves as lines when a fit overlay is available
 * User plot labels/annotations (same text and coordinates)
 
-Output files and naming:
+Output files and naming inside ``<name>.gleplot``:
 
+* ``<name>.gle`` for the exported script
 * ``<label>.dat`` for each exported dataset (time, asymmetry, error)
 * ``<label>.fit`` for each exported fit curve when present (time, fitted asymmetry)
 * file stems are derived from the selected **Label** field value and sanitized
@@ -514,10 +516,11 @@ The ``.fit`` header includes run metadata and fit metadata, including:
 
 Compilation behavior:
 
-* If ``gle`` is available, Asymmetry compiles the ``.gle`` to the selected
+* If ``gle`` is available, Asymmetry compiles the ``.gle`` inside the export
+  folder to the selected
    format from the **Format** dropdown.
 * If ``gle`` is not available, Asymmetry still saves the ``.gle`` and sidecar
-   files so you can compile later.
+  files so you can compile later.
 * If ``gleplot`` regenerates matching ``.dat`` files while saving, Asymmetry
   rewrites the metadata-rich sidecars afterwards so those headers are retained.
 
@@ -712,18 +715,20 @@ or other analysis software.
 ``gleplot`` Python library:
 
 1. Click **"Export to GLE"**
-2. Choose a save location for the ``.gle`` script
+2. Choose a name for the ``.gleplot`` export folder
 3. Select the output format from the **Format** dropdown (PDF or EPS)
-4. The export writes:
+4. The export creates the named ``.gleplot`` folder and writes:
 
+   * A ``<name>.gle`` script for the selected plot
    * A ``.dat`` data file with column headers and the globally shared
      parameters recorded as comments at the top of the file
-   * A ``.gle`` script that plots the currently selected parameter trend
+   * Any optional ``.fit`` sidecars needed for active model overlays
 
 5. If GLE is installed on your system, the script is compiled automatically
    to PDF or EPS and a preview window is shown
 6. If GLE is not installed, the script and data files are still saved —
-   you can compile them later with ``gle -d pdf fit_parameters.gle``
+   you can compile them later with ``gle -d pdf <name>.gle`` from inside the
+   ``.gleplot`` folder
 
 .. note::
 
@@ -743,6 +748,9 @@ For local-parameter exports, Asymmetry also writes:
 
 * A ``*_local_parameters.dat`` table with units and an explicit column map
 * Optional ``*_local_<parameter>.fit`` files for any active local model fit overlays
+
+Both global-fit export buttons use the same foldered layout, so the exported
+``.gle`` file, compiled output, and sidecars stay together in one bundle.
 
 Both global and local export dialogs remember the last export directory and use
 it as the default location next time.

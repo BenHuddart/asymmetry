@@ -1,11 +1,14 @@
 """Command-line interface for Asymmetry."""
 
 import argparse
+import multiprocessing as mp
 
 from asymmetry import __version__
 
 
 def main(argv: list[str] | None = None) -> None:
+    mp.freeze_support()
+
     parser = argparse.ArgumentParser(
         prog="asymmetry",
         description="Asymmetry — μSR data analysis",
@@ -30,4 +33,5 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
+    mp.freeze_support()
     main()

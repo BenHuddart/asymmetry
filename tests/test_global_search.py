@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
+
+import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
@@ -220,58 +223,62 @@ def test_relaxed_to_discrete_extraction_localizes_varying_lambda() -> None:
     assert "A_bg" in fixed_names
 
 
-def test_staged_strategy_preserves_public_recommendation_shape() -> None:
-    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
-    lambdas = [0.15, 0.25, 0.55, 0.9]
-    datasets = [
-        _dataset_for(
-            run_number=300 + idx,
-            field=50.0 * idx,
-            model=model,
-            params={"A_1": 0.2, "Lambda": lambdas[idx - 1], "A_bg": 0.01},
-        )
-        for idx in range(1, 5)
-    ]
+def test_consolidated_strategy_routes_to_staged_builder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    sentinel = object()
 
-    recommendation = build_global_fit_wizard_recommendation(
-        datasets,
-        metric=SelectionMetric.BIC,
-        search_strategy="staged_v1",
+    def _fake_staged(*args, **kwargs):
+        del args
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(
+        global_fit_wizard_module,
+        "_build_global_fit_wizard_recommendation_staged",
+        _fake_staged,
     )
 
-    assessment = recommendation.recommended_assessment
+    result = build_global_fit_wizard_recommendation([], metric=SelectionMetric.BIC)
 
-    assert recommendation.recommended_key is not None
-    assert assessment is not None
-    assert "Lambda" in assessment.local_param_names
-    assert isinstance(assessment.parameter_recommendations, tuple)
+    assert result is sentinel
+    assert captured["metric"] == SelectionMetric.BIC
+    assert captured["selected_template_keys"] is None
+    assert "search_strategy" not in captured
 
 
-def test_staged_v2_strategy_preserves_public_recommendation_shape() -> None:
-    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
-    lambdas = [0.15, 0.25, 0.55, 0.9]
-    datasets = [
-        _dataset_for(
-            run_number=400 + idx,
-            field=75.0 * idx,
-            model=model,
-            params={"A_1": 0.2, "Lambda": lambdas[idx - 1], "A_bg": 0.01},
-        )
-        for idx in range(1, 5)
-    ]
+def test_consolidated_builder_threads_selected_template_keys_and_instrumentation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    instrumentation: dict[str, object] = {}
+    sentinel = object()
 
-    recommendation = build_global_fit_wizard_recommendation(
-        datasets,
-        metric=SelectionMetric.BIC,
-        search_strategy="staged_v2",
+    def _fake_staged(*args, **kwargs):
+        del args
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(
+        global_fit_wizard_module,
+        "_build_global_fit_wizard_recommendation_staged",
+        _fake_staged,
     )
 
-    assessment = recommendation.recommended_assessment
+    result = build_global_fit_wizard_recommendation(
+        [],
+        metric=SelectionMetric.BIC,
+        instrumentation=instrumentation,
+        selected_template_keys=("exp_constant",),
+    )
 
-    assert recommendation.recommended_key is not None
-    assert assessment is not None
-    assert "Lambda" in assessment.local_param_names
-    assert isinstance(assessment.parameter_recommendations, tuple)
+    assert result is sentinel
+    assert captured["metric"] == SelectionMetric.BIC
+    assert captured["selected_template_keys"] == ("exp_constant",)
+    assert "search_strategy" not in captured
+    assert instrumentation["strategy"] == "consolidated"
+    assert isinstance(instrumentation["counters"], dict)
 
 
 def test_move_generation_only_splits_ambiguous_shared_parameters() -> None:

@@ -19,6 +19,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterGroupData,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
 
 
@@ -197,8 +198,8 @@ def test_export_actions_use_separate_defaults(qapp: QApplication) -> None:
     window._export_local_parameters_gle()
 
     assert len(calls) == 2
-    assert calls[0]["default_name"] == "global_parameter_fit_subplots.gle"
-    assert calls[1]["default_name"] == "global_parameter_fit_local_parameters.gle"
+    assert calls[0]["default_name"] == "global_parameter_fit_subplots.gleplot"
+    assert calls[1]["default_name"] == "global_parameter_fit_local_parameters.gleplot"
     assert calls[0]["output_format"] == "pdf"
     assert calls[1]["output_format"] == "pdf"
 
@@ -293,12 +294,14 @@ def test_export_plot_gle_saves_and_compiles(tmp_path: Path, monkeypatch: pytest.
     window._fit_gle_format_combo.setCurrentText("EPS")
 
     out_path = tmp_path / "export_test.gle"
+    resolved_gle_path, _ = resolve_gle_export_paths(out_path, folder=True)
     monkeypatch.setattr(
         "asymmetry.gui.windows.global_parameter_fit_window.QFileDialog.getSaveFileName",
         lambda *_a, **_k: (str(out_path), "GLE files (*.gle)"),
     )
 
     compile_calls: list[tuple[Path, str]] = []
+    save_kwargs: list[dict[str, object]] = []
 
     def _fake_compile(path: Path, fmt: str) -> None:
         compile_calls.append((path, fmt))
@@ -306,8 +309,15 @@ def test_export_plot_gle_saves_and_compiles(tmp_path: Path, monkeypatch: pytest.
     window._compile_and_preview_gle = _fake_compile  # type: ignore[method-assign]
 
     class _FakeFigure:
-        def savefig(self, path: str) -> None:
-            Path(path).write_text("! fake gle", encoding="utf-8")
+        def savefig(self, path: str, **kwargs) -> None:
+            save_kwargs.append(dict(kwargs))
+            output_path = Path(path)
+            if kwargs.get("folder"):
+                output_path, export_dir = resolve_gle_export_paths(output_path, folder=True)
+                export_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text("! fake gle", encoding="utf-8")
 
     class _FakeGlp:
         @staticmethod
@@ -329,8 +339,9 @@ def test_export_plot_gle_saves_and_compiles(tmp_path: Path, monkeypatch: pytest.
         output_format="eps",
     )
 
-    assert out_path.exists()
-    assert compile_calls == [(out_path, "eps")]
+    assert resolved_gle_path.exists()
+    assert save_kwargs[-1]["folder"] is True
+    assert compile_calls == [(resolved_gle_path, "eps")]
 
 
 def test_export_plot_gle_requires_result(monkeypatch: pytest.MonkeyPatch, qapp: QApplication) -> None:

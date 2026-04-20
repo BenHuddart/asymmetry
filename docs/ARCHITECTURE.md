@@ -106,8 +106,8 @@ layers.
 
 - `asymmetry.core.fitting.fit_wizard` owns the deterministic, testable analysis
   pipeline: spectrum fingerprinting, curated candidate selection, multi-start
-  fitting, AIC/AICc/BIC calculation, residual diagnostics, and recommendation
-  payloads.
+  fitting, AIC/AICc/BIC calculation, residual diagnostics, recommendation
+  payloads, and serialization of cached wizard results for persistence.
 - `asymmetry.gui.windows.fit_wizard_window` owns presentation: the four-step
   workflow, plots, metric explainers, residual warnings, and applying an
   accepted candidate back into the single-fit tab.
@@ -123,16 +123,20 @@ The Global Fit Wizard follows the same split, but with one extra concern:
 parameter sharing across an ordered series.
 
 - `asymmetry.core.fitting.global_fit_wizard` owns the reusable analysis logic:
-  ordered-axis inference, candidate shortlisting, staged `Global` versus
-  `Local` parameter-role search, information-criterion scoring, per-run
-  residual diagnostics, continuity warnings, and reusable recommendation
-  payloads.
+  ordered-axis inference, shared candidate-portfolio construction, the phase-1
+  helper that completes missing per-run single-fit wizard tables for the shared
+  portfolio, screening-table aggregation from those independent fits, coupled
+  global optimization for user-selected candidate keys, information-criterion
+  scoring, per-run residual diagnostics, continuity warnings, and reusable
+  recommendation payloads that mix screening-only and globally optimized rows.
 - `asymmetry.gui.windows.global_fit_wizard_window` owns the non-modal workflow:
-  the five-page comparison UI, metric explainers, warning summaries, and
-  applying a selected recommendation back into the global-fit tab.
+  the screening-first interactive workflow, metric explainers, warning
+  summaries, batch optimization controls, and applying a selected optimized
+  recommendation back into the global-fit tab.
 - `asymmetry.gui.panels.fit_panel.GlobalFitTab` remains the integration point
   for the real fit state. It opens the wizard, provides the current model and
-  role configuration as context, and reuses the wizard's computed fit bundle to
+  role configuration as context, persists any newly generated per-run
+  single-fit wizard tables, and reuses the wizard's computed fit bundle to
   refresh plots and fitted-parameter views without rerunning the fit.
 
 This keeps the recommendation engine scriptable and testable while avoiding a

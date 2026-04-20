@@ -1539,7 +1539,11 @@ class MainWindow(QMainWindow):
 
         if not run.histograms:
             source_last_bin = len(source_time) - 1
-            lo = max(0, first_good)
+            source_file = str(getattr(run, "source_file", "") or "")
+            # WiMDA-exported asymmetry tables have already had their early-bin
+            # handling applied upstream, so the stored first-good-bin value is
+            # informational only and must not trim the imported points again.
+            lo = 0 if source_file.lower().endswith(".wim") else max(0, first_good)
             hi = min(source_last_bin, last_good)
             if lo <= hi:
                 time_out = source_time[lo : hi + 1].copy()

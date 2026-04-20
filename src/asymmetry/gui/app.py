@@ -9,21 +9,23 @@ Launch with::
 
 from __future__ import annotations
 
+import multiprocessing as mp
 import os
 import sys
 from pathlib import Path
 
-from PySide6.QtGui import QIcon, QPixmap
-from PySide6.QtWidgets import QApplication
 
-from asymmetry.gui.mainwindow import MainWindow
+QApplication = None
+MainWindow = None
 
 
-def _load_app_icon() -> QIcon | None:
+def _load_app_icon():
     """Load application icon from package resources.
 
     Returns None if icon cannot be loaded.
     """
+    from PySide6.QtGui import QIcon, QPixmap
+
     # Try importlib.resources (preferred for installed packages)
     try:
         from importlib.resources import files
@@ -53,11 +55,25 @@ def _load_app_icon() -> QIcon | None:
 
 
 def main() -> None:
+    mp.freeze_support()
+
+    global QApplication, MainWindow
+
     smoke_test = "--smoke-test" in sys.argv
     if smoke_test:
         # Force a headless backend so this check can run on CI runners.
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         sys.argv = [arg for arg in sys.argv if arg != "--smoke-test"]
+
+    if QApplication is None:
+        from PySide6.QtWidgets import QApplication as _QApplication
+
+        QApplication = _QApplication
+
+    if MainWindow is None:
+        from asymmetry.gui.mainwindow import MainWindow as _MainWindow
+
+        MainWindow = _MainWindow
 
     app = QApplication(sys.argv)
     app.setApplicationName("Asymmetry")
@@ -80,4 +96,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    mp.freeze_support()
     main()

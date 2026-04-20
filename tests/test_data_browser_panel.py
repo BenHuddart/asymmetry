@@ -146,6 +146,23 @@ def test_coadd_and_separate_roundtrip(qapp: QApplication) -> None:
     assert combined_rn not in panel._datasets
 
 
+def test_coadd_wim_marks_first_good_bin_informational(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    d1 = _dataset_with_run(20, source_file="/tmp/run_20.wim")
+    d2 = _dataset_with_run(21, source_file="/tmp/run_21.wim")
+
+    panel.add_dataset(d1)
+    panel.add_dataset(d2)
+
+    combined_rn = panel.add_combined_dataset([20, 21])
+
+    assert combined_rn is not None
+    combined_ds = panel.get_dataset(combined_rn)
+    assert combined_ds is not None
+    assert combined_ds.run is not None
+    assert combined_ds.run.grouping["informational_first_good_bin"] is True
+
+
 def test_delete_key_removes_selected_entries(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     d1 = _dataset(21)

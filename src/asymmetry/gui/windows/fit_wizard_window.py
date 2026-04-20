@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont
@@ -72,6 +74,7 @@ class FitWizardWindow(QMainWindow):
     """Present a guided workflow for model recommendation and comparison."""
 
     apply_assessment_requested = Signal(object, object)  # CandidateAssessment, FitWizardRecommendation
+    analysis_cached = Signal(object, str, object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -86,6 +89,8 @@ class FitWizardWindow(QMainWindow):
         self._analysis_in_progress = False
         self._analysis_thread: QThread | None = None
         self._analysis_worker: FitWizardWorker | None = None
+        self._cached_log_text = ""
+        self._cached_signature: dict[str, object] | None = None
 
         root = QWidget(self)
         self.setCentralWidget(root)
@@ -161,6 +166,8 @@ class FitWizardWindow(QMainWindow):
         """Prepare the wizard for a new dataset/model context."""
         self._dataset = dataset
         self._current_model = current_model
+        self._cached_log_text = ""
+        self._cached_signature = None
         self._analysis_request_id += 1
         self._heading_label.setText(f"Fit Wizard — Run {dataset.run_label}")
         self._recommendation = None
@@ -196,6 +203,7 @@ class FitWizardWindow(QMainWindow):
 
         self._analysis_request_id += 1
         request_id = self._analysis_request_id
+        self._cached_signature = copy.deepcopy(self._analysis_signature())
         self._set_busy(True)
         self._status_label.setText(
             "Running fit wizard analysis in the background. You can keep using the main window while recommendations are prepared."
@@ -258,6 +266,11 @@ class FitWizardWindow(QMainWindow):
         self._metric_combo.blockSignals(True)
         self._metric_combo.setCurrentText(self._recommendation.metric.value)
         self._metric_combo.blockSignals(False)
+        self.analysis_cached.emit(
+            self._recommendation,
+            self.current_log_text(),
+            copy.deepcopy(self._cached_signature) if self._cached_signature is not None else None,
+        )
         self._set_busy(False)
         self._populate_from_recommendation()
         self._refresh_btn.setText("Refresh Analysis")
@@ -278,6 +291,43 @@ class FitWizardWindow(QMainWindow):
         self._recommendation = None
         self._status_label.setText(f"Fit wizard analysis failed: {message}")
         self._set_empty_state()
+
+    def set_cached_recommendation(
+        self,
+        recommendation: FitWizardRecommendation,
+        *,
+        signature: dict[str, object] | None = None,
+        log_text: str = "",
+    ) -> None:
+        """Populate the window from an already-computed recommendation."""
+        self._recommendation = recommendation
+        self._cached_signature = copy.deepcopy(signature) if isinstance(signature, dict) else None
+        self._selected_key = recommendation.recommended_key
+        if self._selected_key is None and recommendation.assessments:
+            self._selected_key = recommendation.assessments[0].template.key
+        self._cached_log_text = str(log_text or "")
+        self._metric_combo.blockSignals(True)
+        self._metric_combo.setCurrentText(recommendation.metric.value)
+        self._metric_combo.blockSignals(False)
+        self._status_label.setText(recommendation.summary)
+        self._set_busy(False)
+        self._populate_from_recommendation()
+
+    def _analysis_signature(self) -> dict[str, object]:
+        return {
+            "run_number": (
+                int(self._dataset.run_number)
+                if self._dataset is not None and getattr(self._dataset, "run_number", None) is not None
+                else None
+            ),
+            "model": self._current_model.to_dict() if self._current_model is not None else None,
+        }
+
+    def current_recommendation(self) -> FitWizardRecommendation | None:
+        return self._recommendation
+
+    def current_log_text(self) -> str:
+        return self._cached_log_text
 
     def _cleanup_analysis_thread(self) -> None:
         self._analysis_thread = None
@@ -629,6 +679,12 @@ class FitWizardWindow(QMainWindow):
         self._populate_compare_table()
         self._sync_selected_assessment()
         self._update_apply_page()
+        if isinstance(self._cached_signature, dict):
+            self.analysis_cached.emit(
+                self._recommendation,
+                self.current_log_text(),
+                copy.deepcopy(self._cached_signature),
+            )
 
     def _on_compare_selection_changed(self) -> None:
         selected_items = self._compare_table.selectedItems()

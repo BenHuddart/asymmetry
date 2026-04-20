@@ -23,6 +23,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterModelFit,
     ParameterModelFitResult,
 )
+from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, _FitRow
 from asymmetry.gui.panels.fit_parameters_panel import _GroupFitData
 from asymmetry.gui.panels.fit_parameters_panel import (
@@ -283,13 +284,21 @@ class _FakeFigure:
     def __init__(self, axis: _FakeAxis) -> None:
         self._axis = axis
         self.saved_paths: list[str] = []
+        self.saved_kwargs: list[dict[str, object]] = []
 
     def add_subplot(self, *_args, **_kwargs) -> _FakeAxis:
         return self._axis
 
-    def savefig(self, path: str) -> None:
-        self.saved_paths.append(path)
-        Path(path).write_text("! fake gle", encoding="utf-8")
+    def savefig(self, path: str, **kwargs) -> None:
+        self.saved_kwargs.append(dict(kwargs))
+        output_path = Path(path)
+        if kwargs.get("folder"):
+            output_path, export_dir = resolve_gle_export_paths(output_path, folder=True)
+            export_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.saved_paths.append(str(output_path))
+        output_path.write_text("! fake gle", encoding="utf-8")
 
 
 def test_generate_gle_plot_uses_errorbar_from_file(
@@ -297,7 +306,8 @@ def test_generate_gle_plot_uses_errorbar_from_file(
 ) -> None:
     data_path = tmp_path / "fit_parameters.dat"
     data_path.write_text("1 2 3\n", encoding="utf-8")
-    gle_path = tmp_path / "plot.gle"
+    requested_gle_path = tmp_path / "plot.gle"
+    gle_path, _ = resolve_gle_export_paths(requested_gle_path, folder=True)
 
     axis = _FakeAxis()
     fig = _FakeFigure(axis)
@@ -313,7 +323,7 @@ def test_generate_gle_plot_uses_errorbar_from_file(
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
     monkeypatch.setattr(panel, "_show_gle_preview", lambda *_a, **_k: None)
 
-    panel._generate_gle_plot(gle_path, data_path, "pdf")
+    panel._generate_gle_plot(requested_gle_path, gle_path, data_path, "pdf")
 
     assert axis.calls, "Expected at least one errorbar_from_file call"
     first = axis.calls[0]
@@ -322,6 +332,7 @@ def test_generate_gle_plot_uses_errorbar_from_file(
     assert first["kwargs"]["y_col"] == 4
     assert first["kwargs"]["yerr_col"] == 5
     assert str(gle_path) in fig.saved_paths
+    assert fig.saved_kwargs[-1]["folder"] is True
 
 
 def test_generate_gle_plot_warns_for_old_gleplot(
@@ -329,7 +340,8 @@ def test_generate_gle_plot_warns_for_old_gleplot(
 ) -> None:
     data_path = tmp_path / "fit_parameters.dat"
     data_path.write_text("1 2 3\n", encoding="utf-8")
-    gle_path = tmp_path / "plot.gle"
+    requested_gle_path = tmp_path / "plot.gle"
+    gle_path, _ = resolve_gle_export_paths(requested_gle_path, folder=True)
 
     warnings: list[str] = []
     fake_glp = SimpleNamespace(Axes=type("OldAxes", (), {}))
@@ -341,7 +353,7 @@ def test_generate_gle_plot_warns_for_old_gleplot(
         lambda *args, **_kwargs: warnings.append(str(args[2]) if len(args) > 2 else ""),
     )
 
-    panel._generate_gle_plot(gle_path, data_path, "pdf")
+    panel._generate_gle_plot(requested_gle_path, gle_path, data_path, "pdf")
 
     assert warnings
     assert "gleplot" in warnings[0]
@@ -367,7 +379,8 @@ def test_generate_gle_plot_subplots_mode_uses_black_series(
 ) -> None:
     data_path = tmp_path / "fit_parameters.dat"
     data_path.write_text("1 2 3\n", encoding="utf-8")
-    gle_path = tmp_path / "plot_subplots.gle"
+    requested_gle_path = tmp_path / "plot_subplots.gle"
+    gle_path, _ = resolve_gle_export_paths(requested_gle_path, folder=True)
 
     ax1 = _FakeAxis()
     ax2 = _FakeAxis()
@@ -389,7 +402,7 @@ def test_generate_gle_plot_subplots_mode_uses_black_series(
     monkeypatch.setattr(QMessageBox, "exec", lambda _self: None)
     monkeypatch.setattr(panel, "_show_gle_preview", lambda *_a, **_k: None)
 
-    panel._generate_gle_plot(gle_path, data_path, "pdf")
+    panel._generate_gle_plot(requested_gle_path, gle_path, data_path, "pdf")
 
     assert ax1.calls and ax2.calls
     assert ax1.calls[0]["kwargs"]["color"] == "black"
@@ -403,7 +416,8 @@ def test_generate_gle_plot_dual_axis_assigns_y_and_y2(
 ) -> None:
     data_path = tmp_path / "fit_parameters.dat"
     data_path.write_text("1 2 3\n", encoding="utf-8")
-    gle_path = tmp_path / "plot_dual.gle"
+    requested_gle_path = tmp_path / "plot_dual.gle"
+    gle_path, _ = resolve_gle_export_paths(requested_gle_path, folder=True)
 
     axis = _FakeAxis()
     fig = _FakeFigure(axis)
@@ -421,7 +435,7 @@ def test_generate_gle_plot_dual_axis_assigns_y_and_y2(
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
     monkeypatch.setattr(panel, "_show_gle_preview", lambda *_a, **_k: None)
 
-    panel._generate_gle_plot(gle_path, data_path, "pdf")
+    panel._generate_gle_plot(requested_gle_path, gle_path, data_path, "pdf")
 
     assert len(axis.calls) == 2
     assert axis.calls[0]["kwargs"]["x_col"] == 2
@@ -506,6 +520,7 @@ def test_export_gle_writes_fit_files_for_active_unselected_fit_param(
     }
 
     out_gle = tmp_path / "fit_parameters.gle"
+    resolved_gle, _ = resolve_gle_export_paths(out_gle, folder=True)
     monkeypatch.setattr(
         "asymmetry.gui.panels.fit_parameters_panel.QFileDialog.getSaveFileName",
         lambda *_a, **_k: (str(out_gle), "GLE files (*.gle)"),
@@ -516,7 +531,8 @@ def test_export_gle_writes_fit_files_for_active_unselected_fit_param(
 
     captured: dict[str, object] = {}
 
-    def _fake_generate(gle_path, data_path, output_format, fit_file_map=None):
+    def _fake_generate(requested_gle_path, gle_path, data_path, output_format, fit_file_map=None):
+        captured["requested_gle_path"] = requested_gle_path
         captured["gle_path"] = gle_path
         captured["data_path"] = data_path
         captured["output_format"] = output_format
@@ -526,11 +542,15 @@ def test_export_gle_writes_fit_files_for_active_unselected_fit_param(
 
     panel._export_gle()
 
+    assert captured["requested_gle_path"] == out_gle
+    assert captured["gle_path"] == resolved_gle
+    assert Path(captured["data_path"]).parent == resolved_gle.parent
     fit_map = captured.get("fit_file_map")
     assert isinstance(fit_map, dict)
     assert fit_map, "Expected active fit sidecar map to be passed to GLE generator"
     fit_file = next(iter(fit_map.values()))
     assert Path(fit_file).exists()
+    assert Path(fit_file).parent == resolved_gle.parent
 
 
 def test_add_gle_model_overlay_uses_formatted_labels_without_hash_one(panel: FitParametersPanel, tmp_path: Path) -> None:

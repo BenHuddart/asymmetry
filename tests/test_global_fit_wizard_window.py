@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 import time
 
@@ -18,7 +19,9 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import (
+    CandidateAssessment,
     CandidateTemplate,
+    FitWizardRecommendation,
     SelectionMetric,
     SpectrumFingerprint,
 )
@@ -243,6 +246,140 @@ def _fake_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommen
     )
 
 
+def _fake_screening_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommendation:
+    optimized = _fake_recommendation(datasets)
+    assessment = optimized.assessments[0]
+    screening_assessment = replace(
+        assessment,
+        parameter_recommendations=(),
+        prescreen_only=True,
+        global_parameters=ParameterSet(),
+        global_param_names=("A_1", "Lambda", "A_bg"),
+        local_param_names=(),
+        fixed_param_names=(),
+    )
+    return replace(
+        optimized,
+        assessments=(screening_assessment,),
+        recommended_key=None,
+        comparable_keys=(),
+        summary=(
+            "Single-fit screening complete. These scores come from independent per-dataset fits only "
+            "and have not yet been optimized for coupled global fitting. Select one or more candidates to continue."
+        ),
+    )
+
+
+def _fake_multi_variant_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommendation:
+    base = _fake_recommendation(datasets)
+    best = replace(
+        base.assessments[0],
+        assessment_key="exp_constant|g=A_1,A_bg|l=Lambda",
+    )
+    shared = replace(
+        base.assessments[0],
+        global_param_names=("A_1", "Lambda", "A_bg"),
+        local_param_names=(),
+        global_parameters=ParameterSet(
+            [
+                Parameter("A_1", value=0.2, min=0.0, max=1.0),
+                Parameter("Lambda", value=0.35, min=0.0, max=5.0),
+                Parameter("A_bg", value=0.01, min=-0.2, max=0.2),
+            ]
+        ),
+        parameter_recommendations=(),
+        aic=11.0,
+        aicc=11.2,
+        bic=13.0,
+        selected_score=11.2,
+        assessment_key="exp_constant|g=A_1,Lambda,A_bg|l=none",
+    )
+    return replace(
+        base,
+        assessments=(best, shared),
+        recommended_key=best.selection_key,
+        comparable_keys=(best.selection_key, shared.selection_key),
+        summary="Recommended globally optimized candidate: Exponential + Constant by AICc, with a similarly scoring alternative to inspect.",
+    )
+
+
+def _fake_single_fit_recommendation(dataset: MuonDataset) -> FitWizardRecommendation:
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    template = CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="Baseline candidate",
+        model=model,
+    )
+    curve = model.function(dataset.time, A_1=0.2, Lambda=0.3, A_bg=0.01)
+    assessment = CandidateAssessment(
+        template=template,
+        fit_result=FitResult(
+            success=True,
+            chi_squared=4.0,
+            reduced_chi_squared=0.08,
+            parameters=ParameterSet(
+                [
+                    Parameter("A_1", value=0.2, min=0.0, max=1.0),
+                    Parameter("Lambda", value=0.3, min=0.0, max=5.0),
+                    Parameter("A_bg", value=0.01, min=-0.2, max=0.2),
+                ]
+            ),
+            uncertainties={"A_1": 0.01, "Lambda": 0.02, "A_bg": 0.001},
+            residuals=np.asarray(dataset.asymmetry - curve, dtype=float),
+            message="ok",
+        ),
+        aic=8.0,
+        aicc=8.2,
+        bic=9.0,
+        selected_score=8.2,
+        residual_rms=0.8,
+        runs_z_score=0.1,
+        max_abs_autocorrelation=0.1,
+        residual_fft_peak_snr=1.0,
+        residual_gate_passed=True,
+        residual_gate_reasons=(),
+        bound_hits=(),
+        fitted_time=np.asarray(dataset.time, dtype=float).copy(),
+        fitted_curve=np.asarray(curve, dtype=float),
+        component_curves=tuple(
+            model.evaluate_components(
+                dataset.time,
+                additive_only=True,
+                A_1=0.2,
+                Lambda=0.3,
+                A_bg=0.01,
+            )
+        ),
+    )
+    return FitWizardRecommendation(
+        fingerprint=SpectrumFingerprint(
+            tail_estimate=0.01,
+            initial_amplitude_estimate=0.2,
+            zero_crossings=0,
+            smoothed_zero_crossings=0,
+            smoothed_turning_points=0,
+            dominant_fft_frequency_mhz=0.0,
+            dominant_fft_snr=0.0,
+            dominant_fft_cycles_in_window=0.0,
+            monotonic_decay_fraction=1.0,
+            early_time_curvature=-0.1,
+            semilog_slope_ratio=1.0,
+            late_time_dip_recovery_score=0.0,
+            oscillatory_hint=False,
+            kt_like_hint=False,
+            multi_rate_hint=False,
+        ),
+        templates=(template,),
+        assessments=(assessment,),
+        metric=SelectionMetric.AICC,
+        recommended_key="exp_constant",
+        comparable_keys=(),
+        summary="Recommended: Exponential + Constant by AICc.",
+    )
+
+
 def _analysis_complete(window: GlobalFitWizardWindow) -> bool:
     return window._recommendation is not None and window._analysis_thread is None
 
@@ -264,8 +401,8 @@ def test_global_fit_wizard_window_populates_tables(
 ) -> None:
     monkeypatch.setattr(
         wizard_window_module,
-        "build_global_fit_wizard_recommendation",
-        lambda datasets_arg, **_kwargs: _fake_recommendation(datasets_arg),
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
     )
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
@@ -274,26 +411,24 @@ def test_global_fit_wizard_window_populates_tables(
     _wait_for(lambda: _analysis_complete(window), qapp)
 
     assert "Field" in window._overview_banner.text()
+    assert window._tabs.count() == 6
+    assert window._tabs.tabText(1) == "2. Candidate Portfolio"
+    assert window._tabs.tabText(2) == "3. Single-Fit Screening"
     assert window._overview_table.rowCount() == len(datasets)
     assert window._portfolio_table.rowCount() == 1
     assert window._compare_table.rowCount() == 1
-    assert window._roles_table.rowCount() == 3
+    assert window._optimized_table.rowCount() == 0
+    assert window._roles_table.rowCount() == 0
+    assert window._portfolio_table.columnWidth(0) >= 420
+    assert window._compare_table.columnWidth(0) >= 420
 
 
 def test_global_fit_wizard_window_apply_recommended_emits_assessment(
     qapp: QApplication,
     datasets: list[MuonDataset],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        wizard_window_module,
-        "build_global_fit_wizard_recommendation",
-        lambda datasets_arg, **_kwargs: _fake_recommendation(datasets_arg),
-    )
     window = GlobalFitWizardWindow()
-    window.set_analysis_context(datasets)
-    window._start_analysis()
-    _wait_for(lambda: _analysis_complete(window), qapp)
+    window.set_cached_recommendation(_fake_recommendation(datasets))
 
     emitted: dict[str, object] = {}
     window.apply_assessment_requested.connect(
@@ -316,13 +451,13 @@ def test_global_fit_wizard_window_shows_progress_log(
     def _fake_build(datasets_arg, **kwargs):
         progress_callback = kwargs.get("progress_callback")
         if callable(progress_callback):
-            progress_callback("Preparing global fit wizard analysis.")
-            progress_callback("Initial screening 1/1: Exponential + Constant.")
-        return _fake_recommendation(datasets_arg)
+            progress_callback("Preparing missing single-fit wizard tables for global screening.")
+            progress_callback("Single-fit table 701: evaluating shared candidate portfolio.")
+        return _fake_screening_recommendation(datasets_arg)
 
     monkeypatch.setattr(
         wizard_window_module,
-        "build_global_fit_wizard_recommendation",
+        "build_global_fit_wizard_screening_recommendation",
         _fake_build,
     )
     window = GlobalFitWizardWindow()
@@ -334,22 +469,32 @@ def test_global_fit_wizard_window_shows_progress_log(
     assert window._log_window is not None
     assert window._log_window.isVisible()
     log_text = window._log_window.to_plain_text()
-    assert "Starting analysis for 3 datasets using legacy." in log_text
-    assert "Preparing global fit wizard analysis." in log_text
-    assert "Initial screening 1/1: Exponential + Constant." in log_text
+    assert "Starting screening for 3 datasets." in log_text
+    assert "Preparing missing single-fit wizard tables for global screening." in log_text
+    assert "Single-fit table 701: evaluating shared candidate portfolio." in log_text
 
 
-def test_global_fit_wizard_window_passes_selected_search_strategy(
+def test_global_fit_wizard_window_optimizes_selected_candidates(
     qapp: QApplication,
     datasets: list[MuonDataset],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, object] = {}
 
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
+    )
+
     def _fake_build(datasets_arg, **kwargs):
         captured["datasets"] = datasets_arg
-        captured["search_strategy"] = kwargs.get("search_strategy")
-        return _fake_recommendation(datasets_arg)
+        captured["selected_template_keys"] = kwargs.get("selected_template_keys")
+        progress_callback = kwargs.get("progress_callback")
+        if callable(progress_callback):
+            progress_callback("Coupled optimisation 1/1: Exponential + Constant.")
+            progress_callback("Completed coupled optimisation for Exponential + Constant.")
+        return _fake_multi_variant_recommendation(datasets_arg)
 
     monkeypatch.setattr(
         wizard_window_module,
@@ -358,13 +503,84 @@ def test_global_fit_wizard_window_passes_selected_search_strategy(
     )
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    window.set_search_strategy("staged_v2")
+    window._start_analysis()
+    _wait_for(lambda: _analysis_complete(window), qapp)
+    assert window._log_window is not None
+    window._log_window.hide()
+    qapp.processEvents()
+
+    window._compare_table.selectRow(0)
+    window._on_compare_selection_changed()
+    window._start_selected_optimisation()
+    _wait_for(lambda: _analysis_complete(window) and window._optimized_table.rowCount() == 2, qapp)
+
+    assert captured["datasets"] == datasets
+    assert captured["selected_template_keys"] == ("exp_constant",)
+    assert window._compare_table.item(0, 5).text() == "Optimized"
+    assert window._optimized_table.columnWidth(0) >= 420
+    assert window._optimized_table.item(0, 6).text() == "A_1, A_bg"
+    assert window._optimized_table.item(0, 7).text() == "Lambda"
+    assert window._optimized_table.item(1, 6).text() == "A_1, Lambda, A_bg"
+    assert window._optimized_table.item(1, 7).text() == "None"
+    assert window._log_window is not None
+    assert window._log_window.isVisible()
+    log_text = window._log_window.to_plain_text()
+    assert "Starting coupled global optimisation for: Exponential + Constant." in log_text
+    assert "Coupled optimisation 1/1: Exponential + Constant." in log_text
+    assert "Completed coupled optimisation for Exponential + Constant." in log_text
+
+
+def test_global_fit_wizard_window_emits_generated_single_fit_tables(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generated_run = int(datasets[0].run_number)
+    phase_one_recommendations = {
+        int(dataset.run_number): _fake_single_fit_recommendation(dataset)
+        for dataset in datasets
+    }
+    original_generated_recommendation = phase_one_recommendations[generated_run]
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_or_complete_single_fit_wizard_recommendations_for_global_portfolio",
+        lambda datasets_arg, **_kwargs: (
+            wizard_window_module.build_global_fit_wizard_candidate_portfolio(datasets_arg),
+            phase_one_recommendations,
+            (generated_run,),
+        ),
+    )
+
+    def _fake_build(datasets_arg, **kwargs):
+        captured["single_fit"] = kwargs.get("single_fit_recommendations_by_run")
+        single_fit = kwargs.get("single_fit_recommendations_by_run")
+        if isinstance(single_fit, dict):
+            single_fit[generated_run] = replace(
+                single_fit[generated_run],
+                summary="Repaired by screening.",
+            )
+        return _fake_screening_recommendation(datasets_arg)
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        _fake_build,
+    )
+
+    window = GlobalFitWizardWindow()
+    emitted: dict[int, FitWizardRecommendation] = {}
+    window.single_fit_recommendations_generated.connect(lambda payload: emitted.update(payload))
+    window.set_analysis_context(datasets)
 
     window._start_analysis()
     _wait_for(lambda: _analysis_complete(window), qapp)
 
-    assert captured["datasets"] == datasets
-    assert captured["search_strategy"] == "staged_v2"
+    assert set(emitted) == {int(dataset.run_number) for dataset in datasets}
+    assert emitted[generated_run] is not original_generated_recommendation
+    assert emitted[generated_run].summary == "Repaired by screening."
+    assert captured["single_fit"] == phase_one_recommendations
 
 
 def test_global_fit_wizard_window_warning_info_dialog_contains_expected_text(
@@ -429,11 +645,11 @@ def test_global_fit_wizard_window_passes_dialog_adjusted_types_and_bounds(
     def _fake_build(datasets_arg, **kwargs):
         captured["types"] = kwargs.get("current_parameter_types")
         captured["bounds"] = kwargs.get("parameter_bounds")
-        return _fake_recommendation(datasets_arg)
+        return _fake_screening_recommendation(datasets_arg)
 
     monkeypatch.setattr(
         wizard_window_module,
-        "build_global_fit_wizard_recommendation",
+        "build_global_fit_wizard_screening_recommendation",
         _fake_build,
     )
     monkeypatch.setattr(

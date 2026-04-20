@@ -93,7 +93,7 @@ stack stays within the versions tested by the project.
 | GUI | PySide6, Matplotlib |
 | NeXus / HDF5 | h5py |
 | ROOT import | uproot |
-| GLE export | `gleplot` plus a local GLE installation |
+| GLE export | `gleplot` (current git version with foldered exports) plus a local GLE installation |
 | Development | pytest, pytest-cov, ruff, Sphinx |
 
 ## Quick start

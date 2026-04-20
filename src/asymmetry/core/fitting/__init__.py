@@ -21,7 +21,9 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalFitWizardRecommendation,
     GlobalParameterRecommendation,
     build_global_fit_wizard_candidate_portfolio,
+    build_global_fit_wizard_screening_recommendation,
     build_global_fit_wizard_recommendation,
+    merge_global_fit_wizard_recommendations,
     rerank_global_fit_wizard_recommendation,
 )
 from asymmetry.core.fitting.models import MODELS
@@ -55,7 +57,9 @@ __all__ = [
     "build_fit_wizard_recommendation",
     "rerank_fit_wizard_recommendation",
     "build_global_fit_wizard_candidate_portfolio",
+    "build_global_fit_wizard_screening_recommendation",
     "build_global_fit_wizard_recommendation",
+    "merge_global_fit_wizard_recommendations",
     "rerank_global_fit_wizard_recommendation",
     "sc",
     "muon_fluorine",

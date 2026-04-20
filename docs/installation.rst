@@ -38,6 +38,9 @@ For GLE export support:
 
        pip install "gleplot @ git+https://github.com/BenHuddart/gleplot.git"
 
+  Recent Asymmetry releases use gleplot's foldered export support by default,
+  so install a current git version rather than an older cached wheel.
+
 Installation Methods
 --------------------
 

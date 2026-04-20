@@ -43,7 +43,11 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.transform.grouping import apply_grouping
 from asymmetry.core.transform.rebin import rebin
 from asymmetry.core.utils.constants import PeriodMode
-from asymmetry.gui.export_paths import default_export_path, remember_export_path
+from asymmetry.gui.export_paths import (
+    default_export_path,
+    remember_export_path,
+    resolve_gle_export_paths,
+)
 
 # Metadata fields available for dataset labelling in the legend.
 _LABEL_FIELDS: list[tuple[str, str]] = [
@@ -1356,7 +1360,7 @@ class PlotPanel(QWidget):
 
         Delegates to :meth:`plot_dataset` when *datasets* has exactly one
         entry so that the single-dataset code path (limit initialisation,
-        fit-range clamping, etc.) is exercised unchanged.
+        fit-range handling, etc.) is exercised unchanged.
         """
         if not self._has_mpl or not datasets:
             return
@@ -1585,12 +1589,6 @@ class PlotPanel(QWidget):
         if self._fit_x_min is None or self._fit_x_max is None:
             self._fit_x_min = data_x_min
             self._fit_x_max = data_x_max
-        else:
-            self._fit_x_min = min(max(self._fit_x_min, data_x_min), data_x_max)
-            self._fit_x_max = min(max(self._fit_x_max, data_x_min), data_x_max)
-            if self._fit_x_min >= self._fit_x_max:
-                self._fit_x_min = data_x_min
-                self._fit_x_max = data_x_max
 
         self._draw_fit_range_artists()
 
@@ -1733,6 +1731,8 @@ class PlotPanel(QWidget):
         if run is None or not isinstance(getattr(run, "grouping", None), dict):
             return mask
 
+        source_run = source_dataset.run if source_dataset is not None else None
+        informational_wim_first_good = self._uses_informational_wim_first_good_bin(source_run or run)
         grouping = run.grouping
         first_good = grouping.get("first_good_bin")
         last_good = grouping.get("last_good_bin")
@@ -1746,7 +1746,7 @@ class PlotPanel(QWidget):
             axis = np.asarray(hist0.time_axis, dtype=float)
 
         try:
-            lo_idx = max(0, int(first_good))
+            lo_idx = 0 if informational_wim_first_good else max(0, int(first_good))
             hi_idx = int(last_good)
         except (TypeError, ValueError):
             return mask
@@ -1804,6 +1804,17 @@ class PlotPanel(QWidget):
         mask |= (time < (good_t_min - tol)) | (time > (good_t_max + tol))
 
         return mask
+
+    @staticmethod
+    def _uses_informational_wim_first_good_bin(run: Run | None) -> bool:
+        """Return ``True`` when WiMDA has already handled early-bin trimming."""
+        if run is None:
+            return False
+        grouping = getattr(run, "grouping", None)
+        if isinstance(grouping, dict) and bool(grouping.get("informational_first_good_bin", False)):
+            return True
+        source_file = str(getattr(run, "source_file", "") or "")
+        return source_file.lower().endswith(".wim")
 
     def _low_confidence_mask_for_dataset(
         self,
@@ -1997,32 +2008,29 @@ class PlotPanel(QWidget):
         emit_signal: bool,
         redraw: bool,
     ) -> None:
-        """Set fit range with ordering, clamping, and optional signaling."""
+        """Set fit range with ordering and optional signaling."""
         lo = float(min(x_min, x_max))
         hi = float(max(x_min, x_max))
-
-        if self._current_dataset is not None:
-            analysis_dataset = self.get_analysis_dataset(self._current_dataset)
-            if analysis_dataset is not None and analysis_dataset.n_points > 0:
-                data_x_min = float(analysis_dataset.time.min())
-                data_x_max = float(analysis_dataset.time.max())
-                lo = min(max(lo, data_x_min), data_x_max)
-                hi = min(max(hi, data_x_min), data_x_max)
-
-                if lo >= hi:
-                    step = max((data_x_max - data_x_min) * 0.001, 1e-6)
-                    if lo >= data_x_max:
-                        lo = max(data_x_min, data_x_max - step)
-                        hi = data_x_max
-                    else:
-                        hi = min(data_x_max, lo + step)
 
         self._fit_x_min = lo
         self._fit_x_max = hi
 
+        limits_changed = False
+        current_x_min = float(self._x_min.value())
+        current_x_max = float(self._x_max.value())
+        if lo < current_x_min:
+            self._set_limit_spinbox_value(self._x_min, lo)
+            limits_changed = True
+        if hi > current_x_max:
+            self._set_limit_spinbox_value(self._x_max, hi)
+            limits_changed = True
+
         if redraw:
-            self._draw_fit_range_artists()
-            self._canvas.draw_idle()
+            if limits_changed:
+                self._apply_limits()
+            else:
+                self._draw_fit_range_artists()
+                self._canvas.draw_idle()
 
         if emit_signal:
             self.fit_range_changed.emit(self._fit_x_min, self._fit_x_max)
@@ -3143,8 +3151,8 @@ class PlotPanel(QWidget):
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Plot(s) to GLE",
-            default_export_path("asymmetry_plot.gle"),
-            "GLE files (*.gle)",
+            default_export_path("asymmetry_plot.gleplot"),
+            "GLE export folders (*.gleplot)",
         )
         if not path:
             return
@@ -3159,7 +3167,9 @@ class PlotPanel(QWidget):
             )
             return
 
-        gle_path = Path(path)
+        requested_gle_path = Path(path)
+        gle_path, export_dir = resolve_gle_export_paths(requested_gle_path, folder=True)
+        export_dir.mkdir(parents=True, exist_ok=True)
         output_format = self._gle_format_combo.currentText().lower()
         colors = [
             "black", "red", "blue", "green", "orange", "purple",
@@ -3246,7 +3256,17 @@ class PlotPanel(QWidget):
             )
             ax.set_xlabel("Time (µs)")
 
-        fig.savefig(str(gle_path))
+        try:
+            fig.savefig(str(requested_gle_path), folder=True)
+        except TypeError as exc:
+            if "folder" in str(exc):
+                QMessageBox.warning(
+                    self,
+                    "gleplot update required",
+                    "Please update gleplot to a newer version.",
+                )
+                return
+            raise
 
         # Ensure our sidecar .dat files retain metadata headers even when
         # gleplot generates/overwrites data_name-matched data files on save.

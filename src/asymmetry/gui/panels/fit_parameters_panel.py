@@ -47,7 +47,11 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
-from asymmetry.gui.export_paths import default_export_path, remember_export_path
+from asymmetry.gui.export_paths import (
+    default_export_path,
+    remember_export_path,
+    resolve_gle_export_paths,
+)
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 
 
@@ -2789,14 +2793,16 @@ class FitParametersPanel(QWidget):
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Export to GLE",
-            default_export_path("fit_parameters.gle"),
-            "GLE files (*.gle);;All files (*)",
+            default_export_path("fit_parameters.gleplot"),
+            "GLE export folders (*.gleplot);;All files (*)",
         )
         if not path:
             return
         remember_export_path(path)
 
-        gle_path = Path(path)
+        requested_gle_path = Path(path)
+        gle_path, export_dir = resolve_gle_export_paths(requested_gle_path, folder=True)
+        export_dir.mkdir(parents=True, exist_ok=True)
         data_path = gle_path.with_suffix(".dat")
         self._write_gle_data_file(data_path)
         x_key = self._effective_x_key()
@@ -2814,10 +2820,17 @@ class FitParametersPanel(QWidget):
         # Make available to preview/notifications invoked during _generate_gle_plot.
         self._last_export_fit_files = list(fit_file_map.values())
         output_format = self._gle_format_combo.currentText().lower()
-        self._generate_gle_plot(gle_path, data_path, output_format, fit_file_map)
+        self._generate_gle_plot(
+            requested_gle_path,
+            gle_path,
+            data_path,
+            output_format,
+            fit_file_map,
+        )
 
     def _generate_gle_plot(
         self,
+        requested_gle_path: Path,
         gle_path: Path,
         data_path: Path,
         output_format: str,
@@ -2984,7 +2997,13 @@ class FitParametersPanel(QWidget):
             if self._log_x_check.isChecked():
                 ax.set_xscale("log")
 
-        fig.savefig(str(gle_path))
+        try:
+            fig.savefig(str(requested_gle_path), folder=True)
+        except TypeError as exc:
+            if "folder" in str(exc):
+                QMessageBox.warning(self, "gleplot update required", "Please update gleplot to a newer version.")
+                return
+            raise
 
         if shutil.which("gle") is not None:
             output_path = gle_path.with_suffix(f".{output_format}")

@@ -435,6 +435,38 @@ class TestMainWindowBasic:
         np.testing.assert_array_equal(dataset.error, original_error)
         assert dataset.run.grouping["bunching_factor"] == 2
 
+    def test_apply_grouping_wim_without_histograms_keeps_early_points_despite_first_good_bin(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """WIM first-good-bin metadata should not trim already-processed source arrays."""
+        dataset = _make_dataset(7407, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.source_file = "/tmp/run_7407.wim"
+        dataset.run.histograms = []
+        original_time = dataset.time.copy()
+        original_asymmetry = dataset.asymmetry.copy()
+        original_error = dataset.error.copy()
+
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 2,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        np.testing.assert_array_equal(dataset.time, original_time)
+        np.testing.assert_array_equal(dataset.asymmetry, original_asymmetry)
+        np.testing.assert_array_equal(dataset.error, original_error)
+        assert dataset.run.grouping["first_good_bin"] == 2
+
     def test_vector_axis_pairs_detected_from_group_names(self, mainwindow: MainWindow) -> None:
         groups = {
             1: [1],

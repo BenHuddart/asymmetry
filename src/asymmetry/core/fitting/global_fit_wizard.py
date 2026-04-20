@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import multiprocessing as mp
 import threading
+from itertools import combinations
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -15,7 +17,9 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
+    CandidateAssessment,
     CandidateTemplate,
+    FitWizardRecommendation,
     SelectionMetric,
     SpectrumFingerprint,
     _bound_hit_names,
@@ -23,12 +27,18 @@ from asymmetry.core.fitting.fit_wizard import (
     _dense_fit_curves,
     _initial_parameters_for_template,
     _is_additive_relaxation_mixture_template,
+    _needs_fit_backend_fallback,
     _parameter_variants,
     _residual_diagnostics,
     _residual_gate_reasons,
+    _scipy_fit_fallback,
+    build_fit_wizard_recommendation_for_templates,
     build_candidate_templates,
+    candidate_template_keys,
     compute_information_criteria,
     fingerprint_spectrum,
+    recommendation_template_keys,
+    rerank_fit_wizard_recommendation,
 )
 from asymmetry.core.fitting.global_search import (
     GlobalSearchConfig,
@@ -38,7 +48,10 @@ from asymmetry.core.fitting.global_search import (
     compile_structure_to_legacy_roles,
     score_exact_candidate,
 )
-from asymmetry.core.fitting.global_search.heuristics import parameter_localisation_priority
+from asymmetry.core.fitting.global_search.heuristics import (
+    localisation_threshold_scale,
+    parameter_localisation_priority,
+)
 from asymmetry.core.fitting.global_search.refine import SearchEvaluation
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
@@ -52,16 +65,21 @@ _GLOBAL_FIT_MAX_CALLS_CAP = 4200
 _LOW_RESIDUAL_RMS_FOR_STRUCTURE_WARNINGS = 0.25
 _GLOBAL_FIT_SIMPLEX_RESCUE_CALLS = 1800
 _GLOBAL_FIT_SIMPLEX_RESCUE_CALLS_CAP = 5600
+_HIGH_DIMENSION_GLOBAL_FIT_SIMPLEX_RESCUE_CALLS = 9000
+_HIGH_DIMENSION_GLOBAL_FIT_SIMPLEX_RESCUE_CALLS_CAP = 9000
 _STAGED_GLOBAL_FIT_MAX_CALLS = 4200
 _STAGED_LOCAL_SEARCH_BEAM_WIDTH = 3
 _STAGED_LOCAL_SEARCH_CANDIDATES_PER_BRANCH = 2
 _STAGED_V2_LOCAL_SEARCH_BEAM_WIDTH = 5
 _STAGED_V2_LOCAL_SEARCH_CANDIDATES_PER_BRANCH = 3
 _STAGED_V2_EXACT_CANDIDATES_PER_TIER = 2
+_STAGED_GLOBALIZATION_CANDIDATES_PER_STEP = 3
+_CONSOLIDATED_SEARCH_VARIANT = "staged_v2"
 _MAX_ROLE_CANDIDATES_PER_TIER = 3
 _HIGH_DIMENSION_FREE_COUNT = 40
 _EXTREME_DIMENSION_FREE_COUNT = 70
 _MAX_TEMPLATE_WORKERS = 4
+_MAX_WAVEFRONT_WORKERS = 12
 _OSCILLATORY_RESCUE_RESIDUAL_FFT_SNR = 6.0
 _OSCILLATORY_RESCUE_MEDIAN_FFT_SNR = 6.5
 _OSCILLATORY_RESCUE_RUNS_Z = 2.5
@@ -122,6 +140,12 @@ class GlobalCandidateAssessment:
     selected_score: float
     fitted_curves_by_run: dict[int, tuple[NDArray[np.float64], NDArray[np.float64]]]
     component_curves_by_run: dict[int, tuple[tuple[str, NDArray[np.float64]], ...]]
+    prescreen_only: bool = False
+    assessment_key: str | None = None
+
+    @property
+    def selection_key(self) -> str:
+        return self.assessment_key or self.template.key
 
     @property
     def parameter_count(self) -> int:
@@ -144,7 +168,7 @@ class GlobalCandidateAssessment:
 
     @property
     def is_successful(self) -> bool:
-        return bool(self.fit_results_by_run) and all(
+        return (not self.prescreen_only) and bool(self.fit_results_by_run) and all(
             result.success for result in self.fit_results_by_run.values()
         )
 
@@ -174,20 +198,44 @@ class GlobalFitWizardRecommendation:
 
     @property
     def recommended_assessment(self) -> GlobalCandidateAssessment | None:
-        if not self.recommended_key:
-            return None
-        for assessment in self.assessments:
-            if assessment.template.key == self.recommended_key:
-                return assessment
-        return None
+        return self.assessment_for_key(self.recommended_key)
 
     def assessment_for_key(self, key: str | None) -> GlobalCandidateAssessment | None:
         if not isinstance(key, str):
             return None
         for assessment in self.assessments:
+            if assessment.selection_key == key:
+                return assessment
+
+        template_matches = [
+            assessment for assessment in self.assessments if assessment.template.key == key
+        ]
+        if not template_matches:
+            return None
+        if len(template_matches) == 1:
+            return template_matches[0]
+
+        optimized_matches = [
+            assessment for assessment in template_matches if not assessment.prescreen_only
+        ]
+        if len(optimized_matches) == 1:
+            return optimized_matches[0]
+        if optimized_matches:
+            return min(
+                optimized_matches,
+                key=lambda assessment: _assessment_sort_key(assessment, self.metric),
+            )
+        for assessment in self.assessments:
             if assessment.template.key == key:
                 return assessment
         return None
+
+    def assessments_for_template_key(self, template_key: str) -> tuple[GlobalCandidateAssessment, ...]:
+        return tuple(
+            assessment
+            for assessment in self.assessments
+            if assessment.template.key == template_key
+        )
 
     def sorted_assessments(
         self,
@@ -198,6 +246,325 @@ class GlobalFitWizardRecommendation:
             self.assessments,
             key=lambda assessment: _assessment_sort_key(assessment, active_metric),
         )
+
+    def sorted_prescreen_assessments(
+        self,
+        metric: SelectionMetric | None = None,
+    ) -> list[GlobalCandidateAssessment]:
+        active_metric = metric or self.metric
+        return sorted(
+            (assessment for assessment in self.assessments if assessment.prescreen_only),
+            key=lambda assessment: _assessment_sort_key(assessment, active_metric),
+        )
+
+    def optimized_assessments(self) -> tuple[GlobalCandidateAssessment, ...]:
+        return tuple(
+            assessment for assessment in self.assessments if not assessment.prescreen_only
+        )
+
+    def sorted_optimized_assessments(
+        self,
+        metric: SelectionMetric | None = None,
+    ) -> list[GlobalCandidateAssessment]:
+        active_metric = metric or self.metric
+        return sorted(
+            self.optimized_assessments(),
+            key=lambda assessment: _assessment_sort_key(assessment, active_metric),
+        )
+
+    def optimization_status_for_key(self, key: str | None) -> str:
+        if not isinstance(key, str):
+            return "Unknown"
+        template_assessments = self.assessments_for_template_key(key)
+        optimized = [assessment for assessment in template_assessments if not assessment.prescreen_only]
+        if not template_assessments:
+            return "Unknown"
+        if not optimized:
+            return "Not optimized"
+        if any(assessment.is_successful for assessment in optimized):
+            return "Optimized"
+        return "Optimization failed"
+
+
+def _global_candidate_assessment_key(
+    template_key: str,
+    *,
+    global_param_names: tuple[str, ...],
+    local_param_names: tuple[str, ...],
+    prescreen_only: bool = False,
+) -> str:
+    if prescreen_only:
+        return template_key
+    global_label = ",".join(global_param_names) or "none"
+    local_label = ",".join(local_param_names) or "none"
+    return f"{template_key}|g={global_label}|l={local_label}"
+
+
+@dataclass(frozen=True)
+class _WarmStartAssessment:
+    fit_results_by_run: dict[int, FitResult]
+    global_parameters: ParameterSet
+    global_param_names: tuple[str, ...]
+    local_param_names: tuple[str, ...]
+
+    @property
+    def is_successful(self) -> bool:
+        return bool(self.fit_results_by_run) and all(
+            result.success for result in self.fit_results_by_run.values()
+        )
+
+
+@dataclass(frozen=True)
+class _WavefrontAssignmentTask:
+    template_key: str
+    template: CandidateTemplate
+    datasets: list[MuonDataset]
+    base_by_run: dict[int, ParameterSet]
+    fixed_param_names: tuple[str, ...]
+    global_param_names: tuple[str, ...]
+    local_param_names: tuple[str, ...]
+    axis_key: str
+    metric: SelectionMetric
+    search_strategy: str
+    warm_start_source: _WarmStartAssessment | None = None
+    initial_seed_by_run: dict[int, ParameterSet] | None = None
+
+
+@dataclass(frozen=True)
+class _WavefrontAssignmentResult:
+    template_key: str
+    global_param_names: tuple[str, ...]
+    local_param_names: tuple[str, ...]
+    assessment: GlobalCandidateAssessment
+    instrumentation: dict[str, object]
+
+
+@dataclass
+class _WavefrontTemplateState:
+    template: CandidateTemplate
+    fixed_param_names: tuple[str, ...]
+    prefit_base_by_run: dict[int, ParameterSet]
+    free_param_names: tuple[str, ...]
+    exact_cache: dict[tuple[tuple[str, ...], tuple[str, ...]], GlobalCandidateAssessment]
+    converged_assessments: dict[
+        tuple[tuple[str, ...], tuple[str, ...]],
+        GlobalCandidateAssessment,
+    ]
+    best_assessment: GlobalCandidateAssessment | None = None
+
+
+def _compact_assessment_for_cache(
+    assessment: GlobalCandidateAssessment,
+) -> GlobalCandidateAssessment:
+    return replace(
+        assessment,
+        fitted_curves_by_run={},
+        component_curves_by_run={},
+        parameter_recommendations=(),
+    )
+
+
+def _warm_start_source_from_assessment(
+    assessment: GlobalCandidateAssessment | None,
+) -> _WarmStartAssessment | None:
+    if assessment is None:
+        return None
+    return _WarmStartAssessment(
+        fit_results_by_run=assessment.fit_results_by_run,
+        global_parameters=assessment.global_parameters,
+        global_param_names=assessment.global_param_names,
+        local_param_names=assessment.local_param_names,
+    )
+
+
+def _merge_instrumentation(
+    instrumentation: dict[str, object] | None,
+    delta: dict[str, object] | None,
+) -> None:
+    if instrumentation is None or not delta:
+        return
+
+    counters = delta.get("counters")
+    if isinstance(counters, dict):
+        target_counters = instrumentation.setdefault("counters", {})
+        if isinstance(target_counters, dict):
+            for name, value in counters.items():
+                target_counters[name] = int(target_counters.get(name, 0)) + int(value)
+
+    for name, value in delta.items():
+        if name == "counters":
+            continue
+        if isinstance(value, list):
+            target_values = instrumentation.setdefault(name, [])
+            if isinstance(target_values, list):
+                target_values.extend(value)
+
+
+def _wavefront_worker_count(task_count: int) -> int:
+    if task_count <= 0:
+        return 1
+    cpu_count = os.cpu_count() or 1
+    return max(1, min(task_count, cpu_count, _MAX_WAVEFRONT_WORKERS))
+
+
+def _single_fit_table_worker_count(task_count: int) -> int:
+    if task_count <= 0:
+        return 1
+    cpu_count = os.cpu_count() or 1
+    return max(1, min(task_count, cpu_count, _MAX_TEMPLATE_WORKERS))
+
+
+def _spawn_context() -> mp.context.BaseContext:
+    return mp.get_context("spawn")
+
+
+def _layer_assignments(
+    free_param_names: tuple[str, ...],
+) -> tuple[tuple[tuple[str, ...], ...], ...]:
+    return tuple(
+        tuple(tuple(names) for names in combinations(free_param_names, local_count))
+        for local_count in range(len(free_param_names) + 1)
+    )
+
+
+def _all_global_seed_parameter_sets(
+    base_by_run: dict[int, ParameterSet],
+) -> dict[int, ParameterSet]:
+    if not base_by_run:
+        return {}
+
+    averaged_values: dict[str, float] = {}
+    collected_values: dict[str, list[float]] = {}
+    for parameters in base_by_run.values():
+        for parameter in parameters:
+            if parameter.fixed:
+                continue
+            collected_values.setdefault(parameter.name, []).append(float(parameter.value))
+
+    for name, values in collected_values.items():
+        averaged_values[name] = float(np.mean(np.asarray(values, dtype=float)))
+
+    seeded_by_run: dict[int, ParameterSet] = {}
+    for run_number, parameters in base_by_run.items():
+        cloned = _clone_parameter_set(parameters)
+        for parameter in cloned:
+            averaged_value = averaged_values.get(parameter.name)
+            if averaged_value is None or parameter.fixed:
+                continue
+            parameter.value = float(np.clip(averaged_value, parameter.min, parameter.max))
+        seeded_by_run[run_number] = cloned
+    return seeded_by_run
+
+
+def _best_predecessor_assessment(
+    exact_cache: dict[tuple[tuple[str, ...], tuple[str, ...]], GlobalCandidateAssessment],
+    *,
+    free_param_names: tuple[str, ...],
+    local_param_names: tuple[str, ...],
+    metric: SelectionMetric,
+) -> GlobalCandidateAssessment | None:
+    predecessors: list[GlobalCandidateAssessment] = []
+    for removed_name in local_param_names:
+        predecessor_local = tuple(name for name in local_param_names if name != removed_name)
+        predecessor_global = tuple(
+            name for name in free_param_names if name not in predecessor_local
+        )
+        predecessor = exact_cache.get((predecessor_global, predecessor_local))
+        if predecessor is not None and predecessor.is_successful:
+            predecessors.append(predecessor)
+    if not predecessors:
+        return None
+    return min(predecessors, key=lambda assessment: _assessment_sort_key(assessment, metric))
+
+
+def _interleave_wavefront_tasks(
+    task_groups: list[list[_WavefrontAssignmentTask]],
+) -> list[_WavefrontAssignmentTask]:
+    ordered_groups = sorted(task_groups, key=len, reverse=True)
+    ordered_tasks: list[_WavefrontAssignmentTask] = []
+    while ordered_groups:
+        next_groups: list[list[_WavefrontAssignmentTask]] = []
+        for group in ordered_groups:
+            ordered_tasks.append(group[0])
+            if len(group) > 1:
+                next_groups.append(group[1:])
+        ordered_groups = next_groups
+    return ordered_tasks
+
+
+def _run_wavefront_assignment_task(
+    task: _WavefrontAssignmentTask,
+) -> _WavefrontAssignmentResult:
+    task_instrumentation: dict[str, object] = {
+        "counters": {},
+        "curvature_hint_sizes": [],
+        "minuit_edm": [],
+        "relaxed_penalties": [],
+        "staged_frontier_widths": [],
+    }
+    fit_engine = FitEngine()
+    warm_start_by_run: dict[int, ParameterSet] | None = None
+    initial_step_sizes: dict[str, float] = {}
+
+    if task.warm_start_source is not None and task.warm_start_source.is_successful:
+        warm_start_by_run = _warm_start_parameter_sets(
+            task.datasets,
+            assessment=task.warm_start_source,
+            base_by_run=task.base_by_run,
+            target_global_names=task.global_param_names,
+            target_local_names=task.local_param_names,
+            fit_engine=fit_engine,
+            template=task.template,
+            progress_callback=None,
+            cache=None,
+        )
+        initial_step_sizes = _step_hints_from_assessment(
+            task.datasets,
+            task.warm_start_source,
+            target_global_names=task.global_param_names,
+            target_local_names=task.local_param_names,
+        )
+    elif task.initial_seed_by_run is not None:
+        warm_start_by_run = _clone_parameter_sets(task.initial_seed_by_run)
+
+    assessment = _fit_exact_assignment(
+        task.datasets,
+        task.template,
+        fit_engine=fit_engine,
+        base_by_run=task.base_by_run,
+        global_param_names=task.global_param_names,
+        local_param_names=task.local_param_names,
+        fixed_param_names=task.fixed_param_names,
+        axis_key=task.axis_key,
+        metric=task.metric,
+        cache={},
+        warm_start_by_run=warm_start_by_run,
+        progress_callback=None,
+        search_strategy=task.search_strategy,
+        instrumentation=task_instrumentation,
+        initial_step_sizes=initial_step_sizes,
+    )
+    return _WavefrontAssignmentResult(
+        template_key=task.template_key,
+        global_param_names=task.global_param_names,
+        local_param_names=task.local_param_names,
+        assessment=assessment,
+        instrumentation=task_instrumentation,
+    )
+
+
+def _single_fit_recommendation_task(
+    dataset: MuonDataset,
+    templates: tuple[CandidateTemplate, ...],
+    metric: SelectionMetric,
+) -> tuple[int, FitWizardRecommendation]:
+    run_number = int(dataset.run_number)
+    recommendation = build_fit_wizard_recommendation_for_templates(
+        dataset,
+        templates,
+        metric=metric,
+    )
+    return run_number, recommendation
 
 
 @dataclass(frozen=True)
@@ -247,6 +614,444 @@ def build_global_fit_wizard_candidate_portfolio(
         fingerprints_by_run=fingerprints_by_run,
         templates=templates,
     )
+
+
+def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+    datasets: list[MuonDataset],
+    current_model: CompositeModel | None = None,
+    *,
+    existing_recommendations_by_run: dict[int, FitWizardRecommendation] | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+) -> tuple[GlobalFitWizardCandidatePortfolio, dict[int, FitWizardRecommendation], tuple[int, ...]]:
+    """Return a complete per-run single-fit table set for one global-wizard portfolio."""
+    progress_callback = _threadsafe_progress_callback(progress_callback)
+    portfolio = build_global_fit_wizard_candidate_portfolio(
+        datasets,
+        current_model=current_model,
+    )
+    expected_template_keys = candidate_template_keys(portfolio.templates)
+    existing = (
+        existing_recommendations_by_run
+        if existing_recommendations_by_run is not None
+        else {}
+    )
+
+    complete_by_run: dict[int, FitWizardRecommendation] = {}
+    for dataset in portfolio.ordered_datasets:
+        run_number = int(dataset.run_number)
+        recommendation = existing.get(run_number)
+        if recommendation is None:
+            continue
+        if recommendation_template_keys(recommendation) != expected_template_keys:
+            continue
+        complete_by_run[run_number] = recommendation
+
+    if portfolio.mixed_axes_warning or not portfolio.templates:
+        complete_by_run = _sync_single_fit_recommendation_store(
+            existing_recommendations_by_run,
+            complete_by_run,
+        )
+        return portfolio, complete_by_run, ()
+
+    missing_datasets = [
+        dataset
+        for dataset in portfolio.ordered_datasets
+        if int(dataset.run_number) not in complete_by_run
+    ]
+    if not missing_datasets:
+        complete_by_run = _sync_single_fit_recommendation_store(
+            existing_recommendations_by_run,
+            complete_by_run,
+        )
+        return portfolio, complete_by_run, ()
+
+    _progress_log(
+        progress_callback,
+        "Preparing per-dataset single-fit comparison tables for "
+        f"{len(missing_datasets)} dataset(s) using the shared candidate portfolio.",
+    )
+
+    generated_run_numbers: list[int] = []
+
+    worker_count = _single_fit_table_worker_count(len(missing_datasets))
+    if worker_count <= 1:
+        for dataset in missing_datasets:
+            _progress_log(
+                progress_callback,
+                f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
+            )
+            run_number, recommendation = _single_fit_recommendation_task(
+                dataset,
+                portfolio.templates,
+                SelectionMetric.AICC,
+            )
+            complete_by_run[run_number] = recommendation
+            generated_run_numbers.append(run_number)
+    else:
+        _progress_log(
+            progress_callback,
+            f"Running phase-1 single-fit table generation with {worker_count} spawn-safe workers.",
+        )
+        with ProcessPoolExecutor(
+            max_workers=worker_count,
+            mp_context=_spawn_context(),
+        ) as executor:
+            future_to_dataset = {}
+            for dataset in missing_datasets:
+                _progress_log(
+                    progress_callback,
+                    f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
+                )
+                future_to_dataset[
+                    executor.submit(
+                        _single_fit_recommendation_task,
+                        dataset,
+                        portfolio.templates,
+                        SelectionMetric.AICC,
+                    )
+                ] = dataset
+            for future in as_completed(future_to_dataset):
+                run_number, recommendation = future.result()
+                complete_by_run[run_number] = recommendation
+                generated_run_numbers.append(run_number)
+
+    complete_by_run = _sync_single_fit_recommendation_store(
+        existing_recommendations_by_run,
+        complete_by_run,
+    )
+    return portfolio, complete_by_run, tuple(generated_run_numbers)
+
+
+def build_global_fit_wizard_screening_recommendation(
+    datasets: list[MuonDataset],
+    current_model: CompositeModel | None = None,
+    *,
+    current_parameter_types: dict[str, str] | None = None,
+    current_values: dict[str, float] | None = None,
+    parameter_bounds: dict[str, tuple[float, float]] | None = None,
+    single_fit_recommendations_by_run: dict[int, FitWizardRecommendation] | None = None,
+    metric: SelectionMetric = SelectionMetric.AICC,
+    progress_callback: Callable[[str], None] | None = None,
+) -> GlobalFitWizardRecommendation:
+    """Build the ranking table from per-run single-fit wizard results only."""
+    if len(datasets) < 2:
+        raise ValueError("Global fit wizard requires at least two datasets.")
+
+    progress_callback = _threadsafe_progress_callback(progress_callback)
+    current_parameter_types = current_parameter_types or {}
+    current_values = current_values or {}
+    parameter_bounds = parameter_bounds or {}
+
+    portfolio = build_global_fit_wizard_candidate_portfolio(
+        datasets,
+        current_model=current_model,
+    )
+    templates = list(portfolio.templates)
+    if portfolio.mixed_axes_warning:
+        return rerank_global_fit_wizard_recommendation(
+            GlobalFitWizardRecommendation(
+                series_axis_key=portfolio.series_axis_key,
+                series_axis_label=portfolio.series_axis_label,
+                mixed_axes_warning=portfolio.mixed_axes_warning,
+                fingerprints_by_run=portfolio.fingerprints_by_run,
+                dataset_order=portfolio.dataset_order,
+                templates=portfolio.templates,
+                assessments=(),
+                metric=metric,
+                recommended_key=None,
+                comparable_keys=(),
+                summary=portfolio.mixed_axes_warning,
+            ),
+            metric,
+        )
+
+    recommendations_by_run = (
+        single_fit_recommendations_by_run
+        if single_fit_recommendations_by_run is not None
+        else {}
+    )
+    expected_template_keys = candidate_template_keys(templates)
+    if not recommendations_by_run or not all(
+        int(dataset.run_number) in recommendations_by_run
+        and recommendation_template_keys(recommendations_by_run[int(dataset.run_number)])
+        == expected_template_keys
+        for dataset in portfolio.ordered_datasets
+    ):
+        _progress_log(
+            progress_callback,
+            "Preparing missing single-fit wizard tables for global screening.",
+        )
+        _portfolio, recommendations_by_run, _generated_runs = (
+            build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+                list(portfolio.ordered_datasets),
+                current_model=current_model,
+                existing_recommendations_by_run=recommendations_by_run,
+                progress_callback=progress_callback,
+            )
+        )
+
+    assessments_by_key, _template_contexts = _build_single_fit_prescreen_assessments(
+        list(portfolio.ordered_datasets),
+        portfolio.fingerprints_by_run,
+        templates,
+        single_fit_recommendations_by_run=recommendations_by_run,
+        current_parameter_types=current_parameter_types,
+        current_values=current_values,
+        parameter_bounds=parameter_bounds,
+        axis_key=portfolio.series_axis_key,
+        metric=metric,
+        fit_engine=FitEngine(),
+        progress_callback=progress_callback,
+    )
+    return rerank_global_fit_wizard_recommendation(
+        GlobalFitWizardRecommendation(
+            series_axis_key=portfolio.series_axis_key,
+            series_axis_label=portfolio.series_axis_label,
+            mixed_axes_warning=portfolio.mixed_axes_warning,
+            fingerprints_by_run=portfolio.fingerprints_by_run,
+            dataset_order=portfolio.dataset_order,
+            templates=portfolio.templates,
+            assessments=tuple(assessments_by_key[template.key] for template in portfolio.templates),
+            metric=metric,
+            recommended_key=None,
+            comparable_keys=(),
+            summary="",
+        ),
+        metric,
+    )
+
+
+def _single_fit_assessment_by_run(
+    recommendations_by_run: dict[int, FitWizardRecommendation],
+    template_key: str,
+) -> dict[int, CandidateAssessment]:
+    assessments: dict[int, CandidateAssessment] = {}
+    for run_number, recommendation in recommendations_by_run.items():
+        assessment = recommendation.assessment_for_key(template_key)
+        if assessment is not None:
+            assessments[int(run_number)] = assessment
+    return assessments
+
+
+def _sync_single_fit_recommendation_store(
+    existing_recommendations_by_run: dict[int, FitWizardRecommendation] | None,
+    complete_by_run: dict[int, FitWizardRecommendation],
+) -> dict[int, FitWizardRecommendation]:
+    if existing_recommendations_by_run is None:
+        return complete_by_run
+    existing_recommendations_by_run.clear()
+    existing_recommendations_by_run.update(complete_by_run)
+    return existing_recommendations_by_run
+
+
+def _merge_repaired_assessments_into_single_fit_recommendations(
+    recommendations_by_run: dict[int, FitWizardRecommendation],
+    template_key: str,
+    repaired_assessments_by_run: dict[int, CandidateAssessment],
+) -> None:
+    for run_number, repaired_assessment in repaired_assessments_by_run.items():
+        recommendation = recommendations_by_run.get(int(run_number))
+        if recommendation is None:
+            continue
+        current_assessment = recommendation.assessment_for_key(template_key)
+        if current_assessment is repaired_assessment:
+            continue
+
+        replaced = False
+        updated_assessments: list[CandidateAssessment] = []
+        for assessment in recommendation.assessments:
+            if assessment.template.key == template_key:
+                updated_assessments.append(repaired_assessment)
+                replaced = True
+            else:
+                updated_assessments.append(assessment)
+        if not replaced:
+            continue
+
+        recommendations_by_run[int(run_number)] = rerank_fit_wizard_recommendation(
+            replace(
+                recommendation,
+                assessments=tuple(updated_assessments),
+            ),
+            recommendation.metric,
+        )
+
+
+def _build_single_fit_prescreen_assessments(
+    datasets: list[MuonDataset],
+    fingerprints_by_run: dict[int, SpectrumFingerprint],
+    templates: list[CandidateTemplate],
+    *,
+    single_fit_recommendations_by_run: dict[int, FitWizardRecommendation],
+    current_parameter_types: dict[str, str],
+    current_values: dict[str, float],
+    parameter_bounds: dict[str, tuple[float, float]],
+    axis_key: str,
+    metric: SelectionMetric,
+    fit_engine: FitEngine | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+    repair_partial_incomplete: bool = True,
+) -> tuple[
+    dict[str, GlobalCandidateAssessment],
+    dict[str, tuple[dict[int, ParameterSet], tuple[str, ...]]],
+]:
+    assessments_by_key: dict[str, GlobalCandidateAssessment] = {}
+    template_contexts: dict[str, tuple[dict[int, ParameterSet], tuple[str, ...]]] = {}
+    fit_engine = fit_engine or FitEngine()
+
+    for template in templates:
+        fixed_param_names = _fixed_param_names(template, current_parameter_types)
+        seed_assessments_by_run = _single_fit_assessment_by_run(
+            single_fit_recommendations_by_run,
+            template.key,
+        )
+        if repair_partial_incomplete:
+            seed_assessments_by_run = _repair_partial_single_fit_prescreen_assessments(
+                datasets,
+                fingerprints_by_run,
+                template,
+                assessments_by_run=seed_assessments_by_run,
+                current_values=current_values,
+                parameter_bounds=parameter_bounds,
+                fixed_param_names=fixed_param_names,
+                metric=metric,
+                fit_engine=fit_engine,
+                progress_callback=progress_callback,
+            )
+            _merge_repaired_assessments_into_single_fit_recommendations(
+                single_fit_recommendations_by_run,
+                template.key,
+                seed_assessments_by_run,
+            )
+        base_by_run = _initial_parameter_sets_for_candidate(
+            datasets,
+            fingerprints_by_run,
+            template,
+            current_values=current_values,
+            parameter_bounds=parameter_bounds,
+            fixed_param_names=fixed_param_names,
+            seed_assessments_by_run=seed_assessments_by_run,
+        )
+        template_contexts[template.key] = (base_by_run, fixed_param_names)
+        global_param_names, local_param_names = _initial_parameter_roles(
+            template,
+            current_parameter_types=current_parameter_types,
+            fixed_param_names=fixed_param_names,
+        )
+
+        fit_results_by_run: dict[int, FitResult] = {}
+        fitted_curves_by_run: dict[int, tuple[NDArray[np.float64], NDArray[np.float64]]] = {}
+        component_curves_by_run: dict[int, tuple[tuple[str, NDArray[np.float64]], ...]] = {}
+        run_diagnostics: list[RunResidualDiagnostic] = []
+        aic_total = 0.0
+        bic_total = 0.0
+        aicc_total = 0.0
+        all_have_aicc = True
+        missing_runs: list[str] = []
+
+        for dataset in datasets:
+            run_number = int(dataset.run_number)
+            axis_value = _axis_value(dataset, axis_key)
+            assessment = seed_assessments_by_run.get(run_number)
+            if assessment is None:
+                missing_runs.append(dataset.run_label)
+                run_diagnostics.append(
+                    RunResidualDiagnostic(
+                        run_number=run_number,
+                        run_label=dataset.run_label,
+                        axis_value=axis_value,
+                        residual_rms=float("inf"),
+                        runs_z_score=float("inf"),
+                        max_abs_autocorrelation=float("inf"),
+                        residual_fft_peak_snr=float("inf"),
+                        gate_passed=False,
+                        gate_reasons=(
+                            f"missing successful single-fit assessment for {template.title}",
+                        ),
+                    )
+                )
+                continue
+
+            fit_results_by_run[run_number] = assessment.fit_result
+            fitted_curves_by_run[run_number] = (
+                np.asarray(assessment.fitted_time, dtype=float).copy(),
+                np.asarray(assessment.fitted_curve, dtype=float).copy(),
+            )
+            component_curves_by_run[run_number] = tuple(
+                (
+                    name,
+                    np.asarray(values, dtype=float).copy(),
+                )
+                for name, values in assessment.component_curves
+            )
+            run_diagnostics.append(
+                RunResidualDiagnostic(
+                    run_number=run_number,
+                    run_label=dataset.run_label,
+                    axis_value=axis_value,
+                    residual_rms=assessment.residual_rms,
+                    runs_z_score=assessment.runs_z_score,
+                    max_abs_autocorrelation=assessment.max_abs_autocorrelation,
+                    residual_fft_peak_snr=assessment.residual_fft_peak_snr,
+                    gate_passed=assessment.residual_gate_passed,
+                    gate_reasons=tuple(assessment.residual_gate_reasons),
+                )
+            )
+
+            if assessment.is_successful:
+                aic_total += float(assessment.aic)
+                bic_total += float(assessment.bic)
+                if assessment.aicc is None:
+                    all_have_aicc = False
+                else:
+                    aicc_total += float(assessment.aicc)
+            else:
+                missing_runs.append(dataset.run_label)
+
+        complete = not missing_runs and len(fit_results_by_run) == len(datasets)
+        if complete:
+            aic = float(aic_total)
+            aicc = float(aicc_total) if all_have_aicc else None
+            bic = float(bic_total)
+            selected_score = _metric_value(metric, aic, aicc, bic)
+            series_warnings = (
+                "Independent single-fit pre-screen only. This candidate was not advanced to coupled global optimisation.",
+            )
+        else:
+            aic = float("inf")
+            aicc = None
+            bic = float("inf")
+            selected_score = float("inf")
+            series_warnings = tuple(
+                [
+                    "Single-fit pre-screen incomplete. This candidate is excluded from the global shortlist.",
+                    *[
+                        f"Missing or failed single-fit assessment for run {run_label}."
+                        for run_label in missing_runs
+                    ],
+                ]
+            )
+
+        assessments_by_key[template.key] = GlobalCandidateAssessment(
+            template=template,
+            fit_results_by_run=fit_results_by_run,
+            global_parameters=ParameterSet(),
+            global_param_names=tuple(global_param_names),
+            local_param_names=tuple(local_param_names),
+            fixed_param_names=tuple(fixed_param_names),
+            parameter_recommendations=(),
+            run_diagnostics=tuple(run_diagnostics),
+            series_warnings=series_warnings,
+            aic=aic,
+            aicc=aicc,
+            bic=bic,
+            selected_score=selected_score,
+            fitted_curves_by_run=fitted_curves_by_run,
+            component_curves_by_run=component_curves_by_run,
+            prescreen_only=True,
+        )
+
+    return assessments_by_key, template_contexts
 
 
 def _record_counter(
@@ -410,395 +1215,6 @@ def _staged_local_search_settings(search_strategy: str) -> tuple[int, int, bool,
     )
 
 
-def _build_global_fit_wizard_recommendation_legacy(
-    datasets: list[MuonDataset],
-    current_model: CompositeModel | None = None,
-    *,
-    current_parameter_types: dict[str, str] | None = None,
-    current_values: dict[str, float] | None = None,
-    parameter_bounds: dict[str, tuple[float, float]] | None = None,
-    metric: SelectionMetric = SelectionMetric.AICC,
-    progress_callback: Callable[[str], None] | None = None,
-) -> GlobalFitWizardRecommendation:
-    """Analyze one ordered dataset series and recommend a global-fit candidate."""
-    if len(datasets) < 2:
-        raise ValueError("Global fit wizard requires at least two datasets.")
-
-    progress_callback = _threadsafe_progress_callback(progress_callback)
-
-    _progress_log(
-        progress_callback,
-        f"Preparing global fit wizard analysis for {len(datasets)} datasets.",
-    )
-    (
-        ordered_datasets,
-        axis_key,
-        axis_label,
-        mixed_axes_warning,
-    ) = _ordered_datasets_with_axis(datasets)
-    _progress_log(
-        progress_callback,
-        f"Detected ordered series axis: {axis_label}.",
-    )
-    fingerprints_by_run = {
-        int(dataset.run_number): fingerprint_spectrum(dataset) for dataset in ordered_datasets
-    }
-    aggregate_fingerprint = _aggregate_fingerprints(
-        [fingerprints_by_run[int(dataset.run_number)] for dataset in ordered_datasets]
-    )
-    templates = list(
-        build_candidate_templates(
-            aggregate_fingerprint,
-            current_model=current_model,
-        )
-    )
-    _progress_log(
-        progress_callback,
-        f"Built candidate portfolio with {len(templates)} model families.",
-    )
-
-    if mixed_axes_warning:
-        _progress_log(progress_callback, mixed_axes_warning)
-        return replace(
-            GlobalFitWizardRecommendation(
-                series_axis_key=axis_key,
-                series_axis_label=axis_label,
-                mixed_axes_warning=mixed_axes_warning,
-                fingerprints_by_run=fingerprints_by_run,
-                dataset_order=tuple(int(dataset.run_number) for dataset in ordered_datasets),
-                templates=tuple(templates),
-                assessments=(),
-                metric=metric,
-                recommended_key=None,
-                comparable_keys=(),
-                summary=mixed_axes_warning,
-            ),
-            metric=metric,
-        )
-
-    current_parameter_types = current_parameter_types or {}
-    current_values = current_values or {}
-    parameter_bounds = parameter_bounds or {}
-
-    initial_assessments: dict[str, GlobalCandidateAssessment] = {}
-    template_contexts: dict[str, tuple[dict[int, ParameterSet], tuple[str, ...]]] = {}
-    recommendation_contexts: dict[
-        str,
-        tuple[
-            CandidateTemplate,
-            dict[int, ParameterSet],
-            tuple[str, ...],
-            set[str],
-            dict[
-                tuple[
-                    tuple[str, ...],
-                    tuple[str, ...],
-                    tuple[str, ...],
-                    tuple[str, ...],
-                    tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
-                ],
-                dict[int, ParameterSet],
-            ],
-        ],
-    ] = {}
-    single_run_prefit_caches: dict[
-        tuple[tuple[str, ...], tuple[str, ...], tuple[bool, ...], tuple[bool, ...]],
-        dict[
-            tuple[tuple[str, ...], tuple[tuple[int, tuple[tuple[str, float], ...]], ...]],
-            dict[int, ParameterSet],
-        ],
-    ] = {}
-    warm_start_caches: dict[
-        tuple[tuple[str, ...], tuple[str, ...], tuple[bool, ...], tuple[bool, ...]],
-        dict[
-            tuple[
-                tuple[str, ...],
-                tuple[str, ...],
-                tuple[str, ...],
-                tuple[str, ...],
-                tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
-            ],
-            dict[int, ParameterSet],
-        ],
-    ] = {}
-
-    def _formula_signature_for_template(
-        eval_template: CandidateTemplate,
-    ) -> tuple[
-        tuple[str, ...],
-        tuple[str, ...],
-        tuple[bool, ...],
-        tuple[bool, ...],
-    ]:
-        return (
-            tuple(eval_template.model.component_names),
-            tuple(eval_template.model.operators),
-            tuple(eval_template.model.open_parentheses),
-            tuple(eval_template.model.close_parentheses),
-        )
-
-    def _single_run_prefit_cache_for(
-        eval_template: CandidateTemplate,
-    ) -> dict[
-        tuple[tuple[str, ...], tuple[tuple[int, tuple[tuple[str, float], ...]], ...]],
-        dict[int, ParameterSet],
-    ]:
-        return single_run_prefit_caches.setdefault(
-            _formula_signature_for_template(eval_template),
-            {},
-        )
-
-    def _warm_start_cache_for(
-        eval_template: CandidateTemplate,
-    ) -> dict[
-        tuple[
-            tuple[str, ...],
-            tuple[str, ...],
-            tuple[str, ...],
-            tuple[str, ...],
-            tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
-        ],
-        dict[int, ParameterSet],
-    ]:
-        return warm_start_caches.setdefault(
-            _formula_signature_for_template(eval_template),
-            {},
-        )
-
-    def _initial_screen_task(
-        template: CandidateTemplate,
-    ) -> tuple[str, dict[int, ParameterSet], tuple[str, ...], GlobalCandidateAssessment]:
-        fixed_param_names = _fixed_param_names(template, current_parameter_types)
-        base_by_run = _initial_parameter_sets_for_candidate(
-            ordered_datasets,
-            fingerprints_by_run,
-            template,
-            current_values=current_values,
-            parameter_bounds=parameter_bounds,
-            fixed_param_names=fixed_param_names,
-        )
-        template_contexts[template.key] = (base_by_run, fixed_param_names)
-        initial_global_names, initial_local_names = _initial_parameter_roles(
-            template,
-            current_parameter_types=current_parameter_types,
-            fixed_param_names=fixed_param_names,
-        )
-        assignment_cache: dict[
-            tuple[tuple[str, ...], tuple[str, ...]],
-            GlobalCandidateAssessment,
-        ] = {}
-        assessment = _fit_exact_assignment(
-            ordered_datasets,
-            template,
-            fit_engine=FitEngine(),
-            base_by_run=base_by_run,
-            global_param_names=initial_global_names,
-            local_param_names=initial_local_names,
-            fixed_param_names=fixed_param_names,
-            axis_key=axis_key,
-            metric=metric,
-            cache=assignment_cache,
-            progress_callback=progress_callback,
-        )
-        return template.key, base_by_run, fixed_param_names, assessment
-
-    template_workers = _template_worker_count(len(templates))
-    if template_workers <= 1:
-        for index, template in enumerate(templates, start=1):
-            _progress_log(
-                progress_callback,
-                f"Initial screening {index}/{len(templates)}: {template.title}.",
-            )
-            key, base_by_run, fixed_param_names, assessment = _initial_screen_task(template)
-            template_contexts[key] = (base_by_run, fixed_param_names)
-            initial_assessments[key] = assessment
-    else:
-        _progress_log(
-            progress_callback,
-            f"Running initial screening with {template_workers} parallel workers.",
-        )
-        with ThreadPoolExecutor(
-            max_workers=template_workers,
-            thread_name_prefix="global-fit-screen",
-        ) as executor:
-            future_to_template = {}
-            for index, template in enumerate(templates, start=1):
-                _progress_log(
-                    progress_callback,
-                    f"Initial screening {index}/{len(templates)}: {template.title}.",
-                )
-                future_to_template[executor.submit(_initial_screen_task, template)] = template
-            for future in as_completed(future_to_template):
-                key, base_by_run, fixed_param_names, assessment = future.result()
-                template_contexts[key] = (base_by_run, fixed_param_names)
-                initial_assessments[key] = assessment
-
-    forced_shortlist_keys = _maybe_expand_oscillatory_shortlist(
-        ordered_datasets,
-        templates=templates,
-        aggregate_fingerprint=aggregate_fingerprint,
-        current_model=current_model,
-        fit_engine=FitEngine(),
-        initial_assessments=initial_assessments,
-        template_contexts=template_contexts,
-        fingerprints_by_run=fingerprints_by_run,
-        current_parameter_types=current_parameter_types,
-        current_values=current_values,
-        parameter_bounds=parameter_bounds,
-        axis_key=axis_key,
-        metric=metric,
-        progress_callback=progress_callback,
-    )
-    shortlist_keys = _shortlist_template_keys(
-        tuple(templates),
-        initial_assessments=initial_assessments,
-        metric=metric,
-        forced_keys=forced_shortlist_keys,
-    )
-    shortlisted_titles = [
-        template.title for template in templates if template.key in shortlist_keys
-    ]
-    _progress_log(
-        progress_callback,
-        "Shortlisted candidates for full parameter-role search: "
-        + ", ".join(shortlisted_titles),
-    )
-
-    def _full_template_search_task(template: CandidateTemplate) -> GlobalCandidateAssessment:
-        initial_assessment = initial_assessments[template.key]
-        base_by_run, fixed_param_names = template_contexts[template.key]
-        initial_global_names, initial_local_names = _initial_parameter_roles(
-            template,
-            current_parameter_types=current_parameter_types,
-            fixed_param_names=fixed_param_names,
-        )
-        fit_engine = FitEngine()
-        assignment_cache: dict[
-            tuple[tuple[str, ...], tuple[str, ...]],
-            GlobalCandidateAssessment,
-        ] = {
-            (
-                initial_assessment.global_param_names,
-                initial_assessment.local_param_names,
-            ): initial_assessment
-        }
-        shortlisted = _search_parameter_roles(
-            ordered_datasets,
-            template,
-            fit_engine=fit_engine,
-            base_by_run=base_by_run,
-            initial_global_names=initial_global_names,
-            initial_local_names=initial_local_names,
-            fixed_param_names=fixed_param_names,
-            axis_key=axis_key,
-            metric=metric,
-            cache=assignment_cache,
-            progress_callback=progress_callback,
-        )
-        return replace(shortlisted, parameter_recommendations=())
-
-    assessments_by_key: dict[str, GlobalCandidateAssessment] = {
-        template.key: initial_assessments[template.key]
-        for template in templates
-        if template.key not in shortlist_keys
-    }
-    shortlisted_templates = [
-        template for template in templates if template.key in shortlist_keys
-    ]
-    shortlisted_workers = _template_worker_count(len(shortlisted_templates))
-    if shortlisted_workers <= 1:
-        for template in shortlisted_templates:
-            _progress_log(
-                progress_callback,
-                f"Searching Global/Local parameter roles for {template.title}.",
-            )
-            assessments_by_key[template.key] = _full_template_search_task(template)
-    else:
-        _progress_log(
-            progress_callback,
-            "Running full parameter-role search with "
-            f"{shortlisted_workers} parallel workers.",
-        )
-        with ThreadPoolExecutor(
-            max_workers=shortlisted_workers,
-            thread_name_prefix="global-fit-search",
-        ) as executor:
-            future_to_template = {}
-            for template in shortlisted_templates:
-                _progress_log(
-                    progress_callback,
-                    f"Searching Global/Local parameter roles for {template.title}.",
-                )
-                future_to_template[executor.submit(_full_template_search_task, template)] = (
-                    template
-                )
-            for future in as_completed(future_to_template):
-                template = future_to_template[future]
-                assessments_by_key[template.key] = future.result()
-
-    recommendation = rerank_global_fit_wizard_recommendation(
-        GlobalFitWizardRecommendation(
-            series_axis_key=axis_key,
-            series_axis_label=axis_label,
-            mixed_axes_warning=mixed_axes_warning,
-            fingerprints_by_run=fingerprints_by_run,
-            dataset_order=tuple(int(dataset.run_number) for dataset in ordered_datasets),
-            templates=tuple(templates),
-            assessments=tuple(assessments_by_key[template.key] for template in templates),
-            metric=metric,
-            recommended_key=None,
-            comparable_keys=(),
-            summary="",
-        ),
-        metric,
-    )
-    for key in _parameter_recommendation_candidate_keys(recommendation):
-        assessment = assessments_by_key.get(key)
-        context = template_contexts.get(key)
-        template = next((candidate for candidate in templates if candidate.key == key), None)
-        if assessment is None or context is None or template is None:
-            continue
-        base_by_run, fixed_param_names = context
-        _progress_log(
-            progress_callback,
-            f"Building per-parameter role recommendations for {template.title}.",
-        )
-        parameter_recommendations = _build_parameter_recommendations(
-            ordered_datasets,
-            assessment,
-            template=template,
-            fit_engine=FitEngine(),
-            base_by_run=base_by_run,
-            fixed_param_names=fixed_param_names,
-            axis_key=axis_key,
-            metric=metric,
-            cache={
-                (assessment.global_param_names, assessment.local_param_names): assessment,
-            },
-            progress_callback=progress_callback,
-        )
-        assessments_by_key[key] = replace(
-            assessment,
-            parameter_recommendations=parameter_recommendations,
-        )
-
-    recommendation = rerank_global_fit_wizard_recommendation(
-        replace(
-            recommendation,
-            assessments=tuple(assessments_by_key[template.key] for template in templates),
-        ),
-        metric,
-    )
-    if recommendation.recommended_assessment is not None:
-        _progress_log(
-            progress_callback,
-            f"Recommended model: {recommendation.recommended_assessment.template.title}.",
-        )
-    else:
-        _progress_log(progress_callback, recommendation.summary)
-    return recommendation
-
-
 def build_global_fit_wizard_recommendation(
     datasets: list[MuonDataset],
     current_model: CompositeModel | None = None,
@@ -806,34 +1222,31 @@ def build_global_fit_wizard_recommendation(
     current_parameter_types: dict[str, str] | None = None,
     current_values: dict[str, float] | None = None,
     parameter_bounds: dict[str, tuple[float, float]] | None = None,
+    single_fit_recommendations_by_run: dict[int, FitWizardRecommendation] | None = None,
     metric: SelectionMetric = SelectionMetric.AICC,
     progress_callback: Callable[[str], None] | None = None,
-    search_strategy: str = "legacy",
     instrumentation: dict[str, object] | None = None,
+    selected_template_keys: tuple[str, ...] | None = None,
 ) -> GlobalFitWizardRecommendation:
     """Analyze one ordered dataset series and recommend a global-fit candidate."""
-    strategy = str(search_strategy).strip().lower()
-    _set_metric(instrumentation, "strategy", strategy)
-    if strategy in {"staged_v1", "staged_v2"}:
-        return _build_global_fit_wizard_recommendation_staged(
-            datasets,
-            current_model=current_model,
-            current_parameter_types=current_parameter_types,
-            current_values=current_values,
-            parameter_bounds=parameter_bounds,
-            metric=metric,
-            progress_callback=progress_callback,
-            search_strategy=strategy,
-            instrumentation=instrumentation,
-        )
-    return _build_global_fit_wizard_recommendation_legacy(
+    _set_metric(instrumentation, "strategy", "consolidated")
+    if instrumentation is not None:
+        instrumentation.setdefault("counters", {})
+        instrumentation.setdefault("staged_frontier_widths", [])
+        instrumentation.setdefault("relaxed_penalties", [])
+        instrumentation.setdefault("curvature_hint_sizes", [])
+        instrumentation.setdefault("minuit_edm", [])
+    return _build_global_fit_wizard_recommendation_staged(
         datasets,
         current_model=current_model,
         current_parameter_types=current_parameter_types,
         current_values=current_values,
         parameter_bounds=parameter_bounds,
+        single_fit_recommendations_by_run=single_fit_recommendations_by_run,
         metric=metric,
         progress_callback=progress_callback,
+        instrumentation=instrumentation,
+        selected_template_keys=selected_template_keys,
     )
 
 
@@ -844,22 +1257,29 @@ def _build_global_fit_wizard_recommendation_staged(
     current_parameter_types: dict[str, str] | None = None,
     current_values: dict[str, float] | None = None,
     parameter_bounds: dict[str, tuple[float, float]] | None = None,
+    single_fit_recommendations_by_run: dict[int, FitWizardRecommendation] | None = None,
     metric: SelectionMetric = SelectionMetric.AICC,
     progress_callback: Callable[[str], None] | None = None,
-    search_strategy: str = "staged_v1",
     instrumentation: dict[str, object] | None = None,
+    selected_template_keys: tuple[str, ...] | None = None,
 ) -> GlobalFitWizardRecommendation:
     if len(datasets) < 2:
         raise ValueError("Global fit wizard requires at least two datasets.")
 
+    search_strategy = _CONSOLIDATED_SEARCH_VARIANT
     progress_callback = _threadsafe_progress_callback(progress_callback)
     current_parameter_types = current_parameter_types or {}
     current_values = current_values or {}
     parameter_bounds = parameter_bounds or {}
+    available_single_fit_recommendations = (
+        single_fit_recommendations_by_run
+        if single_fit_recommendations_by_run is not None
+        else {}
+    )
 
     _progress_log(
         progress_callback,
-        f"Preparing {search_strategy} global fit wizard analysis for {len(datasets)} datasets.",
+        f"Preparing consolidated global fit wizard analysis for {len(datasets)} datasets.",
     )
     (
         ordered_datasets,
@@ -879,6 +1299,7 @@ def _build_global_fit_wizard_recommendation_staged(
             current_model=current_model,
         )
     )
+    template_by_key = {template.key: template for template in templates}
     if mixed_axes_warning:
         return replace(
             GlobalFitWizardRecommendation(
@@ -899,42 +1320,10 @@ def _build_global_fit_wizard_recommendation_staged(
 
     initial_assessments: dict[str, GlobalCandidateAssessment] = {}
     template_contexts: dict[str, tuple[dict[int, ParameterSet], tuple[str, ...]]] = {}
-    recommendation_contexts: dict[
-        str,
-        tuple[
-            CandidateTemplate,
-            dict[int, ParameterSet],
-            tuple[str, ...],
-            set[str],
-            dict[
-                tuple[
-                    tuple[str, ...],
-                    tuple[str, ...],
-                    tuple[str, ...],
-                    tuple[str, ...],
-                    tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
-                ],
-                dict[int, ParameterSet],
-            ],
-        ],
-    ] = {}
     single_run_prefit_caches: dict[
         tuple[tuple[str, ...], tuple[str, ...], tuple[bool, ...], tuple[bool, ...]],
         dict[
             tuple[tuple[str, ...], tuple[tuple[int, tuple[tuple[str, float], ...]], ...]],
-            dict[int, ParameterSet],
-        ],
-    ] = {}
-    warm_start_caches: dict[
-        tuple[tuple[str, ...], tuple[str, ...], tuple[bool, ...], tuple[bool, ...]],
-        dict[
-            tuple[
-                tuple[str, ...],
-                tuple[str, ...],
-                tuple[str, ...],
-                tuple[str, ...],
-                tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
-            ],
             dict[int, ParameterSet],
         ],
     ] = {}
@@ -961,23 +1350,6 @@ def _build_global_fit_wizard_recommendation_staged(
         dict[int, ParameterSet],
     ]:
         return single_run_prefit_caches.setdefault(
-            _formula_signature_for_template(eval_template),
-            {},
-        )
-
-    def _warm_start_cache_for(
-        eval_template: CandidateTemplate,
-    ) -> dict[
-        tuple[
-            tuple[str, ...],
-            tuple[str, ...],
-            tuple[str, ...],
-            tuple[str, ...],
-            tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
-        ],
-        dict[int, ParameterSet],
-    ]:
-        return warm_start_caches.setdefault(
             _formula_signature_for_template(eval_template),
             {},
         )
@@ -1017,368 +1389,139 @@ def _build_global_fit_wizard_recommendation_staged(
         )
         return template.key, base_by_run, fixed_param_names, assessment
 
-    template_workers = _template_worker_count(len(templates))
-    if template_workers <= 1:
-        for index, template in enumerate(templates, start=1):
-            _progress_log(
-                progress_callback,
-                f"Initial screening {index}/{len(templates)}: {template.title}.",
-            )
-            key, base_by_run, fixed_param_names, assessment = _initial_screen_task(template)
-            template_contexts[key] = (base_by_run, fixed_param_names)
-            initial_assessments[key] = assessment
-    else:
+    normalized_selected_template_keys = tuple(
+        key for key in (selected_template_keys or ()) if key in template_by_key
+    )
+    prescreen_templates = (
+        tuple(template_by_key[key] for key in normalized_selected_template_keys)
+        if normalized_selected_template_keys
+        else templates
+    )
+
+    expected_single_fit_template_keys = candidate_template_keys(templates)
+    use_single_fit_prescreen = bool(available_single_fit_recommendations) and all(
+        recommendation_template_keys(available_single_fit_recommendations.get(int(dataset.run_number)))
+        == expected_single_fit_template_keys
+        for dataset in ordered_datasets
+        if int(dataset.run_number) in available_single_fit_recommendations
+    ) and all(
+        int(dataset.run_number) in available_single_fit_recommendations
+        for dataset in ordered_datasets
+    )
+
+    if use_single_fit_prescreen:
         _progress_log(
             progress_callback,
-            f"Running staged initial screening with {template_workers} parallel workers.",
+            "Using completed per-run single-fit wizard tables for aggregated candidate pre-screening.",
         )
-        with ThreadPoolExecutor(
-            max_workers=template_workers,
-            thread_name_prefix="global-fit-staged-screen",
-        ) as executor:
-            future_to_template = {}
-            for index, template in enumerate(templates, start=1):
-                _progress_log(
-                    progress_callback,
-                    f"Initial screening {index}/{len(templates)}: {template.title}.",
-                )
-                future_to_template[executor.submit(_initial_screen_task, template)] = template
-            for future in as_completed(future_to_template):
-                key, base_by_run, fixed_param_names, assessment = future.result()
-                template_contexts[key] = (base_by_run, fixed_param_names)
-                initial_assessments[key] = assessment
-
-    forced_shortlist_keys = _maybe_expand_oscillatory_shortlist(
-        ordered_datasets,
-        templates=templates,
-        aggregate_fingerprint=aggregate_fingerprint,
-        current_model=current_model,
-        fit_engine=FitEngine(),
-        initial_assessments=initial_assessments,
-        template_contexts=template_contexts,
-        fingerprints_by_run=fingerprints_by_run,
-        current_parameter_types=current_parameter_types,
-        current_values=current_values,
-        parameter_bounds=parameter_bounds,
-        axis_key=axis_key,
-        metric=metric,
-        progress_callback=progress_callback,
-    )
-
-    shortlist_keys = _shortlist_template_keys(
-        tuple(templates),
-        initial_assessments=initial_assessments,
-        metric=metric,
-        forced_keys=forced_shortlist_keys,
-    )
-    orchestrator = GlobalSearchOrchestrator()
-
-    def _template_for_structure(
-        source_template: CandidateTemplate,
-        structure,
-    ) -> CandidateTemplate:
-        title = source_template.title
-        if (
-            tuple(structure.model.component_names),
-            tuple(structure.model.operators),
-            tuple(structure.model.open_parentheses),
-            tuple(structure.model.close_parentheses),
-        ) != (
-            tuple(source_template.model.component_names),
-            tuple(source_template.model.operators),
-            tuple(source_template.model.open_parentheses),
-            tuple(source_template.model.close_parentheses),
-        ):
-            title = structure.model.formula_string()
-        return CandidateTemplate(
-            key=source_template.key,
-            title=title,
-            category=source_template.category,
-            rationale=source_template.rationale,
-            model=structure.model,
-            is_current_model_baseline=source_template.is_current_model_baseline,
-        )
-
-    def _staged_assessment_for_template(
-        template: CandidateTemplate,
-        base_by_run: dict[int, ParameterSet],
-        fixed_param_names: tuple[str, ...],
-    ) -> GlobalCandidateAssessment:
-        fit_engine = FitEngine()
-        baseline_assessment = initial_assessments[template.key]
-        exact_caches: dict[
-            tuple[tuple[str, ...], tuple[str, ...], tuple[bool, ...], tuple[bool, ...]],
-            dict[tuple[tuple[str, ...], tuple[str, ...]], GlobalCandidateAssessment],
-        ] = {}
-        baseline_by_formula: dict[
-            tuple[tuple[str, ...], tuple[str, ...], tuple[bool, ...], tuple[bool, ...]],
-            GlobalCandidateAssessment,
-        ] = {}
-        prefit_base_by_run = _single_run_prefit_parameter_sets(
+        initial_assessments, template_contexts = _build_single_fit_prescreen_assessments(
             ordered_datasets,
-            template,
-            fit_engine=fit_engine,
-            base_by_run=base_by_run,
-            fixed_param_names=fixed_param_names,
-            progress_callback=progress_callback,
-            instrumentation=instrumentation,
-            cache=_single_run_prefit_cache_for(template),
-        )
-        structure = compile_legacy_structure(
-            template,
+            fingerprints_by_run,
+            prescreen_templates,
+            single_fit_recommendations_by_run=available_single_fit_recommendations,
             current_parameter_types=current_parameter_types,
             current_values=current_values,
             parameter_bounds=parameter_bounds,
-            treat_nonfixed_roles_as_hints=True,
-        )
-        sample_count = int(sum(dataset.n_points for dataset in ordered_datasets))
-
-        def _exact_cache_for(
-            eval_template: CandidateTemplate,
-        ) -> dict[tuple[tuple[str, ...], tuple[str, ...]], GlobalCandidateAssessment]:
-            signature = _formula_signature_for_template(eval_template)
-            return exact_caches.setdefault(signature, {})
-
-        def _baseline_for_structure(
-            eval_template: CandidateTemplate,
-            *,
-            eval_base_by_run: dict[int, ParameterSet],
-            fixed_names: tuple[str, ...],
-        ) -> GlobalCandidateAssessment:
-            signature = _formula_signature_for_template(eval_template)
-            cached_baseline = baseline_by_formula.get(signature)
-            if cached_baseline is not None:
-                return cached_baseline
-
-            template_signature = _formula_signature_for_template(template)
-            if signature == template_signature:
-                baseline_by_formula[signature] = baseline_assessment
-                return baseline_assessment
-
-            all_global_names = tuple(
-                name for name in eval_template.model.param_names if name not in fixed_names
-            )
-            baseline = _fit_exact_assignment(
-                ordered_datasets,
-                eval_template,
-                fit_engine=fit_engine,
-                base_by_run=eval_base_by_run,
-                global_param_names=all_global_names,
-                local_param_names=(),
-                fixed_param_names=fixed_names,
-                axis_key=axis_key,
-                metric=metric,
-                cache=_exact_cache_for(eval_template),
-                warm_start_by_run=None,
-                progress_callback=progress_callback,
-            )
-            baseline_by_formula[signature] = baseline
-            return baseline
-
-        def _evaluate(candidate) -> SearchEvaluation:
-            eval_template = _template_for_structure(template, candidate.structure)
-            eval_base_by_run = build_parameter_sets_for_structure(
-                candidate.structure,
-                base_by_run=prefit_base_by_run,
-                seed_by_run=candidate.initial_params_by_run,
-            )
-            global_names, local_names, fixed_names = compile_structure_to_legacy_roles(
-                candidate.structure
-            )
-            exact_cache = _exact_cache_for(eval_template)
-            warm_start_by_run = eval_base_by_run
-            curvature_source: GlobalCandidateAssessment | None = None
-            baseline_for_eval = _baseline_for_structure(
-                eval_template,
-                eval_base_by_run=eval_base_by_run,
-                fixed_names=fixed_names,
-            )
-            staged_assessment: GlobalCandidateAssessment | None = None
-            if len(local_names) >= 2 and baseline_for_eval.is_successful:
-                staged_assessment, seed_assessment = _staged_multi_local_assignment(
-                    ordered_datasets,
-                    eval_template,
-                    fit_engine=fit_engine,
-                    base_by_run=eval_base_by_run,
-                    baseline_assessment=baseline_for_eval,
-                    target_local_names=local_names,
-                    fixed_param_names=fixed_names,
-                    axis_key=axis_key,
-                    metric=metric,
-                    cache=exact_cache,
-                    progress_callback=progress_callback,
-                    search_strategy=search_strategy,
-                    instrumentation=instrumentation,
-                    prefit_base_by_run=eval_base_by_run,
-                    warm_start_cache=_warm_start_cache_for(eval_template),
-                )
-                if staged_assessment is None:
-                    curvature_source = seed_assessment
-                    warm_start_by_run = _warm_start_parameter_sets(
-                        ordered_datasets,
-                        assessment=seed_assessment,
-                        base_by_run=eval_base_by_run,
-                        target_global_names=global_names,
-                        target_local_names=local_names,
-                        fit_engine=fit_engine,
-                        template=eval_template,
-                        progress_callback=progress_callback,
-                        cache=_warm_start_cache_for(eval_template),
-                    )
-                else:
-                    curvature_source = staged_assessment
-            elif baseline_for_eval.is_successful:
-                curvature_source = baseline_for_eval
-            assessment = staged_assessment
-            if assessment is None:
-                assessment = _fit_exact_assignment(
-                    ordered_datasets,
-                    eval_template,
-                    fit_engine=fit_engine,
-                    base_by_run=eval_base_by_run,
-                    global_param_names=global_names,
-                    local_param_names=local_names,
-                    fixed_param_names=fixed_names,
-                    axis_key=axis_key,
-                    metric=metric,
-                    cache=exact_cache,
-                    warm_start_by_run=warm_start_by_run,
-                    progress_callback=progress_callback,
-                    search_strategy=search_strategy,
-                    instrumentation=instrumentation,
-                    initial_step_sizes=_step_hints_from_assessment(
-                        ordered_datasets,
-                        curvature_source,
-                        target_global_names=global_names,
-                        target_local_names=local_names,
-                    ),
-                )
-            total_chi2 = float(
-                sum(result.chi_squared for result in assessment.fit_results_by_run.values())
-            )
-            score = score_exact_candidate(
-                total_chi2,
-                assessment.parameter_count,
-                sample_count,
-                primary_metric=metric.value,
-            )
-            return SearchEvaluation(
-                candidate=candidate,
-                score=score,
-                payload=assessment,
-            )
-
-        evaluation, diagnostics = orchestrator.search(
-            structure=structure,
-            datasets=ordered_datasets,
-            base_by_run=prefit_base_by_run,
-            evaluator=_evaluate,
-            progress_callback=progress_callback,
-            config=_staged_orchestrator_config(
-                search_strategy=search_strategy,
-                metric=SelectionMetric.BIC,
-                instrumentation=instrumentation,
-            ),
-        )
-        for message in diagnostics:
-            _progress_log(progress_callback, f"{template.title}: {message}")
-        assessment = evaluation.payload
-        if not isinstance(assessment, GlobalCandidateAssessment):
-            return initial_assessments[template.key]
-
-        eval_template = _template_for_structure(template, evaluation.candidate.structure)
-        eval_base_by_run = build_parameter_sets_for_structure(
-            evaluation.candidate.structure,
-            base_by_run=prefit_base_by_run,
-            seed_by_run=evaluation.candidate.initial_params_by_run,
-        )
-        assessment = _prune_local_assignments(
-            ordered_datasets,
-            eval_template,
-            fit_engine=fit_engine,
-            base_by_run=eval_base_by_run,
-            fixed_param_names=assessment.fixed_param_names,
             axis_key=axis_key,
             metric=metric,
-            cache={
-                (assessment.global_param_names, assessment.local_param_names): assessment,
-            },
+            fit_engine=FitEngine(),
             progress_callback=progress_callback,
-            incumbent=assessment,
-            warm_start_cache=_warm_start_cache_for(eval_template),
+            repair_partial_incomplete=not normalized_selected_template_keys,
         )
-        fixed_names = assessment.fixed_param_names
-        recommendation_contexts[template.key] = (
-            eval_template,
-            eval_base_by_run,
-            fixed_names,
-            (
-                set(evaluation.candidate.ambiguous_param_names)
-                | {
-                    name
-                    for name in assessment.local_param_names
-                    if parameter_localisation_priority(name) >= 3
-                }
-            ),
-            _warm_start_cache_for(eval_template),
+    else:
+        template_workers = _template_worker_count(len(prescreen_templates))
+        if template_workers <= 1:
+            for index, template in enumerate(prescreen_templates, start=1):
+                _progress_log(
+                    progress_callback,
+                    f"Initial screening {index}/{len(prescreen_templates)}: {template.title}.",
+                )
+                key, base_by_run, fixed_param_names, assessment = _initial_screen_task(template)
+                template_contexts[key] = (base_by_run, fixed_param_names)
+                initial_assessments[key] = assessment
+        else:
+            _progress_log(
+                progress_callback,
+                f"Running staged initial screening with {template_workers} parallel workers.",
+            )
+            with ThreadPoolExecutor(
+                max_workers=template_workers,
+                thread_name_prefix="global-fit-staged-screen",
+            ) as executor:
+                future_to_template = {}
+                for index, template in enumerate(prescreen_templates, start=1):
+                    _progress_log(
+                        progress_callback,
+                        f"Initial screening {index}/{len(prescreen_templates)}: {template.title}.",
+                    )
+                    future_to_template[executor.submit(_initial_screen_task, template)] = template
+                for future in as_completed(future_to_template):
+                    key, base_by_run, fixed_param_names, assessment = future.result()
+                    template_contexts[key] = (base_by_run, fixed_param_names)
+                    initial_assessments[key] = assessment
+    if normalized_selected_template_keys:
+        shortlist_keys = set(normalized_selected_template_keys)
+        _progress_log(
+            progress_callback,
+            "Running coupled global optimisation for the selected candidates: "
+            + ", ".join(
+                template.title for template in templates if template.key in shortlist_keys
+            )
+            + ".",
         )
-        return replace(
-            assessment,
-            fixed_param_names=fixed_names,
-            parameter_recommendations=(),
+    else:
+        forced_shortlist_keys = _maybe_expand_oscillatory_shortlist(
+            ordered_datasets,
+            templates=templates,
+            aggregate_fingerprint=aggregate_fingerprint,
+            current_model=current_model,
+            fit_engine=FitEngine(),
+            initial_assessments=initial_assessments,
+            template_contexts=template_contexts,
+            fingerprints_by_run=fingerprints_by_run,
+            current_parameter_types=current_parameter_types,
+            current_values=current_values,
+            parameter_bounds=parameter_bounds,
+            axis_key=axis_key,
+            metric=metric,
+            progress_callback=progress_callback,
         )
 
-    assessments_by_key: dict[str, GlobalCandidateAssessment] = {
-        template.key: initial_assessments[template.key]
-        for template in templates
-        if template.key not in shortlist_keys
-    }
+        shortlist_keys = _shortlist_template_keys(
+            tuple(templates),
+            initial_assessments=initial_assessments,
+            metric=metric,
+            forced_keys=forced_shortlist_keys,
+        )
     shortlisted_templates = [
         template for template in templates if template.key in shortlist_keys
     ]
-    shortlisted_workers = _template_worker_count(len(shortlisted_templates))
-    if shortlisted_workers <= 1:
-        for template in shortlisted_templates:
-            _progress_log(
-                progress_callback,
-                f"Running staged role search for {template.title}.",
-            )
-            base_by_run, fixed_param_names = template_contexts[template.key]
-            assessments_by_key[template.key] = _staged_assessment_for_template(
-                template,
-                base_by_run,
-                fixed_param_names,
-            )
-    else:
+    if shortlisted_templates:
         _progress_log(
             progress_callback,
-            "Running staged role search with "
-            f"{shortlisted_workers} parallel workers.",
+            "Coupled global optimisation will evaluate "
+            f"{len(shortlisted_templates)} candidate(s) "
+            "via exhaustive global/local enumeration.",
         )
-        with ThreadPoolExecutor(
-            max_workers=shortlisted_workers,
-            thread_name_prefix="global-fit-staged-search",
-        ) as executor:
-            future_to_template = {}
-            for template in shortlisted_templates:
-                _progress_log(
-                    progress_callback,
-                    f"Running staged role search for {template.title}.",
-                )
-                base_by_run, fixed_param_names = template_contexts[template.key]
-                future_to_template[
-                    executor.submit(
-                        _staged_assessment_for_template,
-                        template,
-                        base_by_run,
-                        fixed_param_names,
-                    )
-                ] = template
-            for future in as_completed(future_to_template):
-                template = future_to_template[future]
-                assessments_by_key[template.key] = future.result()
+    optimized_assessments = _run_exhaustive_wavefront_search(
+        ordered_datasets,
+        shortlisted_templates=shortlisted_templates,
+        template_contexts=template_contexts,
+        axis_key=axis_key,
+        metric=metric,
+        progress_callback=progress_callback,
+        search_strategy=search_strategy,
+        instrumentation=instrumentation,
+        single_run_prefit_cache_for=_single_run_prefit_cache_for,
+    )
 
-    recommendation = rerank_global_fit_wizard_recommendation(
+    prescreen_assessments = tuple(
+        initial_assessments[template.key]
+        for template in prescreen_templates
+        if template.key in initial_assessments
+    )
+
+    return rerank_global_fit_wizard_recommendation(
         GlobalFitWizardRecommendation(
             series_axis_key=axis_key,
             series_axis_label=axis_label,
@@ -1386,50 +1529,11 @@ def _build_global_fit_wizard_recommendation_staged(
             fingerprints_by_run=fingerprints_by_run,
             dataset_order=tuple(int(dataset.run_number) for dataset in ordered_datasets),
             templates=tuple(templates),
-            assessments=tuple(assessments_by_key[template.key] for template in templates),
+            assessments=prescreen_assessments + optimized_assessments,
             metric=metric,
             recommended_key=None,
             comparable_keys=(),
             summary="",
-        ),
-        metric,
-    )
-    for key in _parameter_recommendation_candidate_keys(recommendation):
-        assessment = assessments_by_key.get(key)
-        context = recommendation_contexts.get(key)
-        if assessment is None or context is None:
-            continue
-        eval_template, eval_base_by_run, fixed_names, names_to_test, warm_start_cache = context
-        _progress_log(
-            progress_callback,
-            f"Building per-parameter role recommendations for {eval_template.title}.",
-        )
-        parameter_recommendations = _build_parameter_recommendations(
-            ordered_datasets,
-            assessment,
-            template=eval_template,
-            fit_engine=FitEngine(),
-            base_by_run=eval_base_by_run,
-            fixed_param_names=fixed_names,
-            axis_key=axis_key,
-            metric=metric,
-            cache={
-                (assessment.global_param_names, assessment.local_param_names): assessment,
-            },
-            progress_callback=progress_callback,
-            names_to_test=names_to_test,
-            warm_start_cache=warm_start_cache,
-        )
-        assessments_by_key[key] = replace(
-            assessment,
-            fixed_param_names=fixed_names,
-            parameter_recommendations=parameter_recommendations,
-        )
-
-    return rerank_global_fit_wizard_recommendation(
-        replace(
-            recommendation,
-            assessments=tuple(assessments_by_key[template.key] for template in templates),
         ),
         metric,
     )
@@ -1455,14 +1559,27 @@ def rerank_global_fit_wizard_recommendation(
         if assessment.is_successful and assessment.residual_gate_passed
     ]
     if not passing:
+        optimized_assessments = recommendation.optimized_assessments()
+        if not optimized_assessments:
+            return replace(
+                recommendation,
+                metric=metric,
+                recommended_key=None,
+                comparable_keys=(),
+                summary=(
+                    "Single-fit screening complete. These scores come from independent "
+                    "per-dataset fits only and have not yet been optimized for coupled "
+                    "global fitting. Select one or more candidates to continue."
+                ),
+            )
         return replace(
             recommendation,
             metric=metric,
             recommended_key=None,
             comparable_keys=(),
             summary=(
-                "No global candidate passed the automatic residual and continuity "
-                "checks. Inspect the comparison table before applying a model."
+                "No globally optimized candidate passed the automatic residual and "
+                "continuity checks. Inspect the optimized-results table before applying a model."
             ),
         )
 
@@ -1488,9 +1605,9 @@ def rerank_global_fit_wizard_recommendation(
                 runner_up.additive_terms,
             )
             preferred = runner_up if runner_up_complexity < primary_complexity else primary
-            alternate = runner_up if preferred.template.key == primary.template.key else primary
+            alternate = primary if preferred.selection_key != primary.selection_key else runner_up
             primary = preferred
-            comparable_keys = (preferred.template.key, alternate.template.key)
+            comparable_keys = (preferred.selection_key, alternate.selection_key)
 
     compare_summary = (
         ", with a similarly scoring alternative to inspect." if comparable_keys else "."
@@ -1498,10 +1615,40 @@ def rerank_global_fit_wizard_recommendation(
     return replace(
         recommendation,
         metric=metric,
-        recommended_key=primary.template.key,
+        recommended_key=primary.selection_key,
         comparable_keys=comparable_keys,
-        summary=(f"Recommended: {primary.template.title} by {metric.value}{compare_summary}"),
+        summary=(
+            f"Recommended globally optimized candidate: {primary.template.title} "
+            f"by {metric.value}{compare_summary}"
+        ),
     )
+
+
+def merge_global_fit_wizard_recommendations(
+    base: GlobalFitWizardRecommendation,
+    updates: GlobalFitWizardRecommendation,
+) -> GlobalFitWizardRecommendation:
+    """Merge optimized assessments from one run back into an existing workflow snapshot."""
+    updated_template_keys = {
+        assessment.template.key
+        for assessment in updates.assessments
+        if not assessment.prescreen_only
+    }
+    merged_assessments = [
+        assessment
+        for assessment in base.assessments
+        if assessment.prescreen_only
+        or assessment.template.key not in updated_template_keys
+    ]
+    merged_assessments.extend(
+        assessment for assessment in updates.assessments if not assessment.prescreen_only
+    )
+    merged = replace(
+        base,
+        metric=updates.metric,
+        assessments=tuple(merged_assessments),
+    )
+    return rerank_global_fit_wizard_recommendation(merged, updates.metric)
 
 
 def _parameter_recommendation_candidate_keys(
@@ -1930,6 +2077,8 @@ def _serialize_global_candidate_assessment(
             str(run_number): _serialize_component_curves(curves)
             for run_number, curves in assessment.component_curves_by_run.items()
         },
+        "prescreen_only": bool(assessment.prescreen_only),
+        "assessment_key": assessment.assessment_key,
     }
 
 
@@ -1998,6 +2147,12 @@ def _deserialize_global_candidate_assessment(
             selected_score=float(payload.get("selected_score", float("inf"))),
             fitted_curves_by_run=fitted_curves_by_run,
             component_curves_by_run=component_curves_by_run,
+            prescreen_only=bool(payload.get("prescreen_only", False)),
+            assessment_key=(
+                str(payload["assessment_key"])
+                if payload.get("assessment_key") is not None
+                else None
+            ),
         )
     except (TypeError, ValueError):
         return None
@@ -2914,6 +3069,193 @@ def _staged_multi_local_assignment(
     return None, best_partial
 
 
+def _staged_globalization_assignment(
+    datasets: list[MuonDataset],
+    template: CandidateTemplate,
+    *,
+    fit_engine: FitEngine,
+    base_by_run: dict[int, ParameterSet],
+    fixed_param_names: tuple[str, ...],
+    axis_key: str,
+    metric: SelectionMetric,
+    cache: dict[tuple[tuple[str, ...], tuple[str, ...]], GlobalCandidateAssessment],
+    progress_callback: Callable[[str], None] | None = None,
+    instrumentation: dict[str, object] | None = None,
+    warm_start_cache: dict[
+        tuple[
+            tuple[str, ...],
+            tuple[str, ...],
+            tuple[str, ...],
+            tuple[str, ...],
+            tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
+        ],
+        dict[int, ParameterSet],
+    ] | None = None,
+) -> GlobalCandidateAssessment | None:
+    promotable_names = tuple(
+        name for name in template.model.param_names if name not in fixed_param_names
+    )
+    if not promotable_names:
+        return None
+
+    _progress_log(
+        progress_callback,
+        f"{template.title}: starting direct staged globalization from all-local prefits.",
+    )
+    incumbent = _fit_exact_assignment(
+        datasets,
+        template,
+        fit_engine=fit_engine,
+        base_by_run=base_by_run,
+        global_param_names=(),
+        local_param_names=promotable_names,
+        fixed_param_names=fixed_param_names,
+        axis_key=axis_key,
+        metric=metric,
+        cache=cache,
+        warm_start_by_run=base_by_run,
+        progress_callback=progress_callback,
+        search_strategy="staged_v2",
+        instrumentation=instrumentation,
+    )
+    if not incumbent.is_successful:
+        _progress_log(
+            progress_callback,
+            f"{template.title}: all-local globalization baseline failed.",
+        )
+        return None
+
+    while incumbent.local_param_names:
+        ranked_names = _globalization_candidate_order(
+            datasets,
+            incumbent,
+            remaining=incumbent.local_param_names,
+        )
+        if not ranked_names:
+            break
+
+        stage_names = ranked_names[: _STAGED_GLOBALIZATION_CANDIDATES_PER_STEP]
+        best_candidate: GlobalCandidateAssessment | None = None
+        for name in stage_names:
+            candidate_local_names = tuple(
+                sorted(local_name for local_name in incumbent.local_param_names if local_name != name)
+            )
+            candidate_global_names = tuple(
+                param_name
+                for param_name in template.model.param_names
+                if param_name not in fixed_param_names and param_name not in candidate_local_names
+            )
+            candidate = _fit_exact_assignment(
+                datasets,
+                template,
+                fit_engine=fit_engine,
+                base_by_run=base_by_run,
+                global_param_names=candidate_global_names,
+                local_param_names=candidate_local_names,
+                fixed_param_names=fixed_param_names,
+                axis_key=axis_key,
+                metric=metric,
+                cache=cache,
+                warm_start_by_run=_warm_start_parameter_sets(
+                    datasets,
+                    assessment=incumbent,
+                    base_by_run=base_by_run,
+                    target_global_names=candidate_global_names,
+                    target_local_names=candidate_local_names,
+                    fit_engine=fit_engine,
+                    template=template,
+                    progress_callback=progress_callback,
+                    cache=warm_start_cache,
+                ),
+                progress_callback=progress_callback,
+                search_strategy="staged_v2",
+                instrumentation=instrumentation,
+                initial_step_sizes=_step_hints_from_assessment(
+                    datasets,
+                    incumbent,
+                    target_global_names=candidate_global_names,
+                    target_local_names=candidate_local_names,
+                ),
+            )
+            if not candidate.is_successful:
+                continue
+            if best_candidate is None or _assessment_sort_key(candidate, metric) < _assessment_sort_key(
+                best_candidate,
+                metric,
+            ):
+                best_candidate = candidate
+
+        if best_candidate is None or not _prefer_globalization_change(
+            best_candidate,
+            incumbent,
+            metric=metric,
+        ):
+            break
+
+        promoted_names = sorted(
+            name
+            for name in best_candidate.global_param_names
+            if name not in incumbent.global_param_names
+        )
+        if promoted_names:
+            _progress_log(
+                progress_callback,
+                f"{template.title}: promoted {', '.join(promoted_names)} to Global; "
+                f"{metric.value} improved to {best_candidate.metric_value(metric):.3f}.",
+            )
+        incumbent = best_candidate
+
+    return incumbent
+
+
+def _globalization_candidate_order(
+    datasets: list[MuonDataset],
+    assessment: GlobalCandidateAssessment,
+    *,
+    remaining: tuple[str, ...],
+) -> tuple[str, ...]:
+    scored_names: list[tuple[float, float, float, float, str]] = []
+    for name in remaining:
+        total_variation, roughness = _parameter_trace_roughness(
+            datasets,
+            assessment,
+            name,
+        )
+        effective_variation = (total_variation + roughness) / max(
+            localisation_threshold_scale(name),
+            1e-9,
+        )
+        scored_names.append(
+            (
+                effective_variation,
+                total_variation + roughness,
+                -float(_parameter_localisation_priority(name)),
+                -localisation_threshold_scale(name),
+                name,
+            )
+        )
+    scored_names.sort()
+    return tuple(name for *_unused, name in scored_names)
+
+
+def _prefer_globalization_change(
+    candidate: GlobalCandidateAssessment,
+    incumbent: GlobalCandidateAssessment,
+    *,
+    metric: SelectionMetric,
+) -> bool:
+    if not candidate.is_successful:
+        return False
+    if incumbent.residual_gate_passed and not candidate.residual_gate_passed:
+        return False
+    score_delta = incumbent.metric_value(metric) - candidate.metric_value(metric)
+    if score_delta > 1e-6:
+        return True
+    if not incumbent.residual_gate_passed and candidate.residual_gate_passed and score_delta >= -1e-6:
+        return True
+    return False
+
+
 def _fit_exact_assignment(
     datasets: list[MuonDataset],
     template: CandidateTemplate,
@@ -2934,7 +3276,7 @@ def _fit_exact_assignment(
 ) -> GlobalCandidateAssessment:
     cache_key = (tuple(global_param_names), tuple(local_param_names))
     cached = cache.get(cache_key)
-    if cached is not None:
+    if cached is not None and cached.is_successful:
         _record_counter(instrumentation, "exact_fit_cache_hits")
         return cached
     _record_counter(instrumentation, "exact_fit_invocations")
@@ -2970,82 +3312,160 @@ def _fit_exact_assignment(
         )
         for attempt in attempt_variants
     )
-    best_results: dict[int, FitResult] | None = None
-    best_global = ParameterSet()
-    best_score = float("inf")
-    best_failure_message = "No fit attempts were created."
-    step_hints = dict(initial_step_sizes or {})
+    difficult_assignment = free_count >= 20 or len(local_param_names) >= 2
 
-    for variant_index, initial_params in enumerate(attempt_variants, start=1):
+    def _evaluate_attempt_variants(
+        variants: tuple[dict[int, ParameterSet], ...],
+        *,
+        initial_hints: dict[str, float],
+    ) -> tuple[
+        dict[int, FitResult] | None,
+        ParameterSet,
+        float,
+        str,
+        dict[str, float],
+    ]:
+        local_best_results: dict[int, FitResult] | None = None
+        local_best_global = ParameterSet()
+        local_best_score = float("inf")
+        local_best_failure_message = "No fit attempts were created."
+        local_step_hints = dict(initial_hints)
+
+        for variant_index, initial_params in enumerate(variants, start=1):
+            _progress_log(
+                progress_callback,
+                f"{template.title}: trying initial parameter variant "
+                f"{variant_index}/{len(variants)}.",
+            )
+            staged_initial_params = _staged_assignment_seed(
+                datasets,
+                template,
+                fit_engine=fit_engine,
+                global_param_names=global_param_names,
+                local_param_names=local_param_names,
+                initial_params=initial_params,
+                progress_callback=progress_callback,
+                max_cycles=4 if search_strategy == "staged_v2" else 2,
+                include_mixed_polish=search_strategy == "staged_v2",
+                instrumentation=instrumentation,
+            )
+            call_budget = _global_fit_call_budget(
+                datasets,
+                staged_initial_params,
+                global_param_names=global_param_names,
+                local_param_names=local_param_names,
+                phase="full",
+            )
+            _record_counter(instrumentation, "global_fit_calls")
+            if local_step_hints:
+                _record_counter(instrumentation, "curvature_hint_applications")
+                _append_metric(instrumentation, "curvature_hint_sizes", len(local_step_hints))
+            results_by_run, fitted_global = fit_engine.global_fit(
+                datasets,
+                template.model.function,
+                list(global_param_names),
+                list(local_param_names),
+                staged_initial_params,
+                max_calls=call_budget,
+                migrad_iterations=7 if difficult_assignment else 5,
+                use_simplex_rescue=difficult_assignment,
+                minuit_strategy=2 if difficult_assignment else None,
+                minuit_tol=0.05 if difficult_assignment else None,
+                initial_step_sizes=local_step_hints or None,
+            )
+            _record_global_fit_diagnostics(instrumentation, results_by_run)
+            results_by_run = _canonicalize_fit_results_by_run(
+                results_by_run,
+                template=template,
+                global_param_names=global_param_names,
+                local_param_names=local_param_names,
+                fixed_param_names=fixed_param_names,
+            )
+            if all(result.success for result in results_by_run.values()):
+                total_chi2 = float(sum(result.chi_squared for result in results_by_run.values()))
+                if total_chi2 < local_best_score:
+                    local_best_score = total_chi2
+                    local_best_results = results_by_run
+                    local_best_global = fitted_global
+                    local_step_hints = _step_hints_from_fit_results(
+                        datasets,
+                        results_by_run,
+                        target_global_names=global_param_names,
+                        target_local_names=local_param_names,
+                    )
+                    continue
+            if local_best_results is None:
+                local_best_results = results_by_run
+                local_best_global = fitted_global
+            failure_message = _assignment_failure_message(results_by_run)
+            if failure_message:
+                local_best_failure_message = failure_message
+
+        return (
+            local_best_results,
+            local_best_global,
+            local_best_score,
+            local_best_failure_message,
+            local_step_hints,
+        )
+
+    best_results, best_global, best_score, best_failure_message, step_hints = _evaluate_attempt_variants(
+        attempt_variants,
+        initial_hints=dict(initial_step_sizes or {}),
+    )
+
+    fallback_attempt_variants: tuple[dict[int, ParameterSet], ...] = ()
+    fit_success = best_results is not None and all(result.success for result in best_results.values())
+    if not fit_success and warm_start_by_run is not None:
+        fallback_attempt_variants = _assignment_attempt_variants(
+            base_by_run,
+            template,
+            warm_start_by_run=None,
+        )
+        fallback_attempt_variants = _trim_assignment_attempt_variants(
+            fallback_attempt_variants,
+            free_count=free_count,
+        )
+        fallback_attempt_variants = tuple(
+            _canonicalize_parameter_sets(
+                attempt,
+                template=template,
+                global_param_names=global_param_names,
+                local_param_names=local_param_names,
+                fixed_param_names=fixed_param_names,
+            )
+            for attempt in fallback_attempt_variants
+        )
         _progress_log(
             progress_callback,
-            f"{template.title}: trying initial parameter variant "
-            f"{variant_index}/{len(attempt_variants)}.",
+            f"{template.title}: retrying assignment from prefit-only seeds.",
         )
-        staged_initial_params = _staged_assignment_seed(
-            datasets,
-            template,
-            fit_engine=fit_engine,
-            global_param_names=global_param_names,
-            local_param_names=local_param_names,
-            initial_params=initial_params,
-            progress_callback=progress_callback,
-            max_cycles=4 if search_strategy == "staged_v2" else 2,
-            include_mixed_polish=search_strategy == "staged_v2",
-            instrumentation=instrumentation,
+        (
+            fallback_results,
+            fallback_global,
+            fallback_score,
+            fallback_failure_message,
+            fallback_step_hints,
+        ) = _evaluate_attempt_variants(
+            fallback_attempt_variants,
+            initial_hints={},
         )
-        call_budget = _global_fit_call_budget(
-            datasets,
-            staged_initial_params,
-            global_param_names=global_param_names,
-            local_param_names=local_param_names,
-            phase="full",
+        fallback_success = fallback_results is not None and all(
+            result.success for result in fallback_results.values()
         )
-        difficult_assignment = free_count >= 20 or len(local_param_names) >= 2
-        _record_counter(instrumentation, "global_fit_calls")
-        if step_hints:
-            _record_counter(instrumentation, "curvature_hint_applications")
-            _append_metric(instrumentation, "curvature_hint_sizes", len(step_hints))
-        results_by_run, fitted_global = fit_engine.global_fit(
-            datasets,
-            template.model.function,
-            list(global_param_names),
-            list(local_param_names),
-            staged_initial_params,
-            max_calls=call_budget,
-            migrad_iterations=7 if difficult_assignment else 5,
-            use_simplex_rescue=difficult_assignment,
-            minuit_strategy=2 if difficult_assignment else None,
-            minuit_tol=0.05 if difficult_assignment else None,
-            initial_step_sizes=step_hints or None,
-        )
-        _record_global_fit_diagnostics(instrumentation, results_by_run)
-        results_by_run = _canonicalize_fit_results_by_run(
-            results_by_run,
-            template=template,
-            global_param_names=global_param_names,
-            local_param_names=local_param_names,
-            fixed_param_names=fixed_param_names,
-        )
-        if all(result.success for result in results_by_run.values()):
-            total_chi2 = float(sum(result.chi_squared for result in results_by_run.values()))
-            if total_chi2 < best_score:
-                best_score = total_chi2
-                best_results = results_by_run
-                best_global = fitted_global
-                step_hints = _step_hints_from_fit_results(
-                    datasets,
-                    results_by_run,
-                    target_global_names=global_param_names,
-                    target_local_names=local_param_names,
-                )
-                continue
-        if best_results is None:
-            best_results = results_by_run
-            best_global = fitted_global
-        failure_message = _assignment_failure_message(results_by_run)
-        if failure_message:
-            best_failure_message = failure_message
+        if fallback_success and (
+            not fit_success or fallback_score < best_score
+        ):
+            best_results = fallback_results
+            best_global = fallback_global
+            best_score = fallback_score
+            best_failure_message = fallback_failure_message
+            step_hints = fallback_step_hints
+            fit_success = True
+        elif best_results is None and fallback_results is not None:
+            best_results = fallback_results
+            best_global = fallback_global
+            best_failure_message = fallback_failure_message
 
     if best_results is None:
         best_results = {
@@ -3058,9 +3478,12 @@ def _fit_exact_assignment(
 
     fit_success = all(result.success for result in best_results.values())
     if not fit_success:
+        rescue_step_hints = {} if difficult_assignment else dict(step_hints)
         rescue_params = (
             _clone_parameter_sets(warm_start_by_run)
             if warm_start_by_run is not None
+            else _clone_parameter_sets(fallback_attempt_variants[0])
+            if fallback_attempt_variants
             else _clone_parameter_sets(attempt_variants[0])
         )
         rescue_params = _staged_assignment_seed(
@@ -3071,6 +3494,9 @@ def _fit_exact_assignment(
             local_param_names=local_param_names,
             initial_params=rescue_params,
             progress_callback=progress_callback,
+            max_cycles=4 if difficult_assignment else 2,
+            include_mixed_polish=difficult_assignment,
+            instrumentation=instrumentation,
         )
         rescue_budget = _global_fit_call_budget(
             datasets,
@@ -3085,9 +3511,9 @@ def _fit_exact_assignment(
         )
         _record_counter(instrumentation, "simplex_rescues")
         _record_counter(instrumentation, "global_fit_calls")
-        if step_hints:
+        if rescue_step_hints:
             _record_counter(instrumentation, "curvature_hint_applications")
-            _append_metric(instrumentation, "curvature_hint_sizes", len(step_hints))
+            _append_metric(instrumentation, "curvature_hint_sizes", len(rescue_step_hints))
         rescue_results, rescue_global = fit_engine.global_fit(
             datasets,
             template.model.function,
@@ -3098,7 +3524,7 @@ def _fit_exact_assignment(
             max_calls=rescue_budget,
             minuit_strategy=2 if free_count >= 20 else None,
             minuit_tol=0.05 if free_count >= 20 else None,
-            initial_step_sizes=step_hints or None,
+            initial_step_sizes=rescue_step_hints or None,
         )
         _record_global_fit_diagnostics(instrumentation, rescue_results)
         rescue_results = _canonicalize_fit_results_by_run(
@@ -3219,33 +3645,20 @@ def _fit_exact_assignment(
             progress_callback,
             f"{template.title}: assignment failed. {best_failure_message}",
         )
-    cache[cache_key] = assessment
+    if assessment.is_successful:
+        cache[cache_key] = assessment
     return assessment
 
 
-def _build_parameter_recommendations(
+def _build_parameter_recommendations_from_exact_cache(
     datasets: list[MuonDataset],
     assessment: GlobalCandidateAssessment,
     *,
     template: CandidateTemplate,
-    fit_engine: FitEngine,
-    base_by_run: dict[int, ParameterSet],
     fixed_param_names: tuple[str, ...],
-    axis_key: str,
     metric: SelectionMetric,
     cache: dict[tuple[tuple[str, ...], tuple[str, ...]], GlobalCandidateAssessment],
-    progress_callback: Callable[[str], None] | None = None,
     names_to_test: set[str] | None = None,
-    warm_start_cache: dict[
-        tuple[
-            tuple[str, ...],
-            tuple[str, ...],
-            tuple[str, ...],
-            tuple[str, ...],
-            tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
-        ],
-        dict[int, ParameterSet],
-    ] | None = None,
 ) -> tuple[GlobalParameterRecommendation, ...]:
     recommendations: list[GlobalParameterRecommendation] = []
     current_local = set(assessment.local_param_names)
@@ -3261,8 +3674,8 @@ def _build_parameter_recommendations(
             assessment,
             name,
         )
+        current_role = "Local" if name in current_local else "Global"
         if names_to_test is not None and name not in names_to_test:
-            current_role = "Local" if name in current_local else "Global"
             recommendations.append(
                 GlobalParameterRecommendation(
                     name=name,
@@ -3273,124 +3686,90 @@ def _build_parameter_recommendations(
                     total_variation=total_variation,
                     roughness=roughness,
                     rationale=(
-                        f"Staged search kept {name} {current_role}; skipped an extra "
-                        "exact role retest because the relaxed proposal was not ambiguous."
+                        f"Wavefront exhaustive search kept {name} {current_role}; "
+                        "no stronger alternative assignment improved the penalized score."
                     ),
                 )
             )
             continue
 
         if name in current_local:
-            _progress_log(
-                progress_callback,
-                f"{template.title}: testing whether {name} can be shared globally.",
-            )
-            global_local_names = tuple(sorted(current_local - {name}))
-            global_global_names = tuple(
+            alternative_local_names = tuple(sorted(current_local - {name}))
+            alternative_global_names = tuple(
                 pname
                 for pname in template.model.param_names
-                if pname not in fixed_names and pname not in global_local_names
+                if pname not in fixed_names and pname not in alternative_local_names
             )
-            alternative = _fit_exact_assignment(
-                datasets,
-                template,
-                fit_engine=fit_engine,
-                base_by_run=base_by_run,
-                global_param_names=global_global_names,
-                local_param_names=global_local_names,
-                fixed_param_names=fixed_param_names,
-                axis_key=axis_key,
-                metric=metric,
-                cache=cache,
-                warm_start_by_run=_warm_start_parameter_sets(
-                    datasets,
-                    assessment=assessment,
-                    base_by_run=base_by_run,
-                    target_global_names=global_global_names,
-                    target_local_names=global_local_names,
-                    fit_engine=fit_engine,
-                    template=template,
-                    progress_callback=progress_callback,
-                    cache=warm_start_cache,
-                ),
-                progress_callback=progress_callback,
-                initial_step_sizes=_step_hints_from_assessment(
-                    datasets,
-                    assessment,
-                    target_global_names=global_global_names,
-                    target_local_names=global_local_names,
-                ),
+            alternative = cache.get((alternative_global_names, alternative_local_names))
+            local_score = current_score
+            global_score = (
+                float(alternative.metric_value(metric))
+                if alternative is not None and alternative.is_successful
+                else float("inf")
             )
-            local_score = assessment.metric_value(metric)
-            global_score = alternative.metric_value(metric)
             improvement = global_score - local_score
             keep_local = (
-                not alternative.is_successful
+                alternative is None
+                or not alternative.is_successful
                 or improvement > _ROLE_DELTA_THRESHOLD
                 or (assessment.residual_gate_passed and not alternative.residual_gate_passed)
             )
             recommended_role = "Local" if keep_local else "Global"
-            rationale = (
-                f"Keeping {name} Local improves the penalized score by {improvement:.2f}."
-                if keep_local and np.isfinite(improvement)
-                else f"{name} is only weakly supported as Local."
-            )
+            if alternative is None:
+                rationale = (
+                    f"The exhaustive wavefront cache does not contain a successful shared-{name} "
+                    "alternative, so the local role is retained."
+                )
+            elif not alternative.is_successful:
+                rationale = (
+                    f"The exhaustive search tried sharing {name}, but that assignment did not converge "
+                    "successfully across the full series."
+                )
+            else:
+                rationale = (
+                    f"Keeping {name} Local improves the penalized score by {improvement:.2f}."
+                    if keep_local and np.isfinite(improvement)
+                    else f"The exhaustive search found that {name} is only weakly supported as Local."
+                )
             delta = improvement
         else:
-            _progress_log(
-                progress_callback,
-                f"{template.title}: testing whether {name} should become local.",
-            )
-            local_local_names = tuple(sorted((*current_local, name)))
-            local_global_names = tuple(
+            alternative_local_names = tuple(sorted((*current_local, name)))
+            alternative_global_names = tuple(
                 pname
                 for pname in template.model.param_names
-                if pname not in fixed_names and pname not in local_local_names
+                if pname not in fixed_names and pname not in alternative_local_names
             )
-            alternative = _fit_exact_assignment(
-                datasets,
-                template,
-                fit_engine=fit_engine,
-                base_by_run=base_by_run,
-                global_param_names=local_global_names,
-                local_param_names=local_local_names,
-                fixed_param_names=fixed_param_names,
-                axis_key=axis_key,
-                metric=metric,
-                cache=cache,
-                warm_start_by_run=_warm_start_parameter_sets(
-                    datasets,
-                    assessment=assessment,
-                    base_by_run=base_by_run,
-                    target_global_names=local_global_names,
-                    target_local_names=local_local_names,
-                    fit_engine=fit_engine,
-                    template=template,
-                    progress_callback=progress_callback,
-                    cache=warm_start_cache,
-                ),
-                progress_callback=progress_callback,
-                initial_step_sizes=_step_hints_from_assessment(
-                    datasets,
-                    assessment,
-                    target_global_names=local_global_names,
-                    target_local_names=local_local_names,
-                ),
+            alternative = cache.get((alternative_global_names, alternative_local_names))
+            global_score = current_score
+            local_score = (
+                float(alternative.metric_value(metric))
+                if alternative is not None and alternative.is_successful
+                else float("inf")
             )
-            global_score = assessment.metric_value(metric)
-            local_score = alternative.metric_value(metric)
             improvement = global_score - local_score
             make_local = (
-                alternative.is_successful
+                alternative is not None
+                and alternative.is_successful
                 and improvement > _ROLE_DELTA_THRESHOLD
                 and (alternative.residual_gate_passed or not assessment.residual_gate_passed)
             )
             recommended_role = "Local" if make_local else "Global"
-            rationale = (
-                f"Localizing {name} improves the penalized score by {improvement:.2f}."
-                if make_local and np.isfinite(improvement)
-                else (f"Localizing {name} does not overcome the complexity penalty.")
-            )
+            if alternative is None:
+                rationale = (
+                    f"The exhaustive wavefront cache does not contain a successful localized-{name} "
+                    "alternative, so the global role is retained."
+                )
+            elif not alternative.is_successful:
+                rationale = (
+                    f"The exhaustive search tried localizing {name}, but that assignment did not converge "
+                    "successfully across the full series."
+                )
+            else:
+                rationale = (
+                    f"Localizing {name} improves the penalized score by {improvement:.2f}."
+                    if make_local and np.isfinite(improvement)
+                    else f"The exhaustive search found that localizing {name} does not overcome the complexity penalty."
+                )
             delta = improvement
 
         recommendations.append(
@@ -3407,8 +3786,6 @@ def _build_parameter_recommendations(
         )
 
     return tuple(recommendations)
-
-
 def _initial_parameter_sets_for_candidate(
     datasets: list[MuonDataset],
     fingerprints_by_run: dict[int, SpectrumFingerprint],
@@ -3417,30 +3794,289 @@ def _initial_parameter_sets_for_candidate(
     current_values: dict[str, float],
     parameter_bounds: dict[str, tuple[float, float]],
     fixed_param_names: tuple[str, ...],
+    seed_assessments_by_run: dict[int, CandidateAssessment] | None = None,
 ) -> dict[int, ParameterSet]:
     base_by_run: dict[int, ParameterSet] = {}
+    seeded_by_run = seed_assessments_by_run or {}
     for dataset in datasets:
         run_number = int(dataset.run_number)
-        parameters = _initial_parameters_for_template(
+        seeded_assessment = seeded_by_run.get(run_number)
+        seeded_values = None
+        if seeded_assessment is not None and seeded_assessment.fit_result.success:
+            seeded_values = {
+                parameter.name: float(parameter.value)
+                for parameter in seeded_assessment.fit_result.parameters
+            }
+        parameters = _configured_single_fit_parameter_set(
             dataset,
             fingerprints_by_run[run_number],
             template,
+            current_values=current_values,
+            parameter_bounds=parameter_bounds,
+            fixed_param_names=fixed_param_names,
+            seeded_values=seeded_values,
         )
-        for parameter in parameters:
-            if parameter.name in current_values:
-                try:
-                    parameter.value = float(current_values[parameter.name])
-                except (TypeError, ValueError):
-                    pass
-            if parameter.name in parameter_bounds:
-                min_val, max_val = parameter_bounds[parameter.name]
-                parameter.min = float(min_val)
-                parameter.max = float(max_val)
-            parameter.value = float(np.clip(parameter.value, parameter.min, parameter.max))
-            if parameter.name in fixed_param_names:
-                parameter.fixed = True
         base_by_run[run_number] = parameters
     return base_by_run
+
+
+def _configured_single_fit_parameter_set(
+    dataset: MuonDataset,
+    fingerprint: SpectrumFingerprint,
+    template: CandidateTemplate,
+    *,
+    current_values: dict[str, float],
+    parameter_bounds: dict[str, tuple[float, float]],
+    fixed_param_names: tuple[str, ...],
+    seeded_values: dict[str, float] | None = None,
+    seeded_values_override_current: bool = False,
+) -> ParameterSet:
+    parameters = _initial_parameters_for_template(dataset, fingerprint, template)
+    seeded_values = dict(seeded_values or {})
+    for parameter in parameters:
+        if not seeded_values_override_current and parameter.name in seeded_values:
+            parameter.value = seeded_values[parameter.name]
+        if parameter.name in current_values:
+            try:
+                parameter.value = float(current_values[parameter.name])
+            except (TypeError, ValueError):
+                pass
+        if (
+            seeded_values_override_current
+            and parameter.name in seeded_values
+            and parameter.name not in fixed_param_names
+        ):
+            parameter.value = seeded_values[parameter.name]
+        if parameter.name in parameter_bounds:
+            min_val, max_val = parameter_bounds[parameter.name]
+            parameter.min = float(min_val)
+            parameter.max = float(max_val)
+        parameter.value = float(np.clip(parameter.value, parameter.min, parameter.max))
+        if parameter.name in fixed_param_names:
+            parameter.fixed = True
+    return parameters
+
+
+def _repair_partial_single_fit_prescreen_assessments(
+    datasets: list[MuonDataset],
+    fingerprints_by_run: dict[int, SpectrumFingerprint],
+    template: CandidateTemplate,
+    *,
+    assessments_by_run: dict[int, CandidateAssessment],
+    current_values: dict[str, float],
+    parameter_bounds: dict[str, tuple[float, float]],
+    fixed_param_names: tuple[str, ...],
+    metric: SelectionMetric,
+    fit_engine: FitEngine,
+    progress_callback: Callable[[str], None] | None = None,
+) -> dict[int, CandidateAssessment]:
+    repaired_assessments = dict(assessments_by_run)
+    run_order = [int(dataset.run_number) for dataset in datasets]
+    successful_runs = [
+        run_number
+        for run_number in run_order
+        if repaired_assessments.get(run_number) is not None
+        and repaired_assessments[run_number].is_successful
+    ]
+    failed_runs = [
+        run_number
+        for run_number in run_order
+        if repaired_assessments.get(run_number) is None
+        or not repaired_assessments[run_number].is_successful
+    ]
+    if not successful_runs or not failed_runs:
+        return repaired_assessments
+
+    _progress_log(
+        progress_callback,
+        f"{template.title}: repairing partial single-fit screening results "
+        f"for {len(failed_runs)} dataset(s) using sibling fit seeds.",
+    )
+
+    order_index = {run_number: index for index, run_number in enumerate(run_order)}
+    dataset_by_run = {int(dataset.run_number): dataset for dataset in datasets}
+
+    while True:
+        successful_runs = [
+            run_number
+            for run_number in run_order
+            if repaired_assessments.get(run_number) is not None
+            and repaired_assessments[run_number].is_successful
+        ]
+        failed_runs = [
+            run_number
+            for run_number in run_order
+            if repaired_assessments.get(run_number) is None
+            or not repaired_assessments[run_number].is_successful
+        ]
+        if not successful_runs or not failed_runs:
+            break
+
+        repaired_any = False
+        failed_runs.sort(
+            key=lambda run_number: min(
+                abs(order_index[run_number] - order_index[other_run])
+                for other_run in successful_runs
+            )
+        )
+        for run_number in failed_runs:
+            repaired = _repair_single_fit_assessment_from_sibling_runs(
+                dataset_by_run[run_number],
+                fingerprints_by_run[run_number],
+                template,
+                donor_assessments=[
+                    repaired_assessments[other_run]
+                    for other_run in sorted(
+                        successful_runs,
+                        key=lambda other_run: (
+                            abs(order_index[run_number] - order_index[other_run]),
+                            order_index[other_run],
+                        ),
+                    )
+                ],
+                current_values=current_values,
+                parameter_bounds=parameter_bounds,
+                fixed_param_names=fixed_param_names,
+                metric=metric,
+                fit_engine=fit_engine,
+            )
+            if repaired is None or not repaired.is_successful:
+                continue
+            repaired_assessments[run_number] = repaired
+            repaired_any = True
+            _progress_log(
+                progress_callback,
+                f"{template.title}: repaired single-fit screening seed for run "
+                f"{dataset_by_run[run_number].run_label}.",
+            )
+
+        if not repaired_any:
+            break
+
+    return repaired_assessments
+
+
+def _repair_single_fit_assessment_from_sibling_runs(
+    dataset: MuonDataset,
+    fingerprint: SpectrumFingerprint,
+    template: CandidateTemplate,
+    *,
+    donor_assessments: list[CandidateAssessment],
+    current_values: dict[str, float],
+    parameter_bounds: dict[str, tuple[float, float]],
+    fixed_param_names: tuple[str, ...],
+    metric: SelectionMetric,
+    fit_engine: FitEngine,
+) -> CandidateAssessment | None:
+    attempts: list[ParameterSet] = []
+    seen_signatures: set[tuple[tuple[str, float], ...]] = set()
+
+    for donor in donor_assessments:
+        if not donor.is_successful:
+            continue
+        seeded_values = {
+            parameter.name: float(parameter.value)
+            for parameter in donor.fit_result.parameters
+        }
+        seeded_parameters = _configured_single_fit_parameter_set(
+            dataset,
+            fingerprint,
+            template,
+            current_values=current_values,
+            parameter_bounds=parameter_bounds,
+            fixed_param_names=fixed_param_names,
+            seeded_values=seeded_values,
+            seeded_values_override_current=True,
+        )
+        for variant in _parameter_variants(seeded_parameters, template=template):
+            signature = tuple((parameter.name, float(parameter.value)) for parameter in variant)
+            if signature in seen_signatures:
+                continue
+            seen_signatures.add(signature)
+            attempts.append(_clone_parameter_set(variant))
+
+    if not attempts:
+        return None
+
+    return _assess_single_fit_candidate_from_attempts(
+        dataset,
+        template,
+        attempts=tuple(attempts),
+        fit_engine=fit_engine,
+        metric=metric,
+    )
+
+
+def _assess_single_fit_candidate_from_attempts(
+    dataset: MuonDataset,
+    template: CandidateTemplate,
+    *,
+    attempts: tuple[ParameterSet, ...],
+    fit_engine: FitEngine,
+    metric: SelectionMetric,
+) -> CandidateAssessment:
+    best_result: FitResult | None = None
+    best_parameters: ParameterSet | None = None
+    for parameters in attempts:
+        result = fit_engine.fit(dataset, template.model.function, _clone_parameter_set(parameters))
+        if _needs_fit_backend_fallback(result):
+            result = _scipy_fit_fallback(dataset, template.model.function, parameters)
+        if best_result is None:
+            best_result = result
+            best_parameters = _clone_parameter_set(parameters)
+            continue
+        if result.success and not best_result.success:
+            best_result = result
+            best_parameters = _clone_parameter_set(parameters)
+            continue
+        if result.success == best_result.success and result.chi_squared < best_result.chi_squared:
+            best_result = result
+            best_parameters = _clone_parameter_set(parameters)
+
+    if best_result is None:
+        best_result = FitResult(success=False, message="No fit attempt was created.")
+        best_parameters = ParameterSet()
+
+    n_points = int(dataset.n_points)
+    k_free = len(best_result.parameters.free_parameters)
+    aic, aicc, bic = compute_information_criteria(best_result.chi_squared, k_free, n_points)
+
+    residual_rms, runs_z_score, max_abs_autocorrelation, residual_fft_peak_snr = (
+        _residual_diagnostics(dataset, best_result)
+    )
+    bound_hits = _bound_hit_names(best_result.parameters)
+    residual_gate_reasons = _residual_gate_reasons(
+        fit_result=best_result,
+        residual_rms=residual_rms,
+        runs_z_score=runs_z_score,
+        max_abs_autocorrelation=max_abs_autocorrelation,
+        residual_fft_peak_snr=residual_fft_peak_snr,
+        bound_hits=bound_hits,
+    )
+    fitted_time, fitted_curve, component_curves = _dense_fit_curves(
+        dataset,
+        template.model,
+        best_result.parameters,
+        fallback_parameters=best_parameters,
+    )
+    return CandidateAssessment(
+        template=template,
+        fit_result=best_result,
+        aic=aic,
+        aicc=aicc,
+        bic=bic,
+        selected_score=_metric_value(metric, aic, aicc, bic),
+        residual_rms=residual_rms,
+        runs_z_score=runs_z_score,
+        max_abs_autocorrelation=max_abs_autocorrelation,
+        residual_fft_peak_snr=residual_fft_peak_snr,
+        residual_gate_passed=not residual_gate_reasons,
+        residual_gate_reasons=tuple(residual_gate_reasons),
+        bound_hits=tuple(bound_hits),
+        fitted_time=fitted_time,
+        fitted_curve=fitted_curve,
+        component_curves=component_curves,
+    )
 
 
 def _initial_param_variants(
@@ -3618,14 +4254,22 @@ def _assignment_attempt_variants(
     warm_start_by_run: dict[int, ParameterSet] | None,
 ) -> tuple[dict[int, ParameterSet], ...]:
     attempts: list[dict[int, ParameterSet]] = []
+    base_variants = list(_initial_param_variants(base_by_run, template))
     if warm_start_by_run is not None:
-        attempts.append(_clone_parameter_sets(warm_start_by_run))
-        warm_variants = _initial_param_variants(warm_start_by_run, template)
-        attempts.extend(
-            _clone_parameter_sets(variant)
-            for variant in warm_variants[1:]
-        )
-    attempts.extend(_initial_param_variants(base_by_run, template))
+        warm_variants = list(_initial_param_variants(warm_start_by_run, template))
+        attempts.append(_clone_parameter_sets(warm_variants[0]))
+
+        base_index = 0
+        warm_index = 1
+        while base_index < len(base_variants) or warm_index < len(warm_variants):
+            if base_index < len(base_variants):
+                attempts.append(_clone_parameter_sets(base_variants[base_index]))
+                base_index += 1
+            if warm_index < len(warm_variants):
+                attempts.append(_clone_parameter_sets(warm_variants[warm_index]))
+                warm_index += 1
+    else:
+        attempts.extend(_clone_parameter_sets(variant) for variant in base_variants)
 
     unique_attempts: list[dict[int, ParameterSet]] = []
     seen_signatures: set[tuple[tuple[int, tuple[tuple[str, float], ...]], ...]] = set()
@@ -4144,10 +4788,15 @@ def _global_fit_call_budget(
         return int(min(max(900, budget), _STAGED_GLOBAL_FIT_MAX_CALLS))
     if phase == "simplex":
         budget = 1200 + (50 * free_count) + (18 * dataset_count)
+        if free_count >= _HIGH_DIMENSION_FREE_COUNT:
+            budget = max(_HIGH_DIMENSION_GLOBAL_FIT_SIMPLEX_RESCUE_CALLS, budget)
+            budget_cap = _HIGH_DIMENSION_GLOBAL_FIT_SIMPLEX_RESCUE_CALLS_CAP
+        else:
+            budget_cap = _GLOBAL_FIT_SIMPLEX_RESCUE_CALLS_CAP
         return int(
             min(
                 max(_GLOBAL_FIT_SIMPLEX_RESCUE_CALLS, budget),
-                _GLOBAL_FIT_SIMPLEX_RESCUE_CALLS_CAP,
+                budget_cap,
             )
         )
     budget = 1000 + (40 * free_count) + (14 * dataset_count)
@@ -4652,6 +5301,253 @@ def _metric_value(
     if metric == SelectionMetric.BIC:
         return bic
     return aicc if aicc is not None else aic
+
+
+def _run_exhaustive_wavefront_search(
+    datasets: list[MuonDataset],
+    *,
+    shortlisted_templates: list[CandidateTemplate],
+    template_contexts: dict[str, tuple[dict[int, ParameterSet], tuple[str, ...]]],
+    axis_key: str,
+    metric: SelectionMetric,
+    progress_callback: Callable[[str], None] | None,
+    search_strategy: str,
+    instrumentation: dict[str, object] | None,
+    single_run_prefit_cache_for: Callable[[CandidateTemplate], dict[object, dict[int, ParameterSet]]],
+) -> tuple[GlobalCandidateAssessment, ...]:
+    if not shortlisted_templates:
+        return ()
+
+    states: list[_WavefrontTemplateState] = []
+    state_by_key: dict[str, _WavefrontTemplateState] = {}
+    layers_by_key: dict[str, tuple[tuple[tuple[str, ...], ...], ...]] = {}
+    baseline_seed_by_key: dict[str, dict[int, ParameterSet]] = {}
+    total_assignments = 0
+    max_rounds = 0
+
+    for template in shortlisted_templates:
+        base_by_run, fixed_param_names = template_contexts[template.key]
+        prefit_base_by_run = _single_run_prefit_parameter_sets(
+            datasets,
+            template,
+            fit_engine=FitEngine(),
+            base_by_run=base_by_run,
+            fixed_param_names=fixed_param_names,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+            cache=single_run_prefit_cache_for(template),
+        )
+        free_param_names = tuple(
+            name for name in template.model.param_names if name not in fixed_param_names
+        )
+        layers = _layer_assignments(free_param_names)
+        layers_by_key[template.key] = layers
+        baseline_seed_by_key[template.key] = _all_global_seed_parameter_sets(prefit_base_by_run)
+        total_assignments += sum(len(layer) for layer in layers)
+        max_rounds = max(max_rounds, len(layers))
+        state = _WavefrontTemplateState(
+            template=template,
+            fixed_param_names=fixed_param_names,
+            prefit_base_by_run=prefit_base_by_run,
+            free_param_names=free_param_names,
+            exact_cache={},
+            converged_assessments={},
+        )
+        states.append(state)
+        state_by_key[template.key] = state
+        _progress_log(
+            progress_callback,
+            f"{template.title}: exhaustive role search will enumerate "
+            f"{sum(len(layer) for layer in layers)} assignment(s) across "
+            f"{len(layers)} Hamming layer(s).",
+        )
+
+    worker_count = _wavefront_worker_count(total_assignments)
+    if worker_count > 1 and total_assignments > 1:
+        _progress_log(
+            progress_callback,
+            "Using spawn-based wavefront scheduling for exhaustive global/local "
+            f"enumeration with {worker_count} worker(s) across "
+            f"{len(shortlisted_templates)} shortlisted template(s).",
+        )
+    else:
+        _progress_log(
+            progress_callback,
+            "Using serial wavefront scheduling for exhaustive global/local enumeration.",
+        )
+
+    executor: ProcessPoolExecutor | None = None
+    if worker_count > 1 and total_assignments > 1:
+        executor = ProcessPoolExecutor(
+            max_workers=worker_count,
+            mp_context=_spawn_context(),
+        )
+
+    try:
+        for round_index in range(max_rounds):
+            task_groups: list[list[_WavefrontAssignmentTask]] = []
+            for state in states:
+                layers = layers_by_key[state.template.key]
+                if round_index >= len(layers):
+                    continue
+                assignment_group: list[_WavefrontAssignmentTask] = []
+                for local_param_names in layers[round_index]:
+                    global_param_names = tuple(
+                        name for name in state.free_param_names if name not in local_param_names
+                    )
+                    predecessor = None
+                    initial_seed_by_run = None
+                    if round_index == 0:
+                        initial_seed_by_run = baseline_seed_by_key[state.template.key]
+                    else:
+                        predecessor = _best_predecessor_assessment(
+                            state.exact_cache,
+                            free_param_names=state.free_param_names,
+                            local_param_names=local_param_names,
+                            metric=metric,
+                        )
+                    assignment_group.append(
+                        _WavefrontAssignmentTask(
+                            template_key=state.template.key,
+                            template=state.template,
+                            datasets=datasets,
+                            base_by_run=state.prefit_base_by_run,
+                            fixed_param_names=state.fixed_param_names,
+                            global_param_names=global_param_names,
+                            local_param_names=local_param_names,
+                            axis_key=axis_key,
+                            metric=metric,
+                            search_strategy=search_strategy,
+                            warm_start_source=_warm_start_source_from_assessment(predecessor),
+                            initial_seed_by_run=initial_seed_by_run,
+                        )
+                    )
+                if assignment_group:
+                    task_groups.append(assignment_group)
+
+            if not task_groups:
+                continue
+
+            ordered_tasks = _interleave_wavefront_tasks(task_groups)
+            _append_metric(instrumentation, "staged_frontier_widths", len(ordered_tasks))
+            _progress_log(
+                progress_callback,
+                f"Wavefront round {round_index + 1}/{max_rounds}: queueing "
+                f"{len(ordered_tasks)} assignment(s) from {len(task_groups)} ready "
+                f"template layer(s) on {worker_count} worker(s). Dispatch order is "
+                "round-robin across ready templates so each template receives early "
+                "slots while surplus workers drain the wider layers.",
+            )
+
+            round_results: list[_WavefrontAssignmentResult] = []
+            if executor is None:
+                round_results = [
+                    _run_wavefront_assignment_task(task)
+                    for task in ordered_tasks
+                ]
+            else:
+                future_to_task = {
+                    executor.submit(_run_wavefront_assignment_task, task): task
+                    for task in ordered_tasks
+                }
+                for future in as_completed(future_to_task):
+                    round_results.append(future.result())
+
+            successful_assignments = 0
+            for result in round_results:
+                state = state_by_key[result.template_key]
+                _merge_instrumentation(instrumentation, result.instrumentation)
+                state.exact_cache[(result.global_param_names, result.local_param_names)] = (
+                    _compact_assessment_for_cache(result.assessment)
+                )
+                if result.assessment.is_successful:
+                    successful_assignments += 1
+                    state.converged_assessments[
+                        (result.global_param_names, result.local_param_names)
+                    ] = result.assessment
+                if state.best_assessment is None or _assessment_sort_key(
+                    result.assessment,
+                    metric,
+                ) < _assessment_sort_key(state.best_assessment, metric):
+                    state.best_assessment = result.assessment
+
+            _progress_log(
+                progress_callback,
+                f"Wavefront round {round_index + 1}/{max_rounds} complete: "
+                f"{successful_assignments}/{len(round_results)} assignment(s) converged.",
+            )
+    finally:
+        if executor is not None:
+            executor.shutdown()
+
+    optimized_assessments: list[GlobalCandidateAssessment] = []
+    for state in states:
+        if not state.converged_assessments and state.best_assessment is None:
+            continue
+        exact_cache = dict(state.exact_cache)
+        successful_assessments = sorted(
+            state.converged_assessments.values(),
+            key=lambda assessment: _assessment_sort_key(assessment, metric),
+        )
+        for assessment in successful_assessments:
+            exact_cache[(assessment.global_param_names, assessment.local_param_names)] = assessment
+
+        if successful_assessments:
+            for assessment in successful_assessments:
+                optimized_assessments.append(
+                    replace(
+                        assessment,
+                        fixed_param_names=state.fixed_param_names,
+                        parameter_recommendations=_build_parameter_recommendations_from_exact_cache(
+                            datasets,
+                            assessment,
+                            template=state.template,
+                            fixed_param_names=state.fixed_param_names,
+                            metric=metric,
+                            cache=exact_cache,
+                            names_to_test=set(state.free_param_names),
+                        ),
+                        assessment_key=_global_candidate_assessment_key(
+                            state.template.key,
+                            global_param_names=assessment.global_param_names,
+                            local_param_names=assessment.local_param_names,
+                        ),
+                    )
+                )
+
+            best_assessment = successful_assessments[0]
+            _progress_log(
+                progress_callback,
+                f"Completed exhaustive coupled optimisation for {state.template.title}. "
+                f"{len(successful_assessments)} converged assignment(s); best {metric.value} = "
+                f"{best_assessment.metric_value(metric):.3f} with "
+                f"Global[{', '.join(best_assessment.global_param_names) or 'none'}], "
+                f"Local[{', '.join(best_assessment.local_param_names) or 'none'}].",
+            )
+            continue
+
+        failed_assessment = state.best_assessment
+        if failed_assessment is None:
+            continue
+        optimized_assessments.append(
+            replace(
+                failed_assessment,
+                fixed_param_names=state.fixed_param_names,
+                parameter_recommendations=(),
+                assessment_key=_global_candidate_assessment_key(
+                    state.template.key,
+                    global_param_names=failed_assessment.global_param_names,
+                    local_param_names=failed_assessment.local_param_names,
+                ),
+            )
+        )
+        _progress_log(
+            progress_callback,
+            f"Completed exhaustive coupled optimisation for {state.template.title}. "
+            "No assignment converged; keeping the best failed attempt for status reporting.",
+        )
+
+    return tuple(optimized_assessments)
 
 
 def _role_delta_threshold(

@@ -12,8 +12,11 @@ from asymmetry.core.fitting.fit_wizard import (
     SelectionMetric,
     build_candidate_templates,
     build_fit_wizard_recommendation,
+    build_fit_wizard_recommendation_for_templates,
     compute_information_criteria,
+    deserialize_fit_wizard_recommendation,
     fingerprint_spectrum,
+    serialize_fit_wizard_recommendation,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 import asymmetry.core.fitting.fit_wizard as wizard_module
@@ -279,9 +282,60 @@ def test_failed_candidate_fit_is_retained_in_the_comparison_table(
     recommendation = build_fit_wizard_recommendation(dataset)
     assessments = {assessment.template.key: assessment for assessment in recommendation.assessments}
 
+
+def test_fit_wizard_recommendation_serialization_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_scipy_fit_backend(monkeypatch)
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    dataset = _dataset_for(model, A_1=0.2, Lambda=0.4, A_bg=0.01)
+
+    recommendation = build_fit_wizard_recommendation(dataset)
+    restored = deserialize_fit_wizard_recommendation(
+        serialize_fit_wizard_recommendation(recommendation)
+    )
+
+    assert restored is not None
+    assert restored.recommended_key == recommendation.recommended_key
+    assert [template.key for template in restored.templates] == [
+        template.key for template in recommendation.templates
+    ]
+    assert [assessment.template.key for assessment in restored.assessments] == [
+        assessment.template.key for assessment in recommendation.assessments
+    ]
+    assert restored.assessment_for_key(recommendation.recommended_key) is not None
+
+
+def test_fit_wizard_can_evaluate_explicit_template_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_scipy_fit_backend(monkeypatch)
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    dataset = _dataset_for(model, A_1=0.2, Lambda=0.4, A_bg=0.01)
+    fingerprint = fingerprint_spectrum(dataset)
+    templates = tuple(build_candidate_templates(fingerprint))
+
+    recommendation = build_fit_wizard_recommendation_for_templates(
+        dataset,
+        templates,
+        fingerprint=fingerprint,
+    )
+
+    assert [template.key for template in recommendation.templates] == [
+        template.key for template in templates
+    ]
+    assert len(recommendation.assessments) == len(templates)
+    assert recommendation.recommended_key == "exp_constant"
+
+    assessments = {
+        assessment.template.key: assessment for assessment in recommendation.assessments
+    }
     assert "gaussian_constant" in assessments
-    assert assessments["gaussian_constant"].fit_result.success is False
     assert assessments["exp_constant"].fit_result.success is True
+    assert (
+        assessments["exp_constant"].metric_value(recommendation.metric)
+        < assessments["gaussian_constant"].metric_value(recommendation.metric)
+    )
 
 
 def test_background_parameter_can_take_negative_bounds() -> None:

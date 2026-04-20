@@ -37,11 +37,14 @@ Global Fit Wizard
 The global-fit tab now also provides a non-modal ``Global Fit Wizard...``
 window for ordered field or temperature series. The wizard reuses the same
 candidate-model portfolio, scoring metrics, seeding heuristics, and residual
-checks as the single-spectrum wizard, then adds a second stage that recommends
-which parameters should stay shared across the whole series and which should be
-allowed to vary run-by-run. Before the expensive search starts, the wizard
-shows a parameter-setup dialog so you can review the combined parameter list,
-choose expected ``Global``/``Local``/``Fixed`` behaviour, and adjust bounds.
+checks as the single-spectrum wizard, but now runs as an explicit two-phase
+workflow. First it builds a ranked screening table from independent single-fit
+results across all selected datasets. Those scores help you decide which model
+families are promising, but they are not yet coupled global fits. You can then
+choose one or more rows and launch the expensive coupled global optimization
+only for that subset. Optimized candidates appear in a separate results tab,
+with the screening table updated to show which families have already been
+optimized.
 
 Version 1 assumes one dominant ordered sweep axis at a time. If the selected
 datasets vary materially in both field and temperature, the wizard reports that
@@ -55,7 +58,7 @@ and fitted-parameter views refresh immediately without rerunning the fit.
 
 Completed global-wizard analyses are cached for the current tab context and are
 included in project state, so reopening the wizard or saving the project does
-not force you to recompute an unchanged finished analysis.
+not force you to recompute an unchanged screening table or optimized result set.
 
 See :doc:`global_fit_wizard` for the detailed workflow, recommendation policy,
 and current limitations.

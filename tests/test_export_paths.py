@@ -1,61 +1,32 @@
-"""Tests for GUI export path persistence helpers."""
-
 from __future__ import annotations
 
 from pathlib import Path
 
-import asymmetry.gui.export_paths as export_paths
+from asymmetry.gui.export_paths import resolve_gle_export_paths
 
 
-class _FakeSettings:
-    _store: dict[str, str] = {}
+def test_resolve_gle_export_paths_defaults_to_foldered_bundle(tmp_path: Path) -> None:
+    selected_path = tmp_path / "example_plot.gle"
 
-    def value(self, key: str, default: str = "", _type=str) -> str:
-        value = self._store.get(key, default)
-        return str(value)
+    output_path, export_dir = resolve_gle_export_paths(selected_path)
 
-    def setValue(self, key: str, value: str) -> None:
-        self._store[key] = str(value)
+    assert export_dir == tmp_path / "example_plot.gleplot"
+    assert output_path == export_dir / "example_plot.gle"
 
 
-def test_default_export_path_prefers_last_export_dir(monkeypatch) -> None:
-    monkeypatch.setattr(export_paths, "QSettings", _FakeSettings)
-    _FakeSettings._store = {
-        "io/last_export_dir": "/tmp/exports",
-        "io/last_open_dir": "/tmp/open",
-    }
+def test_resolve_gle_export_paths_can_leave_files_in_place(tmp_path: Path) -> None:
+    selected_path = tmp_path / "example_plot.gle"
 
-    path = export_paths.default_export_path("figure.gle")
+    output_path, export_dir = resolve_gle_export_paths(selected_path, folder=False)
 
-    assert path == str(Path("/tmp/exports") / "figure.gle")
+    assert export_dir == tmp_path
+    assert output_path == selected_path
 
 
-def test_default_export_path_falls_back_to_last_open_dir(monkeypatch) -> None:
-    monkeypatch.setattr(export_paths, "QSettings", _FakeSettings)
-    _FakeSettings._store = {
-        "io/last_open_dir": "/tmp/open",
-    }
+def test_resolve_gle_export_paths_accepts_gleplot_bundle_names(tmp_path: Path) -> None:
+    selected_path = tmp_path / "example_plot.gleplot"
 
-    path = export_paths.default_export_path("table.csv")
+    output_path, export_dir = resolve_gle_export_paths(selected_path)
 
-    assert path == str(Path("/tmp/open") / "table.csv")
-
-
-def test_default_export_path_falls_back_to_home(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(export_paths, "QSettings", _FakeSettings)
-    _FakeSettings._store = {}
-    monkeypatch.setattr(export_paths.Path, "home", staticmethod(lambda: tmp_path))
-
-    path = export_paths.default_export_path("result.gle")
-
-    assert path == str(tmp_path / "result.gle")
-
-
-def test_remember_export_path_persists_parent_directory(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(export_paths, "QSettings", _FakeSettings)
-    _FakeSettings._store = {}
-    out_file = tmp_path / "nested" / "fit.gle"
-
-    export_paths.remember_export_path(str(out_file))
-
-    assert _FakeSettings._store["io/last_export_dir"] == str((tmp_path / "nested").resolve())
+    assert export_dir == selected_path
+    assert output_path == selected_path / "example_plot.gle"

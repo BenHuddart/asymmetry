@@ -1815,6 +1815,8 @@ class DataBrowserPanel(QWidget):
             "combined_from": list(run_numbers),
         }
         mirrored_grouping = self._mirrored_grouping_for_combined_dataset(datasets[0])
+        if self._grouping_workflow_family(datasets[0]) == "wim":
+            mirrored_grouping["informational_first_good_bin"] = True
         run = Run(
             run_number=combined_run_number,
             histograms=[],

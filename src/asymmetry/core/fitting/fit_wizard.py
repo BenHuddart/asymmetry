@@ -425,16 +425,40 @@ def build_fit_wizard_recommendation(
 ) -> FitWizardRecommendation:
     """Analyze one asymmetry spectrum and recommend a fit candidate."""
     fingerprint = fingerprint_spectrum(dataset)
-    templates = build_candidate_templates(fingerprint, current_model=current_model)
+    templates = tuple(build_candidate_templates(fingerprint, current_model=current_model))
+    return build_fit_wizard_recommendation_for_templates(
+        dataset,
+        templates,
+        fingerprint=fingerprint,
+        metric=metric,
+    )
+
+
+def build_fit_wizard_recommendation_for_templates(
+    dataset: MuonDataset,
+    templates: tuple[CandidateTemplate, ...] | list[CandidateTemplate],
+    *,
+    fingerprint: SpectrumFingerprint | None = None,
+    metric: SelectionMetric = SelectionMetric.AICC,
+) -> FitWizardRecommendation:
+    """Evaluate one dataset against an explicit candidate-template list."""
+    active_fingerprint = fingerprint or fingerprint_spectrum(dataset)
+    active_templates = tuple(templates)
     fit_engine = FitEngine()
     assessments = tuple(
-        _assess_candidate_template(dataset, fingerprint, template, fit_engine=fit_engine, metric=metric)
-        for template in templates
+        _assess_candidate_template(
+            dataset,
+            active_fingerprint,
+            template,
+            fit_engine=fit_engine,
+            metric=metric,
+        )
+        for template in active_templates
     )
     return rerank_fit_wizard_recommendation(
         FitWizardRecommendation(
-            fingerprint=fingerprint,
-            templates=templates,
+            fingerprint=active_fingerprint,
+            templates=active_templates,
             assessments=assessments,
             metric=metric,
             recommended_key=None,
@@ -496,6 +520,343 @@ def rerank_fit_wizard_recommendation(
         f"Recommended: {primary.template.title} by {metric.value}"
         f"{compare_summary}"
     )
+    return replace(
+        recommendation,
+        metric=metric,
+        recommended_key=primary.template.key,
+        comparable_keys=comparable_keys,
+        summary=summary,
+    )
+
+
+def serialize_fit_wizard_recommendation(
+    recommendation: FitWizardRecommendation,
+) -> dict[str, object]:
+    """Return a JSON-serialisable snapshot of a single-fit wizard recommendation."""
+    return {
+        "fingerprint": _serialize_spectrum_fingerprint(recommendation.fingerprint),
+        "templates": [
+            _serialize_candidate_template(template)
+            for template in recommendation.templates
+        ],
+        "assessments": [
+            _serialize_candidate_assessment(assessment)
+            for assessment in recommendation.assessments
+        ],
+        "metric": recommendation.metric.value,
+        "recommended_key": recommendation.recommended_key,
+        "comparable_keys": list(recommendation.comparable_keys),
+        "summary": recommendation.summary,
+    }
+
+
+def deserialize_fit_wizard_recommendation(
+    payload: object,
+) -> FitWizardRecommendation | None:
+    """Rebuild a persisted single-fit wizard recommendation payload."""
+    if not isinstance(payload, dict):
+        return None
+
+    fingerprint = _deserialize_spectrum_fingerprint(payload.get("fingerprint"))
+    if fingerprint is None:
+        return None
+
+    templates = tuple(
+        template
+        for entry in payload.get("templates", [])
+        if (template := _deserialize_candidate_template(entry)) is not None
+    )
+    assessments = tuple(
+        assessment
+        for entry in payload.get("assessments", [])
+        if (assessment := _deserialize_candidate_assessment(entry)) is not None
+    )
+    comparable_keys = tuple(
+        key for key in payload.get("comparable_keys", []) if isinstance(key, str)
+    )
+    return FitWizardRecommendation(
+        fingerprint=fingerprint,
+        templates=templates,
+        assessments=assessments,
+        metric=SelectionMetric.from_value(payload.get("metric", SelectionMetric.AICC.value)),
+        recommended_key=(
+            str(payload["recommended_key"])
+            if payload.get("recommended_key") is not None
+            else None
+        ),
+        comparable_keys=comparable_keys,
+        summary=str(payload.get("summary", "")),
+    )
+
+
+def candidate_template_keys(
+    templates: tuple[CandidateTemplate, ...] | list[CandidateTemplate],
+) -> tuple[str, ...]:
+    """Return the ordered template-key sequence for one candidate portfolio."""
+    return tuple(template.key for template in templates)
+
+
+def recommendation_template_keys(
+    recommendation: FitWizardRecommendation,
+) -> tuple[str, ...]:
+    """Return the ordered template-key sequence embedded in one recommendation."""
+    return candidate_template_keys(recommendation.templates)
+
+
+def _serialize_candidate_template(template: CandidateTemplate) -> dict[str, object]:
+    return {
+        "key": template.key,
+        "title": template.title,
+        "category": template.category,
+        "rationale": template.rationale,
+        "model": template.model.to_dict(),
+        "is_current_model_baseline": bool(template.is_current_model_baseline),
+    }
+
+
+def _deserialize_candidate_template(payload: object) -> CandidateTemplate | None:
+    if not isinstance(payload, dict):
+        return None
+    model_payload = payload.get("model")
+    if not isinstance(model_payload, dict):
+        return None
+    try:
+        model = CompositeModel.from_dict(model_payload)
+    except ValueError:
+        return None
+    return CandidateTemplate(
+        key=str(payload.get("key", "")),
+        title=str(payload.get("title", "")),
+        category=str(payload.get("category", "")),
+        rationale=str(payload.get("rationale", "")),
+        model=model,
+        is_current_model_baseline=bool(payload.get("is_current_model_baseline", False)),
+    )
+
+
+def _serialize_spectrum_fingerprint(fingerprint: SpectrumFingerprint) -> dict[str, object]:
+    return {
+        "tail_estimate": fingerprint.tail_estimate,
+        "initial_amplitude_estimate": fingerprint.initial_amplitude_estimate,
+        "zero_crossings": fingerprint.zero_crossings,
+        "smoothed_zero_crossings": fingerprint.smoothed_zero_crossings,
+        "smoothed_turning_points": fingerprint.smoothed_turning_points,
+        "dominant_fft_frequency_mhz": fingerprint.dominant_fft_frequency_mhz,
+        "dominant_fft_snr": fingerprint.dominant_fft_snr,
+        "dominant_fft_cycles_in_window": fingerprint.dominant_fft_cycles_in_window,
+        "monotonic_decay_fraction": fingerprint.monotonic_decay_fraction,
+        "early_time_curvature": fingerprint.early_time_curvature,
+        "semilog_slope_ratio": fingerprint.semilog_slope_ratio,
+        "late_time_dip_recovery_score": fingerprint.late_time_dip_recovery_score,
+        "oscillatory_hint": fingerprint.oscillatory_hint,
+        "kt_like_hint": fingerprint.kt_like_hint,
+        "multi_rate_hint": fingerprint.multi_rate_hint,
+    }
+
+
+def _deserialize_spectrum_fingerprint(payload: object) -> SpectrumFingerprint | None:
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return SpectrumFingerprint(
+            tail_estimate=float(payload.get("tail_estimate", 0.0)),
+            initial_amplitude_estimate=float(payload.get("initial_amplitude_estimate", 0.0)),
+            zero_crossings=int(payload.get("zero_crossings", 0)),
+            smoothed_zero_crossings=int(payload.get("smoothed_zero_crossings", 0)),
+            smoothed_turning_points=int(payload.get("smoothed_turning_points", 0)),
+            dominant_fft_frequency_mhz=float(payload.get("dominant_fft_frequency_mhz", 0.0)),
+            dominant_fft_snr=float(payload.get("dominant_fft_snr", 0.0)),
+            dominant_fft_cycles_in_window=float(payload.get("dominant_fft_cycles_in_window", 0.0)),
+            monotonic_decay_fraction=float(payload.get("monotonic_decay_fraction", 0.0)),
+            early_time_curvature=float(payload.get("early_time_curvature", 0.0)),
+            semilog_slope_ratio=float(payload.get("semilog_slope_ratio", 0.0)),
+            late_time_dip_recovery_score=float(payload.get("late_time_dip_recovery_score", 0.0)),
+            oscillatory_hint=bool(payload.get("oscillatory_hint", False)),
+            kt_like_hint=bool(payload.get("kt_like_hint", False)),
+            multi_rate_hint=bool(payload.get("multi_rate_hint", False)),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _serialize_parameter_set(parameters: ParameterSet) -> list[dict[str, object]]:
+    return [
+        {
+            "name": parameter.name,
+            "value": float(parameter.value),
+            "min": float(parameter.min),
+            "max": float(parameter.max),
+            "fixed": bool(parameter.fixed),
+            "expr": parameter.expr,
+        }
+        for parameter in parameters
+    ]
+
+
+def _deserialize_parameter_set(payload: object) -> ParameterSet:
+    parameters = ParameterSet()
+    if not isinstance(payload, list):
+        return parameters
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str):
+            continue
+        try:
+            parameters.add(
+                Parameter(
+                    name=name,
+                    value=float(entry.get("value", 0.0)),
+                    min=float(entry.get("min", -float("inf"))),
+                    max=float(entry.get("max", float("inf"))),
+                    fixed=bool(entry.get("fixed", False)),
+                    expr=str(entry["expr"]) if entry.get("expr") is not None else None,
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    return parameters
+
+
+def _serialize_fit_result(result: FitResult) -> dict[str, object]:
+    return {
+        "success": bool(result.success),
+        "chi_squared": float(result.chi_squared),
+        "reduced_chi_squared": float(result.reduced_chi_squared),
+        "parameters": _serialize_parameter_set(result.parameters),
+        "uncertainties": {name: float(value) for name, value in result.uncertainties.items()},
+        "residuals": (
+            np.asarray(result.residuals, dtype=float).tolist()
+            if result.residuals is not None
+            else None
+        ),
+        "message": result.message,
+    }
+
+
+def _deserialize_fit_result(payload: object) -> FitResult | None:
+    if not isinstance(payload, dict):
+        return None
+    try:
+        uncertainties = {
+            str(name): float(value)
+            for name, value in (payload.get("uncertainties", {}) or {}).items()
+        }
+    except (TypeError, ValueError):
+        uncertainties = {}
+    residuals_payload = payload.get("residuals")
+    residuals: NDArray[np.float64] | None
+    if residuals_payload is None:
+        residuals = None
+    else:
+        try:
+            residuals = np.asarray(residuals_payload, dtype=float)
+        except (TypeError, ValueError):
+            residuals = None
+    return FitResult(
+        success=bool(payload.get("success", False)),
+        chi_squared=float(payload.get("chi_squared", 0.0)),
+        reduced_chi_squared=float(payload.get("reduced_chi_squared", 0.0)),
+        parameters=_deserialize_parameter_set(payload.get("parameters", [])),
+        uncertainties=uncertainties,
+        residuals=residuals,
+        message=str(payload.get("message", "")),
+    )
+
+
+def _serialize_component_curves(
+    curves: tuple[tuple[str, NDArray[np.float64]], ...],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "name": name,
+            "values": np.asarray(values, dtype=float).tolist(),
+        }
+        for name, values in curves
+    ]
+
+
+def _deserialize_component_curves(
+    payload: object,
+) -> tuple[tuple[str, NDArray[np.float64]], ...]:
+    if not isinstance(payload, list):
+        return ()
+    curves: list[tuple[str, NDArray[np.float64]]] = []
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str):
+            continue
+        try:
+            curves.append((name, np.asarray(entry.get("values", []), dtype=float)))
+        except (TypeError, ValueError):
+            continue
+    return tuple(curves)
+
+
+def _serialize_candidate_assessment(
+    assessment: CandidateAssessment,
+) -> dict[str, object]:
+    return {
+        "template": _serialize_candidate_template(assessment.template),
+        "fit_result": _serialize_fit_result(assessment.fit_result),
+        "aic": assessment.aic,
+        "aicc": assessment.aicc,
+        "bic": assessment.bic,
+        "selected_score": assessment.selected_score,
+        "residual_rms": assessment.residual_rms,
+        "runs_z_score": assessment.runs_z_score,
+        "max_abs_autocorrelation": assessment.max_abs_autocorrelation,
+        "residual_fft_peak_snr": assessment.residual_fft_peak_snr,
+        "residual_gate_passed": bool(assessment.residual_gate_passed),
+        "residual_gate_reasons": list(assessment.residual_gate_reasons),
+        "bound_hits": list(assessment.bound_hits),
+        "fitted_time": np.asarray(assessment.fitted_time, dtype=float).tolist(),
+        "fitted_curve": np.asarray(assessment.fitted_curve, dtype=float).tolist(),
+        "component_curves": _serialize_component_curves(assessment.component_curves),
+    }
+
+
+def _deserialize_candidate_assessment(
+    payload: object,
+) -> CandidateAssessment | None:
+    if not isinstance(payload, dict):
+        return None
+    template = _deserialize_candidate_template(payload.get("template"))
+    fit_result = _deserialize_fit_result(payload.get("fit_result"))
+    if template is None or fit_result is None:
+        return None
+    try:
+        return CandidateAssessment(
+            template=template,
+            fit_result=fit_result,
+            aic=float(payload.get("aic", float("inf"))),
+            aicc=(
+                float(payload["aicc"])
+                if payload.get("aicc") is not None
+                else None
+            ),
+            bic=float(payload.get("bic", float("inf"))),
+            selected_score=float(payload.get("selected_score", float("inf"))),
+            residual_rms=float(payload.get("residual_rms", float("inf"))),
+            runs_z_score=float(payload.get("runs_z_score", float("inf"))),
+            max_abs_autocorrelation=float(payload.get("max_abs_autocorrelation", float("inf"))),
+            residual_fft_peak_snr=float(payload.get("residual_fft_peak_snr", float("inf"))),
+            residual_gate_passed=bool(payload.get("residual_gate_passed", False)),
+            residual_gate_reasons=tuple(
+                reason for reason in payload.get("residual_gate_reasons", []) if isinstance(reason, str)
+            ),
+            bound_hits=tuple(
+                name for name in payload.get("bound_hits", []) if isinstance(name, str)
+            ),
+            fitted_time=np.asarray(payload.get("fitted_time", []), dtype=float),
+            fitted_curve=np.asarray(payload.get("fitted_curve", []), dtype=float),
+            component_curves=_deserialize_component_curves(payload.get("component_curves", [])),
+        )
+    except (TypeError, ValueError):
+        return None
     return replace(
         recommendation,
         metric=metric,

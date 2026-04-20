@@ -33,3 +33,22 @@ def remember_export_path(selected_path: str) -> None:
     if parent:
         settings = QSettings()
         settings.setValue(_EXPORT_DIR_KEY, parent)
+
+
+def resolve_gle_export_paths(
+    selected_path: str | Path,
+    *,
+    folder: bool = True,
+) -> tuple[Path, Path]:
+    """Resolve the final `.gle` path and export directory for GLE exports."""
+    output_path = Path(selected_path).expanduser()
+    export_dir = output_path.parent
+
+    if folder:
+        if output_path.suffix == ".gleplot":
+            export_dir = output_path
+        else:
+            export_dir = output_path.parent / f"{output_path.stem}.gleplot"
+        output_path = export_dir / f"{export_dir.stem}.gle"
+
+    return output_path, export_dir

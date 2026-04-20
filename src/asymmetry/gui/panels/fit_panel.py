@@ -36,7 +36,12 @@ from asymmetry.core.fitting.global_fit_wizard import (
     deserialize_global_fit_wizard_recommendation,
     serialize_global_fit_wizard_recommendation,
 )
-from asymmetry.core.fitting.fit_wizard import CandidateAssessment, FitWizardRecommendation
+from asymmetry.core.fitting.fit_wizard import (
+    CandidateAssessment,
+    FitWizardRecommendation,
+    deserialize_fit_wizard_recommendation,
+    serialize_fit_wizard_recommendation,
+)
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.parameters import (
     Parameter,
@@ -205,6 +210,9 @@ class SingleFitTab(QWidget):
         self._fit_engine = FitEngine()
         self._composite_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
         self._fit_wizard_window: FitWizardWindow | None = None
+        self._cached_wizard_recommendation: FitWizardRecommendation | None = None
+        self._cached_wizard_signature: dict[str, object] | None = None
+        self._cached_wizard_log_text = ""
 
         # Model selection
         model_group = QGroupBox("Model")
@@ -294,6 +302,53 @@ class SingleFitTab(QWidget):
         self._preview_btn.setToolTip(tooltip)
         self._fit_wizard_btn.setToolTip(tooltip)
 
+    def _wizard_context_signature(self) -> dict[str, object]:
+        return {
+            "run_number": (
+                int(self._current_dataset.run_number)
+                if self._current_dataset is not None and getattr(self._current_dataset, "run_number", None) is not None
+                else None
+            ),
+            "model": self._composite_model.to_dict(),
+        }
+
+    def _wizard_base_signature_matches(
+        self,
+        cached_signature: dict[str, object] | None,
+        current_signature: dict[str, object],
+    ) -> bool:
+        if not isinstance(cached_signature, dict):
+            return False
+        cached_model = cached_signature.get("model")
+        return (
+            cached_signature.get("run_number") == current_signature.get("run_number")
+            and (
+                cached_model is None
+                or cached_model == current_signature.get("model")
+            )
+        )
+
+    def _cache_wizard_analysis(
+        self,
+        recommendation: FitWizardRecommendation,
+        *,
+        signature: dict[str, object],
+        log_text: str = "",
+    ) -> None:
+        self._cached_wizard_recommendation = recommendation
+        self._cached_wizard_signature = copy.deepcopy(signature)
+        self._cached_wizard_log_text = str(log_text)
+
+    def _on_fit_wizard_analysis_cached(
+        self,
+        recommendation: object,
+        log_text: str,
+        signature: object,
+    ) -> None:
+        if not isinstance(recommendation, FitWizardRecommendation) or not isinstance(signature, dict):
+            return
+        self._cache_wizard_analysis(recommendation, signature=signature, log_text=log_text)
+
     def _on_share_function_with_group(self) -> None:
         """Request sharing the active single-fit function with the current data group."""
         if self._current_dataset is None:
@@ -373,11 +428,23 @@ class SingleFitTab(QWidget):
             self._fit_wizard_window.apply_assessment_requested.connect(
                 self._apply_fit_wizard_assessment
             )
+            self._fit_wizard_window.analysis_cached.connect(self._on_fit_wizard_analysis_cached)
+
+        signature = self._wizard_context_signature()
 
         self._fit_wizard_window.set_analysis_context(
             self._current_dataset,
             current_model=self._composite_model,
         )
+        if (
+            self._cached_wizard_recommendation is not None
+            and self._wizard_base_signature_matches(self._cached_wizard_signature, signature)
+        ):
+            self._fit_wizard_window.set_cached_recommendation(
+                self._cached_wizard_recommendation,
+                signature=self._cached_wizard_signature,
+                log_text=self._cached_wizard_log_text,
+            )
         self._fit_wizard_window.show()
         self._fit_wizard_window.raise_()
         self._fit_wizard_window.activateWindow()
@@ -672,6 +739,18 @@ class SingleFitTab(QWidget):
 
     def get_state(self) -> dict:
         """Return a serialisable snapshot of the single-fit tab state."""
+        if self._fit_wizard_window is not None:
+            recommendation = self._fit_wizard_window.current_recommendation()
+            if recommendation is not None:
+                signature = self._cached_wizard_signature
+                if not isinstance(signature, dict):
+                    signature = self._wizard_context_signature()
+                self._cache_wizard_analysis(
+                    recommendation,
+                    signature=signature,
+                    log_text=self._fit_wizard_window.current_log_text(),
+                )
+
         params = []
         for i in range(self._param_table.rowCount()):
             name_item = self._param_table.item(i, 0)
@@ -703,15 +782,31 @@ class SingleFitTab(QWidget):
                 "max": max_item.text() if max_item else "inf",
             })
 
-        return {
+        state = {
             "model_name": "Composite",
             "composite_model": self._composite_model.to_dict(),
             "parameters": params,
             "result_html": self._result_label.text(),
         }
+        if (
+            self._cached_wizard_recommendation is not None
+            and self._cached_wizard_signature is not None
+        ):
+            state["wizard_state"] = {
+                "signature": copy.deepcopy(self._cached_wizard_signature),
+                "recommendation": serialize_fit_wizard_recommendation(
+                    self._cached_wizard_recommendation
+                ),
+                "log_text": self._cached_wizard_log_text,
+            }
+        return state
 
     def restore_state(self, state: dict) -> None:
         """Restore single-fit tab state from a saved dict."""
+        self._cached_wizard_recommendation = None
+        self._cached_wizard_signature = None
+        self._cached_wizard_log_text = ""
+
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):
             try:
@@ -755,6 +850,17 @@ class SingleFitTab(QWidget):
         if isinstance(result_html, str) and result_html:
             self._result_label.setText(result_html)
 
+        wizard_state = state.get("wizard_state")
+        if isinstance(wizard_state, dict):
+            recommendation = deserialize_fit_wizard_recommendation(
+                wizard_state.get("recommendation")
+            )
+            signature = wizard_state.get("signature")
+            if recommendation is not None and isinstance(signature, dict):
+                self._cached_wizard_recommendation = recommendation
+                self._cached_wizard_signature = copy.deepcopy(signature)
+                self._cached_wizard_log_text = str(wizard_state.get("log_text", ""))
+
 
 class GlobalFitTab(QWidget):
     """Global fitting interface for simultaneous multi-dataset fitting.
@@ -787,10 +893,10 @@ class GlobalFitTab(QWidget):
         self._inherited_seed_by_run: dict[int, dict[str, float]] = {}
         self._inherited_model_dict: dict[str, object] | None = None
         self._fit_wizard_window: GlobalFitWizardWindow | None = None
+        self._wizard_cache_by_run_set: dict[tuple[int, ...], dict[str, object]] = {}
         self._cached_wizard_recommendation: GlobalFitWizardRecommendation | None = None
         self._cached_wizard_signature: dict[str, object] | None = None
         self._cached_wizard_log_text = ""
-        self._fit_wizard_search_strategy = "legacy"
 
         # Model selection
         model_group = QGroupBox("Model")
@@ -932,29 +1038,83 @@ class GlobalFitTab(QWidget):
         self._refresh_inherited_single_fit_defaults()
 
     def _invalidate_wizard_cache_if_stale(self) -> None:
-        signature = self._cached_wizard_signature
-        if not isinstance(signature, dict):
+        self._sync_active_wizard_cache_from_selection()
+
+    def _normalized_wizard_run_set(
+        self,
+        run_numbers: list[int] | tuple[int, ...] | None = None,
+    ) -> tuple[int, ...]:
+        normalized: list[int] = []
+        source = run_numbers
+        if source is None:
+            source = [
+                int(dataset.run_number)
+                for dataset in self._datasets
+                if getattr(dataset, "run_number", None) is not None
+            ]
+        for run_number in source:
+            try:
+                normalized.append(int(run_number))
+            except (TypeError, ValueError):
+                continue
+        return tuple(sorted(normalized))
+
+    def _normalized_wizard_signature(
+        self,
+        signature: dict[str, object],
+    ) -> dict[str, object]:
+        normalized = copy.deepcopy(signature)
+        normalized.pop("search_strategy", None)
+        run_numbers = normalized.get("run_numbers")
+        if isinstance(run_numbers, tuple | list):
+            normalized["run_numbers"] = list(self._normalized_wizard_run_set(tuple(run_numbers)))
+        return normalized
+
+    def _set_active_wizard_cache(
+        self,
+        recommendation: GlobalFitWizardRecommendation | None,
+        *,
+        signature: dict[str, object] | None,
+        log_text: str = "",
+    ) -> None:
+        self._cached_wizard_recommendation = recommendation
+        self._cached_wizard_signature = (
+            self._normalized_wizard_signature(signature)
+            if isinstance(signature, dict)
+            else None
+        )
+        self._cached_wizard_log_text = str(log_text)
+
+    def _wizard_cache_entry_for_run_set(
+        self,
+        run_set: tuple[int, ...] | None = None,
+    ) -> dict[str, object] | None:
+        key = self._normalized_wizard_run_set(run_set)
+        if not key:
+            return None
+        entry = self._wizard_cache_by_run_set.get(key)
+        return entry if isinstance(entry, dict) else None
+
+    def _sync_active_wizard_cache_from_selection(self) -> None:
+        entry = self._wizard_cache_entry_for_run_set()
+        if entry is None:
+            self._set_active_wizard_cache(None, signature=None, log_text="")
             return
-        cached_runs = signature.get("run_numbers")
-        current_runs = [
-            int(dataset.run_number)
-            for dataset in self._datasets
-            if getattr(dataset, "run_number", None) is not None
-        ]
-        if cached_runs != current_runs:
-            self._cached_wizard_recommendation = None
-            self._cached_wizard_signature = None
-            self._cached_wizard_log_text = ""
+        recommendation = entry.get("recommendation")
+        signature = entry.get("signature")
+        log_text = entry.get("log_text", "")
+        if not isinstance(recommendation, GlobalFitWizardRecommendation) or not isinstance(signature, dict):
+            self._set_active_wizard_cache(None, signature=None, log_text="")
+            return
+        self._set_active_wizard_cache(
+            recommendation,
+            signature=signature,
+            log_text=str(log_text),
+        )
 
     def _wizard_context_signature(self, parsed: dict[str, object]) -> dict[str, object]:
-        search_strategy = self._fit_wizard_search_strategy
-        if self._fit_wizard_window is not None and hasattr(
-            self._fit_wizard_window,
-            "current_search_strategy",
-        ):
-            search_strategy = self._fit_wizard_window.current_search_strategy()
         return {
-            "run_numbers": [int(dataset.run_number) for dataset in self._datasets],
+            "run_numbers": list(self._normalized_wizard_run_set()),
             "model": self._composite_model.to_dict(),
             "types": {str(key): str(value) for key, value in dict(parsed["types"]).items()},
             "values": {str(key): float(value) for key, value in dict(parsed["values"]).items()},
@@ -962,7 +1122,6 @@ class GlobalFitTab(QWidget):
                 str(key): [float(bounds[0]), float(bounds[1])]
                 for key, bounds in dict(parsed["bounds"]).items()
             },
-            "search_strategy": str(search_strategy),
         }
 
     def _cache_wizard_analysis(
@@ -972,10 +1131,123 @@ class GlobalFitTab(QWidget):
         signature: dict[str, object],
         log_text: str = "",
     ) -> None:
-        self._cached_wizard_recommendation = recommendation
-        self._cached_wizard_signature = copy.deepcopy(signature)
-        self._cached_wizard_log_text = str(log_text)
-        self._fit_wizard_search_strategy = str(signature.get("search_strategy", "legacy"))
+        normalized_signature = self._normalized_wizard_signature(signature)
+        run_set = self._normalized_wizard_run_set(normalized_signature.get("run_numbers"))
+        if run_set:
+            self._wizard_cache_by_run_set[run_set] = {
+                "signature": normalized_signature,
+                "recommendation": recommendation,
+                "log_text": str(log_text),
+            }
+        self._set_active_wizard_cache(
+            recommendation,
+            signature=normalized_signature,
+            log_text=log_text,
+        )
+
+    def _serialize_wizard_cache_store(self) -> list[dict[str, object]]:
+        serialized: list[dict[str, object]] = []
+        for run_set in sorted(self._wizard_cache_by_run_set):
+            entry = self._wizard_cache_by_run_set.get(run_set)
+            if not isinstance(entry, dict):
+                continue
+            recommendation = entry.get("recommendation")
+            signature = entry.get("signature")
+            if not isinstance(recommendation, GlobalFitWizardRecommendation) or not isinstance(signature, dict):
+                continue
+            serialized.append({
+                "run_numbers": list(run_set),
+                "signature": copy.deepcopy(signature),
+                "recommendation": serialize_global_fit_wizard_recommendation(recommendation),
+                "log_text": str(entry.get("log_text", "")),
+            })
+        return serialized
+
+    def _restore_wizard_cache_store(self, payload: object) -> None:
+        self._wizard_cache_by_run_set = {}
+        if not isinstance(payload, list):
+            self._sync_active_wizard_cache_from_selection()
+            return
+        for raw_entry in payload:
+            if not isinstance(raw_entry, dict):
+                continue
+            recommendation = deserialize_global_fit_wizard_recommendation(
+                raw_entry.get("recommendation")
+            )
+            signature = raw_entry.get("signature")
+            raw_run_numbers = raw_entry.get("run_numbers")
+            if recommendation is None or not isinstance(signature, dict):
+                continue
+            if not isinstance(raw_run_numbers, tuple | list):
+                raw_run_numbers = signature.get("run_numbers")
+            run_set = self._normalized_wizard_run_set(raw_run_numbers)
+            if not run_set:
+                continue
+            self._wizard_cache_by_run_set[run_set] = {
+                "signature": self._normalized_wizard_signature(signature),
+                "recommendation": recommendation,
+                "log_text": str(raw_entry.get("log_text", "")),
+            }
+        self._sync_active_wizard_cache_from_selection()
+
+    def _single_fit_wizard_cache_for_run(
+        self,
+        run_number: int,
+    ) -> tuple[FitWizardRecommendation | None, dict[str, object] | None, str]:
+        parent = self._fit_panel_host()
+        getter = getattr(parent, "get_single_fit_wizard_cache_for_run", None)
+        if not callable(getter):
+            return None, None, ""
+        payload = getter(run_number)
+        if not isinstance(payload, tuple) or len(payload) != 3:
+            return None, None, ""
+        recommendation, signature, log_text = payload
+        if not isinstance(recommendation, FitWizardRecommendation):
+            return None, None, ""
+        return recommendation, signature if isinstance(signature, dict) else None, str(log_text)
+
+    def _existing_single_fit_recommendations_for_selected_runs(self) -> dict[int, FitWizardRecommendation]:
+        recommendations: dict[int, FitWizardRecommendation] = {}
+        for dataset in self._datasets:
+            recommendation, _signature, _log_text = self._single_fit_wizard_cache_for_run(
+                int(dataset.run_number)
+            )
+            if recommendation is not None:
+                recommendations[int(dataset.run_number)] = recommendation
+        return recommendations
+
+    def _on_single_fit_recommendations_generated(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        parent = self._fit_panel_host()
+        persist = getattr(parent, "persist_single_fit_wizard_cache_for_run", None)
+        if not callable(persist):
+            return
+        for run_number, recommendation in payload.items():
+            if not isinstance(recommendation, FitWizardRecommendation):
+                continue
+            try:
+                run_key = int(run_number)
+            except (TypeError, ValueError):
+                continue
+            persist(
+                run_key,
+                recommendation,
+                signature={"run_number": run_key, "model": None},
+                log_text="Updated by Global Fit Wizard screening.",
+            )
+
+    def _fit_panel_host(self) -> object | None:
+        parent = self.parent()
+        while parent is not None:
+            if hasattr(parent, "get_single_fit_wizard_cache_for_run") and hasattr(
+                parent,
+                "persist_single_fit_wizard_cache_for_run",
+            ):
+                return parent
+            next_parent = getattr(parent, "parent", None)
+            parent = next_parent() if callable(next_parent) else None
+        return None
 
     def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
         """Enable/disable global-fit execution while preserving selected datasets."""
@@ -1151,11 +1423,12 @@ class GlobalFitTab(QWidget):
                 self._apply_fit_wizard_assessment
             )
             self._fit_wizard_window.analysis_cached.connect(self._on_fit_wizard_analysis_cached)
+            self._fit_wizard_window.single_fit_recommendations_generated.connect(
+                self._on_single_fit_recommendations_generated
+            )
             self._fit_wizard_window.parameter_setup_applied.connect(
                 self._on_fit_wizard_parameter_setup_applied
             )
-        self._fit_wizard_window.set_search_strategy(self._fit_wizard_search_strategy)
-
         signature = self._wizard_context_signature(parsed)
 
         self._fit_wizard_window.set_analysis_context(
@@ -1164,18 +1437,37 @@ class GlobalFitTab(QWidget):
             current_parameter_types=parsed["types"],
             current_values=parsed["values"],
             parameter_bounds=parsed["bounds"],
+            existing_single_fit_recommendations_by_run=self._existing_single_fit_recommendations_for_selected_runs(),
         )
-        if (
-            self._cached_wizard_recommendation is not None
-            and self._wizard_base_signature_matches(
-                self._cached_wizard_signature,
-                signature,
-            )
+        cached_entry = self._wizard_cache_entry_for_run_set()
+        cached_recommendation = None
+        cached_signature = None
+        cached_log_text = ""
+        if isinstance(cached_entry, dict):
+            candidate = cached_entry.get("recommendation")
+            candidate_signature = cached_entry.get("signature")
+            if isinstance(candidate, GlobalFitWizardRecommendation) and isinstance(candidate_signature, dict):
+                cached_recommendation = candidate
+                cached_signature = candidate_signature
+                cached_log_text = str(cached_entry.get("log_text", ""))
+        if cached_recommendation is not None and self._wizard_base_signature_matches(
+            cached_signature,
+            signature,
         ):
             self._fit_wizard_window.set_cached_recommendation(
-                self._cached_wizard_recommendation,
-                signature=self._cached_wizard_signature,
-                log_text=self._cached_wizard_log_text,
+                cached_recommendation,
+                signature=cached_signature,
+                log_text=cached_log_text,
+            )
+        elif cached_recommendation is not None:
+            self._fit_wizard_window.set_cached_recommendation(
+                cached_recommendation,
+                signature=cached_signature,
+                log_text=cached_log_text,
+                status_text=(
+                    "Showing previously cached Global Fit Wizard results for these runs. "
+                    "Rebuild screening to refresh them for the current parameter setup."
+                ),
             )
         self._fit_wizard_window.show()
         self._fit_wizard_window.raise_()
@@ -1317,7 +1609,7 @@ class GlobalFitTab(QWidget):
     ) -> bool:
         if not isinstance(cached_signature, dict):
             return False
-        for key in ("run_numbers", "model", "values", "search_strategy"):
+        for key in ("run_numbers", "model", "values"):
             if cached_signature.get(key) != base_signature.get(key):
                 return False
         cached_types = cached_signature.get("types")
@@ -1710,6 +2002,9 @@ class GlobalFitTab(QWidget):
             "parameters": params,
             "result_html": self._result_text.toHtml(),
         }
+        wizard_state_by_run_set = self._serialize_wizard_cache_store()
+        if wizard_state_by_run_set:
+            state["wizard_state_by_run_set"] = wizard_state_by_run_set
         if (
             self._cached_wizard_recommendation is not None
             and self._cached_wizard_signature is not None
@@ -1725,6 +2020,9 @@ class GlobalFitTab(QWidget):
 
     def restore_state(self, state: dict) -> None:
         """Restore global-fit tab state from a saved dict."""
+        self._wizard_cache_by_run_set = {}
+        self._set_active_wizard_cache(None, signature=None, log_text="")
+
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):
             try:
@@ -1766,6 +2064,10 @@ class GlobalFitTab(QWidget):
         if isinstance(result_html, str) and result_html:
             self._result_text.setHtml(result_html)
 
+        wizard_state_by_run_set = state.get("wizard_state_by_run_set")
+        if isinstance(wizard_state_by_run_set, list):
+            self._restore_wizard_cache_store(wizard_state_by_run_set)
+
         wizard_state = state.get("wizard_state")
         if isinstance(wizard_state, dict):
             recommendation = deserialize_global_fit_wizard_recommendation(
@@ -1773,10 +2075,12 @@ class GlobalFitTab(QWidget):
             )
             signature = wizard_state.get("signature")
             if recommendation is not None and isinstance(signature, dict):
-                self._cached_wizard_recommendation = recommendation
-                self._cached_wizard_signature = copy.deepcopy(signature)
-                self._cached_wizard_log_text = str(wizard_state.get("log_text", ""))
-                self._fit_wizard_search_strategy = str(signature.get("search_strategy", "legacy"))
+                self._cache_wizard_analysis(
+                    recommendation,
+                    signature=signature,
+                    log_text=str(wizard_state.get("log_text", "")),
+                )
+        self._sync_active_wizard_cache_from_selection()
 
 
 class FitPanel(QWidget):
@@ -1930,6 +2234,82 @@ class FitPanel(QWidget):
         if isinstance(state, dict):
             return copy.deepcopy(state)
         return None
+
+    def get_single_fit_wizard_cache_for_run(
+        self,
+        run_number: int,
+    ) -> tuple[FitWizardRecommendation | None, dict[str, object] | None, str]:
+        state = self.get_single_state_for_run(run_number)
+        if not isinstance(state, dict):
+            return None, None, ""
+        wizard_state = state.get("wizard_state")
+        if not isinstance(wizard_state, dict):
+            return None, None, ""
+        recommendation = deserialize_fit_wizard_recommendation(
+            wizard_state.get("recommendation")
+        )
+        signature = wizard_state.get("signature")
+        log_text = str(wizard_state.get("log_text", ""))
+        return (
+            recommendation,
+            signature if isinstance(signature, dict) else None,
+            log_text,
+        )
+
+    def persist_single_fit_wizard_cache_for_run(
+        self,
+        run_number: int,
+        recommendation: FitWizardRecommendation,
+        *,
+        signature: dict[str, object] | None = None,
+        log_text: str = "",
+    ) -> None:
+        try:
+            run_key = int(run_number)
+        except (TypeError, ValueError):
+            return
+
+        active_signature = copy.deepcopy(signature) if isinstance(signature, dict) else {
+            "run_number": run_key,
+            "model": None,
+        }
+        wizard_state = {
+            "signature": active_signature,
+            "recommendation": serialize_fit_wizard_recommendation(recommendation),
+            "log_text": str(log_text),
+        }
+
+        if self._active_single_run_number is not None and int(self._active_single_run_number) == run_key:
+            self._single_tab._cache_wizard_analysis(
+                recommendation,
+                signature=active_signature,
+                log_text=log_text,
+            )
+            self._single_state_by_run[run_key] = self._single_tab.get_state()
+            return
+
+        state = self.get_single_state_for_run(run_key)
+        if not isinstance(state, dict):
+            recommended = recommendation.recommended_assessment
+            if recommended is not None and recommended.fit_result.success:
+                state = self._single_state_from_fit_result(
+                    recommended.template.model,
+                    recommended.fit_result,
+                    source="Fit Wizard",
+                )
+            else:
+                state = {
+                    "model_name": "Composite",
+                    "composite_model": (
+                        recommendation.recommended_assessment.template.model.to_dict()
+                        if recommendation.recommended_assessment is not None
+                        else self._single_tab._composite_model.to_dict()
+                    ),
+                    "parameters": [],
+                    "result_html": "No fit performed yet",
+                }
+        state["wizard_state"] = wizard_state
+        self._single_state_by_run[run_key] = copy.deepcopy(state)
 
     def share_single_function_state(self, source_run_number: int, target_run_numbers: list[int]) -> int:
         """Copy source single-fit function/parameter state to target runs.

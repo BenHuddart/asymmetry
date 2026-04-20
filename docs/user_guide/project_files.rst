@@ -12,12 +12,32 @@ Project files store:
 * Browser state (sorting, filters, selected runs, dynamic columns)
 * Plot state (ranges, selected run, bunch factor)
 * Fit-panel and Fourier-panel state
+* Cached single-fit and global-fit wizard analysis payloads when present
 
 For two-period NeXus runs, grouping metadata persisted with each dataset also
 includes red/green period configuration such as ``period_mode`` and per-period
 histogram metadata used by RG recomputation.
 
 Project files do not embed raw detector arrays.
+
+Wizard Cache State
+------------------
+
+The single-fit and global-fit panels may each include an optional
+``wizard_state`` block inside their saved UI state.
+
+For single-fit runs this stores:
+
+* the cached recommendation payload for the run
+* the signature used to decide whether the cached result can be reused
+* the wizard log text shown in the analysis log window
+
+For the global-fit tab this stores the cached global recommendation together
+with the run-set, parameter-role, value, and bounds signature that produced it.
+
+These blocks are optional and backward-compatible. Older project files do not
+need them, but when present they allow wizard results to reopen immediately
+without rerunning the expensive analysis.
 
 Grouping Overrides
 ------------------

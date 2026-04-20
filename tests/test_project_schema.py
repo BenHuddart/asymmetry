@@ -223,6 +223,47 @@ class TestProjectIO:
         raw = json.loads(path.read_text(encoding="utf-8"))
         assert raw["schema_version"] == 4
 
+    def test_optional_wizard_cache_state_round_trips(self, tmp_path):
+        state = _minimal_state()
+        state["single_fit_state"]["wizard_state"] = {
+            "signature": {"run_number": 1001, "model": None},
+            "recommendation": {"summary": "single cached"},
+            "log_text": "single log",
+        }
+        state["global_fit_state"]["wizard_state"] = {
+            "signature": {
+                "run_numbers": [1001, 1002],
+                "search_strategy": "staged_v2",
+            },
+            "recommendation": {"summary": "global cached"},
+            "log_text": "global log",
+        }
+        state["global_fit_state"]["wizard_state_by_run_set"] = [
+            {
+                "run_numbers": [1001, 1002],
+                "signature": {"run_numbers": [1001, 1002]},
+                "recommendation": {"summary": "group 1"},
+                "log_text": "group 1 log",
+            },
+            {
+                "run_numbers": [1001, 1003],
+                "signature": {"run_numbers": [1001, 1003]},
+                "recommendation": {"summary": "group 2"},
+                "log_text": "group 2 log",
+            },
+        ]
+
+        path = tmp_path / "wizard_state_roundtrip.asymp"
+        save_project(state, path)
+        loaded = load_project(path)
+
+        assert loaded["single_fit_state"]["wizard_state"]["log_text"] == "single log"
+        assert loaded["single_fit_state"]["wizard_state"]["signature"]["run_number"] == 1001
+        assert loaded["global_fit_state"]["wizard_state"]["log_text"] == "global log"
+        assert loaded["global_fit_state"]["wizard_state"]["signature"]["search_strategy"] == "staged_v2"
+        assert len(loaded["global_fit_state"]["wizard_state_by_run_set"]) == 2
+        assert loaded["global_fit_state"]["wizard_state_by_run_set"][1]["log_text"] == "group 2 log"
+
     def test_numpy_arrays_serialised_as_lists(self, tmp_path):
         state = _minimal_state()
         state["plot_state"]["fit_curve"] = {
@@ -869,8 +910,11 @@ class TestMainWindowProjectState:
         assert restored.run.grouping.get("forward_group") == 1
         assert restored.run.grouping.get("backward_group") == 2
 
-        assert window2._plot_panel._x_min.value() == pytest.approx(0.25)
-        assert window2._plot_panel._x_max.value() == pytest.approx(2.75)
+        # The saved fit range still spans the full dataset, so restoring it
+        # widens the visible x-limits back out to include that range.
+        assert window2._plot_panel._x_min.value() == pytest.approx(0.0)
+        assert window2._plot_panel._x_max.value() == pytest.approx(3.0)
+        assert window2._plot_panel.get_fit_range() == pytest.approx((0.0, 3.0))
         assert window2._plot_panel._y_min.value() == pytest.approx(20.0)
         assert window2._plot_panel._y_max.value() == pytest.approx(45.0)
 

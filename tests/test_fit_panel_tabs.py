@@ -306,6 +306,7 @@ def test_single_fit_open_fit_wizard_uses_active_dataset_and_model(
     class _FakeWizard:
         def __init__(self, _parent) -> None:
             self.apply_assessment_requested = SimpleNamespace(connect=lambda _cb: None)
+            self.analysis_cached = SimpleNamespace(connect=lambda _cb: None)
 
         def set_analysis_context(self, dataset_arg, current_model=None) -> None:
             received["dataset"] = dataset_arg
@@ -802,6 +803,92 @@ def test_fit_panel_single_state_roundtrip_preserves_per_run_states(
     assert "saved fit 102" in restored._single_tab._result_label.text()
 
 
+def test_single_tab_state_roundtrip_preserves_cached_wizard_results(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    tab = SingleFitTab()
+    tab.set_dataset(dataset)
+    _assessment, recommendation = _wizard_payload_for_dataset(dataset)
+    signature = {
+        "run_number": int(dataset.run_number),
+        "model": tab._composite_model.to_dict(),
+    }
+
+    tab._cache_wizard_analysis(recommendation, signature=signature, log_text="cached log")
+    saved = tab.get_state()
+
+    restored = SingleFitTab()
+    restored.set_dataset(dataset)
+    restored.restore_state(saved)
+
+    assert restored._cached_wizard_recommendation is not None
+    assert restored._cached_wizard_recommendation.summary == recommendation.summary
+    assert restored._cached_wizard_signature == signature
+    assert restored._cached_wizard_log_text == "cached log"
+
+
+def test_fit_panel_single_state_roundtrip_preserves_per_run_wizard_state(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    panel = FitPanel()
+    d1 = dataset
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    _assessment_1, recommendation_1 = _wizard_payload_for_dataset(d1)
+    _assessment_2, recommendation_2 = _wizard_payload_for_dataset(d2)
+
+    panel.set_dataset(d1)
+    panel._single_tab._cache_wizard_analysis(
+        recommendation_1,
+        signature={"run_number": int(d1.run_number), "model": panel._single_tab._composite_model.to_dict()},
+        log_text="run 101 log",
+    )
+    panel.set_dataset(d2)
+    panel._single_tab._cache_wizard_analysis(
+        recommendation_2,
+        signature={"run_number": int(d2.run_number), "model": panel._single_tab._composite_model.to_dict()},
+        log_text="run 102 log",
+    )
+
+    saved = panel.get_single_state()
+
+    restored = FitPanel()
+    restored.set_dataset(d1)
+    restored.restore_single_state(saved)
+    assert restored._single_tab._cached_wizard_recommendation is not None
+    assert restored._single_tab._cached_wizard_log_text == "run 101 log"
+
+    restored.set_dataset(d2)
+    assert restored._single_tab._cached_wizard_recommendation is not None
+    assert restored._single_tab._cached_wizard_log_text == "run 102 log"
+
+
+def test_fit_panel_persist_single_fit_wizard_cache_restores_unopened_run(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    panel = FitPanel()
+    d1 = dataset
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    _assessment, recommendation = _wizard_payload_for_dataset(d2)
+
+    panel.set_dataset(d1)
+    panel.persist_single_fit_wizard_cache_for_run(
+        102,
+        recommendation,
+        signature={"run_number": 102, "model": None},
+        log_text="phase 1",
+    )
+
+    panel.set_dataset(d2)
+
+    assert panel._single_tab._cached_wizard_recommendation is not None
+    assert panel._single_tab._cached_wizard_recommendation.summary == recommendation.summary
+    assert panel._single_tab._cached_wizard_log_text == "phase 1"
+    assert panel._single_tab._cached_wizard_signature == {"run_number": 102, "model": None}
+
+
 def test_fit_panel_global_fit_results_seed_single_state_per_run(
     qapp: QApplication,
     dataset: MuonDataset,
@@ -1075,11 +1162,11 @@ def test_global_tab_state_roundtrip_preserves_cached_wizard_results(
         "types": {"A_1": "Global", "Lambda": "Local", "A_bg": "Global"},
         "values": {"A_1": 0.2, "Lambda": 0.4, "A_bg": 0.01},
         "bounds": {"A_1": [0.0, 1.0], "Lambda": [0.0, 5.0], "A_bg": [-0.5, 0.5]},
-        "search_strategy": "staged_v1",
     }
     tab._cache_wizard_analysis(recommendation, signature=signature, log_text="cached log")
 
     saved = tab.get_state()
+    assert len(saved["wizard_state_by_run_set"]) == 1
 
     restored = GlobalFitTab()
     restored.set_datasets([dataset, dataset_102])
@@ -1089,7 +1176,226 @@ def test_global_tab_state_roundtrip_preserves_cached_wizard_results(
     assert restored._cached_wizard_recommendation.summary == recommendation.summary
     assert restored._cached_wizard_signature == signature
     assert restored._cached_wizard_log_text == "cached log"
-    assert restored._fit_wizard_search_strategy == "staged_v1"
+
+
+def test_global_tab_reopens_cached_results_for_prior_run_set_after_switching_groups(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tab = GlobalFitTab()
+    dataset_102 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    dataset_103 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 103})
+
+    tab.set_datasets([dataset, dataset_102])
+    signature_12 = tab._wizard_context_signature(tab._parse_parameter_configuration())
+    recommendation_12 = replace(
+        _global_wizard_recommendation_for_dataset(dataset),
+        summary="cached 101/102",
+    )
+    tab._cache_wizard_analysis(recommendation_12, signature=signature_12, log_text="group 12")
+
+    tab.set_datasets([dataset, dataset_103])
+    signature_13 = tab._wizard_context_signature(tab._parse_parameter_configuration())
+    recommendation_13 = replace(
+        _global_wizard_recommendation_for_dataset(dataset),
+        summary="cached 101/103",
+    )
+    tab._cache_wizard_analysis(recommendation_13, signature=signature_13, log_text="group 13")
+
+    captured: dict[str, object] = {}
+
+    class _FakeGlobalWizard:
+        def __init__(self, _parent) -> None:
+            self.apply_assessment_requested = SimpleNamespace(connect=lambda _cb: None)
+            self.analysis_cached = SimpleNamespace(connect=lambda _cb: None)
+            self.single_fit_recommendations_generated = SimpleNamespace(connect=lambda _cb: None)
+            self.parameter_setup_applied = SimpleNamespace(connect=lambda _cb: None)
+
+        def set_analysis_context(self, datasets_arg, **kwargs) -> None:
+            captured["datasets"] = datasets_arg
+            captured["single_fit"] = kwargs.get("existing_single_fit_recommendations_by_run")
+
+        def set_cached_recommendation(self, recommendation, **kwargs) -> None:
+            captured["recommendation"] = recommendation
+            captured["status_text"] = kwargs.get("status_text")
+            captured["signature"] = kwargs.get("signature")
+
+        def show(self) -> None:
+            captured["show"] = True
+
+        def raise_(self) -> None:
+            captured["raise"] = True
+
+        def activateWindow(self) -> None:
+            captured["activate"] = True
+
+    monkeypatch.setattr(fit_panel_module, "GlobalFitWizardWindow", _FakeGlobalWizard)
+
+    tab.set_datasets([dataset, dataset_102])
+    tab._fit_wizard_window = None
+    tab._open_fit_wizard()
+
+    assert captured["datasets"] == [dataset, dataset_102]
+    assert captured["show"] is True
+    assert captured["recommendation"].summary == "cached 101/102"
+    assert captured["status_text"] is None
+    assert captured["signature"] == signature_12
+
+
+def test_global_tab_reopens_historical_results_for_same_run_set_when_signature_changes(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tab = GlobalFitTab()
+    dataset_102 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    tab.set_datasets([dataset, dataset_102])
+
+    signature = tab._wizard_context_signature(tab._parse_parameter_configuration())
+    recommendation = replace(
+        _global_wizard_recommendation_for_dataset(dataset),
+        summary="cached same-group result",
+    )
+    tab._cache_wizard_analysis(recommendation, signature=signature, log_text="old setup")
+
+    lambda_value_item = tab._param_table.item(1, 1)
+    assert lambda_value_item is not None
+    lambda_value_item.setText("0.55")
+
+    captured: dict[str, object] = {}
+
+    class _FakeGlobalWizard:
+        def __init__(self, _parent) -> None:
+            self.apply_assessment_requested = SimpleNamespace(connect=lambda _cb: None)
+            self.analysis_cached = SimpleNamespace(connect=lambda _cb: None)
+            self.single_fit_recommendations_generated = SimpleNamespace(connect=lambda _cb: None)
+            self.parameter_setup_applied = SimpleNamespace(connect=lambda _cb: None)
+
+        def set_analysis_context(self, _datasets_arg, **_kwargs) -> None:
+            return None
+
+        def set_cached_recommendation(self, recommendation, **kwargs) -> None:
+            captured["recommendation"] = recommendation
+            captured["status_text"] = kwargs.get("status_text")
+
+        def show(self) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:
+            return None
+
+    monkeypatch.setattr(fit_panel_module, "GlobalFitWizardWindow", _FakeGlobalWizard)
+
+    tab._fit_wizard_window = None
+    tab._open_fit_wizard()
+
+    assert captured["recommendation"].summary == "cached same-group result"
+    assert isinstance(captured["status_text"], str)
+    assert "previously cached Global Fit Wizard results" in captured["status_text"]
+
+
+def test_global_tab_state_roundtrip_preserves_multiple_run_set_wizard_caches(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    tab = GlobalFitTab()
+    dataset_102 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    dataset_103 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 103})
+
+    tab.set_datasets([dataset, dataset_102])
+    signature_12 = tab._wizard_context_signature(tab._parse_parameter_configuration())
+    recommendation_12 = replace(
+        _global_wizard_recommendation_for_dataset(dataset),
+        summary="cached 101/102",
+    )
+    tab._cache_wizard_analysis(recommendation_12, signature=signature_12, log_text="group 12")
+
+    tab.set_datasets([dataset, dataset_103])
+    signature_13 = tab._wizard_context_signature(tab._parse_parameter_configuration())
+    recommendation_13 = replace(
+        _global_wizard_recommendation_for_dataset(dataset),
+        summary="cached 101/103",
+    )
+    tab._cache_wizard_analysis(recommendation_13, signature=signature_13, log_text="group 13")
+
+    saved = tab.get_state()
+
+    assert len(saved["wizard_state_by_run_set"]) == 2
+
+    restored = GlobalFitTab()
+    restored.set_datasets([dataset, dataset_102])
+    restored.restore_state(saved)
+
+    assert len(restored._wizard_cache_by_run_set) == 2
+    assert restored._cached_wizard_recommendation is not None
+    assert restored._cached_wizard_recommendation.summary == "cached 101/102"
+
+    restored.set_datasets([dataset, dataset_103])
+
+    assert restored._cached_wizard_recommendation is not None
+    assert restored._cached_wizard_recommendation.summary == "cached 101/103"
+
+
+def test_global_tab_open_fit_wizard_passes_cached_single_fit_recommendations(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    panel = FitPanel()
+    d1 = dataset
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    _assessment_1, recommendation_1 = _wizard_payload_for_dataset(d1)
+    _assessment_2, recommendation_2 = _wizard_payload_for_dataset(d2)
+
+    panel.set_dataset(d1)
+    panel._single_tab._cache_wizard_analysis(
+        recommendation_1,
+        signature={"run_number": int(d1.run_number), "model": panel._single_tab._composite_model.to_dict()},
+        log_text="run 101",
+    )
+    panel.set_dataset(d2)
+    panel._single_tab._cache_wizard_analysis(
+        recommendation_2,
+        signature={"run_number": int(d2.run_number), "model": panel._single_tab._composite_model.to_dict()},
+        log_text="run 102",
+    )
+    panel.set_datasets([d1, d2])
+
+    captured: dict[str, object] = {}
+
+    class _FakeGlobalWizard:
+        def __init__(self, _parent) -> None:
+            self.apply_assessment_requested = SimpleNamespace(connect=lambda _cb: None)
+            self.analysis_cached = SimpleNamespace(connect=lambda _cb: None)
+            self.single_fit_recommendations_generated = SimpleNamespace(connect=lambda _cb: None)
+            self.parameter_setup_applied = SimpleNamespace(connect=lambda _cb: None)
+
+        def set_analysis_context(self, datasets_arg, **kwargs) -> None:
+            captured["datasets"] = datasets_arg
+            captured["single_fit"] = kwargs.get("existing_single_fit_recommendations_by_run")
+
+        def show(self) -> None:
+            captured["show"] = True
+
+        def raise_(self) -> None:
+            captured["raise"] = True
+
+        def activateWindow(self) -> None:
+            captured["activate"] = True
+
+    monkeypatch.setattr(fit_panel_module, "GlobalFitWizardWindow", _FakeGlobalWizard)
+
+    panel._global_tab._open_fit_wizard()
+
+    assert captured["datasets"] == [d1, d2]
+    assert captured["show"] is True
+    assert set(captured["single_fit"]) == {int(d1.run_number), int(d2.run_number)}
+    assert captured["single_fit"][int(d1.run_number)].summary == recommendation_1.summary
+    assert captured["single_fit"][int(d2.run_number)].summary == recommendation_2.summary
 
 
 def test_global_tab_apply_fit_wizard_assessment_uses_assignment_roles_without_detailed_retests(
