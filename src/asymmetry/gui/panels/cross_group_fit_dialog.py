@@ -12,7 +12,12 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QLabel, QMessageBox, QTableWidgetItem
 
-from asymmetry.core.fitting.parameter_models import CrossGroupFitResult, ParameterCompositeModel, ParameterGroupData, global_fit_parameter_model
+from asymmetry.core.fitting.parameter_models import (
+    CrossGroupFitResult,
+    ParameterCompositeModel,
+    ParameterGroupData,
+    global_fit_parameter_model,
+)
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.model_fit_dialog import (
     ModelFitDialog,
@@ -54,9 +59,21 @@ class CrossGroupFitDialog(ModelFitDialog):
         self._range_roles: list[dict[str, str]] = []
         self._range_results: dict[int, CrossGroupFitResult] = {}
 
-        all_x = np.concatenate([np.asarray(group.x, dtype=float) for group in groups]) if groups else np.array([], dtype=float)
-        all_y = np.concatenate([np.asarray(group.y, dtype=float) for group in groups]) if groups else np.array([], dtype=float)
-        all_e = np.concatenate([np.asarray(group.yerr, dtype=float) for group in groups]) if groups else np.array([], dtype=float)
+        all_x = (
+            np.concatenate([np.asarray(group.x, dtype=float) for group in groups])
+            if groups
+            else np.array([], dtype=float)
+        )
+        all_y = (
+            np.concatenate([np.asarray(group.y, dtype=float) for group in groups])
+            if groups
+            else np.array([], dtype=float)
+        )
+        all_e = (
+            np.concatenate([np.asarray(group.yerr, dtype=float) for group in groups])
+            if groups
+            else np.array([], dtype=float)
+        )
 
         super().__init__(
             parameter_name=parameter_name,
@@ -70,11 +87,19 @@ class CrossGroupFitDialog(ModelFitDialog):
         self.setWindowTitle(f"Cross-group fit: {parameter_name}")
 
         banner_text = f"Cross-group mode | Parameter: <b>{parameter_name}</b> | X: <b>{x_key}</b> | Groups: <b>{len(groups)}</b>"
-        source_name = existing_config.get("source_group_name") if isinstance(existing_config, dict) else None
-        source_chi2 = existing_config.get("source_reduced_chi_squared") if isinstance(existing_config, dict) else None
+        source_name = (
+            existing_config.get("source_group_name") if isinstance(existing_config, dict) else None
+        )
+        source_chi2 = (
+            existing_config.get("source_reduced_chi_squared")
+            if isinstance(existing_config, dict)
+            else None
+        )
         if isinstance(source_name, str) and source_name.strip():
             if isinstance(source_chi2, (int, float)) and np.isfinite(float(source_chi2)):
-                banner_text += f" | Inherited from: <b>{source_name}</b> (chi2_r={float(source_chi2):.4g})"
+                banner_text += (
+                    f" | Inherited from: <b>{source_name}</b> (chi2_r={float(source_chi2):.4g})"
+                )
             else:
                 banner_text += f" | Inherited from: <b>{source_name}</b>"
 
@@ -84,7 +109,9 @@ class CrossGroupFitDialog(ModelFitDialog):
         if top_layout is not None:
             top_layout.insertWidget(0, banner)
 
-        self._param_table.setHorizontalHeaderLabels(["Name", "Value", "Min", "Max", "Type", "Error"])
+        self._param_table.setHorizontalHeaderLabels(
+            ["Name", "Value", "Min", "Max", "Type", "Error"]
+        )
 
         # Cross-group mode currently supports a single shared model-range.
         while len(self._fit.ranges) > 1:
@@ -100,7 +127,12 @@ class CrossGroupFitDialog(ModelFitDialog):
     def _collect_config(self) -> dict[str, object]:
         self._commit_param_table()
         if not self._fit.ranges:
-            return {"model": {"component_names": ["Linear"], "operators": []}, "fit_x_min": None, "fit_x_max": None, "parameter_rows": []}
+            return {
+                "model": {"component_names": ["Linear"], "operators": []},
+                "fit_x_min": None,
+                "fit_x_max": None,
+                "parameter_rows": [],
+            }
 
         fit_range = self._fit.ranges[0]
         roles = self._range_roles[0] if self._range_roles else {}
@@ -147,9 +179,15 @@ class CrossGroupFitDialog(ModelFitDialog):
         model = fit_range.model
         new_params = ParameterSet()
         for pname in model.param_names:
-            if pname in fit_range.parameters and not _should_reset_param_on_model_change(model, pname):
+            if pname in fit_range.parameters and not _should_reset_param_on_model_change(
+                model, pname
+            ):
                 old = fit_range.parameters[pname]
-                new_params.add(Parameter(name=pname, value=old.value, min=old.min, max=old.max, fixed=old.fixed))
+                new_params.add(
+                    Parameter(
+                        name=pname, value=old.value, min=old.min, max=old.max, fixed=old.fixed
+                    )
+                )
             else:
                 new_params.add(
                     Parameter(
@@ -184,9 +222,19 @@ class CrossGroupFitDialog(ModelFitDialog):
                 fit_range.model = model
                 new_params = ParameterSet()
                 for pname in model.param_names:
-                    if pname in fit_range.parameters and not _should_reset_param_on_model_change(model, pname):
+                    if pname in fit_range.parameters and not _should_reset_param_on_model_change(
+                        model, pname
+                    ):
                         old = fit_range.parameters[pname]
-                        new_params.add(Parameter(name=pname, value=old.value, min=old.min, max=old.max, fixed=old.fixed))
+                        new_params.add(
+                            Parameter(
+                                name=pname,
+                                value=old.value,
+                                min=old.min,
+                                max=old.max,
+                                fixed=old.fixed,
+                            )
+                        )
                     else:
                         new_params.add(
                             Parameter(
@@ -208,9 +256,7 @@ class CrossGroupFitDialog(ModelFitDialog):
         if not isinstance(rows_state, list):
             return
         row_map = {
-            str(entry.get("name", "")): entry
-            for entry in rows_state
-            if isinstance(entry, dict)
+            str(entry.get("name", "")): entry for entry in rows_state if isinstance(entry, dict)
         }
         roles: dict[str, str] = {}
         for p in fit_range.parameters:
@@ -231,10 +277,18 @@ class CrossGroupFitDialog(ModelFitDialog):
         self._range_roles[0] = roles
 
     def _add_range(self) -> None:
-        _show_info(self, "Cross-group range", "Cross-group fitting currently uses one shared fitting range.")
+        _show_info(
+            self,
+            "Cross-group range",
+            "Cross-group fitting currently uses one shared fitting range.",
+        )
 
     def _remove_range(self, idx: int) -> None:
-        _show_info(self, "Cross-group range", "Cross-group fitting currently uses one shared fitting range.")
+        _show_info(
+            self,
+            "Cross-group range",
+            "Cross-group fitting currently uses one shared fitting range.",
+        )
 
     def _status_text_for_range(self, fit_range) -> str:
         idx = self._fit.ranges.index(fit_range) if fit_range in self._fit.ranges else -1
@@ -270,20 +324,16 @@ class CrossGroupFitDialog(ModelFitDialog):
         if result is not None:
             if result.success:
                 self._chi2_label.setText(
-                    (
-                        '<span style="color:#22863a;">'
-                        f"Cross-group fit successful: chi2 = {result.chi_squared:.6g}, "
-                        f"reduced chi2 = {result.reduced_chi_squared:.6g}"
-                        "</span>"
-                    )
+                    '<span style="color:#22863a;">'
+                    f"Cross-group fit successful: chi2 = {result.chi_squared:.6g}, "
+                    f"reduced chi2 = {result.reduced_chi_squared:.6g}"
+                    "</span>"
                 )
             else:
                 self._chi2_label.setText(
-                    (
-                        '<span style="color:#d73a49;">'
-                        f"Cross-group fit failed: {result.message or 'No convergence'}"
-                        "</span>"
-                    )
+                    '<span style="color:#d73a49;">'
+                    f"Cross-group fit failed: {result.message or 'No convergence'}"
+                    "</span>"
                 )
         else:
             self._chi2_label.setText(
@@ -318,9 +368,15 @@ class CrossGroupFitDialog(ModelFitDialog):
 
             err = np.nan
             if result is not None:
-                err_map = result.global_uncertainties if type_combo.currentText() == "Global" else result.local_uncertainties.get(self._groups[0].group_id, {})
+                err_map = (
+                    result.global_uncertainties
+                    if type_combo.currentText() == "Global"
+                    else result.local_uncertainties.get(self._groups[0].group_id, {})
+                )
                 err = err_map.get(param.name, np.nan) if isinstance(err_map, dict) else np.nan
-            self._param_table.setItem(row, 5, QTableWidgetItem(f"{err:.4g}" if np.isfinite(err) else ""))
+            self._param_table.setItem(
+                row, 5, QTableWidgetItem(f"{err:.4g}" if np.isfinite(err) else "")
+            )
 
         self._param_table.blockSignals(False)
         self._param_table.resizeColumnsToContents()
@@ -349,7 +405,11 @@ class CrossGroupFitDialog(ModelFitDialog):
             if name_item is None or not isinstance(type_combo, QComboBox):
                 continue
             pname_data = name_item.data(Qt.ItemDataRole.UserRole)
-            pname = str(pname_data).strip() if isinstance(pname_data, str) and str(pname_data).strip() else name_item.text().strip()
+            pname = (
+                str(pname_data).strip()
+                if isinstance(pname_data, str) and str(pname_data).strip()
+                else name_item.text().strip()
+            )
             role = type_combo.currentText() or "Global"
             roles[pname] = role
             if pname in fit_range.parameters:
@@ -395,7 +455,11 @@ class CrossGroupFitDialog(ModelFitDialog):
             )
 
         if len(fitted_groups) < 2:
-            _show_warning(self, "Insufficient data", "Not enough groups have at least two points in the selected fitting range.")
+            _show_warning(
+                self,
+                "Insufficient data",
+                "Not enough groups have at least two points in the selected fitting range.",
+            )
             return
 
         roles = self._range_roles[idx] if idx < len(self._range_roles) else {}
@@ -455,9 +519,17 @@ class CrossGroupFitDialog(ModelFitDialog):
 
             self._select_range(idx)
             if fit_result.success:
-                _show_info(self, "Cross-group fit complete", f"Reduced chi2 = {fit_result.reduced_chi_squared:.4g}")
+                _show_info(
+                    self,
+                    "Cross-group fit complete",
+                    f"Reduced chi2 = {fit_result.reduced_chi_squared:.4g}",
+                )
             else:
-                _show_warning(self, "Cross-group fit failed", fit_result.message or "Cross-group model fit failed")
+                _show_warning(
+                    self,
+                    "Cross-group fit failed",
+                    fit_result.message or "Cross-group model fit failed",
+                )
 
         self._start_fit_task(_task, _on_done)
 
@@ -504,7 +576,9 @@ class CrossGroupFitDialog(ModelFitDialog):
             fit_x_min = float(r.x_min) if r.x_min is not None else float("nan")
             fit_x_max = float(r.x_max) if r.x_max is not None else float("nan")
         return CrossGroupDialogOutput(
-            model=self._fit.ranges[0].model if self._fit.ranges else ParameterCompositeModel(["Linear"], []),
+            model=self._fit.ranges[0].model
+            if self._fit.ranges
+            else ParameterCompositeModel(["Linear"], []),
             fit_result=self._result,
             groups=getattr(self, "_fitted_groups", self._groups),
             x_key=self._x_key,

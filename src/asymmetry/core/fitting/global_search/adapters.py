@@ -42,7 +42,10 @@ def compile_legacy_structure(
                 source_index=index - 1,
                 source_param_names=tuple(sorted((key, value) for key, value in mapping.items())),
                 operator_before=template.model.operators[index - 2] if index > 1 else None,
-                allow_activity_relaxation=bool(index < len(template.model.components) and template.model.operators[index - 1:index] == ["+"]),
+                allow_activity_relaxation=bool(
+                    index < len(template.model.components)
+                    and template.model.operators[index - 1 : index] == ["+"]
+                ),
             )
         )
 
@@ -63,7 +66,9 @@ def compile_legacy_structure(
             mode = ParameterTieMode.SHARED
         else:
             mode = ParameterTieMode.RELAXED_SHARED
-        default_value = float(current_values.get(name, template.model.param_defaults.get(name, 0.0)))
+        default_value = float(
+            current_values.get(name, template.model.param_defaults.get(name, 0.0))
+        )
         parameter_specs.append(
             ParameterSpec(
                 name=name,
@@ -133,7 +138,11 @@ def subset_additive_structure(
     if not structure.is_additive_mixture:
         return None
     component_by_id = {component.instance_id: component for component in structure.components}
-    ordered = [component_by_id[component_id] for component_id in active_component_ids if component_id in component_by_id]
+    ordered = [
+        component_by_id[component_id]
+        for component_id in active_component_ids
+        if component_id in component_by_id
+    ]
     if len(ordered) < 2:
         return None
 
@@ -153,7 +162,9 @@ def subset_additive_structure(
             replace(
                 component_spec,
                 operator_before="+" if index > 1 else None,
-                source_param_names=tuple(sorted((key, value) for key, value in component_spec.source_param_names)),
+                source_param_names=tuple(
+                    sorted((key, value) for key, value in component_spec.source_param_names)
+                ),
                 active=True,
             )
         )
@@ -212,14 +223,18 @@ def build_parameter_sets_for_structure(
 ) -> dict[int, ParameterSet]:
     """Build legacy per-run ParameterSets for one staged-search structure."""
     seed_by_run = seed_by_run or {}
-    parameter_specs = {spec.name: spec for spec in structure.parameter_specs}
+    {spec.name: spec for spec in structure.parameter_specs}
 
     parameter_sets: dict[int, ParameterSet] = {}
     for run_number, source_params in base_by_run.items():
         params = ParameterSet()
         seed_params = seed_by_run.get(int(run_number))
         source_by_name = {parameter.name: parameter for parameter in source_params}
-        seed_by_name = {parameter.name: parameter for parameter in seed_params} if seed_params is not None else {}
+        seed_by_name = (
+            {parameter.name: parameter for parameter in seed_params}
+            if seed_params is not None
+            else {}
+        )
         for spec in structure.parameter_specs:
             if spec.name in seed_by_name:
                 seed_param = seed_by_name[spec.name]

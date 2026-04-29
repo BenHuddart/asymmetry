@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from enum import Enum
-import math
 
 import numpy as np
 from numpy.typing import NDArray
@@ -12,7 +12,12 @@ from numpy.typing import NDArray
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine, FitResult
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info, split_parameter_name
+from asymmetry.core.fitting.parameters import (
+    Parameter,
+    ParameterSet,
+    get_param_info,
+    split_parameter_name,
+)
 from asymmetry.core.fourier.fft import fft_asymmetry
 
 _EPS = 1e-12
@@ -167,7 +172,9 @@ class FitWizardRecommendation:
                 return assessment
         return None
 
-    def sorted_assessments(self, metric: SelectionMetric | None = None) -> list[CandidateAssessment]:
+    def sorted_assessments(
+        self, metric: SelectionMetric | None = None
+    ) -> list[CandidateAssessment]:
         active_metric = metric or self.metric
         return sorted(
             self.assessments,
@@ -260,9 +267,7 @@ def fingerprint_spectrum(dataset: MuonDataset) -> SpectrumFingerprint:
     )
     kt_like_hint = bool(late_time_dip_recovery_score >= 0.05 and initial_amplitude_estimate > 0.0)
     multi_rate_hint = bool(
-        semilog_slope_ratio >= 1.5
-        and monotonic_decay_fraction >= 0.7
-        and not oscillatory_hint
+        semilog_slope_ratio >= 1.5 and monotonic_decay_fraction >= 0.7 and not oscillatory_hint
     )
 
     return SpectrumFingerprint(
@@ -348,19 +353,25 @@ def build_candidate_templates(
     )
     _add(
         "triple_exp_constant",
-        CompositeModel(["Exponential", "Exponential", "Exponential", "Constant"], operators=["+", "+", "+"]),
+        CompositeModel(
+            ["Exponential", "Exponential", "Exponential", "Constant"], operators=["+", "+", "+"]
+        ),
         category="Multi-rate",
         rationale="Three additive exponential channels for strongly multi-rate monotonic relaxation.",
     )
     _add(
         "double_exp_gaussian_constant",
-        CompositeModel(["Exponential", "Exponential", "Gaussian", "Constant"], operators=["+", "+", "+"]),
+        CompositeModel(
+            ["Exponential", "Exponential", "Gaussian", "Constant"], operators=["+", "+", "+"]
+        ),
         category="Multi-rate",
         rationale="Three relaxing components with two exponential channels and one Gaussian channel.",
     )
     _add(
         "exp_double_gaussian_constant",
-        CompositeModel(["Exponential", "Gaussian", "Gaussian", "Constant"], operators=["+", "+", "+"]),
+        CompositeModel(
+            ["Exponential", "Gaussian", "Gaussian", "Constant"], operators=["+", "+", "+"]
+        ),
         category="Multi-rate",
         rationale="Three relaxing components with one exponential channel and two Gaussian channels.",
     )
@@ -475,7 +486,8 @@ def rerank_fit_wizard_recommendation(
 ) -> FitWizardRecommendation:
     """Reuse existing fit assessments and compute a recommendation for a new metric."""
     passing = [
-        assessment for assessment in recommendation.assessments
+        assessment
+        for assessment in recommendation.assessments
         if assessment.is_successful and assessment.residual_gate_passed
     ]
     if not passing:
@@ -491,7 +503,9 @@ def rerank_fit_wizard_recommendation(
             summary=summary,
         )
 
-    passing_sorted = sorted(passing, key=lambda assessment: _assessment_sort_key(assessment, metric))
+    passing_sorted = sorted(
+        passing, key=lambda assessment: _assessment_sort_key(assessment, metric)
+    )
     primary = passing_sorted[0]
     comparable_keys: tuple[str, ...] = ()
 
@@ -516,10 +530,7 @@ def rerank_fit_wizard_recommendation(
     else:
         compare_summary = "."
 
-    summary = (
-        f"Recommended: {primary.template.title} by {metric.value}"
-        f"{compare_summary}"
-    )
+    summary = f"Recommended: {primary.template.title} by {metric.value}{compare_summary}"
     return replace(
         recommendation,
         metric=metric,
@@ -536,12 +547,10 @@ def serialize_fit_wizard_recommendation(
     return {
         "fingerprint": _serialize_spectrum_fingerprint(recommendation.fingerprint),
         "templates": [
-            _serialize_candidate_template(template)
-            for template in recommendation.templates
+            _serialize_candidate_template(template) for template in recommendation.templates
         ],
         "assessments": [
-            _serialize_candidate_assessment(assessment)
-            for assessment in recommendation.assessments
+            _serialize_candidate_assessment(assessment) for assessment in recommendation.assessments
         ],
         "metric": recommendation.metric.value,
         "recommended_key": recommendation.recommended_key,
@@ -580,9 +589,7 @@ def deserialize_fit_wizard_recommendation(
         assessments=assessments,
         metric=SelectionMetric.from_value(payload.get("metric", SelectionMetric.AICC.value)),
         recommended_key=(
-            str(payload["recommended_key"])
-            if payload.get("recommended_key") is not None
-            else None
+            str(payload["recommended_key"]) if payload.get("recommended_key") is not None else None
         ),
         comparable_keys=comparable_keys,
         summary=str(payload.get("summary", "")),
@@ -833,11 +840,7 @@ def _deserialize_candidate_assessment(
             template=template,
             fit_result=fit_result,
             aic=float(payload.get("aic", float("inf"))),
-            aicc=(
-                float(payload["aicc"])
-                if payload.get("aicc") is not None
-                else None
-            ),
+            aicc=(float(payload["aicc"]) if payload.get("aicc") is not None else None),
             bic=float(payload.get("bic", float("inf"))),
             selected_score=float(payload.get("selected_score", float("inf"))),
             residual_rms=float(payload.get("residual_rms", float("inf"))),
@@ -846,7 +849,9 @@ def _deserialize_candidate_assessment(
             residual_fft_peak_snr=float(payload.get("residual_fft_peak_snr", float("inf"))),
             residual_gate_passed=bool(payload.get("residual_gate_passed", False)),
             residual_gate_reasons=tuple(
-                reason for reason in payload.get("residual_gate_reasons", []) if isinstance(reason, str)
+                reason
+                for reason in payload.get("residual_gate_reasons", [])
+                if isinstance(reason, str)
             ),
             bound_hits=tuple(
                 name for name in payload.get("bound_hits", []) if isinstance(name, str)
@@ -857,13 +862,6 @@ def _deserialize_candidate_assessment(
         )
     except (TypeError, ValueError):
         return None
-    return replace(
-        recommendation,
-        metric=metric,
-        recommended_key=primary.template.key,
-        comparable_keys=comparable_keys,
-        summary=summary,
-    )
 
 
 def _assess_candidate_template(
@@ -966,7 +964,9 @@ def _assessment_sort_key(
     )
 
 
-def _model_identity(model: CompositeModel) -> tuple[tuple[str, ...], tuple[str, ...], tuple[int, ...], tuple[int, ...]]:
+def _model_identity(
+    model: CompositeModel,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[int, ...], tuple[int, ...]]:
     return (
         tuple(model.component_names),
         tuple(model.operators),
@@ -1159,8 +1159,16 @@ def _initial_parameters_for_template(
     early_t = t[:early_count]
     early_y = y[:early_count] - fingerprint.tail_estimate
     slope = _linear_slope(early_t, early_y)
-    lambda_guess = max(0.05, min(20.0, -slope / max(abs(fingerprint.initial_amplitude_estimate), _EPS)))
-    gaussian_width = math.sqrt(max(-fingerprint.early_time_curvature / max(2.0 * abs(fingerprint.initial_amplitude_estimate), _EPS), 0.0))
+    lambda_guess = max(
+        0.05, min(20.0, -slope / max(abs(fingerprint.initial_amplitude_estimate), _EPS))
+    )
+    gaussian_width = math.sqrt(
+        max(
+            -fingerprint.early_time_curvature
+            / max(2.0 * abs(fingerprint.initial_amplitude_estimate), _EPS),
+            0.0,
+        )
+    )
     gaussian_width = max(0.05, min(20.0, gaussian_width if np.isfinite(gaussian_width) else 0.5))
     frequency_guess = max(fingerprint.dominant_fft_frequency_mhz, 0.25 / duration)
     phase_guess = 0.0 if (y[0] - fingerprint.tail_estimate) >= 0.0 else math.pi
@@ -1242,7 +1250,9 @@ def _initial_parameters_for_template(
                 name,
                 overrides.get(
                     base_name,
-                    template.model.param_defaults.get(name, template.model.param_defaults.get(base_name, 0.0)),
+                    template.model.param_defaults.get(
+                        name, template.model.param_defaults.get(base_name, 0.0)
+                    ),
                 ),
             )
         )
@@ -1255,7 +1265,9 @@ def _initial_parameters_for_template(
             duration=duration,
             nyquist=nyquist,
         )
-        parameters.add(Parameter(name=name, value=float(np.clip(value, p_min, p_max)), min=p_min, max=p_max))
+        parameters.add(
+            Parameter(name=name, value=float(np.clip(value, p_min, p_max)), min=p_min, max=p_max)
+        )
     return parameters
 
 
@@ -1314,17 +1326,29 @@ def _parameter_variants(
     if _is_additive_relaxation_mixture_template(template):
         return _additive_relaxation_mixture_variants(base_parameters, template)
 
-    def _adjust(params: ParameterSet, *, scale: float = 1.0, amplitude_bias: float = 0.0, phase_shift: float = 0.0) -> ParameterSet:
+    def _adjust(
+        params: ParameterSet,
+        *,
+        scale: float = 1.0,
+        amplitude_bias: float = 0.0,
+        phase_shift: float = 0.0,
+    ) -> ParameterSet:
         clone = _clone_parameter_set(params)
         for parameter in clone:
             base_name, _index = split_parameter_name(parameter.name)
             if base_name in {"Lambda", "sigma", "Delta", "frequency"} and parameter.value > 0.0:
-                parameter.value = float(np.clip(parameter.value * scale, parameter.min, parameter.max))
+                parameter.value = float(
+                    np.clip(parameter.value * scale, parameter.min, parameter.max)
+                )
             elif base_name == "A" and amplitude_bias != 0.0:
-                parameter.value = float(np.clip(parameter.value * (1.0 + amplitude_bias), parameter.min, parameter.max))
+                parameter.value = float(
+                    np.clip(parameter.value * (1.0 + amplitude_bias), parameter.min, parameter.max)
+                )
             elif base_name == "A_bg" and amplitude_bias != 0.0:
                 shift = amplitude_bias * 0.25 * max(abs(parameter.value), 1.0)
-                parameter.value = float(np.clip(parameter.value - shift, parameter.min, parameter.max))
+                parameter.value = float(
+                    np.clip(parameter.value - shift, parameter.min, parameter.max)
+                )
             elif base_name == "phase" and (phase_shift != 0.0 or "oscillatory" in template.key):
                 wrapped = ((parameter.value + phase_shift + math.pi) % (2.0 * math.pi)) - math.pi
                 parameter.value = float(np.clip(wrapped, parameter.min, parameter.max))
@@ -1387,10 +1411,14 @@ def _additive_relaxation_mixture_overrides(
         mapping = template.model._param_mappings[component_index]  # noqa: SLF001
         overrides[mapping["A"]] = amplitude * weights[component_index]
         if component_name == "Exponential":
-            overrides[mapping["Lambda"]] = max(0.01, min(20.0, lambda_guess * exp_scales[exp_index]))
+            overrides[mapping["Lambda"]] = max(
+                0.01, min(20.0, lambda_guess * exp_scales[exp_index])
+            )
             exp_index += 1
         else:
-            overrides[mapping["sigma"]] = max(0.05, min(20.0, gaussian_width * gauss_scales[gauss_index]))
+            overrides[mapping["sigma"]] = max(
+                0.05, min(20.0, gaussian_width * gauss_scales[gauss_index])
+            )
             gauss_index += 1
     return overrides
 
@@ -1548,7 +1576,9 @@ def _scipy_fit_fallback(
             jac = np.asarray(result.jac, dtype=float)
             jt_j = jac.T @ jac
             cov = np.linalg.pinv(jt_j)
-            reduced = float(np.sum(np.square(_residual_vector(fitted_values)))) / max(len(dataset.time) - len(free), 1)
+            reduced = float(np.sum(np.square(_residual_vector(fitted_values)))) / max(
+                len(dataset.time) - len(free), 1
+            )
             diag = np.diag(cov) * max(reduced, 0.0)
             for name, variance in zip(names, diag, strict=True):
                 if variance >= 0.0:
@@ -1611,7 +1641,9 @@ def _residual_diagnostics(
         errors = errors[: residuals.size]
     safe_errors = np.where(np.isfinite(errors) & (errors > 0.0), errors, 1.0)
     standardized = residuals / safe_errors
-    residual_rms = float(np.sqrt(np.mean(np.square(standardized)))) if standardized.size else float("inf")
+    residual_rms = (
+        float(np.sqrt(np.mean(np.square(standardized)))) if standardized.size else float("inf")
+    )
 
     runs_z_score = _runs_test_z_score(standardized)
     max_abs_autocorrelation = _max_abs_autocorrelation(standardized)
@@ -1733,7 +1765,9 @@ def _dense_fit_curves(
         empty = np.array([], dtype=float)
         return empty, empty, ()
 
-    param_values = _curve_parameter_values(model, parameters, fallback_parameters=fallback_parameters)
+    param_values = _curve_parameter_values(
+        model, parameters, fallback_parameters=fallback_parameters
+    )
     n_samples = _curve_sample_count(dataset, param_values)
     fitted_time = np.linspace(float(dataset.time.min()), float(dataset.time.max()), n_samples)
     fitted_curve = np.asarray(model.function(fitted_time, **param_values), dtype=float)

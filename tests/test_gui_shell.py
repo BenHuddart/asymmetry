@@ -117,9 +117,9 @@ class _StubPlotPanel(QWidget):
         if dataset is None or self.factor <= 1:
             return dataset
         return MuonDataset(
-            time=dataset.time[::self.factor],
-            asymmetry=dataset.asymmetry[::self.factor],
-            error=dataset.error[::self.factor],
+            time=dataset.time[:: self.factor],
+            asymmetry=dataset.asymmetry[:: self.factor],
+            error=dataset.error[:: self.factor],
             metadata={**dataset.metadata, "analysis_factor": self.factor},
             run=dataset.run,
         )

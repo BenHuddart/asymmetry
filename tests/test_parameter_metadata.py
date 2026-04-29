@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
 from asymmetry.core.fitting.models import MODELS
-from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS, ParameterCompositeModel
+from asymmetry.core.fitting.parameter_models import (
+    PARAMETER_MODEL_COMPONENTS,
+    ParameterCompositeModel,
+)
 from asymmetry.core.fitting.parameters import get_param_info
 
 

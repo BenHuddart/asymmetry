@@ -104,7 +104,9 @@ class TestMuonDataset:
     def test_summary_with_run(self):
         """Test summary includes run info when available."""
         ds = self._make_dataset(50)
-        ds.run = Run(run_number=12345, metadata={"title": "Test", "temperature": 10.0, "field": 100.0})
+        ds.run = Run(
+            run_number=12345, metadata={"title": "Test", "temperature": 10.0, "field": 100.0}
+        )
         s = ds.summary()
         assert "50 points" in s
         assert "12345" in s

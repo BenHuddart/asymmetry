@@ -6,8 +6,8 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
-import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
 
+import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
 from asymmetry.core import fitting as fitting_api
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
@@ -32,9 +32,9 @@ from asymmetry.core.fitting.global_fit_wizard import (
     _supported_oscillatory_run_numbers,
     _warm_start_parameter_sets,
     build_global_fit_wizard_candidate_portfolio,
+    build_global_fit_wizard_recommendation,
     build_global_fit_wizard_screening_recommendation,
     build_or_complete_single_fit_wizard_recommendations_for_global_portfolio,
-    build_global_fit_wizard_recommendation,
     merge_global_fit_wizard_recommendations,
     rerank_global_fit_wizard_recommendation,
 )
@@ -324,7 +324,9 @@ def test_build_or_complete_single_fit_tables_reuses_matching_existing_results(
         "build_fit_wizard_recommendation_for_templates",
         _wrapped,
     )
-    monkeypatch.setattr(global_fit_wizard_module, "_single_fit_table_worker_count", lambda _count: 1)
+    monkeypatch.setattr(
+        global_fit_wizard_module, "_single_fit_table_worker_count", lambda _count: 1
+    )
 
     returned_portfolio, recommendations_by_run, generated_runs = (
         build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
@@ -572,9 +574,7 @@ def test_merge_global_fit_wizard_recommendations_keeps_all_optimized_variants() 
 
     assert len(merged.sorted_prescreen_assessments()) == 1
     assert len(merged.sorted_optimized_assessments()) == 2
-    assert {
-        assessment.selection_key for assessment in merged.sorted_optimized_assessments()
-    } == {
+    assert {assessment.selection_key for assessment in merged.sorted_optimized_assessments()} == {
         local_variant.selection_key,
         shared_variant.selection_key,
     }
@@ -806,7 +806,10 @@ def test_global_fit_wizard_screening_repairs_partial_single_fit_family(
                     for parameter in parameters
                 ]
             )
-            if int(dataset.run_number) == failed_run and abs(values.get("Lambda", 0.0) - donor_lambda) < 0.2:
+            if (
+                int(dataset.run_number) == failed_run
+                and abs(values.get("Lambda", 0.0) - donor_lambda) < 0.2
+            ):
                 return FitResult(
                     success=True,
                     chi_squared=0.5,
@@ -842,17 +845,16 @@ def test_global_fit_wizard_screening_repairs_partial_single_fit_family(
         "Single-fit pre-screen incomplete" in warning for warning in assessment.series_warnings
     )
     assert any(
-        "repairing partial single-fit screening results" in message
-        for message in progress_messages
+        "repairing partial single-fit screening results" in message for message in progress_messages
     )
     assert any(
         run_number == failed_run and abs(lambda_value - donor_lambda) < 0.2
         for run_number, lambda_value, method in fit_calls
         if method == "migrad"
     )
-    repaired_single_fit_assessment = single_fit_recommendations_by_run[failed_run].assessment_for_key(
-        "exp_constant"
-    )
+    repaired_single_fit_assessment = single_fit_recommendations_by_run[
+        failed_run
+    ].assessment_for_key("exp_constant")
     assert repaired_single_fit_assessment is not None
     assert repaired_single_fit_assessment.fit_result.success is True
 
@@ -870,8 +872,7 @@ def test_global_fit_wizard_screening_repairs_partial_single_fit_family(
     assert repeat_assessment.fit_results_by_run[failed_run].success is True
     assert len(fit_calls) == fit_calls_after_first_pass
     assert not any(
-        "repairing partial single-fit screening results" in message
-        for message in progress_messages
+        "repairing partial single-fit screening results" in message for message in progress_messages
     )
 
 
@@ -1145,8 +1146,14 @@ def test_cache_derived_role_recommendations_reuse_wavefront_assignments() -> Non
         fixed_param_names=(),
         metric=SelectionMetric.AICC,
         cache={
-            (local_assessment.global_param_names, local_assessment.local_param_names): local_assessment,
-            (shared_assessment.global_param_names, shared_assessment.local_param_names): shared_assessment,
+            (
+                local_assessment.global_param_names,
+                local_assessment.local_param_names,
+            ): local_assessment,
+            (
+                shared_assessment.global_param_names,
+                shared_assessment.local_param_names,
+            ): shared_assessment,
         },
         names_to_test={"Lambda"},
     )
@@ -1173,7 +1180,10 @@ def test_global_fit_wizard_threads_selected_template_keys(monkeypatch) -> None:
     )
 
     assert build_global_fit_wizard_recommendation([]) is sentinel
-    assert build_global_fit_wizard_recommendation([], selected_template_keys=("exp_constant",)) is sentinel
+    assert (
+        build_global_fit_wizard_recommendation([], selected_template_keys=("exp_constant",))
+        is sentinel
+    )
     assert captured == [None, ("exp_constant",)]
 
 
@@ -1751,8 +1761,7 @@ def test_single_run_prefits_improve_staged_seed_parameters() -> None:
         for run_number, truth in lambdas.items()
     )
     fitted_error = sum(
-        abs(prefitted[run_number]["Lambda"].value - truth)
-        for run_number, truth in lambdas.items()
+        abs(prefitted[run_number]["Lambda"].value - truth) for run_number, truth in lambdas.items()
     )
 
     assert fitted_error < initial_error

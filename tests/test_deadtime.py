@@ -21,9 +21,7 @@ def test_prepare_deadtime_uses_file_values_only() -> None:
 
     assert applied is True
     assert grouping["deadtime_method"] == "file"
-    assert corrected[0].counts[0] == pytest.approx(
-        100.0 / (1.0 - (100.0 * 0.01 / (0.02 * 1000.0)))
-    )
+    assert corrected[0].counts[0] == pytest.approx(100.0 / (1.0 - (100.0 * 0.01 / (0.02 * 1000.0))))
     assert has_file_deadtime(grouping, 1) is True
 
 

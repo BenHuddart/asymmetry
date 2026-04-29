@@ -30,4 +30,3 @@ def score_exact_candidate(
         aicc=None if aicc is None else float(aicc),
         primary_metric=primary_metric,
     )
-

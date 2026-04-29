@@ -277,9 +277,7 @@ def test_advanced_dialog_search_filters_rows(qapp: QApplication) -> None:
     advanced._filter_rows("sample/Temp_Sample")
 
     visible_rows = [
-        row
-        for row in range(advanced._table.rowCount())
-        if not advanced._table.isRowHidden(row)
+        row for row in range(advanced._table.rowCount()) if not advanced._table.isRowHidden(row)
     ]
     assert visible_rows
     assert len(visible_rows) < advanced._table.rowCount()

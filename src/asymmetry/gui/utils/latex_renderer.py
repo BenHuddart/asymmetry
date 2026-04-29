@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import base64
-from functools import lru_cache
 import io
+from functools import lru_cache
 
 from PySide6.QtGui import QPixmap
 

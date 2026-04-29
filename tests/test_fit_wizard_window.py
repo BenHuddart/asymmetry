@@ -13,6 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+import asymmetry.gui.windows.fit_wizard_window as wizard_window_module
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
@@ -25,7 +26,6 @@ from asymmetry.core.fitting.fit_wizard import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
-import asymmetry.gui.windows.fit_wizard_window as wizard_window_module
 
 
 @pytest.fixture(scope="module")
@@ -133,7 +133,11 @@ def _fake_recommendation(dataset: MuonDataset) -> FitWizardRecommendation:
         bound_hits=(),
         fitted_time=np.asarray(dataset.time, dtype=float).copy(),
         fitted_curve=np.asarray(exp_curve, dtype=float),
-        component_curves=tuple(exp_model.evaluate_components(dataset.time, additive_only=True, A_1=0.2, Lambda=0.4, A_bg=0.01)),
+        component_curves=tuple(
+            exp_model.evaluate_components(
+                dataset.time, additive_only=True, A_1=0.2, Lambda=0.4, A_bg=0.01
+            )
+        ),
     )
     gauss_assessment = CandidateAssessment(
         template=gauss_template,
@@ -151,7 +155,11 @@ def _fake_recommendation(dataset: MuonDataset) -> FitWizardRecommendation:
         bound_hits=(),
         fitted_time=np.asarray(dataset.time, dtype=float).copy(),
         fitted_curve=np.asarray(gauss_curve, dtype=float),
-        component_curves=tuple(gauss_model.evaluate_components(dataset.time, additive_only=True, A_1=0.18, sigma=0.6, A_bg=0.02)),
+        component_curves=tuple(
+            gauss_model.evaluate_components(
+                dataset.time, additive_only=True, A_1=0.18, sigma=0.6, A_bg=0.02
+            )
+        ),
     )
     return FitWizardRecommendation(
         fingerprint=fingerprint,
@@ -186,7 +194,9 @@ def test_fit_wizard_window_populates_banners_and_tables(
     monkeypatch.setattr(
         wizard_window_module,
         "build_fit_wizard_recommendation",
-        lambda dataset, current_model=None, metric=SelectionMetric.AICC: _fake_recommendation(dataset),
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC: _fake_recommendation(
+            dataset
+        ),
     )
     window = FitWizardWindow()
 
@@ -233,7 +243,9 @@ def test_fit_wizard_window_selection_updates_apply_page(
     monkeypatch.setattr(
         wizard_window_module,
         "build_fit_wizard_recommendation",
-        lambda dataset, current_model=None, metric=SelectionMetric.AICC: _fake_recommendation(dataset),
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC: _fake_recommendation(
+            dataset
+        ),
     )
     window = FitWizardWindow()
     window.set_analysis_context(dataset)
@@ -255,7 +267,9 @@ def test_fit_wizard_window_apply_recommended_emits_assessment(
     monkeypatch.setattr(
         wizard_window_module,
         "build_fit_wizard_recommendation",
-        lambda dataset, current_model=None, metric=SelectionMetric.AICC: _fake_recommendation(dataset),
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC: _fake_recommendation(
+            dataset
+        ),
     )
     window = FitWizardWindow()
     window.set_analysis_context(dataset)
@@ -296,7 +310,9 @@ def test_fit_wizard_window_shows_progress_while_analysis_runs(
 
     assert window._analysis_in_progress is True
     assert window._progress_bar.isHidden() is False
-    _wait_for(lambda: window._analysis_in_progress is False and window._analysis_thread is None, qapp)
+    _wait_for(
+        lambda: window._analysis_in_progress is False and window._analysis_thread is None, qapp
+    )
     assert window._progress_bar.isHidden() is True
 
 
@@ -308,7 +324,9 @@ def test_fit_wizard_window_emits_cached_analysis_payload(
     monkeypatch.setattr(
         wizard_window_module,
         "build_fit_wizard_recommendation",
-        lambda dataset, current_model=None, metric=SelectionMetric.AICC: _fake_recommendation(dataset),
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC: _fake_recommendation(
+            dataset
+        ),
     )
     window = FitWizardWindow()
     payload: dict[str, object] = {}

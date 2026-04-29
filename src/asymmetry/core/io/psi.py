@@ -236,9 +236,7 @@ class PsiLoader(BaseLoader):
                 raise ValueError("PSI-MDU file is too small to contain a header")
             header = self._parse_mdu_header(header_data)
             if header.num_bytes_header != _FE_HEADER.size:
-                raise ValueError(
-                    f"Unsupported PSI-MDU header size: {header.num_bytes_header}"
-                )
+                raise ValueError(f"Unsupported PSI-MDU header size: {header.num_bytes_header}")
             if header.num_bytes_tag < 16 + 11 * 4:
                 raise ValueError(f"Unsupported PSI-MDU tag size: {header.num_bytes_tag}")
 
@@ -685,14 +683,8 @@ class PsiLoader(BaseLoader):
         asymmetry = asymmetry * 100.0
         error = error * 100.0
 
-        good_offsets = [
-            max(0, int(first_good_bins[i]) - int(t0_bins[i]))
-            for i in range(n_hist)
-        ]
-        last_offsets = [
-            max(0, int(last_good_bins[i]) - int(t0_bins[i]))
-            for i in range(n_hist)
-        ]
+        good_offsets = [max(0, int(first_good_bins[i]) - int(t0_bins[i])) for i in range(n_hist)]
+        last_offsets = [max(0, int(last_good_bins[i]) - int(t0_bins[i])) for i in range(n_hist)]
         first_good = min(n - 1, int(common_t0) + max(good_offsets, default=0))
         last_good = min(n - 1, int(common_t0) + min(last_offsets, default=n - 1))
         if last_good < first_good:
@@ -879,11 +871,7 @@ class PsiLoader(BaseLoader):
             return "right"
         if token.startswith("up") or token.startswith("top") or re.fullmatch(r"u\d+", token):
             return "up"
-        if (
-            token.startswith("down")
-            or token.startswith("bottom")
-            or re.fullmatch(r"d\d+", token)
-        ):
+        if token.startswith("down") or token.startswith("bottom") or re.fullmatch(r"d\d+", token):
             return "down"
         return None
 

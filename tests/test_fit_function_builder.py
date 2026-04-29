@@ -80,7 +80,9 @@ def test_dialog_builds_parenthesized_model(qapp: QApplication) -> None:
 def test_dialog_has_info_column_and_button(qapp: QApplication) -> None:
     dialog = FitFunctionBuilderDialog()
 
-    headers = [dialog._table.horizontalHeaderItem(i).text() for i in range(dialog._table.columnCount())]
+    headers = [
+        dialog._table.horizontalHeaderItem(i).text() for i in range(dialog._table.columnCount())
+    ]
     assert headers == ["Op", "(", "Component", "Info", ")", "Remove"]
 
     info_btn = dialog._table.cellWidget(0, 3)
@@ -96,11 +98,7 @@ def test_component_selector_includes_muon_fluorine_submenu(qapp: QApplication) -
     menu = component_widget._build_component_menu()
     assert menu is not None
 
-    submenu_titles = [
-        action.text()
-        for action in menu.actions()
-        if action.menu() is not None
-    ]
+    submenu_titles = [action.text() for action in menu.actions() if action.menu() is not None]
     assert "Muon-Fluorine" in submenu_titles
 
     muon_items: list[str] = []
@@ -108,7 +106,9 @@ def test_component_selector_includes_muon_fluorine_submenu(qapp: QApplication) -
         submenu = action.menu()
         if submenu is None or action.text() != "Muon-Fluorine":
             continue
-        muon_items = [sub_action.text() for sub_action in submenu.actions() if sub_action.isEnabled()]
+        muon_items = [
+            sub_action.text() for sub_action in submenu.actions() if sub_action.isEnabled()
+        ]
         break
 
     assert muon_items

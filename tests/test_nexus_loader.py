@@ -81,14 +81,18 @@ def _write_v2_file(
         detector.create_dataset("raw_time", data=raw_time)
         if include_corrected_time:
             corrected_time = 0.5 * (raw_time[:-1] + raw_time[1:]) - float(time_zero_us)
-            detector.create_dataset("corrected_time", data=np.asarray(corrected_time, dtype=np.float64))
+            detector.create_dataset(
+                "corrected_time", data=np.asarray(corrected_time, dtype=np.float64)
+            )
         if first_good_time_us is not None:
             detector.create_dataset("first_good_time", data=float(first_good_time_us))
         if last_good_time_us is not None:
             detector.create_dataset("last_good_time", data=float(last_good_time_us))
         detector.create_dataset("grouping", data=np.array([1, 2], dtype=np.int32))
         detector.create_dataset("dead_time", data=np.array([0.01, 0.02], dtype=np.float64))
-        detector.create_dataset("time_zero", data=np.array([time_zero_us, time_zero_us], dtype=np.float64))
+        detector.create_dataset(
+            "time_zero", data=np.array([time_zero_us, time_zero_us], dtype=np.float64)
+        )
         detector.create_dataset("orientation", data=np.bytes_("L"))
 
         sample = entry.create_group("sample")
@@ -134,7 +138,9 @@ def _write_v1_file(path) -> None:
                 dtype=np.float64,
             ),
         )
-        h_data.create_dataset("corrected_time", data=np.array([0.0, 0.01, 0.02, 0.03], dtype=np.float64))
+        h_data.create_dataset(
+            "corrected_time", data=np.array([0.0, 0.01, 0.02, 0.03], dtype=np.float64)
+        )
         h_data.create_dataset("grouping", data=np.array([1, 2], dtype=np.int32))
         h_data.create_dataset("dead_time", data=np.array([0.015, 0.025], dtype=np.float64))
 
@@ -219,7 +225,9 @@ def test_load_v2_prefers_corrected_time_axis_when_present(tmp_path, loader: Nexu
     assert ds.run.histograms[1].t0_bin == 2
 
 
-def test_load_v2_raw_time_fallback_applies_time_zero_correction(tmp_path, loader: NexusLoader) -> None:
+def test_load_v2_raw_time_fallback_applies_time_zero_correction(
+    tmp_path, loader: NexusLoader
+) -> None:
     """Fall back to raw_time centres and subtract t0 when corrected_time is absent."""
     path = tmp_path / "run_v2_raw_time_only.nxs"
     _write_v2_file(
@@ -240,7 +248,9 @@ def test_load_v2_raw_time_fallback_applies_time_zero_correction(tmp_path, loader
     assert ds.run.histograms[1].t0_bin == 2
 
 
-def test_load_v2_prefers_bin_attributes_over_explicit_good_times(tmp_path, loader: NexusLoader) -> None:
+def test_load_v2_prefers_bin_attributes_over_explicit_good_times(
+    tmp_path, loader: NexusLoader
+) -> None:
     """Keep integer bin metadata canonical when both forms are present."""
     path = tmp_path / "run_v2_good_times.nxs"
     _write_v2_file(

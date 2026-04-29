@@ -215,14 +215,14 @@ def rho_nonmonotonic_d(
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for nonmonotonic d-wave.
 
-     .. math::
+    .. math::
 
-         g(\phi)=\beta\cos(2\phi)+(1-\beta)\cos(6\phi).
+        g(\phi)=\beta\cos(2\phi)+(1-\beta)\cos(6\phi).
 
-     This form is commonly used as a phenomenological extension when a monotonic
-     :math:`\cos(2\phi)` d-wave is insufficient [1]. The temperature-dependent
-     gap amplitude uses the same d-wave weak-coupling shape factor
-     :math:`a=4/3` as :func:`rho_d_wave`.
+    This form is commonly used as a phenomenological extension when a monotonic
+    :math:`\cos(2\phi)` d-wave is insufficient [1]. The temperature-dependent
+    gap amplitude uses the same d-wave weak-coupling shape factor
+    :math:`a=4/3` as :func:`rho_d_wave`.
     """
     ratio = resolve_gap_ratio(tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
     return superfluid_density(
@@ -475,7 +475,9 @@ def sc_p_wave_axial(
     gap_mev: float | None = None,
 ) -> ArrayLikeFloat:
     r"""Additive 2D axial p-wave model for measured :math:`\sigma(T)`."""
-    rho = rho_p_wave_axial(T, Tc=Tc, gap_ratio=gap_ratio, shape_factor_a=shape_factor_a, gap_mev=gap_mev)
+    rho = rho_p_wave_axial(
+        T, Tc=Tc, gap_ratio=gap_ratio, shape_factor_a=shape_factor_a, gap_mev=gap_mev
+    )
     return _sigma_additive(rho, sigma_0=sigma_0, sigma_bg=sigma_bg)
 
 

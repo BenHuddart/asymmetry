@@ -86,7 +86,9 @@ def test_fit_success_with_fixed_and_free_parameters(
     assert result.reduced_chi_squared == pytest.approx(1.23 / (len(dataset.time) - 1))
 
 
-def test_fit_import_error_returns_failure(dataset: MuonDataset, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_fit_import_error_returns_failure(
+    dataset: MuonDataset, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _install_broken_iminuit(monkeypatch)
 
     params = ParameterSet([Parameter("A0", value=0.2), Parameter("Lambda", value=0.4)])

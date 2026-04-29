@@ -12,7 +12,9 @@ class _FakeRun:
         return "fake run summary"
 
 
-def test_info_command_loads_file_and_prints_summary(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+def test_info_command_loads_file_and_prints_summary(
+    monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
     loaded: list[str] = []
 
     def _fake_load(path: str):

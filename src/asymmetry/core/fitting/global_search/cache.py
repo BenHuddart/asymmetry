@@ -44,4 +44,3 @@ class WarmStartStore:
 
     def put(self, key: tuple[object, ...], value: dict[int, ParameterSet]) -> None:
         self.entries[key] = value
-

@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
-
+from dataclasses import dataclass
 
 _INDEXED_PARAM_RE = re.compile(r"^(.+)_([0-9]+)$")
 _GLE_CONTROL_WORD_RE = re.compile(r"^\\[A-Za-z]+$")
@@ -98,9 +97,13 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "Delta": ParamInfo("Delta", "Delta", "Δ", r"$\Delta$", r"\Delta", "μs⁻¹", default_min=0.0),
     "beta": ParamInfo("beta", "beta", "β", r"$\beta$", r"\beta", default_min=0.0),
     "phase": ParamInfo("phase", "phase", "φ", r"$\phi$", r"\phi", "rad"),
-    "frequency": ParamInfo("frequency", "frequency", "f", r"$f$", r"{\it f}", "MHz", default_min=0.0),
+    "frequency": ParamInfo(
+        "frequency", "frequency", "f", r"$f$", r"{\it f}", "MHz", default_min=0.0
+    ),
     "field": ParamInfo("field", "field", "B", r"$B$", r"{\it B}", "G"),
-    "r_muF": ParamInfo("r_muF", "r_muF", "r_μF", r"$r_{\mu F}$", r"{\it r}_{\mu F}", "Å", default_min=0.0),
+    "r_muF": ParamInfo(
+        "r_muF", "r_muF", "r_μF", r"$r_{\mu F}$", r"{\it r}_{\mu F}", "Å", default_min=0.0
+    ),
     "r1": ParamInfo("r1", "r1", "r₁", r"$r_1$", r"{\it r}_{1}", "Å", default_min=0.0),
     "r2": ParamInfo("r2", "r2", "r₂", r"$r_2$", r"{\it r}_{2}", "Å", default_min=0.0),
     "theta": ParamInfo("theta", "theta", "θ", r"$\theta$", r"\theta", "°", default_min=0.0),
@@ -111,24 +114,46 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "n": ParamInfo("n", "n", "n", r"$n$", r"{\it n}"),
     "tau": ParamInfo("tau", "tau", "τ", r"$\tau$", r"\tau", default_min=0.0),
     "B0": ParamInfo("B0", "B0", "B₀", r"$B_0$", r"{\it B}_{0}", "G"),
-    "Bwid": ParamInfo("Bwid", "Bwid", "B_wid", r"$B_{wid}$", r"{\it B}_{wid}", "G", default_min=0.0),
+    "Bwid": ParamInfo(
+        "Bwid", "Bwid", "B_wid", r"$B_{wid}$", r"{\it B}_{wid}", "G", default_min=0.0
+    ),
     "Tc": ParamInfo("Tc", "Tc", "T_c", r"$T_c$", r"{\it T}_{c}", "K", default_min=0.0),
     "Ea": ParamInfo("Ea", "Ea", "E_a", r"$E_a$", r"{\it E}_{a}", "meV", default_min=0.0),
     "D": ParamInfo("D", "D", "D", r"$D$", r"{\it D}", "MHz", default_min=0.0),
     "nu": ParamInfo("nu", "nu", "ν", r"$\nu$", r"\nu", "MHz", default_min=0.0),
     "m": ParamInfo("m", "m", "m", r"$m$", r"{\it m}"),
     "f": ParamInfo("f", "f", "f", r"$f$", r"{\it f}", "μs⁻¹", default_min=0.0),
-    "D_2D": ParamInfo("D_2D", "D_2D", "D_2D", r"$D_{2D}$", r"{\it D}_{2D}", "μs⁻¹", default_min=0.0),
-    "D_nD": ParamInfo("D_nD", "D_nD", "D_nD", r"$D_{nD}$", r"{\it D}_{nD}", "μs⁻¹", default_min=0.0),
-    "D_perp": ParamInfo("D_perp", "D_perp", "D_⊥", r"$D_{\perp}$", r"{\it D}_{\perp}", "μs⁻¹", default_min=0.0),
+    "D_2D": ParamInfo(
+        "D_2D", "D_2D", "D_2D", r"$D_{2D}$", r"{\it D}_{2D}", "μs⁻¹", default_min=0.0
+    ),
+    "D_nD": ParamInfo(
+        "D_nD", "D_nD", "D_nD", r"$D_{nD}$", r"{\it D}_{nD}", "μs⁻¹", default_min=0.0
+    ),
+    "D_perp": ParamInfo(
+        "D_perp", "D_perp", "D_⊥", r"$D_{\perp}$", r"{\it D}_{\perp}", "μs⁻¹", default_min=0.0
+    ),
     "lambda_BG": ParamInfo(
-        "lambda_BG", "lambda_BG", "λ_BG", r"$\lambda_{BG}$", r"\lambda_{BG}", "μs⁻¹", default_min=0.0
+        "lambda_BG",
+        "lambda_BG",
+        "λ_BG",
+        r"$\lambda_{BG}$",
+        r"\lambda_{BG}",
+        "μs⁻¹",
+        default_min=0.0,
     ),
     "lambda_0D": ParamInfo(
-        "lambda_0D", "lambda_0D", "λ_0D", r"$\lambda_{0D}$", r"\lambda_{0D}", "μs⁻¹", default_min=0.0
+        "lambda_0D",
+        "lambda_0D",
+        "λ_0D",
+        r"$\lambda_{0D}$",
+        r"\lambda_{0D}",
+        "μs⁻¹",
+        default_min=0.0,
     ),
     "C": ParamInfo("C", "C", "C", r"$C$", r"{\it C}", "MHz", default_min=0.0),
-    "sigma_0": ParamInfo("sigma_0", "sigma_0", "σ_0", r"$\sigma_0$", r"\sigma_{0}", "μs⁻¹", default_min=0.0),
+    "sigma_0": ParamInfo(
+        "sigma_0", "sigma_0", "σ_0", r"$\sigma_0$", r"\sigma_{0}", "μs⁻¹", default_min=0.0
+    ),
     "sigma_bg": ParamInfo(
         "sigma_bg", "sigma_bg", "σ_bg", r"$\sigma_{bg}$", r"\sigma_{bg}", "μs⁻¹", default_min=0.0
     ),
@@ -139,7 +164,12 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
         "sigma_nm", "sigma_nm", "σ_nm", r"$\sigma_{nm}$", r"\sigma_{nm}", "μs⁻¹", default_min=0.0
     ),
     "gap_ratio": ParamInfo(
-        "gap_ratio", "gap_ratio", "Δ0/kBTc", r"$\Delta_0/(k_B T_c)$", r"\Delta_{0}/(k_{B} T_{c})", default_min=0.0
+        "gap_ratio",
+        "gap_ratio",
+        "Δ0/kBTc",
+        r"$\Delta_0/(k_B T_c)$",
+        r"\Delta_{0}/(k_{B} T_{c})",
+        default_min=0.0,
     ),
     "gap_ratio_1": ParamInfo(
         "gap_ratio_1",
@@ -185,7 +215,9 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "beta_nm": ParamInfo("beta_nm", "beta_nm", "β_nm", r"$\beta_{nm}$", r"\beta_{nm}"),
     "alpha_sc": ParamInfo("alpha_sc", "alpha_sc", "α", r"$\alpha$", r"\alpha", default_min=0.0),
     "weight": ParamInfo("weight", "weight", "w", r"$w$", r"{\it w}", default_min=0.0),
-    "signed_gap": ParamInfo("signed_gap", "signed_gap", "signed", "signed", "signed", default_min=0.0),
+    "signed_gap": ParamInfo(
+        "signed_gap", "signed_gap", "signed", "signed", "signed", default_min=0.0
+    ),
 }
 
 _PARAM_DESCRIPTIONS: dict[str, str] = {
@@ -254,7 +286,9 @@ def _attach_description(info: ParamInfo) -> ParamInfo:
     )
 
 
-PARAM_INFO_REGISTRY = {name: _attach_description(info) for name, info in PARAM_INFO_REGISTRY.items()}
+PARAM_INFO_REGISTRY = {
+    name: _attach_description(info) for name, info in PARAM_INFO_REGISTRY.items()
+}
 
 
 def get_param_info(name: str) -> ParamInfo:

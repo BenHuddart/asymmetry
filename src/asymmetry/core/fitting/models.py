@@ -31,26 +31,27 @@ class ModelDefinition:
 # Model functions
 # ---------------------------------------------------------------------------
 
-def exponential_relaxation(
-    t: NDArray, A0: float, Lambda: float, baseline: float = 0.0
-) -> NDArray:
+
+def exponential_relaxation(t: NDArray, A0: float, Lambda: float, baseline: float = 0.0) -> NDArray:
     """Simple exponential: A(t) = A0 exp(−Λt) + baseline."""
     # Clamp exponent to prevent overflow; exp(-700) ≈ 0 numerically
     exponent = np.clip(-Lambda * np.abs(t), -700, 0)
     return A0 * np.exp(exponent) + baseline
 
 
-def gaussian_relaxation(
-    t: NDArray, A0: float, sigma: float, baseline: float = 0.0
-) -> NDArray:
+def gaussian_relaxation(t: NDArray, A0: float, sigma: float, baseline: float = 0.0) -> NDArray:
     """Gaussian relaxation: A(t) = A0 exp(−σ²t²) + baseline."""
     # Clamp exponent to prevent overflow
-    exponent = np.clip(-(sigma * t) ** 2, -700, 0)
+    exponent = np.clip(-((sigma * t) ** 2), -700, 0)
     return A0 * np.exp(exponent) + baseline
 
 
 def oscillatory(
-    t: NDArray, A0: float, frequency: float, phase: float = 0.0, Lambda: float = 0.0,
+    t: NDArray,
+    A0: float,
+    frequency: float,
+    phase: float = 0.0,
+    Lambda: float = 0.0,
     baseline: float = 0.0,
 ) -> NDArray:
     """Damped oscillation: A0 cos(2πft + φ) exp(−Λt) + baseline."""
@@ -60,16 +61,23 @@ def oscillatory(
 
 
 def stretched_exponential(
-    t: NDArray, A0: float, Lambda: float, beta: float = 1.0, baseline: float = 0.0,
+    t: NDArray,
+    A0: float,
+    Lambda: float,
+    beta: float = 1.0,
+    baseline: float = 0.0,
 ) -> NDArray:
     """Stretched exponential: A0 exp(−(Λt)^β) + baseline."""
     # Clamp exponent to prevent overflow
-    exponent = np.clip(-np.abs(Lambda * t) ** beta, -700, 0)
+    exponent = np.clip(-(np.abs(Lambda * t) ** beta), -700, 0)
     return A0 * np.exp(exponent) + baseline
 
 
 def static_gkt_zf(
-    t: NDArray, A0: float, Delta: float, baseline: float = 0.0,
+    t: NDArray,
+    A0: float,
+    Delta: float,
+    baseline: float = 0.0,
 ) -> NDArray:
     """Static Gaussian Kubo-Toyabe (zero field).
 

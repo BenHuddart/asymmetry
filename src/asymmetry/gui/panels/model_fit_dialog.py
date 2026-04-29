@@ -2,26 +2,25 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
 import re
 import traceback
-from typing import Callable
+from collections.abc import Callable
+from dataclasses import dataclass
 
 import numpy as np
-from PySide6.QtCore import QObject, QThread, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
-    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QMenu,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -30,8 +29,8 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.fitting.parameter_models import (
-    ModelFitRange,
     PARAMETER_MODEL_COMPONENTS,
+    ModelFitRange,
     ParameterCompositeModel,
     ParameterModelFit,
     component_names_for_x,
@@ -446,7 +445,9 @@ class ParameterModelBuilderDialog(QDialog):
     def _accept(self) -> None:
         component_names, operators = self._read_ui()
         try:
-            self._model = ParameterCompositeModel(component_names=component_names, operators=operators)
+            self._model = ParameterCompositeModel(
+                component_names=component_names, operators=operators
+            )
         except Exception as exc:
             self._formula_label.setText(f"Invalid model: {exc}")
             return
@@ -521,9 +522,7 @@ class ModelFitDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        summary = QLabel(
-            f"Y parameter: <b>{parameter_name}</b> | X variable: <b>{x_key}</b>"
-        )
+        summary = QLabel(f"Y parameter: <b>{parameter_name}</b> | X variable: <b>{x_key}</b>")
         layout.addWidget(summary)
 
         x_min_data = float(np.nanmin(self._x)) if np.any(np.isfinite(self._x)) else 0.0
@@ -572,7 +571,9 @@ class ModelFitDialog(QDialog):
         params_layout.addWidget(self._fit_progress_label)
 
         self._param_table = QTableWidget(0, 6)
-        self._param_table.setHorizontalHeaderLabels(["Name", "Value", "Min", "Max", "Fixed", "Error"])
+        self._param_table.setHorizontalHeaderLabels(
+            ["Name", "Value", "Min", "Max", "Fixed", "Error"]
+        )
         self._param_table.itemChanged.connect(self._on_param_table_edited)
         params_layout.addWidget(self._param_table)
 
@@ -607,12 +608,16 @@ class ModelFitDialog(QDialog):
         x_max = float(np.nanmax(self._x)) if np.any(np.isfinite(self._x)) else 1.0
 
         available = self._component_pool
-        default_component = "Linear" if "Linear" in available else (available[0] if available else "Constant")
+        default_component = (
+            "Linear" if "Linear" in available else (available[0] if available else "Constant")
+        )
         model = ParameterCompositeModel([default_component], [])
 
         params = ParameterSet()
         y_mean = float(np.nanmean(self._y)) if np.any(np.isfinite(self._y)) else 0.0
-        y_span = float(np.nanmax(self._y) - np.nanmin(self._y)) if np.any(np.isfinite(self._y)) else 1.0
+        y_span = (
+            float(np.nanmax(self._y) - np.nanmin(self._y)) if np.any(np.isfinite(self._y)) else 1.0
+        )
 
         for pname in model.param_names:
             default_val = model.param_defaults[pname]
@@ -626,7 +631,9 @@ class ModelFitDialog(QDialog):
                 default_val = max(1e-6, default_val)
             elif pname.startswith("D"):
                 default_val = max(1e-6, default_val)
-            params.add(Parameter(name=pname, value=float(default_val), fixed=(pname == "shape_factor_a")))
+            params.add(
+                Parameter(name=pname, value=float(default_val), fixed=(pname == "shape_factor_a"))
+            )
 
         return ModelFitRange(x_min=x_min, x_max=x_max, model=model, parameters=params)
 
@@ -781,9 +788,15 @@ class ModelFitDialog(QDialog):
 
         new_params = ParameterSet()
         for pname in model.param_names:
-            if pname in fit_range.parameters and not _should_reset_param_on_model_change(model, pname):
+            if pname in fit_range.parameters and not _should_reset_param_on_model_change(
+                model, pname
+            ):
                 old = fit_range.parameters[pname]
-                new_params.add(Parameter(name=pname, value=old.value, min=old.min, max=old.max, fixed=old.fixed))
+                new_params.add(
+                    Parameter(
+                        name=pname, value=old.value, min=old.min, max=old.max, fixed=old.fixed
+                    )
+                )
             else:
                 new_params.add(
                     Parameter(
@@ -808,7 +821,11 @@ class ModelFitDialog(QDialog):
         self._commit_param_table(notify_adjustments=True)
         fit_range = self._fit.ranges[idx]
 
-        if fit_range.x_max is not None and fit_range.x_min is not None and fit_range.x_max <= fit_range.x_min:
+        if (
+            fit_range.x_max is not None
+            and fit_range.x_min is not None
+            and fit_range.x_max <= fit_range.x_min
+        ):
             _show_warning(self, "Invalid range", "x max must be greater than x min.")
             return
 
@@ -886,20 +903,16 @@ class ModelFitDialog(QDialog):
         if fit_range.result is not None:
             if fit_range.result.success:
                 self._chi2_label.setText(
-                    (
-                        '<span style="color:#22863a;">'
-                        f"Fit successful: chi2 = {fit_range.result.chi_squared:.6g}, "
-                        f"reduced chi2 = {fit_range.result.reduced_chi_squared:.6g}"
-                        "</span>"
-                    )
+                    '<span style="color:#22863a;">'
+                    f"Fit successful: chi2 = {fit_range.result.chi_squared:.6g}, "
+                    f"reduced chi2 = {fit_range.result.reduced_chi_squared:.6g}"
+                    "</span>"
                 )
             else:
                 self._chi2_label.setText(
-                    (
-                        '<span style="color:#d73a49;">'
-                        f"Fit failed: {fit_range.result.message or 'No convergence'}"
-                        "</span>"
-                    )
+                    '<span style="color:#d73a49;">'
+                    f"Fit failed: {fit_range.result.message or 'No convergence'}"
+                    "</span>"
                 )
         else:
             self._chi2_label.setText(
@@ -916,9 +929,7 @@ class ModelFitDialog(QDialog):
                 self._x_key,
                 self._parameter_name,
             )
-            name_item = QTableWidgetItem(
-                display_name
-            )
+            name_item = QTableWidgetItem(display_name)
             name_item.setData(Qt.ItemDataRole.UserRole, param.name)
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._param_table.setItem(row, 0, name_item)
@@ -939,7 +950,9 @@ class ModelFitDialog(QDialog):
             err = np.nan
             if fit_range.result is not None:
                 err = fit_range.result.uncertainties.get(param.name, np.nan)
-            self._param_table.setItem(row, 5, QTableWidgetItem(f"{err:.4g}" if np.isfinite(err) else ""))
+            self._param_table.setItem(
+                row, 5, QTableWidgetItem(f"{err:.4g}" if np.isfinite(err) else "")
+            )
 
         self._param_table.blockSignals(False)
         self._param_table.resizeColumnsToContents()
@@ -1008,7 +1021,11 @@ class ModelFitDialog(QDialog):
                 max_item.setText(f"{p_max:.8g}")
 
             fixed = False
-            if fixed_widget is not None and fixed_widget.layout() is not None and fixed_widget.layout().count() > 0:
+            if (
+                fixed_widget is not None
+                and fixed_widget.layout() is not None
+                and fixed_widget.layout().count() > 0
+            ):
                 inner = fixed_widget.layout().itemAt(0).widget()
                 if isinstance(inner, QCheckBox):
                     fixed = inner.isChecked()
@@ -1039,7 +1056,9 @@ class ModelFitDialog(QDialog):
             return
         super().reject()
 
-    def _start_fit_task(self, task: Callable[[], object], on_done: Callable[[object], None]) -> None:
+    def _start_fit_task(
+        self, task: Callable[[], object], on_done: Callable[[object], None]
+    ) -> None:
         if self._fit_in_progress:
             return
 

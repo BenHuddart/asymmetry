@@ -31,6 +31,7 @@ def instrument_name(request):
 # Construction & patch count
 # ---------------------------------------------------------------------------
 
+
 class TestConstruction:
     def test_creates_for_each_instrument(self, qapp, instrument_name):
         layout = get_instrument_layout(instrument_name)
@@ -66,6 +67,7 @@ class TestConstruction:
 # ---------------------------------------------------------------------------
 # set_group_detectors / get_filled_detectors round-trip
 # ---------------------------------------------------------------------------
+
 
 class TestGroupState:
     def test_set_and_get_filled_detectors(self, qapp):
@@ -106,6 +108,7 @@ class TestGroupState:
 # ---------------------------------------------------------------------------
 # Detector toggle via _on_click simulation
 # ---------------------------------------------------------------------------
+
 
 class TestToggle:
     def test_click_adds_detector_to_active_group(self, qapp):
@@ -158,9 +161,11 @@ class TestToggle:
 # Point-in-segment hit test
 # ---------------------------------------------------------------------------
 
+
 class TestPointInSegment:
     def test_point_in_centre_of_segment(self):
         from asymmetry.core.instrument import DetectorSegment
+
         seg = DetectorSegment(
             detector_id=1,
             sector_index=0,
@@ -175,6 +180,7 @@ class TestPointInSegment:
 
     def test_point_outside_radius(self):
         from asymmetry.core.instrument import DetectorSegment
+
         seg = DetectorSegment(
             detector_id=1,
             sector_index=0,
@@ -191,6 +197,7 @@ class TestPointInSegment:
 
     def test_point_outside_angular_range(self):
         from asymmetry.core.instrument import DetectorSegment
+
         seg = DetectorSegment(
             detector_id=1,
             sector_index=0,
@@ -205,6 +212,7 @@ class TestPointInSegment:
 
     def test_none_coordinates_return_false(self):
         from asymmetry.core.instrument import DetectorSegment
+
         seg = DetectorSegment(
             detector_id=1,
             sector_index=0,
@@ -220,6 +228,7 @@ class TestPointInSegment:
 # ---------------------------------------------------------------------------
 # Instrument switching
 # ---------------------------------------------------------------------------
+
 
 class TestInstrumentSwitch:
     def test_set_instrument_clears_groups(self, qapp):

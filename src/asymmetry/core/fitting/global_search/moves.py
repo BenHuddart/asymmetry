@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from asymmetry.core.fitting.global_search.adapters import candidate_with_structure, subset_additive_structure, with_parameter_roles
+from asymmetry.core.fitting.global_search.adapters import (
+    candidate_with_structure,
+    subset_additive_structure,
+    with_parameter_roles,
+)
 from asymmetry.core.fitting.global_search.heuristics import allows_rate_first_localization
 from asymmetry.core.fitting.global_search.types import (
     DiscreteCandidate,
@@ -93,9 +97,7 @@ def apply_search_move(
         and full_structure.is_additive_mixture
     ):
         active_ids = {
-            component.instance_id
-            for component in structure.components
-            if component.active
+            component.instance_id for component in structure.components if component.active
         }
         active_ids.add(move.target)
         ordered = tuple(

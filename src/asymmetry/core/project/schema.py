@@ -288,6 +288,7 @@ def _json_default(obj: object) -> object:
     """JSON serializer for numpy array/scalar types."""
     try:
         import numpy as np  # local import to avoid hard dependency at module level
+
         if isinstance(obj, np.integer):
             return int(obj)
         if isinstance(obj, np.floating):
@@ -297,5 +298,3 @@ def _json_default(obj: object) -> object:
     except ImportError:
         pass
     raise TypeError(f"Object of type {type(obj).__name__!r} is not JSON serializable")
-
-

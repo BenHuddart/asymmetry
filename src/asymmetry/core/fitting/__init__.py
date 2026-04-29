@@ -21,8 +21,8 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalFitWizardRecommendation,
     GlobalParameterRecommendation,
     build_global_fit_wizard_candidate_portfolio,
-    build_global_fit_wizard_screening_recommendation,
     build_global_fit_wizard_recommendation,
+    build_global_fit_wizard_screening_recommendation,
     merge_global_fit_wizard_recommendations,
     rerank_global_fit_wizard_recommendation,
 )
@@ -38,7 +38,7 @@ from asymmetry.core.fitting.parameter_models import (
     evaluate_parameter_model_fit,
     fit_parameter_model,
 )
-from asymmetry.core.fitting.parameters import ParamInfo, Parameter, ParameterSet, get_param_info
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet, ParamInfo, get_param_info
 
 __all__ = [
     "FitEngine",

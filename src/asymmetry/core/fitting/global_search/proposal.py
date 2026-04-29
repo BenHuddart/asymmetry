@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
-import numpy as np
-
-from asymmetry.core.fitting.global_search.adapters import subset_additive_structure, with_parameter_roles
+from asymmetry.core.fitting.global_search.adapters import (
+    subset_additive_structure,
+    with_parameter_roles,
+)
 from asymmetry.core.fitting.global_search.heuristics import (
     allows_rate_first_localization,
     is_background_parameter,
@@ -89,9 +88,7 @@ def extract_discrete_candidates(
         pruned = subset_additive_structure(candidate_structure, active_component_ids=remaining)
         if pruned is not None:
             candidate_structure = pruned
-            notes.append(
-                "Pruned inactive additive components: " + ", ".join(inactive_ids)
-            )
+            notes.append("Pruned inactive additive components: " + ", ".join(inactive_ids))
 
     primary = DiscreteCandidate(
         structure=candidate_structure,

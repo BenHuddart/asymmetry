@@ -54,6 +54,7 @@ class WimLoader(BaseLoader):
 # Section parsers
 # ---------------------------------------------------------------------------
 
+
 def _extract_section(content: str, start_marker: str, end_marker: str) -> str:
     start = content.find(start_marker)
     end = content.find(end_marker)
@@ -63,9 +64,7 @@ def _extract_section(content: str, start_marker: str, end_marker: str) -> str:
 
 
 def _parse_run_info(content: str) -> dict:
-    section = _extract_section(
-        content, "! START OF RUN INFORMATION", "! END OF RUN INFORMATION"
-    )
+    section = _extract_section(content, "! START OF RUN INFORMATION", "! END OF RUN INFORMATION")
     if not section:
         return {}
 
@@ -115,9 +114,7 @@ def _parse_run_info(content: str) -> dict:
 
     # Histograms  e.g. "8 (25600 bins of 390.625 ps = 10.00 µs)"
     hist_str = parsed.get("histograms", "")
-    m = re.match(
-        r"(\d+)\s*\((\d+)\s*bins\s*of\s*([\d.]+)\s*ps\s*=\s*([\d.]+)", hist_str
-    )
+    m = re.match(r"(\d+)\s*\((\d+)\s*bins\s*of\s*([\d.]+)\s*ps\s*=\s*([\d.]+)", hist_str)
     if m:
         result["histograms_count"] = int(m.group(1))
         result["bin_count"] = int(m.group(2))

@@ -13,10 +13,9 @@ is the responsibility of the caller.
 
 from __future__ import annotations
 
-import math
-from pathlib import Path
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
 __all__ = [
@@ -181,6 +180,7 @@ INSTRUMENT_NAMES: Final[tuple[str, ...]] = ("HiFi", "MuSR", "EMU")
 # HiFi layout builder
 # ---------------------------------------------------------------------------
 
+
 def _build_hifi() -> InstrumentLayout:
     """Build the HiFi detector layout.
 
@@ -295,6 +295,7 @@ def _build_hifi() -> InstrumentLayout:
 # MuSR layout builder
 # ---------------------------------------------------------------------------
 
+
 def _build_musr() -> InstrumentLayout:
     """Build the MuSR detector layout.
 
@@ -405,6 +406,7 @@ def _build_musr() -> InstrumentLayout:
 # EMU layout builder
 # ---------------------------------------------------------------------------
 
+
 def _build_emu() -> InstrumentLayout:
     """Build the EMU detector layout.
 
@@ -428,9 +430,9 @@ def _build_emu() -> InstrumentLayout:
 
     # Three radial bands per sector (normalised to outer disc radius)
     radial_bounds = [
-        (0.28, 0.52),   # ring 0 = inner (closest to sample)
-        (0.52, 0.76),   # ring 1 = middle
-        (0.76, 1.00),   # ring 2 = outer (furthest from sample)
+        (0.28, 0.52),  # ring 0 = inner (closest to sample)
+        (0.52, 0.76),  # ring 1 = middle
+        (0.76, 1.00),  # ring 2 = outer (furthest from sample)
     ]
 
     fwd_segs: list[DetectorSegment] = []
@@ -509,7 +511,7 @@ def _build_emu() -> InstrumentLayout:
                 ids.append(bank_offset + 3 * s + ring_idx)
         return tuple(sorted(ids))
 
-    fwd_offset = 1   # Forward bank: 1 + 3*s + ring_idx
+    fwd_offset = 1  # Forward bank: 1 + 3*s + ring_idx
     bwd_offset = 49  # Backward bank: 49 + 3*s + ring_idx
 
     top_sectors = [12, 13, 14, 15, 0, 1, 2, 3]
@@ -520,12 +522,11 @@ def _build_emu() -> InstrumentLayout:
     presets["Vector Polarization"] = PresetGrouping(
         name="Vector Polarization",
         groups={
-            1: GroupDefinition("Pz Forward",  tuple(range(1, 49))),
+            1: GroupDefinition("Pz Forward", tuple(range(1, 49))),
             2: GroupDefinition("Pz Backward", tuple(range(49, 97))),
             3: GroupDefinition(
                 "Py Top",
-                _emu_sector_ids(top_sectors, fwd_offset)
-                + _emu_sector_ids(top_sectors, bwd_offset),
+                _emu_sector_ids(top_sectors, fwd_offset) + _emu_sector_ids(top_sectors, bwd_offset),
             ),
             4: GroupDefinition(
                 "Py Bottom",

@@ -358,8 +358,8 @@ class AdvancedRunInfoDialog(QDialog):
             if field_key:
                 include_box.setChecked(field_key in included_fields)
                 include_box.toggled.connect(
-                    lambda checked, fk=field_key: (
-                        self.set_browser_field_inclusion_requested.emit(fk, checked)
+                    lambda checked, fk=field_key: self.set_browser_field_inclusion_requested.emit(
+                        fk, checked
                     )
                 )
             self._table.setCellWidget(row, 0, include_box)
@@ -377,12 +377,14 @@ class AdvancedRunInfoDialog(QDialog):
                 self._table.setItem(row, 3, QTableWidgetItem(""))
 
             search_blob = " ".join(
-                token for token in (
+                token
+                for token in (
                     str(label),
                     str(value),
                     str(field_key or ""),
                     str(series_path or ""),
-                ) if token
+                )
+                if token
             ).lower()
             self._row_search_tokens.append(search_blob)
 

@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -43,10 +42,9 @@ from PySide6.QtWidgets import (
 from asymmetry.core.instrument import (
     INSTRUMENT_NAMES,
     InstrumentLayout,
-    detect_instrument,
     get_instrument_layout,
 )
-from asymmetry.gui.widgets.detector_schematic import DetectorSchematicWidget, _GROUP_COLOURS
+from asymmetry.gui.widgets.detector_schematic import _GROUP_COLOURS, DetectorSchematicWidget
 
 __all__ = ["DetectorLayoutDialog"]
 
@@ -101,9 +99,7 @@ class DetectorLayoutDialog(QDialog):
         self._backward_group = backward_group
 
         # Internal group state: gid → set of 1-based detector IDs
-        self._groups: dict[int, set[int]] = {
-            gid: set(ids) for gid, ids in groups.items()
-        }
+        self._groups: dict[int, set[int]] = {gid: set(ids) for gid, ids in groups.items()}
         # Group names
         self._group_names: dict[int, str] = dict(group_names or {})
         self._applied_preset_name: str | None = (
@@ -128,9 +124,7 @@ class DetectorLayoutDialog(QDialog):
         # ------------------------------------------------------------------
         self._schematic = DetectorSchematicWidget(self._instrument, parent=self)
         self._schematic.setMinimumWidth(360)
-        self._schematic.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
+        self._schematic.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._schematic.detector_toggled.connect(self._on_detector_toggled)
         root.addWidget(self._schematic, stretch=6)
 
@@ -299,25 +293,15 @@ class DetectorLayoutDialog(QDialog):
         if preset is None:
             return False
 
-        current_groups = {
-            gid: set(ids)
-            for gid, ids in self._groups.items()
-            if ids
-        }
+        current_groups = {gid: set(ids) for gid, ids in self._groups.items() if ids}
         preset_groups = {
-            gid: set(gdef.detector_ids)
-            for gid, gdef in preset.groups.items()
-            if gdef.detector_ids
+            gid: set(gdef.detector_ids) for gid, gdef in preset.groups.items() if gdef.detector_ids
         }
         if current_groups != preset_groups:
             return False
 
         current_names = self._current_group_names_from_edits()
-        preset_names = {
-            gid: gdef.name
-            for gid, gdef in preset.groups.items()
-            if gdef.name
-        }
+        preset_names = {gid: gdef.name for gid, gdef in preset.groups.items() if gdef.name}
         if current_names != preset_names:
             return False
 
@@ -478,11 +462,7 @@ class DetectorLayoutDialog(QDialog):
             ``"instrument"``
                 Instrument name (str).
         """
-        non_empty = {
-            gid: sorted(ids)
-            for gid, ids in self._groups.items()
-            if ids
-        }
+        non_empty = {gid: sorted(ids) for gid, ids in self._groups.items() if ids}
         # Flush any pending name edits
         for gid, edit in self._group_name_edits.items():
             text = edit.text().strip()

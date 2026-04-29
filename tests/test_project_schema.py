@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 # ── schema / migration unit tests ─────────────────────────────────────────────
-
 from asymmetry.core.project import (
     CURRENT_SCHEMA_VERSION,
     UnsupportedSchemaVersion,
@@ -260,7 +257,10 @@ class TestProjectIO:
         assert loaded["single_fit_state"]["wizard_state"]["log_text"] == "single log"
         assert loaded["single_fit_state"]["wizard_state"]["signature"]["run_number"] == 1001
         assert loaded["global_fit_state"]["wizard_state"]["log_text"] == "global log"
-        assert loaded["global_fit_state"]["wizard_state"]["signature"]["search_strategy"] == "staged_v2"
+        assert (
+            loaded["global_fit_state"]["wizard_state"]["signature"]["search_strategy"]
+            == "staged_v2"
+        )
         assert len(loaded["global_fit_state"]["wizard_state_by_run_set"]) == 2
         assert loaded["global_fit_state"]["wizard_state_by_run_set"][1]["log_text"] == "group 2 log"
 
@@ -319,8 +319,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 
-import numpy as np
-
 from asymmetry.core.data.dataset import Histogram, MuonDataset
 
 
@@ -334,6 +332,7 @@ def qapp():
 
 def _make_dataset(run_number: int = 42) -> MuonDataset:
     from asymmetry.core.data.dataset import Run
+
     t = np.linspace(0, 10, 100)
     run = Run(run_number=run_number, source_file=f"/data/run{run_number}.wim")
     run.metadata["field"] = 100.0
@@ -341,8 +340,7 @@ def _make_dataset(run_number: int = 42) -> MuonDataset:
         time=t,
         asymmetry=0.2 * np.exp(-t),
         error=np.full_like(t, 0.01),
-        metadata={"title": f"Run {run_number}", "temperature": 5.0,
-                  "field": 100.0, "comment": ""},
+        metadata={"title": f"Run {run_number}", "temperature": 5.0, "field": 100.0, "comment": ""},
         run=run,
     )
 
@@ -370,8 +368,9 @@ class TestDataBrowserPanelState:
         assert not panel._datasets
 
     def test_restore_state_applies_sort(self, qapp):
-        from asymmetry.gui.panels.data_browser import DataBrowserPanel
         from PySide6.QtCore import Qt
+
+        from asymmetry.gui.panels.data_browser import DataBrowserPanel
 
         panel = DataBrowserPanel()
         panel.add_dataset(_make_dataset(1))
@@ -463,8 +462,16 @@ class TestPlotPanelState:
 
         panel = PlotPanel()
         state = panel.get_state()
-        for key in ("current_run_number", "bunch_factor", "x_min", "x_max",
-                    "y_min", "y_max", "fit_curve", "fit_curves"):
+        for key in (
+            "current_run_number",
+            "bunch_factor",
+            "x_min",
+            "x_max",
+            "y_min",
+            "y_max",
+            "fit_curve",
+            "fit_curves",
+        ):
             assert key in state
         assert state["bunch_factor"] == 1
 
@@ -475,9 +482,17 @@ class TestPlotPanelState:
         if not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        panel.restore_state({"bunch_factor": 4, "x_min": 0.0, "x_max": 5.0,
-                             "y_min": -20.0, "y_max": 20.0,
-                             "fit_curve": None, "fit_curves": {}})
+        panel.restore_state(
+            {
+                "bunch_factor": 4,
+                "x_min": 0.0,
+                "x_max": 5.0,
+                "y_min": -20.0,
+                "y_max": 20.0,
+                "fit_curve": None,
+                "fit_curves": {},
+            }
+        )
         state = panel.get_state()
         assert state["bunch_factor"] == 1
 
@@ -490,8 +505,10 @@ class TestPlotPanelState:
 
         fit_state = {
             "bunch_factor": 1,
-            "x_min": 0.0, "x_max": 10.0,
-            "y_min": -30.0, "y_max": 30.0,
+            "x_min": 0.0,
+            "x_max": 10.0,
+            "y_min": -30.0,
+            "y_max": 30.0,
             "fit_curve": {"t": [0.0, 1.0, 2.0], "y": [0.2, 0.1, 0.05], "label": "Fit"},
             "fit_curves": {},
         }
@@ -528,8 +545,10 @@ class TestPlotPanelState:
 
         fit_state = {
             "bunch_factor": 1,
-            "x_min": 0.0, "x_max": 10.0,
-            "y_min": -30.0, "y_max": 30.0,
+            "x_min": 0.0,
+            "x_max": 10.0,
+            "y_min": -30.0,
+            "y_max": 30.0,
             "fit_curve": None,
             "fit_curves": {
                 "42": {"t": [0.0, 1.0], "y": [0.2, 0.1], "label": "Global Fit"},
@@ -572,8 +591,8 @@ class TestFitPanelState:
         assert isinstance(state["parameters"], list)
 
     def test_single_restore_state_sets_model(self, qapp):
-        from asymmetry.gui.panels.fit_panel import SingleFitTab
         from asymmetry.core.fitting.composite import CompositeModel
+        from asymmetry.gui.panels.fit_panel import SingleFitTab
 
         tab = SingleFitTab()
         state = {
@@ -619,6 +638,7 @@ class TestFitPanelState:
         assert "Saved Single Fit" in panel2._single_tab._result_label.text()
         assert "Saved Global Fit" in panel2._global_tab._result_text.toPlainText()
         assert panel2._tabs.currentIndex() == 1
+
 
 # ── MainWindow project orchestration (headless) ────────────────────────────────
 
@@ -700,8 +720,10 @@ class _StubPlotPanelWithState(_StubPlotPanel):
         return {
             "current_run_number": None,
             "bunch_factor": 1,
-            "x_min": 0.0, "x_max": 10.0,
-            "y_min": -30.0, "y_max": 30.0,
+            "x_min": 0.0,
+            "x_max": 10.0,
+            "y_min": -30.0,
+            "y_max": 30.0,
             "fit_curve": None,
             "fit_curves": {},
         }
@@ -905,7 +927,9 @@ class TestMainWindowProjectState:
         assert restored is not None
 
         # Grouping asymmetry: (F-B)/(F+B) = 1/3, then scaled to percent.
-        assert np.allclose(restored.asymmetry, np.full_like(restored.asymmetry, 33.3333333333), atol=1e-6)
+        assert np.allclose(
+            restored.asymmetry, np.full_like(restored.asymmetry, 33.3333333333), atol=1e-6
+        )
         assert restored.run is not None
         assert restored.run.grouping.get("forward_group") == 1
         assert restored.run.grouping.get("backward_group") == 2
@@ -1367,6 +1391,7 @@ class TestMainWindowProjectState:
 
         # Suppress the "locate directory" dialog – user clicks No.
         from PySide6.QtWidgets import QMessageBox
+
         monkeypatch.setattr(
             QMessageBox, "question", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.No)
         )
@@ -1407,6 +1432,7 @@ class TestMainWindowProjectState:
 
         # Suppress the QMessageBox (user clicks Yes to locate directory).
         from PySide6.QtWidgets import QFileDialog, QMessageBox
+
         monkeypatch.setattr(
             QMessageBox, "question", staticmethod(lambda *a, **kw: QMessageBox.StandardButton.Yes)
         )
@@ -1416,9 +1442,11 @@ class TestMainWindowProjectState:
         )
         # Stub _load_file so we don't need real WIM parsing – just record the path.
         loaded_paths: list[str] = []
+
         def _stub_load_file(self_inner, path):
             loaded_paths.append(path)
             return None  # return None so nothing is added to the browser
+
         monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
 
         window = mw_module.MainWindow()
@@ -1455,7 +1483,9 @@ class TestMainWindowProjectState:
         state = _minimal_state()
         state["single_fit_state"]["result_html"] = "<b>Saved fit result</b>"
         state["fit_parameters_state"] = {
-            "rows": [{"run_number": 1, "field": 100.0, "temperature": 5.0, "values": {}, "errors": {}}]
+            "rows": [
+                {"run_number": 1, "field": 100.0, "temperature": 5.0, "values": {}, "errors": {}}
+            ]
         }
 
         project_path = str(tmp_path / "test.asymp")

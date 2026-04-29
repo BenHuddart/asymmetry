@@ -10,14 +10,14 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.fitting.diffusion import lambda_total
-from asymmetry.core.fitting.sc import models as sc_models
 from asymmetry.core.fitting.parameters import (
-    ParamInfo,
     Parameter,
     ParameterSet,
+    ParamInfo,
     get_param_info,
     split_parameter_name,
 )
+from asymmetry.core.fitting.sc import models as sc_models
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
 
@@ -69,7 +69,9 @@ def _arrhenius(x: NDArray, a: float, Ea: float) -> NDArray[np.float64]:
     return a * np.exp(exponent)
 
 
-def _critical_divergence(x: NDArray, a: float, Tc: float, nu: float, c: float = 0.0) -> NDArray[np.float64]:
+def _critical_divergence(
+    x: NDArray, a: float, Tc: float, nu: float, c: float = 0.0
+) -> NDArray[np.float64]:
     xx = np.asarray(x, dtype=float)
     dist = np.maximum(np.abs(xx - Tc), 1e-9)
     return a * np.power(dist, -nu) + c
@@ -292,9 +294,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
             "D_perp": get_param_info("D_perp"),
         },
         formula_template="(({A}^2)/4)*J(x; n=1, D_2D={D_2D}, D_perp={D_perp})",
-        latex_equation=(
-            r"\lambda_{1D}(B) = \frac{A^2}{4} J\left(B; n=1, D_{2D}, D_{\perp}\right)"
-        ),
+        latex_equation=(r"\lambda_{1D}(B) = \frac{A^2}{4} J\left(B; n=1, D_{2D}, D_{\perp}\right)"),
         scopes=("field",),
     ),
     "DiffusionLF_2D": ParameterModelComponentDefinition(
@@ -309,9 +309,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
             "D_perp": get_param_info("D_perp"),
         },
         formula_template="(({A}^2)/4)*J(x; n=2, D_2D={D_2D}, D_perp={D_perp})",
-        latex_equation=(
-            r"\lambda_{2D}(B) = \frac{A^2}{4} J\left(B; n=2, D_{2D}, D_{\perp}\right)"
-        ),
+        latex_equation=(r"\lambda_{2D}(B) = \frac{A^2}{4} J\left(B; n=2, D_{2D}, D_{\perp}\right)"),
         scopes=("field",),
     ),
     "DiffusionLF_3D": ParameterModelComponentDefinition(
@@ -326,9 +324,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
             "D_perp": get_param_info("D_perp"),
         },
         formula_template="(({A}^2)/4)*J(x; n=3, D_2D={D_2D}, D_perp={D_perp})",
-        latex_equation=(
-            r"\lambda_{3D}(B) = \frac{A^2}{4} J\left(B; n=3, D_{2D}, D_{\perp}\right)"
-        ),
+        latex_equation=(r"\lambda_{3D}(B) = \frac{A^2}{4} J\left(B; n=3, D_{2D}, D_{\perp}\right)"),
         scopes=("field",),
     ),
     "Lambda_bg": ParameterModelComponentDefinition(
@@ -553,9 +549,7 @@ def _register_superconducting_components() -> None:
                     "weight": get_param_info("weight"),
                     "sigma_bg": get_param_info("sigma_bg"),
                 },
-                formula_template=(
-                    "{sigma_0}*({weight}*rho_1 + (1-{weight})*rho_2) + {sigma_bg}"
-                ),
+                formula_template=("{sigma_0}*({weight}*rho_1 + (1-{weight})*rho_2) + {sigma_bg}"),
                 latex_equation=(
                     r"\sigma(T) = \sigma_0\left[w\rho_1(T) + (1-w)\rho_2(T)\right] + \sigma_{bg}"
                 ),
@@ -582,9 +576,7 @@ def _register_superconducting_components() -> None:
                     "weight": get_param_info("weight"),
                     "sigma_bg": get_param_info("sigma_bg"),
                 },
-                formula_template=(
-                    "{sigma_0}*({weight}*rho_s + (1-{weight})*rho_d) + {sigma_bg}"
-                ),
+                formula_template=("{sigma_0}*({weight}*rho_s + (1-{weight})*rho_d) + {sigma_bg}"),
                 latex_equation=(
                     r"\sigma(T) = \sigma_0\left[w\rho_s(T) + (1-w)\rho_d(T)\right] + \sigma_{bg}"
                 ),
@@ -716,11 +708,7 @@ class ParameterCompositeModel:
         self.param_info = param_info
 
     def _build_param_mapping(self) -> list[dict[str, str]]:
-        counts = Counter(
-            pname
-            for component in self.components
-            for pname in component.param_names
-        )
+        counts = Counter(pname for component in self.components for pname in component.param_names)
         mappings: list[dict[str, str]] = []
         for idx, component in enumerate(self.components, start=1):
             mapping: dict[str, str] = {}
@@ -971,11 +959,15 @@ def fit_parameter_model(
 
     for p in parameters:
         if p.fixed:
-            result_params.add(Parameter(name=p.name, value=p.value, min=p.min, max=p.max, fixed=True))
+            result_params.add(
+                Parameter(name=p.name, value=p.value, min=p.min, max=p.max, fixed=True)
+            )
         else:
             idx = param_names.index(p.name)
             value = float(m.values[idx])
-            result_params.add(Parameter(name=p.name, value=value, min=p.min, max=p.max, fixed=False))
+            result_params.add(
+                Parameter(name=p.name, value=value, min=p.min, max=p.max, fixed=False)
+            )
             err = m.errors[idx]
             if err is not None and np.isfinite(err):
                 uncertainties[p.name] = float(err)
@@ -1127,7 +1119,7 @@ def global_fit_parameter_model(
             kwargs = _build_kwargs(arg_map, gidx)
             pred = np.asarray(model.function(xx, **kwargs), dtype=float)
             resid = (yy - pred) / ee
-            total += float(np.sum(resid ** 2))
+            total += float(np.sum(resid**2))
         return total
 
     m = Minuit(cost_function, *fit_init_values, name=fit_param_names)
@@ -1162,7 +1154,9 @@ def global_fit_parameter_model(
         key = f"g__{pname}"
         val = values_by_name[key]
         p_min, p_max = bounds_by_param[pname]
-        global_parameter_set.add(Parameter(name=pname, value=val, min=p_min, max=p_max, fixed=False))
+        global_parameter_set.add(
+            Parameter(name=pname, value=val, min=p_min, max=p_max, fixed=False)
+        )
         err = m.errors[key]
         if err is not None and np.isfinite(err):
             global_unc[pname] = float(err)

@@ -10,15 +10,14 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from matplotlib.patches import Wedge
 from PySide6.QtCore import QSize, Signal
-from PySide6.QtWidgets import QSizePolicy, QWidget, QVBoxLayout
+from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 if TYPE_CHECKING:
-    from asymmetry.core.instrument import InstrumentLayout, DetectorSegment
+    from asymmetry.core.instrument import DetectorSegment, InstrumentLayout
 
 __all__ = ["DetectorSchematicWidget"]
 
@@ -38,8 +37,8 @@ _GROUP_COLOURS: tuple[tuple[float, float, float, float], ...] = (
     (0.62, 0.45, 0.20, 0.85),  # 8 brown
 )
 
-_EMPTY_COLOUR = (0.96, 0.96, 0.96, 1.0)   # light grey — detector in no group
-_EDGE_COLOUR = (0.35, 0.35, 0.35, 1.0)    # dark grey edge
+_EMPTY_COLOUR = (0.96, 0.96, 0.96, 1.0)  # light grey — detector in no group
+_EDGE_COLOUR = (0.35, 0.35, 0.35, 1.0)  # dark grey edge
 _BEAM_HOLE_COLOUR = (0.80, 0.88, 0.95, 1.0)  # pale blue for beam hole
 _HOVER_EDGE_COLOUR = (0.0, 0.0, 0.0, 1.0)
 
@@ -77,7 +76,7 @@ class DetectorSchematicWidget(QWidget):
 
     def __init__(
         self,
-        instrument: "InstrumentLayout",
+        instrument: InstrumentLayout,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -108,9 +107,7 @@ class DetectorSchematicWidget(QWidget):
 
         self._fig = Figure(figsize=(fig_width, fig_height), facecolor="white")
         self._canvas = FigureCanvasQTAgg(self._fig)
-        self._canvas.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
+        self._canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._canvas.setMinimumSize(QSize(300, 240))
 
         layout = QVBoxLayout(self)
@@ -149,6 +146,7 @@ class DetectorSchematicWidget(QWidget):
 
             # Draw beam-hole disc on top
             from matplotlib.patches import Circle
+
             hole = Circle(
                 (0, 0),
                 radius=min(s.r_inner for s in bank.segments) - 0.01,
@@ -162,7 +160,7 @@ class DetectorSchematicWidget(QWidget):
         self._fig.tight_layout(pad=0.4)
         self._canvas.draw_idle()
 
-    def _make_wedge(self, seg: "DetectorSegment") -> Wedge:
+    def _make_wedge(self, seg: DetectorSegment) -> Wedge:
         """Create a matplotlib :class:`~matplotlib.patches.Wedge` for *seg*."""
         # matplotlib Wedge: theta1 < theta2, both in degrees, measured CCW from +x
         # Our angle_center_deg is CCW from +x already.
@@ -190,7 +188,7 @@ class DetectorSchematicWidget(QWidget):
         )
         return patch
 
-    def _add_label(self, ax, seg: "DetectorSegment") -> None:
+    def _add_label(self, ax, seg: DetectorSegment) -> None:
         """Draw the detector number at the segment centroid."""
         angle_rad = math.radians(seg.angle_center_deg)
         r_mid = (seg.r_inner + seg.r_outer) / 2.0
@@ -198,15 +196,15 @@ class DetectorSchematicWidget(QWidget):
         y = r_mid * math.sin(angle_rad)
 
         # Determine font size based on segment density
-        n_sectors = max(
-            len(set(s.sector_index for s in self._instrument.all_segments)), 1
-        )
+        n_sectors = max(len(set(s.sector_index for s in self._instrument.all_segments)), 1)
         fontsize = max(3.5, min(6.5, 130.0 / n_sectors))
 
         ax.text(
-            x, y,
+            x,
+            y,
             str(seg.detector_id),
-            ha="center", va="center",
+            ha="center",
+            va="center",
             fontsize=fontsize,
             color=(0.15, 0.15, 0.15),
             zorder=3,
@@ -305,7 +303,7 @@ class DetectorSchematicWidget(QWidget):
         bank = self._instrument.banks[bank_idx]
 
         # Hit-test: find the topmost patch at click position
-        hit_seg: "DetectorSegment | None" = None
+        hit_seg: DetectorSegment | None = None
         for seg in bank.segments:
             if self._point_in_segment(event.xdata, event.ydata, seg):
                 # In case of stacked patches (e.g. EMU rings), pick the smallest
@@ -332,7 +330,7 @@ class DetectorSchematicWidget(QWidget):
         self.detector_toggled.emit(det_id, included)
 
     @staticmethod
-    def _point_in_segment(x: float, y: float, seg: "DetectorSegment") -> bool:
+    def _point_in_segment(x: float, y: float, seg: DetectorSegment) -> bool:
         """Return ``True`` if the point (x, y) falls within *seg*."""
         if x is None or y is None:
             return False
@@ -357,7 +355,7 @@ class DetectorSchematicWidget(QWidget):
     # Rebuild when instrument changes
     # ------------------------------------------------------------------
 
-    def set_instrument(self, instrument: "InstrumentLayout") -> None:
+    def set_instrument(self, instrument: InstrumentLayout) -> None:
         """Replace the displayed instrument layout.
 
         Parameters

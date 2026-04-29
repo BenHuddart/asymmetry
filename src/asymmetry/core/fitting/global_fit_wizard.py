@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import multiprocessing as mp
+import os
 import threading
-from itertools import combinations
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
+from itertools import combinations
 
 import numpy as np
 from numpy.typing import NDArray
@@ -32,8 +32,8 @@ from asymmetry.core.fitting.fit_wizard import (
     _residual_diagnostics,
     _residual_gate_reasons,
     _scipy_fit_fallback,
-    build_fit_wizard_recommendation_for_templates,
     build_candidate_templates,
+    build_fit_wizard_recommendation_for_templates,
     candidate_template_keys,
     compute_information_criteria,
     fingerprint_spectrum,
@@ -42,17 +42,11 @@ from asymmetry.core.fitting.fit_wizard import (
 )
 from asymmetry.core.fitting.global_search import (
     GlobalSearchConfig,
-    GlobalSearchOrchestrator,
-    build_parameter_sets_for_structure,
-    compile_legacy_structure,
-    compile_structure_to_legacy_roles,
-    score_exact_candidate,
 )
 from asymmetry.core.fitting.global_search.heuristics import (
     localisation_threshold_scale,
     parameter_localisation_priority,
 )
-from asymmetry.core.fitting.global_search.refine import SearchEvaluation
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 _ROLE_DELTA_THRESHOLD = 2.0
@@ -168,8 +162,10 @@ class GlobalCandidateAssessment:
 
     @property
     def is_successful(self) -> bool:
-        return (not self.prescreen_only) and bool(self.fit_results_by_run) and all(
-            result.success for result in self.fit_results_by_run.values()
+        return (
+            (not self.prescreen_only)
+            and bool(self.fit_results_by_run)
+            and all(result.success for result in self.fit_results_by_run.values())
         )
 
     @property
@@ -230,11 +226,11 @@ class GlobalFitWizardRecommendation:
                 return assessment
         return None
 
-    def assessments_for_template_key(self, template_key: str) -> tuple[GlobalCandidateAssessment, ...]:
+    def assessments_for_template_key(
+        self, template_key: str
+    ) -> tuple[GlobalCandidateAssessment, ...]:
         return tuple(
-            assessment
-            for assessment in self.assessments
-            if assessment.template.key == template_key
+            assessment for assessment in self.assessments if assessment.template.key == template_key
         )
 
     def sorted_assessments(
@@ -258,9 +254,7 @@ class GlobalFitWizardRecommendation:
         )
 
     def optimized_assessments(self) -> tuple[GlobalCandidateAssessment, ...]:
-        return tuple(
-            assessment for assessment in self.assessments if not assessment.prescreen_only
-        )
+        return tuple(assessment for assessment in self.assessments if not assessment.prescreen_only)
 
     def sorted_optimized_assessments(
         self,
@@ -276,7 +270,9 @@ class GlobalFitWizardRecommendation:
         if not isinstance(key, str):
             return "Unknown"
         template_assessments = self.assessments_for_template_key(key)
-        optimized = [assessment for assessment in template_assessments if not assessment.prescreen_only]
+        optimized = [
+            assessment for assessment in template_assessments if not assessment.prescreen_only
+        ]
         if not template_assessments:
             return "Unknown"
         if not optimized:
@@ -631,9 +627,7 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     )
     expected_template_keys = candidate_template_keys(portfolio.templates)
     existing = (
-        existing_recommendations_by_run
-        if existing_recommendations_by_run is not None
-        else {}
+        existing_recommendations_by_run if existing_recommendations_by_run is not None else {}
     )
 
     complete_by_run: dict[int, FitWizardRecommendation] = {}
@@ -766,9 +760,7 @@ def build_global_fit_wizard_screening_recommendation(
         )
 
     recommendations_by_run = (
-        single_fit_recommendations_by_run
-        if single_fit_recommendations_by_run is not None
-        else {}
+        single_fit_recommendations_by_run if single_fit_recommendations_by_run is not None else {}
     )
     expected_template_keys = candidate_template_keys(templates)
     if not recommendations_by_run or not all(
@@ -1272,9 +1264,7 @@ def _build_global_fit_wizard_recommendation_staged(
     current_values = current_values or {}
     parameter_bounds = parameter_bounds or {}
     available_single_fit_recommendations = (
-        single_fit_recommendations_by_run
-        if single_fit_recommendations_by_run is not None
-        else {}
+        single_fit_recommendations_by_run if single_fit_recommendations_by_run is not None else {}
     )
 
     _progress_log(
@@ -1399,14 +1389,20 @@ def _build_global_fit_wizard_recommendation_staged(
     )
 
     expected_single_fit_template_keys = candidate_template_keys(templates)
-    use_single_fit_prescreen = bool(available_single_fit_recommendations) and all(
-        recommendation_template_keys(available_single_fit_recommendations.get(int(dataset.run_number)))
-        == expected_single_fit_template_keys
-        for dataset in ordered_datasets
-        if int(dataset.run_number) in available_single_fit_recommendations
-    ) and all(
-        int(dataset.run_number) in available_single_fit_recommendations
-        for dataset in ordered_datasets
+    use_single_fit_prescreen = (
+        bool(available_single_fit_recommendations)
+        and all(
+            recommendation_template_keys(
+                available_single_fit_recommendations.get(int(dataset.run_number))
+            )
+            == expected_single_fit_template_keys
+            for dataset in ordered_datasets
+            if int(dataset.run_number) in available_single_fit_recommendations
+        )
+        and all(
+            int(dataset.run_number) in available_single_fit_recommendations
+            for dataset in ordered_datasets
+        )
     )
 
     if use_single_fit_prescreen:
@@ -1464,9 +1460,7 @@ def _build_global_fit_wizard_recommendation_staged(
         _progress_log(
             progress_callback,
             "Running coupled global optimisation for the selected candidates: "
-            + ", ".join(
-                template.title for template in templates if template.key in shortlist_keys
-            )
+            + ", ".join(template.title for template in templates if template.key in shortlist_keys)
             + ".",
         )
     else:
@@ -1493,9 +1487,7 @@ def _build_global_fit_wizard_recommendation_staged(
             metric=metric,
             forced_keys=forced_shortlist_keys,
         )
-    shortlisted_templates = [
-        template for template in templates if template.key in shortlist_keys
-    ]
+    shortlisted_templates = [template for template in templates if template.key in shortlist_keys]
     if shortlisted_templates:
         _progress_log(
             progress_callback,
@@ -1637,8 +1629,7 @@ def merge_global_fit_wizard_recommendations(
     merged_assessments = [
         assessment
         for assessment in base.assessments
-        if assessment.prescreen_only
-        or assessment.template.key not in updated_template_keys
+        if assessment.prescreen_only or assessment.template.key not in updated_template_keys
     ]
     merged_assessments.extend(
         assessment for assessment in updates.assessments if not assessment.prescreen_only
@@ -1664,14 +1655,8 @@ def _parameter_recommendation_candidate_keys(
     if keys:
         return tuple(keys)
 
-    passing = [
-        assessment
-        for assessment in recommendation.assessments
-        if assessment.is_successful
-    ]
-    passing.sort(
-        key=lambda assessment: _assessment_sort_key(assessment, recommendation.metric)
-    )
+    passing = [assessment for assessment in recommendation.assessments if assessment.is_successful]
+    passing.sort(key=lambda assessment: _assessment_sort_key(assessment, recommendation.metric))
     for assessment in passing[:2]:
         if assessment.template.key not in keys:
             keys.append(assessment.template.key)
@@ -1692,8 +1677,7 @@ def serialize_global_fit_wizard_recommendation(
         },
         "dataset_order": [int(run_number) for run_number in recommendation.dataset_order],
         "templates": [
-            _serialize_candidate_template(template)
-            for template in recommendation.templates
+            _serialize_candidate_template(template) for template in recommendation.templates
         ],
         "assessments": [
             _serialize_global_candidate_assessment(assessment)
@@ -1751,9 +1735,7 @@ def deserialize_global_fit_wizard_recommendation(
         assessments=assessments,
         metric=SelectionMetric.from_value(payload.get("metric", SelectionMetric.AICC.value)),
         recommended_key=(
-            str(payload["recommended_key"])
-            if payload.get("recommended_key") is not None
-            else None
+            str(payload["recommended_key"]) if payload.get("recommended_key") is not None else None
         ),
         comparable_keys=comparable_keys,
         summary=str(payload.get("summary", "")),
@@ -2138,11 +2120,7 @@ def _deserialize_global_candidate_assessment(
                 if isinstance(warning, str)
             ),
             aic=float(payload.get("aic", float("inf"))),
-            aicc=(
-                float(payload["aicc"])
-                if payload.get("aicc") is not None
-                else None
-            ),
+            aicc=(float(payload["aicc"]) if payload.get("aicc") is not None else None),
             bic=float(payload.get("bic", float("inf"))),
             selected_score=float(payload.get("selected_score", float("inf"))),
             fitted_curves_by_run=fitted_curves_by_run,
@@ -2601,7 +2579,8 @@ def _prune_local_assignments(
             tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
         ],
         dict[int, ParameterSet],
-    ] | None = None,
+    ]
+    | None = None,
 ) -> GlobalCandidateAssessment:
     best = incumbent
     for name in list(best.local_param_names):
@@ -2672,7 +2651,8 @@ def _best_forward_role_change(
             tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
         ],
         dict[int, ParameterSet],
-    ] | None = None,
+    ]
+    | None = None,
 ) -> GlobalCandidateAssessment | None:
     candidates = _forward_role_change_candidates(
         datasets,
@@ -2723,7 +2703,8 @@ def _forward_role_change_candidates(
             tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
         ],
         dict[int, ParameterSet],
-    ] | None = None,
+    ]
+    | None = None,
 ) -> tuple[GlobalCandidateAssessment, ...]:
     for tier in _tiered_role_candidates(remaining, incumbent.local_param_names):
         candidate_specs: list[
@@ -2793,7 +2774,13 @@ def _forward_role_change_candidates(
             )
 
         candidates: list[GlobalCandidateAssessment] = []
-        for _probe_score, _name, candidate_global_names, candidate_local_names, warm_start_by_run in candidate_specs[:exact_limit]:
+        for (
+            _probe_score,
+            _name,
+            candidate_global_names,
+            candidate_local_names,
+            warm_start_by_run,
+        ) in candidate_specs[:exact_limit]:
             candidate = _fit_exact_assignment(
                 datasets,
                 template,
@@ -2893,7 +2880,8 @@ def _staged_multi_local_assignment(
             tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
         ],
         dict[int, ParameterSet],
-    ] | None = None,
+    ]
+    | None = None,
 ) -> tuple[GlobalCandidateAssessment | None, GlobalCandidateAssessment]:
     if len(target_local_names) < 2 or not baseline_assessment.is_successful:
         return None, baseline_assessment
@@ -2917,8 +2905,8 @@ def _staged_multi_local_assignment(
         f"{template.title}: building warm start from all-global baseline "
         "for multi-local assignment.",
     )
-    beam_width, branch_limit, use_screening, exact_candidates_per_tier = _staged_local_search_settings(
-        search_strategy
+    beam_width, branch_limit, use_screening, exact_candidates_per_tier = (
+        _staged_local_search_settings(search_strategy)
     )
     frontier: list[GlobalCandidateAssessment] = [baseline_assessment]
     best_partial = baseline_assessment
@@ -2942,7 +2930,9 @@ def _staged_multi_local_assignment(
         seen_signatures: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
         for incumbent in frontier:
             remaining = tuple(
-                name for name in ordered_target_local_names if name not in incumbent.local_param_names
+                name
+                for name in ordered_target_local_names
+                if name not in incumbent.local_param_names
             )
             if not remaining:
                 continue
@@ -3090,7 +3080,8 @@ def _staged_globalization_assignment(
             tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
         ],
         dict[int, ParameterSet],
-    ] | None = None,
+    ]
+    | None = None,
 ) -> GlobalCandidateAssessment | None:
     promotable_names = tuple(
         name for name in template.model.param_names if name not in fixed_param_names
@@ -3134,11 +3125,13 @@ def _staged_globalization_assignment(
         if not ranked_names:
             break
 
-        stage_names = ranked_names[: _STAGED_GLOBALIZATION_CANDIDATES_PER_STEP]
+        stage_names = ranked_names[:_STAGED_GLOBALIZATION_CANDIDATES_PER_STEP]
         best_candidate: GlobalCandidateAssessment | None = None
         for name in stage_names:
             candidate_local_names = tuple(
-                sorted(local_name for local_name in incumbent.local_param_names if local_name != name)
+                sorted(
+                    local_name for local_name in incumbent.local_param_names if local_name != name
+                )
             )
             candidate_global_names = tuple(
                 param_name
@@ -3179,7 +3172,9 @@ def _staged_globalization_assignment(
             )
             if not candidate.is_successful:
                 continue
-            if best_candidate is None or _assessment_sort_key(candidate, metric) < _assessment_sort_key(
+            if best_candidate is None or _assessment_sort_key(
+                candidate, metric
+            ) < _assessment_sort_key(
                 best_candidate,
                 metric,
             ):
@@ -3251,7 +3246,11 @@ def _prefer_globalization_change(
     score_delta = incumbent.metric_value(metric) - candidate.metric_value(metric)
     if score_delta > 1e-6:
         return True
-    if not incumbent.residual_gate_passed and candidate.residual_gate_passed and score_delta >= -1e-6:
+    if (
+        not incumbent.residual_gate_passed
+        and candidate.residual_gate_passed
+        and score_delta >= -1e-6
+    ):
         return True
     return False
 
@@ -3409,13 +3408,17 @@ def _fit_exact_assignment(
             local_step_hints,
         )
 
-    best_results, best_global, best_score, best_failure_message, step_hints = _evaluate_attempt_variants(
-        attempt_variants,
-        initial_hints=dict(initial_step_sizes or {}),
+    best_results, best_global, best_score, best_failure_message, step_hints = (
+        _evaluate_attempt_variants(
+            attempt_variants,
+            initial_hints=dict(initial_step_sizes or {}),
+        )
     )
 
     fallback_attempt_variants: tuple[dict[int, ParameterSet], ...] = ()
-    fit_success = best_results is not None and all(result.success for result in best_results.values())
+    fit_success = best_results is not None and all(
+        result.success for result in best_results.values()
+    )
     if not fit_success and warm_start_by_run is not None:
         fallback_attempt_variants = _assignment_attempt_variants(
             base_by_run,
@@ -3453,9 +3456,7 @@ def _fit_exact_assignment(
         fallback_success = fallback_results is not None and all(
             result.success for result in fallback_results.values()
         )
-        if fallback_success and (
-            not fit_success or fallback_score < best_score
-        ):
+        if fallback_success and (not fit_success or fallback_score < best_score):
             best_results = fallback_results
             best_global = fallback_global
             best_score = fallback_score
@@ -3786,6 +3787,8 @@ def _build_parameter_recommendations_from_exact_cache(
         )
 
     return tuple(recommendations)
+
+
 def _initial_parameter_sets_for_candidate(
     datasets: list[MuonDataset],
     fingerprints_by_run: dict[int, SpectrumFingerprint],
@@ -3975,8 +3978,7 @@ def _repair_single_fit_assessment_from_sibling_runs(
         if not donor.is_successful:
             continue
         seeded_values = {
-            parameter.name: float(parameter.value)
-            for parameter in donor.fit_result.parameters
+            parameter.name: float(parameter.value) for parameter in donor.fit_result.parameters
         }
         seeded_parameters = _configured_single_fit_parameter_set(
             dataset,
@@ -4111,7 +4113,8 @@ def _single_run_prefit_parameter_sets(
     cache: dict[
         tuple[tuple[str, ...], tuple[tuple[int, tuple[tuple[str, float], ...]], ...]],
         dict[int, ParameterSet],
-    ] | None = None,
+    ]
+    | None = None,
 ) -> dict[int, ParameterSet]:
     cache_key = (
         tuple(fixed_param_names),
@@ -4345,10 +4348,7 @@ def _staged_assignment_seed(
     free_local_names = tuple(
         name
         for name in local_param_names
-        if any(
-            not initial_params[int(dataset.run_number)][name].fixed
-            for dataset in datasets
-        )
+        if any(not initial_params[int(dataset.run_number)][name].fixed for dataset in datasets)
     )
     if not free_global_names or not free_local_names:
         return _clone_parameter_sets(initial_params)
@@ -4501,7 +4501,9 @@ def _staged_assignment_seed(
             if all(result.success for result in mixed_results.values()):
                 mixed_score = float(sum(result.chi_squared for result in mixed_results.values()))
                 if mixed_score + 1e-6 < cycle_score:
-                    staged_seed = _merge_result_values_into_parameter_sets(staged_seed, mixed_results)
+                    staged_seed = _merge_result_values_into_parameter_sets(
+                        staged_seed, mixed_results
+                    )
                     step_hints = _step_hints_from_fit_results(
                         datasets,
                         mixed_results,
@@ -4579,8 +4581,7 @@ def _parameter_set_signature(
         (
             int(run_number),
             tuple(
-                (parameter.name, float(parameter.value))
-                for parameter in parameter_sets[run_number]
+                (parameter.name, float(parameter.value)) for parameter in parameter_sets[run_number]
             ),
         )
         for run_number in sorted(parameter_sets)
@@ -4842,7 +4843,8 @@ def _warm_start_parameter_sets(
             tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
         ],
         dict[int, ParameterSet],
-    ] | None = None,
+    ]
+    | None = None,
 ) -> dict[int, ParameterSet]:
     cache_key = _warm_start_cache_key(
         assessment,
@@ -4883,9 +4885,7 @@ def _warm_start_parameter_sets(
                 )
             elif result is not None and parameter.name in result.parameters:
                 parameter.value = result.parameters[parameter.name].value
-            parameter.value = float(
-                np.clip(parameter.value, parameter.min, parameter.max)
-            )
+            parameter.value = float(np.clip(parameter.value, parameter.min, parameter.max))
         seeded[run_number] = base_params
 
     newly_localized = tuple(
@@ -5313,7 +5313,9 @@ def _run_exhaustive_wavefront_search(
     progress_callback: Callable[[str], None] | None,
     search_strategy: str,
     instrumentation: dict[str, object] | None,
-    single_run_prefit_cache_for: Callable[[CandidateTemplate], dict[object, dict[int, ParameterSet]]],
+    single_run_prefit_cache_for: Callable[
+        [CandidateTemplate], dict[object, dict[int, ParameterSet]]
+    ],
 ) -> tuple[GlobalCandidateAssessment, ...]:
     if not shortlisted_templates:
         return ()
@@ -5441,10 +5443,7 @@ def _run_exhaustive_wavefront_search(
 
             round_results: list[_WavefrontAssignmentResult] = []
             if executor is None:
-                round_results = [
-                    _run_wavefront_assignment_task(task)
-                    for task in ordered_tasks
-                ]
+                round_results = [_run_wavefront_assignment_task(task) for task in ordered_tasks]
             else:
                 future_to_task = {
                     executor.submit(_run_wavefront_assignment_task, task): task
@@ -5629,11 +5628,7 @@ def _persistent_lower_bound_penalty(assessment: GlobalCandidateAssessment) -> in
         return 0
 
     threshold = max(3, len(assessment.run_diagnostics) // 4)
-    return sum(
-        count - threshold + 1
-        for count in repeated_hits.values()
-        if count >= threshold
-    )
+    return sum(count - threshold + 1 for count in repeated_hits.values() if count >= threshold)
 
 
 def _axis_value(dataset: MuonDataset, axis_key: str) -> float:

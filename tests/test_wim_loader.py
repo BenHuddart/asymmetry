@@ -3,7 +3,6 @@
 import textwrap
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from asymmetry.core.io.wim import WimLoader

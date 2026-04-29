@@ -161,12 +161,8 @@ class MuonDataset:
         if self.run:
             lines.append(self.run.summary())
         if self.n_points:
-            lines.append(
-                f"  Time range  : {self.time[0]:.4f} – {self.time[-1]:.4f} μs"
-            )
-            lines.append(
-                f"  Asymmetry   : {self.asymmetry.min():.4f} – {self.asymmetry.max():.4f}"
-            )
+            lines.append(f"  Time range  : {self.time[0]:.4f} – {self.time[-1]:.4f} μs")
+            lines.append(f"  Asymmetry   : {self.asymmetry.min():.4f} – {self.asymmetry.max():.4f}")
         return "\n".join(lines)
 
     def __repr__(self) -> str:

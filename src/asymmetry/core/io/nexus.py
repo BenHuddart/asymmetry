@@ -139,7 +139,9 @@ class NexusLoader(BaseLoader):
             )
         if good_frames_values.size == 0:
             good_frames_values = np.asarray(
-                self._read_optional(self._read_optional(entry, "periods"), "good_frames", default=[]),
+                self._read_optional(
+                    self._read_optional(entry, "periods"), "good_frames", default=[]
+                ),
                 dtype=np.float64,
             )
         dead_time_values = np.asarray(
@@ -163,7 +165,9 @@ class NexusLoader(BaseLoader):
 
         sample = self._read_optional(entry, "sample")
         temperature = self._safe_float(self._read_optional(sample, "temperature"), default=0.0)
-        magnetic_field = self._safe_float(self._read_optional(sample, "magnetic_field"), default=0.0)
+        magnetic_field = self._safe_float(
+            self._read_optional(sample, "magnetic_field"), default=0.0
+        )
 
         orientation_raw = self._safe_str(
             self._read_optional(self._read_optional(entry, "instrument"), "detector/orientation")
@@ -233,19 +237,29 @@ class NexusLoader(BaseLoader):
         counts = np.asarray(self._require_dataset(detector, "counts"), dtype=np.float64)
         counts_periods = self._split_period_counts(counts)
 
-        raw_time = np.asarray(self._read_optional(detector, "raw_time", default=[]), dtype=np.float64)
+        raw_time = np.asarray(
+            self._read_optional(detector, "raw_time", default=[]), dtype=np.float64
+        )
         if raw_time.size == 0:
-            raw_time = np.asarray(self._read_optional(detector, "time_of_flight", default=[]), dtype=np.float64)
-        corrected_time = np.asarray(self._read_optional(detector, "corrected_time", default=[]), dtype=np.float64)
+            raw_time = np.asarray(
+                self._read_optional(detector, "time_of_flight", default=[]), dtype=np.float64
+            )
+        corrected_time = np.asarray(
+            self._read_optional(detector, "corrected_time", default=[]), dtype=np.float64
+        )
 
-        grouping_array = np.asarray(self._read_optional(detector, "grouping", default=[]), dtype=np.int64)
+        grouping_array = np.asarray(
+            self._read_optional(detector, "grouping", default=[]), dtype=np.int64
+        )
         good_frames_values = np.asarray(
             self._read_optional(entry, "good_frames", default=[]),
             dtype=np.float64,
         )
         if good_frames_values.size == 0:
             good_frames_values = np.asarray(
-                self._read_optional(self._read_optional(entry, "periods"), "good_frames", default=[]),
+                self._read_optional(
+                    self._read_optional(entry, "periods"), "good_frames", default=[]
+                ),
                 dtype=np.float64,
             )
         if good_frames_values.size == 0:
@@ -262,7 +276,9 @@ class NexusLoader(BaseLoader):
                 self._read_optional(detector, "deadtime", default=[]),
                 dtype=np.float64,
             )
-        time_zero_values = np.asarray(self._read_optional(detector, "time_zero", default=[]), dtype=np.float64)
+        time_zero_values = np.asarray(
+            self._read_optional(detector, "time_zero", default=[]), dtype=np.float64
+        )
 
         run_number = self._safe_int(self._read_optional(entry, "run_number"), default=0)
         title = self._safe_str(self._read_optional(entry, "title"))
@@ -270,11 +286,15 @@ class NexusLoader(BaseLoader):
         stopped = self._safe_str(self._read_optional(entry, "end_time"))
         instrument_name = self._safe_str(self._read_optional(entry, "name"))
         if not instrument_name:
-            instrument_name = self._safe_str(self._read_optional(self._read_optional(entry, "instrument"), "name"))
+            instrument_name = self._safe_str(
+                self._read_optional(self._read_optional(entry, "instrument"), "name")
+            )
 
         sample = self._read_optional(entry, "sample")
         temperature = self._safe_float(self._read_optional(sample, "temperature"), default=0.0)
-        magnetic_field = self._safe_float(self._read_optional(sample, "magnetic_field"), default=0.0)
+        magnetic_field = self._safe_float(
+            self._read_optional(sample, "magnetic_field"), default=0.0
+        )
 
         orientation_raw = self._safe_str(self._read_optional(detector, "orientation"))
         field_direction = self._normalise_orientation(orientation_raw)
@@ -308,7 +328,9 @@ class NexusLoader(BaseLoader):
 
         first_good_bin = 0 if first_good_bin_raw is None else int(first_good_bin_raw)
         last_good_bin_default = counts_periods[0].shape[-1] - 1
-        last_good_bin = last_good_bin_default if last_good_bin_raw is None else int(last_good_bin_raw)
+        last_good_bin = (
+            last_good_bin_default if last_good_bin_raw is None else int(last_good_bin_raw)
+        )
         first_good_time = self._safe_float(
             self._read_optional(detector, "first_good_time"),
             default=None,
@@ -451,11 +473,17 @@ class NexusLoader(BaseLoader):
 
             grouping = self._resolve_grouping(grouping_array, n_detectors)
             forward = apply_grouping(
-                [Histogram(counts=period_counts[i], bin_width=bin_width) for i in range(n_detectors)],
+                [
+                    Histogram(counts=period_counts[i], bin_width=bin_width)
+                    for i in range(n_detectors)
+                ],
                 grouping.forward_indices,
             )
             backward = apply_grouping(
-                [Histogram(counts=period_counts[i], bin_width=bin_width) for i in range(n_detectors)],
+                [
+                    Histogram(counts=period_counts[i], bin_width=bin_width)
+                    for i in range(n_detectors)
+                ],
                 grouping.backward_indices,
             )
 
@@ -509,21 +537,27 @@ class NexusLoader(BaseLoader):
                 histograms=histograms,
                 metadata=run_meta,
                 grouping={
-                    "groups": {gid: [idx + 1 for idx in dets] for gid, dets in grouping.groups.items()},
+                    "groups": {
+                        gid: [idx + 1 for idx in dets] for gid, dets in grouping.groups.items()
+                    },
                     "forward_group": grouping.forward_group_id,
                     "backward_group": grouping.backward_group_id,
                     "alpha": alpha,
                     "first_good_bin": int(first_good_bin),
                     "last_good_bin": int(last_good_bin),
                     "t0_bin": int(histograms[0].t0_bin) if histograms else 0,
-                    "t_good_offset": max(0, int(first_good_bin) - int(histograms[0].t0_bin)) if histograms else 0,
+                    "t_good_offset": max(0, int(first_good_bin) - int(histograms[0].t0_bin))
+                    if histograms
+                    else 0,
                     "bin_index_base": 1 if int(bin_index_base) == 1 else 0,
                     "bunching_factor": 1,
                     "deadtime_correction": False,
                     "good_frames": float(good_frames_periods[period_idx - 1]),
                     "dead_time_us": [
                         float(v)
-                        for v in np.asarray(dead_time_periods[period_idx - 1], dtype=np.float64).tolist()
+                        for v in np.asarray(
+                            dead_time_periods[period_idx - 1], dtype=np.float64
+                        ).tolist()
                     ],
                 },
                 source_file=source_file,
@@ -735,7 +769,9 @@ class NexusLoader(BaseLoader):
 
         return lo, hi
 
-    def _infer_v2_bin_index_offset(self, time_axis: np.ndarray, t0_bin_values: np.ndarray | None) -> int:
+    def _infer_v2_bin_index_offset(
+        self, time_axis: np.ndarray, t0_bin_values: np.ndarray | None
+    ) -> int:
         """Infer whether V2 integer bin metadata is 1-based.
 
         Some files encode ``t0_bin``/``first_good_bin`` using 1-based center-bin
@@ -832,12 +868,19 @@ class NexusLoader(BaseLoader):
             if arr.size == n_detectors:
                 return [arr.copy() for _ in range(n_periods)]
             if arr.size == n_periods * n_detectors:
-                return [arr[i * n_detectors : (i + 1) * n_detectors].copy() for i in range(n_periods)]
-            return [np.resize(arr, n_detectors).astype(np.float64, copy=False) for _ in range(n_periods)]
+                return [
+                    arr[i * n_detectors : (i + 1) * n_detectors].copy() for i in range(n_periods)
+                ]
+            return [
+                np.resize(arr, n_detectors).astype(np.float64, copy=False) for _ in range(n_periods)
+            ]
 
         if arr.ndim >= 2:
             if arr.shape[0] == n_periods:
-                return [np.resize(np.asarray(arr[i], dtype=np.float64), n_detectors) for i in range(n_periods)]
+                return [
+                    np.resize(np.asarray(arr[i], dtype=np.float64), n_detectors)
+                    for i in range(n_periods)
+                ]
             if arr.shape[-1] == n_detectors:
                 base = np.asarray(arr.reshape(-1, n_detectors)[0], dtype=np.float64)
                 return [base.copy() for _ in range(n_periods)]

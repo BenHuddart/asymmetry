@@ -198,4 +198,3 @@ def is_scipy_available() -> bool:
     This function always returns True; it exists for backward compatibility.
     """
     return True
-

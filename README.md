@@ -157,6 +157,22 @@ python -m pytest
 python -m pytest --cov=src/asymmetry --cov-report=term
 ```
 
+## Agent harness
+
+Asymmetry keeps agent-facing project knowledge in the repository. Start with
+[AGENTS.md](AGENTS.md), then use the harness commands for repeatable validation:
+
+```bash
+python tools/harness.py structural
+python tools/harness.py lint
+python tools/harness.py test
+python tools/harness.py validate
+```
+
+See [docs/HARNESS.md](docs/HARNESS.md) for the validation ladder and agent workflow.
+The lint step checks `src`, `tests`, and `tools`. Locally, the harness prefers
+the project `.venv` automatically when it exists.
+
 ## Executable releases
 
 Executable GUI releases are built in GitHub Actions and attached to GitHub Releases.

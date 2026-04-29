@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 from functools import lru_cache
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QDialog, QPushButton, QTextBrowser, QVBoxLayout, QWidget
 
 from asymmetry.core.fitting.component_docs import get_component_applicability
@@ -176,15 +176,9 @@ _MUON_FLUORINE_CASE_TEXT: dict[str, str] = {
 }
 
 _MUON_FLUORINE_MEASURED_ASYMMETRY_LATEX: dict[str, str] = {
-    "MuF": (
-        r"A(t)=A_0\left[p_1 D_z(t)e^{-\lambda t}+p_2 e^{-\sigma^2 t^2}\right]+A_{bg}"
-    ),
-    "FmuF_Linear": (
-        r"A(t)=A_0\,G_{F\mu F}(t)\times \text{(empirical envelope/background terms)}"
-    ),
-    "FmuF_General": (
-        r"A(t)=A_0\left[p_1 D_z(t)e^{-\lambda t}+p_2 e^{-\sigma^2 t^2}\right]+A_{bg}"
-    ),
+    "MuF": (r"A(t)=A_0\left[p_1 D_z(t)e^{-\lambda t}+p_2 e^{-\sigma^2 t^2}\right]+A_{bg}"),
+    "FmuF_Linear": (r"A(t)=A_0\,G_{F\mu F}(t)\times \text{(empirical envelope/background terms)}"),
+    "FmuF_General": (r"A(t)=A_0\left[p_1 D_z(t)e^{-\lambda t}+p_2 e^{-\sigma^2 t^2}\right]+A_{bg}"),
 }
 
 _MUON_FLUORINE_MEASURED_ASYMMETRY_TEXT: dict[str, str] = {
@@ -206,12 +200,8 @@ _MUON_FLUORINE_LIMITS_TEXT: dict[str, str] = {
 }
 
 _MUON_FLUORINE_REFERENCES: dict[str, tuple[str, ...]] = {
-    "MuF": (
-        "T. Lancaster et al., Phys. Rev. Lett. 99, 267601 (2007).",
-    ),
-    "FmuF_Linear": (
-        "J. H. Brewer et al., Phys. Rev. B 33, 7813 (1986).",
-    ),
+    "MuF": ("T. Lancaster et al., Phys. Rev. Lett. 99, 267601 (2007).",),
+    "FmuF_Linear": ("J. H. Brewer et al., Phys. Rev. B 33, 7813 (1986).",),
     "FmuF_General": (
         "T. Lancaster et al., Phys. Rev. Lett. 99, 267601 (2007).",
         "J. H. Brewer et al., Phys. Rev. B 33, 7813 (1986).",
@@ -236,7 +226,9 @@ def _equation_html(component: ComponentDocDefinition, *, render_latex_images: bo
 
 
 def _latex_block_html(latex: LatexBlock, *, render_latex_images: bool, font_size: int = 15) -> str:
-    blocks = (latex,) if isinstance(latex, str) else tuple(block for block in latex if block.strip())
+    blocks = (
+        (latex,) if isinstance(latex, str) else tuple(block for block in latex if block.strip())
+    )
     if not blocks:
         return ""
 
@@ -285,7 +277,9 @@ def _physics_payload(component_name: str) -> tuple[tuple[str, LatexBlock, str], 
     if not component_name.startswith("SC_"):
         return tuple()
 
-    payload: list[tuple[str, str, str]] = [("Superfluid-Density Kernel", _SC_KERNEL_LATEX, _SC_KERNEL_TEXT)]
+    payload: list[tuple[str, str, str]] = [
+        ("Superfluid-Density Kernel", _SC_KERNEL_LATEX, _SC_KERNEL_TEXT)
+    ]
 
     gap_latex = _SC_GAP_MODEL_LATEX.get(component_name)
     if gap_latex:
@@ -293,7 +287,10 @@ def _physics_payload(component_name: str) -> tuple[tuple[str, LatexBlock, str], 
             (
                 "Gap Function / Model Form",
                 gap_latex,
-                _SC_GAP_MODEL_TEXT.get(component_name, "Model-specific gap symmetry used in the superfluid-density kernel."),
+                _SC_GAP_MODEL_TEXT.get(
+                    component_name,
+                    "Model-specific gap symmetry used in the superfluid-density kernel.",
+                ),
             )
         )
 
@@ -303,7 +300,9 @@ def _physics_payload(component_name: str) -> tuple[tuple[str, LatexBlock, str], 
             (
                 "Measured Linewidth Convention",
                 sigma_latex,
-                _SC_SIGMA_MIXING_TEXT.get(component_name, "Conversion from rho_s(T) to measured linewidth convention."),
+                _SC_SIGMA_MIXING_TEXT.get(
+                    component_name, "Conversion from rho_s(T) to measured linewidth convention."
+                ),
             )
         )
 
@@ -380,10 +379,14 @@ def _build_component_info_html_cached(
         "</table>"
     )
 
-    proxy = type("_DocProxy", (), {
-        "latex_equation": latex_equation,
-        "formula_template": formula_template,
-    })
+    proxy = type(
+        "_DocProxy",
+        (),
+        {
+            "latex_equation": latex_equation,
+            "formula_template": formula_template,
+        },
+    )
 
     physics_html = ""
     for heading, latex, explainer in physics_payload:

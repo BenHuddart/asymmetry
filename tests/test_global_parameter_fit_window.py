@@ -14,9 +14,9 @@ from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ModelFitRange,
     ParameterCompositeModel,
+    ParameterGroupData,
     ParameterModelFit,
     ParameterModelFitResult,
-    ParameterGroupData,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.export_paths import resolve_gle_export_paths
@@ -31,7 +31,9 @@ def qapp() -> QApplication:
     return app
 
 
-def test_refresh_plot_tolerates_missing_model_parameter_in_restored_result(qapp: QApplication) -> None:
+def test_refresh_plot_tolerates_missing_model_parameter_in_restored_result(
+    qapp: QApplication,
+) -> None:
     window = GlobalParameterFitWindow()
 
     # DiffusionLF_2D requires D_perp among others; omit it from result params to
@@ -258,7 +260,14 @@ def test_window_state_round_trip_controls_and_annotations(qapp: QApplication) ->
         active=True,
     )
     source._plot_annotations = [
-        {"x": 1.0, "y": 2.0, "text": "A", "axis_tag": "g0", "is_group_label": True, "artist": object()}
+        {
+            "x": 1.0,
+            "y": 2.0,
+            "text": "A",
+            "axis_tag": "g0",
+            "is_group_label": True,
+            "artist": object(),
+        }
     ]
     source._local_plot_annotations = [
         {"x": 3.0, "y": 4.0, "text": "B", "axis_tag": "main", "artist": object()}
@@ -287,7 +296,9 @@ def test_window_state_round_trip_controls_and_annotations(qapp: QApplication) ->
     assert restored._local_plot_annotations[0].get("artist") is None
 
 
-def test_export_plot_gle_saves_and_compiles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qapp: QApplication) -> None:
+def test_export_plot_gle_saves_and_compiles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+) -> None:
     window = GlobalParameterFitWindow()
     window._result = CrossGroupFitResult(success=True, chi_squared=1.0, reduced_chi_squared=1.0)
     window._parameter_name = "Lambda"
@@ -344,7 +355,9 @@ def test_export_plot_gle_saves_and_compiles(tmp_path: Path, monkeypatch: pytest.
     assert compile_calls == [(resolved_gle_path, "eps")]
 
 
-def test_export_plot_gle_requires_result(monkeypatch: pytest.MonkeyPatch, qapp: QApplication) -> None:
+def test_export_plot_gle_requires_result(
+    monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+) -> None:
     window = GlobalParameterFitWindow()
     window._result = None
     window._parameter_name = None
@@ -482,7 +495,9 @@ def test_fit_subplot_gle_builder_uses_gle_labels(tmp_path: Path, qapp: QApplicat
     assert "\\lambda" in ax.ylabel
 
 
-def test_fit_subplot_gle_builder_respects_aspect_ratio_control(tmp_path: Path, qapp: QApplication) -> None:
+def test_fit_subplot_gle_builder_respects_aspect_ratio_control(
+    tmp_path: Path, qapp: QApplication
+) -> None:
     window = GlobalParameterFitWindow()
     window._fit_subplot_aspect_spin.setValue(2.8)
     window._parameter_name = "Lambda"
@@ -518,7 +533,9 @@ def test_fit_subplot_gle_builder_respects_aspect_ratio_control(tmp_path: Path, q
     assert float(figsize[0]) == pytest.approx(2.8 * 3.1)
 
 
-def test_fit_subplot_gle_builder_honors_one_to_one_aspect(tmp_path: Path, qapp: QApplication) -> None:
+def test_fit_subplot_gle_builder_honors_one_to_one_aspect(
+    tmp_path: Path, qapp: QApplication
+) -> None:
     window = GlobalParameterFitWindow()
     window._fit_subplot_aspect_spin.setValue(1.0)
     window._parameter_name = "Lambda"
@@ -563,7 +580,9 @@ def test_fit_subplot_layout_expands_side_margins_for_square_aspect(qapp: QApplic
     assert square["bottom"] == pytest.approx(0.065)
 
 
-def test_fit_subplot_gle_builder_applies_dynamic_layout_params(tmp_path: Path, qapp: QApplication) -> None:
+def test_fit_subplot_gle_builder_applies_dynamic_layout_params(
+    tmp_path: Path, qapp: QApplication
+) -> None:
     window = GlobalParameterFitWindow()
     window._fit_subplot_aspect_spin.setValue(1.0)
     window._parameter_name = "Lambda"
@@ -655,7 +674,9 @@ def test_fit_subplot_without_shared_x_uses_group_titles(tmp_path: Path, qapp: QA
     assert not ax1.text_calls
 
 
-def test_fit_subplot_gle_builder_draws_components_when_enabled(tmp_path: Path, qapp: QApplication) -> None:
+def test_fit_subplot_gle_builder_draws_components_when_enabled(
+    tmp_path: Path, qapp: QApplication
+) -> None:
     window = GlobalParameterFitWindow()
     window._parameter_name = "Lambda"
     window._x_key = "field"
@@ -797,7 +818,9 @@ def test_local_plot_gle_subplots_share_x_axis(tmp_path: Path, qapp: QApplication
     assert subplots_kwargs.get("ncols") == 1
 
 
-def test_local_export_data_file_includes_all_local_and_global_with_units(tmp_path: Path, qapp: QApplication) -> None:
+def test_local_export_data_file_includes_all_local_and_global_with_units(
+    tmp_path: Path, qapp: QApplication
+) -> None:
     window = GlobalParameterFitWindow()
     window._x_key = "field"
     window._local_plot_mode_combo.setCurrentText("Single Axes")
@@ -869,7 +892,9 @@ def test_local_export_data_file_includes_all_local_and_global_with_units(tmp_pat
     assert first[2] == "0"
 
 
-def test_local_export_writes_fit_file_with_descriptive_header(tmp_path: Path, qapp: QApplication) -> None:
+def test_local_export_writes_fit_file_with_descriptive_header(
+    tmp_path: Path, qapp: QApplication
+) -> None:
     window = GlobalParameterFitWindow()
     window._x_key = "field"
     window._local_plot_mode_combo.setCurrentText("Single Axes")
@@ -944,7 +969,6 @@ def test_local_export_writes_fit_file_with_descriptive_header(tmp_path: Path, qa
     assert "! columns: x y" in fit_text
 
 
-
 def test_restore_state_local_selected_y_applies_on_refresh(qapp: QApplication) -> None:
     window = GlobalParameterFitWindow()
     model = ParameterCompositeModel(["Linear"])
@@ -981,7 +1005,9 @@ def test_restore_state_local_selected_y_applies_on_refresh(qapp: QApplication) -
     )
 
     window.restore_state({"local_selected_y": ["nu"]})
-    window.set_results(parameter_name="Lambda", x_key="field", groups=groups, model=model, result=result)
+    window.set_results(
+        parameter_name="Lambda", x_key="field", groups=groups, model=model, result=result
+    )
     selected = window._selected_local_y_parameters()
     assert selected == ["nu"]
 

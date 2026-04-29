@@ -135,12 +135,11 @@ class FitEngine:
                 return FitResult(
                     success=False,
                     message=f"iminuit import error: {error_msg}\n"
-                            "Try: pip install 'numpy<2.3' to fix numpy/numba compatibility.",
+                    "Try: pip install 'numpy<2.3' to fix numpy/numba compatibility.",
                 )
             return FitResult(
                 success=False,
-                message=f"iminuit import error: {error_msg}\n"
-                        "Install it with: pip install iminuit",
+                message=f"iminuit import error: {error_msg}\nInstall it with: pip install iminuit",
             )
 
         # Prepare parameter names, values, and constraints
@@ -320,9 +319,7 @@ class FitEngine:
         fixed_params = {}
         for ds in datasets:
             params = initial_params[ds.run_number]
-            fixed_params[ds.run_number] = {
-                p.name: p.value for p in params if p.fixed
-            }
+            fixed_params[ds.run_number] = {p.name: p.value for p in params if p.fixed}
 
         # Create least squares cost function
         from iminuit.cost import LeastSquares
@@ -376,7 +373,7 @@ class FitEngine:
                 model_vals = model_fn(ds.time, **param_dict)
                 if not np.all(np.isfinite(model_vals)):
                     model_vals = np.full_like(ds.time, 1e30, dtype=float)
-                result[offset:offset+n_points] = model_vals
+                result[offset : offset + n_points] = model_vals
                 offset += n_points
 
             return result

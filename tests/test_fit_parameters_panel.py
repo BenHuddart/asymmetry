@@ -13,24 +13,25 @@ pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # type: ignore
 from PySide6.QtWidgets import QApplication, QMessageBox  # type: ignore
 
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ModelFitRange,
-    ParameterGroupData,
     ParameterCompositeModel,
+    ParameterGroupData,
     ParameterModelFit,
     ParameterModelFitResult,
 )
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.export_paths import resolve_gle_export_paths
-from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, _FitRow
-from asymmetry.gui.panels.fit_parameters_panel import _GroupFitData
 from asymmetry.gui.panels.fit_parameters_panel import (
+    FitParametersPanel,
+    _FitRow,
     _format_gle_label,
     _format_gle_legend_label,
     _format_plot_label,
     _format_plot_legend_label,
+    _GroupFitData,
 )
 
 
@@ -106,7 +107,9 @@ def test_write_gle_data_file_contains_column_map_and_sorted_rows(
     assert float(data_lines[1].split()[1]) == pytest.approx(200.0)
 
 
-def test_write_gle_data_file_includes_combined_run_mapping_comments(tmp_path: Path, qapp: QApplication) -> None:
+def test_write_gle_data_file_includes_combined_run_mapping_comments(
+    tmp_path: Path, qapp: QApplication
+) -> None:
     panel = FitParametersPanel()
     panel._rows = [
         _FitRow(
@@ -225,7 +228,9 @@ def test_delete_group_fits_removes_group_and_emits_run_numbers(
     panel._set_selected_group_ids(["g1"], emit=False)
 
     emitted: list[tuple[str, object]] = []
-    panel.delete_group_fits_requested.connect(lambda gid, run_numbers: emitted.append((gid, run_numbers)))
+    panel.delete_group_fits_requested.connect(
+        lambda gid, run_numbers: emitted.append((gid, run_numbers))
+    )
 
     monkeypatch.setattr(
         QMessageBox,
@@ -444,7 +449,9 @@ def test_generate_gle_plot_dual_axis_assigns_y_and_y2(
     assert axis.calls[1]["kwargs"]["yaxis"] == "y2"
 
 
-def test_write_fit_files_restored_fit_without_bounds(panel: FitParametersPanel, tmp_path: Path) -> None:
+def test_write_fit_files_restored_fit_without_bounds(
+    panel: FitParametersPanel, tmp_path: Path
+) -> None:
     """Loaded fits with missing range bounds should still export .fit curve files."""
     model = ParameterCompositeModel(["Constant"])
     params = ParameterSet([Parameter("c", value=0.21)])
@@ -553,7 +560,9 @@ def test_export_gle_writes_fit_files_for_active_unselected_fit_param(
     assert Path(fit_file).parent == resolved_gle.parent
 
 
-def test_add_gle_model_overlay_uses_formatted_labels_without_hash_one(panel: FitParametersPanel, tmp_path: Path) -> None:
+def test_add_gle_model_overlay_uses_formatted_labels_without_hash_one(
+    panel: FitParametersPanel, tmp_path: Path
+) -> None:
     model = ParameterCompositeModel(["Constant"])
     params = ParameterSet([Parameter("c", value=0.21)])
     result = ParameterModelFitResult(
@@ -570,8 +579,12 @@ def test_add_gle_model_overlay_uses_formatted_labels_without_hash_one(panel: Fit
             x_key="field",
             active=True,
             ranges=[
-                ModelFitRange(x_min=100.0, x_max=150.0, model=model, parameters=params, result=result),
-                ModelFitRange(x_min=150.0, x_max=200.0, model=model, parameters=params, result=result),
+                ModelFitRange(
+                    x_min=100.0, x_max=150.0, model=model, parameters=params, result=result
+                ),
+                ModelFitRange(
+                    x_min=150.0, x_max=200.0, model=model, parameters=params, result=result
+                ),
             ],
         )
     }
@@ -581,7 +594,9 @@ def test_add_gle_model_overlay_uses_formatted_labels_without_hash_one(panel: Fit
     }
     axis = _FakeAxis()
 
-    panel._add_gle_model_overlay(axis, "A_bg", color="red", include_labels=True, fit_file_map=fit_map)
+    panel._add_gle_model_overlay(
+        axis, "A_bg", color="red", include_labels=True, fit_file_map=fit_map
+    )
 
     assert len(axis.line_calls) == 2
     assert axis.line_calls[0]["kwargs"]["label"] == "fit {\\it A}_{bg}"
@@ -589,7 +604,9 @@ def test_add_gle_model_overlay_uses_formatted_labels_without_hash_one(panel: Fit
     assert axis.line_calls[0]["kwargs"]["color"] != axis.line_calls[1]["kwargs"]["color"]
 
 
-def test_build_inherited_cross_group_config_uses_best_successful_fit(panel: FitParametersPanel) -> None:
+def test_build_inherited_cross_group_config_uses_best_successful_fit(
+    panel: FitParametersPanel,
+) -> None:
     model = ParameterCompositeModel(["Linear"])
 
     best_params = ParameterSet(
@@ -692,7 +709,9 @@ def test_build_inherited_cross_group_config_uses_best_successful_fit(panel: FitP
     assert row_by_name["b"]["type"] == "Global"
 
 
-def test_build_inherited_cross_group_config_returns_none_without_success(panel: FitParametersPanel) -> None:
+def test_build_inherited_cross_group_config_returns_none_without_success(
+    panel: FitParametersPanel,
+) -> None:
     model = ParameterCompositeModel(["Linear"])
     failed_params = ParameterSet([Parameter("m", value=0.1), Parameter("b", value=0.2)])
     failed_range = ModelFitRange(
@@ -924,7 +943,9 @@ def test_new_asymmetry_fit_overwrites_existing_group_model_fits(panel: FitParame
     assert panel._plot_annotations == []
 
 
-def test_multi_group_view_does_not_sync_merged_rows_back_into_active_group(panel: FitParametersPanel) -> None:
+def test_multi_group_view_does_not_sync_merged_rows_back_into_active_group(
+    panel: FitParametersPanel,
+) -> None:
     rows_a = [
         _FitRow(
             run_number=1,
@@ -982,7 +1003,9 @@ def test_multi_group_view_does_not_sync_merged_rows_back_into_active_group(panel
     assert [row.run_number for row in panel._group_fit_results["g_a"].rows] == [1]
 
 
-def test_group_button_styles_distinguish_single_active_from_multi_highlight(panel: FitParametersPanel) -> None:
+def test_group_button_styles_distinguish_single_active_from_multi_highlight(
+    panel: FitParametersPanel,
+) -> None:
     panel._group_fit_results = {
         "g_a": _GroupFitData(
             group_id="g_a",
@@ -1018,7 +1041,9 @@ def test_group_button_styles_distinguish_single_active_from_multi_highlight(pane
     assert "1px solid #d29922" in panel._group_button_map["g_b"].styleSheet()
 
 
-def test_shift_click_highlights_group_without_changing_active_selection(panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_shift_click_highlights_group_without_changing_active_selection(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
     rows_a = [
         _FitRow(
             run_number=1,
@@ -1150,8 +1175,12 @@ def test_cross_group_fit_success_updates_each_group_model_fit(panel: FitParamete
         fit_x_min=90.0,
         fit_x_max=250.0,
         groups=[
-            ParameterGroupData("g_a", "Group A", np.array([100.0]), np.array([0.1]), np.array([0.01]), 100.0),
-            ParameterGroupData("g_b", "Group B", np.array([200.0]), np.array([0.14]), np.array([0.01]), 200.0),
+            ParameterGroupData(
+                "g_a", "Group A", np.array([100.0]), np.array([0.1]), np.array([0.01]), 100.0
+            ),
+            ParameterGroupData(
+                "g_b", "Group B", np.array([200.0]), np.array([0.14]), np.array([0.01]), 200.0
+            ),
         ],
     )
 
@@ -1255,7 +1284,9 @@ def test_set_fit_results_copies_global_params_per_group(panel: FitParametersPane
     assert g2_params["A0"].value == pytest.approx(0.42)
 
 
-def test_click_group_switch_does_not_copy_previous_group_rows(panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_click_group_switch_does_not_copy_previous_group_rows(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
     rows_a = [
         _FitRow(
             run_number=11,

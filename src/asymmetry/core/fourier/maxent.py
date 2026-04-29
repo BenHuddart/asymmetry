@@ -32,6 +32,4 @@ def maxent(
     -------
     frequencies, spectrum
     """
-    raise NotImplementedError(
-        "Maximum-entropy reconstruction is planned for a future milestone."
-    )
+    raise NotImplementedError("Maximum-entropy reconstruction is planned for a future milestone.")

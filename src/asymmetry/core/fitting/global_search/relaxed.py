@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 from typing import Protocol
 
 import numpy as np
@@ -52,10 +52,7 @@ class SciPyRelaxedOptimizer:
         penalty_schedule = tuple(
             float(value) for value in (problem.penalty_schedule or (problem.penalty_weight,))
         )
-        current_base_values = {
-            name: self._base_seed(problem, name)
-            for name in active_names
-        }
+        current_base_values = {name: self._base_seed(problem, name) for name in active_names}
         current_local_values = {
             int(run_number): {
                 name: float(problem.initial_params_by_run[run_number][name].value)
@@ -127,9 +124,7 @@ class SciPyRelaxedOptimizer:
         for penalty_weight in penalty_schedule:
             layout = _VariableLayout(
                 base_names=active_names,
-                local_names=tuple(
-                    name for name in active_names if name not in frozen_shared_names
-                ),
+                local_names=tuple(name for name in active_names if name not in frozen_shared_names),
                 run_numbers=run_numbers,
             )
             initial_values: list[float] = []
@@ -140,7 +135,9 @@ class SciPyRelaxedOptimizer:
                 bounds.append((spec.min_value, spec.max_value))
             for run_number in layout.run_numbers:
                 for name in layout.local_names:
-                    initial_values.append(float(current_local_values[run_number].get(name, current_base_values[name])))
+                    initial_values.append(
+                        float(current_local_values[run_number].get(name, current_base_values[name]))
+                    )
                     spec = parameter_specs[name]
                     bounds.append((spec.min_value, spec.max_value))
 
@@ -195,7 +192,9 @@ class SciPyRelaxedOptimizer:
                     value = float(local_values[run_number][parameter.name])
                 else:
                     value = float(parameter.value)
-                deviation_map[parameter.name] = float(value - base_values.get(parameter.name, value))
+                deviation_map[parameter.name] = float(
+                    value - base_values.get(parameter.name, value)
+                )
                 seeded.add(
                     Parameter(
                         name=parameter.name,
@@ -289,8 +288,7 @@ class SciPyRelaxedOptimizer:
     ) -> tuple[dict[str, float], dict[int, dict[str, float]]]:
         offset = 0
         base_values = {
-            name: float(vector[offset + index])
-            for index, name in enumerate(layout.base_names)
+            name: float(vector[offset + index]) for index, name in enumerate(layout.base_names)
         }
         offset += len(layout.base_names)
         local_values: dict[int, dict[str, float]] = {}

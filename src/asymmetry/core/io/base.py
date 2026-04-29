@@ -50,8 +50,7 @@ class LoaderRegistry:
         if loader_cls is None:
             known = ", ".join(sorted(cls._loaders)) or "(none)"
             raise ValueError(
-                f"No loader registered for extension {ext!r}.  "
-                f"Known extensions: {known}"
+                f"No loader registered for extension {ext!r}.  Known extensions: {known}"
             )
         return loader_cls()
 
@@ -81,7 +80,9 @@ class LoaderRegistry:
         all_patterns = " ".join(f"*{ext}" for ext in all_exts)
         parts = [f"All Supported Files ({all_patterns})"]
 
-        for loader_cls, exts in sorted(unique.items(), key=lambda item: item[0].format_name.lower()):
+        for loader_cls, exts in sorted(
+            unique.items(), key=lambda item: item[0].format_name.lower()
+        ):
             patterns = " ".join(f"*{ext}" for ext in sorted(exts))
             label = loader_cls.format_name or f"Data files ({patterns})"
             if "(" in label and ")" in label:

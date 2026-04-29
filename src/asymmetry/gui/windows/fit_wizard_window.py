@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 
 import numpy as np
-from PySide6.QtCore import QObject, QThread, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -17,9 +17,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -73,7 +73,9 @@ class FitWizardWorker(QObject):
 class FitWizardWindow(QMainWindow):
     """Present a guided workflow for model recommendation and comparison."""
 
-    apply_assessment_requested = Signal(object, object)  # CandidateAssessment, FitWizardRecommendation
+    apply_assessment_requested = Signal(
+        object, object
+    )  # CandidateAssessment, FitWizardRecommendation
     analysis_cached = Signal(object, str, object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -235,7 +237,11 @@ class FitWizardWindow(QMainWindow):
         self._progress_bar.setVisible(busy)
         self._progress_label.setText("Analysis in progress..." if busy else "")
         self._refresh_btn.setEnabled(self._dataset is not None and not busy)
-        self._refresh_btn.setText("Refresh Analysis" if (self._recommendation is not None and not busy) else "Start Analysis")
+        self._refresh_btn.setText(
+            "Refresh Analysis"
+            if (self._recommendation is not None and not busy)
+            else "Start Analysis"
+        )
         self._metric_combo.setEnabled(not busy and self._recommendation is not None)
         self._previous_btn.setEnabled(not busy and self._tabs.currentIndex() > 0)
         self._next_btn.setEnabled(not busy and self._tabs.currentIndex() < self._tabs.count() - 1)
@@ -317,7 +323,8 @@ class FitWizardWindow(QMainWindow):
         return {
             "run_number": (
                 int(self._dataset.run_number)
-                if self._dataset is not None and getattr(self._dataset, "run_number", None) is not None
+                if self._dataset is not None
+                and getattr(self._dataset, "run_number", None) is not None
                 else None
             ),
             "model": self._current_model.to_dict() if self._current_model is not None else None,
@@ -363,7 +370,9 @@ class FitWizardWindow(QMainWindow):
         layout.addWidget(self._portfolio_banner)
 
         self._portfolio_table = QTableWidget(0, 4)
-        self._portfolio_table.setHorizontalHeaderLabels(["Candidate", "Category", "Parameters", "Rationale"])
+        self._portfolio_table.setHorizontalHeaderLabels(
+            ["Candidate", "Category", "Parameters", "Rationale"]
+        )
         self._portfolio_table.horizontalHeader().setStretchLastSection(True)
         self._portfolio_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(self._portfolio_table)
@@ -421,7 +430,9 @@ class FitWizardWindow(QMainWindow):
         layout.addWidget(self._apply_selection_label)
 
         self._apply_parameters_table = QTableWidget(0, 3)
-        self._apply_parameters_table.setHorizontalHeaderLabels(["Parameter", "Value", "Uncertainty"])
+        self._apply_parameters_table.setHorizontalHeaderLabels(
+            ["Parameter", "Value", "Uncertainty"]
+        )
         self._apply_parameters_table.horizontalHeader().setStretchLastSection(True)
         self._apply_parameters_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(self._apply_parameters_table)
@@ -518,7 +529,9 @@ class FitWizardWindow(QMainWindow):
                 f"{fingerprint.smoothed_turning_points} turning points."
             )
         else:
-            fingerprint_notes.append("No strong FFT peak was found in the default windowed transform.")
+            fingerprint_notes.append(
+                "No strong FFT peak was found in the default windowed transform."
+            )
         if fingerprint.multi_rate_hint:
             fingerprint_notes.append(
                 f"Semilog slope ratio {fingerprint.semilog_slope_ratio:.2f} suggests multiple relaxation rates or a distributed-rate envelope."
@@ -638,13 +651,23 @@ class FitWizardWindow(QMainWindow):
             if not assessment.residual_gate_passed:
                 title_item.setForeground(QBrush(QColor("#9b2226")))
             self._compare_table.setItem(row, 0, title_item)
-            self._compare_table.setItem(row, 1, _numeric_item(assessment.metric_value(self._recommendation.metric)))
+            self._compare_table.setItem(
+                row, 1, _numeric_item(assessment.metric_value(self._recommendation.metric))
+            )
             self._compare_table.setItem(row, 2, _numeric_item(assessment.aic))
-            self._compare_table.setItem(row, 3, _numeric_item(assessment.aicc) if assessment.aicc is not None else QTableWidgetItem("AIC"))
+            self._compare_table.setItem(
+                row,
+                3,
+                _numeric_item(assessment.aicc)
+                if assessment.aicc is not None
+                else QTableWidgetItem("AIC"),
+            )
             self._compare_table.setItem(row, 4, _numeric_item(assessment.bic))
             gate_text = "Pass" if assessment.residual_gate_passed else "Warn"
             self._compare_table.setItem(row, 5, QTableWidgetItem(gate_text))
-            self._compare_table.setItem(row, 6, _numeric_item(assessment.fit_result.reduced_chi_squared))
+            self._compare_table.setItem(
+                row, 6, _numeric_item(assessment.fit_result.reduced_chi_squared)
+            )
             self._compare_table.setItem(row, 7, QTableWidgetItem(str(assessment.parameter_count)))
         self._compare_table.setSortingEnabled(True)
         self._compare_table.sortItems(1, Qt.SortOrder.AscendingOrder)
@@ -770,7 +793,10 @@ class FitWizardWindow(QMainWindow):
     def _selected_assessment(self) -> CandidateAssessment | None:
         if self._recommendation is None:
             return None
-        return self._recommendation.assessment_for_key(self._selected_key) or self._recommendation.recommended_assessment
+        return (
+            self._recommendation.assessment_for_key(self._selected_key)
+            or self._recommendation.recommended_assessment
+        )
 
     def _update_apply_page(self) -> None:
         assessment = self._selected_assessment()
@@ -796,7 +822,9 @@ class FitWizardWindow(QMainWindow):
         self._apply_parameters_table.setRowCount(len(params))
         for row, parameter in enumerate(params):
             unc = assessment.fit_result.uncertainties.get(parameter.name, 0.0)
-            self._apply_parameters_table.setItem(row, 0, QTableWidgetItem(get_param_info(parameter.name).unicode_label()))
+            self._apply_parameters_table.setItem(
+                row, 0, QTableWidgetItem(get_param_info(parameter.name).unicode_label())
+            )
             self._apply_parameters_table.setItem(row, 1, _numeric_item(parameter.value))
             self._apply_parameters_table.setItem(row, 2, _numeric_item(unc))
 
@@ -807,7 +835,11 @@ class FitWizardWindow(QMainWindow):
         else:
             warnings.append("No residual warnings were raised for the selected candidate.")
         warnings.append(f"AIC = {assessment.aic:.3f}")
-        warnings.append(f"AICc = {assessment.aicc:.3f}" if assessment.aicc is not None else "AICc fell back to AIC for this candidate.")
+        warnings.append(
+            f"AICc = {assessment.aicc:.3f}"
+            if assessment.aicc is not None
+            else "AICc fell back to AIC for this candidate."
+        )
         warnings.append(f"BIC = {assessment.bic:.3f}")
         self._apply_warning_text.setPlainText("\n".join(warnings))
 

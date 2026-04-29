@@ -7,9 +7,9 @@ with :class:`asymmetry.core.fitting.engine.FitEngine`.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
-from collections import Counter
 
 import numpy as np
 from numpy.typing import NDArray
@@ -18,7 +18,6 @@ from asymmetry.core.fitting.models import (
     ModelDefinition,
     exponential_relaxation,
     gaussian_relaxation,
-    oscillatory,
     static_gkt_zf,
     stretched_exponential,
 )
@@ -182,9 +181,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_names=["A", "Delta"],
         param_defaults={"A": 25.0, "Delta": 0.5},
         param_info={"A": get_param_info("A"), "Delta": get_param_info("Delta")},
-        formula_template=(
-            "{A}*(1/3 + 2/3*(1-({Delta}*t)^2)*exp(-({Delta}*t)^2/2))"
-        ),
+        formula_template=("{A}*(1/3 + 2/3*(1-({Delta}*t)^2)*exp(-({Delta}*t)^2/2))"),
         latex_equation=(
             r"A(t) = A\left[\frac{1}{3} + \frac{2}{3}\left(1-(\Delta t)^2\right)e^{-(\Delta t)^2/2}\right]"
         ),
@@ -210,9 +207,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_defaults={"A": 25.0, "r_muF": 1.17},
         param_info={"A": get_param_info("A"), "r_muF": get_param_info("r_muF")},
         formula_template="{A}*G_FmuF_linear(t,{r_muF})",
-        latex_equation=(
-            r"A(t)=A\,G_{F\mu F}(t)"
-        ),
+        latex_equation=(r"A(t)=A\,G_{F\mu F}(t)"),
         category="Muon-Fluorine",
     ),
     "FmuF_General": ComponentDefinition(
@@ -228,9 +223,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "theta": get_param_info("theta"),
         },
         formula_template="{A}*Dz_FmuF_general(t,{r1},{r2},{theta})",
-        latex_equation=(
-            r"A(t)=A\,D_z^{\mathrm{powder}}\!(t;r_1,r_2,\theta)"
-        ),
+        latex_equation=(r"A(t)=A\,D_z^{\mathrm{powder}}\!(t;r_1,r_2,\theta)"),
         category="Muon-Fluorine",
     ),
     "Constant": ComponentDefinition(
@@ -343,7 +336,10 @@ class CompositeModel:
         for idx, component in enumerate(self.components, start=1):
             mapping: dict[str, str] = {}
             for pname in component.param_names:
-                if self._is_scaling_parameter(pname) and self._suppress_component_amplitude[idx - 1]:
+                if (
+                    self._is_scaling_parameter(pname)
+                    and self._suppress_component_amplitude[idx - 1]
+                ):
                     mapping[pname] = _UNIT_AMPLITUDE_SENTINEL
                     continue
                 if pname == "A" and self._share_chain_amplitude:
@@ -375,14 +371,12 @@ class CompositeModel:
             if rhs_index >= len(self.components):
                 continue
 
-            rhs_is_additive_group = (
-                self.open_parentheses[rhs_index] > 0
-                and self._rhs_group_contains_additive_operator(rhs_index)
-            )
-            lhs_is_additive_group = (
-                self.close_parentheses[lhs_index] > 0
-                and self._lhs_group_contains_additive_operator(lhs_index)
-            )
+            rhs_is_additive_group = self.open_parentheses[
+                rhs_index
+            ] > 0 and self._rhs_group_contains_additive_operator(rhs_index)
+            lhs_is_additive_group = self.close_parentheses[
+                lhs_index
+            ] > 0 and self._lhs_group_contains_additive_operator(lhs_index)
 
             if rhs_is_additive_group and not lhs_is_additive_group:
                 if self._component_has_scaling_parameter(lhs_index):
@@ -550,9 +544,7 @@ class CompositeModel:
             if idx < len(self.operators):
                 op = self.operators[idx]
                 while (
-                    op_stack
-                    and op_stack[-1] != "("
-                    and precedence(op_stack[-1]) >= precedence(op)
+                    op_stack and op_stack[-1] != "(" and precedence(op_stack[-1]) >= precedence(op)
                 ):
                     apply_top_operator()
                 op_stack.append(op)
@@ -643,9 +635,7 @@ class CompositeModel:
             zip(self.components, self._param_mappings, strict=True), start=1
         ):
             fmt_values = {
-                pname: (
-                    "1" if mapping[pname] == _UNIT_AMPLITUDE_SENTINEL else mapping[pname]
-                )
+                pname: ("1" if mapping[pname] == _UNIT_AMPLITUDE_SENTINEL else mapping[pname])
                 for pname in component.param_names
             }
             if (

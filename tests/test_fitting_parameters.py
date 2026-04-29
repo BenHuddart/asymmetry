@@ -16,10 +16,12 @@ def test_parameter_is_constrained_for_fixed_or_expression() -> None:
 
 
 def test_parameter_set_basic_operations() -> None:
-    ps = ParameterSet([
-        Parameter(name="A0", value=1.0),
-        Parameter(name="Lambda", value=0.2, fixed=True),
-    ])
+    ps = ParameterSet(
+        [
+            Parameter(name="A0", value=1.0),
+            Parameter(name="Lambda", value=0.2, fixed=True),
+        ]
+    )
 
     assert len(ps) == 2
     assert "A0" in ps

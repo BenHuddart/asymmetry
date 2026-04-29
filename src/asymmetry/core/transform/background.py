@@ -51,9 +51,7 @@ def supports_background_correction(
         return True
     path = str(source_file or metadata.get("source_file", "") or "").lower()
     is_psi_root = "psi" in facility or instrument == "lem" or metadata.get("root_format")
-    return path.endswith((".bin", ".mdu")) or (
-        path.endswith(".root") and bool(is_psi_root)
-    )
+    return path.endswith((".bin", ".mdu")) or (path.endswith(".root") and bool(is_psi_root))
 
 
 def apply_grouped_background_correction(

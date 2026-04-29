@@ -30,18 +30,17 @@ from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QMainWindow,
-    QMenu,
     QMessageBox,
     QToolBar,
 )
 
+from asymmetry.core.data.dataset import Histogram, MuonDataset
 from asymmetry.core.project import (
     CURRENT_SCHEMA_VERSION,
     UnsupportedSchemaVersion,
     load_project,
     save_project,
 )
-from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform import (
     apply_deadtime_correction,
     apply_grouped_background_correction,
@@ -55,10 +54,6 @@ from asymmetry.core.transform import (
 from asymmetry.core.transform.rebin import rebin
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
-
-_MAX_RECENT_PROJECTS = 10
-_PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
-
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
 from asymmetry.gui.panels.fit_panel import FitPanel
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
@@ -68,6 +63,9 @@ from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog, WimGroupingDialog
 from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
+
+_MAX_RECENT_PROJECTS = 10
+_PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
 
 
 def _normalise_source_path(path: str) -> str:
@@ -229,7 +227,9 @@ class MainWindow(QMainWindow):
         tb.addAction("Fit", self._on_fit)
         tb.addAction("FFT", self._on_fourier)
         tb.addAction("Params", self._on_fit_parameters)
-        self._global_parameter_fit_toolbar_action = tb.addAction("Global Fit", self._on_global_parameter_fit)
+        self._global_parameter_fit_toolbar_action = tb.addAction(
+            "Global Fit", self._on_global_parameter_fit
+        )
         self._global_parameter_fit_toolbar_action.setEnabled(False)
 
     # ── panels / docks ─────────────────────────────────────────────────
@@ -249,9 +249,9 @@ class MainWindow(QMainWindow):
         dock_left.setWidget(self._data_browser)
         dock_left.setMinimumWidth(250)  # Can be shrunk by user, but defaults to larger size below
         dock_left.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable |
-            QDockWidget.DockWidgetFeature.DockWidgetFloatable |
-            QDockWidget.DockWidgetFeature.DockWidgetClosable
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_left)
 
@@ -287,11 +287,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock_log)
 
         # Set initial dock widths: data browser gets ~480px by default
-        self.resizeDocks(
-            [dock_left],
-            [480],
-            Qt.Orientation.Horizontal
-        )
+        self.resizeDocks([dock_left], [480], Qt.Orientation.Horizontal)
 
         # Connect signals
         self._data_browser.dataset_selected.connect(self._on_dataset_selected)
@@ -432,7 +428,9 @@ class MainWindow(QMainWindow):
             "P_x": (int(px_a), int(px_b)),
         }
 
-    def _vector_axis_state_for_dataset(self, dataset) -> tuple[dict[str, tuple[int, int]], str | None]:
+    def _vector_axis_state_for_dataset(
+        self, dataset
+    ) -> tuple[dict[str, tuple[int, int]], str | None]:
         """Return vector-axis pair mapping and currently selected axis for a dataset."""
         run = getattr(dataset, "run", None)
         grouping = getattr(run, "grouping", None)
@@ -502,7 +500,9 @@ class MainWindow(QMainWindow):
         if hasattr(self._plot_panel, "get_current_polarization_axis"):
             current = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
         if current not in available:
-            current = first_axis if first_axis in available else (available[0] if available else None)
+            current = (
+                first_axis if first_axis in available else (available[0] if available else None)
+            )
         self._plot_panel.set_polarization_axes(available, current)
 
     def _selected_or_current_datasets(self) -> list[MuonDataset]:
@@ -670,7 +670,9 @@ class MainWindow(QMainWindow):
 
         active_axis = None
         if hasattr(self._plot_panel, "get_current_polarization_axis"):
-            active_axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
+            active_axis = self._normalize_vector_axis(
+                self._plot_panel.get_current_polarization_axis()
+            )
 
         if active_axis == "ALL" and hasattr(self._plot_panel, "plot_vector_subplots"):
             axis_datasets = self._build_vector_axis_datasets(targets)
@@ -690,13 +692,12 @@ class MainWindow(QMainWindow):
 
         active_axis = None
         if hasattr(self._plot_panel, "get_current_polarization_axis"):
-            active_axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
+            active_axis = self._normalize_vector_axis(
+                self._plot_panel.get_current_polarization_axis()
+            )
 
         blocked = active_axis == "ALL"
-        reason = (
-            "Vector All mode is ambiguous for fitting. "
-            "Select x, y, or z before running a fit."
-        )
+        reason = "Vector All mode is ambiguous for fitting. Select x, y, or z before running a fit."
         self._fit_panel.set_fit_blocked(blocked, reason if blocked else "")
 
     def _on_plot_polarization_axis_changed(self, axis_text: str) -> None:
@@ -713,7 +714,9 @@ class MainWindow(QMainWindow):
             return
 
         selected = list(self._data_browser.get_selected_datasets())
-        targets = selected if selected else ([self._current_dataset] if self._current_dataset else [])
+        targets = (
+            selected if selected else ([self._current_dataset] if self._current_dataset else [])
+        )
 
         updated = 0
         for dataset in targets:
@@ -823,7 +826,9 @@ class MainWindow(QMainWindow):
         """Return default logbook export filename, preferring project name."""
         if self._current_project_path:
             stem = Path(self._current_project_path).stem.strip()
-            safe_stem = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in stem).strip("_")
+            safe_stem = "".join(
+                ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in stem
+            ).strip("_")
             if safe_stem:
                 return f"{safe_stem}_logbook.tsv"
         return "logbook.tsv"
@@ -890,7 +895,9 @@ class MainWindow(QMainWindow):
                         if active_axis in {"P_x", "P_y", "P_z"}:
                             grouping_payload["vector_axis"] = active_axis
 
-                        applied, _ = self._apply_grouping_settings_to_dataset(dataset, grouping_payload)
+                        applied, _ = self._apply_grouping_settings_to_dataset(
+                            dataset, grouping_payload
+                        )
                         if applied:
                             auto_grouping_applied += 1
 
@@ -1048,7 +1055,9 @@ class MainWindow(QMainWindow):
             self,
             included_fields=set(self._data_browser.get_extra_columns()),
         )
-        dialog.set_browser_field_inclusion_requested.connect(self._on_run_info_field_inclusion_changed)
+        dialog.set_browser_field_inclusion_requested.connect(
+            self._on_run_info_field_inclusion_changed
+        )
         dialog.exec()
 
     def _on_run_info_field_inclusion_changed(self, field_key: str, include: bool) -> None:
@@ -1061,8 +1070,7 @@ class MainWindow(QMainWindow):
     def _on_grouping_requested(self, run_number: int) -> None:
         """Open shared grouping dialog focused on a selected run."""
         selected_run_numbers = [
-            int(ds.run_number)
-            for ds in self._data_browser.get_selected_datasets()
+            int(ds.run_number) for ds in self._data_browser.get_selected_datasets()
         ]
         if int(run_number) not in selected_run_numbers:
             selected_run_numbers = [int(run_number)]
@@ -1073,10 +1081,11 @@ class MainWindow(QMainWindow):
 
     def _on_grouping_current(self) -> None:
         """Open shared grouping dialog for all datasets in the active project."""
-        selected_run = None if self._current_dataset is None else int(self._current_dataset.run_number)
+        selected_run = (
+            None if self._current_dataset is None else int(self._current_dataset.run_number)
+        )
         selected_run_numbers = [
-            int(ds.run_number)
-            for ds in self._data_browser.get_selected_datasets()
+            int(ds.run_number) for ds in self._data_browser.get_selected_datasets()
         ]
         self._open_shared_grouping_dialog(
             selected_run_number=selected_run,
@@ -1188,19 +1197,22 @@ class MainWindow(QMainWindow):
             updated += 1
 
         rebuilt_combined_dataset = None
-        if updated > 0 and combined_target_run_number is not None and hasattr(
-            self._data_browser,
-            "rebuild_combined_dataset",
+        if (
+            updated > 0
+            and combined_target_run_number is not None
+            and hasattr(
+                self._data_browser,
+                "rebuild_combined_dataset",
+            )
         ):
             rebuilt_combined_dataset = self._data_browser.rebuild_combined_dataset(
                 combined_target_run_number
             )
             if rebuilt_combined_dataset is not None:
                 first_updated_dataset = rebuilt_combined_dataset
-                if (
-                    self._current_dataset is not None
-                    and int(self._current_dataset.run_number) == int(combined_target_run_number)
-                ):
+                if self._current_dataset is not None and int(
+                    self._current_dataset.run_number
+                ) == int(combined_target_run_number):
                     self._current_dataset = rebuilt_combined_dataset
                     self._fit_panel.set_dataset(self._get_fit_dataset(rebuilt_combined_dataset))
 
@@ -1242,7 +1254,9 @@ class MainWindow(QMainWindow):
 
         dialog_datasets = list(all_datasets)
         dialog_selected_run_number = selected_run_number
-        dialog_selected_run_numbers = list(selected_run_numbers) if selected_run_numbers is not None else None
+        dialog_selected_run_numbers = (
+            list(selected_run_numbers) if selected_run_numbers is not None else None
+        )
         combined_target_run_number = None
 
         if (
@@ -1363,9 +1377,7 @@ class MainWindow(QMainWindow):
 
         group_names_raw = grouping.get("group_names")
         if isinstance(group_names_raw, dict) and group_names_raw:
-            payload["group_names"] = {
-                int(k): str(v) for k, v in group_names_raw.items()
-            }
+            payload["group_names"] = {int(k): str(v) for k, v in group_names_raw.items()}
 
         grouping_preset = grouping.get("grouping_preset")
         if grouping_preset:
@@ -1459,7 +1471,9 @@ class MainWindow(QMainWindow):
         setattr(dataset, "_grouping_source_arrays_cache", cached)
         return cached
 
-    def _apply_grouping_settings_to_dataset(self, dataset, grouping_result: dict) -> tuple[bool, bool]:
+    def _apply_grouping_settings_to_dataset(
+        self, dataset, grouping_result: dict
+    ) -> tuple[bool, bool]:
         """Apply grouping settings to one dataset and recompute asymmetry.
 
         Returns
@@ -1543,7 +1557,16 @@ class MainWindow(QMainWindow):
         first_good = t0_bin + t_good_offset
 
         try:
-            bin_index_base = 1 if int(grouping_result.get("bin_index_base", existing_grouping.get("bin_index_base", 0))) == 1 else 0
+            bin_index_base = (
+                1
+                if int(
+                    grouping_result.get(
+                        "bin_index_base", existing_grouping.get("bin_index_base", 0)
+                    )
+                )
+                == 1
+                else 0
+            )
         except (TypeError, ValueError):
             bin_index_base = 0
 
@@ -1572,7 +1595,9 @@ class MainWindow(QMainWindow):
             source_bunch_factor = int(
                 grouping_result.get(
                     "source_bunching_factor",
-                    run.grouping.get("source_bunching_factor", run.grouping.get("bunching_factor", 1)),
+                    run.grouping.get(
+                        "source_bunching_factor", run.grouping.get("bunching_factor", 1)
+                    ),
                 )
             )
             source_bunch_factor = max(1, source_bunch_factor)
@@ -1668,9 +1693,7 @@ class MainWindow(QMainWindow):
         # can have per-detector t0 values, so preserve relative detector
         # offsets when the user edits the common t0 control.
         if isinstance(grouping_result.get("detector_t0_bins"), list):
-            run.grouping["detector_t0_bins"] = list(
-                grouping_result.get("detector_t0_bins", [])
-            )
+            run.grouping["detector_t0_bins"] = list(grouping_result.get("detector_t0_bins", []))
         if isinstance(grouping_result.get("detector_first_good_bins"), list):
             run.grouping["detector_first_good_bins"] = list(
                 grouping_result.get("detector_first_good_bins", [])
@@ -1680,15 +1703,10 @@ class MainWindow(QMainWindow):
                 grouping_result.get("detector_last_good_bins", [])
             )
         if isinstance(grouping_result.get("histogram_labels"), list):
-            run.grouping["histogram_labels"] = list(
-                grouping_result.get("histogram_labels", [])
-            )
+            run.grouping["histogram_labels"] = list(grouping_result.get("histogram_labels", []))
 
         detector_t0_bins = run.grouping.get("detector_t0_bins")
-        if (
-            isinstance(detector_t0_bins, list)
-            and len(detector_t0_bins) == len(run.histograms)
-        ):
+        if isinstance(detector_t0_bins, list) and len(detector_t0_bins) == len(run.histograms):
             try:
                 previous_common_t0 = int(existing_grouping.get("t0_bin", t0_default))
             except (TypeError, ValueError):
@@ -1803,9 +1821,7 @@ class MainWindow(QMainWindow):
             bin_width = float(run.histograms[0].bin_width)
         else:
             bin_width = 1.0
-        time_axis = (
-            np.arange(len(asymmetry), dtype=np.float64) - float(common_t0)
-        ) * bin_width
+        time_axis = (np.arange(len(asymmetry), dtype=np.float64) - float(common_t0)) * bin_width
 
         lo = max(0, first_good)
         hi = min(len(asymmetry) - 1, last_good)
@@ -1847,10 +1863,7 @@ class MainWindow(QMainWindow):
             run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run_alpha))
             run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run_alpha))
             run.grouping["alpha_z"] = float(vector_alphas.get("P_z", run_alpha))
-        if (
-            isinstance(detector_t0_bins, list)
-            and len(detector_t0_bins) == len(run.histograms)
-        ):
+        if isinstance(detector_t0_bins, list) and len(detector_t0_bins) == len(run.histograms):
             run.grouping["detector_t0_bins"] = [int(hist.t0_bin) for hist in run.histograms]
         if enforce_source_bunching:
             run.grouping["source_bunching_factor"] = source_bunch_factor
@@ -1965,9 +1978,7 @@ class MainWindow(QMainWindow):
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Icon.Question)
         msg.setWindowTitle("Apply Field From Comment?")
-        msg.setText(
-            "Field in header is 0 G, but comment contains a field candidate."
-        )
+        msg.setText("Field in header is 0 G, but comment contains a field candidate.")
         msg.setInformativeText(
             f"File: {path}\n"
             f"Run: {dataset.run_number}\n"
@@ -2028,7 +2039,10 @@ class MainWindow(QMainWindow):
 
     def _on_global_parameter_fit(self) -> None:
         """Show the Global Parameter Fit window if cross-group results exist."""
-        if self._global_parameter_fit_window is None or not self._global_parameter_fit_window.has_result():
+        if (
+            self._global_parameter_fit_window is None
+            or not self._global_parameter_fit_window.has_result()
+        ):
             return
         self._global_parameter_fit_window.show()
         self._global_parameter_fit_window.raise_()
@@ -2119,9 +2133,7 @@ class MainWindow(QMainWindow):
             fit_result=fit_result,
             fit_function=fit_function,
         )
-        self._log_panel.log(
-            f"Fit completed: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}"
-        )
+        self._log_panel.log(f"Fit completed: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}")
 
     def _on_preview_requested(self, fit_result, fitted_curve, component_curves) -> None:
         """Handle preview request from fit panel."""
@@ -2163,7 +2175,9 @@ class MainWindow(QMainWindow):
 
         updated = 0
         if hasattr(self._fit_panel, "share_single_function_state"):
-            updated = int(self._fit_panel.share_single_function_state(source_run_number, target_runs))
+            updated = int(
+                self._fit_panel.share_single_function_state(source_run_number, target_runs)
+            )
 
         group_name = (
             self._data_browser.get_group_name(group_id)
@@ -2281,23 +2295,21 @@ class MainWindow(QMainWindow):
 
         # Log summary
         successful_results = [
-            payload for payload in normalized_payloads.values()
-            if payload and payload[0].success
+            payload for payload in normalized_payloads.values() if payload and payload[0].success
         ]
         n_datasets = len(successful_results)
         if n_datasets == 0:
             self._log_panel.log(
                 "Global fit completed but no successful dataset results were available"
             )
-            self.statusBar().showMessage(
-                "Global fit completed with no successful results"
-            )
+            self.statusBar().showMessage("Global fit completed with no successful results")
             return
 
-        avg_chi2r = sum(payload[0].reduced_chi_squared for payload in successful_results) / n_datasets
+        avg_chi2r = (
+            sum(payload[0].reduced_chi_squared for payload in successful_results) / n_datasets
+        )
         self._log_panel.log(
-            f"Global fit completed: {n_datasets} datasets, "
-            f"average χ²ᵣ = {avg_chi2r:.3f}"
+            f"Global fit completed: {n_datasets} datasets, average χ²ᵣ = {avg_chi2r:.3f}"
         )
         self.statusBar().showMessage(f"Global fit completed for {n_datasets} datasets")
 
@@ -2358,7 +2370,9 @@ class MainWindow(QMainWindow):
         selected = self._data_browser.get_selected_datasets()
         active_axis = None
         if hasattr(self._plot_panel, "get_current_polarization_axis"):
-            active_axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
+            active_axis = self._normalize_vector_axis(
+                self._plot_panel.get_current_polarization_axis()
+            )
 
         if selected and active_axis in {"P_x", "P_y", "P_z"}:
             updated = self._synchronize_targets_to_axis(selected, active_axis)
@@ -2410,9 +2424,7 @@ class MainWindow(QMainWindow):
 
         analysis_datasets = [
             dataset
-            for dataset in (
-                self._get_fit_dataset(ds) for ds in selected
-            )
+            for dataset in (self._get_fit_dataset(ds) for ds in selected)
             if dataset is not None
         ]
 
@@ -2435,8 +2447,7 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "New Project",
-            "Clear the current session and start a new project?\n"
-            "Unsaved changes will be lost.",
+            "Clear the current session and start a new project?\nUnsaved changes will be lost.",
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
         )
         if reply != QMessageBox.StandardButton.Ok:
@@ -2467,10 +2478,7 @@ class MainWindow(QMainWindow):
 
     def _on_save_project_as(self) -> None:
         """Save the current project to a user-selected path."""
-        default = (
-            self._current_project_path
-            or os.path.join(self._last_open_dir, "project.asymp")
-        )
+        default = self._current_project_path or os.path.join(self._last_open_dir, "project.asymp")
         path, _ = QFileDialog.getSaveFileName(
             self,
             "Save Project As",
@@ -2493,9 +2501,7 @@ class MainWindow(QMainWindow):
             self._log_panel.log(f"Project saved: {path}")
             self.statusBar().showMessage(f"Saved: {Path(path).name}")
         except Exception as e:
-            QMessageBox.critical(
-                self, "Save Failed", f"Could not save project:\n{e}"
-            )
+            QMessageBox.critical(self, "Save Failed", f"Could not save project:\n{e}")
             self._log_panel.log(f"ERROR saving project: {e}")
 
     def _open_project_file(self, path: str) -> None:
@@ -2548,14 +2554,16 @@ class MainWindow(QMainWindow):
             if not source_file:
                 source_file = str(dataset.metadata.get("source_file", ""))
 
-            datasets.append({
-                "run_number": run_number,
-                "source_file": source_file,
-                "metadata_overrides": {
-                    "field": float(dataset.metadata.get("field", 0.0)),
-                },
-                "grouping_overrides": self._extract_grouping_overrides(dataset),
-            })
+            datasets.append(
+                {
+                    "run_number": run_number,
+                    "source_file": source_file,
+                    "metadata_overrides": {
+                        "field": float(dataset.metadata.get("field", 0.0)),
+                    },
+                    "grouping_overrides": self._extract_grouping_overrides(dataset),
+                }
+            )
             seen_run_numbers.add(run_number)
 
         for run_number, dataset in self._data_browser._datasets.items():
@@ -2638,9 +2646,7 @@ class MainWindow(QMainWindow):
         # If any files are missing, offer the user one chance to redirect to a new directory.
         fallback_dir: str | None = None
         if missing_info:
-            names = ", ".join(
-                os.path.basename(d.get("source_file", "?")) for d in missing_info[:5]
-            )
+            names = ", ".join(os.path.basename(d.get("source_file", "?")) for d in missing_info[:5])
             suffix = f" and {len(missing_info) - 5} more" if len(missing_info) > 5 else ""
             answer = QMessageBox.question(
                 self,
@@ -2673,16 +2679,12 @@ class MainWindow(QMainWindow):
             rn = ds_info.get("run_number")
             source_file = ds_info.get("source_file", "")
             if not source_file:
-                self._log_panel.log(
-                    f"WARNING: Run {rn} has no source file; skipping."
-                )
+                self._log_panel.log(f"WARNING: Run {rn} has no source file; skipping.")
                 continue
 
             resolved = resolved_paths.get(rn)
             if not resolved:
-                self._log_panel.log(
-                    f"WARNING: Source file not found: {source_file}; skipping."
-                )
+                self._log_panel.log(f"WARNING: Source file not found: {source_file}; skipping.")
                 continue
 
             try:
@@ -2752,8 +2754,7 @@ class MainWindow(QMainWindow):
         browser_state = dict(state.get("browser_state", {}))
         if combined_id_map and "selected_run_numbers" in browser_state:
             browser_state["selected_run_numbers"] = [
-                combined_id_map.get(rn, rn)
-                for rn in browser_state["selected_run_numbers"]
+                combined_id_map.get(rn, rn) for rn in browser_state["selected_run_numbers"]
             ]
         self._data_browser.restore_state(browser_state)
 
@@ -2763,9 +2764,7 @@ class MainWindow(QMainWindow):
         if current_run is not None:
             current_run = combined_id_map.get(int(current_run), int(current_run))
         current_dataset = (
-            self._data_browser.get_dataset(current_run)
-            if current_run is not None
-            else None
+            self._data_browser.get_dataset(current_run) if current_run is not None else None
         )
         if current_dataset is not None:
             self._current_dataset = current_dataset
@@ -2829,7 +2828,9 @@ class MainWindow(QMainWindow):
                     fit_x_max=float(fit_x_max),
                 )
                 if isinstance(global_parameter_fit_window_state, dict):
-                    self._global_parameter_fit_window.restore_state(global_parameter_fit_window_state)
+                    self._global_parameter_fit_window.restore_state(
+                        global_parameter_fit_window_state
+                    )
                 self._global_parameter_fit_window.show()
                 self._global_parameter_fit_window.raise_()
                 self._global_parameter_fit_window.activateWindow()
@@ -2855,12 +2856,8 @@ class MainWindow(QMainWindow):
             self._dock_fit_parameters.raise_()
 
         n_loaded = len(loaded_run_numbers)
-        self._log_panel.log(
-            f"Project opened: {n_loaded} run(s) loaded from {project_path}"
-        )
-        self.statusBar().showMessage(
-            f"Opened project — {n_loaded} run(s) loaded"
-        )
+        self._log_panel.log(f"Project opened: {n_loaded} run(s) loaded from {project_path}")
+        self.statusBar().showMessage(f"Opened project — {n_loaded} run(s) loaded")
 
     def _clear_all_state(self) -> None:
         """Reset every panel to its empty initial state."""
@@ -2900,9 +2897,7 @@ class MainWindow(QMainWindow):
             action.setToolTip(path)
             action.triggered.connect(lambda checked=False, p=path: self._open_project_file(p))
         self._recent_menu.addSeparator()
-        self._recent_menu.addAction(
-            "Clear Recent Projects", self._clear_recent_projects
-        )
+        self._recent_menu.addAction("Clear Recent Projects", self._clear_recent_projects)
 
     def _clear_recent_projects(self) -> None:
         """Remove all entries from the recent-projects list."""

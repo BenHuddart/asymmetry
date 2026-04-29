@@ -323,7 +323,11 @@ class DataBrowserPanel(QWidget):
         if group is None:
             return
 
-        insert_index = self._display_order.index(group_id) if group_id in self._display_order else len(self._display_order)
+        insert_index = (
+            self._display_order.index(group_id)
+            if group_id in self._display_order
+            else len(self._display_order)
+        )
         if group_id in self._display_order:
             self._display_order.remove(group_id)
 
@@ -338,7 +342,11 @@ class DataBrowserPanel(QWidget):
 
     def _move_groups_to_top(self) -> None:
         """Keep all group headers above non-grouped rows in display order."""
-        groups = [entry for entry in self._display_order if isinstance(entry, str) and entry in self._groups]
+        groups = [
+            entry
+            for entry in self._display_order
+            if isinstance(entry, str) and entry in self._groups
+        ]
         runs = [entry for entry in self._display_order if isinstance(entry, int)]
         self._display_order = groups + runs
 
@@ -400,7 +408,11 @@ class DataBrowserPanel(QWidget):
             gid = self._run_to_group.get(rn)
             if gid is None or rn not in self._datasets:
                 continue
-            group_index = self._display_order.index(gid) if gid in self._display_order else len(self._display_order)
+            group_index = (
+                self._display_order.index(gid)
+                if gid in self._display_order
+                else len(self._display_order)
+            )
             insert_at = min(insert_at, group_index + 1)
             self._remove_run_from_group(rn, gid)
             if rn not in self._display_order:
@@ -482,7 +494,9 @@ class DataBrowserPanel(QWidget):
         prefix = "▸" if group.collapsed else "▾"
         run_item = QTableWidgetItem(f"{prefix} {group.name}")
         run_item.setData(self._GROUP_ROLE, f"{self._GROUP_SENTINEL_PREFIX}{group.group_id}")
-        run_item.setFlags((run_item.flags() & ~Qt.ItemFlag.ItemIsEditable) | Qt.ItemFlag.ItemIsSelectable)
+        run_item.setFlags(
+            (run_item.flags() & ~Qt.ItemFlag.ItemIsEditable) | Qt.ItemFlag.ItemIsSelectable
+        )
         font = run_item.font()
         font.setBold(True)
         run_item.setFont(font)
@@ -579,7 +593,8 @@ class DataBrowserPanel(QWidget):
                 idx = self._table.model().index(row, 0)
                 selection_model.select(
                     idx,
-                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                    QItemSelectionModel.SelectionFlag.Select
+                    | QItemSelectionModel.SelectionFlag.Rows,
                 )
 
     def _is_row_visible_for_selection(self, row: int) -> bool:
@@ -826,7 +841,7 @@ class DataBrowserPanel(QWidget):
     def _group_id_from_key(self, key: object) -> str | None:
         if not self._is_group_key(key):
             return None
-        return str(key)[len(self._GROUP_SENTINEL_PREFIX):]
+        return str(key)[len(self._GROUP_SENTINEL_PREFIX) :]
 
     def _dataset_run_numbers_from_keys(self, keys: list[int | str]) -> list[int]:
         out: list[int] = []
@@ -1049,9 +1064,7 @@ class DataBrowserPanel(QWidget):
         except (TypeError, ValueError):
             bunching_factor = 1
         try:
-            source_bunching_factor = int(
-                grouping.get("source_bunching_factor", bunching_factor)
-            )
+            source_bunching_factor = int(grouping.get("source_bunching_factor", bunching_factor))
         except (TypeError, ValueError):
             source_bunching_factor = bunching_factor
 
@@ -1176,7 +1189,9 @@ class DataBrowserPanel(QWidget):
                     dataset = self._datasets.get(run_number)
                     if dataset is None:
                         continue
-                    handle.write(self._rtf_tabbed_line(self._export_row_values(run_number, dataset)))
+                    handle.write(
+                        self._rtf_tabbed_line(self._export_row_values(run_number, dataset))
+                    )
                     handle.write("\n")
                     exported_rows += 1
 
@@ -1218,12 +1233,14 @@ class DataBrowserPanel(QWidget):
     def _rtf_escape(self, text: str) -> str:
         sanitized = text.replace("\r", " ").replace("\n", " ")
         if sanitized.isascii():
-            return sanitized.translate({
-                ord("\\"): r"\\",
-                ord("{"): r"\{",
-                ord("}"): r"\}",
-                ord("\t"): r"\tab ",
-            })
+            return sanitized.translate(
+                {
+                    ord("\\"): r"\\",
+                    ord("{"): r"\{",
+                    ord("}"): r"\}",
+                    ord("\t"): r"\tab ",
+                }
+            )
 
         escaped: list[str] = []
         for ch in sanitized:
@@ -1364,7 +1381,9 @@ class DataBrowserPanel(QWidget):
         if not keys:
             return
 
-        selected_group_ids = [gid for gid in (self._group_id_from_key(k) for k in keys) if gid is not None]
+        selected_group_ids = [
+            gid for gid in (self._group_id_from_key(k) for k in keys) if gid is not None
+        ]
         for gid in selected_group_ids:
             self.ungroup(gid)
 
@@ -1385,9 +1404,13 @@ class DataBrowserPanel(QWidget):
 
         menu = QMenu(self)
         selected_runs = [k for k in keys if isinstance(k, int)]
-        selected_group_ids = [gid for gid in (self._group_id_from_key(k) for k in keys) if gid is not None]
+        selected_group_ids = [
+            gid for gid in (self._group_id_from_key(k) for k in keys) if gid is not None
+        ]
         expanded_selected_runs = self._dataset_run_numbers_from_keys(keys)
-        grouped_selected_runs = [rn for rn in selected_runs if self._run_to_group.get(rn) is not None]
+        grouped_selected_runs = [
+            rn for rn in selected_runs if self._run_to_group.get(rn) is not None
+        ]
 
         regular_runs = [rn for rn in expanded_selected_runs if rn not in self._combined_datasets]
         combined_runs = [rn for rn in expanded_selected_runs if rn in self._combined_datasets]
@@ -1436,11 +1459,15 @@ class DataBrowserPanel(QWidget):
         for group in groups:
             action = send_menu.addAction(group.name)
             action.triggered.connect(
-                lambda _checked=False, gid=group.group_id, runs=list(selected_runs): self.add_runs_to_group(runs, gid)
+                lambda _checked=False, gid=group.group_id, runs=list(selected_runs): (
+                    self.add_runs_to_group(runs, gid)
+                )
             )
 
     def _remove_selected_from_group(self) -> None:
-        run_numbers = [rn for rn in self._get_selected_run_numbers() if self._run_to_group.get(rn) is not None]
+        run_numbers = [
+            rn for rn in self._get_selected_run_numbers() if self._run_to_group.get(rn) is not None
+        ]
         if not run_numbers:
             return
         self.remove_runs_from_group(run_numbers)
@@ -1536,7 +1563,10 @@ class DataBrowserPanel(QWidget):
                     return True
 
         if watched is self._table.viewport():
-            if event.type() == QEvent.Type.MouseButtonDblClick and event.button() == Qt.MouseButton.LeftButton:
+            if (
+                event.type() == QEvent.Type.MouseButtonDblClick
+                and event.button() == Qt.MouseButton.LeftButton
+            ):
                 item = self._table.itemAt(event.position().toPoint())
                 if item is not None:
                     gid = self._group_id_from_key(item.data(self._GROUP_ROLE))
@@ -1560,7 +1590,10 @@ class DataBrowserPanel(QWidget):
                         if selection_model is not None:
                             add_to_selection = bool(
                                 modifiers
-                                & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier)
+                                & (
+                                    Qt.KeyboardModifier.ControlModifier
+                                    | Qt.KeyboardModifier.MetaModifier
+                                )
                             )
                             if self._select_visible_row_range(
                                 anchor_row,
@@ -1572,7 +1605,9 @@ class DataBrowserPanel(QWidget):
                     else:
                         self._selection_anchor_row = row
                         if selection_model is not None:
-                            selection_model.setCurrentIndex(index, QItemSelectionModel.SelectionFlag.NoUpdate)
+                            selection_model.setCurrentIndex(
+                                index, QItemSelectionModel.SelectionFlag.NoUpdate
+                            )
 
         if watched is header.viewport():
             if event.type() == QEvent.Type.MouseButtonRelease:
@@ -1584,7 +1619,9 @@ class DataBrowserPanel(QWidget):
                     self._on_header_clicked(logical_index)
                     return True
                 if event.button() == Qt.MouseButton.RightButton:
-                    QTimer.singleShot(0, lambda ci=logical_index: self._open_header_context_menu(ci))
+                    QTimer.singleShot(
+                        0, lambda ci=logical_index: self._open_header_context_menu(ci)
+                    )
                     return True
         return super().eventFilter(watched, event)
 
@@ -1660,12 +1697,18 @@ class DataBrowserPanel(QWidget):
         sorted_runs = sorted(runs, key=_sort_key, reverse=reverse)
 
         if self._groups:
-            groups = [entry for entry in self._display_order if isinstance(entry, str) and entry in self._groups]
+            groups = [
+                entry
+                for entry in self._display_order
+                if isinstance(entry, str) and entry in self._groups
+            ]
             self._display_order = groups + sorted_runs
         else:
             self._display_order = sorted_runs
 
-        self._table.horizontalHeader().setSortIndicator(self._current_sort_column, self._current_sort_order)
+        self._table.horizontalHeader().setSortIndicator(
+            self._current_sort_column, self._current_sort_order
+        )
         if rebuild:
             self._rebuild_table()
 
@@ -1720,7 +1763,11 @@ class DataBrowserPanel(QWidget):
                 key = run_item.data(self._GROUP_ROLE)
                 if isinstance(key, int):
                     gid = self._run_to_group.get(key)
-                    if gid is not None and self._groups.get(gid) is not None and self._groups[gid].collapsed:
+                    if (
+                        gid is not None
+                        and self._groups.get(gid) is not None
+                        and self._groups[gid].collapsed
+                    ):
                         self._table.setRowHidden(row, True)
             self.selection_changed.emit()
             return
@@ -1738,7 +1785,11 @@ class DataBrowserPanel(QWidget):
             visible = self._row_visible_by_filters(row)
             if isinstance(key, int):
                 gid = self._run_to_group.get(key)
-                if gid is not None and self._groups.get(gid) is not None and self._groups[gid].collapsed:
+                if (
+                    gid is not None
+                    and self._groups.get(gid) is not None
+                    and self._groups[gid].collapsed
+                ):
                     visible = False
                 if gid is not None and visible:
                     group_has_visible[gid] = True
@@ -1833,12 +1884,12 @@ class DataBrowserPanel(QWidget):
         for dataset in datasets:
             if np.array_equal(dataset.time, time_grid):
                 asymmetries.append(dataset.asymmetry)
-                errors_squared.append(dataset.error ** 2)
+                errors_squared.append(dataset.error**2)
             else:
                 interp_asymmetry = np.interp(time_grid, dataset.time, dataset.asymmetry)
                 interp_error = np.interp(time_grid, dataset.time, dataset.error)
                 asymmetries.append(interp_asymmetry)
-                errors_squared.append(interp_error ** 2)
+                errors_squared.append(interp_error**2)
 
         combined_asymmetry = np.mean(asymmetries, axis=0)
         combined_error = np.sqrt(np.sum(errors_squared, axis=0)) / len(datasets)
@@ -1907,7 +1958,9 @@ class DataBrowserPanel(QWidget):
                     member_index = group.member_run_numbers.index(rn)
                 except ValueError:
                     member_index = len(group.member_run_numbers)
-                group.member_run_numbers = [member for member in group.member_run_numbers if member != rn]
+                group.member_run_numbers = [
+                    member for member in group.member_run_numbers if member != rn
+                ]
                 self._run_to_group.pop(rn, None)
 
                 for offset, dataset in enumerate(source_datasets):
@@ -1998,7 +2051,9 @@ class DataBrowserPanel(QWidget):
         selected_group_ids = self._get_selected_group_ids()
         return {
             "sort_column": self._current_sort_column,
-            "sort_order": "ascending" if self._current_sort_order == Qt.SortOrder.AscendingOrder else "descending",
+            "sort_order": "ascending"
+            if self._current_sort_order == Qt.SortOrder.AscendingOrder
+            else "descending",
             "filters": filters,
             "selected_run_numbers": self._get_selected_run_numbers(),
             "selected_group_ids": selected_group_ids,
@@ -2027,7 +2082,11 @@ class DataBrowserPanel(QWidget):
             group_id = str(group_entry.get("group_id") or "")
             if not group_id:
                 continue
-            run_numbers = [int(v) for v in group_entry.get("member_run_numbers", []) if int(v) in self._datasets]
+            run_numbers = [
+                int(v)
+                for v in group_entry.get("member_run_numbers", [])
+                if int(v) in self._datasets
+            ]
             if len(run_numbers) < 2:
                 continue
             self.create_data_group(

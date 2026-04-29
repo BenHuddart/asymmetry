@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -168,7 +167,9 @@ class TestPlotPanel:
         assert panel.is_overlay_enabled() is False
         assert panel._overlay_checkbox.text() == "Overlay"
 
-    def test_second_toolbar_row_places_label_overlay_then_annotation_export(self, panel: PlotPanel) -> None:
+    def test_second_toolbar_row_places_label_overlay_then_annotation_export(
+        self, panel: PlotPanel
+    ) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
@@ -207,7 +208,9 @@ class TestPlotPanel:
         assert not panel._pan_btn.isChecked()
         assert not panel._zoom_btn.isChecked()
 
-    def test_limit_spinboxes_follow_axis_limit_changes(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
+    def test_limit_spinboxes_follow_axis_limit_changes(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
@@ -251,7 +254,9 @@ class TestPlotPanel:
 
         assert x_after_y == pytest.approx(x_after_x)
 
-    def test_auto_y_uses_current_x_range_and_ignores_low_count_points(self, panel: PlotPanel) -> None:
+    def test_auto_y_uses_current_x_range_and_ignores_low_count_points(
+        self, panel: PlotPanel
+    ) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
@@ -272,7 +277,9 @@ class TestPlotPanel:
         # Outlier in good bins but outside current x-range: also ignored by Auto Y.
         asym[60] = 5.0
 
-        ds = MuonDataset(time=time, asymmetry=asym, error=err, metadata={"run_number": 321}, run=run)
+        ds = MuonDataset(
+            time=time, asymmetry=asym, error=err, metadata={"run_number": 321}, run=run
+        )
         panel.plot_dataset(ds)
 
         panel._x_min.setValue(1.0)
@@ -509,7 +516,9 @@ class TestPlotPanel:
         mask = panel._low_count_mask_for_dataset(ds, source_dataset=ds)
 
         assert mask.shape == (10,)
-        assert np.array_equal(mask, np.array([False, False, False, False, False, True, True, True, True, True]))
+        assert np.array_equal(
+            mask, np.array([False, False, False, False, False, True, True, True, True, True])
+        )
 
     def test_low_count_mask_projects_saturated_source_bins_after_rebin(
         self,
@@ -620,7 +629,9 @@ class TestPlotPanel:
             pytest.skip("matplotlib not available")
 
         panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_x")
-        labels = [panel._polarization_combo.itemText(i) for i in range(panel._polarization_combo.count())]
+        labels = [
+            panel._polarization_combo.itemText(i) for i in range(panel._polarization_combo.count())
+        ]
 
         assert labels == ["x", "y", "z"]
 
@@ -640,7 +651,9 @@ class TestPlotPanel:
             pytest.skip("matplotlib not available")
 
         panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
-        labels = [panel._polarization_combo.itemText(i) for i in range(panel._polarization_combo.count())]
+        labels = [
+            panel._polarization_combo.itemText(i) for i in range(panel._polarization_combo.count())
+        ]
 
         assert labels[0] == "All"
 
@@ -746,8 +759,12 @@ class TestPlotPanel:
 
         run_px = Run(run_number=9901, grouping={"vector_axis": "P_x"})
         run_py = Run(run_number=9901, grouping={"vector_axis": "P_y"})
-        ds_px = MuonDataset(time=t, asymmetry=y_px, error=e, metadata={"run_number": 9901}, run=run_px)
-        ds_py = MuonDataset(time=t, asymmetry=y_py, error=e, metadata={"run_number": 9901}, run=run_py)
+        ds_px = MuonDataset(
+            time=t, asymmetry=y_px, error=e, metadata={"run_number": 9901}, run=run_px
+        )
+        ds_py = MuonDataset(
+            time=t, asymmetry=y_py, error=e, metadata={"run_number": 9901}, run=run_py
+        )
 
         fit_px = 0.20 * np.exp(-0.28 * t)
         fit_py = 0.15 * np.exp(-0.22 * t)
@@ -957,7 +974,9 @@ class TestPlotPanel:
         # Panel should handle multiple datasets
         assert panel._canvas is not None
 
-    def test_multi_dataset_legend_labels_follow_selected_label_field(self, panel: PlotPanel) -> None:
+    def test_multi_dataset_legend_labels_follow_selected_label_field(
+        self, panel: PlotPanel
+    ) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
         panel.set_overlay_enabled(True)
@@ -1209,7 +1228,9 @@ class TestPlotPanel:
         restored.set_active_label_group("g2")
         assert [ann["text"] for ann in restored._annotations] == ["g2"]
 
-    def test_dataset_label_falls_back_to_run_label_when_field_missing(self, panel: PlotPanel) -> None:
+    def test_dataset_label_falls_back_to_run_label_when_field_missing(
+        self, panel: PlotPanel
+    ) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
@@ -1397,7 +1418,10 @@ class TestPlotPanel:
             t_fit,
             y_fit,
             label="Fit",
-            component_curves=[("Exponential", y_fit - 0.01), ("Constant", np.full_like(t_fit, 0.01))],
+            component_curves=[
+                ("Exponential", y_fit - 0.01),
+                ("Constant", np.full_like(t_fit, 0.01)),
+            ],
         )
         panel._annotations = [{"x": 1.0, "y": 0.12, "text": "peak", "artist": None}]
 
@@ -1496,7 +1520,9 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr(
+            "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
+        )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
         monkeypatch.setattr(
             "subprocess.run",
@@ -1568,7 +1594,9 @@ class TestPlotPanel:
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
         monkeypatch.setattr(panel, "get_current_plot_export_data", lambda: [payload])
-        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr(
+            "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
+        )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
@@ -1623,7 +1651,9 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr(
+            "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
+        )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
@@ -1680,7 +1710,9 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr(
+            "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
+        )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
@@ -1708,8 +1740,12 @@ class TestPlotPanel:
 
         t = np.linspace(0.0, 10.0, 80)
         e = np.full_like(t, 0.01)
-        ds1 = MuonDataset(time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 1001})
-        ds2 = MuonDataset(time=t, asymmetry=0.16 * np.exp(-0.22 * t), error=e, metadata={"run_number": 1002})
+        ds1 = MuonDataset(
+            time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 1001}
+        )
+        ds2 = MuonDataset(
+            time=t, asymmetry=0.16 * np.exp(-0.22 * t), error=e, metadata={"run_number": 1002}
+        )
         panel.plot_datasets([ds1, ds2])
 
         panel._fit_curves = {
@@ -1733,7 +1769,9 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr(
+            "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
+        )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
@@ -1771,13 +1809,29 @@ class TestPlotPanel:
 
         t = np.linspace(0.0, 8.0, 50)
         e = np.full_like(t, 0.01)
-        base = MuonDataset(time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 3001})
+        base = MuonDataset(
+            time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 3001}
+        )
 
         panel._current_polarization_axis = "ALL"
         panel._vector_subplot_datasets = {
             "P_x": [base],
-            "P_y": [MuonDataset(time=t, asymmetry=0.16 * np.exp(-0.25 * t), error=e, metadata={"run_number": 3001})],
-            "P_z": [MuonDataset(time=t, asymmetry=0.12 * np.exp(-0.2 * t), error=e, metadata={"run_number": 3001})],
+            "P_y": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=0.16 * np.exp(-0.25 * t),
+                    error=e,
+                    metadata={"run_number": 3001},
+                )
+            ],
+            "P_z": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=0.12 * np.exp(-0.2 * t),
+                    error=e,
+                    metadata={"run_number": 3001},
+                )
+            ],
         }
         panel._y_limits_by_polarization = {
             "P_x": (-0.2, 0.4),
@@ -1814,7 +1868,9 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr(
+            "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
+        )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
@@ -1892,9 +1948,27 @@ class TestPlotPanel:
         t = np.linspace(0.0, 8.0, 80)
         e = np.full_like(t, 0.01)
         datasets_by_axis = {
-            "P_x": [MuonDataset(time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 4101})],
-            "P_y": [MuonDataset(time=t, asymmetry=0.16 * np.exp(-0.25 * t), error=e, metadata={"run_number": 4101})],
-            "P_z": [MuonDataset(time=t, asymmetry=0.12 * np.exp(-0.2 * t), error=e, metadata={"run_number": 4101})],
+            "P_x": [
+                MuonDataset(
+                    time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 4101}
+                )
+            ],
+            "P_y": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=0.16 * np.exp(-0.25 * t),
+                    error=e,
+                    metadata={"run_number": 4101},
+                )
+            ],
+            "P_z": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=0.12 * np.exp(-0.2 * t),
+                    error=e,
+                    metadata={"run_number": 4101},
+                )
+            ],
         }
 
         panel._current_polarization_axis = "ALL"
@@ -1912,16 +1986,36 @@ class TestPlotPanel:
         assert panel._x_max.value() == pytest.approx(5.5)
         assert panel._ax.get_xlim() == pytest.approx((1.5, 5.5))
 
-    def test_stale_axis_limit_callback_does_not_reset_all_mode_x_limits(self, panel: PlotPanel) -> None:
+    def test_stale_axis_limit_callback_does_not_reset_all_mode_x_limits(
+        self, panel: PlotPanel
+    ) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
         t = np.linspace(0.0, 8.0, 80)
         e = np.full_like(t, 0.01)
         datasets_by_axis = {
-            "P_x": [MuonDataset(time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 4201})],
-            "P_y": [MuonDataset(time=t, asymmetry=0.16 * np.exp(-0.25 * t), error=e, metadata={"run_number": 4201})],
-            "P_z": [MuonDataset(time=t, asymmetry=0.12 * np.exp(-0.2 * t), error=e, metadata={"run_number": 4201})],
+            "P_x": [
+                MuonDataset(
+                    time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 4201}
+                )
+            ],
+            "P_y": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=0.16 * np.exp(-0.25 * t),
+                    error=e,
+                    metadata={"run_number": 4201},
+                )
+            ],
+            "P_z": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=0.12 * np.exp(-0.2 * t),
+                    error=e,
+                    metadata={"run_number": 4201},
+                )
+            ],
         }
 
         panel._current_polarization_axis = "ALL"
@@ -1953,13 +2047,29 @@ class TestPlotPanel:
 
         t = np.linspace(0.0, 8.0, 50)
         e = np.full_like(t, 0.01)
-        base = MuonDataset(time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 3002})
+        base = MuonDataset(
+            time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 3002}
+        )
 
         panel._current_polarization_axis = "ALL"
         panel._vector_subplot_datasets = {
             "P_x": [base],
-            "P_y": [MuonDataset(time=t, asymmetry=0.16 * np.exp(-0.25 * t), error=e, metadata={"run_number": 3002})],
-            "P_z": [MuonDataset(time=t, asymmetry=0.12 * np.exp(-0.2 * t), error=e, metadata={"run_number": 3002})],
+            "P_y": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=0.16 * np.exp(-0.25 * t),
+                    error=e,
+                    metadata={"run_number": 3002},
+                )
+            ],
+            "P_z": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=0.12 * np.exp(-0.2 * t),
+                    error=e,
+                    metadata={"run_number": 3002},
+                )
+            ],
         }
 
         target_gle = tmp_path / "vector_all_subplots_sharex.gle"
@@ -1996,7 +2106,9 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr(
+            "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
+        )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
@@ -2021,13 +2133,29 @@ class TestPlotPanel:
 
         t = np.linspace(0.0, 8.0, 50)
         e = np.full_like(t, 0.01)
-        base = MuonDataset(time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 3003})
+        base = MuonDataset(
+            time=t, asymmetry=0.2 * np.exp(-0.3 * t), error=e, metadata={"run_number": 3003}
+        )
 
         panel._current_polarization_axis = "ALL"
         panel._vector_subplot_datasets = {
             "P_x": [base],
-            "P_y": [MuonDataset(time=t, asymmetry=0.16 * np.exp(-0.25 * t), error=e, metadata={"run_number": 3003})],
-            "P_z": [MuonDataset(time=t, asymmetry=0.12 * np.exp(-0.2 * t), error=e, metadata={"run_number": 3003})],
+            "P_y": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=0.16 * np.exp(-0.25 * t),
+                    error=e,
+                    metadata={"run_number": 3003},
+                )
+            ],
+            "P_z": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=0.12 * np.exp(-0.2 * t),
+                    error=e,
+                    metadata={"run_number": 3003},
+                )
+            ],
         }
 
         target_gle = tmp_path / "vector_all_single_no_legend.gle"
@@ -2057,7 +2185,9 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr("importlib.import_module", lambda name: fake_glp if name == "gleplot" else None)
+        monkeypatch.setattr(
+            "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
+        )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
         monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)

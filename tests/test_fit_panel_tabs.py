@@ -18,18 +18,18 @@ from PySide6.QtWidgets import QApplication, QComboBox
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
-from asymmetry.core.fitting.global_fit_wizard import (
-    GlobalCandidateAssessment,
-    GlobalFitWizardRecommendation,
-    GlobalParameterRecommendation,
-    RunResidualDiagnostic,
-)
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     CandidateTemplate,
     FitWizardRecommendation,
     SelectionMetric,
     SpectrumFingerprint,
+)
+from asymmetry.core.fitting.global_fit_wizard import (
+    GlobalCandidateAssessment,
+    GlobalFitWizardRecommendation,
+    GlobalParameterRecommendation,
+    RunResidualDiagnostic,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels import fit_panel as fit_panel_module
@@ -52,7 +52,9 @@ def dataset() -> MuonDataset:
     return MuonDataset(time=t, asymmetry=a, error=e, metadata={"run_number": 101})
 
 
-def _wizard_payload_for_dataset(dataset: MuonDataset) -> tuple[CandidateAssessment, FitWizardRecommendation]:
+def _wizard_payload_for_dataset(
+    dataset: MuonDataset,
+) -> tuple[CandidateAssessment, FitWizardRecommendation]:
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     parameters = ParameterSet(
         [
@@ -94,7 +96,9 @@ def _wizard_payload_for_dataset(dataset: MuonDataset) -> tuple[CandidateAssessme
         fitted_time=np.asarray(dataset.time, dtype=float).copy(),
         fitted_curve=np.asarray(curve, dtype=float),
         component_curves=tuple(
-            model.evaluate_components(dataset.time, additive_only=True, A_1=0.2, Lambda=0.4, A_bg=0.01)
+            model.evaluate_components(
+                dataset.time, additive_only=True, A_1=0.2, Lambda=0.4, A_bg=0.01
+            )
         ),
     )
     recommendation = FitWizardRecommendation(
@@ -125,7 +129,9 @@ def _wizard_payload_for_dataset(dataset: MuonDataset) -> tuple[CandidateAssessme
     return assessment, recommendation
 
 
-def _global_wizard_recommendation_for_dataset(dataset: MuonDataset) -> GlobalFitWizardRecommendation:
+def _global_wizard_recommendation_for_dataset(
+    dataset: MuonDataset,
+) -> GlobalFitWizardRecommendation:
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     fitted_curves = {
         int(dataset.run_number): (
@@ -375,9 +381,7 @@ def test_fit_panel_forwards_fit_wizard_apply_via_normal_fit_completed_signal(
     assert len(emitted["curve"][0]) >= 500
 
 
-def test_fit_panel_forwards_single_tab_preview(
-    qapp: QApplication, dataset: MuonDataset
-) -> None:
+def test_fit_panel_forwards_single_tab_preview(qapp: QApplication, dataset: MuonDataset) -> None:
     panel = FitPanel()
     panel.set_dataset(dataset)
 
@@ -572,7 +576,9 @@ def test_global_fit_finished_success_emits(qapp: QApplication, dataset: MuonData
     assert set(emitted["res"]) == {101, 102}
 
 
-def test_global_fit_finished_failure_lists_failed_runs(qapp: QApplication, dataset: MuonDataset) -> None:
+def test_global_fit_finished_failure_lists_failed_runs(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
     tab = GlobalFitTab()
     tab._current_model = tab._composite_model
     tab._current_global_params = []
@@ -754,7 +760,9 @@ def test_global_fit_uses_inherited_local_values_per_run(
     assert pset_102["A_bg"].value == pytest.approx(0.015)
 
 
-def test_fit_panel_restores_single_fit_state_per_dataset(qapp: QApplication, dataset: MuonDataset) -> None:
+def test_fit_panel_restores_single_fit_state_per_dataset(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
     panel = FitPanel()
     d1 = dataset
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
@@ -841,13 +849,19 @@ def test_fit_panel_single_state_roundtrip_preserves_per_run_wizard_state(
     panel.set_dataset(d1)
     panel._single_tab._cache_wizard_analysis(
         recommendation_1,
-        signature={"run_number": int(d1.run_number), "model": panel._single_tab._composite_model.to_dict()},
+        signature={
+            "run_number": int(d1.run_number),
+            "model": panel._single_tab._composite_model.to_dict(),
+        },
         log_text="run 101 log",
     )
     panel.set_dataset(d2)
     panel._single_tab._cache_wizard_analysis(
         recommendation_2,
-        signature={"run_number": int(d2.run_number), "model": panel._single_tab._composite_model.to_dict()},
+        signature={
+            "run_number": int(d2.run_number),
+            "model": panel._single_tab._composite_model.to_dict(),
+        },
         log_text="run 102 log",
     )
 
@@ -985,7 +999,9 @@ def test_fit_panel_clear_fits_for_runs_removes_cached_fit_state(
     assert 102 in panel._global_tab._single_fit_seed_by_run
 
 
-def test_global_fit_wizard_button_tracks_dataset_and_block_state(qapp: QApplication, dataset: MuonDataset) -> None:
+def test_global_fit_wizard_button_tracks_dataset_and_block_state(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
     tab = GlobalFitTab()
     assert tab._fit_wizard_btn.isEnabled() is False
 
@@ -1031,7 +1047,10 @@ def test_global_fit_apply_fit_wizard_assessment_updates_roles_and_emits(
             uncertainties={"A_1": 0.01, "Lambda": 0.02, "A_bg": 0.001},
             residuals=np.asarray(ds.asymmetry - curve, dtype=float),
         )
-        fitted_curves[run_number] = (np.asarray(ds.time, dtype=float).copy(), np.asarray(curve, dtype=float))
+        fitted_curves[run_number] = (
+            np.asarray(ds.time, dtype=float).copy(),
+            np.asarray(curve, dtype=float),
+        )
         component_curves[run_number] = tuple(
             model.evaluate_components(ds.time, additive_only=True, A_1=0.2, Lambda=lam, A_bg=0.01)
         )
@@ -1354,13 +1373,19 @@ def test_global_tab_open_fit_wizard_passes_cached_single_fit_recommendations(
     panel.set_dataset(d1)
     panel._single_tab._cache_wizard_analysis(
         recommendation_1,
-        signature={"run_number": int(d1.run_number), "model": panel._single_tab._composite_model.to_dict()},
+        signature={
+            "run_number": int(d1.run_number),
+            "model": panel._single_tab._composite_model.to_dict(),
+        },
         log_text="run 101",
     )
     panel.set_dataset(d2)
     panel._single_tab._cache_wizard_analysis(
         recommendation_2,
-        signature={"run_number": int(d2.run_number), "model": panel._single_tab._composite_model.to_dict()},
+        signature={
+            "run_number": int(d2.run_number),
+            "model": panel._single_tab._composite_model.to_dict(),
+        },
         log_text="run 102",
     )
     panel.set_datasets([d1, d2])

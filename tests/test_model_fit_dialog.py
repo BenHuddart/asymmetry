@@ -15,14 +15,18 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QCheckBox, QDialog
 
-from asymmetry.core.fitting.parameter_models import ModelFitRange, ParameterCompositeModel, ParameterModelFit
+from asymmetry.core.fitting.parameter_models import (
+    ModelFitRange,
+    ParameterCompositeModel,
+    ParameterModelFit,
+)
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.model_fit_dialog import (
+    _SC_COMPONENT_MENU_TITLE,
     ModelFitDialog,
     ParameterModelBuilderDialog,
-    _ComponentSelectorButton,
-    _SC_COMPONENT_MENU_TITLE,
     _component_pool_for_context,
+    _ComponentSelectorButton,
     _format_model_param_label,
 )
 from asymmetry.gui.widgets.component_info_dialog import build_component_info_html
@@ -124,7 +128,9 @@ def test_commit_parameter_table_normalizes_domain_limits(qapp: QApplication) -> 
     y = np.linspace(0.2, 0.4, 12)
     yerr = np.full_like(x, 0.02)
 
-    model = ParameterCompositeModel(["Redfield", "DiffusionLF_2D", "Lambda_bg"], operators=["+", "+"])
+    model = ParameterCompositeModel(
+        ["Redfield", "DiffusionLF_2D", "Lambda_bg"], operators=["+", "+"]
+    )
     params = ParameterSet(
         [
             Parameter("D", 1.0, min=-10.0, max=10.0),
@@ -246,7 +252,9 @@ def test_edit_model_to_redfield_resets_m_to_default(qapp: QApplication, monkeypa
         def get_model(self):
             return ParameterCompositeModel(["Redfield"], [])
 
-    monkeypatch.setattr("asymmetry.gui.panels.model_fit_dialog.ParameterModelBuilderDialog", _FakeBuilder)
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.model_fit_dialog.ParameterModelBuilderDialog", _FakeBuilder
+    )
     dlg._edit_model(0)
 
     params = dlg.get_model_fit().ranges[0].parameters
@@ -291,7 +299,9 @@ def test_edit_model_to_sc_component_keeps_shape_factor_a_fixed_by_default(
         def get_model(self):
             return ParameterCompositeModel(["SC_PWaveAxial"], [])
 
-    monkeypatch.setattr("asymmetry.gui.panels.model_fit_dialog.ParameterModelBuilderDialog", _FakeBuilder)
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.model_fit_dialog.ParameterModelBuilderDialog", _FakeBuilder
+    )
     dlg._edit_model(0)
 
     params = dlg.get_model_fit().ranges[0].parameters
@@ -312,7 +322,9 @@ def test_edit_model_to_sc_component_keeps_shape_factor_a_fixed_by_default(
 def test_parameter_model_builder_has_info_column(qapp: QApplication) -> None:
     dialog = ParameterModelBuilderDialog(component_pool=["Linear", "Arrhenius"])
 
-    headers = [dialog._table.horizontalHeaderItem(i).text() for i in range(dialog._table.columnCount())]
+    headers = [
+        dialog._table.horizontalHeaderItem(i).text() for i in range(dialog._table.columnCount())
+    ]
     assert headers == ["Op", "Component", "Info", "Remove"]
 
     info_btn = dialog._table.cellWidget(0, 2)
@@ -333,7 +345,11 @@ def test_parameter_model_builder_groups_sc_models_in_submenu(qapp: QApplication)
     assert any(action.text() == "Linear" and action.menu() is None for action in top_actions)
 
     sc_action = next(
-        (action for action in top_actions if action.menu() is not None and action.text() == _SC_COMPONENT_MENU_TITLE),
+        (
+            action
+            for action in top_actions
+            if action.menu() is not None and action.text() == _SC_COMPONENT_MENU_TITLE
+        ),
         None,
     )
     assert sc_action is not None

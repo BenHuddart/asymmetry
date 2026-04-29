@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 import os
 import time
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -84,9 +84,7 @@ def auto_parameter_setup(monkeypatch: pytest.MonkeyPatch) -> None:
         return {
             "types": {
                 name: (
-                    "Global"
-                    if name.startswith("A")
-                    else ("Local" if name != "A_bg" else "Global")
+                    "Global" if name.startswith("A") else ("Local" if name != "A_bg" else "Global")
                 )
                 for name in names
             },
@@ -270,7 +268,9 @@ def _fake_screening_recommendation(datasets: list[MuonDataset]) -> GlobalFitWiza
     )
 
 
-def _fake_multi_variant_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommendation:
+def _fake_multi_variant_recommendation(
+    datasets: list[MuonDataset],
+) -> GlobalFitWizardRecommendation:
     base = _fake_recommendation(datasets)
     best = replace(
         base.assessments[0],
@@ -537,8 +537,7 @@ def test_global_fit_wizard_window_emits_generated_single_fit_tables(
 ) -> None:
     generated_run = int(datasets[0].run_number)
     phase_one_recommendations = {
-        int(dataset.run_number): _fake_single_fit_recommendation(dataset)
-        for dataset in datasets
+        int(dataset.run_number): _fake_single_fit_recommendation(dataset) for dataset in datasets
     }
     original_generated_recommendation = phase_one_recommendations[generated_run]
     captured: dict[str, object] = {}

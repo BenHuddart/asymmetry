@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -77,8 +76,7 @@ class _ComponentSelectorButton(QPushButton):
             action.triggered.connect(lambda _checked=False, n=name: self.setCurrentText(n))
 
         submenu_categories = [
-            cat for cat in sorted(self._components_by_category)
-            if cat != "General"
+            cat for cat in sorted(self._components_by_category) if cat != "General"
         ]
         if submenu_categories and regular_components:
             menu.addSeparator()
@@ -189,7 +187,9 @@ class FitFunctionBuilderDialog(QDialog):
 
         open_combo = QComboBox()
         open_combo.addItems(_PARENTHESIS_COUNT_OPTIONS)
-        open_combo.setCurrentText(str(open_count) if str(open_count) in _PARENTHESIS_COUNT_OPTIONS else "0")
+        open_combo.setCurrentText(
+            str(open_count) if str(open_count) in _PARENTHESIS_COUNT_OPTIONS else "0"
+        )
         open_combo.currentTextChanged.connect(self._update_formula_preview)
         self._table.setCellWidget(row, 1, open_combo)
 
@@ -207,7 +207,9 @@ class FitFunctionBuilderDialog(QDialog):
 
         close_combo = QComboBox()
         close_combo.addItems(_PARENTHESIS_COUNT_OPTIONS)
-        close_combo.setCurrentText(str(close_count) if str(close_count) in _PARENTHESIS_COUNT_OPTIONS else "0")
+        close_combo.setCurrentText(
+            str(close_count) if str(close_count) in _PARENTHESIS_COUNT_OPTIONS else "0"
+        )
         close_combo.currentTextChanged.connect(self._update_formula_preview)
         self._table.setCellWidget(row, 4, close_combo)
 
@@ -294,7 +296,9 @@ class FitFunctionBuilderDialog(QDialog):
             open_parentheses.append(open_count)
 
             close_combo = self._table.cellWidget(row, 4)
-            close_count = int(close_combo.currentText()) if isinstance(close_combo, QComboBox) else 0
+            close_count = (
+                int(close_combo.currentText()) if isinstance(close_combo, QComboBox) else 0
+            )
             close_parentheses.append(close_count)
 
             if row > 0:

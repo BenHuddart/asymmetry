@@ -40,8 +40,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterModelFitResult,
     evaluate_parameter_model_fit,
 )
-from asymmetry.core.fitting.parameters import get_param_info
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
 from asymmetry.gui.export_paths import (
     default_export_path,
     remember_export_path,
@@ -131,7 +130,9 @@ class GlobalParameterFitWindow(QMainWindow):
         controls_row = QHBoxLayout()
         self._local_plot_mode_combo = QComboBox()
         self._local_plot_mode_combo.addItems(["Single Axes", "Subplots"])
-        self._local_plot_mode_combo.currentTextChanged.connect(lambda _text: self._refresh_local_parameter_plots())
+        self._local_plot_mode_combo.currentTextChanged.connect(
+            lambda _text: self._refresh_local_parameter_plots()
+        )
         controls_row.addWidget(self._local_plot_mode_combo)
 
         self._local_log_x_check = QCheckBox("Log X")
@@ -154,11 +155,17 @@ class GlobalParameterFitWindow(QMainWindow):
 
         self._local_y_selector_table = QTableWidget(0, 3)
         self._local_y_selector_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._local_y_selector_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._local_y_selector_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._local_y_selector_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self._local_y_selector_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self._local_y_selector_table.horizontalHeader().setVisible(False)
         self._local_y_selector_table.verticalHeader().setVisible(False)
-        self._local_y_selector_table.itemSelectionChanged.connect(self._on_local_y_selection_changed)
+        self._local_y_selector_table.itemSelectionChanged.connect(
+            self._on_local_y_selection_changed
+        )
         right_layout.addWidget(self._local_y_selector_table)
 
         self._local_canvas = None
@@ -173,7 +180,9 @@ class GlobalParameterFitWindow(QMainWindow):
 
             self._local_canvas.mpl_connect("button_press_event", self._on_local_canvas_button_press)
             self._local_canvas.mpl_connect("motion_notify_event", self._on_local_canvas_motion)
-            self._local_canvas.mpl_connect("button_release_event", self._on_local_canvas_button_release)
+            self._local_canvas.mpl_connect(
+                "button_release_event", self._on_local_canvas_button_release
+            )
         except ImportError:
             pass
 
@@ -227,7 +236,9 @@ class GlobalParameterFitWindow(QMainWindow):
     def has_result(self) -> bool:
         return self._result is not None
 
-    def _serialize_annotations(self, annotations: list[dict[str, object]]) -> list[dict[str, object]]:
+    def _serialize_annotations(
+        self, annotations: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
         out: list[dict[str, object]] = []
         for ann in annotations:
             try:
@@ -397,8 +408,12 @@ class GlobalParameterFitWindow(QMainWindow):
 
                 ranges.append(
                     ModelFitRange(
-                        x_min=float(range_state.get("x_min")) if range_state.get("x_min") is not None else None,
-                        x_max=float(range_state.get("x_max")) if range_state.get("x_max") is not None else None,
+                        x_min=float(range_state.get("x_min"))
+                        if range_state.get("x_min") is not None
+                        else None,
+                        x_max=float(range_state.get("x_max"))
+                        if range_state.get("x_max") is not None
+                        else None,
                         model=model,
                         parameters=params,
                         result=result_obj,
@@ -450,7 +465,9 @@ class GlobalParameterFitWindow(QMainWindow):
             self._local_param_log_y = {str(k): bool(v) for k, v in raw_local_param_log.items()}
         else:
             self._local_param_log_y = {}
-        self._local_model_fits = self._deserialize_local_model_fits(state.get("local_model_fits", {}))
+        self._local_model_fits = self._deserialize_local_model_fits(
+            state.get("local_model_fits", {})
+        )
         fit_subplot_aspect = state.get("fit_subplot_aspect")
         try:
             if fit_subplot_aspect is not None:
@@ -476,7 +493,9 @@ class GlobalParameterFitWindow(QMainWindow):
             self._restored_local_selected_y = []
 
         self._plot_annotations = self._deserialize_annotations(state.get("plot_annotations", []))
-        self._local_plot_annotations = self._deserialize_annotations(state.get("local_plot_annotations", []))
+        self._local_plot_annotations = self._deserialize_annotations(
+            state.get("local_plot_annotations", [])
+        )
 
         suppressed = state.get("suppressed_group_label_tags", [])
         if isinstance(suppressed, list):
@@ -491,7 +510,9 @@ class GlobalParameterFitWindow(QMainWindow):
 
     def _selected_local_y_parameters(self) -> list[str]:
         params: list[str] = []
-        for row in sorted({index.row() for index in self._local_y_selector_table.selectedIndexes()}):
+        for row in sorted(
+            {index.row() for index in self._local_y_selector_table.selectedIndexes()}
+        ):
             item = self._local_y_selector_table.item(row, 0)
             if item is None:
                 continue
@@ -504,7 +525,9 @@ class GlobalParameterFitWindow(QMainWindow):
         self._local_selected_y_names = self._selected_local_y_parameters()
         self._refresh_local_parameter_plots()
 
-    def _rebuild_local_y_controls(self, parameter_names: list[str], preferred_selected: list[str] | None = None) -> None:
+    def _rebuild_local_y_controls(
+        self, parameter_names: list[str], preferred_selected: list[str] | None = None
+    ) -> None:
         self._local_y_selector_table.blockSignals(True)
         self._local_y_selector_table.clearContents()
         self._local_y_selector_table.setRowCount(0)
@@ -521,12 +544,16 @@ class GlobalParameterFitWindow(QMainWindow):
             self._local_y_selector_table.setItem(idx, 0, item)
 
             fit_button = QPushButton("Model Fit")
-            fit_button.clicked.connect(lambda _checked=False, p=name: self._open_local_model_fit_dialog(p))
+            fit_button.clicked.connect(
+                lambda _checked=False, p=name: self._open_local_model_fit_dialog(p)
+            )
             self._local_y_selector_table.setCellWidget(idx, 1, fit_button)
 
             log_check = QCheckBox("log")
             log_check.setChecked(bool(self._local_param_log_y.get(name, False)))
-            log_check.toggled.connect(lambda checked, p=name: self._on_local_param_log_toggled(p, checked))
+            log_check.toggled.connect(
+                lambda checked, p=name: self._on_local_param_log_toggled(p, checked)
+            )
             log_container = QWidget()
             log_layout = QHBoxLayout(log_container)
             log_layout.setContentsMargins(0, 0, 0, 0)
@@ -631,7 +658,9 @@ class GlobalParameterFitWindow(QMainWindow):
             fit_button = controls.get("fit_button")
             if isinstance(fit_button, QPushButton):
                 active_fit = self._local_model_fits.get(param_name)
-                fit_button.setText("Model Fit*" if active_fit is not None and active_fit.active else "Model Fit")
+                fit_button.setText(
+                    "Model Fit*" if active_fit is not None and active_fit.active else "Model Fit"
+                )
 
         self._refresh_local_parameter_plots()
 
@@ -703,7 +732,9 @@ class GlobalParameterFitWindow(QMainWindow):
         return get_param_info(name).gle_label()
 
     def _safe_file_token(self, value: str) -> str:
-        token = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(value).strip())
+        token = "".join(
+            ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(value).strip()
+        )
         token = "_".join(part for part in token.split("_") if part)
         return token or "group"
 
@@ -730,7 +761,9 @@ class GlobalParameterFitWindow(QMainWindow):
                 kwargs[name] = float(defaults[name])
         return kwargs
 
-    def _sample_group_fit_curve(self, group: ParameterGroupData) -> tuple[np.ndarray, np.ndarray] | None:
+    def _sample_group_fit_curve(
+        self, group: ParameterGroupData
+    ) -> tuple[np.ndarray, np.ndarray] | None:
         if self._model is None:
             return None
         kwargs = self._model_kwargs_for_group(group.group_id)
@@ -743,7 +776,11 @@ class GlobalParameterFitWindow(QMainWindow):
             return None
 
         xx = np.sort(finite_x)
-        if np.isfinite(self._fit_x_min) and np.isfinite(self._fit_x_max) and self._fit_x_max > self._fit_x_min:
+        if (
+            np.isfinite(self._fit_x_min)
+            and np.isfinite(self._fit_x_max)
+            and self._fit_x_max > self._fit_x_min
+        ):
             mask = (xx >= self._fit_x_min) & (xx <= self._fit_x_max)
             xx = xx[mask]
         if xx.size < 2:
@@ -831,15 +868,21 @@ class GlobalParameterFitWindow(QMainWindow):
         for p in self._result.global_parameters:
             row = self._params_table.rowCount()
             self._params_table.insertRow(row)
-            self._params_table.setItem(row, 0, QTableWidgetItem(get_param_info(p.name).unicode_label()))
+            self._params_table.setItem(
+                row, 0, QTableWidgetItem(get_param_info(p.name).unicode_label())
+            )
             self._params_table.setItem(row, 1, QTableWidgetItem(f"{p.value:.6g}"))
             err = self._result.global_uncertainties.get(p.name)
-            self._params_table.setItem(row, 2, QTableWidgetItem("" if err is None else f"{err:.3g}"))
+            self._params_table.setItem(
+                row, 2, QTableWidgetItem("" if err is None else f"{err:.3g}")
+            )
 
         for p in self._result.fixed_parameters:
             row = self._params_table.rowCount()
             self._params_table.insertRow(row)
-            self._params_table.setItem(row, 0, QTableWidgetItem(f"{get_param_info(p.name).unicode_label()} (fixed)"))
+            self._params_table.setItem(
+                row, 0, QTableWidgetItem(f"{get_param_info(p.name).unicode_label()} (fixed)")
+            )
             self._params_table.setItem(row, 1, QTableWidgetItem(f"{p.value:.6g}"))
             self._params_table.setItem(row, 2, QTableWidgetItem(""))
 
@@ -885,7 +928,9 @@ class GlobalParameterFitWindow(QMainWindow):
             # Backward-compatible restore support: older saved cross-group
             # states may miss newer model parameters (e.g. D_perp). Fill from
             # model defaults before evaluating.
-            missing = [name for name in getattr(self._model, "param_names", []) if name not in kwargs]
+            missing = [
+                name for name in getattr(self._model, "param_names", []) if name not in kwargs
+            ]
             defaults = getattr(self._model, "param_defaults", {})
             for name in missing:
                 if isinstance(defaults, dict) and name in defaults:
@@ -897,7 +942,11 @@ class GlobalParameterFitWindow(QMainWindow):
                     xx = xx.copy()
                     xx.sort()
 
-                if np.isfinite(self._fit_x_min) and np.isfinite(self._fit_x_max) and self._fit_x_max > self._fit_x_min:
+                if (
+                    np.isfinite(self._fit_x_min)
+                    and np.isfinite(self._fit_x_max)
+                    and self._fit_x_max > self._fit_x_min
+                ):
                     mask = (xx >= self._fit_x_min) & (xx <= self._fit_x_max)
                     xx = xx[mask]
 
@@ -906,17 +955,34 @@ class GlobalParameterFitWindow(QMainWindow):
 
                 try:
                     if self._show_components_check.isChecked():
-                        components = self._model.evaluate_components(xx, additive_only=True, **kwargs)
+                        components = self._model.evaluate_components(
+                            xx, additive_only=True, **kwargs
+                        )
                         ordered = self._ordered_components_for_stacking(components)
                         cumulative = np.zeros_like(xx, dtype=float)
-                        component_colors = ["#8ecae6", "#90be6d", "#f4a261", "#e5989b", "#bdb2ff", "#ffd166"]
+                        component_colors = [
+                            "#8ecae6",
+                            "#90be6d",
+                            "#f4a261",
+                            "#e5989b",
+                            "#bdb2ff",
+                            "#ffd166",
+                        ]
                         for cidx, (_name, comp_y) in enumerate(ordered):
                             fill_color = component_colors[cidx % len(component_colors)]
                             comp_fill = np.maximum(np.asarray(comp_y, dtype=float), 0.0)
                             lower = cumulative
                             upper = cumulative + comp_fill
                             ax.fill_between(xx, lower, upper, color=fill_color, alpha=0.3, zorder=1)
-                            ax.plot(xx, upper, linestyle="--", linewidth=0.8, color=fill_color, alpha=0.9, zorder=2)
+                            ax.plot(
+                                xx,
+                                upper,
+                                linestyle="--",
+                                linewidth=0.8,
+                                color=fill_color,
+                                alpha=0.9,
+                                zorder=2,
+                            )
                             cumulative = upper
 
                     yy = self._model.function(xx, **kwargs)
@@ -959,11 +1025,7 @@ class GlobalParameterFitWindow(QMainWindow):
             return
 
         local_param_names = sorted(
-            {
-                p.name
-                for pset in self._result.local_parameters.values()
-                for p in pset
-            }
+            {p.name for pset in self._result.local_parameters.values() for p in pset}
         )
 
         previous_selected = list(self._local_selected_y_names)
@@ -1000,7 +1062,9 @@ class GlobalParameterFitWindow(QMainWindow):
                 xs.append(float(group.group_variable_value))
                 ys.append(float(param.value))
                 err = self._result.local_uncertainties.get(group.group_id, {}).get(pname)
-                es.append(float(err) if err is not None and np.isfinite(err) and err >= 0 else np.nan)
+                es.append(
+                    float(err) if err is not None and np.isfinite(err) and err >= 0 else np.nan
+                )
 
             if not xs:
                 continue
@@ -1024,15 +1088,35 @@ class GlobalParameterFitWindow(QMainWindow):
             shared_x_ax = None
             for idx, (pname, x_arr, y_arr, e_arr) in enumerate(traces):
                 if shared_x_ax is not None:
-                    ax = self._local_figure.add_subplot(num_rows, num_cols, idx + 1, sharex=shared_x_ax)
+                    ax = self._local_figure.add_subplot(
+                        num_rows, num_cols, idx + 1, sharex=shared_x_ax
+                    )
                 else:
                     ax = self._local_figure.add_subplot(num_rows, num_cols, idx + 1)
                     shared_x_ax = ax
                 self._local_axes_tag_map[id(ax)] = pname
-                ax.errorbar(x_arr, y_arr, yerr=e_arr, fmt="o", linestyle="none", color="C0", capsize=2, zorder=6)
+                ax.errorbar(
+                    x_arr,
+                    y_arr,
+                    yerr=e_arr,
+                    fmt="o",
+                    linestyle="none",
+                    color="C0",
+                    capsize=2,
+                    zorder=6,
+                )
                 finite_err = np.isfinite(e_arr) & (e_arr > 0)
                 if np.any(finite_err):
-                    ax.errorbar(x_arr, y_arr, yerr=e_arr, fmt="none", ecolor="gray", capsize=2, elinewidth=1, zorder=5)
+                    ax.errorbar(
+                        x_arr,
+                        y_arr,
+                        yerr=e_arr,
+                        fmt="none",
+                        ecolor="gray",
+                        capsize=2,
+                        elinewidth=1,
+                        zorder=5,
+                    )
                 ax.set_ylabel(self._parameter_label(pname))
                 fit = self._local_model_fits.get(pname)
                 if fit is not None and fit.active and fit.x_key == self._local_group_x_key():
@@ -1059,15 +1143,37 @@ class GlobalParameterFitWindow(QMainWindow):
                 self._local_axes_tag_map[id(ax)] = pname_l
                 self._local_axes_tag_map[id(ax2)] = pname_r
 
-                ax.errorbar(x_l, y_l, yerr=e_l, fmt="o", linestyle="none", color="C0", capsize=2, zorder=6)
+                ax.errorbar(
+                    x_l, y_l, yerr=e_l, fmt="o", linestyle="none", color="C0", capsize=2, zorder=6
+                )
                 finite_l = np.isfinite(e_l) & (e_l > 0)
                 if np.any(finite_l):
-                    ax.errorbar(x_l, y_l, yerr=e_l, fmt="none", ecolor="C0", capsize=2, elinewidth=1, zorder=5)
+                    ax.errorbar(
+                        x_l,
+                        y_l,
+                        yerr=e_l,
+                        fmt="none",
+                        ecolor="C0",
+                        capsize=2,
+                        elinewidth=1,
+                        zorder=5,
+                    )
 
-                ax2.errorbar(x_r, y_r, yerr=e_r, fmt="o", linestyle="none", color="C1", capsize=2, zorder=6)
+                ax2.errorbar(
+                    x_r, y_r, yerr=e_r, fmt="o", linestyle="none", color="C1", capsize=2, zorder=6
+                )
                 finite_r = np.isfinite(e_r) & (e_r > 0)
                 if np.any(finite_r):
-                    ax2.errorbar(x_r, y_r, yerr=e_r, fmt="none", ecolor="C1", capsize=2, elinewidth=1, zorder=5)
+                    ax2.errorbar(
+                        x_r,
+                        y_r,
+                        yerr=e_r,
+                        fmt="none",
+                        ecolor="C1",
+                        capsize=2,
+                        elinewidth=1,
+                        zorder=5,
+                    )
 
                 ax.set_ylabel(self._parameter_label(pname_l), color="C0")
                 ax2.set_ylabel(self._parameter_label(pname_r), color="C1")
@@ -1099,7 +1205,16 @@ class GlobalParameterFitWindow(QMainWindow):
                     )
                     finite_err = np.isfinite(e_arr) & (e_arr > 0)
                     if np.any(finite_err):
-                        ax.errorbar(x_arr, y_arr, yerr=e_arr, fmt="none", ecolor=color, capsize=2, elinewidth=1, zorder=5)
+                        ax.errorbar(
+                            x_arr,
+                            y_arr,
+                            yerr=e_arr,
+                            fmt="none",
+                            ecolor=color,
+                            capsize=2,
+                            elinewidth=1,
+                            zorder=5,
+                        )
                     fit = self._local_model_fits.get(pname)
                     if fit is not None and fit.active and fit.x_key == self._local_group_x_key():
                         for curve in evaluate_parameter_model_fit(fit, num_points=200):
@@ -1143,7 +1258,10 @@ class GlobalParameterFitWindow(QMainWindow):
         for idx, (pname, x_arr, y_arr, e_arr) in enumerate(traces):
             y_out = np.full_like(x_values, np.nan, dtype=float)
             e_out = np.full_like(x_values, np.nan, dtype=float)
-            local = {f"{float(x):.12g}": (float(y), float(e)) for x, y, e in zip(x_arr, y_arr, e_arr, strict=True)}
+            local = {
+                f"{float(x):.12g}": (float(y), float(e))
+                for x, y, e in zip(x_arr, y_arr, e_arr, strict=True)
+            }
             for i, xv in enumerate(x_values):
                 key = f"{float(xv):.12g}"
                 if key in local:
@@ -1159,7 +1277,9 @@ class GlobalParameterFitWindow(QMainWindow):
         if self._result is not None:
             for p in self._result.global_parameters:
                 err = self._result.global_uncertainties.get(p.name, np.nan)
-                err_val = float(err) if err is not None and np.isfinite(err) and err >= 0 else np.nan
+                err_val = (
+                    float(err) if err is not None and np.isfinite(err) and err >= 0 else np.nan
+                )
                 global_cols.append((p.name, float(p.value), err_val))
 
         with open(data_path, "w", encoding="utf-8") as f:
@@ -1240,7 +1360,9 @@ class GlobalParameterFitWindow(QMainWindow):
             if not curves:
                 continue
 
-            fit_path = gle_path.with_name(f"{gle_path.stem}_local_{self._safe_data_name(pname)}.fit")
+            fit_path = gle_path.with_name(
+                f"{gle_path.stem}_local_{self._safe_data_name(pname)}.fit"
+            )
             info = get_param_info(pname)
             with open(fit_path, "w", encoding="utf-8") as f:
                 f.write("! Local parameter model fit curve\n")
@@ -1257,7 +1379,9 @@ class GlobalParameterFitWindow(QMainWindow):
 
         return fit_files
 
-    def _ordered_components_for_stacking(self, components: list[tuple[str, np.ndarray]]) -> list[tuple[str, np.ndarray]]:
+    def _ordered_components_for_stacking(
+        self, components: list[tuple[str, np.ndarray]]
+    ) -> list[tuple[str, np.ndarray]]:
         if not components:
             return []
 
@@ -1289,7 +1413,9 @@ class GlobalParameterFitWindow(QMainWindow):
     def _default_group_label_position(self, ax) -> tuple[float, float]:
         x_min, x_max = ax.get_xlim()
         y_min, y_max = ax.get_ylim()
-        if not (np.isfinite(x_min) and np.isfinite(x_max) and np.isfinite(y_min) and np.isfinite(y_max)):
+        if not (
+            np.isfinite(x_min) and np.isfinite(x_max) and np.isfinite(y_min) and np.isfinite(y_max)
+        ):
             return 0.0, 0.0
         x = float(x_min + 0.02 * (x_max - x_min))
         y = float(y_max - 0.05 * (y_max - y_min))
@@ -1317,7 +1443,9 @@ class GlobalParameterFitWindow(QMainWindow):
         self._plot_annotations = [
             ann
             for ann in self._plot_annotations
-            if not (bool(ann.get("is_group_label")) and str(ann.get("axis_tag", "")) not in valid_tags)
+            if not (
+                bool(ann.get("is_group_label")) and str(ann.get("axis_tag", "")) not in valid_tags
+            )
         ]
         self._suppressed_group_label_tags &= valid_tags
 
@@ -1488,7 +1616,11 @@ class GlobalParameterFitWindow(QMainWindow):
             ax = subplot_axes[idx]
             file_info = file_map.get(group.group_id)
             data_path = file_info.get("data_path") if isinstance(file_info, dict) else None
-            if isinstance(file_info, dict) and data_path is not None and hasattr(ax, "errorbar_from_file"):
+            if (
+                isinstance(file_info, dict)
+                and data_path is not None
+                and hasattr(ax, "errorbar_from_file")
+            ):
                 ax.errorbar_from_file(
                     data_path.name,
                     x_col=1,
@@ -1520,13 +1652,24 @@ class GlobalParameterFitWindow(QMainWindow):
             else:
                 xx, yy = None, None
 
-            if xx is not None and self._show_components_check.isChecked() and self._model is not None:
+            if (
+                xx is not None
+                and self._show_components_check.isChecked()
+                and self._model is not None
+            ):
                 try:
                     kwargs = self._model_kwargs_for_group(group.group_id)
                     components = self._model.evaluate_components(xx, additive_only=True, **kwargs)
                     ordered = self._ordered_components_for_stacking(components)
                     cumulative = np.zeros_like(xx, dtype=float)
-                    component_colors = ["lightblue", "lightgreen", "pink", "lightgray", "cyan", "yellow"]
+                    component_colors = [
+                        "lightblue",
+                        "lightgreen",
+                        "pink",
+                        "lightgray",
+                        "cyan",
+                        "yellow",
+                    ]
                     group_token = self._safe_data_name(group.group_name or group.group_id)
                     for cidx, (_name, comp_y) in enumerate(ordered):
                         fill_color = component_colors[cidx % len(component_colors)]
@@ -1554,7 +1697,12 @@ class GlobalParameterFitWindow(QMainWindow):
                 except KeyError:
                     pass
 
-            if isinstance(file_info, dict) and bool(file_info.get("has_fit", False)) and fit_path is not None and hasattr(ax, "line_from_file"):
+            if (
+                isinstance(file_info, dict)
+                and bool(file_info.get("has_fit", False))
+                and fit_path is not None
+                and hasattr(ax, "line_from_file")
+            ):
                 ax.line_from_file(
                     fit_path.name,
                     x_col=1,
@@ -1611,11 +1759,7 @@ class GlobalParameterFitWindow(QMainWindow):
 
     def _build_local_parameter_gle_figure(self, glp, gle_path: Path):
         local_param_names = sorted(
-            {
-                p.name
-                for pset in self._result.local_parameters.values()
-                for p in pset
-            }
+            {p.name for pset in self._result.local_parameters.values() for p in pset}
         )
         if not local_param_names:
             fig = glp.figure(figsize=(7.0, 4.5))
@@ -1635,7 +1779,9 @@ class GlobalParameterFitWindow(QMainWindow):
                 xs.append(float(group.group_variable_value))
                 ys.append(float(pset[pname].value))
                 err = self._result.local_uncertainties.get(group.group_id, {}).get(pname)
-                es.append(float(err) if err is not None and np.isfinite(err) and err >= 0 else np.nan)
+                es.append(
+                    float(err) if err is not None and np.isfinite(err) and err >= 0 else np.nan
+                )
             if not xs:
                 continue
             x_arr = np.asarray(xs, dtype=float)
@@ -1662,7 +1808,9 @@ class GlobalParameterFitWindow(QMainWindow):
         if plot_mode == "Subplots" and len(traces) > 1:
             num_cols = 1
             num_rows = (len(traces) + num_cols - 1) // num_cols
-            fig, axes = glp.subplots(nrows=num_rows, ncols=num_cols, figsize=(7.2, max(4.8, 2.8 * num_rows)), sharex=True)
+            fig, axes = glp.subplots(
+                nrows=num_rows, ncols=num_cols, figsize=(7.2, max(4.8, 2.8 * num_rows)), sharex=True
+            )
             flat_axes = axes if isinstance(axes, list) else [axes]
             for idx, (pname, x_arr, y_arr, e_arr) in enumerate(traces):
                 ax = flat_axes[idx]
@@ -1679,7 +1827,15 @@ class GlobalParameterFitWindow(QMainWindow):
                         capsize=2,
                     )
                 else:
-                    ax.errorbar(x_arr, y_arr, yerr=e_arr if has_err else None, marker="o", color="black", linestyle="none", capsize=2)
+                    ax.errorbar(
+                        x_arr,
+                        y_arr,
+                        yerr=e_arr if has_err else None,
+                        marker="o",
+                        color="black",
+                        linestyle="none",
+                        capsize=2,
+                    )
                 ax.set_ylabel(self._parameter_label_gle(pname))
                 row = idx // num_cols
                 if row == num_rows - 1:
@@ -1703,7 +1859,13 @@ class GlobalParameterFitWindow(QMainWindow):
                         )
                     else:
                         for curve in evaluate_parameter_model_fit(fit, num_points=200):
-                            ax.plot(curve.x, curve.y, color="red", linewidth=1.5, data_name=f"model_local_{self._safe_data_name(pname)}")
+                            ax.plot(
+                                curve.x,
+                                curve.y,
+                                color="red",
+                                linewidth=1.5,
+                                data_name=f"model_local_{self._safe_data_name(pname)}",
+                            )
                 for ann in self._local_plot_annotations:
                     if str(ann.get("axis_tag", "")) != pname:
                         continue
@@ -1760,7 +1922,13 @@ class GlobalParameterFitWindow(QMainWindow):
                     )
                 else:
                     for curve in evaluate_parameter_model_fit(fit, num_points=200):
-                        ax.plot(curve.x, curve.y, color=color, linewidth=1.2, data_name=f"model_local_{self._safe_data_name(pname)}")
+                        ax.plot(
+                            curve.x,
+                            curve.y,
+                            color=color,
+                            linewidth=1.2,
+                            data_name=f"model_local_{self._safe_data_name(pname)}",
+                        )
         ax.set_xlabel(x_label)
         if self._local_log_x_check.isChecked():
             ax.set_xscale("log")
@@ -1798,6 +1966,7 @@ class GlobalParameterFitWindow(QMainWindow):
 
         try:
             import tempfile
+
             from PySide6.QtGui import QPixmap
 
             dialog = QDialog(self)
@@ -1870,7 +2039,12 @@ class GlobalParameterFitWindow(QMainWindow):
 
         output_path = gle_path.with_suffix(f".{output_format}")
         try:
-            subprocess.run(["gle", "-d", output_format, str(gle_path)], capture_output=True, text=True, check=True)
+            subprocess.run(
+                ["gle", "-d", output_format, str(gle_path)],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
             QMessageBox.information(
                 self,
                 "Export Successful",
@@ -1881,7 +2055,9 @@ class GlobalParameterFitWindow(QMainWindow):
             QMessageBox.warning(self, "GLE compilation failed", exc.stderr or str(exc))
             self._show_gle_preview(output_path)
 
-    def _export_plot_gle(self, *, title: str, default_name: str, builder, output_format: str) -> None:
+    def _export_plot_gle(
+        self, *, title: str, default_name: str, builder, output_format: str
+    ) -> None:
         if self._result is None or self._parameter_name is None:
             QMessageBox.information(self, "No result", "Run a cross-group fit first.")
             return
@@ -1905,10 +2081,14 @@ class GlobalParameterFitWindow(QMainWindow):
             fig.savefig(str(requested_gle_path), folder=True)
             self._compile_and_preview_gle(gle_path, output_format)
         except ImportError:
-            QMessageBox.warning(self, "gleplot not available", "Install gleplot to export GLE plots.")
+            QMessageBox.warning(
+                self, "gleplot not available", "Install gleplot to export GLE plots."
+            )
         except TypeError as exc:
             if "folder" in str(exc):
-                QMessageBox.warning(self, "gleplot update required", "Please update gleplot to a newer version.")
+                QMessageBox.warning(
+                    self, "gleplot update required", "Please update gleplot to a newer version."
+                )
                 return
             QMessageBox.warning(self, "Export failed", f"Could not export GLE: {exc}")
         except Exception as exc:

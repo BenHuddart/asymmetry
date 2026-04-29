@@ -639,6 +639,7 @@ def test_wim_grouping_dialog_only_modifies_bunching_payload(qapp: QApplication) 
 # group_names in payload
 # ---------------------------------------------------------------------------
 
+
 def test_current_grouping_payload_contains_group_names_key(qapp: QApplication) -> None:
     dialog = GroupingDialog([_dataset_with_histograms()])
     payload = dialog._current_grouping_payload()
@@ -712,6 +713,7 @@ def test_detector_layout_prefers_saved_instrument(
 # .grp format: group_name round-trip
 # ---------------------------------------------------------------------------
 
+
 def test_grp_round_trip_with_group_names() -> None:
     payload = {
         "groups": {1: [1, 2], 2: [3, 4]},
@@ -771,10 +773,12 @@ def test_serialize_grp_no_group_names_no_spurious_lines() -> None:
 # "Detector Layout…" button exists in the GroupingDialog UI
 # ---------------------------------------------------------------------------
 
+
 def test_detector_layout_button_exists(qapp: QApplication) -> None:
     dialog = GroupingDialog([_dataset_with_histograms()])
     # The button is connected to _on_detector_layout; verify it is present.
     from PySide6.QtWidgets import QPushButton
+
     buttons = dialog.findChildren(QPushButton)
     labels = [b.text() for b in buttons]
     assert any("Detector Layout" in lbl for lbl in labels)

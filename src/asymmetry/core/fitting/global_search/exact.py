@@ -46,7 +46,9 @@ class ExactStructureFitter:
             base_by_run=base_by_run,
             seed_by_run=candidate.initial_params_by_run,
         )
-        global_names, local_names, _fixed_names = compile_structure_to_legacy_roles(candidate.structure)
+        global_names, local_names, _fixed_names = compile_structure_to_legacy_roles(
+            candidate.structure
+        )
         results_by_run, global_parameters = self._fit_engine.global_fit(
             datasets,
             candidate.structure.model.function,
@@ -70,4 +72,3 @@ class ExactStructureFitter:
             score=score,
             initial_params_by_run=initial_params_by_run,
         )
-

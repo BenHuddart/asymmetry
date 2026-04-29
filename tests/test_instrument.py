@@ -2,24 +2,21 @@
 
 from __future__ import annotations
 
-import math
 import pytest
 
 from asymmetry.core.instrument import (
     INSTRUMENT_NAMES,
-    InstrumentLayout,
-    BankLayout,
     DetectorSegment,
-    GroupDefinition,
+    InstrumentLayout,
     PresetGrouping,
     detect_instrument,
     get_instrument_layout,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _all_detector_ids(layout: InstrumentLayout) -> list[int]:
     """Return all detector IDs across all banks of *layout*."""
@@ -30,7 +27,7 @@ def _all_detector_ids(layout: InstrumentLayout) -> list[int]:
     return ids
 
 
-def _preset_all_ids(preset: "PresetGrouping") -> list[int]:
+def _preset_all_ids(preset: PresetGrouping) -> list[int]:
     """Return all detector IDs across all groups in *preset* (may have duplicates)."""
     ids = []
     for gdef in preset.groups.values():
@@ -41,6 +38,7 @@ def _preset_all_ids(preset: "PresetGrouping") -> list[int]:
 # ---------------------------------------------------------------------------
 # detect_instrument
 # ---------------------------------------------------------------------------
+
 
 class TestDetectInstrument:
     def test_64_returns_hifi(self):
@@ -53,13 +51,9 @@ class TestDetectInstrument:
         assert detect_instrument(64, source_file="/tmp/emu000123.nxs") == "EMU"
 
     def test_psi_metadata_does_not_select_isis_layout(self):
+        assert detect_instrument(64, metadata={"facility": "PSI", "instrument": "HIFI"}) is None
         assert (
-            detect_instrument(64, metadata={"facility": "PSI", "instrument": "HIFI"})
-            is None
-        )
-        assert (
-            detect_instrument(64, metadata={"psi_format": "psi-bin", "instrument": "MuSR"})
-            is None
+            detect_instrument(64, metadata={"psi_format": "psi-bin", "instrument": "MuSR"}) is None
         )
 
     def test_96_returns_emu(self):
@@ -81,6 +75,7 @@ class TestDetectInstrument:
 # get_instrument_layout
 # ---------------------------------------------------------------------------
 
+
 class TestGetInstrumentLayout:
     def test_returns_layout_for_each_known_name(self):
         for name in INSTRUMENT_NAMES:
@@ -101,6 +96,7 @@ class TestGetInstrumentLayout:
 # ---------------------------------------------------------------------------
 # HiFi layout
 # ---------------------------------------------------------------------------
+
 
 class TestHiFiLayout:
     @pytest.fixture(scope="class")
@@ -213,6 +209,7 @@ class TestHiFiLayout:
 # MuSR layout
 # ---------------------------------------------------------------------------
 
+
 class TestMuSRLayout:
     @pytest.fixture(scope="class")
     def layout(self):
@@ -289,6 +286,7 @@ class TestMuSRLayout:
 # ---------------------------------------------------------------------------
 # EMU layout
 # ---------------------------------------------------------------------------
+
 
 class TestEMULayout:
     @pytest.fixture(scope="class")
@@ -423,7 +421,9 @@ class TestEMULayout:
         """Py and Px halves overlap by one octant (24 detectors) per adjacent pair."""
         preset = layout.presets["Vector Polarization"]
         py_top = set(next(g.detector_ids for g in preset.groups.values() if g.name == "Py Top"))
-        py_bottom = set(next(g.detector_ids for g in preset.groups.values() if g.name == "Py Bottom"))
+        py_bottom = set(
+            next(g.detector_ids for g in preset.groups.values() if g.name == "Py Bottom")
+        )
         px_right = set(next(g.detector_ids for g in preset.groups.values() if g.name == "Px Right"))
         px_left = set(next(g.detector_ids for g in preset.groups.values() if g.name == "Px Left"))
 
@@ -440,7 +440,9 @@ class TestEMULayout:
     def test_vector_polarization_pz_groups_overlap_transverse_groups(self, layout):
         """Pz groups intentionally overlap Px/Py groups for vector decomposition."""
         preset = layout.presets["Vector Polarization"]
-        pz_forward = set(next(g.detector_ids for g in preset.groups.values() if g.name == "Pz Forward"))
+        pz_forward = set(
+            next(g.detector_ids for g in preset.groups.values() if g.name == "Pz Forward")
+        )
         py_up = set(next(g.detector_ids for g in preset.groups.values() if g.name == "Py Top"))
         px_right = set(next(g.detector_ids for g in preset.groups.values() if g.name == "Px Right"))
 
@@ -464,6 +466,7 @@ class TestEMULayout:
 # DetectorSegment helpers
 # ---------------------------------------------------------------------------
 
+
 class TestDetectorSegment:
     def test_angle_start_end(self):
         seg = DetectorSegment(
@@ -482,6 +485,7 @@ class TestDetectorSegment:
 # ---------------------------------------------------------------------------
 # InstrumentLayout helpers
 # ---------------------------------------------------------------------------
+
 
 class TestInstrumentLayoutHelpers:
     def test_all_segments_returns_all(self):

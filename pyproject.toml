@@ -72,8 +72,25 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP"]
+ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings are intentional.
 
 [tool.ruff.lint.per-file-ignores]
+"src/asymmetry/core/fitting/composite.py" = ["N803"]  # Physics parameter names (A, Lambda, Delta)
+"src/asymmetry/core/fitting/diffusion.py" = ["N802", "N803"]  # Physics notation (nD, D_nD)
 "src/asymmetry/core/fitting/models.py" = ["N803"]  # Physics parameter names (A0, Lambda, Delta)
-"src/asymmetry/core/fitting/diffusion.py" = ["N803"]  # Physics parameter names (D_nD, D_perp)
+"src/asymmetry/core/fitting/muon_fluorine/polarization.py" = ["N803"]  # Physics parameter names (r_muF)
+"src/asymmetry/core/fitting/parameter_models.py" = ["N803", "N806"]  # Physics parameter names (Tc, B0, D_2D)
 "src/asymmetry/core/fitting/sc/models.py" = ["N803"]  # Physics parameter names (Tc)
+"src/asymmetry/core/project/schema.py" = ["N818"]  # Public API exception class predates the suffix rule
+"src/asymmetry/gui/panels/fit_function_builder.py" = ["N802", "N815"]  # Qt-compatible shim names
+"src/asymmetry/gui/panels/model_fit_dialog.py" = ["N802", "N815"]  # Qt-compatible shim names
+"src/asymmetry/gui/widgets/detector_schematic.py" = ["N802"]  # Qt sizeHint override
+"src/asymmetry/gui/windows/fit_wizard_window.py" = ["N802"]  # Qt closeEvent override
+"tests/test_fit_panel_tabs.py" = ["N802"]  # Qt-style test doubles
+"tests/test_fit_parameters_panel.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/test_fitting_engine.py" = ["N803"]  # Physics-style model parameter names
+"tests/test_global_parameter_fit_window.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/test_mainwindow_additional.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/test_nexus_loader.py" = ["E402"]  # pytest.importorskip before optional h5py import
+"tests/test_plot_panel.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/test_project_schema.py" = ["E402", "N802"]  # Split module-level GUI fixtures and Qt test doubles

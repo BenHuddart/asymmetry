@@ -11,7 +11,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.instrument import INSTRUMENT_NAMES, get_instrument_layout
-from asymmetry.gui.windows.detector_layout_dialog import DetectorLayoutDialog, _MAX_GROUPS
+from asymmetry.gui.windows.detector_layout_dialog import _MAX_GROUPS, DetectorLayoutDialog
 
 
 @pytest.fixture(scope="module")
@@ -29,6 +29,7 @@ def _default_groups() -> dict[int, list[int]]:
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
+
 
 class TestConstruction:
     def test_creates_for_hifi(self, qapp):
@@ -76,8 +77,7 @@ class TestConstruction:
         layout = get_instrument_layout("HiFi")
         dlg = DetectorLayoutDialog(layout, groups={})
         combo_texts = [
-            dlg._instrument_combo.itemText(i)
-            for i in range(dlg._instrument_combo.count())
+            dlg._instrument_combo.itemText(i) for i in range(dlg._instrument_combo.count())
         ]
         for name in INSTRUMENT_NAMES:
             assert name in combo_texts
@@ -85,10 +85,7 @@ class TestConstruction:
     def test_preset_combo_populated_for_hifi(self, qapp):
         layout = get_instrument_layout("HiFi")
         dlg = DetectorLayoutDialog(layout, groups={})
-        preset_texts = [
-            dlg._preset_combo.itemText(i)
-            for i in range(dlg._preset_combo.count())
-        ]
+        preset_texts = [dlg._preset_combo.itemText(i) for i in range(dlg._preset_combo.count())]
         assert "Longitudinal" in preset_texts
 
     def test_instrument_combo_shows_current_instrument(self, qapp):
@@ -102,6 +99,7 @@ class TestConstruction:
 # ---------------------------------------------------------------------------
 # Group name edits prefilled from constructor
 # ---------------------------------------------------------------------------
+
 
 class TestGroupNamesPrefill:
     def test_name_edits_prefilled(self, qapp):
@@ -129,6 +127,7 @@ class TestGroupNamesPrefill:
 # ---------------------------------------------------------------------------
 # Preset application
 # ---------------------------------------------------------------------------
+
 
 class TestPresetApplication:
     def test_apply_longitudinal_preset_hifi(self, qapp):
@@ -197,10 +196,7 @@ class TestPresetApplication:
         dlg = DetectorLayoutDialog(layout, groups={})
         # Switch instrument to EMU
         dlg._instrument_combo.setCurrentText("EMU")
-        preset_texts = [
-            dlg._preset_combo.itemText(i)
-            for i in range(dlg._preset_combo.count())
-        ]
+        preset_texts = [dlg._preset_combo.itemText(i) for i in range(dlg._preset_combo.count())]
         assert "Vector Polarization" in preset_texts
         assert "Longitudinal" in preset_texts
 
@@ -238,6 +234,7 @@ class TestPresetApplication:
 # ---------------------------------------------------------------------------
 # get_result contract
 # ---------------------------------------------------------------------------
+
 
 class TestGetResult:
     def test_result_keys_present(self, qapp):
@@ -299,6 +296,7 @@ class TestGetResult:
 # ---------------------------------------------------------------------------
 # Detector toggle
 # ---------------------------------------------------------------------------
+
 
 class TestDetectorToggle:
     def test_on_detector_toggled_adds_to_active_group(self, qapp):

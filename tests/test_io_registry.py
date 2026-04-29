@@ -24,7 +24,9 @@ class _DummyLoader(BaseLoader):
         )
 
 
-def test_registry_register_get_loader_and_supported_extensions(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_registry_register_get_loader_and_supported_extensions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(LoaderRegistry, "_loaders", {})
     LoaderRegistry.register(_DummyLoader)
 

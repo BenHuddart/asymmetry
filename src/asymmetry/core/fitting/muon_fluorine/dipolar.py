@@ -29,7 +29,9 @@ _SY = 0.5 * _SIGMA_Y
 _SZ = 0.5 * _SIGMA_Z
 
 
-def _kron3(a: NDArray[np.complex128], b: NDArray[np.complex128], c: NDArray[np.complex128]) -> NDArray[np.complex128]:
+def _kron3(
+    a: NDArray[np.complex128], b: NDArray[np.complex128], c: NDArray[np.complex128]
+) -> NDArray[np.complex128]:
     return np.kron(np.kron(a, b), c)
 
 
@@ -84,7 +86,7 @@ def omega_dipolar_rad_per_us(
 
     gamma_i = _gamma_rad_per_s_per_t(gamma_i_mhz_per_t)
     gamma_j = _gamma_rad_per_s_per_t(gamma_j_mhz_per_t)
-    omega_rad_per_s = MU_0_OVER_4PI * gamma_i * gamma_j * HBAR_J_S / (r_m ** 3)
+    omega_rad_per_s = MU_0_OVER_4PI * gamma_i * gamma_j * HBAR_J_S / (r_m**3)
     return omega_rad_per_s * RAD_PER_S_TO_RAD_PER_US
 
 

@@ -57,7 +57,8 @@ def _dataset_with_run(
         run_number=run_number,
         histograms=[h0, h1],
         metadata={"run_number": run_number},
-        grouping=grouping or {
+        grouping=grouping
+        or {
             "groups": {1: [1], 2: [2]},
             "forward_group": 1,
             "backward_group": 2,
@@ -73,7 +74,11 @@ def _dataset_with_run(
     return ds
 
 
-def _click_row(panel: DataBrowserPanel, row: int, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier) -> None:
+def _click_row(
+    panel: DataBrowserPanel,
+    row: int,
+    modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier,
+) -> None:
     item = panel._table.item(row, 0)
     assert item is not None
     rect = panel._table.visualItemRect(item)
@@ -296,7 +301,9 @@ def test_context_menu_shows_separate_for_combined_dataset(qapp: QApplication) ->
     assert "Remove Entry" in action_texts
 
 
-def test_context_menu_shows_form_group_for_combined_and_regular_selection(qapp: QApplication) -> None:
+def test_context_menu_shows_form_group_for_combined_and_regular_selection(
+    qapp: QApplication,
+) -> None:
     panel = DataBrowserPanel()
     d1 = _dataset_with_run(53)
     d2 = _dataset_with_run(54, t_shift=0.1)
@@ -355,7 +362,9 @@ def test_extra_column_roundtrip_in_state(qapp: QApplication) -> None:
     panel.add_dataset(ds)
     panel.restore_state(state)
 
-    header_labels = [panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())]
+    header_labels = [
+        panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())
+    ]
     assert "nexus_fields.sample.temperature" in header_labels
 
 
@@ -367,7 +376,9 @@ def test_orientation_extra_column_uses_friendly_header(qapp: QApplication) -> No
 
     panel.add_extra_column("nexus_fields.sample.shape")
 
-    header_labels = [panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())]
+    header_labels = [
+        panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())
+    ]
     assert "Orientation" in header_labels
 
 
@@ -380,7 +391,9 @@ def test_run_info_synthetic_extra_columns_render_values(qapp: QApplication) -> N
     panel.add_extra_column("run_info.histograms")
     panel.add_extra_column("run_info.counts_mev")
 
-    labels = [panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())]
+    labels = [
+        panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())
+    ]
     points_col = labels.index("Points")
     hist_col = labels.index("Histograms")
     mev_col = labels.index("Counts (MEv)")
@@ -487,7 +500,9 @@ def test_separate_inserts_at_combined_dataset_position(qapp: QApplication) -> No
     assert row_2_item.data(Qt.ItemDataRole.UserRole) == 73
 
 
-def test_form_data_group_accepts_combined_dataset(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_form_data_group_accepts_combined_dataset(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
     panel = DataBrowserPanel()
     d1 = _dataset_with_run(74)
     d2 = _dataset_with_run(75, t_shift=0.1)
@@ -577,7 +592,9 @@ def test_separate_combined_inside_group_replaces_group_member_runs(qapp: QApplic
     assert combined_rn not in panel._datasets
 
 
-def test_coadd_blocks_different_grouping(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_coadd_blocks_different_grouping(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
     panel = DataBrowserPanel()
     d1 = _dataset_with_run(101)
     d2 = _dataset_with_run(
@@ -618,7 +635,9 @@ def test_coadd_blocks_different_grouping(qapp: QApplication, monkeypatch: pytest
     assert not any(rn < 0 for rn in panel._datasets)
 
 
-def test_coadd_blocks_mixed_wim_and_non_wim(qapp: QApplication, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_coadd_blocks_mixed_wim_and_non_wim(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
     panel = DataBrowserPanel()
     d1 = _dataset_with_run(111, source_file="/tmp/run_111.wim")
     d2 = _dataset_with_run(112, source_file="/tmp/run_112.nxs")
@@ -853,7 +872,9 @@ def test_send_to_group_action_moves_selected_runs(qapp: QApplication) -> None:
     assert menu is not None
     send_action = next((a for a in menu.actions() if a.text() == "Send to Group"), None)
     assert send_action is not None and send_action.menu() is not None
-    target_action = next((a for a in send_action.menu().actions() if a.text() == "Target Group"), None)
+    target_action = next(
+        (a for a in send_action.menu().actions() if a.text() == "Target Group"), None
+    )
     assert target_action is not None
     target_action.trigger()
 
@@ -903,7 +924,9 @@ def test_remove_runs_from_group_moves_to_top_level(qapp: QApplication) -> None:
     assert 171 not in panel._groups[gid].member_run_numbers
 
 
-def test_default_group_name_detects_near_constant_temperature_with_tolerance(qapp: QApplication) -> None:
+def test_default_group_name_detects_near_constant_temperature_with_tolerance(
+    qapp: QApplication,
+) -> None:
     panel = DataBrowserPanel()
     d1 = _dataset(201)
     d2 = _dataset(202)

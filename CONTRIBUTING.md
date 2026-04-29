@@ -20,6 +20,12 @@ Thank you for your interest in contributing to Asymmetry!
    python -m pytest tests/
    ```
 
+4. Run the repository harness before larger pull requests:
+   ```bash
+   python tools/harness.py validate
+   ```
+   If `.venv` exists, the harness automatically uses that interpreter.
+
 ## Code Style
 
 - Follow PEP 8 guidelines
@@ -28,6 +34,10 @@ Thank you for your interest in contributing to Asymmetry!
   ```bash
   ruff check src/ tests/
   ```
+- The agent/CI harness runs the same lint with:
+  ```bash
+  python tools/harness.py lint
+  ```
 
 ## Testing
 
@@ -35,6 +45,10 @@ Thank you for your interest in contributing to Asymmetry!
 - Ensure all tests pass before submitting:
   ```bash
    python -m pytest tests/ --cov=src/asymmetry
+  ```
+- For focused iteration, pass pytest arguments through the harness:
+  ```bash
+  python tools/harness.py test -- tests/test_transforms.py
   ```
 - Aim for comprehensive test coverage (current: 71%)
 - Use pytest fixtures for common test setup

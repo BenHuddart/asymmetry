@@ -45,13 +45,13 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterModelFit,
     ParameterModelFitResult,
 )
-from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
 from asymmetry.gui.export_paths import (
     default_export_path,
     remember_export_path,
     resolve_gle_export_paths,
 )
+from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 
 
@@ -386,9 +386,15 @@ class FitParametersPanel(QWidget):
                             run_label=str(entry.get("run_label") or entry.get("run_number", 0)),
                             field=float(entry.get("field", 0.0)),
                             temperature=float(entry.get("temperature", 0.0)),
-                            values={str(k): float(v) for k, v in dict(entry.get("values", {})).items()},
-                            errors={str(k): float(v) for k, v in dict(entry.get("errors", {})).items()},
-                            combined_from=[int(v) for v in entry.get("combined_from", [])] if entry.get("combined_from") else None,
+                            values={
+                                str(k): float(v) for k, v in dict(entry.get("values", {})).items()
+                            },
+                            errors={
+                                str(k): float(v) for k, v in dict(entry.get("errors", {})).items()
+                            },
+                            combined_from=[int(v) for v in entry.get("combined_from", [])]
+                            if entry.get("combined_from")
+                            else None,
                         )
                     )
                 except Exception:
@@ -407,7 +413,9 @@ class FitParametersPanel(QWidget):
             self._varying_params = self._detect_varying_parameters(self._rows)
 
         inferred_x = state.get("inferred_x_key", "field")
-        self._inferred_x_key = inferred_x if inferred_x in {"field", "temperature", "run"} else "field"
+        self._inferred_x_key = (
+            inferred_x if inferred_x in {"field", "temperature", "run"} else "field"
+        )
 
         selected_y_state = state.get("selected_y_params", [])
         if isinstance(selected_y_state, list):
@@ -458,10 +466,18 @@ class FitParametersPanel(QWidget):
         self._plot_annotations = restored_annotations
 
         self._model_fits = self._deserialize_model_fits(state.get("model_fits", {}))
-        self._group_fit_results = self._deserialize_group_fit_results(state.get("group_fit_results", {}))
-        self._active_group_id = state.get("active_group_id") if isinstance(state.get("active_group_id"), str) else None
-        self._last_cross_group_fit = self._deserialize_last_cross_group_fit(state.get("last_cross_group_fit"))
-        self._cross_group_fit_configs = self._deserialize_cross_group_fit_configs(state.get("cross_group_fit_configs", {}))
+        self._group_fit_results = self._deserialize_group_fit_results(
+            state.get("group_fit_results", {})
+        )
+        self._active_group_id = (
+            state.get("active_group_id") if isinstance(state.get("active_group_id"), str) else None
+        )
+        self._last_cross_group_fit = self._deserialize_last_cross_group_fit(
+            state.get("last_cross_group_fit")
+        )
+        self._cross_group_fit_configs = self._deserialize_cross_group_fit_configs(
+            state.get("cross_group_fit_configs", {})
+        )
         self._rebuild_group_buttons()
 
         selected_group_ids = state.get("selected_group_ids", [])
@@ -525,7 +541,9 @@ class FitParametersPanel(QWidget):
                     temperature=float(meta.get("temperature", 0.0)),
                     values=values,
                     errors=errors,
-                    combined_from=[int(v) for v in meta.get("combined_from", [])] if meta.get("combined_from") else None,
+                    combined_from=[int(v) for v in meta.get("combined_from", [])]
+                    if meta.get("combined_from")
+                    else None,
                 )
             )
 
@@ -539,13 +557,16 @@ class FitParametersPanel(QWidget):
             for fit_result, _ in results_dict.values():
                 if fit_result.success and fit_result.uncertainties:
                     for pname in global_param_names:
-                        if pname in fit_result.uncertainties and pname not in global_param_uncertainties:
+                        if (
+                            pname in fit_result.uncertainties
+                            and pname not in global_param_uncertainties
+                        ):
                             global_param_uncertainties[pname] = fit_result.uncertainties[pname]
                     if global_param_uncertainties.keys() >= global_param_names:
                         break
 
         gid = str(group_id).strip() if group_id else "__ungrouped__"
-        gname = (str(group_name).strip() if group_name else "Ungrouped")
+        gname = str(group_name).strip() if group_name else "Ungrouped"
         varying = self._detect_varying_parameters(rows)
         inferred_x = self._infer_x_key(rows)
         # A newly completed asymmetry fit replaces prior per-group trend/model-fit
@@ -557,7 +578,9 @@ class FitParametersPanel(QWidget):
             group_id=gid,
             group_name=gname,
             rows=rows,
-            global_params=self._copy_parameter_set(global_params) if global_params is not None else None,
+            global_params=self._copy_parameter_set(global_params)
+            if global_params is not None
+            else None,
             varying_params=varying,
             inferred_x_key=inferred_x,
             model_fits=model_fits,
@@ -580,7 +603,9 @@ class FitParametersPanel(QWidget):
             group_id=current.group_id,
             group_name=current.group_name,
             rows=list(self._rows),
-            global_params=self._copy_parameter_set(self._global_params) if self._global_params is not None else None,
+            global_params=self._copy_parameter_set(self._global_params)
+            if self._global_params is not None
+            else None,
             varying_params=list(self._varying_params),
             inferred_x_key=self._inferred_x_key,
             model_fits=dict(self._model_fits),
@@ -617,7 +642,9 @@ class FitParametersPanel(QWidget):
             button.clicked.connect(self._on_group_button_clicked)
             button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             button.customContextMenuRequested.connect(
-                lambda pos, gid=group.group_id, b=button: self._show_group_button_context_menu(gid, b, pos)
+                lambda pos, gid=group.group_id, b=button: self._show_group_button_context_menu(
+                    gid, b, pos
+                )
             )
             self._group_tabs_layout.addWidget(button)
             self._group_button_map[group.group_id] = button
@@ -706,8 +733,7 @@ class FitParametersPanel(QWidget):
                 # Active group: included in global fit and additionally marked
                 # as currently selected via a stronger blue border.
                 button.setStyleSheet(
-                    base +
-                    "QPushButton {"
+                    base + "QPushButton {"
                     " font-weight: 700;"
                     " border: 2px solid #1f6feb;"
                     " background: #fff4cc;"
@@ -723,8 +749,7 @@ class FitParametersPanel(QWidget):
             elif gid in selected_ids:
                 # Included for global fit but not currently selected.
                 button.setStyleSheet(
-                    base +
-                    "QPushButton {"
+                    base + "QPushButton {"
                     " font-weight: 500;"
                     " border: 1px solid #d29922;"
                     " background: #fff9db;"
@@ -739,8 +764,7 @@ class FitParametersPanel(QWidget):
                 )
             else:
                 button.setStyleSheet(
-                    base +
-                    "QPushButton {"
+                    base + "QPushButton {"
                     " font-weight: 500;"
                     " border: 1px solid #d0d7de;"
                     " background: #f3f4f6;"
@@ -771,7 +795,11 @@ class FitParametersPanel(QWidget):
             clicked_button = self._group_button_map[clicked_gid]
             # Shift+click toggles whether a group is included for global fit,
             # but does not change which group is currently selected.
-            if shift_pressed and not clicked_button.isChecked() and clicked_gid == self._active_group_id:
+            if (
+                shift_pressed
+                and not clicked_button.isChecked()
+                and clicked_gid == self._active_group_id
+            ):
                 clicked_button.setChecked(True)
             elif clicked_button.isChecked() and not shift_pressed:
                 self._active_group_id = clicked_gid
@@ -793,11 +821,19 @@ class FitParametersPanel(QWidget):
             self._sync_active_group_state()
         previous_selected_y = list(self._selected_y_param_names) or self._selected_y_parameters()
         selected_group_ids = self._selected_group_ids_from_buttons()
-        if not selected_group_ids and self._active_group_id and self._active_group_id in self._group_fit_results:
+        if (
+            not selected_group_ids
+            and self._active_group_id
+            and self._active_group_id in self._group_fit_results
+        ):
             selected_group_ids = [self._active_group_id]
             self._set_selected_group_ids(selected_group_ids, emit=False)
 
-        selected_groups = [self._group_fit_results[gid] for gid in selected_group_ids if gid in self._group_fit_results]
+        selected_groups = [
+            self._group_fit_results[gid]
+            for gid in selected_group_ids
+            if gid in self._group_fit_results
+        ]
         if not selected_groups:
             self._rows = []
             self._varying_params = []
@@ -821,13 +857,21 @@ class FitParametersPanel(QWidget):
             self._active_group_id = group.group_id
             self._rows = list(group.rows)
             self._varying_params = list(group.varying_params)
-            self._global_params = self._copy_parameter_set(group.global_params) if group.global_params is not None else None
+            self._global_params = (
+                self._copy_parameter_set(group.global_params)
+                if group.global_params is not None
+                else None
+            )
             self._global_param_uncertainties = dict(group.global_param_uncertainties)
             self._inferred_x_key = group.inferred_x_key
             self._model_fits = dict(group.model_fits)
             self._plot_annotations = list(group.plot_annotations)
         else:
-            active_gid = self._active_group_id if self._active_group_id in selected_group_ids else selected_group_ids[0]
+            active_gid = (
+                self._active_group_id
+                if self._active_group_id in selected_group_ids
+                else selected_group_ids[0]
+            )
             active_group = self._group_fit_results.get(active_gid)
             if active_group is None:
                 active_group = selected_groups[0]
@@ -838,7 +882,11 @@ class FitParametersPanel(QWidget):
             self._active_group_id = active_gid
             self._rows = list(active_group.rows)
             self._varying_params = list(active_group.varying_params)
-            self._global_params = self._copy_parameter_set(active_group.global_params) if active_group.global_params is not None else None
+            self._global_params = (
+                self._copy_parameter_set(active_group.global_params)
+                if active_group.global_params is not None
+                else None
+            )
             self._global_param_uncertainties = dict(active_group.global_param_uncertainties)
             self._inferred_x_key = active_group.inferred_x_key
             self._model_fits = dict(active_group.model_fits)
@@ -1028,7 +1076,9 @@ class FitParametersPanel(QWidget):
                         "fixed": bool(p.fixed),
                     }
                     for p in group.global_params
-                ] if group.global_params is not None else None,
+                ]
+                if group.global_params is not None
+                else None,
                 "rows": [
                     {
                         "run_number": int(row.run_number),
@@ -1037,7 +1087,9 @@ class FitParametersPanel(QWidget):
                         "temperature": float(row.temperature),
                         "values": {k: float(v) for k, v in row.values.items()},
                         "errors": {k: float(v) for k, v in row.errors.items()},
-                        "combined_from": [int(v) for v in row.combined_from] if row.combined_from else None,
+                        "combined_from": [int(v) for v in row.combined_from]
+                        if row.combined_from
+                        else None,
                     }
                     for row in group.rows
                 ],
@@ -1053,7 +1105,9 @@ class FitParametersPanel(QWidget):
                     }
                     for ann in group.plot_annotations
                 ],
-                "global_param_uncertainties": {k: float(v) for k, v in group.global_param_uncertainties.items()},
+                "global_param_uncertainties": {
+                    k: float(v) for k, v in group.global_param_uncertainties.items()
+                },
             }
         return out
 
@@ -1080,12 +1134,22 @@ class FitParametersPanel(QWidget):
                     rows.append(
                         _FitRow(
                             run_number=int(row_entry.get("run_number", 0)),
-                            run_label=str(row_entry.get("run_label", row_entry.get("run_number", ""))),
+                            run_label=str(
+                                row_entry.get("run_label", row_entry.get("run_number", ""))
+                            ),
                             field=float(row_entry.get("field", 0.0)),
                             temperature=float(row_entry.get("temperature", 0.0)),
-                            values={str(k): float(v) for k, v in dict(row_entry.get("values", {})).items()},
-                            errors={str(k): float(v) for k, v in dict(row_entry.get("errors", {})).items()},
-                            combined_from=[int(v) for v in row_entry.get("combined_from", [])] if row_entry.get("combined_from") else None,
+                            values={
+                                str(k): float(v)
+                                for k, v in dict(row_entry.get("values", {})).items()
+                            },
+                            errors={
+                                str(k): float(v)
+                                for k, v in dict(row_entry.get("errors", {})).items()
+                            },
+                            combined_from=[int(v) for v in row_entry.get("combined_from", [])]
+                            if row_entry.get("combined_from")
+                            else None,
                         )
                     )
                 except Exception:
@@ -1141,7 +1205,9 @@ class FitParametersPanel(QWidget):
                 group_name=str(entry.get("group_name", gid)),
                 rows=rows,
                 global_params=global_params,
-                varying_params=[str(v) for v in entry.get("varying_params", []) if isinstance(v, str)],
+                varying_params=[
+                    str(v) for v in entry.get("varying_params", []) if isinstance(v, str)
+                ],
                 inferred_x_key=_normalize_x_key(entry.get("inferred_x_key", "run")),
                 model_fits=model_fits,
                 plot_annotations=plot_annotations,
@@ -1374,7 +1440,9 @@ class FitParametersPanel(QWidget):
             self._y_selector_table.setItem(idx, 0, name_item)
 
             fit_button = QPushButton("Model Fit")
-            fit_button.clicked.connect(lambda _checked=False, p=name: self._open_model_fit_dialog(p))
+            fit_button.clicked.connect(
+                lambda _checked=False, p=name: self._open_model_fit_dialog(p)
+            )
             self._y_selector_table.setCellWidget(idx, 1, fit_button)
 
             log_check = QCheckBox("log")
@@ -1725,15 +1793,27 @@ class FitParametersPanel(QWidget):
             if not isinstance(key, str) or not isinstance(config, dict):
                 continue
             out[key] = {
-                "model": dict(config.get("model", {})) if isinstance(config.get("model"), dict) else {},
-                "fit_x_min": float(config.get("fit_x_min")) if isinstance(config.get("fit_x_min"), (int, float)) else None,
-                "fit_x_max": float(config.get("fit_x_max")) if isinstance(config.get("fit_x_max"), (int, float)) else None,
+                "model": dict(config.get("model", {}))
+                if isinstance(config.get("model"), dict)
+                else {},
+                "fit_x_min": float(config.get("fit_x_min"))
+                if isinstance(config.get("fit_x_min"), (int, float))
+                else None,
+                "fit_x_max": float(config.get("fit_x_max"))
+                if isinstance(config.get("fit_x_max"), (int, float))
+                else None,
                 "parameter_rows": [
                     {
                         "name": str(row.get("name", "")),
-                        "initial": float(row.get("initial", 0.0)) if isinstance(row.get("initial"), (int, float)) else 0.0,
-                        "min": float(row.get("min", -float("inf"))) if isinstance(row.get("min"), (int, float)) else -float("inf"),
-                        "max": float(row.get("max", float("inf"))) if isinstance(row.get("max"), (int, float)) else float("inf"),
+                        "initial": float(row.get("initial", 0.0))
+                        if isinstance(row.get("initial"), (int, float))
+                        else 0.0,
+                        "min": float(row.get("min", -float("inf")))
+                        if isinstance(row.get("min"), (int, float))
+                        else -float("inf"),
+                        "max": float(row.get("max", float("inf")))
+                        if isinstance(row.get("max"), (int, float))
+                        else float("inf"),
                         "type": str(row.get("type", "Global")),
                     }
                     for row in config.get("parameter_rows", [])
@@ -1753,9 +1833,15 @@ class FitParametersPanel(QWidget):
             rows = config.get("parameter_rows")
             out[key] = {
                 "model": dict(model) if isinstance(model, dict) else {},
-                "fit_x_min": float(config.get("fit_x_min")) if isinstance(config.get("fit_x_min"), (int, float)) else None,
-                "fit_x_max": float(config.get("fit_x_max")) if isinstance(config.get("fit_x_max"), (int, float)) else None,
-                "parameter_rows": [dict(row) for row in rows if isinstance(row, dict)] if isinstance(rows, list) else [],
+                "fit_x_min": float(config.get("fit_x_min"))
+                if isinstance(config.get("fit_x_min"), (int, float))
+                else None,
+                "fit_x_max": float(config.get("fit_x_max"))
+                if isinstance(config.get("fit_x_max"), (int, float))
+                else None,
+                "parameter_rows": [dict(row) for row in rows if isinstance(row, dict)]
+                if isinstance(rows, list)
+                else [],
             }
         return out
 
@@ -1775,15 +1861,21 @@ class FitParametersPanel(QWidget):
 
         fit_x_min_raw = payload.get("fit_x_min", float("nan"))
         fit_x_max_raw = payload.get("fit_x_max", float("nan"))
-        fit_x_min = float(fit_x_min_raw) if isinstance(fit_x_min_raw, (int, float)) else float("nan")
-        fit_x_max = float(fit_x_max_raw) if isinstance(fit_x_max_raw, (int, float)) else float("nan")
+        fit_x_min = (
+            float(fit_x_min_raw) if isinstance(fit_x_min_raw, (int, float)) else float("nan")
+        )
+        fit_x_max = (
+            float(fit_x_max_raw) if isinstance(fit_x_max_raw, (int, float)) else float("nan")
+        )
 
         return {
             "parameter_name": str(payload.get("parameter_name", "")),
             "x_key": str(payload.get("x_key", "run")),
             "fit_x_min": fit_x_min if np.isfinite(fit_x_min) else None,
             "fit_x_max": fit_x_max if np.isfinite(fit_x_max) else None,
-            "config": dict(payload.get("config", {})) if isinstance(payload.get("config"), dict) else {},
+            "config": dict(payload.get("config", {}))
+            if isinstance(payload.get("config"), dict)
+            else {},
             "config_key": str(payload.get("config_key", "")),
             "groups": [
                 {
@@ -1841,8 +1933,7 @@ class FitParametersPanel(QWidget):
                     for p in fit_result.fixed_parameters
                 ],
                 "local_uncertainties": {
-                    gid: dict(vals)
-                    for gid, vals in fit_result.local_uncertainties.items()
+                    gid: dict(vals) for gid, vals in fit_result.local_uncertainties.items()
                 },
             },
         }
@@ -1853,7 +1944,11 @@ class FitParametersPanel(QWidget):
         model_state = state.get("model")
         fit_state = state.get("fit_result")
         groups_state = state.get("groups")
-        if not isinstance(model_state, dict) or not isinstance(fit_state, dict) or not isinstance(groups_state, list):
+        if (
+            not isinstance(model_state, dict)
+            or not isinstance(fit_state, dict)
+            or not isinstance(groups_state, list)
+        ):
             return None
 
         try:
@@ -1928,7 +2023,9 @@ class FitParametersPanel(QWidget):
             global_parameters=global_params,
             local_parameters=local_params,
             fixed_parameters=fixed_params,
-            global_uncertainties={str(k): float(v) for k, v in dict(fit_state.get("global_uncertainties", {})).items()},
+            global_uncertainties={
+                str(k): float(v) for k, v in dict(fit_state.get("global_uncertainties", {})).items()
+            },
             local_uncertainties={
                 str(gid): {str(k): float(v) for k, v in dict(vals).items()}
                 for gid, vals in dict(fit_state.get("local_uncertainties", {})).items()
@@ -1939,9 +2036,15 @@ class FitParametersPanel(QWidget):
         return {
             "parameter_name": str(state.get("parameter_name", "")),
             "x_key": str(state.get("x_key", "run")),
-            "fit_x_min": float(state.get("fit_x_min")) if isinstance(state.get("fit_x_min"), (int, float)) else float("nan"),
-            "fit_x_max": float(state.get("fit_x_max")) if isinstance(state.get("fit_x_max"), (int, float)) else float("nan"),
-            "config": dict(state.get("config", {})) if isinstance(state.get("config"), dict) else {},
+            "fit_x_min": float(state.get("fit_x_min"))
+            if isinstance(state.get("fit_x_min"), (int, float))
+            else float("nan"),
+            "fit_x_max": float(state.get("fit_x_max"))
+            if isinstance(state.get("fit_x_max"), (int, float))
+            else float("nan"),
+            "config": dict(state.get("config", {}))
+            if isinstance(state.get("config"), dict)
+            else {},
             "config_key": str(state.get("config_key", "")),
             "groups": groups,
             "model": model,
@@ -2020,7 +2123,9 @@ class FitParametersPanel(QWidget):
                 result = fit_range.result
                 if result is not None and result.success:
                     kwargs = {p.name: p.value for p in result.parameters}
-                    components = fit_range.model.evaluate_components(xs, additive_only=True, **kwargs)
+                    components = fit_range.model.evaluate_components(
+                        xs, additive_only=True, **kwargs
+                    )
                     ordered_components = self._ordered_components_for_stacking(components)
                     cumulative = np.zeros_like(xs, dtype=float)
                     for cidx, (_cname, comp_y) in enumerate(ordered_components):
@@ -2029,7 +2134,15 @@ class FitParametersPanel(QWidget):
                         lower = cumulative
                         upper = cumulative + comp_fill
                         ax.fill_between(xs, lower, upper, color=fill_color, alpha=0.3, zorder=1)
-                        ax.plot(xs, upper, linestyle="--", linewidth=0.8, color=fill_color, alpha=0.9, zorder=2)
+                        ax.plot(
+                            xs,
+                            upper,
+                            linestyle="--",
+                            linewidth=0.8,
+                            color=fill_color,
+                            alpha=0.9,
+                            zorder=2,
+                        )
                         cumulative = upper
 
             ax.plot(xs, ys, linestyle="-", linewidth=1.5, color=line_color, alpha=0.9, zorder=3)
@@ -2113,7 +2226,16 @@ class FitParametersPanel(QWidget):
                 ax.scatter(x_vals, y_vals, s=16, zorder=6, color="C0")
                 finite_err = np.isfinite(y_err) & (y_err > 0)
                 if np.any(finite_err):
-                    ax.errorbar(x_vals, y_vals, yerr=y_err, fmt="none", ecolor="gray", capsize=2, elinewidth=1, zorder=5)
+                    ax.errorbar(
+                        x_vals,
+                        y_vals,
+                        yerr=y_err,
+                        fmt="none",
+                        ecolor="gray",
+                        capsize=2,
+                        elinewidth=1,
+                        zorder=5,
+                    )
 
                 ax.set_xlabel(x_label)
                 ax.set_ylabel(_format_plot_label(y_name))
@@ -2151,11 +2273,29 @@ class FitParametersPanel(QWidget):
 
                 ax.scatter(x_vals, left_vals, s=16, zorder=6, color=left_color)
                 if np.any(np.isfinite(left_err) & (left_err > 0)):
-                    ax.errorbar(x_vals, left_vals, yerr=left_err, fmt="none", ecolor=left_color, capsize=2, elinewidth=1, zorder=5)
+                    ax.errorbar(
+                        x_vals,
+                        left_vals,
+                        yerr=left_err,
+                        fmt="none",
+                        ecolor=left_color,
+                        capsize=2,
+                        elinewidth=1,
+                        zorder=5,
+                    )
 
                 ax2.scatter(x_vals, right_vals, s=16, zorder=6, color=right_color)
                 if np.any(np.isfinite(right_err) & (right_err > 0)):
-                    ax2.errorbar(x_vals, right_vals, yerr=right_err, fmt="none", ecolor=right_color, capsize=2, elinewidth=1, zorder=5)
+                    ax2.errorbar(
+                        x_vals,
+                        right_vals,
+                        yerr=right_err,
+                        fmt="none",
+                        ecolor=right_color,
+                        capsize=2,
+                        elinewidth=1,
+                        zorder=5,
+                    )
 
                 ax.set_ylabel(_format_plot_label(left_name), color=left_color)
                 ax2.set_ylabel(_format_plot_label(right_name), color=right_color)
@@ -2183,7 +2323,16 @@ class FitParametersPanel(QWidget):
 
                     ax.scatter(x_vals, y_vals, s=16, zorder=6, label=label, color=color)
                     if np.any(np.isfinite(y_err) & (y_err > 0)):
-                        ax.errorbar(x_vals, y_vals, yerr=y_err, fmt="none", ecolor=color, capsize=2, elinewidth=1, zorder=5)
+                        ax.errorbar(
+                            x_vals,
+                            y_vals,
+                            yerr=y_err,
+                            fmt="none",
+                            ecolor=color,
+                            capsize=2,
+                            elinewidth=1,
+                            zorder=5,
+                        )
 
                 if len(y_params) == 1:
                     ax.set_ylabel(_format_plot_label(y_params[0]))
@@ -2200,7 +2349,11 @@ class FitParametersPanel(QWidget):
                         ax.set_yscale("linear")
                         ax.set_ylim(bottom=0.0)
                     else:
-                        ax.set_yscale("log" if any(self._is_log_y_for(name) for name in y_params) else "linear")
+                        ax.set_yscale(
+                            "log"
+                            if any(self._is_log_y_for(name) for name in y_params)
+                            else "linear"
+                        )
 
                 ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
                 ax.grid(True, alpha=0.3)
@@ -2256,7 +2409,9 @@ class FitParametersPanel(QWidget):
         table_view = QTableWidget(self._table.rowCount(), self._table.columnCount(), dialog)
         table_view.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
-        headers = [self._table.horizontalHeaderItem(col).text() for col in range(self._table.columnCount())]
+        headers = [
+            self._table.horizontalHeaderItem(col).text() for col in range(self._table.columnCount())
+        ]
         table_view.setHorizontalHeaderLabels(headers)
 
         for row in range(self._table.rowCount()):
@@ -2449,8 +2604,12 @@ class FitParametersPanel(QWidget):
 
                 ranges.append(
                     ModelFitRange(
-                        x_min=float(range_state.get("x_min")) if range_state.get("x_min") is not None else None,
-                        x_max=float(range_state.get("x_max")) if range_state.get("x_max") is not None else None,
+                        x_min=float(range_state.get("x_min"))
+                        if range_state.get("x_min") is not None
+                        else None,
+                        x_max=float(range_state.get("x_max"))
+                        if range_state.get("x_max") is not None
+                        else None,
                         model=model,
                         parameters=params,
                         result=result_obj,
@@ -2558,7 +2717,9 @@ class FitParametersPanel(QWidget):
             curves.append((idx, xs, ys))
         return curves
 
-    def _write_fit_files(self, gle_path: Path, x_key: str, y_params: list[str]) -> dict[tuple[str, int], Path]:
+    def _write_fit_files(
+        self, gle_path: Path, x_key: str, y_params: list[str]
+    ) -> dict[tuple[str, int], Path]:
         """Write model-fit sidecar files with metadata and sampled curve points."""
         entries = list(self._iter_active_fit_ranges(x_key, y_params))
         if not entries:
@@ -2667,7 +2828,11 @@ class FitParametersPanel(QWidget):
             f.write("! " + " ".join(f"{h:>16}" for h in headers) + "\n")
 
             for row in rows:
-                values: list[float] = [float(row.run_number), float(row.field), float(row.temperature)]
+                values: list[float] = [
+                    float(row.run_number),
+                    float(row.field),
+                    float(row.temperature),
+                ]
                 for name in self._varying_params:
                     values.append(row.values.get(name, np.nan))
                     values.append(row.errors.get(name, np.nan))
@@ -2709,7 +2874,11 @@ class FitParametersPanel(QWidget):
         curves = self._sampled_fit_curves(param_name, x_key=fit.x_key, num_points=200)
         for idx, (range_index, xs, ys) in enumerate(curves):
             line_color = _fit_overlay_color(idx) if len(curves) > 1 else color
-            line_label = _fit_overlay_label(param_name, idx, len(curves), gle=True) if include_labels else None
+            line_label = (
+                _fit_overlay_label(param_name, idx, len(curves), gle=True)
+                if include_labels
+                else None
+            )
             base_name = f"{_safe_data_name(param_name)}_range_{int(range_index)}"
 
             if show_components and range_index < len(fit.ranges):
@@ -2717,7 +2886,9 @@ class FitParametersPanel(QWidget):
                 result = fit_range.result
                 if result is not None and result.success:
                     kwargs = {p.name: p.value for p in result.parameters}
-                    components = fit_range.model.evaluate_components(xs, additive_only=True, **kwargs)
+                    components = fit_range.model.evaluate_components(
+                        xs, additive_only=True, **kwargs
+                    )
                     ordered_components = self._ordered_components_for_stacking(components)
                     cumulative = np.zeros_like(xs, dtype=float)
                     for cidx, (_cname, comp_y) in enumerate(ordered_components):
@@ -2806,7 +2977,7 @@ class FitParametersPanel(QWidget):
         data_path = gle_path.with_suffix(".dat")
         self._write_gle_data_file(data_path)
         x_key = self._effective_x_key()
-        y_params = self._selected_y_parameters() or ([self._varying_params[0]] if self._varying_params else [])
+        self._selected_y_parameters() or ([self._varying_params[0]] if self._varying_params else [])
 
         # Export fit sidecars for all active fits on this x-axis, regardless of
         # current y-selection, so restored projects always emit .fit files.
@@ -2841,19 +3012,27 @@ class FitParametersPanel(QWidget):
         try:
             glp = importlib.import_module("gleplot")
         except ImportError:
-            QMessageBox.warning(self, "gleplot not available", "Install gleplot to export GLE plots.")
+            QMessageBox.warning(
+                self, "gleplot not available", "Install gleplot to export GLE plots."
+            )
             return
 
         if not hasattr(glp, "Axes") or not hasattr(glp.Axes, "errorbar_from_file"):
-            QMessageBox.warning(self, "gleplot update required", "Please update gleplot to a newer version.")
+            QMessageBox.warning(
+                self, "gleplot update required", "Please update gleplot to a newer version."
+            )
             return
 
         if fit_file_map and (not hasattr(glp.Axes, "line_from_file")):
-            QMessageBox.warning(self, "gleplot update required", "Please update gleplot to a newer version.")
+            QMessageBox.warning(
+                self, "gleplot update required", "Please update gleplot to a newer version."
+            )
             return
 
         x_key = self._effective_x_key()
-        y_params = self._selected_y_parameters() or ([self._varying_params[0]] if self._varying_params else [])
+        y_params = self._selected_y_parameters() or (
+            [self._varying_params[0]] if self._varying_params else []
+        )
         if not y_params:
             return
 
@@ -2865,7 +3044,9 @@ class FitParametersPanel(QWidget):
         show_fit_legend = self._count_fit_curves(x_key, y_params) > 1
 
         if plot_mode == "Subplots" and len(y_params) > 1:
-            fig, axes = glp.subplots(nrows=len(y_params), ncols=1, figsize=(5.8, 3.0 * len(y_params)), sharex=True)
+            fig, axes = glp.subplots(
+                nrows=len(y_params), ncols=1, figsize=(5.8, 3.0 * len(y_params)), sharex=True
+            )
             subplot_axes = axes if isinstance(axes, list) else [axes]
             for idx, y_name in enumerate(y_params):
                 cols = self._gle_columns_for_param(y_name)
@@ -2939,8 +3120,28 @@ class FitParametersPanel(QWidget):
                     include_labels=show_fit_legend,
                     fit_file_map=fit_file_map,
                 )
-                ax.errorbar_from_file(data_file_ref, x_col=x_col, y_col=left_y_col, yerr_col=left_err_col if has_left_err else None, color=_gle_series_color(0), marker="o", markersize=5, capsize=2, yaxis="y")
-                ax.errorbar_from_file(data_file_ref, x_col=x_col, y_col=right_y_col, yerr_col=right_err_col if has_right_err else None, color=_gle_series_color(1), marker="o", markersize=5, capsize=2, yaxis="y2")
+                ax.errorbar_from_file(
+                    data_file_ref,
+                    x_col=x_col,
+                    y_col=left_y_col,
+                    yerr_col=left_err_col if has_left_err else None,
+                    color=_gle_series_color(0),
+                    marker="o",
+                    markersize=5,
+                    capsize=2,
+                    yaxis="y",
+                )
+                ax.errorbar_from_file(
+                    data_file_ref,
+                    x_col=x_col,
+                    y_col=right_y_col,
+                    yerr_col=right_err_col if has_right_err else None,
+                    color=_gle_series_color(1),
+                    marker="o",
+                    markersize=5,
+                    capsize=2,
+                    yaxis="y2",
+                )
                 ax.set_ylabel(_format_gle_label(left_name), axis="y")
                 ax.set_ylabel(_format_gle_label(right_name), axis="y2")
                 if self._show_components_check.isChecked():
@@ -3001,14 +3202,21 @@ class FitParametersPanel(QWidget):
             fig.savefig(str(requested_gle_path), folder=True)
         except TypeError as exc:
             if "folder" in str(exc):
-                QMessageBox.warning(self, "gleplot update required", "Please update gleplot to a newer version.")
+                QMessageBox.warning(
+                    self, "gleplot update required", "Please update gleplot to a newer version."
+                )
                 return
             raise
 
         if shutil.which("gle") is not None:
             output_path = gle_path.with_suffix(f".{output_format}")
             try:
-                subprocess.run(["gle", "-d", output_format, str(gle_path)], capture_output=True, text=True, check=True)
+                subprocess.run(
+                    ["gle", "-d", output_format, str(gle_path)],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
                 if not is_test_mode:
                     fit_files = getattr(self, "_last_export_fit_files", [])
                     fit_files_text = "\n".join(str(p) for p in fit_files) if fit_files else "(none)"
@@ -3023,11 +3231,15 @@ class FitParametersPanel(QWidget):
                             f"Output: {output_path}"
                         ),
                     )
-                    self._show_gle_preview(fig, data_path, list(fit_file_map.values()) if fit_file_map else [])
+                    self._show_gle_preview(
+                        fig, data_path, list(fit_file_map.values()) if fit_file_map else []
+                    )
             except subprocess.CalledProcessError as exc:
                 if not is_test_mode:
                     QMessageBox.warning(self, "GLE compilation failed", exc.stderr or str(exc))
-                    self._show_gle_preview(fig, data_path, list(fit_file_map.values()) if fit_file_map else [])
+                    self._show_gle_preview(
+                        fig, data_path, list(fit_file_map.values()) if fit_file_map else []
+                    )
         else:
             if not is_test_mode:
                 QMessageBox.information(
@@ -3035,7 +3247,9 @@ class FitParametersPanel(QWidget):
                     "GLE Not Installed",
                     f"GLE script saved to {gle_path}. Install GLE to compile to {output_format.upper()}.",
                 )
-                self._show_gle_preview(fig, data_path, list(fit_file_map.values()) if fit_file_map else [])
+                self._show_gle_preview(
+                    fig, data_path, list(fit_file_map.values()) if fit_file_map else []
+                )
 
     def _show_gle_preview(self, fig, data_path: Path, fit_files: list[Path] | None = None) -> None:
         if os.environ.get("PYTEST_CURRENT_TEST"):
@@ -3043,6 +3257,7 @@ class FitParametersPanel(QWidget):
 
         try:
             import tempfile
+
             from PySide6.QtGui import QPixmap
 
             dialog = QDialog(self)
@@ -3066,7 +3281,12 @@ class FitParametersPanel(QWidget):
                         if src.exists():
                             shutil.copy2(src, tmpdir_path / src.name)
                     fig.savefig(str(gle_file))
-                    subprocess.run(["gle", "-d", "png", str(gle_file)], capture_output=True, check=True, cwd=str(tmpdir_path))
+                    subprocess.run(
+                        ["gle", "-d", "png", str(gle_file)],
+                        capture_output=True,
+                        check=True,
+                        cwd=str(tmpdir_path),
+                    )
 
                     pixmap = QPixmap(str(png_file))
                     if not pixmap.isNull():

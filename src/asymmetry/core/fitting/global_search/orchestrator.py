@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
-import math
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.fit_wizard import SelectionMetric
-from asymmetry.core.fitting.global_search.cache import ApproximateScoreCache, ExactStructureCache, WarmStartStore
+from asymmetry.core.fitting.global_search.cache import (
+    ApproximateScoreCache,
+    ExactStructureCache,
+    WarmStartStore,
+)
 from asymmetry.core.fitting.global_search.diagnostics import summarize_relaxed_fit
 from asymmetry.core.fitting.global_search.moves import apply_search_move, generate_search_moves
 from asymmetry.core.fitting.global_search.proposal import extract_discrete_candidates
@@ -60,10 +64,10 @@ class GlobalSearchOrchestrator:
         config = config or GlobalSearchConfig()
         penalty_weight = float(config.penalty_weight)
         if penalty_weight <= 0.0:
-            penalty_weight = max(2.0, math.log(max(sum(dataset.n_points for dataset in datasets), 2)))
-        penalty_schedule = tuple(
-            float(value) for value in config.penalty_schedule
-        )
+            penalty_weight = max(
+                2.0, math.log(max(sum(dataset.n_points for dataset in datasets), 2))
+            )
+        penalty_schedule = tuple(float(value) for value in config.penalty_schedule)
         if not penalty_schedule:
             if config.active_set_threshold > 0.0 or config.beam_width > 1:
                 penalty_schedule = (0.5 * penalty_weight, penalty_weight, 1.75 * penalty_weight)
@@ -94,7 +98,9 @@ class GlobalSearchOrchestrator:
         if instrumentation is not None:
             instrumentation["relaxed_penalties"] = list(relaxed_result.continuation_penalties)
             instrumentation["relaxed_objectives"] = list(relaxed_result.continuation_objectives)
-            instrumentation["relaxed_frozen_shared_names"] = list(relaxed_result.frozen_shared_names)
+            instrumentation["relaxed_frozen_shared_names"] = list(
+                relaxed_result.frozen_shared_names
+            )
 
         proposals = extract_discrete_candidates(
             relaxed_result,
@@ -125,7 +131,9 @@ class GlobalSearchOrchestrator:
                 full_structure=structure,
                 allow_backward_moves=config.allow_backward_moves,
             ),
-            move_applier=lambda candidate, move: apply_search_move(candidate, move, full_structure=structure),
+            move_applier=lambda candidate, move: apply_search_move(
+                candidate, move, full_structure=structure
+            ),
             approximate_scorer=lambda candidate: self._approximate_candidate_score(candidate),
             max_steps=config.max_steps,
             max_neighbors=config.max_neighbors,

@@ -12,6 +12,7 @@ def _register_window(name: str):
     def decorator(fn):
         _WINDOWS[name] = fn
         return fn
+
     return decorator
 
 

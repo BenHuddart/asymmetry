@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import numpy as np
 import threading
 import time
+
+import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 

@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from asymmetry.core.fitting.global_search.cache import ApproximateScoreCache, ExactStructureCache, WarmStartStore
+from asymmetry.core.fitting.global_search.cache import (
+    ApproximateScoreCache,
+    ExactStructureCache,
+    WarmStartStore,
+)
 from asymmetry.core.fitting.global_search.types import DiscreteCandidate, ModelScore, SearchState
 
 
@@ -65,9 +69,7 @@ def refine_candidate_search(
     best = beam[0]
     state.incumbent_signature = best.candidate.signature()
     state.beam_widths.append(len(beam))
-    diagnostics.append(
-        f"Initialized refinement beam with {len(beam)} exact candidates."
-    )
+    diagnostics.append(f"Initialized refinement beam with {len(beam)} exact candidates.")
 
     for _step in range(max_steps):
         neighbors_by_signature: dict[tuple[object, ...], tuple[float, DiscreteCandidate]] = {}
@@ -97,8 +99,7 @@ def refine_candidate_search(
         )
 
         evaluated = [
-            evaluate(next_candidate)
-            for _approx_score, next_candidate in neighbors[:exact_budget]
+            evaluate(next_candidate) for _approx_score, next_candidate in neighbors[:exact_budget]
         ]
         if not evaluated:
             break
@@ -116,8 +117,7 @@ def refine_candidate_search(
             f"Refinement step {_step + 1}: exact-evaluated {len(evaluated)} candidates, beam size {len(next_beam)}."
         )
         improved = any(
-            item.score.primary_value + 1e-9 < best.score.primary_value
-            for item in evaluated
+            item.score.primary_value + 1e-9 < best.score.primary_value for item in evaluated
         )
         beam = next_beam
         if beam[0].score.primary_value + 1e-9 < best.score.primary_value:
@@ -130,4 +130,3 @@ def refine_candidate_search(
         f"Refinement completed after {state.exact_evaluations} exact evaluations and {state.approximate_candidates} approximate screenings."
     )
     return best, tuple(diagnostics)
-

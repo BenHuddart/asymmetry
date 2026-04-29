@@ -7,6 +7,7 @@ parameters, run the fit, and inspect results.
 from __future__ import annotations
 
 import copy
+
 import numpy as np
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (
@@ -16,33 +17,32 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
-    QSizePolicy,
-    QMessageBox,
 )
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.engine import FitEngine
-from asymmetry.core.fitting.global_fit_wizard import (
-    GlobalCandidateAssessment,
-    GlobalFitWizardRecommendation,
-    deserialize_global_fit_wizard_recommendation,
-    serialize_global_fit_wizard_recommendation,
-)
+from asymmetry.core.fitting.engine import FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     FitWizardRecommendation,
     deserialize_fit_wizard_recommendation,
     serialize_fit_wizard_recommendation,
 )
-from asymmetry.core.fitting.models import MODELS
+from asymmetry.core.fitting.global_fit_wizard import (
+    GlobalCandidateAssessment,
+    GlobalFitWizardRecommendation,
+    deserialize_global_fit_wizard_recommendation,
+    serialize_global_fit_wizard_recommendation,
+)
 from asymmetry.core.fitting.parameters import (
     Parameter,
     ParameterSet,
@@ -51,8 +51,8 @@ from asymmetry.core.fitting.parameters import (
 )
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
-from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
+from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
 
 def _format_param_label(name: str) -> str:
@@ -123,9 +123,7 @@ def _fit_curve_sample_count(
         if base_name == "frequency":
             max_frequency_mhz = max(max_frequency_mhz, numeric_value)
         elif base_name == "field":
-            field_frequency = (
-                MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * numeric_value
-            )
+            field_frequency = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * numeric_value
             max_frequency_mhz = max(max_frequency_mhz, field_frequency)
 
     if max_frequency_mhz <= 0.0:
@@ -146,6 +144,7 @@ class GlobalFitWorker(QObject):
     error : Signal(str)
         Emitted with error message if fit fails.
     """
+
     # Use object/object for cross-thread payloads containing Python objects
     # (FitResult, ParameterSet, numpy arrays). Typed Qt containers can trigger
     # conversion errors when queued between threads.
@@ -197,7 +196,9 @@ class SingleFitTab(QWidget):
     """
 
     fit_completed = Signal(object, object, object)  # (FitResult, fitted_curve, component_curves)
-    preview_requested = Signal(object, object, object)  # (FitResult, fitted_curve, component_curves)
+    preview_requested = Signal(
+        object, object, object
+    )  # (FitResult, fitted_curve, component_curves)
     share_function_with_group_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -227,14 +228,14 @@ class SingleFitTab(QWidget):
         self._share_group_btn = QPushButton("Share Function With Data Group")
         self._share_group_btn.clicked.connect(self._on_share_function_with_group)
         self._share_group_btn.setEnabled(False)
-        
+
         # Button row for Edit, Wizard, and Share
         model_button_layout = QHBoxLayout()
         model_button_layout.addWidget(self._edit_model_btn)
         model_button_layout.addWidget(self._fit_wizard_btn)
         model_button_layout.addWidget(self._share_group_btn)
         model_button_layout.addStretch()
-        
+
         model_layout.addRow("A(t):", self._formula_label)
         model_layout.addRow("", model_button_layout)
         layout.addWidget(model_group)
@@ -245,11 +246,11 @@ class SingleFitTab(QWidget):
         self._param_table = QTableWidget(0, 5)
         self._param_table.setHorizontalHeaderLabels(["Name", "Value", "Fix", "Min", "Max"])
         self._param_table.horizontalHeader().setStretchLastSection(False)
-        self._param_table.setColumnWidth(0, 80)   # Name
+        self._param_table.setColumnWidth(0, 80)  # Name
         self._param_table.setColumnWidth(1, 100)  # Value
-        self._param_table.setColumnWidth(2, 40)   # Fix
-        self._param_table.setColumnWidth(3, 80)   # Min
-        self._param_table.setColumnWidth(4, 80)   # Max
+        self._param_table.setColumnWidth(2, 40)  # Fix
+        self._param_table.setColumnWidth(3, 80)  # Min
+        self._param_table.setColumnWidth(4, 80)  # Max
         param_layout.addWidget(self._param_table)
         layout.addWidget(param_group)
 
@@ -306,7 +307,8 @@ class SingleFitTab(QWidget):
         return {
             "run_number": (
                 int(self._current_dataset.run_number)
-                if self._current_dataset is not None and getattr(self._current_dataset, "run_number", None) is not None
+                if self._current_dataset is not None
+                and getattr(self._current_dataset, "run_number", None) is not None
                 else None
             ),
             "model": self._composite_model.to_dict(),
@@ -320,12 +322,8 @@ class SingleFitTab(QWidget):
         if not isinstance(cached_signature, dict):
             return False
         cached_model = cached_signature.get("model")
-        return (
-            cached_signature.get("run_number") == current_signature.get("run_number")
-            and (
-                cached_model is None
-                or cached_model == current_signature.get("model")
-            )
+        return cached_signature.get("run_number") == current_signature.get("run_number") and (
+            cached_model is None or cached_model == current_signature.get("model")
         )
 
     def _cache_wizard_analysis(
@@ -345,7 +343,9 @@ class SingleFitTab(QWidget):
         log_text: str,
         signature: object,
     ) -> None:
-        if not isinstance(recommendation, FitWizardRecommendation) or not isinstance(signature, dict):
+        if not isinstance(recommendation, FitWizardRecommendation) or not isinstance(
+            signature, dict
+        ):
             return
         self._cache_wizard_analysis(recommendation, signature=signature, log_text=log_text)
 
@@ -416,10 +416,14 @@ class SingleFitTab(QWidget):
     def _open_fit_wizard(self) -> None:
         """Launch or refresh the non-modal fit wizard window."""
         if self._current_dataset is None:
-            QMessageBox.information(self, "Fit Wizard", "Select a dataset before opening the fit wizard.")
+            QMessageBox.information(
+                self, "Fit Wizard", "Select a dataset before opening the fit wizard."
+            )
             return
         if self._fit_blocked:
-            message = self._fit_block_reason or "Fit actions are unavailable for the current selection."
+            message = (
+                self._fit_block_reason or "Fit actions are unavailable for the current selection."
+            )
             QMessageBox.information(self, "Fit Wizard", message)
             return
 
@@ -436,9 +440,8 @@ class SingleFitTab(QWidget):
             self._current_dataset,
             current_model=self._composite_model,
         )
-        if (
-            self._cached_wizard_recommendation is not None
-            and self._wizard_base_signature_matches(self._cached_wizard_signature, signature)
+        if self._cached_wizard_recommendation is not None and self._wizard_base_signature_matches(
+            self._cached_wizard_signature, signature
         ):
             self._fit_wizard_window.set_cached_recommendation(
                 self._cached_wizard_recommendation,
@@ -695,9 +698,7 @@ class SingleFitTab(QWidget):
             ]
             for param in result.parameters:
                 unc = result.uncertainties.get(param.name, 0.0)
-                lines.append(
-                    f"  {_format_param_label(param.name)} = {param.value:.6f} ± {unc:.6f}"
-                )
+                lines.append(f"  {_format_param_label(param.name)} = {param.value:.6f} ± {unc:.6f}")
             self._result_label.setText("<br>".join(lines))
 
             # Update table with fit results
@@ -754,11 +755,7 @@ class SingleFitTab(QWidget):
         params = []
         for i in range(self._param_table.rowCount()):
             name_item = self._param_table.item(i, 0)
-            param_name = (
-                name_item.data(Qt.ItemDataRole.UserRole)
-                if name_item
-                else f"param_{i}"
-            )
+            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else f"param_{i}"
             if not isinstance(param_name, str):
                 param_name = name_item.text() if name_item else f"param_{i}"
 
@@ -774,13 +771,15 @@ class SingleFitTab(QWidget):
 
             min_item = self._param_table.item(i, 3)
             max_item = self._param_table.item(i, 4)
-            params.append({
-                "name": param_name,
-                "value": value,
-                "fixed": fixed,
-                "min": min_item.text() if min_item else "-inf",
-                "max": max_item.text() if max_item else "inf",
-            })
+            params.append(
+                {
+                    "name": param_name,
+                    "value": value,
+                    "fixed": fixed,
+                    "min": min_item.text() if min_item else "-inf",
+                    "max": max_item.text() if max_item else "inf",
+                }
+            )
 
         state = {
             "model_name": "Composite",
@@ -812,16 +811,14 @@ class SingleFitTab(QWidget):
             try:
                 self._set_composite_model(CompositeModel.from_dict(composite_data))
             except ValueError:
-                self._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
+                self._set_composite_model(
+                    CompositeModel(["Exponential", "Constant"], operators=["+"])
+                )
 
         params_data = {p["name"]: p for p in state.get("parameters", [])}
         for i in range(self._param_table.rowCount()):
             name_item = self._param_table.item(i, 0)
-            param_name = (
-                name_item.data(Qt.ItemDataRole.UserRole)
-                if name_item
-                else None
-            )
+            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
             if not isinstance(param_name, str) and name_item:
                 param_name = name_item.text()
             if param_name not in params_data:
@@ -932,9 +929,9 @@ class GlobalFitTab(QWidget):
         self._param_table = QTableWidget(0, 4)
         self._param_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
         self._param_table.horizontalHeader().setStretchLastSection(False)
-        self._param_table.setColumnWidth(0, 80)   # Parameter name
-        self._param_table.setColumnWidth(1, 80)   # Initial value
-        self._param_table.setColumnWidth(2, 90)   # Type (dropdown)
+        self._param_table.setColumnWidth(0, 80)  # Parameter name
+        self._param_table.setColumnWidth(1, 80)  # Initial value
+        self._param_table.setColumnWidth(2, 90)  # Type (dropdown)
         self._param_table.setColumnWidth(3, 150)  # Bounds
         param_layout.addWidget(self._param_table)
         layout.addWidget(param_group)
@@ -966,7 +963,9 @@ class GlobalFitTab(QWidget):
 
         self._set_composite_model(self._composite_model)
 
-    def register_single_fit_seed(self, run_number: int, model: CompositeModel, fit_result: object) -> None:
+    def register_single_fit_seed(
+        self, run_number: int, model: CompositeModel, fit_result: object
+    ) -> None:
         """Store successful single-fit results for later global-fit initialisation."""
         if getattr(fit_result, "success", False) is not True:
             return
@@ -1022,18 +1021,15 @@ class GlobalFitTab(QWidget):
         self._fit_wizard_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
         if n == 0:
             self._result_text.setText(
-                "No datasets selected.\n"
-                "Select datasets in the browser to run a global fit."
+                "No datasets selected.\nSelect datasets in the browser to run a global fit."
             )
         elif n == 1:
             self._result_text.setText(
-                "Global fitting requires at least 2 datasets.\n"
-                "Currently have 1 selected dataset."
+                "Global fitting requires at least 2 datasets.\nCurrently have 1 selected dataset."
             )
         else:
             self._result_text.setText(
-                f"{n} datasets selected. "
-                "Configure parameters and click Run Global Fit."
+                f"{n} datasets selected. Configure parameters and click Run Global Fit."
             )
         self._refresh_inherited_single_fit_defaults()
 
@@ -1079,9 +1075,7 @@ class GlobalFitTab(QWidget):
     ) -> None:
         self._cached_wizard_recommendation = recommendation
         self._cached_wizard_signature = (
-            self._normalized_wizard_signature(signature)
-            if isinstance(signature, dict)
-            else None
+            self._normalized_wizard_signature(signature) if isinstance(signature, dict) else None
         )
         self._cached_wizard_log_text = str(log_text)
 
@@ -1103,7 +1097,9 @@ class GlobalFitTab(QWidget):
         recommendation = entry.get("recommendation")
         signature = entry.get("signature")
         log_text = entry.get("log_text", "")
-        if not isinstance(recommendation, GlobalFitWizardRecommendation) or not isinstance(signature, dict):
+        if not isinstance(recommendation, GlobalFitWizardRecommendation) or not isinstance(
+            signature, dict
+        ):
             self._set_active_wizard_cache(None, signature=None, log_text="")
             return
         self._set_active_wizard_cache(
@@ -1153,14 +1149,18 @@ class GlobalFitTab(QWidget):
                 continue
             recommendation = entry.get("recommendation")
             signature = entry.get("signature")
-            if not isinstance(recommendation, GlobalFitWizardRecommendation) or not isinstance(signature, dict):
+            if not isinstance(recommendation, GlobalFitWizardRecommendation) or not isinstance(
+                signature, dict
+            ):
                 continue
-            serialized.append({
-                "run_numbers": list(run_set),
-                "signature": copy.deepcopy(signature),
-                "recommendation": serialize_global_fit_wizard_recommendation(recommendation),
-                "log_text": str(entry.get("log_text", "")),
-            })
+            serialized.append(
+                {
+                    "run_numbers": list(run_set),
+                    "signature": copy.deepcopy(signature),
+                    "recommendation": serialize_global_fit_wizard_recommendation(recommendation),
+                    "log_text": str(entry.get("log_text", "")),
+                }
+            )
         return serialized
 
     def _restore_wizard_cache_store(self, payload: object) -> None:
@@ -1206,7 +1206,9 @@ class GlobalFitTab(QWidget):
             return None, None, ""
         return recommendation, signature if isinstance(signature, dict) else None, str(log_text)
 
-    def _existing_single_fit_recommendations_for_selected_runs(self) -> dict[int, FitWizardRecommendation]:
+    def _existing_single_fit_recommendations_for_selected_runs(
+        self,
+    ) -> dict[int, FitWizardRecommendation]:
         recommendations: dict[int, FitWizardRecommendation] = {}
         for dataset in self._datasets:
             recommendation, _signature, _log_text = self._single_fit_wizard_cache_for_run(
@@ -1359,9 +1361,7 @@ class GlobalFitTab(QWidget):
         # Use the mean field across loaded datasets (if non-zero) as the default
         # for any 'field' parameters.
         dataset_fields = [
-            ds.run.field
-            for ds in self._datasets
-            if ds.run is not None and ds.run.field != 0.0
+            ds.run.field for ds in self._datasets if ds.run is not None and ds.run.field != 0.0
         ]
         mean_field = float(np.mean(dataset_fields)) if dataset_fields else 0.0
         field_overrides = _field_value_overrides(model, mean_field)
@@ -1446,7 +1446,9 @@ class GlobalFitTab(QWidget):
         if isinstance(cached_entry, dict):
             candidate = cached_entry.get("recommendation")
             candidate_signature = cached_entry.get("signature")
-            if isinstance(candidate, GlobalFitWizardRecommendation) and isinstance(candidate_signature, dict):
+            if isinstance(candidate, GlobalFitWizardRecommendation) and isinstance(
+                candidate_signature, dict
+            ):
                 cached_recommendation = candidate
                 cached_signature = candidate_signature
                 cached_log_text = str(cached_entry.get("log_text", ""))
@@ -1679,16 +1681,20 @@ class GlobalFitTab(QWidget):
                 if inherited_seed_by_run:
                     if pname in local_params and pname in local_seed_values:
                         value = local_seed_values[pname]
-                    elif pname in inherited_averages and (pname in global_params or pname in fixed_params):
+                    elif pname in inherited_averages and (
+                        pname in global_params or pname in fixed_params
+                    ):
                         value = inherited_averages[pname]
                 fixed = pname in fixed_params
-                params.add(Parameter(
-                    name=pname,
-                    value=value,
-                    min=min_val,
-                    max=max_val,
-                    fixed=fixed,
-                ))
+                params.add(
+                    Parameter(
+                        name=pname,
+                        value=value,
+                        min=min_val,
+                        max=max_val,
+                        fixed=fixed,
+                    )
+                )
             initial_params[run_number] = params
 
         # Run global fit in background thread
@@ -1746,7 +1752,9 @@ class GlobalFitTab(QWidget):
             )
 
         total_chi2 = sum(result.chi_squared for result in results_dict.values())
-        avg_red_chi2 = sum(result.reduced_chi_squared for result in results_dict.values()) / len(results_dict)
+        avg_red_chi2 = sum(result.reduced_chi_squared for result in results_dict.values()) / len(
+            results_dict
+        )
         lines.append(f"<br><b>Total χ² = {total_chi2:.2f}</b>")
         lines.append(f"<b>Average χ²ᵣ = {avg_red_chi2:.3f}</b>")
         lines.append(f"<br>Fitted {len(results_dict)} datasets")
@@ -1756,7 +1764,9 @@ class GlobalFitTab(QWidget):
         self,
         model: CompositeModel,
         results_dict: dict[int, FitResult],
-    ) -> dict[int, tuple[FitResult, tuple[np.ndarray, np.ndarray], tuple[tuple[str, np.ndarray], ...]]]:
+    ) -> dict[
+        int, tuple[FitResult, tuple[np.ndarray, np.ndarray], tuple[tuple[str, np.ndarray], ...]]
+    ]:
         results_with_curves = {}
         for dataset in self._datasets:
             result = results_dict[int(dataset.run_number)]
@@ -1846,7 +1856,9 @@ class GlobalFitTab(QWidget):
         )
         fitted_by_name = {
             parameter.name: parameter
-            for parameter in (representative_result.parameters if representative_result is not None else [])
+            for parameter in (
+                representative_result.parameters if representative_result is not None else []
+            )
         }
 
         for row in range(self._param_table.rowCount()):
@@ -1924,8 +1936,7 @@ class GlobalFitTab(QWidget):
             run_label_by_number = {ds.run_number: ds.run_label for ds in self._datasets}
             failed_labels = [run_label_by_number.get(run, str(run)) for run in failed]
             self._result_text.setText(
-                f"<b>Global fit failed</b><br>"
-                f"Failed datasets: {failed_labels}"
+                f"<b>Global fit failed</b><br>Failed datasets: {failed_labels}"
             )
 
     def _on_fit_error(self, error_msg: str) -> None:
@@ -1965,11 +1976,7 @@ class GlobalFitTab(QWidget):
         params = []
         for i in range(self._param_table.rowCount()):
             name_item = self._param_table.item(i, 0)
-            param_name = (
-                name_item.data(Qt.ItemDataRole.UserRole)
-                if name_item
-                else f"param_{i}"
-            )
+            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else f"param_{i}"
             if not isinstance(param_name, str) and name_item:
                 param_name = name_item.text()
 
@@ -1980,21 +1987,19 @@ class GlobalFitTab(QWidget):
                 value = 0.0
 
             type_combo = self._param_table.cellWidget(i, 2)
-            type_text = (
-                type_combo.currentText()
-                if isinstance(type_combo, QComboBox)
-                else "Local"
-            )
+            type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Local"
 
             bounds_item = self._param_table.item(i, 3)
             bounds_text = bounds_item.text() if bounds_item else "-inf, inf"
 
-            params.append({
-                "name": param_name,
-                "value": value,
-                "type": type_text,
-                "bounds": bounds_text,
-            })
+            params.append(
+                {
+                    "name": param_name,
+                    "value": value,
+                    "type": type_text,
+                    "bounds": bounds_text,
+                }
+            )
 
         state = {
             "model_name": "Composite",
@@ -2028,16 +2033,14 @@ class GlobalFitTab(QWidget):
             try:
                 self._set_composite_model(CompositeModel.from_dict(composite_data))
             except ValueError:
-                self._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
+                self._set_composite_model(
+                    CompositeModel(["Exponential", "Constant"], operators=["+"])
+                )
 
         params_data = {p["name"]: p for p in state.get("parameters", [])}
         for i in range(self._param_table.rowCount()):
             name_item = self._param_table.item(i, 0)
-            param_name = (
-                name_item.data(Qt.ItemDataRole.UserRole)
-                if name_item
-                else None
-            )
+            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
             if not isinstance(param_name, str) and name_item:
                 param_name = name_item.text()
             if param_name not in params_data:
@@ -2090,7 +2093,9 @@ class FitPanel(QWidget):
     """
 
     fit_completed = Signal(object, object, object)  # (FitResult, fitted_curve, component_curves)
-    preview_requested = Signal(object, object, object)  # (preview_result, fitted_curve, component_curves)
+    preview_requested = Signal(
+        object, object, object
+    )  # (preview_result, fitted_curve, component_curves)
     # Keep payload generic to preserve Python dict key/value types end-to-end.
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
     share_function_with_group_requested = Signal(int)
@@ -2161,7 +2166,9 @@ class FitPanel(QWidget):
             self._single_tab.restore_state(self._single_state_by_run[run_number])
         else:
             # Unseen datasets should not inherit another run's fit UI/result state.
-            self._single_tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
+            self._single_tab._set_composite_model(
+                CompositeModel(["Exponential", "Constant"], operators=["+"])
+            )
             self._single_tab._result_label.setText("No fit performed yet")
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
@@ -2245,9 +2252,7 @@ class FitPanel(QWidget):
         wizard_state = state.get("wizard_state")
         if not isinstance(wizard_state, dict):
             return None, None, ""
-        recommendation = deserialize_fit_wizard_recommendation(
-            wizard_state.get("recommendation")
-        )
+        recommendation = deserialize_fit_wizard_recommendation(wizard_state.get("recommendation"))
         signature = wizard_state.get("signature")
         log_text = str(wizard_state.get("log_text", ""))
         return (
@@ -2269,17 +2274,24 @@ class FitPanel(QWidget):
         except (TypeError, ValueError):
             return
 
-        active_signature = copy.deepcopy(signature) if isinstance(signature, dict) else {
-            "run_number": run_key,
-            "model": None,
-        }
+        active_signature = (
+            copy.deepcopy(signature)
+            if isinstance(signature, dict)
+            else {
+                "run_number": run_key,
+                "model": None,
+            }
+        )
         wizard_state = {
             "signature": active_signature,
             "recommendation": serialize_fit_wizard_recommendation(recommendation),
             "log_text": str(log_text),
         }
 
-        if self._active_single_run_number is not None and int(self._active_single_run_number) == run_key:
+        if (
+            self._active_single_run_number is not None
+            and int(self._active_single_run_number) == run_key
+        ):
             self._single_tab._cache_wizard_analysis(
                 recommendation,
                 signature=active_signature,
@@ -2311,7 +2323,9 @@ class FitPanel(QWidget):
         state["wizard_state"] = wizard_state
         self._single_state_by_run[run_key] = copy.deepcopy(state)
 
-    def share_single_function_state(self, source_run_number: int, target_run_numbers: list[int]) -> int:
+    def share_single_function_state(
+        self, source_run_number: int, target_run_numbers: list[int]
+    ) -> int:
         """Copy source single-fit function/parameter state to target runs.
 
         The copied state intentionally clears fit-result text for targets because
@@ -2395,16 +2409,26 @@ class FitPanel(QWidget):
 
                 min_val = getattr(param, "min", -float("inf"))
                 max_val = getattr(param, "max", float("inf"))
-                min_text = "-inf" if min_val is None or not np.isfinite(float(min_val)) else str(float(min_val))
-                max_text = "inf" if max_val is None or not np.isfinite(float(max_val)) else str(float(max_val))
+                min_text = (
+                    "-inf"
+                    if min_val is None or not np.isfinite(float(min_val))
+                    else str(float(min_val))
+                )
+                max_text = (
+                    "inf"
+                    if max_val is None or not np.isfinite(float(max_val))
+                    else str(float(max_val))
+                )
 
-            params.append({
-                "name": pname,
-                "value": value,
-                "fixed": fixed,
-                "min": min_text,
-                "max": max_text,
-            })
+            params.append(
+                {
+                    "name": pname,
+                    "value": value,
+                    "fixed": fixed,
+                    "min": min_text,
+                    "max": max_text,
+                }
+            )
 
         return {
             "model_name": "Composite",
@@ -2413,7 +2437,9 @@ class FitPanel(QWidget):
             "result_html": self._result_html_from_fit(fit_result, source),
         }
 
-    def register_global_fit_results(self, results_by_run: dict[int, tuple[object, object, object]]) -> None:
+    def register_global_fit_results(
+        self, results_by_run: dict[int, tuple[object, object, object]]
+    ) -> None:
         """Persist per-run single-tab state using the latest successful global fit."""
         model = self._global_tab._composite_model
         active_run = self._active_single_run_number

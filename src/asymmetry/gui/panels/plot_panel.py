@@ -19,7 +19,6 @@ import subprocess
 from pathlib import Path
 
 import numpy as np
-
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -39,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.transform.grouping import apply_grouping
 from asymmetry.core.transform.rebin import rebin
 from asymmetry.core.utils.constants import PeriodMode
@@ -109,7 +108,9 @@ class PlotPanel(QWidget):
             layout.addLayout(self._limit_toolbar)
 
             self._alpha_label = QLabel("")
-            self._alpha_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._alpha_label.setAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
             self._alpha_label.hide()
 
             self._polarization_label = QLabel("Polarization:")
@@ -120,9 +121,7 @@ class PlotPanel(QWidget):
 
             self._polarization_combo = QComboBox()
             self._polarization_combo.setMinimumWidth(90)
-            self._polarization_combo.currentIndexChanged.connect(
-                self._on_polarization_axis_changed
-            )
+            self._polarization_combo.currentIndexChanged.connect(self._on_polarization_axis_changed)
             self._polarization_combo.hide()
 
             alpha_row = QHBoxLayout()
@@ -155,7 +154,7 @@ class PlotPanel(QWidget):
             # Store fit curve data to persist across redraws
             self._fit_curve = None  # (t_fit, y_fit, label) for single fits
             self._fit_curve_run_number = None
-            self._fit_curves = {}   # {run_number: (t_fit, y_fit, label)} for global fits
+            self._fit_curves = {}  # {run_number: (t_fit, y_fit, label)} for global fits
             self._fit_curves_by_key: dict[tuple[int, str | None], tuple] = {}
 
             # Per-fit additive component curves for shading.
@@ -456,7 +455,9 @@ class PlotPanel(QWidget):
         try:
             if self._subplot_axes_by_polarization:
                 subplot_axes = list(self._subplot_axes_by_polarization.values())
-                if source_axis is not None and not any(source_axis is axis for axis in subplot_axes):
+                if source_axis is not None and not any(
+                    source_axis is axis for axis in subplot_axes
+                ):
                     return
 
                 axis_obj = None
@@ -601,7 +602,9 @@ class PlotPanel(QWidget):
 
         target_field = self._default_label_field
         if normalized_group_id is not None:
-            target_field = self._label_field_by_group.get(normalized_group_id, self._default_label_field)
+            target_field = self._label_field_by_group.get(
+                normalized_group_id, self._default_label_field
+            )
 
         idx = self._label_field_combo.findData(target_field)
         if idx < 0:
@@ -624,10 +627,7 @@ class PlotPanel(QWidget):
 
     def _serialize_annotations(self, annotations: list[dict]) -> list[dict[str, object]]:
         """Return serializable annotation payload from in-memory annotation dicts."""
-        return [
-            {"x": ann["x"], "y": ann["y"], "text": ann["text"]}
-            for ann in annotations
-        ]
+        return [{"x": ann["x"], "y": ann["y"], "text": ann["text"]} for ann in annotations]
 
     def _deserialize_annotations(self, payload: object) -> list[dict]:
         """Return in-memory annotation dicts from serialized annotation payload."""
@@ -969,7 +969,9 @@ class PlotPanel(QWidget):
         """Return the axis order currently visible in ALL mode."""
         if not self._subplot_axes_by_polarization:
             return []
-        return [axis for axis in ("P_x", "P_y", "P_z") if axis in self._subplot_axes_by_polarization]
+        return [
+            axis for axis in ("P_x", "P_y", "P_z") if axis in self._subplot_axes_by_polarization
+        ]
 
     def _sync_y_controls_with_visible_axis(self) -> None:
         """Keep Y controls aligned with currently visible polarization context."""
@@ -1062,7 +1064,9 @@ class PlotPanel(QWidget):
         self._subplot_axes_by_polarization = {}
         self._vector_subplot_datasets = {}
 
-    def _plot_datasets_on_axis(self, ax, datasets: list[MuonDataset], axis_key: str | None) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
+    def _plot_datasets_on_axis(
+        self, ax, datasets: list[MuonDataset], axis_key: str | None
+    ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
         """Plot one or more datasets on ``ax`` and return flattened arrays for auto-y."""
         all_times: list[np.ndarray] = []
         all_asym: list[np.ndarray] = []
@@ -1124,7 +1128,7 @@ class PlotPanel(QWidget):
                     default_color=color,
                     variant_index=i,
                 )
-                ax.plot(t_fit, y_fit, '-', color=fit_color, linewidth=2, label="_nolegend_")
+                ax.plot(t_fit, y_fit, "-", color=fit_color, linewidth=2, label="_nolegend_")
 
             if np.any(finite_mask):
                 all_times.append(time[finite_mask])
@@ -1170,7 +1174,9 @@ class PlotPanel(QWidget):
             self._subplot_axes_by_polarization[axis_key] = ax
             self._ax = ax if idx == 0 else self._ax
 
-            t, a, e, low = self._plot_datasets_on_axis(ax, self._vector_subplot_datasets.get(axis_key, []), axis_key)
+            t, a, e, low = self._plot_datasets_on_axis(
+                ax, self._vector_subplot_datasets.get(axis_key, []), axis_key
+            )
             if axis_key in self._y_limits_by_polarization:
                 y0, y1 = self._y_limits_by_polarization[axis_key]
                 ax.set_ylim(y0, y1)
@@ -1316,16 +1322,19 @@ class PlotPanel(QWidget):
                 "#000000",  # black
             ],
         }
-        distinct_palette = palette_by_base.get(base_color.lower(), [
-            "#0072b2",  # blue
-            "#e69f00",  # orange
-            "#56b4e9",  # sky blue
-            "#f0e442",  # yellow
-            "#009e73",  # bluish green
-            "#cc79a7",  # magenta
-            "#000000",  # black
-            "#d55e00",  # vermillion
-        ])
+        distinct_palette = palette_by_base.get(
+            base_color.lower(),
+            [
+                "#0072b2",  # blue
+                "#e69f00",  # orange
+                "#56b4e9",  # sky blue
+                "#f0e442",  # yellow
+                "#009e73",  # bluish green
+                "#cc79a7",  # magenta
+                "#000000",  # black
+                "#d55e00",  # vermillion
+            ],
+        )
         return distinct_palette[(index - 1) % len(distinct_palette)]
 
     def _fit_line_color_for_dataset(
@@ -1435,8 +1444,7 @@ class PlotPanel(QWidget):
                     default_color=color,
                     variant_index=i,
                 )
-                self._ax.plot(t_fit, y_fit, '-', color=fit_color, linewidth=2,
-                              label="_nolegend_")
+                self._ax.plot(t_fit, y_fit, "-", color=fit_color, linewidth=2, label="_nolegend_")
 
             if np.any(finite_mask):
                 all_times.append(time[finite_mask])
@@ -1554,12 +1562,12 @@ class PlotPanel(QWidget):
             t_fit, y_fit, fit_label = fit_to_plot
             fit_color = self._fit_line_color_for_dataset(
                 dataset,
-                default_color='r',
+                default_color="r",
             )
             self._ax.plot(
                 t_fit,
                 y_fit,
-                '-',
+                "-",
                 color=fit_color,
                 linewidth=2,
                 label=fit_label,
@@ -1664,7 +1672,11 @@ class PlotPanel(QWidget):
             # ALL mode inherits per-axis limits from individual polarization views.
             return
 
-        if self._last_plot_time is None or self._last_plot_asymmetry is None or self._last_plot_error is None:
+        if (
+            self._last_plot_time is None
+            or self._last_plot_asymmetry is None
+            or self._last_plot_error is None
+        ):
             return
 
         x_lo = float(self._x_min.value())
@@ -1732,7 +1744,9 @@ class PlotPanel(QWidget):
             return mask
 
         source_run = source_dataset.run if source_dataset is not None else None
-        informational_wim_first_good = self._uses_informational_wim_first_good_bin(source_run or run)
+        informational_wim_first_good = self._uses_informational_wim_first_good_bin(
+            source_run or run
+        )
         grouping = run.grouping
         first_good = grouping.get("first_good_bin")
         last_good = grouping.get("last_good_bin")
@@ -1835,7 +1849,11 @@ class PlotPanel(QWidget):
         saturated = np.isclose(np.abs(reference_asym), 100.0, atol=1e-12)
 
         run = reference_dataset.run
-        if run is None or not run.histograms or not isinstance(getattr(run, "grouping", None), dict):
+        if (
+            run is None
+            or not run.histograms
+            or not isinstance(getattr(run, "grouping", None), dict)
+        ):
             return self._project_source_mask_to_analysis_dataset(
                 source_mask=saturated,
                 source_dataset=reference_dataset,
@@ -2323,7 +2341,7 @@ class PlotPanel(QWidget):
         if self._current_dataset is not None:
             self.plot_dataset(self._current_dataset)
         else:
-            self._ax.plot(t_fit, y_fit, 'r-', linewidth=2, label=label)
+            self._ax.plot(t_fit, y_fit, "r-", linewidth=2, label=label)
             self._ax.legend()
             self._canvas.draw()
 
@@ -2466,17 +2484,12 @@ class PlotPanel(QWidget):
             self._fit_components_by_run.pop(run_number, None)
             self._fit_metadata.pop(run_number, None)
 
-        removed_curve_keys = [
-            key for key in self._fit_curves_by_key
-            if key[0] in normalized_runs
-        ]
+        removed_curve_keys = [key for key in self._fit_curves_by_key if key[0] in normalized_runs]
         removed_component_keys = [
-            key for key in self._fit_components_by_key
-            if key[0] in normalized_runs
+            key for key in self._fit_components_by_key if key[0] in normalized_runs
         ]
         removed_metadata_keys = [
-            key for key in self._fit_metadata_by_key
-            if key[0] in normalized_runs
+            key for key in self._fit_metadata_by_key if key[0] in normalized_runs
         ]
 
         for key in removed_curve_keys:
@@ -2545,8 +2558,7 @@ class PlotPanel(QWidget):
     def _safe_file_token(value: str) -> str:
         """Sanitize a string for use in a filename."""
         token = "".join(
-            ch if ch.isalnum() or ch in {"_", "-"} else "_"
-            for ch in str(value).strip()
+            ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(value).strip()
         )
         token = "_".join(part for part in token.split("_") if part)
         return token or "dataset"
@@ -2564,7 +2576,9 @@ class PlotPanel(QWidget):
         text = text.encode("ascii", "ignore").decode("ascii")
         return text or fallback
 
-    def get_current_plot_export_data(self, datasets: list[MuonDataset] | None = None) -> list[dict] | None:
+    def get_current_plot_export_data(
+        self, datasets: list[MuonDataset] | None = None
+    ) -> list[dict] | None:
         """Return export payloads for all displayed datasets.
 
         Returns a list of dicts (one per displayed dataset), or *None* when
@@ -2643,7 +2657,7 @@ class PlotPanel(QWidget):
                                         continue
                                     hi_clamped = min(hi, counts.size - 1)
                                     if hi_clamped >= lo:
-                                        grouped_total += float(np.sum(counts[lo:hi_clamped + 1]))
+                                        grouped_total += float(np.sum(counts[lo : hi_clamped + 1]))
 
                             if grouped_total > 0:
                                 histogram_info["events_grouped"] = grouped_total
@@ -2660,31 +2674,32 @@ class PlotPanel(QWidget):
 
             label_text = self._dataset_label_for(dataset)
 
-            payloads.append({
-                "run_number": rn,
-                "label": label_text,
-                "data": {
-                    "t": analysis.time,
-                    "y": analysis.asymmetry,
-                    "err": analysis.error,
-                },
-                "fit": {"t": t_fit, "y": y_fit, "label": fit_label} if t_fit is not None and y_fit is not None else None,
-                "components": [
-                    {"name": name, "y": y_vals} for name, y_vals in component_data
-                ],
-                "fit_metadata": self._fit_metadata_for_dataset(dataset),
-                "grouping": grouping,
-                "run_metadata": run_metadata,
-                "histogram_info": histogram_info,
-            })
+            payloads.append(
+                {
+                    "run_number": rn,
+                    "label": label_text,
+                    "data": {
+                        "t": analysis.time,
+                        "y": analysis.asymmetry,
+                        "err": analysis.error,
+                    },
+                    "fit": {"t": t_fit, "y": y_fit, "label": fit_label}
+                    if t_fit is not None and y_fit is not None
+                    else None,
+                    "components": [{"name": name, "y": y_vals} for name, y_vals in component_data],
+                    "fit_metadata": self._fit_metadata_for_dataset(dataset),
+                    "grouping": grouping,
+                    "run_metadata": run_metadata,
+                    "histogram_info": histogram_info,
+                }
+            )
 
         if not payloads:
             return None
 
         # Append annotations (shared across all datasets in this view)
         annotations = [
-            {"x": ann["x"], "y": ann["y"], "text": ann["text"]}
-            for ann in self._annotations
+            {"x": ann["x"], "y": ann["y"], "text": ann["text"]} for ann in self._annotations
         ]
         for p in payloads:
             p["annotations"] = annotations
@@ -2729,10 +2744,7 @@ class PlotPanel(QWidget):
             token = self._safe_file_token(f"{label_text}_{axis_suffix}")
             data_color = colors[i % len(colors)] if is_multi else "black"
             fit_color = data_color if is_multi else "red"
-            suppress_subplot_labels = (
-                axis_key in {"P_x", "P_y", "P_z"}
-                and not show_legend
-            )
+            suppress_subplot_labels = axis_key in {"P_x", "P_y", "P_z"} and not show_legend
             data_label = None if suppress_subplot_labels else safe_label
 
             data = payload.get("data") or {}
@@ -2838,7 +2850,9 @@ class PlotPanel(QWidget):
             for t_val, y_val in zip(t_fit, y_fit):
                 f.write(f"{float(t_val):.10g} {float(y_val):.10g}\n")
 
-    def _write_data_file(self, dat_path: Path, payload: dict, *, label_text: object | None = None) -> None:
+    def _write_data_file(
+        self, dat_path: Path, payload: dict, *, label_text: object | None = None
+    ) -> None:
         """Write a .dat file with spectra data and metadata header."""
         data = payload.get("data") or {}
         t_data = data.get("t")
@@ -2848,8 +2862,12 @@ class PlotPanel(QWidget):
             return
 
         display_label = label_text if label_text is not None else payload.get("label", "dataset")
-        run_metadata = payload.get("run_metadata") if isinstance(payload.get("run_metadata"), dict) else {}
-        histogram_info = payload.get("histogram_info") if isinstance(payload.get("histogram_info"), dict) else {}
+        run_metadata = (
+            payload.get("run_metadata") if isinstance(payload.get("run_metadata"), dict) else {}
+        )
+        histogram_info = (
+            payload.get("histogram_info") if isinstance(payload.get("histogram_info"), dict) else {}
+        )
         grouping = payload.get("grouping") if isinstance(payload.get("grouping"), dict) else {}
 
         def _fmt_float(value: object, decimals: int) -> str:
@@ -2876,9 +2894,7 @@ class PlotPanel(QWidget):
         stopped = str(run_metadata.get("stopped", "") or "")
         temperature = _fmt_float(run_metadata.get("temperature"), 3)
         temperature_label = str(
-            run_metadata.get("temperature_label")
-            or run_metadata.get("temperature_setpoint")
-            or ""
+            run_metadata.get("temperature_label") or run_metadata.get("temperature_setpoint") or ""
         ).strip()
         field = _fmt_float(run_metadata.get("field"), 2)
 
@@ -2923,7 +2939,9 @@ class PlotPanel(QWidget):
                 if b_det:
                     groups[2] = sorted(set(b_det))
 
-        t0_bins = histogram_info.get("t0_bins") if isinstance(histogram_info.get("t0_bins"), list) else []
+        t0_bins = (
+            histogram_info.get("t0_bins") if isinstance(histogram_info.get("t0_bins"), list) else []
+        )
         forward_group = _safe_int(grouping.get("forward_group"))
         backward_group = _safe_int(grouping.get("backward_group"))
         alpha = _fmt_float(grouping.get("alpha"), 4)
@@ -2956,13 +2974,20 @@ class PlotPanel(QWidget):
                 f.write(f"!  Started     : {started}\n")
             if stopped:
                 f.write(f"!  Stopped     : {stopped}\n")
-            if n_hist is not None and n_bins is not None and bin_width_ps_text and bin_width_us_text:
+            if (
+                n_hist is not None
+                and n_bins is not None
+                and bin_width_ps_text
+                and bin_width_us_text
+            ):
                 f.write(
                     "!  Histograms  : "
                     f"{n_hist} ({n_bins} bins of {bin_width_ps_text} ps = {bin_width_us_text} us)\n"
                 )
             if events_grouped and events_raw:
-                f.write(f"!  Events      : {events_grouped} MEv grouped in range (raw = {events_raw})\n")
+                f.write(
+                    f"!  Events      : {events_grouped} MEv grouped in range (raw = {events_raw})\n"
+                )
             elif events_raw:
                 f.write(f"!  Events      : {events_raw} MEv\n")
             f.write("! END OF RUN INFORMATION\n")
@@ -2985,7 +3010,9 @@ class PlotPanel(QWidget):
                 f.write(
                     f"!  Forward Group = {fwd_text}, Backward Group = {bwd_text}, Alpha = {alpha}\n"
                 )
-            elif isinstance(grouping.get("forward"), list) or isinstance(grouping.get("backward"), list):
+            elif isinstance(grouping.get("forward"), list) or isinstance(
+                grouping.get("backward"), list
+            ):
                 f.write(f"!  Forward Group = forward, Backward Group = backward, Alpha = {alpha}\n")
             if t_good_offset is not None or last_good_bin is not None:
                 fg_text = "" if t_good_offset is None else str(t_good_offset)
@@ -3080,6 +3107,7 @@ class PlotPanel(QWidget):
 
         try:
             import tempfile
+
             from PySide6.QtGui import QPixmap
 
             dialog = QDialog(self)
@@ -3143,7 +3171,8 @@ class PlotPanel(QWidget):
             payloads = first_axis_payloads
         if not payloads:
             QMessageBox.warning(
-                self, "Export unavailable",
+                self,
+                "Export unavailable",
                 "No plotted data is available to export.",
             )
             return
@@ -3162,7 +3191,8 @@ class PlotPanel(QWidget):
             glp = importlib.import_module("gleplot")
         except ImportError:
             QMessageBox.warning(
-                self, "gleplot not available",
+                self,
+                "gleplot not available",
                 "Install gleplot to export GLE plots.",
             )
             return
@@ -3172,8 +3202,16 @@ class PlotPanel(QWidget):
         export_dir.mkdir(parents=True, exist_ok=True)
         output_format = self._gle_format_combo.currentText().lower()
         colors = [
-            "black", "red", "blue", "green", "orange", "purple",
-            "cyan", "magenta", "brown", "gray",
+            "black",
+            "red",
+            "blue",
+            "green",
+            "orange",
+            "purple",
+            "cyan",
+            "magenta",
+            "brown",
+            "gray",
         ]
 
         fig = glp.figure(figsize=self._export_figure_size(len(payloads)))
@@ -3209,7 +3247,9 @@ class PlotPanel(QWidget):
 
                 for idx, axis_key in enumerate(axis_order):
                     ax = axes_objs[idx]
-                    axis_payloads = self.get_current_plot_export_data(self._vector_subplot_datasets.get(axis_key, []))
+                    axis_payloads = self.get_current_plot_export_data(
+                        self._vector_subplot_datasets.get(axis_key, [])
+                    )
                     if not axis_payloads:
                         continue
                     show_legend = idx == 0 and len(axis_payloads) > 1
@@ -3279,7 +3319,9 @@ class PlotPanel(QWidget):
             try:
                 subprocess.run(
                     ["gle", "-d", output_format, str(gle_path)],
-                    capture_output=True, text=True, check=True,
+                    capture_output=True,
+                    text=True,
+                    check=True,
                 )
                 files_text = "\n".join(str(p) for p in written_files)
                 self._show_export_result_dialog(
@@ -3294,7 +3336,8 @@ class PlotPanel(QWidget):
                 self._show_gle_preview(gle_path)
             except subprocess.CalledProcessError as exc:
                 QMessageBox.warning(
-                    self, "GLE compilation failed",
+                    self,
+                    "GLE compilation failed",
                     exc.stderr or str(exc),
                 )
         else:
@@ -3325,9 +3368,7 @@ class PlotPanel(QWidget):
         """
         state: dict = {
             "current_run_number": (
-                self._current_dataset.run_number
-                if self._current_dataset is not None
-                else None
+                self._current_dataset.run_number if self._current_dataset is not None else None
             ),
             "label_field": self._label_field_combo.currentData() if self._has_mpl else "run",
             "default_label_field": self._default_label_field,
@@ -3378,27 +3419,22 @@ class PlotPanel(QWidget):
                 }
             if self._fit_components is not None:
                 state["fit_components"] = [
-                    {"name": name, "y": list(y_vals)}
-                    for name, y_vals in self._fit_components
+                    {"name": name, "y": list(y_vals)} for name, y_vals in self._fit_components
                 ]
             for run_number, curves in self._fit_components_by_run.items():
                 state["fit_components_by_run"][str(run_number)] = [
-                    {"name": name, "y": list(y_vals)}
-                    for name, y_vals in curves
+                    {"name": name, "y": list(y_vals)} for name, y_vals in curves
                 ]
             for (run_number, axis_key), curves in self._fit_components_by_key.items():
-                state["fit_components_by_key"][self._encode_fit_storage_key(run_number, axis_key)] = [
-                    {"name": name, "y": list(y_vals)}
-                    for name, y_vals in curves
-                ]
+                state["fit_components_by_key"][
+                    self._encode_fit_storage_key(run_number, axis_key)
+                ] = [{"name": name, "y": list(y_vals)} for name, y_vals in curves]
             state["annotations"] = self._serialize_annotations(self._default_annotations)
             state["annotations_by_group"] = {
                 str(group_id): self._serialize_annotations(annotations)
                 for group_id, annotations in self._annotations_by_group.items()
             }
-            state["fit_metadata"] = {
-                str(rn): meta for rn, meta in self._fit_metadata.items()
-            }
+            state["fit_metadata"] = {str(rn): meta for rn, meta in self._fit_metadata.items()}
             state["fit_metadata_by_key"] = {
                 self._encode_fit_storage_key(run_number, axis_key): meta
                 for (run_number, axis_key), meta in self._fit_metadata_by_key.items()
@@ -3409,7 +3445,7 @@ class PlotPanel(QWidget):
     def restore_state(
         self,
         state: dict,
-        dataset: "MuonDataset | None" = None,
+        dataset: MuonDataset | None = None,
     ) -> None:
         """Restore plot panel state from a saved dict.
 
@@ -3447,7 +3483,11 @@ class PlotPanel(QWidget):
         if isinstance(raw_y_limits_by_axis, dict):
             for raw_axis, raw_limits in raw_y_limits_by_axis.items():
                 axis = self._axis_canonical_key(raw_axis)
-                if axis is None or not isinstance(raw_limits, (list, tuple)) or len(raw_limits) != 2:
+                if (
+                    axis is None
+                    or not isinstance(raw_limits, (list, tuple))
+                    or len(raw_limits) != 2
+                ):
                     continue
                 try:
                     lo = float(raw_limits[0])

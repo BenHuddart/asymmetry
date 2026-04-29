@@ -9,13 +9,10 @@ import pytest
 
 from asymmetry.core.fitting.parameter_models import (
     PARAMETER_MODEL_COMPONENTS,
-    ParameterCompositeModel,
-    ParameterModelFitResult,
-    component_names_for_x,
-    evaluate_parameter_model_fit,
-    fit_parameter_model,
     ModelFitRange,
+    ParameterCompositeModel,
     ParameterModelFit,
+    ParameterModelFitResult,
     _arrhenius,
     _constant,
     _critical_divergence,
@@ -25,13 +22,16 @@ from asymmetry.core.fitting.parameter_models import (
     _lorentzian,
     _power_law,
     _redfield,
+    component_names_for_x,
+    evaluate_parameter_model_fit,
+    fit_parameter_model,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-
 
 # ---------------------------------------------------------------------------
 # component_names_for_x
 # ---------------------------------------------------------------------------
+
 
 def test_component_names_filtered_by_x_key() -> None:
     field_names = component_names_for_x("field")
@@ -68,6 +68,7 @@ def test_component_names_common_excludes_scoped() -> None:
 # ---------------------------------------------------------------------------
 # Individual basis functions
 # ---------------------------------------------------------------------------
+
 
 def test_constant_fills_array() -> None:
     x = np.array([1.0, 2.0, 5.0, 10.0])
@@ -205,6 +206,7 @@ def test_redfield_safe_with_near_zero_nu() -> None:
 # PARAMETER_MODEL_COMPONENTS registry
 # ---------------------------------------------------------------------------
 
+
 def test_all_components_have_unique_names() -> None:
     names = list(PARAMETER_MODEL_COMPONENTS.keys())
     assert len(names) == len(set(names))
@@ -226,6 +228,7 @@ def test_all_components_callable() -> None:
 # ---------------------------------------------------------------------------
 # ParameterCompositeModel construction
 # ---------------------------------------------------------------------------
+
 
 def test_composite_single_component_works() -> None:
     model = ParameterCompositeModel(["Constant"])
@@ -273,6 +276,7 @@ def test_composite_unique_params_have_no_suffix() -> None:
 # ParameterCompositeModel.formula_string
 # ---------------------------------------------------------------------------
 
+
 def test_formula_string_single_component() -> None:
     model = ParameterCompositeModel(["Constant"])
     assert model.formula_string() == "{c}".format(c="c")
@@ -289,6 +293,7 @@ def test_formula_string_two_components_uses_operator() -> None:
 # ---------------------------------------------------------------------------
 # ParameterCompositeModel.function evaluation
 # ---------------------------------------------------------------------------
+
 
 def test_composite_function_addition() -> None:
     model = ParameterCompositeModel(["Constant", "Constant"], operators=["+"])
@@ -387,6 +392,7 @@ def test_parameter_composite_evaluate_components_additive_only() -> None:
 # fit_parameter_model
 # ---------------------------------------------------------------------------
 
+
 def test_fit_parameter_model_linear_recovers_parameters() -> None:
     rng = np.random.default_rng(123)
     x = np.linspace(0.0, 10.0, 120)
@@ -472,10 +478,12 @@ def test_fit_with_fixed_parameter_preserved() -> None:
     yerr = np.full_like(x, 0.1)
 
     model = ParameterCompositeModel(["Linear"])
-    params = ParameterSet([
-        Parameter("m", value=1.0),
-        Parameter("b", value=5.0, fixed=True),  # fix b
-    ])
+    params = ParameterSet(
+        [
+            Parameter("m", value=1.0),
+            Parameter("b", value=5.0, fixed=True),  # fix b
+        ]
+    )
 
     result = fit_parameter_model(x, y, yerr, model, params)
     assert result.success
@@ -492,7 +500,9 @@ def test_fit_with_simplex_method_succeeds() -> None:
     params = ParameterSet([Parameter("m", value=1.0), Parameter("b", value=0.0)])
 
     result = fit_parameter_model(x, y, yerr, model, params, method="simplex")
-    assert result.success or not result.success  # simplex may not set m.valid; just ensure no exception
+    assert (
+        result.success or not result.success
+    )  # simplex may not set m.valid; just ensure no exception
 
 
 def test_fit_power_law_recovers_exponent() -> None:
@@ -504,11 +514,13 @@ def test_fit_power_law_recovers_exponent() -> None:
     yerr = np.full_like(x, 0.05)
 
     model = ParameterCompositeModel(["PowerLaw"])
-    params = ParameterSet([
-        Parameter("a", value=1.0, min=0.0),
-        Parameter("n", value=1.0, min=0.5, max=4.0),
-        Parameter("c", value=0.0, fixed=True),
-    ])
+    params = ParameterSet(
+        [
+            Parameter("a", value=1.0, min=0.0),
+            Parameter("n", value=1.0, min=0.5, max=4.0),
+            Parameter("c", value=0.0, fixed=True),
+        ]
+    )
     result = fit_parameter_model(x, y, yerr, model, params)
     assert result.success
     fitted = {p.name: p.value for p in result.parameters}
@@ -525,11 +537,13 @@ def test_fit_exp_decay_recovers_tau() -> None:
     yerr = np.full_like(x, 0.02)
 
     model = ParameterCompositeModel(["ExponentialDecay"])
-    params = ParameterSet([
-        Parameter("a", value=2.0, min=0.0),
-        Parameter("tau", value=4.0, min=0.1),
-        Parameter("c", value=0.0, fixed=True),
-    ])
+    params = ParameterSet(
+        [
+            Parameter("a", value=2.0, min=0.0),
+            Parameter("tau", value=4.0, min=0.1),
+            Parameter("c", value=0.0, fixed=True),
+        ]
+    )
     result = fit_parameter_model(x, y, yerr, model, params)
     assert result.success
     fitted = {p.name: p.value for p in result.parameters}
@@ -566,6 +580,7 @@ def test_fit_result_chi_squared_finite() -> None:
 # ---------------------------------------------------------------------------
 # evaluate_parameter_model_fit
 # ---------------------------------------------------------------------------
+
 
 def test_evaluate_parameter_model_fit_produces_curves_for_successful_ranges() -> None:
     model = ParameterCompositeModel(["Constant"])
@@ -663,7 +678,9 @@ def test_evaluate_skips_range_with_none_x_bounds() -> None:
     fit = ParameterModelFit(
         parameter_name="Lambda",
         x_key="field",
-        ranges=[ModelFitRange(x_min=None, x_max=5.0, model=model, parameters=params, result=result)],
+        ranges=[
+            ModelFitRange(x_min=None, x_max=5.0, model=model, parameters=params, result=result)
+        ],
         active=True,
     )
 

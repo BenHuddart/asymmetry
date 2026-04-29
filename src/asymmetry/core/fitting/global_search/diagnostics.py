@@ -13,7 +13,10 @@ def summarize_relaxed_fit(result: RelaxedFitResult) -> tuple[str, ...]:
     localized = sorted(
         name
         for name in result.base_values
-        if any(abs(run_values.get(name, 0.0)) > 1e-6 for run_values in result.deviations_by_run.values())
+        if any(
+            abs(run_values.get(name, 0.0)) > 1e-6
+            for run_values in result.deviations_by_run.values()
+        )
     )
     if localized:
         messages.append("Relaxed deviations activated: " + ", ".join(localized))
@@ -23,4 +26,3 @@ def summarize_relaxed_fit(result: RelaxedFitResult) -> tuple[str, ...]:
     if inactive:
         messages.append("Relaxed activity flagged weak components: " + ", ".join(inactive))
     return tuple(messages)
-

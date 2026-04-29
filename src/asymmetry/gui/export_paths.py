@@ -6,7 +6,6 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings
 
-
 _EXPORT_DIR_KEY = "io/last_export_dir"
 _OPEN_DIR_KEY = "io/last_open_dir"
 

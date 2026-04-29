@@ -8,7 +8,6 @@ import numpy as np
 
 from asymmetry.core.fitting.component_docs import get_component_applicability
 from asymmetry.core.fitting.composite import COMPONENTS
-from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.core.fitting.muon_fluorine import polarization
 from asymmetry.core.fitting.muon_fluorine.dipolar import omega_d_mu_f_rad_per_us
 from asymmetry.core.fitting.muon_fluorine.polarization import (
@@ -16,6 +15,7 @@ from asymmetry.core.fitting.muon_fluorine.polarization import (
     linear_fmuf_polarization,
     mu_f_polarization,
 )
+from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.gui.utils.latex_renderer import render_latex_png_bytes
 from asymmetry.gui.widgets.component_info_dialog import build_component_info_html
 

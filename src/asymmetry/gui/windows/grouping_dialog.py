@@ -67,14 +67,10 @@ class GroupingDialog(QDialog):
     ) -> None:
         """Create a shared grouping dialog for project datasets."""
         super().__init__(parent)
-        self._datasets = [
-            ds for ds in datasets if ds.run is not None
-        ]
+        self._datasets = [ds for ds in datasets if ds.run is not None]
         self._selected_run_number = selected_run_number
         self._selected_run_numbers = (
-            {int(v) for v in selected_run_numbers}
-            if selected_run_numbers is not None
-            else None
+            {int(v) for v in selected_run_numbers} if selected_run_numbers is not None else None
         )
 
         self.setWindowTitle("Grouping")
@@ -164,8 +160,7 @@ class GroupingDialog(QDialog):
         detector_layout_btn.setAutoDefault(False)
         detector_layout_btn.setDefault(False)
         detector_layout_btn.setToolTip(
-            "Open the interactive detector schematic editor to assign "
-            "detectors to groups visually."
+            "Open the interactive detector schematic editor to assign detectors to groups visually."
         )
         detector_layout_btn.clicked.connect(self._on_detector_layout)
         root.addWidget(detector_layout_btn)
@@ -186,9 +181,7 @@ class GroupingDialog(QDialog):
             else None
         )
         self._detector_layout_instrument_name: str | None = (
-            str(grouping.get("instrument")).strip()
-            if grouping.get("instrument")
-            else None
+            str(grouping.get("instrument")).strip() if grouping.get("instrument") else None
         )
         self._enforce_source_bunching = self._reference_is_wim_run()
         self._source_bunching_factor = self._read_source_bunching_factor(grouping)
@@ -308,14 +301,18 @@ class GroupingDialog(QDialog):
             spin = QDoubleSpinBox()
             spin.setDecimals(6)
             spin.setRange(0.01, 1000.0)
-            spin.setValue(self._alpha_value_for_axis(grouping_alpha, axis, float(self._alpha_spin.value())))
+            spin.setValue(
+                self._alpha_value_for_axis(grouping_alpha, axis, float(self._alpha_spin.value()))
+            )
             vector_layout.addWidget(spin, 3, col)
             self._vector_alpha_spins[axis] = spin
 
             btn = QPushButton("Estimate α")
             btn.setAutoDefault(False)
             btn.setDefault(False)
-            btn.clicked.connect(lambda _checked=False, axis_key=axis: self._estimate_alpha_for_axis(axis_key))
+            btn.clicked.connect(
+                lambda _checked=False, axis_key=axis: self._estimate_alpha_for_axis(axis_key)
+            )
             vector_layout.addWidget(btn, 4, col)
             self._vector_estimate_buttons[axis] = btn
 
@@ -437,7 +434,11 @@ class GroupingDialog(QDialog):
     def _bin_index_base(self, grouping: dict[str, Any] | None = None) -> int:
         """Return displayed index base (0- or 1-based) for bin controls."""
         if grouping is None:
-            grouping = self._run.grouping if self._run is not None and isinstance(self._run.grouping, dict) else {}
+            grouping = (
+                self._run.grouping
+                if self._run is not None and isinstance(self._run.grouping, dict)
+                else {}
+            )
         raw_base = grouping.get("bin_index_base", 0)
         try:
             return 1 if int(raw_base) == 1 else 0
@@ -599,7 +600,9 @@ class GroupingDialog(QDialog):
                 "Background correction is available for PSI BIN/MDU and PSI/LEM ROOT data."
             )
             return
-        self._background_checkbox.setToolTip("Apply grouped background subtraction before asymmetry.")
+        self._background_checkbox.setToolTip(
+            "Apply grouped background subtraction before asymmetry."
+        )
 
     def _update_bunching_ui_hints(self) -> None:
         """Refresh explanatory text shown next to bunching controls."""
@@ -609,12 +612,13 @@ class GroupingDialog(QDialog):
                 f"WIM baseline: {base}. Allowed values: {base}, {2 * base}, {3 * base}, ..."
             )
             self._bunch_spin.setToolTip(
-                "For this .wim dataset, bunching must be an integer multiple of "
-                f"{base}."
+                f"For this .wim dataset, bunching must be an integer multiple of {base}."
             )
             return
 
-        self._bunch_source_hint.setText("No file-imposed bunching constraint for this dataset type.")
+        self._bunch_source_hint.setText(
+            "No file-imposed bunching constraint for this dataset type."
+        )
         self._bunch_spin.setToolTip("Set any bunching factor >= 1.")
 
     def _read_source_bunching_factor(self, grouping: dict[str, Any]) -> int:
@@ -650,7 +654,9 @@ class GroupingDialog(QDialog):
             QMessageBox.warning(self, "Invalid Bunching Factor", err)
             return
 
-        t0_bin, t_good_offset, first_good_bin, last_good_bin = self._resolve_good_bin_limits_from_controls()
+        t0_bin, t_good_offset, first_good_bin, last_good_bin = (
+            self._resolve_good_bin_limits_from_controls()
+        )
         max_bin = self._max_bin_index_for_reference_dataset()
         if first_good_bin > max_bin:
             QMessageBox.warning(
@@ -692,7 +698,9 @@ class GroupingDialog(QDialog):
         for i in range(self._dataset_list.count()):
             item = self._dataset_list.item(i)
             run_number = item.data(Qt.ItemDataRole.UserRole)
-            state = Qt.CheckState.Checked if run_number == reference_run else Qt.CheckState.Unchecked
+            state = (
+                Qt.CheckState.Checked if run_number == reference_run else Qt.CheckState.Unchecked
+            )
             item.setCheckState(state)
 
     def _deselect_all_datasets(self) -> None:
@@ -857,7 +865,11 @@ class GroupingDialog(QDialog):
 
             spin = self._vector_alpha_spins[axis]
             try:
-                value = float(grouping_values.get(self._vector_alpha_key(axis), grouping_values.get("alpha", spin.value())))
+                value = float(
+                    grouping_values.get(
+                        self._vector_alpha_key(axis), grouping_values.get("alpha", spin.value())
+                    )
+                )
             except (TypeError, ValueError):
                 value = self._alpha_value_for_axis(grouping_values, axis, fallback)
             spin.setValue(value)
@@ -952,7 +964,9 @@ class GroupingDialog(QDialog):
     def _estimate_alpha_for_group_ids(self, forward_gid: int, backward_gid: int) -> float | None:
         """Estimate alpha for the provided group IDs using the reference run."""
         if forward_gid == backward_gid:
-            QMessageBox.warning(self, "Invalid Grouping", "Forward and backward groups must differ.")
+            QMessageBox.warning(
+                self, "Invalid Grouping", "Forward and backward groups must differ."
+            )
             return None
 
         forward_indices = self._groups.get(forward_gid, [])
@@ -966,16 +980,22 @@ class GroupingDialog(QDialog):
             return None
 
         if max(forward_indices, default=-1) >= len(self._run.histograms):
-            QMessageBox.warning(self, "Estimate Failed", "Forward group exceeds detector count for reference run.")
+            QMessageBox.warning(
+                self, "Estimate Failed", "Forward group exceeds detector count for reference run."
+            )
             return None
         if max(backward_indices, default=-1) >= len(self._run.histograms):
-            QMessageBox.warning(self, "Estimate Failed", "Backward group exceeds detector count for reference run.")
+            QMessageBox.warning(
+                self, "Estimate Failed", "Backward group exceeds detector count for reference run."
+            )
             return None
 
         forward_counts = apply_grouping(self._run.histograms, forward_indices)
         backward_counts = apply_grouping(self._run.histograms, backward_indices)
 
-        _t0_bin, _t_good_offset, first_good_bin, last_good_bin = self._resolve_good_bin_limits_from_controls()
+        _t0_bin, _t_good_offset, first_good_bin, last_good_bin = (
+            self._resolve_good_bin_limits_from_controls()
+        )
         return float(
             estimate_alpha(
                 forward_counts,
@@ -989,7 +1009,9 @@ class GroupingDialog(QDialog):
         """Estimate alpha for one vector polarization axis pair."""
         pair = self._vector_axis_pairs.get(axis)
         if pair is None:
-            QMessageBox.warning(self, "Estimate Failed", f"No vector grouping pair is available for {axis}.")
+            QMessageBox.warning(
+                self, "Estimate Failed", f"No vector grouping pair is available for {axis}."
+            )
             return
         alpha = self._estimate_alpha_for_group_ids(int(pair[0]), int(pair[1]))
         if alpha is not None:
@@ -1041,7 +1063,9 @@ class GroupingDialog(QDialog):
         """Build the current grouping payload from UI controls."""
         forward_gid = int(self._forward_combo.currentData())
         backward_gid = int(self._backward_combo.currentData())
-        t0_bin, t_good_offset, first_good_bin, last_good_bin = self._resolve_good_bin_limits_from_controls()
+        t0_bin, t_good_offset, first_good_bin, last_good_bin = (
+            self._resolve_good_bin_limits_from_controls()
+        )
         vector_mode = bool(self._vector_axis_pairs)
         if vector_mode and "P_z" in self._vector_axis_pairs:
             forward_gid, backward_gid = self._vector_axis_pairs["P_z"]
@@ -1115,16 +1139,20 @@ class GroupingDialog(QDialog):
         if not path:
             return
 
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             payload = self.parse_grp(handle.read())
 
-        loaded_index_base = 1 if int(payload.get("bin_index_base", self._bin_index_base())) == 1 else 0
+        loaded_index_base = (
+            1 if int(payload.get("bin_index_base", self._bin_index_base())) == 1 else 0
+        )
         if isinstance(self._run.grouping, dict):
             self._run.grouping["bin_index_base"] = loaded_index_base
 
         loaded_groups = payload.get("groups", {})
         if not isinstance(loaded_groups, dict) or len(loaded_groups) < 2:
-            QMessageBox.warning(self, "Invalid Grouping", "Loaded .grp file does not define at least two groups.")
+            QMessageBox.warning(
+                self, "Invalid Grouping", "Loaded .grp file does not define at least two groups."
+            )
             return
 
         groups: dict[int, list[int]] = {}
@@ -1288,7 +1316,15 @@ class GroupingDialog(QDialog):
                 payload[key] = int(float(value))
                 if key == "t_good_offset":
                     saw_t_good_offset = True
-            elif key in {"alpha", "alpha_x", "alpha_y", "alpha_z", "alpha_px", "alpha_py", "alpha_pz"}:
+            elif key in {
+                "alpha",
+                "alpha_x",
+                "alpha_y",
+                "alpha_z",
+                "alpha_px",
+                "alpha_py",
+                "alpha_pz",
+            }:
                 payload[key] = float(value)
             elif key == "deadtime_correction":
                 payload[key] = value.strip().lower() in {"1", "true", "yes", "on"}
@@ -1353,13 +1389,12 @@ class WimGroupingDialog(QDialog):
         self._datasets = [
             ds
             for ds in datasets
-            if ds.run is not None and str(getattr(ds.run, "source_file", "")).lower().endswith(".wim")
+            if ds.run is not None
+            and str(getattr(ds.run, "source_file", "")).lower().endswith(".wim")
         ]
         self._selected_run_number = selected_run_number
         self._selected_run_numbers = (
-            {int(v) for v in selected_run_numbers}
-            if selected_run_numbers is not None
-            else None
+            {int(v) for v in selected_run_numbers} if selected_run_numbers is not None else None
         )
 
         self.setWindowTitle("WIM Grouping")
@@ -1540,7 +1575,9 @@ class WimGroupingDialog(QDialog):
 
         t_good_offset = grouping.get("t_good_offset")
         try:
-            t_good_offset_int = int(t_good_offset) if t_good_offset is not None else first_good_int - t0_bin_int
+            t_good_offset_int = (
+                int(t_good_offset) if t_good_offset is not None else first_good_int - t0_bin_int
+            )
         except (TypeError, ValueError):
             t_good_offset_int = first_good_int - t0_bin_int
 
@@ -1552,7 +1589,9 @@ class WimGroupingDialog(QDialog):
             self._last_good_label.setText(str(int(last_good_raw) + index_base))
         except (TypeError, ValueError):
             self._last_good_label.setText("-")
-        self._deadtime_label.setText("on" if bool(grouping.get("deadtime_correction", False)) else "off")
+        self._deadtime_label.setText(
+            "on" if bool(grouping.get("deadtime_correction", False)) else "off"
+        )
 
     def _update_bunching_ui_hints(self) -> None:
         base = int(self._source_bunching_factor)
@@ -1560,8 +1599,7 @@ class WimGroupingDialog(QDialog):
             f"WIM baseline: {base}. Allowed values: {base}, {2 * base}, {3 * base}, ..."
         )
         self._bunch_spin.setToolTip(
-            "For this .wim dataset, bunching must be an integer multiple of "
-            f"{base}."
+            f"For this .wim dataset, bunching must be an integer multiple of {base}."
         )
 
     def _read_source_bunching_factor(self, grouping: dict[str, Any]) -> int:
@@ -1613,7 +1651,9 @@ class WimGroupingDialog(QDialog):
         for i in range(self._dataset_list.count()):
             item = self._dataset_list.item(i)
             run_number = item.data(Qt.ItemDataRole.UserRole)
-            state = Qt.CheckState.Checked if run_number == reference_run else Qt.CheckState.Unchecked
+            state = (
+                Qt.CheckState.Checked if run_number == reference_run else Qt.CheckState.Unchecked
+            )
             item.setCheckState(state)
 
     def _deselect_all_datasets(self) -> None:
@@ -1633,7 +1673,9 @@ class WimGroupingDialog(QDialog):
                 )
             ),
             "first_good_bin": int(grouping.get("first_good_bin", 0)),
-            "last_good_bin": int(grouping.get("last_good_bin", max(0, self._reference_dataset.n_points - 1))),
+            "last_good_bin": int(
+                grouping.get("last_good_bin", max(0, self._reference_dataset.n_points - 1))
+            ),
             "bunching_factor": int(self._bunch_spin.value()),
             "source_bunching_factor": int(self._source_bunching_factor),
             "enforce_source_bunching": True,

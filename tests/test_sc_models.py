@@ -341,7 +341,9 @@ def test_s_plus_g_uses_generalized_gap_amplitude() -> None:
     temps = np.array([16.0])
     ratio = 2.77
 
-    rho_model = models.rho_s_plus_g(temps, Tc=tc, gap_ratio=ratio, n_theta=32, n_phi=64, n_energy=80)
+    rho_model = models.rho_s_plus_g(
+        temps, Tc=tc, gap_ratio=ratio, n_theta=32, n_phi=64, n_energy=80
+    )
     rho_expected = kernel.superfluid_density_3d(
         temps,
         tc=tc,

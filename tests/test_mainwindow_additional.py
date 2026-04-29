@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import sys
 from types import SimpleNamespace
 
-import pytest
 import numpy as np
+import pytest
 
 pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar  # type: ignore
 
+import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
@@ -18,7 +18,6 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterGroupData,
 )
 from asymmetry.gui.mainwindow import MainWindow
-import asymmetry.gui.mainwindow as mw_module
 
 
 @pytest.fixture(scope="module")
@@ -134,7 +133,9 @@ class TestMainWindowBasic:
         )
 
         remembered: dict[str, str] = {}
-        monkeypatch.setattr(mw_module, "remember_export_path", lambda p: remembered.setdefault("path", p))
+        monkeypatch.setattr(
+            mw_module, "remember_export_path", lambda p: remembered.setdefault("path", p)
+        )
 
         called: dict[str, str] = {}
 
@@ -754,7 +755,11 @@ class TestMainWindowBasic:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         calls = {"render": 0, "apply": 0}
-        monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: calls.__setitem__("render", calls["render"] + 1))
+        monkeypatch.setattr(
+            mainwindow,
+            "_render_current_selection_plot",
+            lambda: calls.__setitem__("render", calls["render"] + 1),
+        )
 
         def _unexpected_apply(*_args, **_kwargs):
             calls["apply"] += 1
@@ -839,8 +844,14 @@ class TestMainWindowBasic:
             mainwindow._plot_panel.get_current_polarization_axis = lambda: None
 
         plotted: list[int] = []
-        monkeypatch.setattr(mainwindow._plot_panel, "plot_datasets", lambda _datasets: plotted.append(-1))
-        monkeypatch.setattr(mainwindow._plot_panel, "plot_dataset", lambda dataset: plotted.append(int(dataset.run_number)))
+        monkeypatch.setattr(
+            mainwindow._plot_panel, "plot_datasets", lambda _datasets: plotted.append(-1)
+        )
+        monkeypatch.setattr(
+            mainwindow._plot_panel,
+            "plot_dataset",
+            lambda dataset: plotted.append(int(dataset.run_number)),
+        )
 
         mainwindow._render_current_selection_plot()
 
@@ -871,8 +882,14 @@ class TestMainWindowBasic:
             mainwindow._plot_panel.get_current_polarization_axis = lambda: None
 
         plotted: list[int] = []
-        monkeypatch.setattr(mainwindow._plot_panel, "plot_datasets", lambda _datasets: plotted.append(-1))
-        monkeypatch.setattr(mainwindow._plot_panel, "plot_dataset", lambda dataset: plotted.append(int(dataset.run_number)))
+        monkeypatch.setattr(
+            mainwindow._plot_panel, "plot_datasets", lambda _datasets: plotted.append(-1)
+        )
+        monkeypatch.setattr(
+            mainwindow._plot_panel,
+            "plot_dataset",
+            lambda dataset: plotted.append(int(dataset.run_number)),
+        )
 
         mainwindow._current_dataset = ds2
         mainwindow._render_current_selection_plot()
@@ -918,7 +935,11 @@ class TestMainWindowBasic:
             mainwindow._plot_panel.get_current_polarization_axis = lambda: "P_x"
 
         calls = {"render": 0}
-        monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: calls.__setitem__("render", calls["render"] + 1))
+        monkeypatch.setattr(
+            mainwindow,
+            "_render_current_selection_plot",
+            lambda: calls.__setitem__("render", calls["render"] + 1),
+        )
         mainwindow._fit_panel.set_dataset = lambda _dataset: None
 
         mainwindow._on_dataset_selected(7701)
@@ -962,7 +983,11 @@ class TestMainWindowBasic:
             mainwindow._plot_panel.get_current_polarization_axis = lambda: "ALL"
 
         calls = {"render": 0}
-        monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: calls.__setitem__("render", calls["render"] + 1))
+        monkeypatch.setattr(
+            mainwindow,
+            "_render_current_selection_plot",
+            lambda: calls.__setitem__("render", calls["render"] + 1),
+        )
         mainwindow._fit_panel.set_dataset = lambda _dataset: None
 
         mainwindow._on_dataset_selected(7702)
@@ -1005,8 +1030,8 @@ class TestMainWindowBasic:
 
         mainwindow._current_dataset = ds1
         mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
-        mainwindow._data_browser.get_dataset = (
-            lambda run_number: ds1 if int(run_number) == 7711 else ds2
+        mainwindow._data_browser.get_dataset = lambda run_number: (
+            ds1 if int(run_number) == 7711 else ds2
         )
         if hasattr(mainwindow._data_browser, "get_selected_group_ids"):
             mainwindow._data_browser.get_selected_group_ids = lambda: []
@@ -1047,7 +1072,9 @@ class TestMainWindowBasic:
 
         assert calls == [("add", "run_info.points"), ("remove", "run_info.points")]
 
-    def test_cross_group_completion_shows_global_parameter_window(self, mainwindow: MainWindow) -> None:
+    def test_cross_group_completion_shows_global_parameter_window(
+        self, mainwindow: MainWindow
+    ) -> None:
         """Accepted cross-group fit should open and focus the global-fit result window."""
         model = ParameterCompositeModel(["Linear"])
         fit_result = CrossGroupFitResult(
@@ -1080,8 +1107,12 @@ class TestMainWindowBasic:
         """Deleting a fit-parameter group should clear fit data for its runs."""
         captured: dict[str, list[int]] = {"fit": [], "plot": []}
 
-        mainwindow._fit_panel.clear_fits_for_runs = lambda runs: captured["fit"].extend(runs) or len(runs)
-        mainwindow._plot_panel.clear_fits_for_runs = lambda runs: captured["plot"].extend(runs) or len(runs)
+        mainwindow._fit_panel.clear_fits_for_runs = lambda runs: (
+            captured["fit"].extend(runs) or len(runs)
+        )
+        mainwindow._plot_panel.clear_fits_for_runs = lambda runs: (
+            captured["plot"].extend(runs) or len(runs)
+        )
 
         mainwindow._on_fit_parameters_group_fits_deleted("g1", [101, "102", 101, "bad"])
 
@@ -1127,19 +1158,23 @@ class TestMainWindowBasic:
         incoming = _make_dataset(7020, with_grouping=False)
 
         assert low_run.run is not None
-        low_run.run.grouping.update({
-            "groups": {1: [1], 2: [2]},
-            "forward_group": 1,
-            "backward_group": 2,
-            "alpha": 1.0,
-        })
+        low_run.run.grouping.update(
+            {
+                "groups": {1: [1], 2: [2]},
+                "forward_group": 1,
+                "backward_group": 2,
+                "alpha": 1.0,
+            }
+        )
         assert high_run.run is not None
-        high_run.run.grouping.update({
-            "groups": {5: [1], 6: [2]},
-            "forward_group": 5,
-            "backward_group": 6,
-            "alpha": 2.5,
-        })
+        high_run.run.grouping.update(
+            {
+                "groups": {5: [1], 6: [2]},
+                "forward_group": 5,
+                "backward_group": 6,
+                "alpha": 2.5,
+            }
+        )
 
         mainwindow._data_browser.add_dataset(low_run)
         mainwindow._data_browser.add_dataset(high_run)
@@ -1306,10 +1341,12 @@ class TestMainWindowBasic:
         monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
         monkeypatch.setattr(QMessageBox, "question", _stub_question)
 
-        mainwindow._load_files([
-            "/tmp/duplicate_all_1.wim",
-            "/tmp/duplicate_all_2.wim",
-        ])
+        mainwindow._load_files(
+            [
+                "/tmp/duplicate_all_1.wim",
+                "/tmp/duplicate_all_2.wim",
+            ]
+        )
 
         assert prompt_calls["n"] == 1
         first_result = mainwindow._data_browser.get_dataset(7303)
@@ -1579,7 +1616,9 @@ class TestMainWindowBasic:
         assert combined_ds is not None
 
         mainwindow._current_dataset = combined_ds
-        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [combined_ds])
+        monkeypatch.setattr(
+            mainwindow._data_browser, "get_selected_datasets", lambda: [combined_ds]
+        )
 
         captured = {
             "run_numbers": None,
@@ -1625,7 +1664,9 @@ class TestMainWindowBasic:
         assert combined_ds is not None
 
         mainwindow._current_dataset = combined_ds
-        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [combined_ds])
+        monkeypatch.setattr(
+            mainwindow._data_browser, "get_selected_datasets", lambda: [combined_ds]
+        )
         monkeypatch.setattr(mainwindow._data_browser, "_rebuild_table", lambda: None)
         monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: None)
         monkeypatch.setattr(mainwindow, "_refresh_vector_axis_selector", lambda: None)
@@ -1663,7 +1704,9 @@ class TestMainWindowBasic:
         assert combined_ds.run.grouping["alpha"] == pytest.approx(2.5)
         assert mainwindow._current_dataset is combined_ds
 
-        monkeypatch.setattr(mainwindow._data_browser, "_get_selected_run_numbers", lambda: [combined_rn])
+        monkeypatch.setattr(
+            mainwindow._data_browser, "_get_selected_run_numbers", lambda: [combined_rn]
+        )
         mainwindow._data_browser._separate_combined()
 
         restored_1 = mainwindow._data_browser.get_dataset(8411)
@@ -1691,7 +1734,9 @@ class TestMainWindowBasic:
         assert combined_ds is not None
 
         mainwindow._current_dataset = combined_ds
-        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [combined_ds])
+        monkeypatch.setattr(
+            mainwindow._data_browser, "get_selected_datasets", lambda: [combined_ds]
+        )
 
         calls = {"wim": 0, "normal": 0}
 

@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
-
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.fit_wizard import CandidateTemplate, SelectionMetric
@@ -101,10 +100,7 @@ def test_compile_legacy_structure_can_treat_nonfixed_roles_as_hints() -> None:
         treat_nonfixed_roles_as_hints=True,
     )
 
-    tie_modes = {
-        tie.parameter_name: tie.mode.value
-        for tie in structure.parameter_ties
-    }
+    tie_modes = {tie.parameter_name: tie.mode.value for tie in structure.parameter_ties}
 
     assert tie_modes["A_1"] == "relaxed_shared"
     assert tie_modes["Lambda"] == "relaxed_shared"
@@ -139,8 +135,7 @@ def test_relaxed_optimizer_keeps_shared_parameter_nearly_shared() -> None:
     )
 
     max_deviation = max(
-        abs(run_values["Lambda"])
-        for run_values in result.deviations_by_run.values()
+        abs(run_values["Lambda"]) for run_values in result.deviations_by_run.values()
     )
     assert result.success is True
     assert max_deviation < 1e-2
