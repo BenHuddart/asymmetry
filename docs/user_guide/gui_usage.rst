@@ -258,6 +258,11 @@ paths. For example, ``run_info.points`` appears as **Points**, and
 For parameters backed by time-series NeXus logs, a **Plot** button appears in
 the right column and opens the full log trace.
 
+PSI-BIN ``.mon`` temperature logs are exposed through the same time-series
+path. When a matching sidecar is loaded, the summary **Temperature (K)** row
+gets a **Plot** button and the individual channels are listed in Advanced as
+``nexus_time_series.psi_temperature/Temp_<channel>.mean`` rows.
+
 Advanced subwindow
 ~~~~~~~~~~~~~~~~~~
 
@@ -266,6 +271,10 @@ metadata table with the same include-checkbox and log-plot behavior.
 
 This allows promoting any advanced NeXus field into the Data Browser without
 leaving the Run Info workflow.
+
+For PSI-BIN temperature sidecars, Advanced also lists ``psi_temperature_log``
+provenance fields, including the source ``.mon`` path and the
+``Mantid LoadPSIMuonBin-compatible`` reader provenance.
 
 The Advanced window now includes a search box, so you can filter the metadata
 table by field name or rendered value before adding a column or opening a log
@@ -279,6 +288,9 @@ dialog now depends on the run format:
 
 * **WiMDA (.wim)** runs open a dedicated **WIM Grouping** dialog.
 * **NeXus (.nxs/.nexus)** and other runs open the full **Grouping** dialog.
+* **PSI BIN/MDU** and **MusrRoot/LEM ROOT (.root)** runs also open the full
+  dialog, seeded with detector labels and per-detector ``t0`` values from the
+  file when those metadata are available.
 
 This keeps fit inputs consistent with the run grouping settings and project
 state.
@@ -310,8 +322,10 @@ Full Grouping dialog
 ~~~~~~~~~~~~~~~~~~~~
 
 For NeXus and other non-WIM datasets, the full Grouping dialog is used and
-supports editing grouping assignment, alpha, deadtime, good-bin limits, and
-bunching.
+supports editing grouping assignment, alpha, correction toggles, good-bin
+limits, and bunching. Deadtime correction is enabled only when the source file
+provides deadtime constants; background correction is enabled for PSI BIN/MDU
+and PSI/LEM ROOT data.
 
 Changing bunching in either dialog refreshes both the displayed curve and the
 dataset passed to the fitting panel.
@@ -517,8 +531,7 @@ The ``.fit`` header includes run metadata and fit metadata, including:
 Compilation behavior:
 
 * If ``gle`` is available, Asymmetry compiles the ``.gle`` inside the export
-  folder to the selected
-   format from the **Format** dropdown.
+  folder to the selected format from the **Format** dropdown.
 * If ``gle`` is not available, Asymmetry still saves the ``.gle`` and sidecar
   files so you can compile later.
 * If ``gleplot`` regenerates matching ``.dat`` files while saving, Asymmetry

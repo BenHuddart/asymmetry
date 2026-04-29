@@ -9,13 +9,13 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QSpinBox,
-    QDoubleSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -36,7 +35,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.instrument import detect_instrument, get_instrument_layout
-from asymmetry.core.transform import apply_grouping
+from asymmetry.core.transform import apply_grouping, supports_background_correction
 from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.utils.constants import PeriodMode
 
@@ -156,7 +155,8 @@ class GroupingDialog(QDialog):
 
         self._group_table = QTableWidget(0, 3)
         self._group_table.setHorizontalHeaderLabels(["Group", "Name", "Detector Indices (1-based)"])
-        self._group_table.setMaximumHeight(140)
+        self._group_table.setMinimumHeight(180)
+        self._group_table.setMaximumHeight(320)
         root.addWidget(self._group_table)
         self._populate_group_table()
 
@@ -235,6 +235,10 @@ class GroupingDialog(QDialog):
 
         self._deadtime_checkbox = QCheckBox("Enable Deadtime Correction")
         self._deadtime_checkbox.setChecked(bool(grouping.get("deadtime_correction", False)))
+        self._update_deadtime_checkbox_state(grouping)
+        self._background_checkbox = QCheckBox("Enable Background Correction")
+        self._background_checkbox.setChecked(bool(grouping.get("background_correction", False)))
+        self._update_background_checkbox_state()
 
         self._period_mode_label = QLabel("RG Mode")
         self._period_mode_group = QButtonGroup(self)
@@ -329,6 +333,7 @@ class GroupingDialog(QDialog):
         form.addRow("Bunching Factor", self._bunch_spin)
         form.addRow("Bunching Rules", self._bunch_source_hint)
         form.addRow("Deadtime", self._deadtime_checkbox)
+        form.addRow("Background", self._background_checkbox)
         form.addRow(self._period_mode_label, self._period_mode_widget)
         root.addLayout(form)
         self._update_vector_mode_controls(grouping)
@@ -536,6 +541,9 @@ class GroupingDialog(QDialog):
         self._bunch_spin.setValue(requested_bunching)
         self._update_bunching_ui_hints()
         self._deadtime_checkbox.setChecked(bool(grouping.get("deadtime_correction", False)))
+        self._update_deadtime_checkbox_state(grouping)
+        self._background_checkbox.setChecked(bool(grouping.get("background_correction", False)))
+        self._update_background_checkbox_state()
         self._set_period_mode(str(grouping.get("period_mode", PeriodMode.RED)))
         self._update_vector_mode_controls(grouping)
         self._update_period_mode_visibility()
@@ -544,6 +552,54 @@ class GroupingDialog(QDialog):
         """Return ``True`` when the reference dataset was loaded from a ``.wim`` file."""
         source_file = str(getattr(self._run, "source_file", "") or "")
         return source_file.lower().endswith(".wim")
+
+    def _reference_has_file_deadtime(self, grouping: dict[str, Any]) -> bool:
+        """Return whether the reference run provides file deadtime values."""
+        values = grouping.get("dead_time_us") if isinstance(grouping, dict) else None
+        if not isinstance(values, list):
+            return False
+        n_histograms = len(self._run.histograms) if self._run is not None else 0
+        required = max(1, n_histograms)
+        if len(values) < required:
+            return False
+        for value in values:
+            try:
+                if float(value) != 0.0:
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
+
+    def _update_deadtime_checkbox_state(self, grouping: dict[str, Any]) -> None:
+        """Enable deadtime only for runs with file-provided deadtime values."""
+        enabled = self._reference_has_file_deadtime(grouping)
+        self._deadtime_checkbox.setEnabled(enabled)
+        if not enabled:
+            self._deadtime_checkbox.setChecked(False)
+            self._deadtime_checkbox.setToolTip(
+                "Deadtime correction requires file-provided deadtime values "
+                "(typically ISIS NeXus data)."
+            )
+            return
+        self._deadtime_checkbox.setToolTip("Apply file-provided deadtime correction.")
+
+    def _update_background_checkbox_state(self) -> None:
+        """Enable background correction for PSI-style grouped raw data."""
+        metadata: dict[str, Any] = {}
+        if self._reference_dataset is not None:
+            metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
+        if self._run is not None:
+            metadata.update(getattr(self._run, "metadata", {}) or {})
+        source_file = str(getattr(self._run, "source_file", "") or metadata.get("source_file", ""))
+        enabled = supports_background_correction(metadata=metadata, source_file=source_file)
+        self._background_checkbox.setEnabled(enabled)
+        if not enabled:
+            self._background_checkbox.setChecked(False)
+            self._background_checkbox.setToolTip(
+                "Background correction is available for PSI BIN/MDU and PSI/LEM ROOT data."
+            )
+            return
+        self._background_checkbox.setToolTip("Apply grouped background subtraction before asymmetry.")
 
     def _update_bunching_ui_hints(self) -> None:
         """Refresh explanatory text shown next to bunching controls."""
@@ -653,6 +709,11 @@ class GroupingDialog(QDialog):
             detectors = [str(idx + 1) for idx in self._groups[gid]]
             self._group_table.setItem(row, 2, QTableWidgetItem(", ".join(detectors)))
         self._group_table.resizeColumnsToContents()
+        visible_rows = min(max(len(self._groups), 3), 8)
+        row_height = max(24, self._group_table.verticalHeader().defaultSectionSize())
+        header_height = self._group_table.horizontalHeader().height()
+        frame = 2 * self._group_table.frameWidth()
+        self._group_table.setMinimumHeight(header_height + visible_rows * row_height + frame + 8)
 
     def _detect_vector_axis_pairs(self) -> dict[str, tuple[int, int]]:
         """Return vector-axis group pairs if canonical vector group names exist."""
@@ -1008,7 +1069,12 @@ class GroupingDialog(QDialog):
             "bunching_factor": int(self._bunch_spin.value()),
             "source_bunching_factor": int(self._source_bunching_factor),
             "enforce_source_bunching": bool(self._enforce_source_bunching),
-            "deadtime_correction": bool(self._deadtime_checkbox.isChecked()),
+            "deadtime_correction": bool(
+                self._deadtime_checkbox.isEnabled() and self._deadtime_checkbox.isChecked()
+            ),
+            "background_correction": bool(
+                self._background_checkbox.isEnabled() and self._background_checkbox.isChecked()
+            ),
             "period_mode": self._current_period_mode(),
             "bin_index_base": self._bin_index_base(),
         } | (
@@ -1120,6 +1186,8 @@ class GroupingDialog(QDialog):
         self._last_good_spin.setValue(last_good_bin + index_base)
         self._bunch_spin.setValue(int(payload.get("bunching_factor", self._bunch_spin.value())))
         self._deadtime_checkbox.setChecked(bool(payload.get("deadtime_correction", False)))
+        self._background_checkbox.setChecked(bool(payload.get("background_correction", False)))
+        self._update_background_checkbox_state()
         self._set_period_mode(str(payload.get("period_mode", PeriodMode.RED)))
         self._populate_group_table()
         self._update_vector_mode_controls(payload)
@@ -1149,6 +1217,7 @@ class GroupingDialog(QDialog):
             f"bunching_factor={int(payload.get('bunching_factor', 1))}",
             f"bin_index_base={1 if int(payload.get('bin_index_base', 0)) == 1 else 0}",
             f"deadtime_correction={1 if bool(payload.get('deadtime_correction', False)) else 0}",
+            f"background_correction={1 if bool(payload.get('background_correction', False)) else 0}",
             f"period_mode={str(payload.get('period_mode', PeriodMode.RED))}",
         ]
 
@@ -1181,6 +1250,7 @@ class GroupingDialog(QDialog):
             "last_good_bin": 0,
             "bunching_factor": 1,
             "deadtime_correction": False,
+            "background_correction": False,
             "period_mode": str(PeriodMode.RED),
             "bin_index_base": 0,
         }
@@ -1221,6 +1291,8 @@ class GroupingDialog(QDialog):
             elif key in {"alpha", "alpha_x", "alpha_y", "alpha_z", "alpha_px", "alpha_py", "alpha_pz"}:
                 payload[key] = float(value)
             elif key == "deadtime_correction":
+                payload[key] = value.strip().lower() in {"1", "true", "yes", "on"}
+            elif key == "background_correction":
                 payload[key] = value.strip().lower() in {"1", "true", "yes", "on"}
             elif key == "period_mode":
                 if value in {

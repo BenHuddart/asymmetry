@@ -635,6 +635,9 @@ def detect_instrument(
         Canonical instrument name when detection succeeds, else ``None``.
     """
     if isinstance(metadata, dict):
+        facility = str(metadata.get("facility", "")).strip().lower()
+        if facility == "psi" or metadata.get("psi_format"):
+            return None
         for key in (
             "instrument",
             "instrument_name",

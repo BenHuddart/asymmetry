@@ -13,9 +13,9 @@ from typing import Any
 import numpy as np
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QHBoxLayout,
-    QCheckBox,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -36,7 +36,12 @@ class RunInfoDialog(QDialog):
 
     _TABLE_HEADERS = ["Include in Data Browser", "Field", "Value", "Log Plot"]
 
-    def __init__(self, dataset: MuonDataset, parent=None, included_fields: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        dataset: MuonDataset,
+        parent=None,
+        included_fields: set[str] | None = None,
+    ) -> None:
         """Create a run-information dialog for ``dataset``.
 
         Parameters
@@ -48,8 +53,13 @@ class RunInfoDialog(QDialog):
         """
         super().__init__(parent)
         self._dataset = dataset
-        self._series_cache: dict[str, dict[str, Any]] = dataset.metadata.get("nexus_time_series", {})
-        self._included_fields: set[str] = {str(v) for v in (included_fields or set()) if str(v).strip()}
+        self._series_cache: dict[str, dict[str, Any]] = dataset.metadata.get(
+            "nexus_time_series",
+            {},
+        )
+        self._included_fields: set[str] = {
+            str(v) for v in (included_fields or set()) if str(v).strip()
+        }
         self._advanced_dialog: AdvancedRunInfoDialog | None = None
 
         self.setWindowTitle(f"Run Info - {dataset.run_label}")
@@ -95,7 +105,9 @@ class RunInfoDialog(QDialog):
             ("End", str(meta.get("stopped", "")), "stopped", None),
             (
                 "Temperature (K)",
-                self._fmt_float(meta.get("temperature")),
+                self._fmt_float(
+                    self._summary_value_for_field("temperature", meta.get("temperature"))
+                ),
                 "temperature",
                 self._series_path_for_field("temperature"),
             ),
@@ -123,12 +135,24 @@ class RunInfoDialog(QDialog):
                 [
                     ("Histograms", str(n_hist), "run_info.histograms", None),
                     ("Bins", str(h0.n_bins), "run_info.bins", None),
-                    ("Bin Width (us)", self._fmt_float(h0.bin_width), "run_info.bin_width_us", None),
+                    (
+                        "Bin Width (us)",
+                        self._fmt_float(h0.bin_width),
+                        "run_info.bin_width_us",
+                        None,
+                    ),
                 ]
             )
 
             total_counts = float(np.sum([np.sum(h.counts) for h in run.histograms]))
-            rows.append(("Counts (MEv)", self._fmt_float(total_counts / 1.0e6), "run_info.counts_mev", None))
+            rows.append(
+                (
+                    "Counts (MEv)",
+                    self._fmt_float(total_counts / 1.0e6),
+                    "run_info.counts_mev",
+                    None,
+                )
+            )
             rows.append(
                 (
                     "Counts per Detector",
@@ -148,6 +172,15 @@ class RunInfoDialog(QDialog):
             (key, value, key, series_path) for key, value, series_path in flat
         ]
 
+        psi_temperature_log = self._dataset.metadata.get("psi_temperature_log", {})
+        rows.extend(
+            (key, value, key, series_path)
+            for key, value, series_path in self._flatten_fields(
+                "psi_temperature_log",
+                psi_temperature_log,
+            )
+        )
+
         for series_path, info in sorted(self._series_cache.items()):
             summary_key = f"nexus_time_series.{series_path}.mean"
             units = str(info.get("units", "")).strip()
@@ -160,7 +193,11 @@ class RunInfoDialog(QDialog):
             rows.append((summary_key, summary_val, summary_key, series_path))
         return rows
 
-    def _fill_table(self, table: QTableWidget, rows: list[tuple[str, str, str | None, str | None]]) -> None:
+    def _fill_table(
+        self,
+        table: QTableWidget,
+        rows: list[tuple[str, str, str | None, str | None]],
+    ) -> None:
         """Populate a run-info table with include checkboxes and log-plot actions."""
         table.setRowCount(len(rows))
         for row, (label, value, field_key, series_path) in enumerate(rows):
@@ -178,7 +215,9 @@ class RunInfoDialog(QDialog):
 
             if series_path:
                 plot_button = QPushButton("Plot")
-                plot_button.clicked.connect(lambda _=False, sp=series_path: self._show_series_plot(sp))
+                plot_button.clicked.connect(
+                    lambda _=False, sp=series_path: self._show_series_plot(sp)
+                )
                 table.setCellWidget(row, 3, plot_button)
             else:
                 table.setItem(row, 3, QTableWidgetItem(""))
@@ -222,6 +261,15 @@ class RunInfoDialog(QDialog):
             if any(token in lowered for token in tokens):
                 return series_path
         return None
+
+    def _summary_value_for_field(self, field_key: str, fallback: Any) -> Any:
+        """Return the summary value shown for a field in Run Info."""
+        series_path = self._series_path_for_field(field_key)
+        if series_path:
+            info = self._series_cache.get(series_path, {})
+            if "mean" in info:
+                return info.get("mean")
+        return fallback
 
     def _show_series_plot(self, series_path: str) -> None:
         """Open a dedicated plot dialog for a selected time-series log."""
@@ -310,7 +358,9 @@ class AdvancedRunInfoDialog(QDialog):
             if field_key:
                 include_box.setChecked(field_key in included_fields)
                 include_box.toggled.connect(
-                    lambda checked, fk=field_key: self.set_browser_field_inclusion_requested.emit(fk, checked)
+                    lambda checked, fk=field_key: (
+                        self.set_browser_field_inclusion_requested.emit(fk, checked)
+                    )
                 )
             self._table.setCellWidget(row, 0, include_box)
 

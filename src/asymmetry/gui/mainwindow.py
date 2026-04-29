@@ -42,7 +42,16 @@ from asymmetry.core.project import (
     save_project,
 )
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.transform import apply_grouping, compute_asymmetry
+from asymmetry.core.transform import (
+    apply_deadtime_correction,
+    apply_grouped_background_correction,
+    apply_grouping_aligned,
+    common_t0_for_groups,
+    compute_asymmetry,
+    has_file_deadtime,
+    prepare_histograms_with_deadtime,
+    supports_background_correction,
+)
 from asymmetry.core.transform.rebin import rebin
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
@@ -1141,11 +1150,14 @@ class MainWindow(QMainWindow):
         run_numbers = {int(v) for v in grouping_result.get("run_numbers", [])}
         alpha = float(grouping_result.get("alpha", 1.0))
         use_deadtime = bool(grouping_result.get("deadtime_correction", False))
+        use_background = bool(grouping_result.get("background_correction", False))
 
         updated = 0
         skipped = 0
         deadtime_applied = 0
         deadtime_missing = 0
+        background_applied = 0
+        background_missing = 0
         first_updated_dataset = None
 
         for dataset in dialog_datasets:
@@ -1159,6 +1171,15 @@ class MainWindow(QMainWindow):
                 deadtime_missing += 1
             if dt_applied:
                 deadtime_applied += 1
+            if use_background:
+                grouping = dataset.run.grouping if dataset.run is not None else {}
+                if isinstance(grouping, dict) and grouping.get("background_method") in {
+                    "estimated",
+                    "fixed",
+                }:
+                    background_applied += 1
+                else:
+                    background_missing += 1
 
             if dataset is self._current_dataset:
                 self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
@@ -1191,12 +1212,15 @@ class MainWindow(QMainWindow):
         deadtime_msg = "off"
         if use_deadtime:
             deadtime_msg = f"on (applied={deadtime_applied}, missing={deadtime_missing})"
+        background_msg = "off"
+        if use_background:
+            background_msg = f"on (applied={background_applied}, missing={background_missing})"
 
         self._log_panel.log(
             f"Applied grouping to {updated} dataset(s); skipped {skipped}. "
             f"F={grouping_result['forward_group']}, "
             f"B={grouping_result['backward_group']}, alpha={alpha:.6g}, "
-            f"deadtime={deadtime_msg}"
+            f"deadtime={deadtime_msg}, background={background_msg}"
         )
 
     def _resolve_grouping_dialog_context(
@@ -1317,6 +1341,7 @@ class MainWindow(QMainWindow):
                 grouping.get("source_bunching_factor", grouping.get("bunching_factor", 1))
             ),
             "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
+            "background_correction": bool(grouping.get("background_correction", False)),
         }
 
         for axis in ("P_x", "P_y", "P_z"):
@@ -1354,6 +1379,27 @@ class MainWindow(QMainWindow):
             payload["dead_time_us"] = list(grouping.get("dead_time_us", []))
         if "good_frames" in grouping:
             payload["good_frames"] = grouping.get("good_frames")
+        for key in (
+            "background_ranges",
+            "background_range",
+            "background_forward_range",
+            "background_backward_range",
+            "background_fixed_values",
+            "background_values",
+            "background_method",
+            "background_fix",
+            "bkg_fix",
+        ):
+            if key in grouping:
+                payload[key] = grouping.get(key)
+        for key in (
+            "detector_t0_bins",
+            "detector_first_good_bins",
+            "detector_last_good_bins",
+            "histogram_labels",
+        ):
+            if isinstance(grouping.get(key), list):
+                payload[key] = list(grouping.get(key, []))
         return payload
 
     def _normalize_group_entries(self, values) -> list[object]:
@@ -1536,6 +1582,10 @@ class MainWindow(QMainWindow):
                 return False, False
             additional_bunch_factor = max(1, bunch_factor // source_bunch_factor)
         use_deadtime = bool(grouping_result.get("deadtime_correction", False))
+        use_background = bool(
+            grouping_result.get("background_correction", False)
+            and self._dataset_supports_background_correction(dataset)
+        )
 
         if not run.histograms:
             source_last_bin = len(source_time) - 1
@@ -1577,7 +1627,11 @@ class MainWindow(QMainWindow):
             run.grouping["last_good_bin"] = last_good
             run.grouping["bin_index_base"] = bin_index_base
             run.grouping["bunching_factor"] = bunch_factor
-            run.grouping["deadtime_correction"] = use_deadtime
+            run.grouping["deadtime_correction"] = False
+            run.grouping["background_correction"] = use_background
+            if not use_background:
+                run.grouping.pop("background_method", None)
+                run.grouping.pop("background_values", None)
             run.grouping["period_mode"] = period_mode
             if enforce_source_bunching:
                 run.grouping["source_bunching_factor"] = source_bunch_factor
@@ -1610,9 +1664,47 @@ class MainWindow(QMainWindow):
         if not isinstance(run.grouping, dict):
             run.grouping = {}
 
-        # Keep histogram time-zero consistent with grouping metadata so edited
-        # t0 values immediately propagate to the displayed time axis.
-        if run.histograms and any(int(hist.t0_bin) != t0_bin for hist in run.histograms):
+        # Keep histogram time-zero consistent with grouping metadata. PSI files
+        # can have per-detector t0 values, so preserve relative detector
+        # offsets when the user edits the common t0 control.
+        if isinstance(grouping_result.get("detector_t0_bins"), list):
+            run.grouping["detector_t0_bins"] = list(
+                grouping_result.get("detector_t0_bins", [])
+            )
+        if isinstance(grouping_result.get("detector_first_good_bins"), list):
+            run.grouping["detector_first_good_bins"] = list(
+                grouping_result.get("detector_first_good_bins", [])
+            )
+        if isinstance(grouping_result.get("detector_last_good_bins"), list):
+            run.grouping["detector_last_good_bins"] = list(
+                grouping_result.get("detector_last_good_bins", [])
+            )
+        if isinstance(grouping_result.get("histogram_labels"), list):
+            run.grouping["histogram_labels"] = list(
+                grouping_result.get("histogram_labels", [])
+            )
+
+        detector_t0_bins = run.grouping.get("detector_t0_bins")
+        if (
+            isinstance(detector_t0_bins, list)
+            and len(detector_t0_bins) == len(run.histograms)
+        ):
+            try:
+                previous_common_t0 = int(existing_grouping.get("t0_bin", t0_default))
+            except (TypeError, ValueError):
+                previous_common_t0 = t0_default
+            delta = int(t0_bin) - previous_common_t0
+            run.histograms = [
+                Histogram(
+                    counts=hist.counts,
+                    bin_width=hist.bin_width,
+                    t0_bin=max(0, int(detector_t0_bins[i]) + delta),
+                    good_bin_start=hist.good_bin_start,
+                    good_bin_end=hist.good_bin_end,
+                )
+                for i, hist in enumerate(run.histograms)
+            ]
+        elif run.histograms and any(int(hist.t0_bin) != t0_bin for hist in run.histograms):
             run.histograms = [
                 Histogram(
                     counts=hist.counts,
@@ -1628,6 +1720,21 @@ class MainWindow(QMainWindow):
             run.grouping["dead_time_us"] = list(grouping_result.get("dead_time_us", []))
         if "good_frames" in grouping_result:
             run.grouping["good_frames"] = grouping_result.get("good_frames")
+        for key in (
+            "background_ranges",
+            "background_range",
+            "background_forward_range",
+            "background_backward_range",
+            "background_fixed_values",
+            "background_fix",
+            "bkg_fix",
+        ):
+            if key in grouping_result:
+                run.grouping[key] = grouping_result.get(key)
+
+        use_deadtime = bool(use_deadtime and has_file_deadtime(run.grouping, len(run.histograms)))
+        if not use_deadtime:
+            run.grouping.pop("deadtime_method", None)
 
         working_histograms, dt_applied = self._prepare_grouping_histograms(
             run.histograms,
@@ -1635,15 +1742,70 @@ class MainWindow(QMainWindow):
             use_deadtime,
         )
 
-        forward = apply_grouping(working_histograms, forward_idx)
-        backward = apply_grouping(working_histograms, backward_idx)
+        common_t0 = common_t0_for_groups(working_histograms, forward_idx, backward_idx)
+        forward = apply_grouping_aligned(
+            working_histograms,
+            forward_idx,
+            common_t0_bin=common_t0,
+        )
+        backward = apply_grouping_aligned(
+            working_histograms,
+            backward_idx,
+            common_t0_bin=common_t0,
+        )
+        n_grouped = min(len(forward), len(backward))
+        forward = forward[:n_grouped]
+        backward = backward[:n_grouped]
+
+        if use_background:
+            bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
+            facility = str(
+                run.metadata.get(
+                    "facility",
+                    dataset.metadata.get("facility", dataset.metadata.get("instrument", "")),
+                )
+            )
+            bkg_result = apply_grouped_background_correction(
+                forward,
+                backward,
+                grouping=run.grouping,
+                t0_bin=common_t0,
+                bin_width_us=bin_width,
+                facility=facility,
+            )
+            forward = bkg_result.forward
+            backward = bkg_result.backward
+            if bkg_result.applied:
+                run.grouping["background_method"] = bkg_result.method
+                if bkg_result.values is not None:
+                    run.grouping["background_values"] = [
+                        float(bkg_result.values[0]),
+                        float(bkg_result.values[1]),
+                    ]
+                if bkg_result.ranges is not None:
+                    run.grouping["background_ranges"] = [
+                        [int(v) for v in bkg_result.ranges[0]],
+                        [int(v) for v in bkg_result.ranges[1]],
+                    ]
+            else:
+                run.grouping["background_method"] = bkg_result.method
+                run.grouping.pop("background_values", None)
+        else:
+            run.grouping.pop("background_method", None)
+            run.grouping.pop("background_values", None)
 
         run_alpha = alpha if alpha > 0 else 1.0
 
         asymmetry, error = compute_asymmetry(forward, backward, alpha=run_alpha)
         asymmetry = asymmetry * 100.0
         error = error * 100.0
-        time_axis = run.histograms[0].time_axis
+        if run.histograms:
+            bin_width = float(run.histograms[0].bin_width)
+        else:
+            bin_width = 1.0
+        time_axis = (
+            np.arange(len(asymmetry), dtype=np.float64) - float(common_t0)
+        ) * bin_width
 
         lo = max(0, first_good)
         hi = min(len(asymmetry) - 1, last_good)
@@ -1677,6 +1839,7 @@ class MainWindow(QMainWindow):
                 "bin_index_base": bin_index_base,
                 "bunching_factor": bunch_factor,
                 "deadtime_correction": use_deadtime,
+                "background_correction": use_background,
                 "period_mode": period_mode,
             }
         )
@@ -1684,6 +1847,11 @@ class MainWindow(QMainWindow):
             run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run_alpha))
             run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run_alpha))
             run.grouping["alpha_z"] = float(vector_alphas.get("P_z", run_alpha))
+        if (
+            isinstance(detector_t0_bins, list)
+            and len(detector_t0_bins) == len(run.histograms)
+        ):
+            run.grouping["detector_t0_bins"] = [int(hist.t0_bin) for hist in run.histograms]
         if enforce_source_bunching:
             run.grouping["source_bunching_factor"] = source_bunch_factor
         # Persist group names if provided
@@ -1724,50 +1892,18 @@ class MainWindow(QMainWindow):
         """
         if not use_deadtime:
             return list(histograms), False
+        return prepare_histograms_with_deadtime(histograms, grouping, use_deadtime)
 
-        dead_time_us = grouping.get("dead_time_us") if isinstance(grouping, dict) else None
-        if not isinstance(dead_time_us, list):
-            return list(histograms), False
-        if len(dead_time_us) < len(histograms):
-            return list(histograms), False
-
-        good_frames = 1.0
-        try:
-            good_frames = float(grouping.get("good_frames", 1.0))
-        except (TypeError, ValueError):
-            good_frames = 1.0
-        if good_frames <= 0.0:
-            good_frames = 1.0
-
-        corrected: list[Histogram] = []
-        applied_any = False
-        for i, hist in enumerate(histograms):
-            try:
-                tau_us = float(dead_time_us[i])
-            except (TypeError, ValueError):
-                tau_us = 0.0
-
-            counts = hist.counts
-            if tau_us > 0.0:
-                counts = self._apply_deadtime_correction(
-                    counts,
-                    tau_us,
-                    hist.bin_width,
-                    num_good_frames=good_frames,
-                )
-                applied_any = True
-
-            corrected.append(
-                Histogram(
-                    counts=counts,
-                    bin_width=hist.bin_width,
-                    t0_bin=hist.t0_bin,
-                    good_bin_start=hist.good_bin_start,
-                    good_bin_end=hist.good_bin_end,
-                )
-            )
-
-        return corrected, applied_any
+    def _dataset_supports_background_correction(self, dataset) -> bool:
+        """Return whether this dataset should expose PSI-style background correction."""
+        run = getattr(dataset, "run", None)
+        metadata = dict(getattr(dataset, "metadata", {}) or {})
+        if run is not None:
+            metadata.update(getattr(run, "metadata", {}) or {})
+        source_file = str(getattr(run, "source_file", "") if run is not None else "")
+        if not source_file:
+            source_file = str(metadata.get("source_file", ""))
+        return supports_background_correction(metadata=metadata, source_file=source_file)
 
     def _apply_deadtime_correction(
         self,
@@ -1787,13 +1923,12 @@ class MainWindow(QMainWindow):
         ``n_frames`` is the number of good frames (Mantid-compatible).
         Denominators are clamped away from zero for numerical stability.
         """
-        n = np.asarray(counts, dtype=np.float64)
-        if tau_us <= 0.0 or bin_width_us <= 0.0 or num_good_frames <= 0.0:
-            return n.copy()
-
-        denom = 1.0 - (n * tau_us / (float(bin_width_us) * float(num_good_frames)))
-        denom = np.clip(denom, 1.0e-6, None)
-        return n / denom
+        return apply_deadtime_correction(
+            counts,
+            tau_us,
+            bin_width_us,
+            num_good_frames=num_good_frames,
+        )
 
     def _maybe_apply_comment_field(
         self,

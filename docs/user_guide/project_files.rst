@@ -76,6 +76,44 @@ exact detector grouping is preserved without re-running the Grouping dialog.
 ``deadtime_correction``
     Boolean; whether per-detector deadtime correction is active.
 
+``deadtime_method``
+    Optional string set after grouping is applied. ``"file"`` means
+    per-detector deadtime values from the data file were used.
+
+``dead_time_us``
+    Optional per-detector deadtime values in microseconds, read from formats
+    that provide NeXus-style deadtime metadata.
+
+``background_correction``
+    Boolean; whether grouped-count background subtraction is active.
+
+``background_method``
+    Optional string set after grouping is applied. ``"fixed"`` means explicit
+    forward/backward background values were used. ``"estimated"`` means the
+    values were calculated from background bin ranges. ``"invalid_range"``
+    means background correction was requested but not applied because the range
+    was outside the grouped data.
+
+``background_ranges``
+    Optional inclusive background-bin ranges for forward and backward grouped
+    histograms, stored as ``[[forward_start, forward_end],
+    [backward_start, backward_end]]``. Shared ``background_range`` metadata may
+    also be used as input.
+
+``background_values``
+    Optional forward/backward background values that were subtracted from the
+    grouped histograms during the last grouping apply.
+
+``detector_t0_bins``
+    Optional per-detector time-zero bins, used by formats such as PSI BIN/MDU
+    and MusrRoot/LEM ROOT where each detector can carry its own ``t0``.
+    Grouping aligns detector histograms by these values before summing.
+
+``root_histo_numbers``
+    Optional list of original ROOT ``hDecay`` histogram numbers. Present for
+    MusrRoot/LEM ROOT files so grouped detector slots can be traced back to
+    the source ROOT objects used by musrfit.
+
 ``grouping_preset``
     Name of the last applied preset (e.g. ``"Vector Polarization"``).
 

@@ -51,7 +51,6 @@ def _dataset() -> MuonDataset:
 
 
 def _dataset_with_run() -> MuonDataset:
-    t = np.linspace(0.0, 1.0, 8)
     h0 = Histogram(counts=np.array([100.0, 90.0, 80.0, 70.0]), bin_width=0.01)
     h1 = Histogram(counts=np.array([95.0, 85.0, 75.0, 65.0]), bin_width=0.01)
     run = Run(
@@ -65,10 +64,42 @@ def _dataset_with_run() -> MuonDataset:
     return ds
 
 
+def _psi_dataset_with_temperature_log() -> MuonDataset:
+    ds = _dataset()
+    ds.metadata["facility"] = "PSI"
+    ds.metadata["nexus_time_series"] = {
+        "psi_temperature/Temp_Heater": {
+            "units": "K",
+            "time": [0.0, 10.0],
+            "values": [4.9906, 5.0],
+            "mean": 4.9953,
+            "min": 4.9906,
+            "max": 5.0,
+            "source_file": "/tmp/run_4321_templs0.mon",
+            "reader_provenance": "Mantid LoadPSIMuonBin-compatible",
+        }
+    }
+    ds.metadata["psi_temperature_log"] = {
+        "source_file": "/tmp/run_4321_templs0.mon",
+        "source_format": "PSI .mon",
+        "reader_provenance": "Mantid LoadPSIMuonBin-compatible",
+        "channels": ["Temp_Heater"],
+    }
+    return ds
+
+
 def _row_for_field(table, field_name: str) -> int:
     for row in range(table.rowCount()):
         item = table.item(row, 1)
         if item is not None and item.text() == field_name:
+            return row
+    return -1
+
+
+def _row_containing_field(table, field_fragment: str) -> int:
+    for row in range(table.rowCount()):
+        item = table.item(row, 1)
+        if item is not None and field_fragment in item.text():
             return row
     return -1
 
@@ -102,6 +133,19 @@ def test_summary_table_shows_plot_button_for_series_backed_field(qapp: QApplicat
 
     temp_row = _row_for_field(dialog._summary_table, "Temperature (K)")
     assert temp_row >= 0
+    plot_button = dialog._summary_table.cellWidget(temp_row, 3)
+    assert plot_button is not None
+    dialog.close()
+
+
+def test_summary_table_shows_plot_button_for_psi_temperature_log(qapp: QApplication) -> None:
+    dialog = RunInfoDialog(_psi_dataset_with_temperature_log())
+
+    temp_row = _row_for_field(dialog._summary_table, "Temperature (K)")
+    assert temp_row >= 0
+    value_item = dialog._summary_table.item(temp_row, 2)
+    assert value_item is not None
+    assert float(value_item.text()) == pytest.approx(4.9953)
     plot_button = dialog._summary_table.cellWidget(temp_row, 3)
     assert plot_button is not None
     dialog.close()
@@ -181,6 +225,30 @@ def test_advanced_dialog_shows_plot_for_time_series_rows(qapp: QApplication) -> 
                 break
 
     assert found_plot
+    if dialog._advanced_dialog is not None:
+        dialog._advanced_dialog.close()
+    dialog.close()
+
+
+def test_advanced_dialog_shows_psi_temperature_log_provenance(qapp: QApplication) -> None:
+    dialog = RunInfoDialog(_psi_dataset_with_temperature_log())
+    dialog._open_advanced_dialog()
+    advanced = dialog._advanced_dialog
+    assert advanced is not None
+
+    source_row = _row_containing_field(advanced._table, "psi_temperature_log.source_file")
+    assert source_row >= 0
+    value_item = advanced._table.item(source_row, 2)
+    assert value_item is not None
+    assert value_item.text() == "/tmp/run_4321_templs0.mon"
+
+    series_row = _row_containing_field(
+        advanced._table,
+        "nexus_time_series.psi_temperature/Temp_Heater.mean",
+    )
+    assert series_row >= 0
+    assert advanced._table.cellWidget(series_row, 3) is not None
+
     if dialog._advanced_dialog is not None:
         dialog._advanced_dialog.close()
     dialog.close()

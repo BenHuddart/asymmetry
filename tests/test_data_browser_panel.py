@@ -391,6 +391,38 @@ def test_run_info_synthetic_extra_columns_render_values(qapp: QApplication) -> N
     assert float(panel._table.item(0, mev_col).text()) == pytest.approx(9.0e-05)
 
 
+def test_temperature_include_replaces_browser_value_with_log_mean(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _dataset(304)
+    ds.metadata["temperature"] = 50.0
+    ds.metadata["nexus_time_series"] = {
+        "psi_temperature/Temp_Sample": {
+            "units": "K",
+            "time": [0.0, 10.0],
+            "values": [4.9906, 5.0],
+            "mean": 4.9953,
+            "min": 4.9906,
+            "max": 5.0,
+        }
+    }
+    panel.add_dataset(ds)
+
+    assert panel._table.item(0, 2).text() == "50.00"
+
+    panel.add_extra_column("temperature")
+
+    header_labels = [
+        panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())
+    ]
+    assert header_labels == list(DataBrowserPanel._COLUMNS)
+    assert panel.get_extra_columns() == ["temperature"]
+    assert panel._table.item(0, 2).text() == "5.00"
+
+    panel.remove_extra_column("temperature")
+
+    assert panel._table.item(0, 2).text() == "50.00"
+
+
 def test_coadd_inserts_at_first_selected_position(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     d1 = _dataset_with_run(61)

@@ -42,3 +42,24 @@ NeXus Loader
    :members:
    :undoc-members:
    :show-inheritance:
+
+PSI Loader
+~~~~~~~~~~
+
+Loads PSI BIN/MDU raw histogram files using the musrfit-compatible binary
+metadata interpretation. PSI-BIN ``.mon`` temperature sidecars are discovered
+and parsed using Mantid ``LoadPSIMuonBin``-compatible rules, then exposed as
+``metadata["nexus_time_series"]`` and in the Get Info metadata tables.
+
+.. autoclass:: asymmetry.core.io.psi.PsiLoader
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+ROOT Loader
+~~~~~~~~~~~
+
+.. autoclass:: asymmetry.core.io.root.RootLoader
+   :members:
+   :undoc-members:
+   :show-inheritance:

@@ -226,6 +226,107 @@ class TestMainWindowBasic:
         expected = 100.0 / (1.0 - (100.0 * 0.01 / (0.02 * 1000.0)))
         assert corrected[0] == pytest.approx(expected)
 
+    def test_background_correction_subtracts_grouped_mean_before_asymmetry(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Background correction follows musrfit's grouped-histogram ordering."""
+        dataset = _make_dataset(7398, with_grouping=False)
+        dataset.metadata["facility"] = "PSI"
+        dataset.run.metadata["facility"] = "PSI"
+        dataset.run.histograms = [
+            Histogram(np.array([10.0, 10.0, 100.0, 100.0]), bin_width=0.01, t0_bin=2),
+            Histogram(np.array([20.0, 20.0, 80.0, 80.0]), bin_width=0.01, t0_bin=2),
+        ]
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "t0_bin": 2,
+            "first_good_bin": 2,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+            "background_correction": True,
+            "background_range": [0, 1],
+        }
+
+        applied, dt_applied = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert dt_applied is False
+        assert dataset.run.grouping["background_method"] == "estimated"
+        assert dataset.run.grouping["background_values"] == pytest.approx([10.0, 20.0])
+        assert dataset.run.grouping["background_ranges"] == [[0, 1], [0, 1]]
+        np.testing.assert_allclose(dataset.asymmetry, [20.0, 20.0])
+
+    def test_background_requested_for_non_psi_data_is_not_applied(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Background correction is the PSI path, not an ISIS grouping fallback."""
+        dataset = _make_dataset(7397, with_grouping=False)
+        dataset.run.metadata["facility"] = "ISIS"
+        dataset.metadata["facility"] = "ISIS"
+        dataset.run.histograms = [
+            Histogram(np.array([10.0, 10.0, 100.0, 100.0]), bin_width=0.01, t0_bin=2),
+            Histogram(np.array([20.0, 20.0, 80.0, 80.0]), bin_width=0.01, t0_bin=2),
+        ]
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "t0_bin": 2,
+            "first_good_bin": 2,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+            "background_correction": True,
+            "background_range": [0, 1],
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert dataset.run.grouping["background_correction"] is False
+        assert "background_method" not in dataset.run.grouping
+        np.testing.assert_allclose(dataset.asymmetry, [100.0 / 9.0, 100.0 / 9.0])
+
+    def test_background_off_preserves_raw_isis_grouping_behavior(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Leaving background off keeps the previous raw grouping calculation."""
+        dataset = _make_dataset(7399, with_grouping=False)
+        dataset.run.metadata["instrument"] = "HIFI"
+        dataset.metadata["instrument"] = "HIFI"
+        dataset.run.histograms = [
+            Histogram(np.array([10.0, 10.0, 100.0, 100.0]), bin_width=0.01, t0_bin=2),
+            Histogram(np.array([20.0, 20.0, 80.0, 80.0]), bin_width=0.01, t0_bin=2),
+        ]
+        dataset.run.grouping["background_range"] = [0, 1]
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "t0_bin": 2,
+            "first_good_bin": 2,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+            "background_correction": False,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert dataset.run.grouping["background_correction"] is False
+        assert "background_method" not in dataset.run.grouping
+        np.testing.assert_allclose(dataset.asymmetry, [100.0 / 9.0, 100.0 / 9.0])
+
     def test_apply_grouping_does_not_auto_estimate_alpha_from_bunching_change(
         self,
         mainwindow: MainWindow,

@@ -269,8 +269,14 @@ def test_estimate_alpha_updates_spinbox(qapp: QApplication) -> None:
 
 
 def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:
-    dialog = GroupingDialog([_dataset_with_histograms()])
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.metadata["facility"] = "PSI"
+    dataset.run.metadata["facility"] = "PSI"
+    dataset.run.grouping["dead_time_us"] = [0.01, 0.01]
+    dialog = GroupingDialog([dataset])
     dialog._deadtime_checkbox.setChecked(True)
+    dialog._background_checkbox.setChecked(True)
     dialog._bunch_spin.setValue(1234)
     result = dialog.get_grouping_result()
     assert result is not None
@@ -278,7 +284,22 @@ def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:
     assert "backward_indices" in result
     assert "alpha" in result
     assert result["deadtime_correction"] is True
+    assert result["background_correction"] is True
     assert result["bunching_factor"] == 1234
+
+
+def test_deadtime_checkbox_disabled_without_file_deadtime(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+
+    assert not dialog._deadtime_checkbox.isEnabled()
+    assert dialog._current_grouping_payload()["deadtime_correction"] is False
+
+
+def test_background_checkbox_disabled_for_non_psi_data(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+
+    assert not dialog._background_checkbox.isEnabled()
+    assert dialog._current_grouping_payload()["background_correction"] is False
 
 
 def test_vector_mode_shows_per_axis_alpha_controls(qapp: QApplication) -> None:
@@ -393,6 +414,7 @@ def test_grp_round_trip_parser_and_serializer() -> None:
         "last_good_bin": 2048,
         "bunching_factor": 5,
         "deadtime_correction": True,
+        "background_correction": True,
         "period_mode": str(PeriodMode.GREEN_PLUS_RED),
     }
     text = GroupingDialog.serialize_grp(payload)
@@ -409,6 +431,7 @@ def test_grp_round_trip_parser_and_serializer() -> None:
     assert parsed["last_good_bin"] == 2048
     assert parsed["bunching_factor"] == 5
     assert parsed["deadtime_correction"] is True
+    assert parsed["background_correction"] is True
     assert parsed["period_mode"] == str(PeriodMode.GREEN_PLUS_RED)
 
 

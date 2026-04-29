@@ -6,13 +6,17 @@ Use the :func:`load` convenience function to auto-detect the format::
     dataset = load("run12345.wim")
 """
 
-from asymmetry.core.io.base import BaseLoader, LoadResult, LoaderRegistry
+from asymmetry.core.io.base import BaseLoader, LoaderRegistry, LoadResult
 from asymmetry.core.io.nexus import NexusLoader
+from asymmetry.core.io.psi import PsiLoader
+from asymmetry.core.io.root import RootLoader
 from asymmetry.core.io.wim import WimLoader
 
 # Register built-in loaders
 LoaderRegistry.register(WimLoader)
 LoaderRegistry.register(NexusLoader)
+LoaderRegistry.register(PsiLoader)
+LoaderRegistry.register(RootLoader)
 
 
 def load(filepath: str, fmt: str | None = None) -> LoadResult:
@@ -30,4 +34,13 @@ def load(filepath: str, fmt: str | None = None) -> LoadResult:
     return loader.load(filepath)
 
 
-__all__ = ["BaseLoader", "LoadResult", "LoaderRegistry", "WimLoader", "NexusLoader", "load"]
+__all__ = [
+    "BaseLoader",
+    "LoadResult",
+    "LoaderRegistry",
+    "WimLoader",
+    "NexusLoader",
+    "PsiLoader",
+    "RootLoader",
+    "load",
+]

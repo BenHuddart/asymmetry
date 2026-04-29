@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import copy
 import csv
-from dataclasses import dataclass
 import json
 import uuid
+from dataclasses import dataclass
 
 import numpy as np
-from PySide6.QtCore import QEvent, QItemSelection, QItemSelectionModel, QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset, Run
-
 
 _GROUP_TEMP_ABS_TOL_K = 5e-3
 _GROUP_TEMP_REL_TOL = 2e-3
@@ -203,6 +202,7 @@ class DataBrowserPanel(QWidget):
         "run_info.counts_per_detector": "Counts per Detector",
         "nexus_fields.sample.shape": "Orientation",
     }
+    _BASE_COLUMN_OVERRIDE_KEYS = {"temperature"}
     _GROUP_ROLE = Qt.ItemDataRole.UserRole
     _GROUP_SENTINEL_PREFIX = "group:"
 
@@ -528,7 +528,7 @@ class DataBrowserPanel(QWidget):
         title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self._table.setItem(row, 1, title_item)
 
-        temp = float(meta.get("temperature", 0.0))
+        temp = self._temperature_for_display(dataset)
         temp_item = NumericTableWidgetItem(f"{temp:.2f}")
         temp_item.setFlags(temp_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self._table.setItem(row, 2, temp_item)
@@ -542,7 +542,7 @@ class DataBrowserPanel(QWidget):
         comment_item = QTableWidgetItem(comment)
         comment_item.setFlags(comment_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self._table.setItem(row, 4, comment_item)
-        for i, field_key in enumerate(self._extra_columns, start=len(self._COLUMNS)):
+        for i, field_key in enumerate(self._visible_extra_columns(), start=len(self._COLUMNS)):
             value = self._value_for_extra_column(dataset, field_key)
             item = QTableWidgetItem(value)
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -666,9 +666,15 @@ class DataBrowserPanel(QWidget):
 
     def _refresh_column_headers(self) -> None:
         """Apply base and dynamic column labels to the table header."""
-        labels = list(self._COLUMNS) + [self._extra_column_header(key) for key in self._extra_columns]
+        labels = list(self._COLUMNS) + [
+            self._extra_column_header(key) for key in self._visible_extra_columns()
+        ]
         self._table.setColumnCount(len(labels))
         self._table.setHorizontalHeaderLabels(labels)
+
+    def _visible_extra_columns(self) -> list[str]:
+        """Return extra columns that should appear beyond the fixed browser columns."""
+        return [key for key in self._extra_columns if key not in self._BASE_COLUMN_OVERRIDE_KEYS]
 
     def _extra_column_header(self, field_key: str) -> str:
         """Return display header for an extra metadata-backed column."""
@@ -705,6 +711,9 @@ class DataBrowserPanel(QWidget):
         if field_key.startswith("run_info."):
             return self._resolve_run_info_value(dataset, field_key)
 
+        if field_key == "temperature":
+            return self._temperature_for_display(dataset)
+
         metadata = dataset.metadata
         current = metadata
         for part in field_key.split("."):
@@ -713,6 +722,39 @@ class DataBrowserPanel(QWidget):
             else:
                 return None
         return current
+
+    def _temperature_for_display(self, dataset: MuonDataset) -> float:
+        """Return the temperature shown in the fixed browser temperature column."""
+        if "temperature" in self._extra_columns:
+            series_mean = self._series_mean_for_field(dataset, "temperature")
+            if series_mean is not None:
+                return float(series_mean)
+        try:
+            return float(dataset.metadata.get("temperature", 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _series_mean_for_field(self, dataset: MuonDataset, field_key: str) -> float | None:
+        """Return the mean from the time-series log associated with a summary field."""
+        series = dataset.metadata.get("nexus_time_series", {})
+        if not isinstance(series, dict):
+            return None
+        token_map = {
+            "temperature": ["temp", "sampletemp"],
+        }
+        tokens = token_map.get(field_key, [])
+        for series_path in sorted(series.keys(), key=str):
+            lowered = str(series_path).lower()
+            if not any(token in lowered for token in tokens):
+                continue
+            info = series.get(series_path, {})
+            if not isinstance(info, dict) or "mean" not in info:
+                continue
+            try:
+                return float(info.get("mean"))
+            except (TypeError, ValueError):
+                continue
+        return None
 
     def _resolve_run_info_value(self, dataset: MuonDataset, field_key: str):
         """Resolve synthetic ``run_info.*`` keys used by Run Info summary rows."""
@@ -1258,11 +1300,11 @@ class DataBrowserPanel(QWidget):
         row = [
             run_display,
             str(meta.get("title", "")),
-            f"{float(meta.get('temperature', 0.0)):.2f}",
+            f"{self._temperature_for_display(dataset):.2f}",
             f"{float(meta.get('field', 0.0)):.1f}",
             str(meta.get("comment", "")),
         ]
-        for field_key in self._extra_columns:
+        for field_key in self._visible_extra_columns():
             row.append(self._value_for_extra_column(dataset, field_key))
         return row
 
@@ -1556,10 +1598,11 @@ class DataBrowserPanel(QWidget):
             return
 
         extra_index = col_idx - len(self._COLUMNS)
-        if extra_index < 0 or extra_index >= len(self._extra_columns):
+        visible_extra_columns = self._visible_extra_columns()
+        if extra_index < 0 or extra_index >= len(visible_extra_columns):
             return
 
-        field_key = self._extra_columns[extra_index]
+        field_key = visible_extra_columns[extra_index]
         menu = QMenu(self)
         menu.addAction(
             "Remove from Data Browser",
@@ -1595,14 +1638,15 @@ class DataBrowserPanel(QWidget):
             if self._current_sort_column == 1:
                 return str(meta.get("title", ""))
             if self._current_sort_column == 2:
-                return float(meta.get("temperature", 0.0))
+                return self._temperature_for_display(dataset)
             if self._current_sort_column == 3:
                 return float(meta.get("field", 0.0))
             if self._current_sort_column >= len(self._COLUMNS):
                 idx = self._current_sort_column - len(self._COLUMNS)
-                if idx < 0 or idx >= len(self._extra_columns):
+                visible_extra_columns = self._visible_extra_columns()
+                if idx < 0 or idx >= len(visible_extra_columns):
                     return ""
-                value = self._resolve_metadata_path(dataset, self._extra_columns[idx])
+                value = self._resolve_metadata_path(dataset, visible_extra_columns[idx])
                 if isinstance(value, (int, float, np.integer, np.floating)):
                     return float(value)
                 if isinstance(value, (list, tuple, np.ndarray)):

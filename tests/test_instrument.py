@@ -52,6 +52,16 @@ class TestDetectInstrument:
     def test_source_file_prefix_can_hint_instrument(self):
         assert detect_instrument(64, source_file="/tmp/emu000123.nxs") == "EMU"
 
+    def test_psi_metadata_does_not_select_isis_layout(self):
+        assert (
+            detect_instrument(64, metadata={"facility": "PSI", "instrument": "HIFI"})
+            is None
+        )
+        assert (
+            detect_instrument(64, metadata={"psi_format": "psi-bin", "instrument": "MuSR"})
+            is None
+        )
+
     def test_96_returns_emu(self):
         assert detect_instrument(96) == "EMU"
 

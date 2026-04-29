@@ -208,26 +208,59 @@ def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
         def __init__(self, _argv):
             self.name = None
             self.org = None
+            events.append("app-init")
 
-        def setApplicationName(self, name):
+        def setApplicationName(self, name):  # noqa: N802
             self.name = name
+            events.append("set-name")
 
-        def setOrganizationName(self, org):
+        def setOrganizationName(self, org):  # noqa: N802
             self.org = org
 
-        def setWindowIcon(self, _icon):
+        def setWindowIcon(self, _icon):  # noqa: N802
+            events.append("set-icon")
             return
 
+        def processEvents(self):  # noqa: N802
+            events.append("process-events")
+
         def exec(self):
+            events.append("exec")
             return 0
 
     class _FakeWindow:
+        def __init__(self):
+            events.append("window-init")
+
         def show(self):
+            events.append("window-show")
             return
+
+    class _FakeSplash:
+        def finish(self, _window):
+            events.append("splash-finish")
+
+    events = []
+    startup_pixmap = object()
+
+    def _fake_startup_pixmap(_filename):
+        events.append("load-startup-pixmap")
+        return startup_pixmap
+
+    def _fake_create_splash(_app, logo=None):
+        assert logo is startup_pixmap
+        events.append("splash-show")
+        return _FakeSplash()
 
     monkeypatch.setattr(app_module, "QApplication", _FakeApp)
     monkeypatch.setattr(app_module, "MainWindow", _FakeWindow)
-    monkeypatch.setattr(app_module, "_load_app_icon", lambda: None)
+    monkeypatch.setattr(app_module, "_load_startup_pixmap", _fake_startup_pixmap)
+    monkeypatch.setattr(
+        app_module,
+        "_load_app_icon",
+        lambda _pixmap=None: events.append("load-icon") or object(),
+    )
+    monkeypatch.setattr(app_module, "_create_splash_screen", _fake_create_splash)
 
     captured = {}
 
@@ -242,6 +275,18 @@ def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert exc.value.code == 0
     assert captured["code"] == 0
+    assert events == [
+        "app-init",
+        "load-startup-pixmap",
+        "load-icon",
+        "set-icon",
+        "splash-show",
+        "set-name",
+        "window-init",
+        "window-show",
+        "splash-finish",
+        "exec",
+    ]
 
 
 def test_mainwindow_share_single_fit_function_with_group(

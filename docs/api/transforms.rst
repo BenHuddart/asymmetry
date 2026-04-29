@@ -26,6 +26,20 @@ Grouping
 .. autofunction:: asymmetry.core.transform.grouping.apply_grouping
    :no-index:
 
+Background
+----------
+
+.. automodule:: asymmetry.core.transform.background
+   :members:
+   :undoc-members:
+
+Deadtime
+--------
+
+.. automodule:: asymmetry.core.transform.deadtime
+   :members:
+   :undoc-members:
+
 Rebinning
 ---------
 

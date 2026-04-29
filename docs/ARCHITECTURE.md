@@ -33,9 +33,9 @@ asymmetry/
 │   │   ├── __init__.py
 │   │   ├── base.py           # Abstract loader interface
 │   │   ├── nexus.py          # NeXus / HDF5 loader
+│   │   ├── psi.py            # PSI BIN/MDU raw histogram loader
 │   │   ├── root.py           # ROOT file loader
 │   │   ├── ascii.py          # Column-delimited ASCII / CSV
-│   │   ├── psi_bin.py        # PSI binary format
 │   │   └── mud.py            # TRIUMF MUD format
 │   ├── transform/      # Data transformations
 │   │   ├── __init__.py
@@ -159,17 +159,16 @@ second, UI-only implementation of the global-fit logic.
 
 ### 4.1 Data I/O
 
-> **Implementation note:** The initial release targets **WiMDA `.wim` files**
-> as the primary data format.  NeXus/HDF5 and ROOT loaders will be added once
-> the exact muon-specific schemas at each facility are confirmed.  The existing
-> `wim_parser.py` has been adapted into the `asymmetry.core.io.wim` module.
+> **Implementation note:** WiMDA `.wim`, ISIS muon NeXus, PSI BIN/MDU, and
+> MusrRoot/LEM ROOT loaders are implemented in the shared loader registry.
+> ASCII/CSV and TRIUMF MUD remain planned extension points.
 
 | ID | Requirement |
 |---|---|
 | IO-1 | Load μSR histogram data from **NeXus/HDF5** files (ISIS, PSI, J-PARC NeXus conventions). *(Deferred — pending format confirmation.)* |
-| IO-2 | Load data from **ROOT** files (e.g. LEM/PSI, MEG-format). *(Deferred — pending format confirmation.)* |
+| IO-2 | Load **MusrRoot/LEM ROOT** files with `RunHeader` metadata and `hDecay` histograms, following musrfit's `PRunDataHandler::ReadRootFile`. |
 | IO-3 | Load column-delimited **ASCII/CSV** files with user-defined column mappings. |
-| IO-4 | Load **PSI binary** (`.bin`) format. |
+| IO-4 | Load **PSI binary** (`.bin`) and **PSI MDU** (`.mdu`) raw histogram formats. |
 | IO-5 | Load **TRIUMF MUD** format. |
 | IO-6 | Load **WiMDA `.wim`** format (initial primary format). |
 | IO-7 | Auto-detect file format where possible; fall back to manual selection. |
@@ -184,9 +183,62 @@ second, UI-only implementation of the global-fit logic.
 | DM-2 | Store per-detector raw histograms with timing information (t₀, bin width, good-bin range). |
 | DM-3 | Support detector **grouping** definitions (forward, backward, custom groups). |
 | DM-4 | Compute the **asymmetry** $A(t) = \frac{N_F(t) - \alpha\, N_B(t)}{N_F(t) + \alpha\, N_B(t)}$ from grouped histograms. |
-| DM-5 | Apply **dead-time correction** to raw histograms. |
+| DM-5 | Apply **dead-time correction** to raw histograms using file-provided deadtime values when present. |
 | DM-6 | Provide **rebinning** of time-domain data with variable bin widths. |
-| DM-7 | Estimate and subtract **background** counts. |
+| DM-7 | Estimate and subtract **background** counts from grouped raw forward/backward histograms when enabled. |
+
+### 4.2.1 PSI and Deadtime Provenance
+
+The PSI support is deliberately tied to existing muon-analysis implementations:
+
+- PSI BIN/MDU parsing follows musrfit's PSI raw-data reader, especially
+  `PRunDataHandler::ReadPsiBinFile` and the PSI BIN/MDU structures used there.
+  Mantid's `LoadPSIMuonBin` is used as an additional cross-check for PSI-BIN
+  files.
+- PSI-BIN `.mon` temperature sidecars follow Mantid's `LoadPSIMuonBin`
+  behavior: search from the BIN directory up to three levels below it for a
+  `.mon` filename containing the run number, parse the PSI title/date header
+  and backslash-delimited rows, and expose each channel as a plottable run log
+  in `nexus_time_series`. musrfit is still the reference for embedded PSI BIN
+  temperature fields, but it was not found to implement `.mon` sidecar loading.
+- Per-detector PSI `t0` values are preserved as detector metadata and used by
+  grouping before histograms are summed.
+- File-based deadtime correction follows the non-paralyzable correction used by
+  musrfit `PRunBase::DeadTimeCorrection` and Mantid `ApplyDeadTimeCorr`, but
+  it is applied only when the loaded file provides detector deadtime values
+  and good-frame metadata. PSI BIN/MDU and MusrRoot/LEM ROOT files normally do
+  not provide these NeXus-style deadtime constants, so they do not use a
+  deadtime fallback.
+
+### 4.2.2 Background Provenance
+
+Raw-count background correction follows musrfit's `PRunAsymmetry` ordering:
+group forward/backward histograms first, subtract fixed or estimated
+background next, then calculate asymmetry. Estimated background values are the
+mean counts in an inclusive background-bin range. When no range is supplied,
+Asymmetry uses musrfit's fallback `0.1 * t0` to `0.6 * t0` range. PSI and
+TRIUMF background ranges are adjusted toward complete accelerator periods using
+the musrfit constants (`0.01975 us` and `0.04337 us` respectively).
+
+The toggle is off by default and exposed only for PSI-style raw data
+(`.bin`, `.mdu`, and PSI/LEM `.root`). Existing ISIS/NeXus raw grouping remains
+on the file-deadtime path, and Asymmetry does not use background subtraction as
+an ISIS deadtime fallback.
+
+### 4.2.3 ROOT Provenance
+
+ROOT support follows musrfit's `PRunDataHandler::ReadRootFile`. Asymmetry reads
+MusrRoot `RunHeader` metadata and `hDecay%03d` histograms from both the
+documented `TFolder` layout and the newer `TDirectory` layout. The musrfit
+paths `histos/hDecay%03d` and `histos/DecayAnaModule/hDecay%03d` are both
+searched. `RunInfo` metadata, `RedGreen Offsets`, and `DetectorInfo` fields are
+used to preserve run metadata, detector labels, per-detector `t0`, and
+good-bin ranges.
+
+Legacy LEM ROOT files without a MusrRoot `RunHeader` are treated as a
+best-effort compatibility path when `uproot` can expose their `RunInfo` and
+histogram objects. The full TLemRunHeader/PyROOT object model is not
+reimplemented.
 
 ### 4.3 Fitting — Time Domain
 

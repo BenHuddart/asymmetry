@@ -1,0 +1,179 @@
+"""Tests for MusrRoot/LEM ROOT loading."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from asymmetry.core.io import RootLoader, load
+
+uproot = pytest.importorskip("uproot")
+
+
+def _write_musrroot_directory(path: Path) -> None:
+    edges = np.arange(-0.5, 7.5, 1.0)
+    with uproot.recreate(path) as root_file:
+        root_file["RunHeader/RunInfo/Run Number"] = "2468"
+        root_file["RunHeader/RunInfo/Run Title"] = "Synthetic MusrRoot"
+        root_file["RunHeader/RunInfo/Laboratory"] = "PSI"
+        root_file["RunHeader/RunInfo/Instrument"] = "LEM"
+        root_file["RunHeader/RunInfo/Muon Source"] = "low energy muon source"
+        root_file["RunHeader/RunInfo/Sample Name"] = "Ag"
+        root_file["RunHeader/RunInfo/Sample Temperature"] = "12.5 +- 0.1 K"
+        root_file["RunHeader/RunInfo/Sample Magnetic Field"] = "0.01 T"
+        root_file["RunHeader/RunInfo/Run Start Time"] = "2026-01-01 10:00:00"
+        root_file["RunHeader/RunInfo/Run Stop Time"] = "2026-01-01 11:00:00"
+        root_file["RunHeader/RunInfo/No of Histos"] = "2"
+        root_file["RunHeader/RunInfo/Time Resolution"] = "10 ns"
+        root_file["RunHeader/DetectorInfo/Detector001/Name"] = "Left"
+        root_file["RunHeader/DetectorInfo/Detector001/Histo Number"] = "1"
+        root_file["RunHeader/DetectorInfo/Detector001/Time Zero Bin"] = "2"
+        root_file["RunHeader/DetectorInfo/Detector001/First Good Bin"] = "3"
+        root_file["RunHeader/DetectorInfo/Detector001/Last Good Bin"] = "6"
+        root_file["RunHeader/DetectorInfo/Detector002/Name"] = "Right"
+        root_file["RunHeader/DetectorInfo/Detector002/Histo Number"] = "2"
+        root_file["RunHeader/DetectorInfo/Detector002/Time Zero Bin"] = "3"
+        root_file["RunHeader/DetectorInfo/Detector002/First Good Bin"] = "4"
+        root_file["RunHeader/DetectorInfo/Detector002/Last Good Bin"] = "6"
+        root_file["histos/DecayAnaModule/hDecay001"] = (
+            np.array([0, 10, 20, 30, 40, 50, 60], dtype=np.float64),
+            edges,
+        )
+        root_file["histos/DecayAnaModule/hDecay002"] = (
+            np.array([0, 0, 15, 25, 35, 45, 55], dtype=np.float64),
+            edges,
+        )
+
+
+def _write_red_green_offset_directory(path: Path) -> None:
+    edges = np.arange(-0.5, 4.5, 1.0)
+    with uproot.recreate(path) as root_file:
+        root_file["RunHeader/RunInfo/Run Number"] = "1357"
+        root_file["RunHeader/RunInfo/Instrument"] = "LEM"
+        root_file["RunHeader/RunInfo/No of Histos"] = "1"
+        root_file["RunHeader/RunInfo/RedGreen Offsets"] = "20"
+        root_file["RunHeader/RunInfo/Time Resolution"] = "5 ns"
+        root_file["RunHeader/DetectorInfo/Detector001/Name"] = "Offset detector"
+        root_file["RunHeader/DetectorInfo/Detector001/Histo Number"] = "21"
+        root_file["RunHeader/DetectorInfo/Detector001/Time Zero Bin"] = "1"
+        root_file["RunHeader/DetectorInfo/Detector001/First Good Bin"] = "1"
+        root_file["RunHeader/DetectorInfo/Detector001/Last Good Bin"] = "3"
+        root_file["histos/DecayAnaModule/hDecay001"] = (
+            np.array([100, 100, 100, 100], dtype=np.float64),
+            edges,
+        )
+        root_file["histos/DecayAnaModule/hDecay021"] = (
+            np.array([1, 2, 3, 4], dtype=np.float64),
+            edges,
+        )
+
+
+def test_load_musrroot_directory_reads_header_histograms_and_grouping(tmp_path) -> None:
+    path = tmp_path / "lem_synthetic.root"
+    _write_musrroot_directory(path)
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    assert ds.run_number == 2468
+    assert ds.metadata["root_format"] == "musr-root-directory"
+    assert ds.metadata["facility"] == "PSI"
+    assert ds.metadata["instrument"] == "LEM"
+    assert ds.metadata["temperature"] == pytest.approx(12.5)
+    assert ds.metadata["field"] == pytest.approx(100.0)
+    assert len(ds.run.histograms) == 2
+    assert ds.run.histograms[0].bin_width == pytest.approx(0.01)
+    assert ds.run.grouping["groups"] == {1: [1], 2: [2]}
+    assert ds.run.grouping["group_names"] == {1: "Left", 2: "Right"}
+    assert ds.run.grouping["forward_group"] == 1
+    assert ds.run.grouping["backward_group"] == 2
+    assert ds.run.grouping["detector_t0_bins"] == [2, 3]
+    assert ds.run.grouping["root_histo_numbers"] == [1, 2]
+    assert ds.time[0] == pytest.approx(0.01)
+
+
+def test_red_green_offsets_select_declared_histogram_numbers(tmp_path) -> None:
+    path = tmp_path / "lem_offset.root"
+    _write_red_green_offset_directory(path)
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    assert ds.run.grouping["root_histo_numbers"] == [21]
+    assert ds.run.grouping["group_names"] == {1: "Offset detector"}
+    assert ds.run.grouping["detector_t0_bins"] == [1]
+    assert ds.run.histograms[0].counts.tolist() == [1, 2, 3, 4]
+    assert ds.run.histograms[0].bin_width == pytest.approx(0.005)
+
+
+def test_load_convenience_registers_root_loader(tmp_path) -> None:
+    path = tmp_path / "lem_synthetic.root"
+    _write_musrroot_directory(path)
+
+    ds = load(str(path))
+
+    assert ds.metadata["root_format"] == "musr-root-directory"
+
+
+def test_load_musrfit_musrroot_folder_fixture() -> None:
+    path = Path("/Users/bhuddart/Source/musrfit/doc/examples/data/lem15_his_2994.root")
+    if not path.exists():
+        pytest.skip("musrfit ROOT fixture not available")
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    assert ds.run_number == 2994
+    assert ds.metadata["root_format"] == "musr-root-folder"
+    assert ds.metadata["facility"] == "PSI"
+    assert ds.metadata["instrument"] == "LEM"
+    assert ds.metadata["temperature"] == pytest.approx(45.0)
+    assert ds.metadata["field"] == pytest.approx(26.67)
+    assert len(ds.run.histograms) == 32
+    assert ds.run.histograms[0].bin_width == pytest.approx(0.0001953125)
+    assert ds.run.grouping["root_histo_numbers"][:8] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert ds.run.grouping["root_histo_numbers"][8:16] == [21, 22, 23, 24, 25, 26, 27, 28]
+    assert ds.run.grouping["group_names"][1].startswith("e+ Left")
+
+
+def test_load_musrfit_musrroot_fixture_used_by_musrfit_histo_test() -> None:
+    """Read the ROOT file referenced by musrfit's test-histo-MusrRoot.msr."""
+    path = Path("/Users/bhuddart/Source/musrfit/doc/examples/data/lem12_his_2466.root")
+    if not path.exists():
+        pytest.skip("musrfit ROOT fixture not available")
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    assert ds.run_number == 2466
+    assert ds.metadata["root_format"] == "musr-root-folder"
+    assert ds.metadata["title"].startswith("LSCO x=0.02 (224-227), T=12.00 (K)")
+    assert ds.metadata["sample"] == "LSCO x=0.02 (224-227)"
+    assert ds.metadata["temperature"] == pytest.approx(11.999)
+    assert ds.metadata["field"] == pytest.approx(49.11)
+    assert ds.metadata["started"] == "2012-06-03 13:22:00"
+    assert ds.metadata["stopped"] == "2012-06-03 14:04:38"
+    assert len(ds.run.histograms) == 16
+    assert ds.run.histograms[0].n_bins == 66601
+    assert ds.run.histograms[0].bin_width == pytest.approx(0.0001953125)
+    assert ds.run.grouping["root_histo_numbers"][:8] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert ds.run.grouping["root_histo_numbers"][8:16] == [21, 22, 23, 24, 25, 26, 27, 28]
+    assert ds.run.grouping["detector_t0_bins"] == [2741] * 16
+    assert ds.run.grouping["detector_first_good_bins"] == [2741] * 16
+    assert ds.run.grouping["detector_last_good_bins"] == [66600] * 16
+    assert ds.run.grouping["group_names"][1] == "e+ Left D(F)"
+    assert ds.run.grouping["group_names"][8] == "e+ Bottom U(B)"
+    assert [float(np.sum(h.counts)) for h in ds.run.histograms[:8]] == pytest.approx(
+        [
+            521957.0,
+            566162.0,
+            540160.0,
+            481742.0,
+            491464.0,
+            505091.0,
+            499640.0,
+            483329.0,
+        ]
+    )
