@@ -380,7 +380,7 @@ class TestPlotPanel:
         assert np.all((low_x < 5.0) | (low_x > 14.0))
         assert np.all((main_x >= 5.0) & (main_x <= 14.0))
 
-    def test_plot_dataset_wim_without_histograms_keeps_early_points_main(
+    def test_plot_dataset_without_histograms_applies_good_window(
         self,
         panel: PlotPanel,
         monkeypatch: pytest.MonkeyPatch,
@@ -394,7 +394,7 @@ class TestPlotPanel:
         run = Run(
             run_number=324,
             grouping={"first_good_bin": 5, "last_good_bin": 14},
-            source_file="/tmp/run_324.wim",
+            source_file="/tmp/run_324.nxs",
         )
         ds = MuonDataset(
             time=time,
@@ -422,58 +422,8 @@ class TestPlotPanel:
         main_x = np.asarray(main_call["args"][0], dtype=float)
 
         assert low_call["kwargs"].get("color") == "0.6"
-        assert np.all(low_x > 14.0)
-        assert np.all(main_x <= 14.0)
-        assert np.any(main_x < 5.0)
-
-    def test_plot_dataset_coadded_wim_keeps_early_points_main(
-        self,
-        panel: PlotPanel,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
-            pytest.skip("matplotlib not available")
-
-        time = np.arange(20, dtype=float)
-        asym = np.linspace(0.25, 0.05, time.size)
-        err = np.full_like(time, 0.01)
-        run = Run(
-            run_number=-1,
-            grouping={
-                "first_good_bin": 5,
-                "last_good_bin": 14,
-                "informational_first_good_bin": True,
-            },
-        )
-        ds = MuonDataset(
-            time=time,
-            asymmetry=asym,
-            error=err,
-            metadata={"run_number": -1, "combined_from": [1, 2]},
-            run=run,
-        )
-
-        errorbar_calls: list[dict[str, object]] = []
-        original_errorbar = panel._ax.errorbar
-
-        def _capture_errorbar(*args, **kwargs):
-            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
-            return original_errorbar(*args, **kwargs)
-
-        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
-
-        panel.plot_dataset(ds)
-
-        assert len(errorbar_calls) >= 2
-        low_call = errorbar_calls[0]
-        main_call = errorbar_calls[1]
-        low_x = np.asarray(low_call["args"][0], dtype=float)
-        main_x = np.asarray(main_call["args"][0], dtype=float)
-
-        assert low_call["kwargs"].get("color") == "0.6"
-        assert np.all(low_x > 14.0)
-        assert np.all(main_x <= 14.0)
-        assert np.any(main_x < 5.0)
+        assert np.all((low_x < 5.0) | (low_x > 14.0))
+        assert np.all((main_x >= 5.0) & (main_x <= 14.0))
 
     def test_low_count_mask_marks_saturated_and_zero_denominator_bins_in_good_window(
         self,

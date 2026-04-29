@@ -19,7 +19,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # --- info command ---
     info_parser = sub.add_parser("info", help="Show metadata for a data file")
-    info_parser.add_argument("file", help="Path to a μSR data file (.wim, etc.)")
+    info_parser.add_argument("file", help="Path to a μSR data file")
 
     args = parser.parse_args(argv)
 

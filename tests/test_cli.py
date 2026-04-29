@@ -22,10 +22,10 @@ def test_info_command_loads_file_and_prints_summary(
         return _FakeRun()
 
     monkeypatch.setattr("asymmetry.core.io.load", _fake_load)
-    cli.main(["info", "sample.wim"])
+    cli.main(["info", "sample.nxs"])
 
     out = capsys.readouterr().out
-    assert loaded == ["sample.wim"]
+    assert loaded == ["sample.nxs"]
     assert "fake run summary" in out
 
 

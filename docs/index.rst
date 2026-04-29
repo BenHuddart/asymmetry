@@ -16,7 +16,7 @@ providing tools for loading, processing, analyzing, and visualizing μSR data.
 Features
 --------
 
-* **Data Loading**: Support for WiMDA (.wim) format with extensible I/O system
+* **Data Loading**: Support for NeXus, PSI, and ROOT formats with extensible I/O system
 * **Data Processing**: Rebinning, grouping, and asymmetry calculation
 * **Fourier Analysis**: FFT and Maximum Entropy for frequency-domain analysis
 * **Fitting**: Integration with lmfit for flexible model fitting
@@ -47,8 +47,8 @@ Loading Data
 
    from asymmetry.core.io import load
    
-   # Load a WiMDA file
-   dataset = load("mydata.wim")
+   # Load a NeXus file
+   dataset = load("mydata.nxs")
    print(dataset.summary())
 
 Using the GUI

@@ -151,23 +151,6 @@ def test_coadd_and_separate_roundtrip(qapp: QApplication) -> None:
     assert combined_rn not in panel._datasets
 
 
-def test_coadd_wim_marks_first_good_bin_informational(qapp: QApplication) -> None:
-    panel = DataBrowserPanel()
-    d1 = _dataset_with_run(20, source_file="/tmp/run_20.wim")
-    d2 = _dataset_with_run(21, source_file="/tmp/run_21.wim")
-
-    panel.add_dataset(d1)
-    panel.add_dataset(d2)
-
-    combined_rn = panel.add_combined_dataset([20, 21])
-
-    assert combined_rn is not None
-    combined_ds = panel.get_dataset(combined_rn)
-    assert combined_ds is not None
-    assert combined_ds.run is not None
-    assert combined_ds.run.grouping["informational_first_good_bin"] is True
-
-
 def test_delete_key_removes_selected_entries(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     d1 = _dataset(21)
@@ -632,34 +615,6 @@ def test_coadd_blocks_different_grouping(
     assert "identical grouping" in captured["text"]
     assert 101 in panel._datasets
     assert 102 in panel._datasets
-    assert not any(rn < 0 for rn in panel._datasets)
-
-
-def test_coadd_blocks_mixed_wim_and_non_wim(
-    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    panel = DataBrowserPanel()
-    d1 = _dataset_with_run(111, source_file="/tmp/run_111.wim")
-    d2 = _dataset_with_run(112, source_file="/tmp/run_112.nxs")
-    panel.add_dataset(d1)
-    panel.add_dataset(d2)
-
-    captured = {"text": ""}
-
-    def _stub_warning(_parent, _title, text):
-        captured["text"] = text
-        return QMessageBox.StandardButton.Ok
-
-    monkeypatch.setattr(QMessageBox, "warning", _stub_warning)
-
-    panel._table.selectRow(0)
-    idx = panel._table.model().index(1, 0)
-    panel._table.selectionModel().select(
-        idx, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
-    )
-    panel._coadd_selected()
-
-    assert "Mixed .wim and non-WIM" in captured["text"]
     assert not any(rn < 0 for rn in panel._datasets)
 
 

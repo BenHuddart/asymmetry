@@ -91,7 +91,7 @@ class TestSchemaMigration:
             "datasets": [
                 {
                     "run_number": 5001,
-                    "source_file": "/tmp/run_5001.wim",
+                    "source_file": "/tmp/run_5001.nxs",
                     "metadata_overrides": {"field": 100.0},
                     "grouping_overrides": {
                         "groups": {
@@ -170,7 +170,7 @@ class TestProjectIO:
         state["datasets"] = [
             {
                 "run_number": 7001,
-                "source_file": "/tmp/run7001.wim",
+                "source_file": "/tmp/run7001.nxs",
                 "metadata_overrides": {"field": 100.0},
                 "grouping_overrides": {
                     "groups": {
@@ -302,7 +302,7 @@ class TestProjectIO:
         state["datasets"] = [
             {
                 "run_number": np.int64(42),
-                "source_file": "/data/run42.wim",
+                "source_file": "/data/run42.nxs",
                 "metadata_overrides": {"field": np.float64(150.0)},
             }
         ]
@@ -334,7 +334,7 @@ def _make_dataset(run_number: int = 42) -> MuonDataset:
     from asymmetry.core.data.dataset import Run
 
     t = np.linspace(0, 10, 100)
-    run = Run(run_number=run_number, source_file=f"/data/run{run_number}.wim")
+    run = Run(run_number=run_number, source_file=f"/data/run{run_number}.nxs")
     run.metadata["field"] = 100.0
     return MuonDataset(
         time=t,
@@ -844,7 +844,7 @@ class TestMainWindowProjectState:
     def test_project_round_trip_restores_grouping_and_plot_limits_end_to_end(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
     ) -> None:
-        source_file = tmp_path / "run6001.wim"
+        source_file = tmp_path / "run6001.nxs"
         source_file.write_bytes(b"\x00")
 
         def _make_groupable_dataset() -> MuonDataset:
@@ -942,13 +942,13 @@ class TestMainWindowProjectState:
         assert window2._plot_panel._y_min.value() == pytest.approx(20.0)
         assert window2._plot_panel._y_max.value() == pytest.approx(45.0)
 
-    def test_project_round_trip_restores_wim_grouping_bunching(
+    def test_project_round_trip_restores_nexus_grouping_bunching(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
     ) -> None:
-        source_file = tmp_path / "run6002.wim"
+        source_file = tmp_path / "run6002.nxs"
         source_file.write_bytes(b"\x00")
 
-        def _make_wim_dataset() -> MuonDataset:
+        def _make_nexus_dataset() -> MuonDataset:
             from asymmetry.core.data.dataset import Run
 
             run = Run(
@@ -965,8 +965,7 @@ class TestMainWindowProjectState:
                     "alpha": 1.0,
                     "first_good_bin": 0,
                     "last_good_bin": 3,
-                    "bunching_factor": 2,
-                    "source_bunching_factor": 2,
+                    "bunching_factor": 1,
                     "deadtime_correction": False,
                 },
             )
@@ -983,7 +982,7 @@ class TestMainWindowProjectState:
             )
 
         window1 = mw_module.MainWindow()
-        ds = _make_wim_dataset()
+        ds = _make_nexus_dataset()
         window1._data_browser.add_dataset(ds)
         window1._current_dataset = ds
 
@@ -997,9 +996,7 @@ class TestMainWindowProjectState:
             "alpha": 1.0,
             "first_good_bin": 0,
             "last_good_bin": 3,
-            "bunching_factor": 4,
-            "source_bunching_factor": 2,
-            "enforce_source_bunching": True,
+            "bunching_factor": 2,
             "deadtime_correction": False,
         }
         applied, _ = window1._apply_grouping_settings_to_dataset(ds, grouping_payload)
@@ -1007,13 +1004,13 @@ class TestMainWindowProjectState:
         assert len(ds.time) == 2
 
         state = window1.collect_project_state()
-        path = tmp_path / "roundtrip_wim.asymp"
+        path = tmp_path / "roundtrip_nexus.asymp"
         save_project(state, path)
         loaded_state = load_project(path)
 
         def _stub_load_file(self_inner, path_str: str):
             assert path_str == str(source_file)
-            return _make_wim_dataset()
+            return _make_nexus_dataset()
 
         monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
         window2 = mw_module.MainWindow()
@@ -1023,8 +1020,7 @@ class TestMainWindowProjectState:
         assert restored is not None
         assert len(restored.time) == 2
         assert restored.run is not None
-        assert restored.run.grouping["bunching_factor"] == 4
-        assert restored.run.grouping["source_bunching_factor"] == 2
+        assert restored.run.grouping["bunching_factor"] == 2
         assert restored.run.grouping["groups"] == {
             1: [(1, 100), (2, 100)],
             2: [(3, 100), (4, 100)],
@@ -1058,7 +1054,7 @@ class TestMainWindowProjectState:
     def test_restore_project_state_all_mode_renders_subplots_immediately(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
     ) -> None:
-        source_file = tmp_path / "run6101.wim"
+        source_file = tmp_path / "run6101.nxs"
         source_file.write_bytes(b"\x00")
 
         def _make_vector_dataset() -> MuonDataset:
@@ -1315,7 +1311,7 @@ class TestMainWindowProjectState:
         monkeypatch.setattr(mw_module, "FourierPanel", _StubFourierWithState)
         monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParamsClear)
 
-        file_path = tmp_path / "run42.wim"
+        file_path = tmp_path / "run42.nxs"
         file_path.write_bytes(b"\x00")
 
         grouping_payload = {
@@ -1402,7 +1398,7 @@ class TestMainWindowProjectState:
         state["datasets"] = [
             {
                 "run_number": 42,
-                "source_file": "/nonexistent/path/run42.wim",
+                "source_file": "/nonexistent/path/run42.nxs",
                 "metadata_overrides": {"field": 100.0},
             }
         ]
@@ -1427,8 +1423,8 @@ class TestMainWindowProjectState:
         # Create a real data file in a "new" directory (simulating a moved file).
         new_data_dir = tmp_path / "moved_data"
         new_data_dir.mkdir()
-        fake_wim = new_data_dir / "run42.wim"
-        fake_wim.write_bytes(b"\x00")  # empty placeholder
+        fake_nexus = new_data_dir / "run42.nxs"
+        fake_nexus.write_bytes(b"\x00")  # empty placeholder
 
         # Suppress the QMessageBox (user clicks Yes to locate directory).
         from PySide6.QtWidgets import QFileDialog, QMessageBox
@@ -1440,7 +1436,7 @@ class TestMainWindowProjectState:
         monkeypatch.setattr(
             QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **kw: str(new_data_dir))
         )
-        # Stub _load_file so we don't need real WIM parsing – just record the path.
+        # Stub _load_file so we don't need real NeXus parsing – just record the path.
         loaded_paths: list[str] = []
 
         def _stub_load_file(self_inner, path):
@@ -1454,7 +1450,7 @@ class TestMainWindowProjectState:
         state["datasets"] = [
             {
                 "run_number": 42,
-                "source_file": "/original/data/run42.wim",
+                "source_file": "/original/data/run42.nxs",
                 "metadata_overrides": {"field": 100.0},
             }
         ]
@@ -1463,7 +1459,7 @@ class TestMainWindowProjectState:
 
         # _load_file should have been called with the resolved path in the new directory.
         assert len(loaded_paths) == 1
-        assert os.path.basename(loaded_paths[0]) == "run42.wim"
+        assert os.path.basename(loaded_paths[0]) == "run42.nxs"
         assert str(new_data_dir) in loaded_paths[0]
 
     def test_restore_project_state_opens_fit_and_params_docks_when_results_exist(

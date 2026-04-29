@@ -74,7 +74,7 @@ Basic Fitting Workflow
    from asymmetry.core.io import load
    
    # Load data
-   dataset = load("data.wim")
+   dataset = load("data.nxs")
    
    # Create fit engine
    engine = FitEngine()
@@ -356,7 +356,7 @@ rate) vary.
    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
    from asymmetry.core.io import load
 
-   datasets = [load(f"run_{i}.wim") for i in range(1, 4)]
+   datasets = [load(f"run_{i}.nxs") for i in range(1, 4)]
    model = MODELS["ExponentialRelaxation"]
    engine = FitEngine()
 

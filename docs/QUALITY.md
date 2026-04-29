@@ -9,7 +9,7 @@ not to replace tests or architecture docs.
 | Area | Grade | Notes | Primary Checks |
 | --- | --- | --- | --- |
 | Core data model and transforms | B+ | Broad coverage exists for grouping, asymmetry, rebinning, deadtime, and background paths. Keep boundary cases explicit. | `python tools/harness.py test -- tests/test_transforms.py tests/test_deadtime.py tests/test_background_correction.py` |
-| File loaders | B | WiMDA, NeXus, PSI, and ROOT loaders have focused tests. Format fixtures and provenance assumptions are the main risk. | `python tools/harness.py test -- tests/test_wim_loader.py tests/test_nexus_loader.py tests/test_psi_loader.py tests/test_root_loader.py` |
+| File loaders | B | NeXus, PSI, and ROOT loaders have focused tests. Format fixtures and provenance assumptions are the main risk. | `python tools/harness.py test -- tests/test_nexus_loader.py tests/test_psi_loader.py tests/test_root_loader.py` |
 | Fitting and model logic | B+ | Model, parameter, wizard, and global-search tests cover much of the numerical behavior. Watch for slow or flaky optimization changes. | `python tools/harness.py test -- tests/test_fitting_engine.py tests/test_fit_wizard.py tests/test_global_search.py` |
 | GUI workflows | B | Many panels and dialogs are covered with headless Qt tests, but true interactive QA remains partly manual. | `python tools/harness.py gui-smoke` and targeted GUI tests |
 | Project persistence | B+ | `.asymp` schema paths are well covered. Schema migrations should stay explicit and tested. | `python tools/harness.py test -- tests/test_project_schema.py` |

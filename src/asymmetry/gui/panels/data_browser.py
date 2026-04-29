@@ -972,16 +972,6 @@ class DataBrowserPanel(QWidget):
         self._datasets[combined_rn] = rebuilt
         return rebuilt
 
-    def _grouping_workflow_family(self, dataset: MuonDataset) -> str | None:
-        """Return grouping-workflow family for *dataset*."""
-        run = getattr(dataset, "run", None)
-        if run is None:
-            return None
-        source_file = str(getattr(run, "source_file", "") or "").strip().lower()
-        if not source_file:
-            return None
-        return "wim" if source_file.endswith(".wim") else "standard"
-
     def _normalize_grouping_value(self, value):
         """Return a deterministic representation for grouping comparisons."""
         if isinstance(value, dict):
@@ -1063,11 +1053,6 @@ class DataBrowserPanel(QWidget):
             bunching_factor = int(grouping.get("bunching_factor", 1))
         except (TypeError, ValueError):
             bunching_factor = 1
-        try:
-            source_bunching_factor = int(grouping.get("source_bunching_factor", bunching_factor))
-        except (TypeError, ValueError):
-            source_bunching_factor = bunching_factor
-
         signature = {
             "groups": groups,
             "forward_group": int(grouping.get("forward_group", 1)),
@@ -1084,7 +1069,6 @@ class DataBrowserPanel(QWidget):
             "last_good_bin": last_good_bin,
             "bin_index_base": bin_index_base,
             "bunching_factor": bunching_factor,
-            "source_bunching_factor": source_bunching_factor,
             "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
             "dead_time_us": grouping.get("dead_time_us"),
             "good_frames": grouping.get("good_frames"),
@@ -1098,19 +1082,6 @@ class DataBrowserPanel(QWidget):
         """Return a user-facing error when selected datasets cannot be co-added."""
         if len(datasets) < 2:
             return "Select at least two grouped datasets to co-add."
-
-        families = [self._grouping_workflow_family(ds) for ds in datasets]
-        if any(family is None for family in families):
-            return (
-                "Co-add requires grouped source datasets with valid source-file metadata. "
-                "Please load runs normally and align their grouping first."
-            )
-
-        if len(set(families)) != 1:
-            return (
-                "Co-add requires identical grouping and a single grouping workflow family. "
-                "Mixed .wim and non-WIM selections cannot be co-added."
-            )
 
         signatures = [self._grouping_signature(ds) for ds in datasets]
         if any(signature is None for signature in signatures):
@@ -1910,8 +1881,6 @@ class DataBrowserPanel(QWidget):
             "combined_from": list(run_numbers),
         }
         mirrored_grouping = self._mirrored_grouping_for_combined_dataset(datasets[0])
-        if self._grouping_workflow_family(datasets[0]) == "wim":
-            mirrored_grouping["informational_first_good_bin"] = True
         run = Run(
             run_number=combined_run_number,
             histograms=[],

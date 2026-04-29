@@ -51,7 +51,7 @@ structure::
         "created_with_app_version": "0.1.0",
         "datasets": [
             {
-                "source_file": "/absolute/path/to/file.wim",
+                "source_file": "/absolute/path/to/file.nxs",
                 "run_number": 1234,
                 "metadata_overrides": { "field": 50.0 }
             }

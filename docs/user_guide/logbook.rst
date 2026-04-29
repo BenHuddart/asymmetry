@@ -12,7 +12,7 @@ Basic Usage
    from asymmetry.core.io import load
 
    logbook = Logbook()
-   dataset = load("run_3101.wim")
+   dataset = load("run_3101.nxs")
    logbook.add(dataset, tags=["zf", "sample-a"])
 
    print(logbook.run_numbers)

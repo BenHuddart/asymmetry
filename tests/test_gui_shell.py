@@ -183,7 +183,7 @@ def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplicat
     window._on_dataset_selected(42)
     assert window._fit_panel.last_dataset is ds
 
-    choice = window._maybe_apply_comment_field(ds, "dummy.wim", apply_to_all=True)
+    choice = window._maybe_apply_comment_field(ds, "dummy.nxs", apply_to_all=True)
     assert choice == "yes_to_all"
     assert ds.metadata["field"] == pytest.approx(150.0)
 

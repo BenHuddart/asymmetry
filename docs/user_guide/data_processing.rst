@@ -32,7 +32,7 @@ Extract a subset of the data:
 
 .. code-block:: python
 
-   dataset = load("data.wim")
+   dataset = load("data.nxs")
    
    # Select data between 0.5 and 5.0 μs
    subset = dataset.time_range(t_min=0.5, t_max=5.0)
@@ -128,7 +128,7 @@ Average multiple datasets with proper error propagation:
    from asymmetry.core.io import load
    
    # Load multiple datasets
-   datasets = [load(f"run_{i}.wim") for i in range(1, 4)]
+   datasets = [load(f"run_{i}.nxs") for i in range(1, 4)]
    
    # Ensure same time grid (or interpolate if needed)
    time_grid = datasets[0].time
@@ -149,7 +149,6 @@ propagation.
 In the GUI, co-add is intentionally strict:
 
 * every selected dataset must already have equivalent grouping settings,
-* mixed ``.wim`` and non-WIM selections are rejected, and
 * the resulting combined dataset mirrors that shared grouping state.
 
 When you later edit grouping on a combined dataset, Asymmetry applies the
@@ -166,7 +165,7 @@ Apply window functions before FFT:
 
    from asymmetry.core.fourier.window import apply_window
    
-   dataset = load("data.wim")
+   dataset = load("data.nxs")
    
    # Apply Hann window
    windowed_data = apply_window(dataset.asymmetry, window_type="hann")

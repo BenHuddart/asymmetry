@@ -21,7 +21,7 @@ Current schema (version 4)
         "datasets": [
             {
                 "run_number": 3077,
-                "source_file": "/abs/path/to/file.wim",
+                "source_file": "/abs/path/to/file.nxs",
                 "metadata_overrides": {"field": 150.0}
             }
         ],

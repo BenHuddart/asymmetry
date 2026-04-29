@@ -20,7 +20,6 @@ import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.base import BaseLoader
-from asymmetry.core.io.wim import _extract_field_from_comment
 from asymmetry.core.transform import (
     apply_grouping_aligned,
     common_t0_for_groups,
@@ -48,6 +47,26 @@ _PSI_MONTHS = {
     "NOV": "11",
     "DEC": "12",
 }
+
+
+def _extract_field_from_comment(comment: str) -> float | None:
+    """Extract magnetic field in Gauss from comment text."""
+    if not comment:
+        return None
+
+    patterns = [
+        r"(?i)\b(?:field|bx|by|bz|lf|tf|zf)?\s*[:=]?\s*([+-]?\d+(?:\.\d+)?)\s*(?:g|gauss)\b",
+        r"(?i)\b([+-]?\d+(?:\.\d+)?)\s*(?:g|gauss)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, comment)
+        if match is None:
+            continue
+        try:
+            return float(match.group(1))
+        except ValueError:
+            continue
+    return None
 
 
 @dataclass
@@ -740,7 +759,6 @@ class PsiLoader(BaseLoader):
             "last_good_bin": int(last_good),
             "bin_index_base": 0,
             "bunching_factor": 1,
-            "source_bunching_factor": 1,
             "deadtime_correction": False,
             "detector_t0_bins": [int(v) for v in t0_bins],
             "detector_first_good_bins": [int(v) for v in first_good_bins],

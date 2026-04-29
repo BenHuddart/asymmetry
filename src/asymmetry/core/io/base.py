@@ -13,10 +13,10 @@ LoadResult = MuonDataset | list[MuonDataset]
 class BaseLoader(ABC):
     """Interface that every file-format loader must implement."""
 
-    #: File extensions this loader claims (e.g. ``[".wim"]``).
+    #: File extensions this loader claims (e.g. ``[".nxs"]``).
     extensions: list[str] = []
 
-    #: Short human-readable name (e.g. ``"WiMDA (.wim)"``).
+    #: Short human-readable name (e.g. ``"ISIS NeXus (.nxs/.nexus)"``).
     format_name: str = ""
 
     @abstractmethod

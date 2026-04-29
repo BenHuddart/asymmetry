@@ -27,14 +27,6 @@ Base Loader
    :undoc-members:
    :show-inheritance:
 
-WiMDA Loader
-~~~~~~~~~~~~
-
-.. autoclass:: asymmetry.core.io.wim.WimLoader
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 NeXus Loader
 ~~~~~~~~~~~~
 

@@ -274,7 +274,6 @@ class RootLoader(BaseLoader):
             "last_good_bin": int(last_good),
             "bin_index_base": 0,
             "bunching_factor": 1,
-            "source_bunching_factor": 1,
             "deadtime_correction": False,
             "detector_t0_bins": detector_t0_bins,
             "detector_first_good_bins": first_good_bins,

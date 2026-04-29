@@ -1,16 +1,11 @@
 Loading Data
 ============
 
-Asymmetry supports WiMDA, ISIS muon NeXus, PSI BIN/MDU, and
-MusrRoot/LEM ROOT files through a common API.
+Asymmetry supports ISIS muon NeXus, PSI BIN/MDU, and MusrRoot/LEM ROOT files
+through a common API.
 
 Supported Formats
 -----------------
-
-WiMDA Format (.wim)
-~~~~~~~~~~~~~~~~~~~
-
-WiMDA files are loaded with ``WimLoader`` or the convenience ``load`` function.
 
 ISIS Muon NeXus (.nxs, .nexus)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -71,10 +66,9 @@ the grouping in the same full Grouping dialog used for raw NeXus runs.
 Repeated labels are not collapsed: each histogram remains visible as its own
 group, with suffixes such as ``Forw 2`` added where needed.
 
-As with WiMDA files, if the explicit field entry is missing or zero but the
-PSI comment/title text contains a recognizable field such as ``LF 32G`` or
-``Bz=150 G``, the GUI offers to apply that comment-derived value as the run
-field.
+If the explicit field entry is missing or zero but the PSI comment/title text
+contains a recognizable field such as ``LF 32G`` or ``Bz=150 G``, the GUI
+offers to apply that comment-derived value as the run field.
 
 PSI-BIN temperature metadata has two sources. The scalar run temperature is
 read from the BIN header using the musrfit-compatible offsets. Optional
@@ -168,21 +162,16 @@ does not invent format rules:
 Grouping behavior by format
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-In the GUI, grouping controls are format-aware:
+In the GUI, supported raw data runs use the full Grouping dialog:
 
-* ``.wim`` runs use a dedicated **WIM Grouping** dialog where only bunching is
-   editable and other grouping values are shown read-only.
-* Non-WIM runs (for example NeXus) use the full Grouping dialog.
-* PSI BIN/MDU runs also use the full Grouping dialog, with PSI label-derived
+* NeXus runs use the full Grouping dialog.
+* PSI BIN/MDU runs use the full Grouping dialog, with PSI label-derived
    forward/backward defaults when labels such as ``Forw``/``Back`` or
    ``F1``/``B1`` are present.
 * MusrRoot/LEM ROOT runs use the full Grouping dialog. Detector names from
    ``DetectorInfo`` or ROOT histogram titles become the initial group names,
    and ROOT per-detector ``t0`` values are handled like PSI BIN/MDU ``t0``
    metadata.
-
-For ``.wim`` runs, bunching is constrained to integer multiples of the
-file-provided baseline bunching factor when present.
 
 Basic Usage
 -----------
@@ -194,7 +183,7 @@ Loading a Single File
 
    from asymmetry.core.io import load
    
-   dataset = load("path/to/data.wim")
+   dataset = load("path/to/data.nxs")
    print(dataset.summary())
 
 The same ``load`` API can be used with NeXus files:
@@ -231,7 +220,7 @@ Accessing Metadata
 
 .. code-block:: python
 
-   dataset = load("data.wim")
+   dataset = load("data.nxs")
    
    print(f"Run number: {dataset.run_number}")
    print(f"Temperature: {dataset.metadata.get('temperature')} K")
@@ -248,8 +237,8 @@ Loading Multiple Files
    data_dir = Path("data")
    datasets = []
    
-   for wim_file in data_dir.glob("*.wim"):
-       dataset = load(str(wim_file))
+   for nexus_file in data_dir.glob("*.nxs"):
+       dataset = load(str(nexus_file))
        datasets.append(dataset)
    
    print(f"Loaded {len(datasets)} datasets")
@@ -257,17 +246,7 @@ Loading Multiple Files
 Direct File Format Access
 --------------------------
 
-For advanced users, you can access the low-level file loaders:
-
-.. code-block:: python
-
-   from asymmetry.core.io.wim import WimLoader
-   
-   loader = WimLoader()
-   dataset = loader.load("data.wim")
-   print(dataset.run_number)
-
-For NeXus files:
+For advanced users, you can access the low-level file loaders. For NeXus files:
 
 .. code-block:: python
 

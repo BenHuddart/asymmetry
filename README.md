@@ -7,15 +7,15 @@ A Python toolkit for muon-spin spectroscopy (μSR) data reduction, fitting, and 
 
 ## Overview
 
-Asymmetry combines a pure-Python analysis library with a PySide6 desktop application inspired by
-[WiMDA](https://shadow.nd.rl.ac.uk/wimda/). The project is aimed at day-to-day μSR analysis:
-loading raw or reduced data, applying detector grouping and asymmetry transforms, fitting time-
-domain signals, exploring parameter trends, and saving full GUI sessions for later reuse.
+Asymmetry combines a pure-Python analysis library with a PySide6 desktop application for
+day-to-day μSR analysis: loading raw or reduced data, applying detector grouping and asymmetry
+transforms, fitting time-domain signals, exploring parameter trends, and saving full GUI sessions
+for later reuse.
 
 ## Main functionality
 
-- **Data loading**: load WiMDA `.wim` files and ISIS muon NeXus `.nxs` / `.nexus` files through a
-  common API, including multi-period NeXus runs.
+- **Data loading**: load ISIS muon NeXus `.nxs` / `.nexus`, PSI BIN/MDU, and ROOT files through
+  a common API, including multi-period NeXus runs.
 - **Core data workflows**: apply grouping, estimate alpha, compute asymmetry, rebin data, and
   co-add compatible datasets with propagated uncertainties.
 - **Time-domain fitting**: fit single datasets or simultaneous multi-dataset series using built-in
@@ -103,13 +103,13 @@ stack stays within the versions tested by the project.
 ```python
 from asymmetry.core.io import load
 
-dataset_or_periods = load("data/EMU00012345.wim")
+dataset_or_periods = load("data/EMU00012345.nxs")
 dataset = dataset_or_periods[0] if isinstance(dataset_or_periods, list) else dataset_or_periods
 
 print(dataset.summary())
 ```
 
-The same `load(...)` entry point works for WiMDA and ISIS muon NeXus files.
+The same `load(...)` entry point works for supported NeXus, PSI, and ROOT files.
 
 ### Launch the GUI
 

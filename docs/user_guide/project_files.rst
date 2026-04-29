@@ -139,7 +139,7 @@ Save and Load
    state = {
        "schema_version": 3,
        "created_with_app_version": "0.1.0",
-       "datasets": [{"run_number": 3077, "source_file": "run3077.wim", "metadata_overrides": {}}],
+       "datasets": [{"run_number": 3077, "source_file": "run3077.nxs", "metadata_overrides": {}}],
        "browser_state": {
            "sort_column": 0,
            "sort_order": "ascending",

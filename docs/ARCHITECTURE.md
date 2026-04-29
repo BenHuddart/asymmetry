@@ -159,8 +159,8 @@ second, UI-only implementation of the global-fit logic.
 
 ### 4.1 Data I/O
 
-> **Implementation note:** WiMDA `.wim`, ISIS muon NeXus, PSI BIN/MDU, and
-> MusrRoot/LEM ROOT loaders are implemented in the shared loader registry.
+> **Implementation note:** ISIS muon NeXus, PSI BIN/MDU, and MusrRoot/LEM ROOT
+> loaders are implemented in the shared loader registry.
 > ASCII/CSV and TRIUMF MUD remain planned extension points.
 
 | ID | Requirement |
@@ -170,7 +170,6 @@ second, UI-only implementation of the global-fit logic.
 | IO-3 | Load column-delimited **ASCII/CSV** files with user-defined column mappings. |
 | IO-4 | Load **PSI binary** (`.bin`) and **PSI MDU** (`.mdu`) raw histogram formats. |
 | IO-5 | Load **TRIUMF MUD** format. |
-| IO-6 | Load **WiMDA `.wim`** format (initial primary format). |
 | IO-7 | Auto-detect file format where possible; fall back to manual selection. |
 | IO-8 | Provide a **plugin interface** so third-party loaders can be registered without modifying the core. |
 | IO-9 | Export processed asymmetry data and fit results to ASCII, HDF5, and JSON. |

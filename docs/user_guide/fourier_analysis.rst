@@ -22,7 +22,7 @@ The simplest method for frequency analysis:
    from asymmetry.core.fourier.fft import fft_asymmetry
    from asymmetry.core.io import load
    
-   dataset = load("data.wim")
+   dataset = load("data.nxs")
    
    # Compute FFT — returns (frequencies, real_part, magnitude)
    frequencies, real_part, magnitude = fft_asymmetry(dataset)
@@ -101,7 +101,7 @@ Complete workflow for frequency analysis:
    import matplotlib.pyplot as plt
    
    # Load data
-   dataset = load("data.wim")
+   dataset = load("data.nxs")
    
    # Compute FFT with Hann window and 4× zero-padding
    freq, real_part, magnitude = fft_asymmetry(

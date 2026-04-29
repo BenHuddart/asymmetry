@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.transform.grouping import apply_grouping
 from asymmetry.core.transform.rebin import rebin
 from asymmetry.core.utils.constants import PeriodMode
@@ -1743,10 +1743,6 @@ class PlotPanel(QWidget):
         if run is None or not isinstance(getattr(run, "grouping", None), dict):
             return mask
 
-        source_run = source_dataset.run if source_dataset is not None else None
-        informational_wim_first_good = self._uses_informational_wim_first_good_bin(
-            source_run or run
-        )
         grouping = run.grouping
         first_good = grouping.get("first_good_bin")
         last_good = grouping.get("last_good_bin")
@@ -1760,7 +1756,7 @@ class PlotPanel(QWidget):
             axis = np.asarray(hist0.time_axis, dtype=float)
 
         try:
-            lo_idx = 0 if informational_wim_first_good else max(0, int(first_good))
+            lo_idx = max(0, int(first_good))
             hi_idx = int(last_good)
         except (TypeError, ValueError):
             return mask
@@ -1788,8 +1784,7 @@ class PlotPanel(QWidget):
             return mask
 
         # Fallback for datasets that carry grouping metadata but no raw
-        # histograms (for example imported WiMDA asymmetry tables). Use the
-        # source, pre-rebinning time axis when available.
+        # histograms. Use the source, pre-rebinning time axis when available.
         reference_time = np.asarray(
             source_dataset.time if source_dataset is not None else dataset.time,
             dtype=float,
@@ -1818,17 +1813,6 @@ class PlotPanel(QWidget):
         mask |= (time < (good_t_min - tol)) | (time > (good_t_max + tol))
 
         return mask
-
-    @staticmethod
-    def _uses_informational_wim_first_good_bin(run: Run | None) -> bool:
-        """Return ``True`` when WiMDA has already handled early-bin trimming."""
-        if run is None:
-            return False
-        grouping = getattr(run, "grouping", None)
-        if isinstance(grouping, dict) and bool(grouping.get("informational_first_good_bin", False)):
-            return True
-        source_file = str(getattr(run, "source_file", "") or "")
-        return source_file.lower().endswith(".wim")
 
     def _low_confidence_mask_for_dataset(
         self,

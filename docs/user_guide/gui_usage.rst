@@ -36,7 +36,7 @@ Multiple File Selection
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 1. Click **File → Open** (or toolbar "Open" button)
-2. Select one or multiple .wim files (use Ctrl+Click or Shift+Click)
+2. Select one or multiple supported data files (use Ctrl+Click or Shift+Click)
 3. All selected files will be loaded into the data browser
 
 The data browser shows:
@@ -126,7 +126,6 @@ The co-added dataset:
 * Averages asymmetry values
 * Propagates errors correctly: σ_combined = √(Σσ²) / N
 * Requires identical grouping on every selected source dataset
-* Does not allow mixed ``.wim`` and non-WIM source selections
 * Mirrors the shared grouping state of its source datasets
 * Can be plotted and analyzed like any other dataset
 
@@ -283,14 +282,9 @@ trace.
 Grouping and Bunching
 ~~~~~~~~~~~~~~~~~~~~~
 
-Grouping configuration is opened from **Grouping** (toolbar/menu), but the
-dialog now depends on the run format:
-
-* **WiMDA (.wim)** runs open a dedicated **WIM Grouping** dialog.
-* **NeXus (.nxs/.nexus)** and other runs open the full **Grouping** dialog.
-* **PSI BIN/MDU** and **MusrRoot/LEM ROOT (.root)** runs also open the full
-  dialog, seeded with detector labels and per-detector ``t0`` values from the
-  file when those metadata are available.
+Grouping configuration is opened from **Grouping** (toolbar/menu). Supported
+raw data runs use the full **Grouping** dialog, seeded with detector labels
+and per-detector ``t0`` values from the file when those metadata are available.
 
 This keeps fit inputs consistent with the run grouping settings and project
 state.
@@ -300,35 +294,16 @@ datasets are pre-ticked in the dialog. When loading new runs into an existing
 project, Asymmetry reuses the grouping payload from the highest run number
 currently present in the Data Browser when that payload is well-defined.
 
-WIM Grouping dialog
-~~~~~~~~~~~~~~~~~~~
-
-For ``.wim`` runs, only **Bunching Factor** is editable. Grouping values read
-from the file (forward/backward group, alpha, good-bin limits, deadtime) are
-shown as read-only fields.
-
-When the source file contains a bunching baseline, the allowed values are
-restricted to integer multiples of that baseline. For example, a baseline of
-``10`` allows ``10, 20, 30, ...``.
-
-If you enter an invalid value (below baseline or non-multiple), Asymmetry
-shows a warning and does not apply the change.
-
-The WIM dialog is available even when raw histograms are not present; bunching
-still updates the plotted/fitted asymmetry by rebunching the current dataset
-arrays.
-
 Full Grouping dialog
 ~~~~~~~~~~~~~~~~~~~~
 
-For NeXus and other non-WIM datasets, the full Grouping dialog is used and
-supports editing grouping assignment, alpha, correction toggles, good-bin
-limits, and bunching. Deadtime correction is enabled only when the source file
-provides deadtime constants; background correction is enabled for PSI BIN/MDU
-and PSI/LEM ROOT data.
+The full Grouping dialog supports editing grouping assignment, alpha,
+correction toggles, good-bin limits, and bunching. Deadtime correction is
+enabled only when the source file provides deadtime constants; background
+correction is enabled for PSI BIN/MDU and PSI/LEM ROOT data.
 
-Changing bunching in either dialog refreshes both the displayed curve and the
-dataset passed to the fitting panel.
+Changing bunching refreshes both the displayed curve and the dataset passed to
+the fitting panel.
 
 Detector Layout Editor
 ~~~~~~~~~~~~~~~~~~~~~~

@@ -85,7 +85,7 @@ Code example:
 .. code-block:: python
 
    from asymmetry import load
-   dataset = load("data.wim")
+   dataset = load("data.nxs")
 ```
 
 ### API Documentation

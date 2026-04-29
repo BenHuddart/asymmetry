@@ -22,7 +22,7 @@ def _dataset(run: int, title: str, temperature: float, field: float) -> MuonData
             "temperature": temperature,
             "field": field,
             "comment": f"comment-{run}",
-            "source_file": f"run_{run}.wim",
+            "source_file": f"run_{run}.nxs",
         },
     )
 

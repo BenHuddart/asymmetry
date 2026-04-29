@@ -61,7 +61,7 @@ from asymmetry.gui.panels.fourier_panel import FourierPanel
 from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
-from asymmetry.gui.windows.grouping_dialog import GroupingDialog, WimGroupingDialog
+from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
 
 _MAX_RECENT_PROJECTS = 10
@@ -118,7 +118,7 @@ class MainWindow(QMainWindow):
     The ``collect_project_state`` / ``restore_project_state`` pair serialises
     and deserialises the full application state as a versioned JSON file.
     Source data files are *referenced* rather than embedded, so each relevant
-    ``.wim`` file must remain accessible at its original path (or at the same
+    data file must remain accessible at its original path (or at the same
     relative path from the ``.asymp`` file) for the project to reopen cleanly.
     Missing files are skipped with a ``WARNING`` log entry; the rest of the
     session restores normally.
@@ -1106,7 +1106,7 @@ class MainWindow(QMainWindow):
         )
         (
             dialog_datasets,
-            reference_dataset,
+            _reference_dataset,
             dialog_selected_run_number,
             dialog_selected_run_numbers,
             combined_target_run_number,
@@ -1116,39 +1116,12 @@ class MainWindow(QMainWindow):
             selected_run_numbers=selected_run_numbers,
         )
 
-        use_wim_dialog = False
-        if reference_dataset is not None and reference_dataset.run is not None:
-            source_file = str(getattr(reference_dataset.run, "source_file", "") or "")
-            use_wim_dialog = source_file.lower().endswith(".wim")
-
-        if use_wim_dialog:
-            wim_dialog_datasets = [
-                ds
-                for ds in dialog_datasets
-                if ds.run is not None
-                and str(getattr(ds.run, "source_file", "") or "").lower().endswith(".wim")
-            ]
-            filtered_selected = None
-            if dialog_selected_run_numbers is not None:
-                selected_set = {int(v) for v in dialog_selected_run_numbers}
-                filtered_selected = [
-                    int(ds.run_number)
-                    for ds in wim_dialog_datasets
-                    if int(ds.run_number) in selected_set
-                ]
-            dialog = WimGroupingDialog(
-                wim_dialog_datasets,
-                selected_run_number=dialog_selected_run_number,
-                selected_run_numbers=filtered_selected,
-                parent=self,
-            )
-        else:
-            dialog = GroupingDialog(
-                dialog_datasets,
-                selected_run_number=dialog_selected_run_number,
-                selected_run_numbers=dialog_selected_run_numbers,
-                parent=self,
-            )
+        dialog = GroupingDialog(
+            dialog_datasets,
+            selected_run_number=dialog_selected_run_number,
+            selected_run_numbers=dialog_selected_run_numbers,
+            parent=self,
+        )
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
 
@@ -1351,9 +1324,6 @@ class MainWindow(QMainWindow):
             "last_good_bin": last_good_bin,
             "bin_index_base": bin_index_base,
             "bunching_factor": int(grouping.get("bunching_factor", 1)),
-            "source_bunching_factor": int(
-                grouping.get("source_bunching_factor", grouping.get("bunching_factor", 1))
-            ),
             "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
             "background_correction": bool(grouping.get("background_correction", False)),
         }
@@ -1453,12 +1423,7 @@ class MainWindow(QMainWindow):
         self,
         dataset,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Return immutable source arrays for regrouping datasets without histograms.
-
-        ``.wim`` datasets only carry processed asymmetry arrays, so repeated
-        bunching edits must always start from the original loaded data rather
-        than the most recently rebinned view.
-        """
+        """Return immutable source arrays for regrouping datasets without histograms."""
         cached = getattr(dataset, "_grouping_source_arrays_cache", None)
         if isinstance(cached, tuple) and len(cached) == 3:
             return cached
@@ -1584,28 +1549,7 @@ class MainWindow(QMainWindow):
                 alpha = 1.0
         bunch_factor = int(grouping_result.get("bunching_factor", 1))
         period_mode = str(grouping_result.get("period_mode", PeriodMode.RED))
-        enforce_source_bunching = bool(grouping_result.get("enforce_source_bunching", False))
-        if "enforce_source_bunching" not in grouping_result:
-            source_file = str(getattr(run, "source_file", "") or "")
-            enforce_source_bunching = source_file.lower().endswith(".wim")
-
-        source_bunch_factor = 1
-        additional_bunch_factor = max(1, bunch_factor)
-        if enforce_source_bunching:
-            source_bunch_factor = int(
-                grouping_result.get(
-                    "source_bunching_factor",
-                    run.grouping.get(
-                        "source_bunching_factor", run.grouping.get("bunching_factor", 1)
-                    ),
-                )
-            )
-            source_bunch_factor = max(1, source_bunch_factor)
-            if bunch_factor < source_bunch_factor:
-                return False, False
-            if bunch_factor % source_bunch_factor != 0:
-                return False, False
-            additional_bunch_factor = max(1, bunch_factor // source_bunch_factor)
+        bunch_factor = max(1, bunch_factor)
         use_deadtime = bool(grouping_result.get("deadtime_correction", False))
         use_background = bool(
             grouping_result.get("background_correction", False)
@@ -1614,22 +1558,18 @@ class MainWindow(QMainWindow):
 
         if not run.histograms:
             source_last_bin = len(source_time) - 1
-            source_file = str(getattr(run, "source_file", "") or "")
-            # WiMDA-exported asymmetry tables have already had their early-bin
-            # handling applied upstream, so the stored first-good-bin value is
-            # informational only and must not trim the imported points again.
-            lo = 0 if source_file.lower().endswith(".wim") else max(0, first_good)
+            lo = max(0, first_good)
             hi = min(source_last_bin, last_good)
             if lo <= hi:
                 time_out = source_time[lo : hi + 1].copy()
                 asym_out = source_asymmetry[lo : hi + 1].copy()
                 err_out = source_error[lo : hi + 1].copy()
-                if additional_bunch_factor > 1:
+                if bunch_factor > 1:
                     time_out, asym_out, err_out = rebin(
                         time_out,
                         asym_out,
                         err_out,
-                        additional_bunch_factor,
+                        bunch_factor,
                     )
                 dataset.time = time_out
                 dataset.asymmetry = asym_out
@@ -1658,8 +1598,6 @@ class MainWindow(QMainWindow):
                 run.grouping.pop("background_method", None)
                 run.grouping.pop("background_values", None)
             run.grouping["period_mode"] = period_mode
-            if enforce_source_bunching:
-                run.grouping["source_bunching_factor"] = source_bunch_factor
             group_names = grouping_result.get("group_names")
             if isinstance(group_names, dict) and group_names:
                 run.grouping["group_names"] = {int(k): str(v) for k, v in group_names.items()}
@@ -1829,14 +1767,12 @@ class MainWindow(QMainWindow):
             time_out = time_axis[lo : hi + 1].copy()
             asym_out = asymmetry[lo : hi + 1].copy()
             err_out = error[lo : hi + 1].copy()
-            # Datasets can already be bunched in-source (e.g. .wim). Apply
-            # only the extra bunching requested relative to source binning.
-            if additional_bunch_factor > 1:
+            if bunch_factor > 1:
                 time_out, asym_out, err_out = rebin(
                     time_out,
                     asym_out,
                     err_out,
-                    additional_bunch_factor,
+                    bunch_factor,
                 )
             dataset.time = time_out
             dataset.asymmetry = asym_out
@@ -1865,8 +1801,6 @@ class MainWindow(QMainWindow):
             run.grouping["alpha_z"] = float(vector_alphas.get("P_z", run_alpha))
         if isinstance(detector_t0_bins, list) and len(detector_t0_bins) == len(run.histograms):
             run.grouping["detector_t0_bins"] = [int(hist.t0_bin) for hist in run.histograms]
-        if enforce_source_bunching:
-            run.grouping["source_bunching_factor"] = source_bunch_factor
         # Persist group names if provided
         group_names = grouping_result.get("group_names")
         if isinstance(group_names, dict) and group_names:
