@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
@@ -217,6 +217,15 @@ def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:
     assert result["deadtime_correction"] is True
     assert result["background_correction"] is True
     assert result["bunching_factor"] == 1234
+
+
+def test_grouping_dialog_does_not_show_bunching_rules(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+
+    labels = {label.text() for label in dialog.findChildren(QLabel)}
+
+    assert "Bunching Rules" not in labels
+    assert dialog._bunch_spin.toolTip() == "Set any bunching factor >= 1."
 
 
 def test_deadtime_checkbox_disabled_without_file_deadtime(qapp: QApplication) -> None:
@@ -482,6 +491,36 @@ def test_current_grouping_payload_contains_instrument(qapp: QApplication) -> Non
     assert payload["instrument"] == "MuSR"
 
 
+def test_psi_detector_convention_defaults_are_swapped_in_grouping_dropdowns(
+    qapp: QApplication,
+) -> None:
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.metadata["facility"] = "PSI"
+    dataset.run.grouping["group_names"] = {1: "Forward", 2: "Backward"}
+    dataset.run.grouping["forward_group"] = 1
+    dataset.run.grouping["backward_group"] = 2
+
+    dialog = GroupingDialog([dataset])
+
+    assert dialog._forward_combo.currentData() == 2
+    assert dialog._backward_combo.currentData() == 1
+
+
+def test_psi_already_swapped_grouping_dropdowns_are_preserved(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.metadata["facility"] = "PSI"
+    dataset.run.grouping["group_names"] = {1: "Forward", 2: "Backward"}
+    dataset.run.grouping["forward_group"] = 2
+    dataset.run.grouping["backward_group"] = 1
+
+    dialog = GroupingDialog([dataset])
+
+    assert dialog._forward_combo.currentData() == 2
+    assert dialog._backward_combo.currentData() == 1
+
+
 def test_detector_layout_prefers_saved_instrument(
     qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
@@ -518,6 +557,124 @@ def test_detector_layout_prefers_saved_instrument(
     dialog._on_detector_layout()
 
     assert captured["instrument"] == "MuSR"
+
+
+def test_detector_layout_detects_flame_from_psi_metadata(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.metadata["facility"] = "PSI"
+    dataset.run.metadata["instrument"] = "FLAME"
+
+    captured: dict[str, str] = {}
+
+    class _FakeDialog:
+        DialogCode = type("DialogCode", (), {"Accepted": 1})
+
+        def __init__(self, *args, instrument, **kwargs):
+            captured["instrument"] = instrument.name
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
+        _FakeDialog,
+    )
+
+    dialog = GroupingDialog([dataset])
+    dialog._on_detector_layout()
+
+    assert captured["instrument"] == "FLAME"
+
+
+def test_detector_layout_retries_detection_when_saved_instrument_is_generic_psi(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.grouping["instrument"] = "PSI"
+    dataset.run.grouping["histogram_labels"] = [
+        "Forw",
+        "Back",
+        "Righ",
+        "Left",
+        "R_F",
+        "R_B",
+        "L_F",
+        "L_B",
+    ]
+    dataset.run.metadata["facility"] = "PSI"
+    dataset.run.metadata["instrument"] = "PSI"
+    dataset.run.histograms = dataset.run.histograms * 4
+
+    captured: dict[str, str] = {}
+
+    class _FakeDialog:
+        DialogCode = type("DialogCode", (), {"Accepted": 1})
+
+        def __init__(self, *args, instrument, **kwargs):
+            captured["instrument"] = instrument.name
+
+        def exec(self):
+            return 0
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
+        _FakeDialog,
+    )
+
+    dialog = GroupingDialog([dataset])
+    dialog._on_detector_layout()
+
+    assert captured["instrument"] == "FLAME"
+
+
+def test_psi_detector_layout_result_is_swapped_for_analysis_dropdowns(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.metadata["facility"] = "PSI"
+    dataset.run.metadata["instrument"] = "FLAME"
+    dataset.run.grouping["instrument"] = "FLAME"
+    dataset.run.grouping["group_names"] = {1: "Forward", 2: "Backward"}
+    dataset.run.grouping["forward_group"] = 1
+    dataset.run.grouping["backward_group"] = 2
+
+    class _FakeDialog:
+        DialogCode = type("DialogCode", (), {"Accepted": 1})
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 1
+
+        def get_result(self):
+            return {
+                "groups": {1: [1], 2: [2]},
+                "group_names": {1: "Forward", 2: "Backward"},
+                "forward_group": 1,
+                "backward_group": 2,
+                "instrument": "FLAME",
+                "grouping_preset": "Longitudinal",
+            }
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
+        _FakeDialog,
+    )
+
+    dialog = GroupingDialog([dataset])
+    dialog._on_detector_layout()
+
+    assert dialog._forward_combo.currentData() == 2
+    assert dialog._backward_combo.currentData() == 1
 
 
 # ---------------------------------------------------------------------------

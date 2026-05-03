@@ -1,8 +1,9 @@
 """Interactive detector schematic widget for the grouping editor.
 
-This widget renders a 2D schematic of an ISIS muon spectrometer's detector
-arrangement using matplotlib wedge patches.  Users can click individual
-detector segments to toggle their membership in the currently active group.
+This widget renders a 2D schematic of a muon spectrometer's detector
+arrangement using matplotlib wedge or rectangle patches.  Users can click
+individual detector segments to toggle their membership in the currently active
+group.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from typing import TYPE_CHECKING
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-from matplotlib.patches import Wedge
+from matplotlib.patches import Circle, FancyArrowPatch, Rectangle, Wedge
 from PySide6.QtCore import QSize, Signal
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
@@ -87,8 +88,8 @@ class DetectorSchematicWidget(QWidget):
         self._groups: dict[int, set[int]] = {}
         self._active_group: int = 1
 
-        # Patch map: detector_id → matplotlib Wedge
-        self._patches: dict[int, Wedge] = {}
+        # Patch map: detector_id → matplotlib patch
+        self._patches: dict[int, Wedge | Rectangle] = {}
         # Axis map: bank index → polar axes
         self._axes: list = []
 
@@ -101,9 +102,9 @@ class DetectorSchematicWidget(QWidget):
 
     def _setup_ui(self) -> None:
         """Create the matplotlib figure canvas."""
-        n_banks = len(self._instrument.banks)
+        n_banks = 1 if self._instrument.view == "plan" else len(self._instrument.banks)
         fig_width = max(4.0, n_banks * 3.2)
-        fig_height = 3.8
+        fig_height = 4.6 if self._instrument.view == "plan" else 3.8
 
         self._fig = Figure(figsize=(fig_width, fig_height), facecolor="white")
         self._canvas = FigureCanvasQTAgg(self._fig)
@@ -126,6 +127,10 @@ class DetectorSchematicWidget(QWidget):
         self._patches.clear()
         self._axes.clear()
 
+        if self._instrument.view == "plan":
+            self._build_plan_schematic()
+            return
+
         n_banks = len(self._instrument.banks)
         for bi, bank in enumerate(self._instrument.banks):
             ax = self._fig.add_subplot(1, n_banks, bi + 1)
@@ -144,9 +149,6 @@ class DetectorSchematicWidget(QWidget):
                 # Label at centroid
                 self._add_label(ax, seg)
 
-            # Draw beam-hole disc on top
-            from matplotlib.patches import Circle
-
             hole = Circle(
                 (0, 0),
                 radius=min(s.r_inner for s in bank.segments) - 0.01,
@@ -157,6 +159,110 @@ class DetectorSchematicWidget(QWidget):
             )
             ax.add_patch(hole)
 
+        self._fig.tight_layout(pad=0.4)
+        self._canvas.draw_idle()
+
+    def _build_plan_schematic(self) -> None:
+        """Draw a single top-view rectangular detector layout."""
+        ax = self._fig.add_subplot(1, 1, 1)
+        ax.set_aspect("equal")
+        ax.axis("off")
+        ax.set_title(self._instrument.banks[0].name, fontsize=10, fontweight="bold", pad=4)
+        self._axes.append(ax)
+
+        segments = self._instrument.all_segments
+        for seg in segments:
+            patch = self._make_rectangle(seg)
+            ax.add_patch(patch)
+            self._patches[seg.detector_id] = patch
+            self._add_label(ax, seg)
+
+        sample = Circle(
+            (0, 0),
+            radius=0.16,
+            facecolor=(0.46, 0.38, 0.85, 1.0),
+            edgecolor=(0.1, 0.1, 0.1, 1.0),
+            linewidth=0.8,
+            zorder=6,
+        )
+        ax.add_patch(sample)
+        ax.text(0, -0.28, "sample", ha="center", va="top", fontsize=8, color="#333333")
+
+        for arrow in self._instrument.reference_arrows:
+            ax.add_patch(
+                FancyArrowPatch(
+                    arrow.start,
+                    arrow.end,
+                    arrowstyle="-|>",
+                    mutation_scale=14,
+                    linewidth=1.8,
+                    color=arrow.color,
+                    zorder=5,
+                )
+            )
+            label_lower = arrow.label.lower()
+            if "beam" in label_lower:
+                label_x = (arrow.start[0] + arrow.end[0]) / 2.0
+                label_y = arrow.start[1] - 0.16
+                ha = "center"
+                va = "top"
+            elif "spin" in label_lower:
+                label_x = (arrow.start[0] + arrow.end[0]) / 2.0
+                label_y = arrow.start[1] + 0.16
+                ha = "center"
+                va = "bottom"
+            else:
+                label_x = arrow.end[0] + 0.08
+                label_y = arrow.end[1] + 0.08
+                ha = "left"
+                va = "bottom"
+            ax.text(
+                label_x,
+                label_y,
+                arrow.label,
+                ha=ha,
+                va=va,
+                fontsize=8,
+                color=arrow.color,
+            )
+
+        axis_colour = "#555555"
+        ax.add_patch(
+            FancyArrowPatch(
+                (2.75, -1.22),
+                (3.25, -1.22),
+                arrowstyle="-|>",
+                mutation_scale=10,
+                linewidth=1.0,
+                color=axis_colour,
+                zorder=5,
+            )
+        )
+        ax.text(2.68, -1.22, "+z", ha="right", va="center", fontsize=8, color=axis_colour)
+        ax.add_patch(
+            FancyArrowPatch(
+                (-4.25, 1.05),
+                (-4.25, 1.72),
+                arrowstyle="-|>",
+                mutation_scale=10,
+                linewidth=1.0,
+                color=axis_colour,
+                zorder=5,
+            )
+        )
+        ax.text(
+            -4.25,
+            0.96,
+            "+y",
+            ha="center",
+            va="top",
+            fontsize=8,
+            color=axis_colour,
+        )
+
+        min_x, max_x, min_y, max_y = self._plan_bounds(segments)
+        ax.set_xlim(min_x - 0.45, max_x + 0.8)
+        ax.set_ylim(min_y - 0.55, max_y + 0.55)
         self._fig.tight_layout(pad=0.4)
         self._canvas.draw_idle()
 
@@ -188,8 +294,38 @@ class DetectorSchematicWidget(QWidget):
         )
         return patch
 
+    def _make_rectangle(self, seg: DetectorSegment) -> Rectangle:
+        """Create a matplotlib rectangle patch for a plan-view detector."""
+        patch = Rectangle(
+            (seg.x_center - seg.width / 2.0, seg.y_center - seg.height / 2.0),
+            seg.width,
+            seg.height,
+            angle=seg.rotation_deg,
+            rotation_point="center",
+            facecolor=_EMPTY_COLOUR,
+            edgecolor=_EDGE_COLOUR,
+            linewidth=0.8,
+            picker=True,
+            zorder=2,
+        )
+        return patch
+
     def _add_label(self, ax, seg: DetectorSegment) -> None:
         """Draw the detector number at the segment centroid."""
+        if seg.shape == "rectangle":
+            label = f"{seg.detector_id}\n{seg.label}" if seg.label else str(seg.detector_id)
+            ax.text(
+                seg.x_center,
+                seg.y_center,
+                label,
+                ha="center",
+                va="center",
+                fontsize=8,
+                color=(0.15, 0.15, 0.15),
+                zorder=3,
+            )
+            return
+
         angle_rad = math.radians(seg.angle_center_deg)
         r_mid = (seg.r_inner + seg.r_outer) / 2.0
         x = r_mid * math.cos(angle_rad)
@@ -334,6 +470,9 @@ class DetectorSchematicWidget(QWidget):
         """Return ``True`` if the point (x, y) falls within *seg*."""
         if x is None or y is None:
             return False
+        if seg.shape == "rectangle":
+            return DetectorSchematicWidget._point_in_rectangle(x, y, seg)
+
         r = math.sqrt(x * x + y * y)
         if not (seg.r_inner <= r <= seg.r_outer):
             return False
@@ -350,6 +489,27 @@ class DetectorSchematicWidget(QWidget):
         else:
             # Wraps across 0°
             return angle >= a1 or angle <= a2
+
+    @staticmethod
+    def _point_in_rectangle(x: float, y: float, seg: DetectorSegment) -> bool:
+        """Return ``True`` if the point falls within a rectangular segment."""
+        dx = x - seg.x_center
+        dy = y - seg.y_center
+        theta = math.radians(-seg.rotation_deg)
+        local_x = dx * math.cos(theta) - dy * math.sin(theta)
+        local_y = dx * math.sin(theta) + dy * math.cos(theta)
+        return abs(local_x) <= seg.width / 2.0 and abs(local_y) <= seg.height / 2.0
+
+    @staticmethod
+    def _plan_bounds(segments: list[DetectorSegment]) -> tuple[float, float, float, float]:
+        """Return approximate bounds for plan-view rectangle segments."""
+        if not segments:
+            return -1.0, 1.0, -1.0, 1.0
+        min_x = min(seg.x_center - seg.width / 2.0 for seg in segments)
+        max_x = max(seg.x_center + seg.width / 2.0 for seg in segments)
+        min_y = min(seg.y_center - seg.height / 2.0 for seg in segments)
+        max_y = max(seg.y_center + seg.height / 2.0 for seg in segments)
+        return min_x, max_x, min_y, max_y
 
     # ------------------------------------------------------------------
     # Rebuild when instrument changes
@@ -369,5 +529,5 @@ class DetectorSchematicWidget(QWidget):
         self._build_schematic()
 
     def sizeHint(self) -> QSize:
-        n_banks = len(self._instrument.banks)
+        n_banks = 1 if self._instrument.view == "plan" else len(self._instrument.banks)
         return QSize(max(380, n_banks * 200), 280)

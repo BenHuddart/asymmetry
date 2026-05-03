@@ -101,6 +101,22 @@ def _write_psi_mon_with_backslash_titles(path) -> None:
     path.write_text("\n".join(lines), encoding="latin-1")
 
 
+def _write_flame_mon(path, equipment: str, title: str, rows: list[str]) -> None:
+    lines = [
+        "! File = run_4321.mon",
+        f"! Midas Event ID is: 221  Equipment name: FRAPPY {equipment}",
+        "! Record format is:",
+        "!",
+        "!   <delta_time>\\<n_vals>\\<val1> <val2> ..\\<int1> <int2> ..\\",
+        "!    <delta_time> = [dd ]hh:mm:ss",
+        "!",
+        "! 05-NOV-2025 14:53:19: Start of Run 4321",
+        f"! Title: {title}",
+    ]
+    lines.extend(rows)
+    path.write_text("\n".join(lines), encoding="latin-1")
+
+
 def _tag(
     label: bytes,
     tag_type: bytes,
@@ -173,10 +189,27 @@ def test_load_psi_bin_uses_labels_and_per_detector_t0(tmp_path) -> None:
     assert ds.metadata["field"] == pytest.approx(1000.0)
     assert ds.run.grouping["groups"] == {1: [1], 2: [2]}
     assert ds.run.grouping["group_names"] == {1: "Back", 2: "Forw"}
-    assert ds.run.grouping["forward_group"] == 2
-    assert ds.run.grouping["backward_group"] == 1
+    assert ds.run.grouping["forward_group"] == 1
+    assert ds.run.grouping["backward_group"] == 2
     assert ds.run.grouping["detector_t0_bins"] == [1, 3]
     assert ds.run.grouping["t0_bin"] == 3
+    assert ds.n_points == 1
+    assert ds.time[0] == pytest.approx(0.02)
+
+
+def test_load_psi_bin_marks_flame_from_filename(tmp_path) -> None:
+    labels = [b"Forw", b"Back", b"Righ", b"Left", b"R_F", b"R_B", b"L_F", b"L_B"]
+    counts = np.vstack(
+        [np.arange(6, dtype=np.int32) + offset for offset in range(len(labels))]
+    ).astype("<i4")
+    path = tmp_path / "flame0001.bin"
+    _write_psi_bin(path, labels=labels, counts=counts)
+
+    ds = PsiLoader().load(str(path))
+
+    assert ds.metadata["instrument"] == "FLAME"
+    assert ds.run is not None
+    assert ds.run.grouping["instrument"] == "FLAME"
     assert ds.n_points == 1
     assert ds.time[0] == pytest.approx(0.02)
 
@@ -233,6 +266,104 @@ def test_load_psi_bin_finds_temperature_mon_file_below_data_dir(tmp_path) -> Non
     assert "psi_temperature/Temp_Sample" in ds.metadata["nexus_time_series"]
 
 
+def test_psi_temperature_log_search_prefers_exact_run_tokens_in_tlog(tmp_path) -> None:
+    path = tmp_path / "deltat_tdc_flame_4321.bin"
+    log_dir = tmp_path / "tlog"
+    log_dir.mkdir()
+    _write_psi_bin(path)
+    for name in (
+        "run_4321_flamesam0.mon",
+        "run_14321_flamesam0.mon",
+        "run_43210_flamesam0.mon",
+    ):
+        (log_dir / name).write_text("not parsed here", encoding="latin-1")
+
+    files = PsiLoader()._find_temperature_log_files(path, 4321)
+
+    assert [file.name for file in files] == ["run_4321_flamesam0.mon"]
+
+
+def test_load_psi_bin_merges_flame_tlog_files_and_marks_sample_temperature(tmp_path) -> None:
+    path = tmp_path / "deltat_tdc_flame_4321.bin"
+    log_dir = tmp_path / "tlog"
+    log_dir.mkdir()
+    _write_psi_bin(path)
+    _write_flame_mon(
+        log_dir / "run_4321_flamedil0.mon",
+        "flamedil0",
+        "DIL_T_mix DIL_T_sorb DIL_T_still DIL_T_hx\\DIL_T_mix DIL_T_sorb DIL_T_still DIL_T_hx",
+        [
+            "00:00:03\\4\\0.031 2.7 0.02 2.5\\0.031 2.7 0.02 2.5\\",
+            "00:00:13\\4\\0.033 2.8 0.02 2.6\\0.033 2.8 0.02 2.6\\",
+        ],
+    )
+    _write_flame_mon(
+        log_dir / "run_4321_flamesam0.mon",
+        "flamesam0",
+        "SAM_ts SAM_ts_high SAM_ts_low NONE\\SAM_ts SAM_ts_high SAM_ts_low NONE",
+        [
+            "00:00:01\\4\\0.101 0.102 0 -1\\0.101 0.102 0 -1\\",
+            "00:00:11\\4\\0.103 0.104 0 -1\\0.103 0.104 0 -1\\",
+        ],
+    )
+    _write_flame_mon(
+        log_dir / "run_4321_variox0.mon",
+        "variox0",
+        "Variox Sample\\Variox Sample",
+        [
+            "00:00:00\\2\\2.30 1.20\\2.30 1.20\\",
+            "1 00:00:10\\2\\2.32 1.20\\2.32 1.20\\",
+        ],
+    )
+
+    ds = PsiLoader().load(str(path))
+
+    series = ds.metadata["nexus_time_series"]
+    assert "psi_temperature/flamedil0/DIL_T_mix" in series
+    assert "psi_temperature/flamesam0/SAM_ts" in series
+    assert "psi_temperature/variox0/Variox" in series
+    assert "psi_temperature/variox0/Sample" in series
+    assert all("NONE" not in key for key in series)
+
+    sample = series["psi_temperature/flamesam0/SAM_ts"]
+    assert sample["mean"] == pytest.approx(0.102)
+    assert sample["role"] == "sample_temperature"
+    assert sample["sensor"] == "SAM_ts_value"
+    assert sample["primary"] is True
+    assert sample["source_file"] == str(log_dir / "run_4321_flamesam0.mon")
+
+    dilution = series["psi_temperature/flamedil0/DIL_T_mix"]
+    assert dilution["mean"] == pytest.approx(0.032)
+    assert dilution["role"] == "sample_temperature"
+    assert dilution["primary"] is False
+
+    variox = series["psi_temperature/variox0/Variox"]
+    assert variox["mean"] == pytest.approx(2.31)
+    assert variox["time"] == pytest.approx([0.0, 86410.0])
+    assert variox["role"] == "sample_temperature"
+    assert variox["primary"] is False
+    assert "role" not in series["psi_temperature/variox0/Sample"]
+
+    log_metadata = ds.metadata["psi_temperature_log"]
+    assert log_metadata["source_file"] == str(log_dir / "run_4321_flamesam0.mon")
+    assert log_metadata["source_files"] == [
+        str(log_dir / "run_4321_flamedil0.mon"),
+        str(log_dir / "run_4321_flamesam0.mon"),
+        str(log_dir / "run_4321_variox0.mon"),
+    ]
+    assert log_metadata["channels"] == [
+        "flamedil0/DIL_T_hx",
+        "flamedil0/DIL_T_mix",
+        "flamedil0/DIL_T_sorb",
+        "flamedil0/DIL_T_still",
+        "flamesam0/SAM_ts",
+        "flamesam0/SAM_ts_high",
+        "flamesam0/SAM_ts_low",
+        "variox0/Sample",
+        "variox0/Variox",
+    ]
+
+
 def test_load_psi_bin_reads_backslash_title_temperature_mon_file(tmp_path) -> None:
     path = tmp_path / "deltat_pta_gpd_4321.bin"
     mon_path = tmp_path / "run_4321_templs0.mon"
@@ -259,8 +390,8 @@ def test_load_psi_mdu_t5(tmp_path) -> None:
     assert len(ds.run.histograms) == 2
     assert ds.run.grouping["groups"] == {1: [1], 2: [2]}
     assert ds.run.grouping["group_names"] == {1: "F1", 2: "B1"}
-    assert ds.run.grouping["forward_group"] == 1
-    assert ds.run.grouping["backward_group"] == 2
+    assert ds.run.grouping["forward_group"] == 2
+    assert ds.run.grouping["backward_group"] == 1
     assert ds.run.grouping["t0_bin"] == 1
     assert ds.run.grouping["first_good_bin"] == 2
     assert ds.run.grouping["last_good_bin"] == 5
@@ -295,8 +426,8 @@ def test_load_psi_bin_preserves_individual_labeled_groups(tmp_path) -> None:
         5: "Forw 3",
         6: "Back 3",
     }
-    assert ds.run.grouping["forward_group"] == 1
-    assert ds.run.grouping["backward_group"] == 2
+    assert ds.run.grouping["forward_group"] == 2
+    assert ds.run.grouping["backward_group"] == 1
 
 
 def test_musrfit_bin_fixture_matches_musrfit_psi_reader_dump() -> None:

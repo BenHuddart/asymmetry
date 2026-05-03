@@ -1,9 +1,9 @@
-"""Instrument layout definitions for ISIS muon spectrometers.
+"""Instrument layout definitions for muon spectrometers.
 
 This module provides static geometric descriptions of the detector arrangements
-for HiFi, EMU, and MuSR, along with standard grouping presets from the
-instrument manuals.  The data here is used by the interactive detector layout
-editor (:class:`~asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog`)
+for HiFi, EMU, MuSR, and PSI FLAME, along with standard grouping presets.  The
+data here is used by the interactive detector layout editor
+(:class:`~asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog`)
 but has no GUI dependencies and can be used independently.
 
 Detector IDs are always **1-based** in this module, matching the instrument
@@ -23,6 +23,7 @@ __all__ = [
     "BankLayout",
     "GroupDefinition",
     "PresetGrouping",
+    "ReferenceArrow",
     "InstrumentLayout",
     "INSTRUMENT_NAMES",
     "get_instrument_layout",
@@ -56,6 +57,14 @@ class DetectorSegment:
         Inner radius normalised to the outer disc radius (0–1).
     r_outer:
         Outer radius normalised to the outer disc radius (0–1).
+    shape:
+        Rendering primitive. ``"wedge"`` is used for circular ISIS detector
+        banks; ``"rectangle"`` is used for top-view detector plates such as
+        PSI FLAME.
+    label:
+        Optional short detector label displayed alongside the detector ID.
+    x_center, y_center, width, height, rotation_deg:
+        Rectangle geometry in an arbitrary plan-view coordinate system.
     """
 
     detector_id: int
@@ -65,6 +74,13 @@ class DetectorSegment:
     angle_half_width_deg: float
     r_inner: float
     r_outer: float
+    shape: str = "wedge"
+    label: str | None = None
+    x_center: float = 0.0
+    y_center: float = 0.0
+    width: float = 0.0
+    height: float = 0.0
+    rotation_deg: float = 0.0
 
     @property
     def angle_start_deg(self) -> float:
@@ -133,8 +149,18 @@ class PresetGrouping:
 
 
 @dataclass(frozen=True)
+class ReferenceArrow:
+    """A labelled direction marker rendered on plan-view schematics."""
+
+    label: str
+    start: tuple[float, float]
+    end: tuple[float, float]
+    color: str = "#333333"
+
+
+@dataclass(frozen=True)
 class InstrumentLayout:
-    """Complete detector layout description for one ISIS muon instrument.
+    """Complete detector layout description for one muon instrument.
 
     Parameters
     ----------
@@ -147,12 +173,18 @@ class InstrumentLayout:
     presets:
         Ordered dict of preset names to :class:`PresetGrouping`.
         The first entry is the default preset.
+    view:
+        Schematic rendering mode, either ``"radial"`` or ``"plan"``.
+    reference_arrows:
+        Optional labelled arrows used by plan-view layouts.
     """
 
     name: str
     n_detectors: int
     banks: tuple[BankLayout, ...]
     presets: dict[str, PresetGrouping]
+    view: str = "radial"
+    reference_arrows: tuple[ReferenceArrow, ...] = ()
 
     @property
     def all_segments(self) -> list[DetectorSegment]:
@@ -173,7 +205,7 @@ class InstrumentLayout:
 # ---------------------------------------------------------------------------
 
 #: Canonical names of all supported instruments.
-INSTRUMENT_NAMES: Final[tuple[str, ...]] = ("HiFi", "MuSR", "EMU")
+INSTRUMENT_NAMES: Final[tuple[str, ...]] = ("HiFi", "MuSR", "EMU", "FLAME")
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +589,100 @@ def _build_emu() -> InstrumentLayout:
 
 
 # ---------------------------------------------------------------------------
+# PSI FLAME layout builder
+# ---------------------------------------------------------------------------
+
+
+def _flame_rectangle(
+    detector_id: int,
+    name: str,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+) -> DetectorSegment:
+    """Return one FLAME detector plate in the top-view schematic."""
+    return DetectorSegment(
+        detector_id=detector_id,
+        sector_index=detector_id - 1,
+        ring_index=0,
+        angle_center_deg=0.0,
+        angle_half_width_deg=0.0,
+        r_inner=0.0,
+        r_outer=0.0,
+        shape="rectangle",
+        label=name,
+        x_center=x,
+        y_center=y,
+        width=width,
+        height=height,
+    )
+
+
+def _build_flame() -> InstrumentLayout:
+    """Build the PSI FLAME detector layout.
+
+    FLAME uses eight rectangular detector plates.  The plan-view geometry below
+    follows the published detector-name / histogram-number convention:
+
+    * 1 = Forward, 2 = Backward
+    * 3 = Right, 4 = Left
+    * 5 = R_F, 6 = R_B, 7 = L_F, 8 = L_B
+
+    The schematic is drawn from above, with the beam and main magnetic field
+    along +z and transverse left/right along y.
+    """
+    segments = (
+        _flame_rectangle(1, "Forward", 3.55, 0.0, 0.74, 1.72),
+        _flame_rectangle(2, "Backward", -3.55, 0.0, 0.74, 1.72),
+        _flame_rectangle(3, "Right", 0.0, -2.18, 2.18, 0.82),
+        _flame_rectangle(4, "Left", 0.0, 2.18, 2.18, 0.82),
+        _flame_rectangle(5, "R_F", 1.55, -2.18, 0.82, 0.82),
+        _flame_rectangle(6, "R_B", -1.55, -2.18, 0.82, 0.82),
+        _flame_rectangle(7, "L_F", 1.55, 2.18, 0.82, 0.82),
+        _flame_rectangle(8, "L_B", -1.55, 2.18, 0.82, 0.82),
+    )
+    banks = (BankLayout(name="FLAME top view", segments=segments),)
+
+    presets: dict[str, PresetGrouping] = {}
+    presets["Longitudinal"] = PresetGrouping(
+        name="Longitudinal",
+        groups={
+            1: GroupDefinition("Forward", (1,)),
+            2: GroupDefinition("Backward", (2,)),
+        },
+        forward_group=1,
+        backward_group=2,
+    )
+    presets["Transverse"] = PresetGrouping(
+        name="Transverse",
+        groups={
+            1: GroupDefinition("Right", (3, 6, 5)),
+            2: GroupDefinition("Left", (4, 8, 7)),
+        },
+        forward_group=1,
+        backward_group=2,
+    )
+
+    return InstrumentLayout(
+        name="FLAME",
+        n_detectors=8,
+        banks=banks,
+        presets=presets,
+        view="plan",
+        reference_arrows=(
+            ReferenceArrow(
+                "beam, main magnetic field",
+                (-2.55, -0.82),
+                (2.55, -0.82),
+                "#202020",
+            ),
+            ReferenceArrow("initial muon spin", (0.0, 0.25), (-2.75, 0.25), "#5b2ea6"),
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -568,6 +694,7 @@ def _build_registry() -> dict[str, InstrumentLayout]:
         "HiFi": _build_hifi(),
         "MuSR": _build_musr(),
         "EMU": _build_emu(),
+        "FLAME": _build_flame(),
     }
 
 
@@ -577,7 +704,7 @@ def get_instrument_layout(name: str) -> InstrumentLayout:
     Parameters
     ----------
     name:
-        One of ``"HiFi"``, ``"MuSR"``, or ``"EMU"`` (case-sensitive).
+        One of the names in :data:`INSTRUMENT_NAMES` (case-sensitive).
 
     Raises
     ------
@@ -587,6 +714,11 @@ def get_instrument_layout(name: str) -> InstrumentLayout:
     global _LAYOUTS
     if _LAYOUTS is None:
         _LAYOUTS = _build_registry()
+    if name in _LAYOUTS:
+        return _LAYOUTS[name]
+    resolved = _canonical_instrument_name(name)
+    if resolved is not None:
+        return _LAYOUTS[resolved]
     return _LAYOUTS[name]
 
 
@@ -599,6 +731,8 @@ def _canonical_instrument_name(raw: object) -> str | None:
         return None
 
     compact = re.sub(r"[^a-z0-9]+", "", token.lower())
+    if "flame" in compact:
+        return "FLAME"
     if "hifi" in compact:
         return "HiFi"
     if "musr" in compact:
@@ -606,6 +740,35 @@ def _canonical_instrument_name(raw: object) -> str | None:
     if "emu" in compact:
         return "EMU"
     return None
+
+
+def _metadata_labels(metadata: dict) -> list[str]:
+    """Return detector-label hints from metadata-like dictionaries."""
+    raw = metadata.get("histogram_labels") or metadata.get("detector_labels")
+    labels: list[str] = []
+    if isinstance(raw, (list, tuple)):
+        labels.extend(str(label) for label in raw)
+    group_names = metadata.get("group_names")
+    if isinstance(group_names, dict):
+        labels.extend(str(label) for label in group_names.values())
+    return labels
+
+
+def _labels_match_flame(labels: list[str], n_histograms: int) -> bool:
+    """Return True when detector labels match the FLAME eight-counter layout."""
+    if n_histograms != 8:
+        return False
+    compact = {re.sub(r"[^a-z0-9]+", "", label.lower()) for label in labels}
+    if not compact:
+        return False
+    has_main = (
+        bool({"forw", "forward"} & compact)
+        and bool({"back", "backward"} & compact)
+        and "left" in compact
+        and bool({"right", "righ"} & compact)
+    )
+    has_corners = {"rf", "rb", "lf", "lb"}.issubset(compact)
+    return has_main and has_corners
 
 
 def detect_instrument(
@@ -635,10 +798,10 @@ def detect_instrument(
     str or None
         Canonical instrument name when detection succeeds, else ``None``.
     """
+    psi_data = False
     if isinstance(metadata, dict):
         facility = str(metadata.get("facility", "")).strip().lower()
-        if facility == "psi" or metadata.get("psi_format"):
-            return None
+        psi_data = facility == "psi" or bool(metadata.get("psi_format"))
         for key in (
             "instrument",
             "instrument_name",
@@ -649,12 +812,21 @@ def detect_instrument(
         ):
             resolved = _canonical_instrument_name(metadata.get(key))
             if resolved is not None:
+                if psi_data and resolved != "FLAME":
+                    return None
                 return resolved
+        if _labels_match_flame(_metadata_labels(metadata), n_histograms):
+            return "FLAME"
 
     if source_file:
         path_token = _canonical_instrument_name(Path(source_file).stem)
         if path_token is not None:
+            if psi_data and path_token != "FLAME":
+                return None
             return path_token
+
+    if psi_data:
+        return None
 
     if n_histograms == 64:
         return "HiFi"

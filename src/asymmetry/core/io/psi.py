@@ -72,6 +72,7 @@ def _extract_field_from_comment(comment: str) -> float | None:
 @dataclass
 class _PsiTemperatureLogs:
     source_file: str
+    source_files: list[str]
     start_time: str
     channels: list[str]
     time_series: dict[str, dict[str, Any]]
@@ -470,18 +471,50 @@ class PsiLoader(BaseLoader):
     # ------------------------------------------------------------------
 
     def _read_temperature_logs(self, path: Path, run_number: int) -> _PsiTemperatureLogs | None:
-        """Read the optional PSI ``.mon`` sidecar using Mantid-compatible rules."""
-        log_path = self._find_temperature_log_file(path, run_number)
-        if log_path is None:
+        """Read optional PSI ``.mon`` sidecars using Mantid-compatible rules."""
+        log_paths = self._find_temperature_log_files(path, run_number)
+        if not log_paths:
             return None
-        try:
-            return self._parse_temperature_log_file(log_path)
-        except (OSError, ValueError):
+        parsed_logs: list[_PsiTemperatureLogs] = []
+        for log_path in log_paths:
+            try:
+                parsed_logs.append(self._parse_temperature_log_file(log_path))
+            except (OSError, ValueError):
+                continue
+        if not parsed_logs:
             return None
+        return self._merge_temperature_logs(parsed_logs)
 
-    def _find_temperature_log_file(self, path: Path, run_number: int) -> Path | None:
-        """Find a PSI ``.mon`` file whose name contains the BIN run number."""
-        run_token = str(int(run_number))
+    def _find_temperature_log_files(self, path: Path, run_number: int) -> list[Path]:
+        """Find PSI ``.mon`` files whose names contain the BIN run number."""
+        matches = self._find_temperature_log_files_in_likely_dirs(path, run_number)
+        if matches:
+            return matches
+
+        return self._find_temperature_log_files_recursively(path, run_number)
+
+    def _find_temperature_log_files_in_likely_dirs(
+        self,
+        path: Path,
+        run_number: int,
+    ) -> list[Path]:
+        """Fast path for the common PSI layout with sidecars beside data or in ``tlog``."""
+        matches: list[Path] = []
+        seen_dirs: set[Path] = set()
+        for directory in (path.parent, path.parent / "tlog"):
+            try:
+                resolved = directory.resolve()
+            except OSError:
+                resolved = directory
+            if resolved in seen_dirs or not directory.is_dir():
+                continue
+            seen_dirs.add(resolved)
+            matches.extend(self._temperature_log_files_in_directory(directory, run_number))
+        return self._unique_temperature_log_files(matches)
+
+    def _find_temperature_log_files_recursively(self, path: Path, run_number: int) -> list[Path]:
+        """Fallback recursive search for less common PSI sidecar layouts."""
+        matches: list[Path] = []
         queue: list[tuple[Path, int]] = [(path.parent, 0)]
         seen: set[Path] = set()
         while queue:
@@ -499,16 +532,74 @@ class PsiLoader(BaseLoader):
                 continue
             for child in children:
                 if child.is_file():
-                    if child.suffix.lower() == _TEMPERATURE_FILE_EXT and run_token in child.name:
-                        return child
+                    if self._is_temperature_log_file_for_run(child, run_number):
+                        matches.append(child)
                 elif child.is_dir() and depth < _TEMPERATURE_FILE_MAX_SEARCH_DEPTH:
                     queue.append((child, depth + 1))
-        return None
+        return self._unique_temperature_log_files(matches)
+
+    def _temperature_log_files_in_directory(self, directory: Path, run_number: int) -> list[Path]:
+        try:
+            children = sorted(directory.iterdir(), key=lambda child: child.name.lower())
+        except OSError:
+            return []
+        return [
+            child
+            for child in children
+            if child.is_file() and self._is_temperature_log_file_for_run(child, run_number)
+        ]
+
+    def _is_temperature_log_file_for_run(self, path: Path, run_number: int) -> bool:
+        if path.suffix.lower() != _TEMPERATURE_FILE_EXT:
+            return False
+        run_token = str(int(run_number))
+        return bool(re.search(rf"(?<!\d){re.escape(run_token)}(?!\d)", path.name))
+
+    def _unique_temperature_log_files(self, paths: list[Path]) -> list[Path]:
+        unique: dict[str, Path] = {}
+        for path in paths:
+            try:
+                key = str(path.resolve())
+            except OSError:
+                key = str(path)
+            unique.setdefault(key, path)
+        return sorted(unique.values(), key=lambda candidate: str(candidate).lower())
+
+    def _find_temperature_log_file(self, path: Path, run_number: int) -> Path | None:
+        """Find the first PSI ``.mon`` file whose name contains the BIN run number."""
+        files = self._find_temperature_log_files(path, run_number)
+        return files[0] if files else None
+
+    def _merge_temperature_logs(self, logs: list[_PsiTemperatureLogs]) -> _PsiTemperatureLogs:
+        """Merge all parsed temperature sidecars for one run."""
+        time_series: dict[str, dict[str, Any]] = {}
+        for log in logs:
+            time_series.update(log.time_series)
+
+        primary = [
+            info
+            for _, info in sorted(time_series.items())
+            if info.get("role") == "sample_temperature" and bool(info.get("primary", False))
+        ]
+        source_file = (
+            str(primary[0].get("source_file", ""))
+            if primary
+            else next((log.source_file for log in logs if log.source_file), "")
+        )
+        source_files = sorted({source for log in logs for source in log.source_files})
+        start_time = next((log.start_time for log in logs if log.start_time), "")
+        return _PsiTemperatureLogs(
+            source_file=source_file,
+            source_files=source_files,
+            start_time=start_time,
+            channels=[key.removeprefix("psi_temperature/") for key in sorted(time_series)],
+            time_series=time_series,
+        )
 
     def _parse_temperature_log_file(self, path: Path) -> _PsiTemperatureLogs:
         contents = path.read_text(encoding="latin-1", errors="ignore").splitlines()
-        titles: list[str] = []
-        delimiter_is_backslash = False
+        title_groups: list[list[str]] = []
+        equipment = ""
         start_time = ""
         data_start = 0
 
@@ -516,16 +607,16 @@ class PsiLoader(BaseLoader):
             if not line.startswith("!"):
                 data_start = line_no
                 break
-            if line_no <= 6:
-                continue
+            if "Equipment name:" in line:
+                equipment = self._parse_temperature_equipment(line)
             if "Title" in line:
-                titles, delimiter_is_backslash = self._parse_temperature_titles(line)
+                title_groups = self._parse_temperature_title_groups(line)
             elif self._looks_like_psi_temperature_date(line):
                 start_time = self._parse_temperature_start_time(line)
         else:
             data_start = len(contents)
 
-        if not titles:
+        if not title_groups:
             raise ValueError(f"PSI temperature log does not define channel titles: {path}")
 
         series_data: dict[str, dict[str, list[float]]] = {}
@@ -534,8 +625,8 @@ class PsiLoader(BaseLoader):
                 continue
             for channel, time_value, value in self._parse_temperature_data_line(
                 line,
-                titles,
-                delimiter_is_backslash,
+                title_groups,
+                equipment,
             ):
                 bucket = series_data.setdefault(channel, {"time": [], "values": []})
                 bucket["time"].append(time_value)
@@ -546,7 +637,8 @@ class PsiLoader(BaseLoader):
             data_values = np.asarray(values["values"], dtype=np.float64)
             if data_values.size == 0:
                 continue
-            series_path = f"psi_temperature/{channel}"
+            series_path = self._psi_temperature_series_path(equipment, channel)
+            role = self._psi_temperature_channel_role(equipment, channel)
             time_series[series_path] = {
                 "path": series_path,
                 "units": "K",
@@ -559,23 +651,45 @@ class PsiLoader(BaseLoader):
                 "source_format": "PSI .mon",
                 "reader_provenance": "Mantid LoadPSIMuonBin-compatible",
             }
+            if equipment:
+                time_series[series_path]["equipment"] = equipment
+            if role:
+                time_series[series_path].update(role)
 
         if not time_series:
             raise ValueError(f"PSI temperature log does not contain numeric data: {path}")
 
         return _PsiTemperatureLogs(
             source_file=str(path),
+            source_files=[str(path)],
             start_time=start_time,
-            channels=[key.rsplit("/", 1)[-1] for key in sorted(time_series)],
+            channels=[key.removeprefix("psi_temperature/") for key in sorted(time_series)],
             time_series=time_series,
         )
 
-    def _parse_temperature_titles(self, line: str) -> tuple[list[str], bool]:
+    def _parse_temperature_equipment(self, line: str) -> str:
+        match = re.search(r"Equipment name:\s*(.+)$", line)
+        if match is None:
+            return ""
+        tokens = match.group(1).split()
+        return tokens[-1].strip() if tokens else ""
+
+    def _parse_temperature_title_groups(self, line: str) -> list[list[str]]:
         _, _, title_text = line.partition(":")
         title_text = title_text.strip()
-        if "\\" in title_text:
-            return [title.strip() for title in title_text.split("\\") if title.strip()], True
-        return [title.strip() for title in title_text.split() if title.strip()], False
+        groups: list[list[str]] = []
+        for group_text in title_text.split("\\"):
+            titles = [title.strip() for title in group_text.split() if title.strip()]
+            if titles:
+                groups.append(titles)
+        return groups
+
+    def _parse_temperature_titles(self, line: str) -> tuple[list[str], bool]:
+        """Return legacy title parsing for older private tests."""
+        groups = self._parse_temperature_title_groups(line)
+        if len(groups) > 1:
+            return [" ".join(group) for group in groups], True
+        return (groups[0] if groups else []), False
 
     def _looks_like_psi_temperature_date(self, line: str) -> bool:
         if len(line) >= 8 and line[5:8].upper() in _PSI_MONTHS:
@@ -607,30 +721,93 @@ class PsiLoader(BaseLoader):
     def _parse_temperature_data_line(
         self,
         line: str,
-        titles: list[str],
-        delimiter_is_backslash: bool,
+        title_groups: list[list[str]],
+        equipment: str = "",
     ) -> list[tuple[str, float, float]]:
         segments = line.split("\\")
-        if len(segments) != 5:
+        if len(segments) < 4:
             raise ValueError(f"PSI temperature log data line is not backslash-delimited: {line}")
 
         time_value = self._seconds_from_clock_string(segments[0])
         num_values = int(segments[1])
-        first_values = self._split_temperature_values(segments[2])
-        second_values = self._split_temperature_values(segments[3])
+        value_blocks = [self._split_temperature_values(segment) for segment in segments[2:-1]]
+        if not value_blocks:
+            return []
 
         rows: list[tuple[str, float, float]] = []
-        if delimiter_is_backslash:
-            if len(titles) >= 1 and first_values:
-                rows.append((f"Temp_{titles[0]}", time_value, first_values[0]))
-            if len(titles) >= 2 and second_values:
-                rows.append((f"Temp_{titles[1]}", time_value, second_values[0]))
-            return rows
+        emitted: set[str] = set()
+        groups_to_parse = title_groups
+        blocks_to_parse = value_blocks
+        if (
+            len(title_groups) >= 2
+            and len(value_blocks) >= 2
+            and title_groups[0] == title_groups[1]
+            and value_blocks[0] == value_blocks[1]
+        ):
+            groups_to_parse = [title_groups[0]]
+            blocks_to_parse = [value_blocks[0]]
 
-        limit = min(num_values, len(titles), len(first_values))
-        for idx in range(limit):
-            rows.append((f"Temp_{titles[idx]}", time_value, first_values[idx]))
+        for group, values in zip(groups_to_parse, blocks_to_parse, strict=False):
+            limit = min(num_values, len(group), len(values))
+            for idx in range(limit):
+                channel = self._psi_temperature_channel_name(group[idx], equipment)
+                if channel is None or channel in emitted:
+                    continue
+                emitted.add(channel)
+                rows.append((channel, time_value, values[idx]))
         return rows
+
+    def _psi_temperature_channel_name(self, title: str, equipment: str = "") -> str | None:
+        channel = str(title).strip()
+        if not channel:
+            return None
+        normalized = self._normalize_sensor_text(channel)
+        if normalized in {"none", "nan", "null"}:
+            return None
+        if equipment:
+            return channel
+        return f"Temp_{channel}"
+
+    def _psi_temperature_series_path(self, equipment: str, channel: str) -> str:
+        if equipment:
+            return f"psi_temperature/{equipment}/{channel}"
+        return f"psi_temperature/{channel}"
+
+    def _psi_temperature_channel_role(
+        self,
+        equipment: str,
+        channel: str,
+    ) -> dict[str, Any]:
+        equipment_norm = self._normalize_sensor_text(equipment)
+        channel_norm = self._normalize_sensor_text(channel)
+        if equipment_norm == "flamesam0" and channel_norm in {"samts", "samtsvalue"}:
+            return {
+                "role": "sample_temperature",
+                "sensor": "SAM_ts_value",
+                "primary": True,
+            }
+        if equipment_norm == "flamedil0" and channel_norm in {"diltmix", "diltmixvalue"}:
+            return {
+                "role": "sample_temperature",
+                "sensor": "DIL_T_mix_value",
+                "primary": False,
+            }
+        if equipment_norm == "variox0" and channel_norm in {"variox", "varioxvariox"}:
+            return {
+                "role": "sample_temperature",
+                "sensor": "VARIOX_Variox (K) Loop0",
+                "primary": False,
+            }
+        if not equipment_norm and ("sample" in channel_norm or channel_norm.endswith("ts")):
+            return {
+                "role": "sample_temperature",
+                "sensor": channel,
+                "primary": True,
+            }
+        return {}
+
+    def _normalize_sensor_text(self, text: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(text).lower())
 
     def _split_temperature_values(self, text: str) -> list[float]:
         values: list[float] = []
@@ -642,11 +819,15 @@ class PsiLoader(BaseLoader):
         return values
 
     def _seconds_from_clock_string(self, text: str) -> float:
-        match = re.match(r"\s*(\d{1,2}):(\d{2}):(\d{2})", text)
+        match = re.match(r"\s*(?:(\d+)\s+)?(\d{1,2}):(\d{2}):(\d{2})", text)
         if not match:
             raise ValueError(f"Invalid PSI temperature log time: {text!r}")
-        hours, minutes, seconds = (int(part) for part in match.groups())
-        return float(hours * 3600 + minutes * 60 + seconds)
+        days_text, hours_text, minutes_text, seconds_text = match.groups()
+        days = int(days_text) if days_text else 0
+        hours = int(hours_text)
+        minutes = int(minutes_text)
+        seconds = int(seconds_text)
+        return float(days * 86400 + hours * 3600 + minutes * 60 + seconds)
 
     # ------------------------------------------------------------------
     # Dataset construction
@@ -739,6 +920,7 @@ class PsiLoader(BaseLoader):
             metadata["nexus_time_series"] = raw.temperature_logs.time_series
             metadata["psi_temperature_log"] = {
                 "source_file": raw.temperature_logs.source_file,
+                "source_files": list(raw.temperature_logs.source_files),
                 "source_format": "PSI .mon",
                 "reader_provenance": "Mantid LoadPSIMuonBin-compatible",
                 "start_time": raw.temperature_logs.start_time,
@@ -806,7 +988,7 @@ class PsiLoader(BaseLoader):
                 forward_gid = 1
             if backward_gid is None:
                 backward_gid = 2 if forward_gid != 2 and 2 in groups else 1
-            return groups, names, int(forward_gid), int(backward_gid)
+            return groups, names, *self._analysis_pair_for_psi(names, forward_gid, backward_gid)
 
         back: list[int] = []
         forward: list[int] = []
@@ -834,13 +1016,27 @@ class PsiLoader(BaseLoader):
             if right:
                 groups[next_gid] = right
                 names[next_gid] = "Right"
-            return groups, names, 2, 1
+            return groups, names, 1, 2
 
         split = max(1, n_hist // 2)
         groups = {1: list(range(1, split + 1)), 2: list(range(split + 1, n_hist + 1))}
         if not groups[2]:
             groups[2] = list(groups[1])
-        return groups, {1: "Forward", 2: "Backward"}, 1, 2
+        return groups, {1: "Forward", 2: "Backward"}, 2, 1
+
+    def _analysis_pair_for_psi(
+        self,
+        group_names: dict[int, str],
+        forward_gid: int,
+        backward_gid: int,
+    ) -> tuple[int, int]:
+        """Convert PSI beam-forward/backward names to spin-forward/backward analysis slots."""
+        if (
+            self._label_direction(group_names.get(int(forward_gid), "")) == "forward"
+            and self._label_direction(group_names.get(int(backward_gid), "")) == "backward"
+        ):
+            return int(backward_gid), int(forward_gid)
+        return int(forward_gid), int(backward_gid)
 
     def _label_groups(self, labels: list[str], n_hist: int) -> list[tuple[str, list[int]]]:
         groups: list[tuple[str, list[int]]] = []
@@ -954,7 +1150,10 @@ class PsiLoader(BaseLoader):
             "dolly": ("DOLLY", "piE1", "continuous surface muon source"),
             "alc": ("ALC", "piE3", "continuous surface muon source"),
             "hifi": ("HIFI", "piE3", "continuous surface muon source"),
+            "flame": ("FLAME", "PSI", "continuous muon source"),
         }
+        if "flame" in token:
+            return mapping["flame"]
         for key, values in mapping.items():
             if f"_{key}_" in token or token.startswith(f"{key}_") or token.endswith(f"_{key}"):
                 return values

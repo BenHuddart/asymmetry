@@ -7,6 +7,7 @@ in the active project. Grouping definitions can be saved to and loaded from
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from PySide6.QtCore import Qt
@@ -183,8 +184,12 @@ class GroupingDialog(QDialog):
         self._detector_layout_instrument_name: str | None = (
             str(grouping.get("instrument")).strip() if grouping.get("instrument") else None
         )
-        self._set_combo_to_group(self._forward_combo, int(grouping.get("forward_group", 1)))
-        self._set_combo_to_group(self._backward_combo, int(grouping.get("backward_group", 2)))
+        forward_gid, backward_gid = self._analysis_pair_for_reference(
+            int(grouping.get("forward_group", 1)),
+            int(grouping.get("backward_group", 2)),
+        )
+        self._set_combo_to_group(self._forward_combo, forward_gid)
+        self._set_combo_to_group(self._backward_combo, backward_gid)
 
         self._alpha_spin = QDoubleSpinBox()
         self._alpha_spin.setDecimals(6)
@@ -219,8 +224,7 @@ class GroupingDialog(QDialog):
         requested_bunching = int(grouping.get("bunching_factor", 1))
         self._bunch_spin.setValue(requested_bunching)
         self._bunch_spin.setMaximumWidth(100)
-        self._bunch_source_hint = QLabel()
-        self._update_bunching_ui_hints()
+        self._bunch_spin.setToolTip("Set any bunching factor >= 1.")
 
         self._deadtime_checkbox = QCheckBox("Enable Deadtime Correction")
         self._deadtime_checkbox.setChecked(bool(grouping.get("deadtime_correction", False)))
@@ -324,7 +328,6 @@ class GroupingDialog(QDialog):
         form.addRow("t_good Offset", self._t_good_offset_spin)
         form.addRow("Last Good Bin", self._last_good_spin)
         form.addRow("Bunching Factor", self._bunch_spin)
-        form.addRow("Bunching Rules", self._bunch_source_hint)
         form.addRow("Deadtime", self._deadtime_checkbox)
         form.addRow("Background", self._background_checkbox)
         form.addRow(self._period_mode_label, self._period_mode_widget)
@@ -382,6 +385,42 @@ class GroupingDialog(QDialog):
             except (TypeError, ValueError):
                 continue
         return result
+
+    def _reference_is_psi(self) -> bool:
+        """Return True when the current reference run uses PSI detector conventions."""
+        metadata: dict[str, Any] = {}
+        if self._reference_dataset is not None:
+            metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
+        if self._run is not None:
+            metadata.update(getattr(self._run, "metadata", {}) or {})
+            grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+            if grouping.get("psi_format"):
+                return True
+        facility = str(metadata.get("facility", "")).strip().lower()
+        return facility == "psi" or bool(metadata.get("psi_format"))
+
+    @staticmethod
+    def _beam_direction_label(label: object) -> str | None:
+        """Return beam-direction label for explicit forward/backward group names."""
+        token = re.sub(r"[^a-z0-9]+", "", str(label).lower())
+        if token.startswith(("forw", "fwd")) or "forward" in token:
+            return "forward"
+        if token.startswith(("back", "bwd")) or "backward" in token:
+            return "backward"
+        return None
+
+    def _analysis_pair_for_reference(self, forward_gid: int, backward_gid: int) -> tuple[int, int]:
+        """Map PSI beam-forward/backward selections to analysis spin-forward/backward."""
+        if not self._reference_is_psi():
+            return int(forward_gid), int(backward_gid)
+        forward_name = self._group_names.get(int(forward_gid), "")
+        backward_name = self._group_names.get(int(backward_gid), "")
+        if (
+            self._beam_direction_label(forward_name) == "forward"
+            and self._beam_direction_label(backward_name) == "backward"
+        ):
+            return int(backward_gid), int(forward_gid)
+        return int(forward_gid), int(backward_gid)
 
     def _load_groups(self, run) -> dict[int, list[int]]:
         """Load detector groups from run metadata or default half/half groups."""
@@ -510,10 +549,11 @@ class GroupingDialog(QDialog):
             else None
         )
         self._group_names = self._load_group_names(self._run)
-        self._refresh_group_combo_items(
-            forward_gid=int(grouping.get("forward_group", 1)),
-            backward_gid=int(grouping.get("backward_group", 2)),
+        forward_gid, backward_gid = self._analysis_pair_for_reference(
+            int(grouping.get("forward_group", 1)),
+            int(grouping.get("backward_group", 2)),
         )
+        self._refresh_group_combo_items(forward_gid=forward_gid, backward_gid=backward_gid)
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
         max_bin = self._max_bin_index_for_reference_dataset()
         index_base = self._bin_index_base(grouping)
@@ -532,7 +572,6 @@ class GroupingDialog(QDialog):
         self._last_good_spin.setValue(default_last_good + index_base)
         requested_bunching = int(grouping.get("bunching_factor", 1))
         self._bunch_spin.setValue(requested_bunching)
-        self._update_bunching_ui_hints()
         self._deadtime_checkbox.setChecked(bool(grouping.get("deadtime_correction", False)))
         self._update_deadtime_checkbox_state(grouping)
         self._background_checkbox.setChecked(bool(grouping.get("background_correction", False)))
@@ -591,23 +630,8 @@ class GroupingDialog(QDialog):
             "Apply grouped background subtraction before asymmetry."
         )
 
-    def _update_bunching_ui_hints(self) -> None:
-        """Refresh explanatory text shown next to bunching controls."""
-        self._bunch_source_hint.setText("Set any bunching factor >= 1.")
-        self._bunch_spin.setToolTip("Set any bunching factor >= 1.")
-
-    def _validate_bunching_factor(self, requested: int) -> str | None:
-        """Return validation error text for requested bunching, or ``None``."""
-        return None
-
     def _on_apply(self) -> None:
         """Validate form values before accepting the dialog."""
-        requested = int(self._bunch_spin.value())
-        err = self._validate_bunching_factor(requested)
-        if err is not None:
-            QMessageBox.warning(self, "Invalid Bunching Factor", err)
-            return
-
         t0_bin, t_good_offset, first_good_bin, last_good_bin = (
             self._resolve_good_bin_limits_from_controls()
         )
@@ -840,21 +864,37 @@ class GroupingDialog(QDialog):
 
         # Determine number of histograms for instrument auto-detection
         n_histo = len(self._run.histograms) if self._run and self._run.histograms else 0
-        try:
-            instrument_name = self._detector_layout_instrument_name
-            if not instrument_name:
-                instrument_name = detect_instrument(
-                    n_histo,
-                    metadata=self._run.metadata if self._run else None,
-                    source_file=self._run.source_file if self._run else None,
-                )
-            if instrument_name is None:
-                instrument_name = "HiFi"  # safe fallback
-            instrument = get_instrument_layout(instrument_name)
-        except KeyError:
+        grouping = self._run.grouping or {} if self._run else {}
+        metadata = (
+            dict(self._run.metadata) if self._run and isinstance(self._run.metadata, dict) else {}
+        )
+        if isinstance(grouping, dict):
+            for key in ("histogram_labels", "group_names"):
+                if key in grouping and key not in metadata:
+                    metadata[key] = grouping[key]
+
+        instrument_name = self._detector_layout_instrument_name
+        instrument = None
+        if instrument_name:
+            try:
+                instrument = get_instrument_layout(instrument_name)
+            except KeyError:
+                instrument_name = None
+
+        if instrument is None:
+            instrument_name = detect_instrument(
+                n_histo,
+                metadata=metadata,
+                source_file=self._run.source_file if self._run else None,
+            )
+            try:
+                instrument = get_instrument_layout(instrument_name) if instrument_name else None
+            except KeyError:
+                instrument = None
+
+        if instrument is None:
             instrument = get_instrument_layout("HiFi")
 
-        grouping = self._run.grouping or {} if self._run else {}
         forward_gid = int(grouping.get("forward_group", self._forward_combo.currentData() or 1))
         backward_gid = int(grouping.get("backward_group", self._backward_combo.currentData() or 2))
 
@@ -892,6 +932,7 @@ class GroupingDialog(QDialog):
         # Update forward/backward combos
         new_fwd = result.get("forward_group", forward_gid)
         new_bwd = result.get("backward_group", backward_gid)
+        new_fwd, new_bwd = self._analysis_pair_for_reference(int(new_fwd), int(new_bwd))
         self._refresh_group_combo_items(forward_gid=int(new_fwd), backward_gid=int(new_bwd))
 
         self._populate_group_table()

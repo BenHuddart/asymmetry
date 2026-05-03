@@ -46,6 +46,13 @@ The data browser shows:
 * Temperature (K)
 * Magnetic field (G)
 
+Use **Options → Use temperature from log** to switch the fixed temperature
+column from the scalar/header temperature to the average of the sample
+temperature log when a supported log is available. The menu option applies the
+same choice to every loaded run and clears any per-run overrides. Temperature
+cells whose value comes from a log are shown with red text. Untick the option
+to return the column to the scalar/header value.
+
 Data Browser Features
 ---------------------
 
@@ -255,12 +262,28 @@ paths. For example, ``run_info.points`` appears as **Points**, and
 ``nexus_fields.sample.shape`` appears as **Orientation**.
 
 For parameters backed by time-series NeXus logs, a **Plot** button appears in
-the right column and opens the full log trace.
+the right column and opens the full log trace. NeXus sample-temperature logs
+follow the same Data Browser rule as PSI and ROOT logs: the fixed
+**Temperature (K)** column uses the scalar/header temperature by default, and
+switches to the log mean while **Options → Use temperature from log** is
+enabled. The menu option applies to every loaded run. The **Temperature (K)**
+include checkbox in Get Info overrides only the run whose Get Info window is
+open, so it can be used to make per-dataset exceptions after setting the global
+option. Temperature values shown in red are using log averages.
 
 PSI-BIN ``.mon`` temperature logs are exposed through the same time-series
 path. When a matching sidecar is loaded, the summary **Temperature (K)** row
 gets a **Plot** button and the individual channels are listed in Advanced as
 ``nexus_time_series.psi_temperature/Temp_<channel>.mean`` rows.
+
+MusrRoot ROOT slow-control histograms are handled in the same way. If the file
+contains ``histos/SCAnaModule/hSampleTemperature``, Get Info shows the average
+temperature from that histogram, provides a **Plot** button, and lets the
+**Temperature (K)** checkbox replace the Data Browser's default header
+temperature with the log mean for that run only. FLAME ROOT files can store the
+same information under sensor names such as ``SAM_ts_value``; when the header
+temperature references that sensor, the **Temperature (K)** row uses it for
+the log plot.
 
 Advanced subwindow
 ~~~~~~~~~~~~~~~~~~
@@ -274,6 +297,10 @@ leaving the Run Info workflow.
 For PSI-BIN temperature sidecars, Advanced also lists ``psi_temperature_log``
 provenance fields, including the source ``.mon`` path and the
 ``Mantid LoadPSIMuonBin-compatible`` reader provenance.
+
+For MusrRoot slow-control logs, Advanced lists ``musrroot_slow_control_log``
+provenance fields and ``nexus_time_series.musrroot_slow_control/...`` summary
+rows.
 
 The Advanced window now includes a search box, so you can filter the metadata
 table by field name or rendered value before adding a column or opening a log
@@ -309,12 +336,15 @@ Detector Layout Editor
 ~~~~~~~~~~~~~~~~~~~~~~
 
 The full Grouping dialog includes a **Detector Layout...** button that opens a
-visual grouping editor for ISIS instruments **HiFi**, **MuSR**, and **EMU**.
+visual grouping editor for ISIS instruments **HiFi**, **MuSR**, **EMU**, and
+PSI **FLAME** data loaded from BIN or ROOT files.
 
 The editor has three panels:
 
 * **Detector schematic** (left): click detector sectors to toggle membership in
-   the currently active group.
+   the currently active group. FLAME detectors are shown as rectangular plates
+   in a top-view diagram; detector plates that are not in any group are left
+   unfilled.
 * **Group slots** (centre): eight group buttons (**Group 1** to **Group 8**),
    each with an editable name field.
 * **Presets** (right): instrument selector plus a preset dropdown with
@@ -328,9 +358,11 @@ Key behavior:
   1. **Saved instrument** — if a previous session already set the instrument for
      this dataset, that choice is restored directly.
   2. **Run metadata** — fields such as ``instrument``, ``instrument_name``,
-     ``beamline``, or ``spectrometer`` in the file's embedded metadata.
+     ``beamline``, or ``spectrometer`` in the file's embedded metadata. PSI
+     FLAME BIN/ROOT files are recognised when metadata identify ``FLAME``,
+     including values such as ``LMU_BULKMUSR_FLAME``.
   3. **Source filename** — if the filename contains a recognisable instrument
-     token (e.g. ``emu``, ``hifi``, ``musr``).
+     token (e.g. ``emu``, ``hifi``, ``musr``, ``flame``).
   4. **Histogram count** — 64 histograms → HiFi; 96 histograms → EMU;
      other counts → no automatic selection.
 
@@ -345,6 +377,14 @@ Preset highlights:
 * **EMU** includes a **Vector Polarization** preset with six groups:
    ``Pz Forward``, ``Pz Backward``, ``Py Top``, ``Py Bottom``, ``Px Left``, and
    ``Px Right``.
+* **FLAME** includes **Longitudinal** (Forward / Backward) and **Transverse**
+   presets. The transverse preset groups ``Right``, ``R_B``, and ``R_F``
+   together, and ``Left``, ``L_B``, and ``L_F`` together.
+* PSI detector-layout names follow the PSI beam-direction convention. The main
+   Grouping dialog uses spin-direction forward/backward for asymmetry
+   calculation, so longitudinal PSI/FLAME analysis defaults are swapped:
+   **Forward Group** = ``Group 2: Backward`` and **Backward Group** =
+   ``Group 1: Forward``. ISIS datasets are unchanged.
 
 .. note::
 

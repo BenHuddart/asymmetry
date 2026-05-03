@@ -45,6 +45,10 @@ def _write_musrroot_directory(path: Path) -> None:
             np.array([0, 0, 15, 25, 35, 45, 55], dtype=np.float64),
             edges,
         )
+        root_file["histos/SCAnaModule/hSampleTemperature"] = (
+            np.array([11.8, 12.2, 12.4], dtype=np.float64),
+            np.array([0.0, 20.0, 40.0, 60.0], dtype=np.float64),
+        )
 
 
 def _write_red_green_offset_directory(path: Path) -> None:
@@ -70,6 +74,73 @@ def _write_red_green_offset_directory(path: Path) -> None:
         )
 
 
+def _write_zero_field_title_root_directory(path: Path) -> None:
+    edges = np.arange(-0.5, 4.5, 1.0)
+    with uproot.recreate(path) as root_file:
+        root_file["RunHeader/RunInfo/Run Number"] = "9753"
+        root_file["RunHeader/RunInfo/Run Title"] = "Sample, LF 32G Bz"
+        root_file["RunHeader/RunInfo/Comment"] = "Header field intentionally left at zero"
+        root_file["RunHeader/RunInfo/Laboratory"] = "PSI"
+        root_file["RunHeader/RunInfo/Instrument"] = "FLAME"
+        root_file["RunHeader/RunInfo/Sample Magnetic Field"] = "0 G"
+        root_file["RunHeader/RunInfo/No of Histos"] = "2"
+        root_file["RunHeader/RunInfo/Time Resolution"] = "10 ns"
+        root_file["RunHeader/DetectorInfo/Detector001/Name"] = "Forward"
+        root_file["RunHeader/DetectorInfo/Detector001/Histo Number"] = "1"
+        root_file["RunHeader/DetectorInfo/Detector001/Time Zero Bin"] = "1"
+        root_file["RunHeader/DetectorInfo/Detector001/First Good Bin"] = "1"
+        root_file["RunHeader/DetectorInfo/Detector001/Last Good Bin"] = "3"
+        root_file["RunHeader/DetectorInfo/Detector002/Name"] = "Backward"
+        root_file["RunHeader/DetectorInfo/Detector002/Histo Number"] = "2"
+        root_file["RunHeader/DetectorInfo/Detector002/Time Zero Bin"] = "1"
+        root_file["RunHeader/DetectorInfo/Detector002/First Good Bin"] = "1"
+        root_file["RunHeader/DetectorInfo/Detector002/Last Good Bin"] = "3"
+        root_file["histos/DecayAnaModule/hDecay001"] = (
+            np.array([10, 20, 30, 40], dtype=np.float64),
+            edges,
+        )
+        root_file["histos/DecayAnaModule/hDecay002"] = (
+            np.array([9, 18, 27, 36], dtype=np.float64),
+            edges,
+        )
+
+
+def _write_flame_root_directory(path: Path) -> None:
+    edges = np.arange(-0.5, 5.5, 1.0)
+    labels = ["Forward", "Backward", "Right", "Left", "R_F", "R_B", "L_F", "L_B"]
+    with uproot.recreate(path) as root_file:
+        root_file["RunHeader/RunInfo/Run Number"] = "8642"
+        root_file["RunHeader/RunInfo/Laboratory"] = "PSI"
+        root_file["RunHeader/RunInfo/Instrument"] = "FLAME"
+        root_file["RunHeader/RunInfo/No of Histos"] = str(len(labels))
+        root_file["RunHeader/RunInfo/Time Resolution"] = "10 ns"
+        for index, label in enumerate(labels, start=1):
+            prefix = f"RunHeader/DetectorInfo/Detector{index:03d}"
+            root_file[f"{prefix}/Name"] = label
+            root_file[f"{prefix}/Histo Number"] = str(index)
+            root_file[f"{prefix}/Time Zero Bin"] = "1"
+            root_file[f"{prefix}/First Good Bin"] = "1"
+            root_file[f"{prefix}/Last Good Bin"] = "4"
+            root_file[f"histos/DecayAnaModule/hDecay{index:03d}"] = (
+                np.arange(5, dtype=np.float64) + index,
+                edges,
+            )
+        root_file["RunHeader/RunInfo/Sample Temperature"] = (
+            "10.4 +- 0.1 K; SP: 10; SP=SAM_ts_target Sens=SAM_ts_value"
+        )
+        root_file["RunHeader/RunInfo/Sample Temperature [0]"] = (
+            "10.9 +- 0.2 K; Sens=DIL_T_mix_value"
+        )
+        root_file["histos/SCAnaModule/[12] flamesam0 SAM_ts_value"] = (
+            np.array([10.8, 10.6, 10.4], dtype=np.float64),
+            np.array([0.0, 30.0, 60.0, 90.0], dtype=np.float64),
+        )
+        root_file["histos/SCAnaModule/[06] flamedil0 DIL_T_mix_value"] = (
+            np.array([11.2, 11.1, 10.9], dtype=np.float64),
+            np.array([0.0, 30.0, 60.0, 90.0], dtype=np.float64),
+        )
+
+
 def test_load_musrroot_directory_reads_header_histograms_and_grouping(tmp_path) -> None:
     path = tmp_path / "lem_synthetic.root"
     _write_musrroot_directory(path)
@@ -83,6 +154,13 @@ def test_load_musrroot_directory_reads_header_histograms_and_grouping(tmp_path) 
     assert ds.metadata["instrument"] == "LEM"
     assert ds.metadata["temperature"] == pytest.approx(12.5)
     assert ds.metadata["field"] == pytest.approx(100.0)
+    assert ds.metadata["musrroot_slow_control_log"]["source_format"] == "MusrRoot SCAnaModule"
+    assert ds.metadata["musrroot_slow_control_log"]["channels"] == ["Sample Temperature"]
+    series = ds.metadata["nexus_time_series"]["musrroot_slow_control/Sample Temperature"]
+    assert series["units"] == "K"
+    assert series["time"] == pytest.approx([10.0, 30.0, 50.0])
+    assert series["values"] == pytest.approx([11.8, 12.2, 12.4])
+    assert series["mean"] == pytest.approx(12.1333333333)
     assert len(ds.run.histograms) == 2
     assert ds.run.histograms[0].bin_width == pytest.approx(0.01)
     assert ds.run.grouping["groups"] == {1: [1], 2: [2]}
@@ -106,6 +184,52 @@ def test_red_green_offsets_select_declared_histogram_numbers(tmp_path) -> None:
     assert ds.run.grouping["detector_t0_bins"] == [1]
     assert ds.run.histograms[0].counts.tolist() == [1, 2, 3, 4]
     assert ds.run.histograms[0].bin_width == pytest.approx(0.005)
+
+
+def test_root_loader_marks_title_field_candidate_when_header_field_is_zero(tmp_path) -> None:
+    path = tmp_path / "flame_zero_field.root"
+    _write_zero_field_title_root_directory(path)
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.metadata["field"] == pytest.approx(0.0)
+    assert ds.metadata["field_header"] == pytest.approx(0.0)
+    assert ds.metadata["field_comment_candidate"] == pytest.approx(32.0)
+
+
+def test_root_loader_preserves_flame_instrument_for_layout_detection(tmp_path) -> None:
+    path = tmp_path / "flame_synthetic.root"
+    _write_flame_root_directory(path)
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    assert ds.metadata["instrument"] == "FLAME"
+    assert ds.run.grouping["instrument"] == "FLAME"
+    assert ds.run.grouping["forward_group"] == 2
+    assert ds.run.grouping["backward_group"] == 1
+    assert ds.run.grouping["group_names"][5] == "R_F"
+
+
+def test_root_loader_reads_flame_sensor_named_temperature_logs(tmp_path) -> None:
+    path = tmp_path / "flame_synthetic.root"
+    _write_flame_root_directory(path)
+
+    ds = RootLoader().load(str(path))
+
+    series = ds.metadata["nexus_time_series"]
+    sample_series = series["musrroot_slow_control/flamesam0 SAM ts value"]
+    assert sample_series["role"] == "sample_temperature"
+    assert sample_series["sensor"] == "SAM_ts_value"
+    assert sample_series["primary"] is True
+    assert sample_series["units"] == "K"
+    assert sample_series["time"] == pytest.approx([15.0, 45.0, 75.0])
+    assert sample_series["mean"] == pytest.approx(10.6)
+
+    dil_series = series["musrroot_slow_control/flamedil0 DIL T mix value"]
+    assert dil_series["role"] == "sample_temperature"
+    assert dil_series["sensor"] == "DIL_T_mix_value"
+    assert dil_series["primary"] is False
 
 
 def test_load_convenience_registers_root_loader(tmp_path) -> None:

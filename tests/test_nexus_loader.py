@@ -160,6 +160,9 @@ def test_load_v2_single_period(tmp_path, loader: NexusLoader) -> None:
     assert ds.metadata["field"] == pytest.approx(150.0)
     assert "nexus_fields" in ds.metadata
     assert "nexus_time_series" in ds.metadata
+    temp_series = ds.metadata["nexus_time_series"]["sample/Temp_Sample"]
+    assert temp_series["mean"] == pytest.approx(12.5)
+    assert temp_series["values"] == pytest.approx([12.0, 12.5, 13.0])
     assert ds.n_points == 4
     # Values are percentages, not fractions.
     expected_first = 100.0 * (100.0 - 80.0) / (100.0 + 80.0)

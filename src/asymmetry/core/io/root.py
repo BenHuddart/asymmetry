@@ -25,11 +25,38 @@ from asymmetry.core.transform import (
 )
 
 
+def _extract_field_from_comment(comment: str) -> float | None:
+    """Extract magnetic field in Gauss from title/comment text."""
+    if not comment:
+        return None
+
+    patterns = [
+        r"(?i)\b(?:field|bx|by|bz|lf|tf|zf)?\s*[:=]?\s*([+-]?\d+(?:\.\d+)?)\s*(?:g|gauss)\b",
+        r"(?i)\b([+-]?\d+(?:\.\d+)?)\s*(?:g|gauss)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, comment)
+        if match is None:
+            continue
+        try:
+            return float(match.group(1))
+        except ValueError:
+            continue
+    return None
+
+
 @dataclass
 class _RootHistogram:
     histo_number: int
     counts: np.ndarray
     title: str
+
+
+@dataclass
+class _RootSlowControlLogs:
+    source_file: str
+    channels: list[str]
+    time_series: dict[str, dict[str, Any]]
 
 
 class RootLoader(BaseLoader):
@@ -54,10 +81,11 @@ class RootLoader(BaseLoader):
         with uproot.open(path) as root_file:
             header, header_kind = self._read_header(root_file)
             root_histograms = self._read_histograms(root_file)
+            slow_control_logs = self._read_slow_control_logs(root_file, path, header)
 
         if not root_histograms:
             raise ValueError(f"ROOT file does not contain hDecay histograms: {filepath}")
-        return self._build_dataset(path, header, header_kind, root_histograms)
+        return self._build_dataset(path, header, header_kind, root_histograms, slow_control_logs)
 
     # ------------------------------------------------------------------
     # ROOT object extraction
@@ -169,6 +197,235 @@ class RootLoader(BaseLoader):
 
         return [histograms[number] for number in sorted(histograms)]
 
+    def _read_slow_control_logs(
+        self,
+        root_file,
+        path: Path,
+        header: dict[str, str] | None = None,
+    ) -> _RootSlowControlLogs | None:
+        """Read MusrRoot slow-control histograms from ``SCAnaModule``."""
+        time_series: dict[str, dict[str, Any]] = {}
+        seen_paths: set[str] = set()
+        sensor_roles = self._slow_control_sensor_roles(header or {})
+
+        for key in root_file.keys(recursive=True):
+            clean = self._clean_key(key)
+            if "SCAnaModule" not in clean:
+                continue
+            try:
+                obj = root_file[key]
+            except Exception:
+                continue
+            series = self._slow_control_series_from_histogram(
+                clean,
+                obj,
+                str(path),
+                sensor_roles,
+            )
+            if series is None:
+                continue
+            series_path, info = series
+            time_series[series_path] = info
+            seen_paths.add(series_path)
+
+        if "histos" in root_file:
+            for obj, ancestors in self._walk_objects_with_ancestors(root_file["histos"]):
+                if not self._is_histogram(obj):
+                    continue
+                name = self._object_name(obj)
+                if re.fullmatch(r"hDecay\d+", name):
+                    continue
+                title = self._object_title(obj)
+                inside_sc_module = any(
+                    self._object_name(parent) == "SCAnaModule" for parent in ancestors
+                )
+                if not inside_sc_module and not self._looks_like_slow_control_label(name, title):
+                    continue
+                series = self._slow_control_series_from_histogram(
+                    name,
+                    obj,
+                    str(path),
+                    sensor_roles,
+                )
+                if series is None:
+                    continue
+                series_path, info = series
+                if series_path in seen_paths:
+                    continue
+                time_series[series_path] = info
+                seen_paths.add(series_path)
+
+        if not time_series:
+            return None
+        return _RootSlowControlLogs(
+            source_file=str(path),
+            channels=[key.rsplit("/", 1)[-1] for key in sorted(time_series)],
+            time_series=time_series,
+        )
+
+    def _slow_control_series_from_histogram(
+        self,
+        key: str,
+        obj,
+        source_file: str,
+        sensor_roles: dict[str, dict[str, Any]] | None = None,
+    ) -> tuple[str, dict[str, Any]] | None:
+        if not self._is_histogram(obj):
+            return None
+
+        name = self._object_name(obj) or str(key).rsplit("/", 1)[-1]
+        title = self._object_title(obj)
+        label = self._slow_control_label(name, title)
+        if not label:
+            return None
+        sensor_role = self._slow_control_sensor_role(label, title, sensor_roles or {})
+
+        values = np.asarray(obj.values(flow=False), dtype=np.float64)
+        if values.size == 0:
+            return None
+        try:
+            time_axis = np.asarray(obj.axis().centers(), dtype=np.float64)
+        except Exception:
+            time_axis = np.arange(values.size, dtype=np.float64)
+        if time_axis.size != values.size:
+            time_axis = np.arange(values.size, dtype=np.float64)
+
+        finite = np.isfinite(values)
+        if not np.any(finite):
+            return None
+        valid_values = values[finite]
+        valid_time = time_axis[finite]
+        series_path = f"musrroot_slow_control/{label}"
+        info: dict[str, Any] = {
+            "path": series_path,
+            "units": self._slow_control_units(label, title, sensor_role),
+            "time": [float(v) for v in valid_time],
+            "values": [float(v) for v in valid_values],
+            "mean": float(np.mean(valid_values)),
+            "min": float(np.min(valid_values)),
+            "max": float(np.max(valid_values)),
+            "source_file": source_file,
+            "source_format": "MusrRoot SCAnaModule",
+            "reader_provenance": "MusrRoot slow-control histogram",
+        }
+        if sensor_role:
+            info.update(
+                {
+                    "role": sensor_role.get("role", ""),
+                    "sensor": sensor_role.get("sensor", ""),
+                    "primary": bool(sensor_role.get("primary", False)),
+                    "header_key": sensor_role.get("header_key", ""),
+                }
+            )
+        return series_path, info
+
+    def _slow_control_label(self, name: str, title: str) -> str:
+        for candidate in (title, name):
+            label = str(candidate).strip()
+            if not label:
+                continue
+            label = re.sub(r"\s+Run\s+\S+.*$", "", label)
+            label = re.sub(r"^\[\d+\]\s*", "", label)
+            label = re.sub(r"^h(?=[A-Z])", "", label)
+            label = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", label)
+            label = re.sub(r"[_/]+", " ", label).strip()
+            if label and not re.fullmatch(r"hDecay\d+", label):
+                return label
+        return ""
+
+    def _slow_control_units(
+        self,
+        label: str,
+        title: str,
+        sensor_role: dict[str, Any] | None = None,
+    ) -> str:
+        if sensor_role and sensor_role.get("units"):
+            return str(sensor_role["units"])
+        combined = f"{label} {title}".lower()
+        if "temp" in combined or "(k)" in combined or " kelvin" in combined:
+            return "K"
+        if "field" in combined or "magnet" in combined:
+            return "G"
+        return ""
+
+    def _looks_like_slow_control_label(self, name: str, title: str) -> bool:
+        combined = f"{name} {title}".lower()
+        return any(
+            token in combined
+            for token in (
+                "temp",
+                "field",
+                "magnet",
+                "pressure",
+                "voltage",
+                "current",
+                "cryo",
+                "heater",
+                "variox",
+                "sam_ts",
+                "dil_t",
+                "(k)",
+                "mag_",
+            )
+        )
+
+    def _slow_control_sensor_roles(self, header: dict[str, str]) -> dict[str, dict[str, Any]]:
+        roles: dict[str, dict[str, Any]] = {}
+        for key, value in header.items():
+            if not key.startswith("RunInfo/"):
+                continue
+            role = self._slow_control_role_for_header_key(key)
+            if role is None:
+                continue
+            units = self._unit_from_value(value).upper()
+            for sensor in self._slow_control_sensors_from_value(value):
+                normalized = self._normalize_sensor_text(sensor)
+                if not normalized:
+                    continue
+                existing = roles.get(normalized, {})
+                primary = bool(role == "sample_temperature" and key == "RunInfo/Sample Temperature")
+                if existing.get("primary") and not primary:
+                    continue
+                roles[normalized] = {
+                    "sensor": sensor,
+                    "role": role,
+                    "units": units,
+                    "primary": primary,
+                    "header_key": key,
+                }
+        return roles
+
+    def _slow_control_role_for_header_key(self, key: str) -> str | None:
+        label = key.rsplit("/", 1)[-1].lower()
+        if "sample temperature" in label:
+            return "sample_temperature"
+        if "sample magnetic field" in label:
+            return "sample_field"
+        return None
+
+    def _slow_control_sensors_from_value(self, value: str) -> list[str]:
+        sensors: list[str] = []
+        for match in re.finditer(r"\bSens\s*=\s*([^;]+?)(?=\s+-@\d+\s*$|;|$)", str(value)):
+            sensor = match.group(1).strip()
+            if sensor:
+                sensors.append(sensor)
+        return sensors
+
+    def _slow_control_sensor_role(
+        self,
+        label: str,
+        title: str,
+        sensor_roles: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        normalized_label = self._normalize_sensor_text(f"{label} {title}")
+        for sensor, role in sensor_roles.items():
+            if sensor and sensor in normalized_label:
+                return dict(role)
+        return {}
+
+    def _normalize_sensor_text(self, text: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(text).lower())
+
     def _root_histogram(self, match: re.Match[str], obj) -> _RootHistogram:
         values = np.asarray(obj.values(flow=False), dtype=np.float64)
         return _RootHistogram(
@@ -187,6 +444,7 @@ class RootLoader(BaseLoader):
         header: dict[str, str],
         header_kind: str,
         root_histograms: list[_RootHistogram],
+        slow_control_logs: _RootSlowControlLogs | None = None,
     ) -> MuonDataset:
         bin_width_us = self._time_resolution_us(header)
         selected = self._select_histograms(header, root_histograms)
@@ -261,7 +519,9 @@ class RootLoader(BaseLoader):
         asymmetry = asymmetry[first_good : last_good + 1]
         error = error[first_good : last_good + 1]
 
-        metadata = self._metadata(path, header, header_kind, labels, root_numbers)
+        metadata = self._metadata(
+            path, header, header_kind, labels, root_numbers, slow_control_logs
+        )
         grouping = {
             "groups": groups,
             "group_names": group_names,
@@ -360,6 +620,7 @@ class RootLoader(BaseLoader):
         header_kind: str,
         labels: list[str],
         root_numbers: list[int],
+        slow_control_logs: _RootSlowControlLogs | None = None,
     ) -> dict[str, Any]:
         run_number = self._int_from_value(header.get("RunInfo/Run Number"), default=0)
         if run_number == 0:
@@ -367,21 +628,30 @@ class RootLoader(BaseLoader):
             run_number = int(match.group(1)) if match else 0
 
         field = self._field_gauss(header.get("RunInfo/Sample Magnetic Field"))
+        instrument = header.get("RunInfo/Instrument", "")
+        if not instrument and "flame" in path.stem.lower():
+            instrument = "FLAME"
+        title = header.get("RunInfo/Run Title", "")
+        comment = header.get("RunInfo/Comment", "")
+        field_comment_candidate = _extract_field_from_comment(f"{title} {comment}")
+
         metadata: dict[str, Any] = {
             "run_number": run_number,
-            "title": header.get("RunInfo/Run Title", ""),
+            "title": title,
             "sample": header.get("RunInfo/Sample Name", ""),
             "temperature": self._float_from_value(
                 header.get("RunInfo/Sample Temperature"),
                 default=0.0,
             ),
             "field": field,
+            "field_header": field,
+            "field_comment_candidate": field_comment_candidate,
             "orientation": header.get("RunInfo/Sample Orientation", ""),
             "setup": header.get("RunInfo/Setup", ""),
-            "comment": header.get("RunInfo/Comment", ""),
+            "comment": comment,
             "started": header.get("RunInfo/Run Start Time", ""),
             "stopped": header.get("RunInfo/Run Stop Time", ""),
-            "instrument": header.get("RunInfo/Instrument", ""),
+            "instrument": instrument,
             "beamline": header.get("BeamlineInfo/Name", ""),
             "facility": header.get("RunInfo/Laboratory", ""),
             "muon_source": header.get("RunInfo/Muon Source", ""),
@@ -392,8 +662,16 @@ class RootLoader(BaseLoader):
         }
         if not metadata["beamline"]:
             metadata["beamline"] = "muE4" if metadata["instrument"] == "LEM" else ""
-        if not metadata["facility"] and metadata["instrument"] == "LEM":
+        if not metadata["facility"] and metadata["instrument"] in {"LEM", "FLAME"}:
             metadata["facility"] = "PSI"
+        if slow_control_logs is not None:
+            metadata["nexus_time_series"] = slow_control_logs.time_series
+            metadata["musrroot_slow_control_log"] = {
+                "source_file": slow_control_logs.source_file,
+                "source_format": "MusrRoot SCAnaModule",
+                "reader_provenance": "MusrRoot slow-control histogram",
+                "channels": list(slow_control_logs.channels),
+            }
         return metadata
 
     def _default_groups(
@@ -402,6 +680,11 @@ class RootLoader(BaseLoader):
     ) -> tuple[dict[int, list[int]], dict[int, str], int, int]:
         groups = {gid: [gid] for gid in range(1, len(labels) + 1)}
         group_names = self._unique_names(labels)
+        beam_forward_gid = self._first_explicit_group_matching(group_names, "forward")
+        beam_backward_gid = self._first_explicit_group_matching(group_names, "backward")
+        if beam_forward_gid is not None and beam_backward_gid is not None:
+            return groups, group_names, int(beam_backward_gid), int(beam_forward_gid)
+
         forward_gid = self._first_group_matching(group_names, "forward")
         backward_gid = self._first_group_matching(group_names, "backward")
         if forward_gid is None:
@@ -426,6 +709,24 @@ class RootLoader(BaseLoader):
         for gid, name in group_names.items():
             if self._label_direction(name) == direction:
                 return gid
+        return None
+
+    def _first_explicit_group_matching(
+        self,
+        group_names: dict[int, str],
+        direction: str,
+    ) -> int | None:
+        for gid, name in group_names.items():
+            if self._explicit_label_direction(name) == direction:
+                return gid
+        return None
+
+    def _explicit_label_direction(self, label: str) -> str | None:
+        token = re.sub(r"[^a-z0-9]+", "", str(label).lower())
+        if token.startswith(("forw", "fwd")) or "forward" in token:
+            return "forward"
+        if token.startswith(("back", "bwd")) or "backward" in token:
+            return "backward"
         return None
 
     def _label_direction(self, label: str) -> str | None:
@@ -556,3 +857,8 @@ class RootLoader(BaseLoader):
         for child in self._children(obj):
             yield child
             yield from self._walk_objects(child)
+
+    def _walk_objects_with_ancestors(self, obj, ancestors=()):
+        for child in self._children(obj):
+            yield child, ancestors
+            yield from self._walk_objects_with_ancestors(child, (*ancestors, child))

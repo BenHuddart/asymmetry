@@ -30,6 +30,8 @@ class BackgroundCorrectionResult:
 
     forward: NDArray[np.float64]
     backward: NDArray[np.float64]
+    forward_error: NDArray[np.float64] | None
+    backward_error: NDArray[np.float64] | None
     applied: bool
     method: str
     values: tuple[float, float] | None = None
@@ -91,6 +93,8 @@ def apply_grouped_background_correction(
         return BackgroundCorrectionResult(
             forward=f - fixed[0],
             backward=b - fixed[1],
+            forward_error=_fixed_background_error(f),
+            backward_error=_fixed_background_error(b),
             applied=True,
             method="fixed",
             values=fixed,
@@ -99,7 +103,7 @@ def apply_grouped_background_correction(
 
     ranges = _background_ranges(grouping, int(t0_bin))
     if ranges is None:
-        return BackgroundCorrectionResult(f, b, False, "none")
+        return BackgroundCorrectionResult(f, b, None, None, False, "none")
 
     f_range = _adjust_range_for_beam_period(
         ranges[0],
@@ -112,13 +116,27 @@ def apply_grouped_background_correction(
         facility=facility,
     )
     if not _range_is_valid(f_range, len(f)) or not _range_is_valid(b_range, len(b)):
-        return BackgroundCorrectionResult(f, b, False, "invalid_range", ranges=(f_range, b_range))
+        return BackgroundCorrectionResult(
+            f,
+            b,
+            None,
+            None,
+            False,
+            "invalid_range",
+            ranges=(f_range, b_range),
+        )
 
-    f_value = float(np.mean(f[f_range[0] : f_range[1] + 1]))
-    b_value = float(np.mean(b[b_range[0] : b_range[1] + 1]))
+    f_slice = f[f_range[0] : f_range[1] + 1]
+    b_slice = b[b_range[0] : b_range[1] + 1]
+    f_value = float(np.mean(f_slice))
+    b_value = float(np.mean(b_slice))
+    f_bkg_error = _estimated_background_error(f_slice)
+    b_bkg_error = _estimated_background_error(b_slice)
     return BackgroundCorrectionResult(
         forward=f - f_value,
         backward=b - b_value,
+        forward_error=_estimated_background_count_error(f, f_bkg_error),
+        backward_error=_estimated_background_count_error(b, b_bkg_error),
         applied=True,
         method="estimated",
         values=(f_value, b_value),
@@ -135,6 +153,32 @@ def _fixed_background_values(grouping: dict[str, Any]) -> tuple[float, float] | 
             except (TypeError, ValueError):
                 return None
     return None
+
+
+def _fixed_background_error(values: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Return musrfit-style count errors for fixed-background subtraction."""
+    arr = np.asarray(values, dtype=np.float64)
+    return np.where(arr != 0.0, np.sqrt(np.maximum(arr, 0.0)), 1.0)
+
+
+def _estimated_background_error(values: NDArray[np.float64]) -> float:
+    """Return musrfit's error on an estimated constant background."""
+    arr = np.asarray(values, dtype=np.float64)
+    if arr.size == 0:
+        return 0.0
+    total = float(np.sum(arr))
+    if total <= 0.0:
+        return 0.0
+    return float(np.sqrt(total) / float(arr.size))
+
+
+def _estimated_background_count_error(
+    values: NDArray[np.float64],
+    background_error: float,
+) -> NDArray[np.float64]:
+    """Return musrfit-style per-bin count errors after estimated subtraction."""
+    arr = np.asarray(values, dtype=np.float64)
+    return np.where(arr > 0.0, np.sqrt(np.maximum(arr + background_error**2, 0.0)), 1.0)
 
 
 def _background_ranges(

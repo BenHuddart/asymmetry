@@ -11,6 +11,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
 import asymmetry.gui.app as app_module
@@ -287,6 +288,32 @@ def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
         "splash-finish",
         "exec",
     ]
+
+
+def test_macos_app_icon_pixmap_uses_rounded_mask(
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    monkeypatch.setattr(app_module.sys, "platform", "darwin")
+    pixmap = QPixmap(64, 64)
+    pixmap.fill(QColor("#ffffff"))
+
+    rounded = app_module._macos_icon_pixmap(pixmap).toImage()
+
+    assert rounded.pixelColor(0, 0).alpha() == 0
+    assert rounded.pixelColor(32, 0).alpha() == 0
+    assert rounded.pixelColor(32, 6).alpha() == 255
+    assert rounded.pixelColor(32, 32).alpha() == 255
+
+
+def test_non_macos_app_icon_pixmap_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+    qapp: QApplication,
+) -> None:
+    monkeypatch.setattr(app_module.sys, "platform", "linux")
+    pixmap = QPixmap(64, 64)
+
+    assert app_module._macos_icon_pixmap(pixmap) is pixmap
 
 
 def test_mainwindow_share_single_fit_function_with_group(

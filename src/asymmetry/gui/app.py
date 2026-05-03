@@ -14,6 +14,7 @@ import sys
 
 QApplication = None
 MainWindow = None
+MACOS_ICON_TILE_SCALE = 0.82
 
 
 def _resource_file_path(filename: str) -> str:
@@ -70,17 +71,56 @@ def _icon_from_pixmap(pixmap):
     return None
 
 
+def _macos_icon_pixmap(pixmap):
+    """Return a rounded-square macOS icon pixmap from a source logo pixmap."""
+    if pixmap is None or sys.platform != "darwin":
+        return pixmap
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
+
+    size = max(pixmap.width(), pixmap.height())
+    if size <= 0:
+        return pixmap
+    tile_size = max(1, round(size * MACOS_ICON_TILE_SCALE))
+    tile_offset = (size - tile_size) // 2
+
+    icon = QPixmap(size, size)
+    icon.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(icon)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    radius = round(tile_size * 0.223)
+    path = QPainterPath()
+    path.addRoundedRect(tile_offset, tile_offset, tile_size, tile_size, radius, radius)
+    painter.setClipPath(path)
+    painter.fillPath(path, QColor("#ffffff"))
+    painter.drawPixmap(
+        tile_offset,
+        tile_offset,
+        pixmap.scaled(
+            tile_size,
+            tile_size,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ),
+    )
+    painter.end()
+
+    return icon
+
+
 def _load_app_icon(pixmap=None):
     """Load application icon from package resources.
 
     Returns None if icon cannot be loaded.
     """
-    icon = _icon_from_pixmap(pixmap)
+    icon = _icon_from_pixmap(_macos_icon_pixmap(pixmap))
     if icon is not None:
         return icon
 
     pixmap = _load_resource_pixmap("logo_256x256.png")
-    return _icon_from_pixmap(pixmap)
+    return _icon_from_pixmap(_macos_icon_pixmap(pixmap))
 
 
 def _create_splash_screen(app, logo=None):

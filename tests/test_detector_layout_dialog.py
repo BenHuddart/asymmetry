@@ -49,6 +49,12 @@ class TestConstruction:
         dlg = DetectorLayoutDialog(layout, groups=groups)
         assert dlg is not None
 
+    def test_creates_for_flame(self, qapp):
+        layout = get_instrument_layout("FLAME")
+        groups = {1: [1], 2: [2]}
+        dlg = DetectorLayoutDialog(layout, groups=groups)
+        assert dlg is not None
+
     def test_creates_with_empty_groups(self, qapp):
         layout = get_instrument_layout("HiFi")
         dlg = DetectorLayoutDialog(layout, groups={})
@@ -173,6 +179,17 @@ class TestPresetApplication:
         assert "Py Bottom" in names
         assert "Px Left" in names
         assert "Px Right" in names
+
+    def test_apply_flame_transverse(self, qapp):
+        layout = get_instrument_layout("FLAME")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        dlg._preset_combo.setCurrentText("Transverse")
+        dlg._on_apply_preset()
+        result = dlg.get_result()
+        assert set(result["groups"][1]) == {3, 5, 6}
+        assert set(result["groups"][2]) == {4, 7, 8}
+        assert result["group_names"][1] == "Right"
+        assert result["group_names"][2] == "Left"
 
     def test_apply_preset_populates_name_edits(self, qapp):
         layout = get_instrument_layout("HiFi")

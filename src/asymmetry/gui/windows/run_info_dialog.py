@@ -172,14 +172,13 @@ class RunInfoDialog(QDialog):
             (key, value, key, series_path) for key, value, series_path in flat
         ]
 
-        psi_temperature_log = self._dataset.metadata.get("psi_temperature_log", {})
-        rows.extend(
-            (key, value, key, series_path)
-            for key, value, series_path in self._flatten_fields(
-                "psi_temperature_log",
-                psi_temperature_log,
+        for metadata_key in ("psi_temperature_log", "musrroot_slow_control_log"):
+            log_info = self._dataset.metadata.get(metadata_key, {})
+            rows.extend(
+                (key, value, key, series_path)
+                for key, value, series_path in self._flatten_fields(metadata_key, log_info)
             )
-        )
+            rows.extend(self._log_channel_rows(metadata_key, log_info))
 
         for series_path, info in sorted(self._series_cache.items()):
             summary_key = f"nexus_time_series.{series_path}.mean"
@@ -248,17 +247,91 @@ class RunInfoDialog(QDialog):
 
     def _series_path_for_field(self, field_key: str) -> str | None:
         """Return a best-effort time-series path for a summary field."""
-        token_map = {
-            "temperature": ["temp", "sampletemp"],
-            "field": ["field", "magnet"],
-            "field_direction": ["field", "direction"],
-        }
-        tokens = token_map.get(field_key, [])
-        if not tokens:
+        scored = [
+            (score, series_path)
+            for series_path in self._series_cache
+            if (score := self._series_path_score(field_key, series_path)) > 0
+        ]
+        if not scored:
             return None
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return scored[0][1]
+
+    def _series_path_score(self, field_key: str, series_path: str) -> int:
+        """Score how well a time-series path represents a summary field."""
+        info = self._series_cache.get(series_path, {})
+        role = str(info.get("role", "")).strip().lower() if isinstance(info, Mapping) else ""
+        primary = bool(info.get("primary", False)) if isinstance(info, Mapping) else False
+        if field_key == "temperature" and role == "sample_temperature":
+            return 100 if primary else 70
+        if field_key == "field" and role == "sample_field":
+            return 80 if primary else 60
+
+        normalized = self._normalize_series_text(series_path)
+        compact = normalized.replace(" ", "")
+        if field_key == "temperature":
+            if not (
+                "temp" in compact
+                or "samtsvalue" in compact
+                or "dilt" in compact
+                or "variox" in compact
+                or "(k)" in series_path.lower()
+            ):
+                return 0
+            score = 10
+            if "sample" in normalized:
+                score += 20
+            if "sam ts value" in normalized:
+                score += 30
+            if "sample temperature" in normalized or "sampletemp" in compact:
+                score += 20
+            if "moderator" in normalized:
+                score -= 5
+            return score
+        if field_key == "field":
+            if "field" not in normalized and "magnet" not in normalized:
+                return 0
+            score = 10
+            if "sample" in normalized:
+                score += 10
+            return score
+        if field_key == "field_direction":
+            return 10 if "direction" in normalized else 0
+        return 0
+
+    def _normalize_series_text(self, text: str) -> str:
+        """Normalize series labels for matching summary rows to log traces."""
+        return " ".join(str(text).replace("_", " ").replace("/", " ").lower().split())
+
+    def _log_channel_rows(
+        self,
+        metadata_key: str,
+        log_info: Any,
+    ) -> list[tuple[str, str, str | None, str | None]]:
+        """Return provenance channel rows with direct log-plot actions."""
+        if not isinstance(log_info, Mapping):
+            return []
+        channels = log_info.get("channels", [])
+        if not isinstance(channels, list):
+            return []
+
+        rows: list[tuple[str, str, str | None, str | None]] = []
+        for channel in channels:
+            series_path = self._series_path_for_channel(str(channel))
+            if series_path is None:
+                continue
+            key = f"{metadata_key}.channel.{channel}"
+            rows.append((key, str(channel), key, series_path))
+        return rows
+
+    def _series_path_for_channel(self, channel: str) -> str | None:
+        """Find the time-series path associated with a named log channel."""
+        normalized_channel = self._normalize_series_text(channel)
+        compact_channel = normalized_channel.replace(" ", "")
         for series_path in sorted(self._series_cache.keys()):
-            lowered = series_path.lower()
-            if any(token in lowered for token in tokens):
+            normalized_path = self._normalize_series_text(series_path.rsplit("/", 1)[-1])
+            compact_path = normalized_path.replace(" ", "")
+            if normalized_path == normalized_channel or compact_path == compact_channel:
                 return series_path
         return None
 

@@ -12,6 +12,15 @@ ISIS Muon NeXus (.nxs, .nexus)
 
 Asymmetry supports ISIS muon NeXus files (legacy V1 and modern V2), including
 multi-period runs. Multi-period files return a list of ``MuonDataset`` values.
+Scalar sample temperature is read from the NeXus sample header. NXlog-style
+temperature groups with ``time`` plus ``value``/``values`` datasets are also
+summarized in Get Info; the Data Browser keeps the scalar header temperature
+unless **Options → Use temperature from log** or the **Temperature (K)**
+include checkbox is ticked, in which case the log mean is shown while that
+selection remains active. The Options menu choice is global and resets all
+loaded runs to the same behaviour. The Get Info checkbox affects only the
+target run, making it useful for per-dataset overrides. Log-derived temperature
+values are shown with red text in the Data Browser.
 
 For NeXus good-data windows, Asymmetry treats integer bin metadata as
 canonical (``first_good_bin``, ``last_good_bin``, and ``t0_bin``). When
@@ -66,19 +75,31 @@ the grouping in the same full Grouping dialog used for raw NeXus runs.
 Repeated labels are not collapsed: each histogram remains visible as its own
 group, with suffixes such as ``Forw 2`` added where needed.
 
+PSI labels define forward/backward along the beam direction, whereas
+Asymmetry's pair-asymmetry controls use forward/backward relative to the
+initial muon spin. For PSI data, the analysis forward/backward selections are
+therefore initialized with the beam-forward and beam-backward detector groups
+swapped. The detector layout editor still displays the PSI detector convention.
+
 If the explicit field entry is missing or zero but the PSI comment/title text
 contains a recognizable field such as ``LF 32G`` or ``Bz=150 G``, the GUI
-offers to apply that comment-derived value as the run field.
+offers to apply that comment-derived value as the run field. This prompt is
+available for PSI BIN/MDU and MusrRoot/LEM ROOT files.
 
 PSI-BIN temperature metadata has two sources. The scalar run temperature is
 read from the BIN header using the musrfit-compatible offsets. Optional
 temperature-log sidecars use Mantid's ``LoadPSIMuonBin`` convention: Asymmetry
 searches from the BIN file directory, to three directory levels below it, for
-a ``.mon`` file whose filename contains the run number. The ``.mon`` header
-date/title and backslash-delimited rows are parsed into plottable
-``nexus_time_series`` entries named like ``psi_temperature/Temp_<channel>``.
+all ``.mon`` files whose filename contains the run number. The ``.mon`` header
+date/title, equipment name, and backslash-delimited rows are parsed into
+plottable ``nexus_time_series`` entries named like
+``psi_temperature/Temp_<channel>`` for classic logs or
+``psi_temperature/<equipment>/<channel>`` for FLAME ``tlog`` files. When FLAME
+logs are present, ``flamesam0/SAM_ts`` is marked as the primary sample
+temperature to match the MusrRoot slow-control convention; ``flamedil0/DIL_T_mix``
+and ``variox0/Variox`` are retained as secondary sample-temperature traces.
 The Get Info window shows these logs in the summary/advanced tables and records
-the sidecar path plus ``Mantid LoadPSIMuonBin-compatible`` provenance in
+the sidecar paths plus ``Mantid LoadPSIMuonBin-compatible`` provenance in
 ``psi_temperature_log`` metadata.
 
 MusrRoot / LEM ROOT (.root)
@@ -103,6 +124,18 @@ than inventing a new interpretation. In particular:
 * ``DetectorInfo`` entries provide detector labels, histogram numbers,
   per-detector ``t0`` bins, and detector-specific good-bin ranges when the
   file supplies them.
+* MusrRoot slow-control histograms in ``histos/SCAnaModule`` are imported as
+  plottable ``nexus_time_series`` logs. In particular, ``hSampleTemperature``
+  is summarized as an average temperature in Get Info while the scalar
+  ``RunInfo/Sample Temperature`` remains the default Data Browser value until
+  **Options → Use temperature from log** or the **Temperature (K)** include
+  checkbox is ticked. The Options menu choice applies to every loaded run,
+  while the Get Info checkbox overrides only that run. Log-derived temperature
+  values are shown with red text. FLAME ROOT files may use EPICS-style sensor
+  names such as ``SAM_ts_value`` instead of a literal
+  ``hSampleTemperature`` histogram; Asymmetry follows the ``Sens=...`` pointer
+  in ``RunInfo/Sample Temperature`` so the Get Info temperature row still opens
+  the corresponding log plot.
 
 Legacy LEM ROOT files without a MusrRoot ``RunHeader`` are supported only when
 their ``RunInfo`` and histogram objects are readable through ``uproot``. The
@@ -144,7 +177,9 @@ does not invent format rules:
 * Background correction follows musrfit ``PRunAsymmetry``: group
   forward/backward histograms, subtract fixed values or mean background from
   inclusive bin ranges, then calculate asymmetry. If no ranges are supplied,
-  the fallback range is ``0.1 * t0`` to ``0.6 * t0``.
+  the fallback range is ``0.1 * t0`` to ``0.6 * t0``. The corrected-count
+  uncertainty follows musrfit-style propagation, while Asymmetry retains its
+  standard alpha convention with ``alpha`` applied to the backward group.
 * File-based deadtime correction uses the non-paralyzable formula implemented
   by musrfit ``PRunBase::DeadTimeCorrection`` and Mantid
   ``ApplyDeadTimeCorr``:

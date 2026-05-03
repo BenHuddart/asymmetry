@@ -63,10 +63,11 @@ Combine detector histograms into logical groups:
    forward_counts = apply_grouping(histograms, grouping["forward"])
    backward_counts = apply_grouping(histograms, grouping["backward"])
 
-In the GUI, grouping is configured from the Grouping dialog. For supported ISIS
-instruments, the **Detector Layout...** editor provides an interactive detector
-schematic, preset groupings, and named group slots that are saved with project
-state and ``.grp`` files.
+In the GUI, grouping is configured from the Grouping dialog. For supported
+instrument layouts, including ISIS HiFi/MuSR/EMU and PSI FLAME, the
+**Detector Layout...** editor provides an interactive detector schematic,
+preset groupings, and named group slots that are saved with project state and
+``.grp`` files.
 
 For detector-by-detector instrument layouts and grouping workflows, see
 :doc:`detector_grouping`.
@@ -97,7 +98,20 @@ Asymmetry uses the standard pair formula:
 
    A(t) = \frac{F(t) - \alpha B(t)}{F(t) + \alpha B(t)}
 
-where :math:`F` and :math:`B` are grouped forward/backward counts.
+where :math:`F` and :math:`B` are grouped forward/backward counts. Asymmetry's
+alpha convention applies :math:`\alpha` to the backward group. This convention
+is retained consistently in the GUI, loaders, grouping tools, and fitting
+inputs, even when comparing against packages that place the balance factor on
+the forward group.
+
+In the asymmetry expression, **Forward** and **Backward** are defined relative
+to the initial muon spin direction. PSI detector labels and FLAME detector
+layout presets use the PSI instrument convention, where forward/backward are
+defined relative to the beam direction. For PSI data, the Grouping dialog
+therefore swaps the analysis dropdown defaults: the analysis **Forward Group**
+is the detector-layout **Backward** group, and the analysis **Backward Group**
+is the detector-layout **Forward** group. ISIS data keep the instrument
+forward/backward convention already used by their detector layouts.
 
 Asymmetry and uncertainty handling follows Mantid-style behavior:
 
@@ -112,6 +126,14 @@ Asymmetry and uncertainty handling follows Mantid-style behavior:
 
 In low-count late-time tails, this naturally produces large fluctuations and
 large uncertainties.
+
+For musrfit-style PSI background correction, the background is subtracted from
+the grouped count histograms before this pair formula is evaluated. The
+asymmetry value still uses the same alpha convention above, but uncertainty is
+propagated from the corrected count histograms using musrfit-style count
+errors: fixed-background subtraction keeps Poisson errors from the raw counts,
+while estimated-background subtraction adds the uncertainty of the estimated
+constant background before propagating through the pair formula.
 
 In vector polarization mode, axis-specific alpha values (``alpha_x``,
 ``alpha_y``, ``alpha_z``) are used for ``P_x``, ``P_y``, and ``P_z``

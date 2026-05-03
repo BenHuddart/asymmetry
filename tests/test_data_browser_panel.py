@@ -12,6 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QItemSelectionModel, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
 
@@ -419,6 +420,111 @@ def test_temperature_include_replaces_browser_value_with_log_mean(qapp: QApplica
     assert panel._table.item(0, 2).text() == "50.00"
 
 
+def test_nexus_temperature_include_replaces_browser_value_with_log_mean(
+    qapp: QApplication,
+) -> None:
+    panel = DataBrowserPanel()
+    ds = _dataset(305)
+    ds.metadata["temperature"] = 12.5
+    ds.metadata["nexus_time_series"] = {
+        "entry/sample/Temp_Sample": {
+            "units": "K",
+            "time": [0.0, 10.0, 20.0],
+            "values": [12.0, 12.5, 13.0],
+            "mean": 12.5,
+            "min": 12.0,
+            "max": 13.0,
+        }
+    }
+    panel.add_dataset(ds)
+
+    assert panel._table.item(0, 2).text() == "12.50"
+
+    panel.add_extra_column("temperature")
+
+    header_labels = [
+        panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())
+    ]
+    assert header_labels == list(DataBrowserPanel._COLUMNS)
+    assert panel.get_extra_columns() == ["temperature"]
+    assert panel._table.item(0, 2).text() == "12.50"
+
+    ds.metadata["nexus_time_series"]["entry/sample/Temp_Sample"]["mean"] = 12.75
+    panel._rebuild_table()
+    assert panel._table.item(0, 2).text() == "12.75"
+
+    panel.remove_extra_column("temperature")
+
+    assert panel._table.item(0, 2).text() == "12.50"
+
+
+def test_temperature_log_global_toggle_and_per_dataset_overrides(
+    qapp: QApplication,
+) -> None:
+    panel = DataBrowserPanel()
+    ds1 = _dataset(306)
+    ds1.metadata["temperature"] = 50.0
+    ds1.metadata["nexus_time_series"] = {
+        "psi_temperature/Temp_Sample": {
+            "units": "K",
+            "time": [0.0, 10.0],
+            "values": [4.8, 5.2],
+            "mean": 5.0,
+            "min": 4.8,
+            "max": 5.2,
+        }
+    }
+    ds2 = _dataset(307)
+    ds2.metadata["temperature"] = 60.0
+    ds2.metadata["nexus_time_series"] = {
+        "musrroot_slow_control/Sample Temperature": {
+            "units": "K",
+            "time": [0.0, 10.0],
+            "values": [6.8, 7.2],
+            "mean": 7.0,
+            "min": 6.8,
+            "max": 7.2,
+        }
+    }
+    panel.add_dataset(ds1)
+    panel.add_dataset(ds2)
+
+    log_foreground = QColor(176, 36, 36)
+    assert panel._table.item(0, 2).text() == "50.00"
+    assert panel._table.item(1, 2).text() == "60.00"
+    assert panel._table.item(0, 2).foreground().style() == Qt.BrushStyle.NoBrush
+    assert panel._table.item(1, 2).foreground().style() == Qt.BrushStyle.NoBrush
+
+    panel.set_use_temperature_from_log(True)
+
+    assert panel._table.item(0, 2).text() == "5.00"
+    assert panel._table.item(1, 2).text() == "7.00"
+    assert panel._table.item(0, 2).foreground().color() == log_foreground
+    assert panel._table.item(1, 2).foreground().color() == log_foreground
+
+    panel.set_dataset_temperature_from_log(306, False)
+
+    assert panel._table.item(0, 2).text() == "50.00"
+    assert panel._table.item(1, 2).text() == "7.00"
+    assert panel._table.item(0, 2).foreground().style() == Qt.BrushStyle.NoBrush
+    assert panel._table.item(1, 2).foreground().color() == log_foreground
+
+    panel.set_use_temperature_from_log(False)
+
+    assert panel._table.item(0, 2).text() == "50.00"
+    assert panel._table.item(1, 2).text() == "60.00"
+    assert panel._table.item(0, 2).foreground().style() == Qt.BrushStyle.NoBrush
+    assert panel._table.item(1, 2).foreground().style() == Qt.BrushStyle.NoBrush
+
+    panel.set_dataset_temperature_from_log(307, True)
+
+    assert panel._table.item(0, 2).text() == "50.00"
+    assert panel._table.item(1, 2).text() == "7.00"
+    assert panel._table.item(0, 2).foreground().style() == Qt.BrushStyle.NoBrush
+    assert panel._table.item(1, 2).foreground().color() == log_foreground
+    assert panel.get_extra_columns() == []
+
+
 def test_coadd_inserts_at_first_selected_position(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     d1 = _dataset_with_run(61)
@@ -631,6 +737,27 @@ def test_shift_click_selects_full_range_from_anchor(qapp: QApplication) -> None:
 
     selected = panel.get_selected_datasets()
     assert [dataset.run_number for dataset in selected] == [82, 83, 84, 85]
+
+
+def test_shift_click_range_emits_single_selection_change(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    for run_number in range(700, 760):
+        panel.add_dataset(_dataset(run_number))
+
+    panel.show()
+    qapp.processEvents()
+
+    _click_row(panel, 0)
+    qapp.processEvents()
+
+    emissions = {"count": 0}
+    panel.selection_changed.connect(lambda: emissions.__setitem__("count", emissions["count"] + 1))
+
+    _click_row(panel, 59, Qt.KeyboardModifier.ShiftModifier)
+    qapp.processEvents()
+
+    assert emissions["count"] == 1
+    assert len(panel.get_selected_datasets()) == 60
 
 
 def test_shift_click_uses_latest_plain_click_as_anchor(qapp: QApplication) -> None:

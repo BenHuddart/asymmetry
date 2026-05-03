@@ -88,6 +88,105 @@ def _psi_dataset_with_temperature_log() -> MuonDataset:
     return ds
 
 
+def _root_dataset_with_temperature_log() -> MuonDataset:
+    ds = _dataset()
+    ds.metadata["facility"] = "PSI"
+    ds.metadata["root_format"] = "musr-root-directory"
+    ds.metadata["temperature"] = 12.5
+    ds.metadata["nexus_time_series"] = {
+        "musrroot_slow_control/Sample Temperature": {
+            "units": "K",
+            "time": [10.0, 30.0],
+            "values": [12.1, 12.3],
+            "mean": 12.2,
+            "min": 12.1,
+            "max": 12.3,
+            "source_file": "/tmp/lem.root",
+            "reader_provenance": "MusrRoot slow-control histogram",
+        }
+    }
+    ds.metadata["musrroot_slow_control_log"] = {
+        "source_file": "/tmp/lem.root",
+        "source_format": "MusrRoot SCAnaModule",
+        "reader_provenance": "MusrRoot slow-control histogram",
+        "channels": ["Sample Temperature"],
+    }
+    return ds
+
+
+def _root_dataset_with_multiple_temperature_logs() -> MuonDataset:
+    ds = _dataset()
+    ds.metadata["facility"] = "PSI"
+    ds.metadata["root_format"] = "musr-root-folder"
+    ds.metadata["temperature"] = 45.0
+    ds.metadata["nexus_time_series"] = {
+        "musrroot_slow_control/Moderator Temperature Run lem15 2994": {
+            "units": "K",
+            "time": [0.0, 1.0],
+            "values": [39.0, 41.0],
+            "mean": 40.0,
+            "min": 39.0,
+            "max": 41.0,
+        },
+        "musrroot_slow_control/Sample Temperature Run lem15 2994": {
+            "units": "K",
+            "time": [0.0, 1.0],
+            "values": [44.8, 45.2],
+            "mean": 45.0,
+            "min": 44.8,
+            "max": 45.2,
+        },
+    }
+    ds.metadata["musrroot_slow_control_log"] = {
+        "source_file": "/tmp/lem15_his_2994.root",
+        "source_format": "MusrRoot SCAnaModule",
+        "reader_provenance": "MusrRoot slow-control histogram",
+        "channels": [
+            "Moderator Temperature Run lem15 2994",
+            "Sample Temperature Run lem15 2994",
+        ],
+    }
+    return ds
+
+
+def _root_dataset_with_sensor_named_temperature_log() -> MuonDataset:
+    ds = _dataset()
+    ds.metadata["facility"] = "PSI"
+    ds.metadata["root_format"] = "musr-root-folder"
+    ds.metadata["temperature"] = 10.4
+    ds.metadata["nexus_time_series"] = {
+        "musrroot_slow_control/flamedil0 DIL T mix value": {
+            "units": "K",
+            "time": [0.0, 30.0],
+            "values": [11.2, 11.0],
+            "mean": 11.1,
+            "min": 11.0,
+            "max": 11.2,
+            "role": "sample_temperature",
+            "sensor": "DIL_T_mix_value",
+            "primary": False,
+        },
+        "musrroot_slow_control/flamesam0 SAM ts value": {
+            "units": "K",
+            "time": [0.0, 30.0],
+            "values": [10.5, 10.3],
+            "mean": 10.4,
+            "min": 10.3,
+            "max": 10.5,
+            "role": "sample_temperature",
+            "sensor": "SAM_ts_value",
+            "primary": True,
+        },
+    }
+    ds.metadata["musrroot_slow_control_log"] = {
+        "source_file": "/tmp/flame.root",
+        "source_format": "MusrRoot SCAnaModule",
+        "reader_provenance": "MusrRoot slow-control histogram",
+        "channels": ["flamedil0 DIL T mix value", "flamesam0 SAM ts value"],
+    }
+    return ds
+
+
 def _row_for_field(table, field_name: str) -> int:
     for row in range(table.rowCount()):
         item = table.item(row, 1)
@@ -146,6 +245,49 @@ def test_summary_table_shows_plot_button_for_psi_temperature_log(qapp: QApplicat
     value_item = dialog._summary_table.item(temp_row, 2)
     assert value_item is not None
     assert float(value_item.text()) == pytest.approx(4.9953)
+    plot_button = dialog._summary_table.cellWidget(temp_row, 3)
+    assert plot_button is not None
+    dialog.close()
+
+
+def test_summary_table_shows_plot_button_for_musrroot_temperature_log(qapp: QApplication) -> None:
+    dialog = RunInfoDialog(_root_dataset_with_temperature_log())
+
+    temp_row = _row_for_field(dialog._summary_table, "Temperature (K)")
+    assert temp_row >= 0
+    value_item = dialog._summary_table.item(temp_row, 2)
+    assert value_item is not None
+    assert float(value_item.text()) == pytest.approx(12.2)
+    plot_button = dialog._summary_table.cellWidget(temp_row, 3)
+    assert plot_button is not None
+    dialog.close()
+
+
+def test_summary_table_prefers_musrroot_sample_temperature_log(
+    qapp: QApplication,
+) -> None:
+    dialog = RunInfoDialog(_root_dataset_with_multiple_temperature_logs())
+
+    temp_row = _row_for_field(dialog._summary_table, "Temperature (K)")
+    assert temp_row >= 0
+    value_item = dialog._summary_table.item(temp_row, 2)
+    assert value_item is not None
+    assert float(value_item.text()) == pytest.approx(45.0)
+    plot_button = dialog._summary_table.cellWidget(temp_row, 3)
+    assert plot_button is not None
+    dialog.close()
+
+
+def test_summary_table_uses_musrroot_sensor_role_for_temperature_log(
+    qapp: QApplication,
+) -> None:
+    dialog = RunInfoDialog(_root_dataset_with_sensor_named_temperature_log())
+
+    temp_row = _row_for_field(dialog._summary_table, "Temperature (K)")
+    assert temp_row >= 0
+    value_item = dialog._summary_table.item(temp_row, 2)
+    assert value_item is not None
+    assert float(value_item.text()) == pytest.approx(10.4)
     plot_button = dialog._summary_table.cellWidget(temp_row, 3)
     assert plot_button is not None
     dialog.close()
@@ -248,6 +390,39 @@ def test_advanced_dialog_shows_psi_temperature_log_provenance(qapp: QApplication
     )
     assert series_row >= 0
     assert advanced._table.cellWidget(series_row, 3) is not None
+
+    if dialog._advanced_dialog is not None:
+        dialog._advanced_dialog.close()
+    dialog.close()
+
+
+def test_advanced_dialog_shows_musrroot_slow_control_log_provenance(
+    qapp: QApplication,
+) -> None:
+    dialog = RunInfoDialog(_root_dataset_with_temperature_log())
+    dialog._open_advanced_dialog()
+    advanced = dialog._advanced_dialog
+    assert advanced is not None
+
+    source_row = _row_containing_field(advanced._table, "musrroot_slow_control_log.source_file")
+    assert source_row >= 0
+    value_item = advanced._table.item(source_row, 2)
+    assert value_item is not None
+    assert value_item.text() == "/tmp/lem.root"
+
+    series_row = _row_containing_field(
+        advanced._table,
+        "nexus_time_series.musrroot_slow_control/Sample Temperature.mean",
+    )
+    assert series_row >= 0
+    assert advanced._table.cellWidget(series_row, 3) is not None
+
+    channel_row = _row_containing_field(
+        advanced._table,
+        "musrroot_slow_control_log.channel.Sample Temperature",
+    )
+    assert channel_row >= 0
+    assert advanced._table.cellWidget(channel_row, 3) is not None
 
     if dialog._advanced_dialog is not None:
         dialog._advanced_dialog.close()

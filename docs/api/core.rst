@@ -57,6 +57,11 @@ Instrument Geometry
    :undoc-members:
    :show-inheritance:
 
+.. autoclass:: asymmetry.core.instrument.ReferenceArrow
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. autoclass:: asymmetry.core.instrument.InstrumentLayout
    :members:
    :undoc-members:

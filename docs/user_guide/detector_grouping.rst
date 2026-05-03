@@ -4,9 +4,9 @@ Detector Grouping and Layout
 Overview
 --------
 
-Asymmetry supports detector grouping for HiFi, MuSR, and EMU instruments.
-Grouping is configured from the Grouping dialog and can be edited graphically
-with the Detector Layout editor.
+Asymmetry supports detector grouping for HiFi, MuSR, EMU, and PSI FLAME
+instruments. Grouping is configured from the Grouping dialog and can be edited
+graphically with the Detector Layout editor.
 
 The grouping payload stores:
 
@@ -31,9 +31,11 @@ PSI BIN/MDU files use the full Grouping dialog, matching the interaction model
 used for raw ISIS NeXus files. Initial group names and forward/backward
 defaults are derived from PSI detector labels where the file provides them
 (``Forw``/``Back`` in BIN files, and labels such as ``F1``/``B1`` in MDU
-files). This behavior follows the detector metadata exposed by musrfit's PSI
-raw-data reader, with Mantid's PSI-BIN loader used as a cross-check for BIN
-layout details.
+files). For PSI FLAME BIN files, filenames, detector labels, or metadata
+containing ``FLAME`` select the FLAME detector layout automatically; this
+includes PSI instrument strings such as ``LMU_BULKMUSR_FLAME``. This behavior
+follows the detector metadata exposed by musrfit's PSI raw-data reader, with
+Mantid's PSI-BIN loader used as a cross-check for BIN layout details.
 When labels repeat, Asymmetry keeps one visible group per histogram and makes
 the displayed names unique with numeric suffixes.
 
@@ -41,6 +43,15 @@ PSI data can carry a separate ``t0`` for each detector. Asymmetry stores these
 values as ``detector_t0_bins`` and aligns each detector histogram to its own
 ``t0`` before summing groups. This avoids shifting all PSI spectra through a
 single global time-zero before grouping.
+
+PSI detector names use the PSI instrument convention: ``Forward`` and
+``Backward`` are measured along the beam direction. Asymmetry's pair-asymmetry
+formula uses forward/backward relative to the initial muon spin direction.
+For PSI runs, the detector layout editor keeps the PSI detector convention,
+but the main Grouping dialog swaps the analysis dropdown defaults. For a
+longitudinal PSI/FLAME layout, **Forward Group** is set to ``Group 2:
+Backward`` and **Backward Group** is set to ``Group 1: Forward``. ISIS runs are
+not swapped.
 
 ROOT Grouping
 -------------
@@ -50,6 +61,10 @@ follows musrfit's ``PRunDataHandler::ReadRootFile`` and reads detector labels
 from ``DetectorInfo`` when available, falling back to the ROOT histogram title
 or ``hDecay`` name. As with PSI BIN/MDU files, repeated detector labels are
 kept as separate visible groups with numeric suffixes.
+
+ROOT files with ``RunInfo/Instrument`` set to ``FLAME`` are opened with the
+FLAME detector layout available by default. If that metadata field is absent,
+Asymmetry also recognises ``flame`` in the source filename.
 
 ROOT ``DetectorInfo`` entries can provide detector-specific ``Time Zero Bin``,
 ``First Good Bin``, and ``Last Good Bin`` values. Asymmetry stores these in the
@@ -93,6 +108,15 @@ asymmetry is calculated. If grouping metadata provide fixed forward/backward
 background values, those values are subtracted. Otherwise Asymmetry estimates
 the background as the mean count in an inclusive bin range. If no range is
 provided, it uses musrfit's fallback range from ``0.1 * t0`` to ``0.6 * t0``.
+For corrected histograms, Asymmetry propagates musrfit-style count
+uncertainties through its standard pair formula, with ``alpha`` multiplying the
+backward group.
+
+Background subtraction can make late-time corrected forward/backward sums very
+small or negative. Those bins may therefore produce asymmetries at or beyond
+``+/-100%``. The plot keeps such low-confidence PSI points visible in gray,
+matching the low-count visual treatment used for raw grouped data, and excludes
+them from automatic Y-axis scaling.
 
 The correction is off by default and disabled for ISIS/NeXus data, where
 deadtime correction is the file-metadata correction path. When enabled for PSI
@@ -143,6 +167,21 @@ EMU
    :alt: EMU detector schematic generated from the program layout model.
 
    EMU schematic matching the in-app detector arrangement.
+
+PSI FLAME
+~~~~~~~~~
+
+.. figure:: images/flame-program-schematic.png
+   :width: 90%
+   :align: center
+   :alt: PSI FLAME detector schematic generated from the program layout model.
+
+   PSI FLAME top-view detector layout. The beam and main magnetic field are
+   drawn along +z, and the initial muon spin points toward the Backward
+   detector. FLAME detectors are rectangular plates: 1 Forward, 2 Backward,
+   3 Right, 4 Left, 5 R_F, 6 R_B, 7 L_F, and 8 L_B. The Left and Right banks
+   use equal-height rectangles with the central detector drawn wider than the
+   front/back side detectors.
 
 Related Topics
 --------------

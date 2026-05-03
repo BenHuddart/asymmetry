@@ -47,6 +47,7 @@ from asymmetry.core.transform import (
     apply_grouping_aligned,
     common_t0_for_groups,
     compute_asymmetry,
+    compute_asymmetry_with_count_errors,
     has_file_deadtime,
     prepare_histograms_with_deadtime,
     supports_background_correction,
@@ -78,6 +79,8 @@ def _load_window_icon() -> QIcon | None:
 
     Returns None if icon cannot be loaded.
     """
+    from asymmetry.gui.app import _icon_from_pixmap, _load_resource_pixmap, _macos_icon_pixmap
+
     # Try importlib.resources (preferred for installed packages)
     try:
         from importlib.resources import files
@@ -86,19 +89,24 @@ def _load_window_icon() -> QIcon | None:
         if logo.is_file():
             pixmap = QPixmap()
             if pixmap.loadFromData(logo.read_bytes(), "PNG"):
-                icon = QIcon(pixmap)
-                if not icon.isNull():
+                icon = _icon_from_pixmap(_macos_icon_pixmap(pixmap))
+                if icon is not None and not icon.isNull():
                     return icon
     except (ImportError, ModuleNotFoundError, TypeError, AttributeError, OSError):
         pass
+
+    icon = _icon_from_pixmap(_macos_icon_pixmap(_load_resource_pixmap("logo_256x256.png")))
+    if icon is not None:
+        return icon
 
     # Fallback: try direct path (for development)
     try:
         resources_dir = Path(__file__).parent.parent / "resources"
         icon_path = resources_dir / "logo_256x256.png"
         if icon_path.exists():
-            icon = QIcon(str(icon_path))
-            if not icon.isNull():
+            pixmap = QPixmap(str(icon_path))
+            icon = _icon_from_pixmap(_macos_icon_pixmap(pixmap))
+            if icon is not None and not icon.isNull():
                 return icon
     except (OSError, ValueError):
         pass
@@ -177,7 +185,7 @@ class MainWindow(QMainWindow):
     # ── menus ──────────────────────────────────────────────────────────
 
     def _setup_menus(self) -> None:
-        """Build the application menu bar with File, Analysis, View, and Help menus."""
+        """Build the application menu bar."""
         mb = self.menuBar()
 
         # File
@@ -208,6 +216,14 @@ class MainWindow(QMainWindow):
         # View
         view_menu = mb.addMenu("&View")
         view_menu.addAction("Reset layout", self._reset_layout)
+
+        # Options
+        options_menu = mb.addMenu("&Options")
+        self._use_temperature_from_log_action = options_menu.addAction("Use temperature from log")
+        self._use_temperature_from_log_action.setCheckable(True)
+        self._use_temperature_from_log_action.toggled.connect(
+            self._on_use_temperature_from_log_toggled
+        )
 
         # Help
         help_menu = mb.addMenu("&Help")
@@ -1053,19 +1069,57 @@ class MainWindow(QMainWindow):
         dialog = RunInfoDialog(
             dataset,
             self,
-            included_fields=set(self._data_browser.get_extra_columns()),
+            included_fields=self._run_info_included_fields_for_dataset(run_number),
         )
         dialog.set_browser_field_inclusion_requested.connect(
-            self._on_run_info_field_inclusion_changed
+            lambda field_key, include, rn=run_number: self._on_run_info_field_inclusion_changed(
+                field_key,
+                include,
+                rn,
+            )
         )
         dialog.exec()
 
-    def _on_run_info_field_inclusion_changed(self, field_key: str, include: bool) -> None:
+    def _run_info_included_fields_for_dataset(self, run_number: int) -> set[str]:
+        """Return Run Info checkbox state for a specific dataset."""
+        included = set(self._data_browser.get_extra_columns())
+        if self._data_browser.dataset_uses_temperature_from_log(run_number):
+            included.add("temperature")
+        else:
+            included.discard("temperature")
+        return included
+
+    def _on_run_info_field_inclusion_changed(
+        self,
+        field_key: str,
+        include: bool,
+        run_number: int | None = None,
+    ) -> None:
         """Apply include/exclude requests from the Run Info dialog."""
+        if field_key == "temperature" and run_number is not None:
+            self._data_browser.set_dataset_temperature_from_log(run_number, include)
+            return
         if include:
             self._data_browser.add_extra_column(field_key)
         else:
             self._data_browser.remove_extra_column(field_key)
+        if field_key == "temperature":
+            self._sync_temperature_log_option_action()
+
+    def _on_use_temperature_from_log_toggled(self, checked: bool) -> None:
+        """Toggle Data Browser temperature display between header and log mean."""
+        if not hasattr(self, "_data_browser"):
+            return
+        self._data_browser.set_use_temperature_from_log(checked)
+
+    def _sync_temperature_log_option_action(self) -> None:
+        """Keep the Options menu temperature action aligned with browser state."""
+        action = getattr(self, "_use_temperature_from_log_action", None)
+        if action is None or not hasattr(self, "_data_browser"):
+            return
+        action.blockSignals(True)
+        action.setChecked(self._data_browser.use_temperature_from_log())
+        action.blockSignals(False)
 
     def _on_grouping_requested(self, run_number: int) -> None:
         """Open shared grouping dialog focused on a selected run."""
@@ -1713,6 +1767,7 @@ class MainWindow(QMainWindow):
         forward = forward[:n_grouped]
         backward = backward[:n_grouped]
 
+        bkg_result = None
         if use_background:
             bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
             facility = str(
@@ -1752,7 +1807,21 @@ class MainWindow(QMainWindow):
 
         run_alpha = alpha if alpha > 0 else 1.0
 
-        asymmetry, error = compute_asymmetry(forward, backward, alpha=run_alpha)
+        if (
+            bkg_result is not None
+            and bkg_result.applied
+            and bkg_result.forward_error is not None
+            and bkg_result.backward_error is not None
+        ):
+            asymmetry, error = compute_asymmetry_with_count_errors(
+                forward,
+                backward,
+                bkg_result.forward_error,
+                bkg_result.backward_error,
+                alpha=run_alpha,
+            )
+        else:
+            asymmetry, error = compute_asymmetry(forward, backward, alpha=run_alpha)
         asymmetry = asymmetry * 100.0
         error = error * 100.0
         if run.histograms:
@@ -2346,8 +2415,7 @@ class MainWindow(QMainWindow):
             self._refresh_vector_axis_selector()
             self._update_fit_block_state()
             if self._overlay_enabled():
-                run_labels = ", ".join(str(ds.run_label) for ds in selected)
-                self.statusBar().showMessage(f"Viewing runs {run_labels}")
+                self.statusBar().showMessage(self._selection_status_message(selected))
             elif self._current_dataset is not None:
                 self.statusBar().showMessage(f"Viewing run {self._current_dataset.run_label}")
         elif self._current_dataset is not None:
@@ -2368,6 +2436,14 @@ class MainWindow(QMainWindow):
             self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
 
         self._fit_panel.set_datasets(analysis_datasets)
+
+    def _selection_status_message(self, selected: list) -> str:
+        """Return a compact status message for multi-run selections."""
+        run_labels = [str(ds.run_label) for ds in selected]
+        if len(run_labels) <= 12:
+            return f"Viewing runs {', '.join(run_labels)}"
+        preview = ", ".join(run_labels[:12])
+        return f"Viewing {len(run_labels)} runs: {preview}, ..."
 
     def _get_fit_dataset(self, dataset):
         """Return analysis dataset restricted to the active fit range."""
@@ -2691,6 +2767,7 @@ class MainWindow(QMainWindow):
                 combined_id_map.get(rn, rn) for rn in browser_state["selected_run_numbers"]
             ]
         self._data_browser.restore_state(browser_state)
+        self._sync_temperature_log_option_action()
 
         # ── restore plot state ─────────────────────────────────────────
         plot_state = state.get("plot_state", {})
@@ -2805,6 +2882,7 @@ class MainWindow(QMainWindow):
             self._global_parameter_fit_window.close()
             self._global_parameter_fit_window = None
         self._update_global_parameter_fit_menu_style(False)
+        self._sync_temperature_log_option_action()
 
     def _add_recent_project(self, path: str) -> None:
         """Add *path* to the front of the recent-projects list in QSettings."""

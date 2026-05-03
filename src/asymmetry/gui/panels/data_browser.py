@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass
 
 import numpy as np
-from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -33,6 +33,7 @@ from asymmetry.core.data.dataset import MuonDataset, Run
 _GROUP_TEMP_ABS_TOL_K = 5e-3
 _GROUP_TEMP_REL_TOL = 2e-3
 _GROUP_FIELD_ABS_TOL_G = 1e-3
+_LOG_TEMPERATURE_FOREGROUND = QColor(176, 36, 36)
 _GROUP_FIELD_REL_TOL = 1e-4
 
 
@@ -219,6 +220,8 @@ class DataBrowserPanel(QWidget):
 
         self._column_filters: dict[int, set[str]] = {}
         self._extra_columns: list[str] = []
+        self._use_temperature_from_log = False
+        self._temperature_from_log_overrides: dict[int, bool] = {}
         self._current_sort_column: int = -1
         self._current_sort_order: Qt.SortOrder = Qt.SortOrder.AscendingOrder
         self._selection_anchor_row: int | None = None
@@ -545,6 +548,8 @@ class DataBrowserPanel(QWidget):
         temp = self._temperature_for_display(dataset)
         temp_item = NumericTableWidgetItem(f"{temp:.2f}")
         temp_item.setFlags(temp_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        if self._temperature_uses_log_for_display(dataset):
+            temp_item.setForeground(_LOG_TEMPERATURE_FOREGROUND)
         self._table.setItem(row, 2, temp_item)
 
         field = float(meta.get("field", 0.0))
@@ -583,19 +588,24 @@ class DataBrowserPanel(QWidget):
         selection_model = self._table.selectionModel()
         if selection_model is None:
             return
-        self._table.clearSelection()
-        for row in range(self._table.rowCount()):
-            item = self._table.item(row, 0)
-            if item is None:
-                continue
-            key = item.data(self._GROUP_ROLE)
-            if key in wanted:
-                idx = self._table.model().index(row, 0)
-                selection_model.select(
-                    idx,
-                    QItemSelectionModel.SelectionFlag.Select
-                    | QItemSelectionModel.SelectionFlag.Rows,
-                )
+        selected_any = False
+        with QSignalBlocker(self._table):
+            self._table.clearSelection()
+            for row in range(self._table.rowCount()):
+                item = self._table.item(row, 0)
+                if item is None:
+                    continue
+                key = item.data(self._GROUP_ROLE)
+                if key in wanted:
+                    idx = self._table.model().index(row, 0)
+                    selection_model.select(
+                        idx,
+                        QItemSelectionModel.SelectionFlag.Select
+                        | QItemSelectionModel.SelectionFlag.Rows,
+                    )
+                    selected_any = True
+        if selected_any:
+            self._on_selection_changed()
 
     def _is_row_visible_for_selection(self, row: int) -> bool:
         return 0 <= row < self._table.rowCount() and not self._table.isRowHidden(row)
@@ -647,17 +657,22 @@ class DataBrowserPanel(QWidget):
         if not visible_rows:
             return False
 
-        for index, row in enumerate(visible_rows):
-            row_index = self._table.model().index(row, 0)
-            flags = QItemSelectionModel.SelectionFlag.Rows
-            if add_to_selection or index > 0:
-                flags |= QItemSelectionModel.SelectionFlag.Select
-            else:
-                flags |= QItemSelectionModel.SelectionFlag.ClearAndSelect
-            selection_model.select(row_index, flags)
+        with QSignalBlocker(self._table):
+            for index, row in enumerate(visible_rows):
+                row_index = self._table.model().index(row, 0)
+                flags = QItemSelectionModel.SelectionFlag.Rows
+                if add_to_selection or index > 0:
+                    flags |= QItemSelectionModel.SelectionFlag.Select
+                else:
+                    flags |= QItemSelectionModel.SelectionFlag.ClearAndSelect
+                selection_model.select(row_index, flags)
 
-        current_index = self._table.model().index(target_row, 0)
-        selection_model.setCurrentIndex(current_index, QItemSelectionModel.SelectionFlag.NoUpdate)
+            current_index = self._table.model().index(target_row, 0)
+            selection_model.setCurrentIndex(
+                current_index,
+                QItemSelectionModel.SelectionFlag.NoUpdate,
+            )
+        self._on_selection_changed()
         return True
 
     def _resize_columns_to_content(self) -> None:
@@ -701,6 +716,9 @@ class DataBrowserPanel(QWidget):
     def add_extra_column(self, field_key: str) -> None:
         """Add a metadata-backed dynamic column to the browser table."""
         key = str(field_key).strip()
+        if key == "temperature":
+            self.set_use_temperature_from_log(True)
+            return
         if not key or key in self._extra_columns:
             return
         self._extra_columns.append(key)
@@ -710,6 +728,9 @@ class DataBrowserPanel(QWidget):
 
     def remove_extra_column(self, field_key: str) -> None:
         """Remove a dynamic metadata column from the browser table."""
+        if field_key == "temperature":
+            self.set_use_temperature_from_log(False)
+            return
         if field_key not in self._extra_columns:
             return
         self._extra_columns = [key for key in self._extra_columns if key != field_key]
@@ -719,7 +740,45 @@ class DataBrowserPanel(QWidget):
 
     def get_extra_columns(self) -> list[str]:
         """Return the current metadata-backed extra columns."""
-        return list(self._extra_columns)
+        columns = list(self._extra_columns)
+        if self._use_temperature_from_log:
+            columns.append("temperature")
+        return columns
+
+    def set_use_temperature_from_log(self, enabled: bool) -> None:
+        """Set the global temperature-from-log display option."""
+        enabled = bool(enabled)
+        changed = self._use_temperature_from_log != enabled or bool(
+            self._temperature_from_log_overrides
+        )
+        self._use_temperature_from_log = enabled
+        self._temperature_from_log_overrides.clear()
+        if changed:
+            self._rebuild_table()
+            self._resize_columns_to_content()
+
+    def use_temperature_from_log(self) -> bool:
+        """Return the global temperature-from-log display option."""
+        return bool(self._use_temperature_from_log)
+
+    def set_dataset_temperature_from_log(self, run_number: int, enabled: bool) -> None:
+        """Override temperature-from-log display for a single dataset."""
+        rn = int(run_number)
+        enabled = bool(enabled)
+        if enabled == self._use_temperature_from_log:
+            changed = rn in self._temperature_from_log_overrides
+            self._temperature_from_log_overrides.pop(rn, None)
+        else:
+            changed = self._temperature_from_log_overrides.get(rn) != enabled
+            self._temperature_from_log_overrides[rn] = enabled
+        if changed:
+            self._rebuild_table()
+            self._resize_columns_to_content()
+
+    def dataset_uses_temperature_from_log(self, run_number: int) -> bool:
+        """Return whether one dataset is configured to show log temperature."""
+        rn = int(run_number)
+        return bool(self._temperature_from_log_overrides.get(rn, self._use_temperature_from_log))
 
     def _resolve_metadata_path(self, dataset: MuonDataset, field_key: str):
         """Resolve a metadata/synthetic key to a value for dynamic columns."""
@@ -740,7 +799,7 @@ class DataBrowserPanel(QWidget):
 
     def _temperature_for_display(self, dataset: MuonDataset) -> float:
         """Return the temperature shown in the fixed browser temperature column."""
-        if "temperature" in self._extra_columns:
+        if self.dataset_uses_temperature_from_log(int(dataset.run_number)):
             series_mean = self._series_mean_for_field(dataset, "temperature")
             if series_mean is not None:
                 return float(series_mean)
@@ -749,19 +808,26 @@ class DataBrowserPanel(QWidget):
         except (TypeError, ValueError):
             return 0.0
 
+    def _temperature_uses_log_for_display(self, dataset: MuonDataset) -> bool:
+        """Return whether the displayed temperature value came from a log."""
+        return (
+            self.dataset_uses_temperature_from_log(int(dataset.run_number))
+            and self._series_mean_for_field(dataset, "temperature") is not None
+        )
+
     def _series_mean_for_field(self, dataset: MuonDataset, field_key: str) -> float | None:
         """Return the mean from the time-series log associated with a summary field."""
         series = dataset.metadata.get("nexus_time_series", {})
         if not isinstance(series, dict):
             return None
-        token_map = {
-            "temperature": ["temp", "sampletemp"],
-        }
-        tokens = token_map.get(field_key, [])
-        for series_path in sorted(series.keys(), key=str):
-            lowered = str(series_path).lower()
-            if not any(token in lowered for token in tokens):
-                continue
+        scored = [
+            (score, series_path)
+            for series_path in series
+            if (score := self._series_path_score(field_key, series_path, series.get(series_path)))
+            > 0
+        ]
+        scored.sort(key=lambda item: (-item[0], str(item[1])))
+        for _, series_path in scored:
             info = series.get(series_path, {})
             if not isinstance(info, dict) or "mean" not in info:
                 continue
@@ -770,6 +836,34 @@ class DataBrowserPanel(QWidget):
             except (TypeError, ValueError):
                 continue
         return None
+
+    def _series_path_score(self, field_key: str, series_path: str, info) -> int:
+        """Score how well a log series matches a browser summary field."""
+        if not isinstance(info, dict):
+            info = {}
+        role = str(info.get("role", "")).strip().lower()
+        if field_key == "temperature" and role == "sample_temperature":
+            return 100 if bool(info.get("primary", False)) else 70
+
+        normalized = " ".join(str(series_path).replace("_", " ").replace("/", " ").lower().split())
+        compact = normalized.replace(" ", "")
+        if field_key == "temperature":
+            if not (
+                "temp" in compact
+                or "sampletemp" in compact
+                or "samtsvalue" in compact
+                or "dilt" in compact
+                or "variox" in compact
+                or "(k)" in str(series_path).lower()
+            ):
+                return 0
+            score = 10
+            if "sample" in normalized:
+                score += 20
+            if "sam ts value" in normalized:
+                score += 30
+            return score
+        return 0
 
     def _resolve_run_info_value(self, dataset: MuonDataset, field_key: str):
         """Resolve synthetic ``run_info.*`` keys used by Run Info summary rows."""
@@ -1340,6 +1434,7 @@ class DataBrowserPanel(QWidget):
         self._datasets.pop(run_number, None)
         self._combined_datasets.pop(run_number, None)
         self._combined_source_datasets.pop(run_number, None)
+        self._temperature_from_log_overrides.pop(int(run_number), None)
 
         gid = self._run_to_group.get(run_number)
         if gid is not None:
@@ -1965,6 +2060,8 @@ class DataBrowserPanel(QWidget):
         self._display_order.clear()
         self._column_filters.clear()
         self._extra_columns.clear()
+        self._use_temperature_from_log = False
+        self._temperature_from_log_overrides.clear()
         self._current_sort_column = -1
         self._current_sort_order = Qt.SortOrder.AscendingOrder
         self._refresh_column_headers()
@@ -2028,6 +2125,11 @@ class DataBrowserPanel(QWidget):
             "selected_group_ids": selected_group_ids,
             "data_groups": data_groups,
             "extra_columns": list(self._extra_columns),
+            "use_temperature_from_log": bool(self._use_temperature_from_log),
+            "temperature_from_log_overrides": {
+                str(rn): bool(enabled)
+                for rn, enabled in sorted(self._temperature_from_log_overrides.items())
+            },
         }
 
     def restore_state(self, state: dict) -> None:
@@ -2042,7 +2144,19 @@ class DataBrowserPanel(QWidget):
             if sort_order_str == "ascending"
             else Qt.SortOrder.DescendingOrder
         )
-        self._extra_columns = [str(v) for v in state.get("extra_columns", []) if str(v).strip()]
+        saved_extra_columns = [str(v) for v in state.get("extra_columns", []) if str(v).strip()]
+        self._use_temperature_from_log = bool(
+            state.get("use_temperature_from_log", "temperature" in saved_extra_columns)
+        )
+        self._extra_columns = [key for key in saved_extra_columns if key != "temperature"]
+        self._temperature_from_log_overrides = {}
+        for run_number, enabled in state.get("temperature_from_log_overrides", {}).items():
+            try:
+                rn = int(run_number)
+            except (TypeError, ValueError):
+                continue
+            if rn in self._datasets:
+                self._temperature_from_log_overrides[rn] = bool(enabled)
         self._refresh_column_headers()
 
         for group_entry in state.get("data_groups", []):

@@ -3,7 +3,11 @@
 import numpy as np
 import pytest
 
-from asymmetry.core.transform.asymmetry import compute_asymmetry, estimate_alpha
+from asymmetry.core.transform.asymmetry import (
+    compute_asymmetry,
+    compute_asymmetry_with_count_errors,
+    estimate_alpha,
+)
 from asymmetry.core.transform.rebin import rebin
 
 
@@ -42,6 +46,18 @@ class TestComputeAsymmetry:
         assert asym[0] == pytest.approx(1.0)
         # Mantid-compatible formula gives sqrt(2) for this case.
         assert err[0] == pytest.approx(np.sqrt(2.0))
+
+    def test_supplied_count_errors_use_musrfit_style_propagation(self):
+        f = np.array([90.0])
+        b = np.array([60.0])
+        ef = np.array([np.sqrt(105.0)])
+        eb = np.array([np.sqrt(90.0)])
+
+        asym, err = compute_asymmetry_with_count_errors(f, b, ef, eb, alpha=1.0)
+
+        assert asym[0] == pytest.approx(0.2)
+        expected = 2.0 * np.sqrt((60.0 * ef[0]) ** 2 + (90.0 * eb[0]) ** 2) / (150.0**2)
+        assert err[0] == pytest.approx(expected)
 
 
 class TestEstimateAlpha:

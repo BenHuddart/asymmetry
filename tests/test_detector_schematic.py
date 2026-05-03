@@ -22,7 +22,7 @@ def qapp():
     return app
 
 
-@pytest.fixture(params=["HiFi", "MuSR", "EMU"])
+@pytest.fixture(params=["HiFi", "MuSR", "EMU", "FLAME"])
 def instrument_name(request):
     return request.param
 
@@ -57,6 +57,11 @@ class TestConstruction:
         layout = get_instrument_layout("EMU")
         widget = DetectorSchematicWidget(layout)
         assert len(widget._patches) == 96
+
+    def test_flame_patch_count(self, qapp):
+        layout = get_instrument_layout("FLAME")
+        widget = DetectorSchematicWidget(layout)
+        assert len(widget._patches) == 8
 
     def test_axes_count_matches_banks(self, qapp, instrument_name):
         layout = get_instrument_layout(instrument_name)
@@ -223,6 +228,15 @@ class TestPointInSegment:
             r_outer=0.7,
         )
         assert not DetectorSchematicWidget._point_in_segment(None, None, seg)
+
+    def test_point_in_flame_rectangle(self):
+        seg = next(s for s in get_instrument_layout("FLAME").all_segments if s.detector_id == 1)
+        assert DetectorSchematicWidget._point_in_segment(seg.x_center, seg.y_center, seg)
+        assert not DetectorSchematicWidget._point_in_segment(
+            seg.x_center + seg.width,
+            seg.y_center + seg.height,
+            seg,
+        )
 
 
 # ---------------------------------------------------------------------------

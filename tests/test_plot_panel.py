@@ -470,6 +470,56 @@ class TestPlotPanel:
             mask, np.array([False, False, False, False, False, True, True, True, True, True])
         )
 
+    def test_low_count_mask_uses_background_corrected_psi_denominator(
+        self,
+        panel: PlotPanel,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        f_raw = np.array([10.0, 10.0, 110.0, 80.0, 50.0, 25.0, 13.0, 10.1, 9.9, 10.2])
+        b_raw = np.array([12.0, 12.0, 90.0, 70.0, 48.0, 25.0, 13.1, 11.9, 12.2, 12.0])
+        f_corr = f_raw - 10.0
+        b_corr = b_raw - 12.0
+        denominator = f_corr + b_corr
+        asym = np.zeros_like(denominator)
+        safe = denominator != 0.0
+        asym[safe] = ((f_corr[safe] - b_corr[safe]) / denominator[safe]) * 100.0
+
+        run = Run(
+            run_number=326,
+            histograms=[
+                Histogram(counts=f_raw, bin_width=1.0, t0_bin=0),
+                Histogram(counts=b_raw, bin_width=1.0, t0_bin=0),
+            ],
+            metadata={"facility": "PSI"},
+            grouping={
+                "groups": {1: [1], 2: [2]},
+                "forward_group": 1,
+                "backward_group": 2,
+                "alpha": 1.0,
+                "first_good_bin": 0,
+                "last_good_bin": 9,
+                "background_correction": True,
+                "background_range": [0, 1],
+            },
+            source_file="/tmp/run_326.bin",
+        )
+        ds = MuonDataset(
+            time=np.arange(10, dtype=float),
+            asymmetry=asym,
+            error=np.ones_like(asym),
+            metadata={"run_number": 326, "facility": "PSI"},
+            run=run,
+        )
+
+        mask = panel._low_count_mask_for_dataset(ds, source_dataset=ds)
+
+        assert np.array_equal(
+            mask,
+            np.array([True, True, False, False, False, False, False, True, True, True]),
+        )
+
     def test_low_count_mask_projects_saturated_source_bins_after_rebin(
         self,
         panel: PlotPanel,

@@ -1,6 +1,10 @@
 """Data transformations: asymmetry calculation, grouping, rebinning."""
 
-from asymmetry.core.transform.asymmetry import compute_asymmetry, estimate_alpha
+from asymmetry.core.transform.asymmetry import (
+    compute_asymmetry,
+    compute_asymmetry_with_count_errors,
+    estimate_alpha,
+)
 from asymmetry.core.transform.background import (
     BackgroundCorrectionResult,
     apply_grouped_background_correction,
@@ -20,6 +24,7 @@ from asymmetry.core.transform.rebin import rebin
 
 __all__ = [
     "compute_asymmetry",
+    "compute_asymmetry_with_count_errors",
     "estimate_alpha",
     "BackgroundCorrectionResult",
     "apply_grouped_background_correction",

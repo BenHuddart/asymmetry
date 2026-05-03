@@ -39,7 +39,14 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.transform.grouping import apply_grouping
+from asymmetry.core.transform.background import (
+    apply_grouped_background_correction,
+    supports_background_correction,
+)
+from asymmetry.core.transform.grouping import (
+    apply_grouping_aligned,
+    common_t0_for_groups,
+)
 from asymmetry.core.transform.rebin import rebin
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.export_paths import (
@@ -1830,7 +1837,11 @@ class PlotPanel(QWidget):
         if reference_asym.size == 0:
             return np.zeros_like(dataset.time, dtype=bool)
 
-        saturated = np.isclose(np.abs(reference_asym), 100.0, atol=1e-12)
+        saturated = (np.abs(reference_asym) > 100.0) | np.isclose(
+            np.abs(reference_asym),
+            100.0,
+            atol=1e-12,
+        )
 
         run = reference_dataset.run
         if (
@@ -1894,12 +1905,51 @@ class PlotPanel(QWidget):
                 analysis_dataset=dataset,
             )
 
-        forward = apply_grouping(run.histograms, forward_idx)
-        backward = apply_grouping(run.histograms, backward_idx)
+        common_t0 = common_t0_for_groups(run.histograms, forward_idx, backward_idx)
+        forward = apply_grouping_aligned(run.histograms, forward_idx, common_t0_bin=common_t0)
+        backward = apply_grouping_aligned(run.histograms, backward_idx, common_t0_bin=common_t0)
+        n_grouped = min(len(forward), len(backward))
+        forward = forward[:n_grouped]
+        backward = backward[:n_grouped]
+        if n_grouped == 0:
+            return self._project_source_mask_to_analysis_dataset(
+                source_mask=saturated,
+                source_dataset=reference_dataset,
+                analysis_dataset=dataset,
+            )
         try:
             alpha = float(grouping.get("alpha", 1.0))
         except (TypeError, ValueError):
             alpha = 1.0
+
+        if bool(grouping.get("background_correction", False)):
+            run_metadata = getattr(run, "metadata", None)
+            metadata = run_metadata if isinstance(run_metadata, dict) else {}
+            source_file = str(
+                getattr(run, "source_file", "") or reference_dataset.metadata.get("source_file", "")
+            )
+            if supports_background_correction(metadata=metadata, source_file=source_file):
+                bin_width = float(run.histograms[0].bin_width) if run.histograms else 1.0
+                facility = str(
+                    metadata.get(
+                        "facility",
+                        reference_dataset.metadata.get(
+                            "facility",
+                            reference_dataset.metadata.get("instrument", ""),
+                        ),
+                    )
+                )
+                bkg_result = apply_grouped_background_correction(
+                    forward,
+                    backward,
+                    grouping=grouping,
+                    t0_bin=common_t0,
+                    bin_width_us=bin_width,
+                    facility=facility,
+                )
+                if bkg_result.applied:
+                    forward = bkg_result.forward
+                    backward = bkg_result.backward
 
         denominator = np.asarray(forward + alpha * backward, dtype=float)
         if denominator.size == 0:

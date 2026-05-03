@@ -50,6 +50,27 @@ class TestDetectInstrument:
     def test_source_file_prefix_can_hint_instrument(self):
         assert detect_instrument(64, source_file="/tmp/emu000123.nxs") == "EMU"
 
+    def test_flame_can_be_detected_from_psi_metadata_or_filename(self):
+        assert detect_instrument(8, metadata={"facility": "PSI", "instrument": "FLAME"}) == "FLAME"
+        assert (
+            detect_instrument(
+                8,
+                metadata={"facility": "PSI", "instrument": ""},
+                source_file="/tmp/run_flame_001.bin",
+            )
+            == "FLAME"
+        )
+
+    def test_flame_can_be_detected_from_psi_detector_labels(self):
+        labels = ["Forw", "Back", "Righ", "Left", "R_F", "R_B", "L_F", "L_B"]
+        assert (
+            detect_instrument(
+                8,
+                metadata={"facility": "PSI", "instrument": "PSI", "histogram_labels": labels},
+            )
+            == "FLAME"
+        )
+
     def test_psi_metadata_does_not_select_isis_layout(self):
         assert detect_instrument(64, metadata={"facility": "PSI", "instrument": "HIFI"}) is None
         assert (
@@ -91,6 +112,71 @@ class TestGetInstrumentLayout:
         a = get_instrument_layout("HiFi")
         b = get_instrument_layout("HiFi")
         assert a is b  # cached singleton
+
+    def test_freeform_flame_alias_returns_flame_layout(self):
+        assert get_instrument_layout("LMU_BULKMUSR_FLAME").name == "FLAME"
+
+
+# ---------------------------------------------------------------------------
+# FLAME layout
+# ---------------------------------------------------------------------------
+
+
+class TestFlameLayout:
+    @pytest.fixture(scope="class")
+    def layout(self):
+        return get_instrument_layout("FLAME")
+
+    def test_n_detectors(self, layout):
+        assert layout.n_detectors == 8
+
+    def test_plan_view(self, layout):
+        assert layout.view == "plan"
+        assert len(layout.banks) == 1
+        assert layout.reference_arrows
+
+    def test_detector_ids_and_labels(self, layout):
+        labels = {seg.detector_id: seg.label for seg in layout.all_segments}
+        assert labels == {
+            1: "Forward",
+            2: "Backward",
+            3: "Right",
+            4: "Left",
+            5: "R_F",
+            6: "R_B",
+            7: "L_F",
+            8: "L_B",
+        }
+        assert {seg.shape for seg in layout.all_segments} == {"rectangle"}
+
+    def test_side_bank_rectangles_share_height_with_wide_middle(self, layout):
+        segments = {seg.detector_id: seg for seg in layout.all_segments}
+        assert segments[3].height == pytest.approx(segments[5].height)
+        assert segments[3].height == pytest.approx(segments[6].height)
+        assert segments[4].height == pytest.approx(segments[7].height)
+        assert segments[4].height == pytest.approx(segments[8].height)
+        assert segments[3].width > segments[5].width * 2
+        assert segments[4].width > segments[7].width * 2
+
+    def test_spin_arrow_points_toward_backward_detector(self, layout):
+        spin_arrow = next(arrow for arrow in layout.reference_arrows if "spin" in arrow.label)
+        backward = next(seg for seg in layout.all_segments if seg.detector_id == 2)
+        assert spin_arrow.end[0] < spin_arrow.start[0]
+        assert abs(spin_arrow.end[1] - backward.y_center) < backward.height / 2
+
+    def test_longitudinal_preset(self, layout):
+        preset = layout.presets["Longitudinal"]
+        assert preset.forward_group == 1
+        assert preset.backward_group == 2
+        assert preset.groups[1].detector_ids == (1,)
+        assert preset.groups[2].detector_ids == (2,)
+
+    def test_transverse_preset(self, layout):
+        preset = layout.presets["Transverse"]
+        assert preset.forward_group == 1
+        assert preset.backward_group == 2
+        assert set(preset.groups[1].detector_ids) == {3, 5, 6}
+        assert set(preset.groups[2].detector_ids) == {4, 7, 8}
 
 
 # ---------------------------------------------------------------------------

@@ -79,6 +79,17 @@ class TestMainWindowBasic:
         """Test menubar exists."""
         assert mainwindow.menuBar() is not None
 
+    def test_options_menu_has_temperature_log_toggle(self, mainwindow: MainWindow) -> None:
+        """Options menu should expose the sample-log temperature toggle."""
+        options_menu = None
+        for action in mainwindow.menuBar().actions():
+            if action.text().replace("&", "") == "Options":
+                options_menu = action.menu()
+                break
+
+        assert options_menu is not None
+        assert any(action.text() == "Use temperature from log" for action in options_menu.actions())
+
     def test_has_central_widget(self, mainwindow: MainWindow) -> None:
         """Test central widget exists."""
         assert mainwindow.centralWidget() is not None
@@ -261,6 +272,13 @@ class TestMainWindowBasic:
         assert dataset.run.grouping["background_values"] == pytest.approx([10.0, 20.0])
         assert dataset.run.grouping["background_ranges"] == [[0, 1], [0, 1]]
         np.testing.assert_allclose(dataset.asymmetry, [20.0, 20.0])
+        expected_error = (
+            2.0
+            * np.sqrt((60.0 * np.sqrt(105.0)) ** 2 + (90.0 * np.sqrt(90.0)) ** 2)
+            / (150.0**2)
+            * 100.0
+        )
+        np.testing.assert_allclose(dataset.error, [expected_error, expected_error])
 
     def test_background_requested_for_non_psi_data_is_not_applied(
         self,
@@ -983,6 +1001,138 @@ class TestMainWindowBasic:
         mainwindow._on_run_info_field_inclusion_changed("run_info.points", False)
 
         assert calls == [("add", "run_info.points"), ("remove", "run_info.points")]
+
+    def test_options_temperature_log_toggle_updates_data_browser(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """Options toggle should switch fixed temperature column to log mean and back."""
+        dataset = _make_dataset(6101, with_grouping=True)
+        dataset.metadata.update(
+            {
+                "title": "temperature scan",
+                "temperature": 50.0,
+                "field": 100.0,
+                "comment": "",
+                "nexus_time_series": {
+                    "musrroot_slow_control/Sample Temperature": {
+                        "units": "K",
+                        "time": [0.0, 10.0],
+                        "values": [4.8, 5.2],
+                        "mean": 5.0,
+                        "min": 4.8,
+                        "max": 5.2,
+                    }
+                },
+            }
+        )
+        if dataset.run is not None:
+            dataset.run.metadata.update(dataset.metadata)
+        mainwindow._data_browser.add_dataset(dataset)
+
+        assert mainwindow._data_browser._table.item(0, 2).text() == "50.00"
+
+        mainwindow._use_temperature_from_log_action.setChecked(True)
+
+        assert mainwindow._data_browser._table.item(0, 2).text() == "5.00"
+        assert "temperature" in mainwindow._data_browser.get_extra_columns()
+
+        mainwindow._use_temperature_from_log_action.setChecked(False)
+
+        assert mainwindow._data_browser._table.item(0, 2).text() == "50.00"
+        assert "temperature" not in mainwindow._data_browser.get_extra_columns()
+
+    def test_run_info_temperature_inclusion_syncs_options_action(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """Get Info temperature checkbox should stay in sync with Options."""
+        mainwindow._on_run_info_field_inclusion_changed("temperature", True)
+        assert mainwindow._use_temperature_from_log_action.isChecked()
+
+        mainwindow._on_run_info_field_inclusion_changed("temperature", False)
+        assert not mainwindow._use_temperature_from_log_action.isChecked()
+
+    def test_run_info_temperature_inclusion_overrides_single_dataset(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """A run-specific Get Info change should not alter the global option."""
+        ds1 = _make_dataset(6111, with_grouping=True)
+        ds1.metadata.update(
+            {
+                "title": "run one",
+                "temperature": 50.0,
+                "field": 100.0,
+                "comment": "",
+                "nexus_time_series": {
+                    "musrroot_slow_control/Sample Temperature": {
+                        "units": "K",
+                        "time": [0.0, 10.0],
+                        "values": [4.8, 5.2],
+                        "mean": 5.0,
+                        "min": 4.8,
+                        "max": 5.2,
+                    }
+                },
+            }
+        )
+        ds2 = _make_dataset(6112, with_grouping=True)
+        ds2.metadata.update(
+            {
+                "title": "run two",
+                "temperature": 60.0,
+                "field": 100.0,
+                "comment": "",
+                "nexus_time_series": {
+                    "musrroot_slow_control/Sample Temperature": {
+                        "units": "K",
+                        "time": [0.0, 10.0],
+                        "values": [6.8, 7.2],
+                        "mean": 7.0,
+                        "min": 6.8,
+                        "max": 7.2,
+                    }
+                },
+            }
+        )
+        mainwindow._data_browser.add_dataset(ds1)
+        mainwindow._data_browser.add_dataset(ds2)
+
+        mainwindow._use_temperature_from_log_action.setChecked(True)
+
+        assert mainwindow._data_browser._table.item(0, 2).text() == "5.00"
+        assert mainwindow._data_browser._table.item(1, 2).text() == "7.00"
+        assert mainwindow._run_info_included_fields_for_dataset(6111) >= {"temperature"}
+        assert mainwindow._run_info_included_fields_for_dataset(6112) >= {"temperature"}
+
+        mainwindow._on_run_info_field_inclusion_changed(
+            "temperature",
+            False,
+            run_number=6111,
+        )
+
+        assert mainwindow._use_temperature_from_log_action.isChecked()
+        assert mainwindow._data_browser._table.item(0, 2).text() == "50.00"
+        assert mainwindow._data_browser._table.item(1, 2).text() == "7.00"
+        assert "temperature" not in mainwindow._run_info_included_fields_for_dataset(6111)
+        assert "temperature" in mainwindow._run_info_included_fields_for_dataset(6112)
+
+        mainwindow._use_temperature_from_log_action.setChecked(False)
+
+        assert mainwindow._data_browser._table.item(0, 2).text() == "50.00"
+        assert mainwindow._data_browser._table.item(1, 2).text() == "60.00"
+        assert "temperature" not in mainwindow._run_info_included_fields_for_dataset(6111)
+        assert "temperature" not in mainwindow._run_info_included_fields_for_dataset(6112)
+
+        mainwindow._on_run_info_field_inclusion_changed(
+            "temperature",
+            True,
+            run_number=6112,
+        )
+
+        assert not mainwindow._use_temperature_from_log_action.isChecked()
+        assert mainwindow._data_browser._table.item(0, 2).text() == "50.00"
+        assert mainwindow._data_browser._table.item(1, 2).text() == "7.00"
+        assert "temperature" not in mainwindow._run_info_included_fields_for_dataset(6111)
+        assert "temperature" in mainwindow._run_info_included_fields_for_dataset(6112)
 
     def test_cross_group_completion_shows_global_parameter_window(
         self, mainwindow: MainWindow

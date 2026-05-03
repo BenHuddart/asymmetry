@@ -51,6 +51,11 @@ and parsed using Mantid ``LoadPSIMuonBin``-compatible rules, then exposed as
 ROOT Loader
 ~~~~~~~~~~~
 
+Loads MusrRoot/LEM ROOT histograms and header metadata. MusrRoot slow-control
+histograms under ``histos/SCAnaModule`` are exposed through
+``metadata["nexus_time_series"]`` and Get Info, including sample-temperature
+logs such as ``hSampleTemperature``.
+
 .. autoclass:: asymmetry.core.io.root.RootLoader
    :members:
    :undoc-members:
