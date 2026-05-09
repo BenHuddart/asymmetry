@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.engine import FitEngine
+from asymmetry.core.fitting.engine import FitEngine, FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 
@@ -192,3 +192,42 @@ def test_global_fit_rejects_non_finite_initial_values(monkeypatch: pytest.Monkey
 
     with pytest.raises(ValueError, match="non-finite initial value"):
         FitEngine().global_fit([ds], _exp_model, ["A0"], ["Lambda"], init)
+
+
+def test_global_fit_all_local_reuses_single_fit_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    t = np.linspace(0.0, 2.0, 20)
+    ds1 = MuonDataset(t, _exp_model(t, 0.2, 0.3), np.full_like(t, 0.01), {"run_number": 1})
+    ds2 = MuonDataset(t, _exp_model(t, 0.3, 0.5), np.full_like(t, 0.01), {"run_number": 2})
+
+    init = {
+        1: ParameterSet([Parameter("A0", 0.2), Parameter("Lambda", 0.3)]),
+        2: ParameterSet([Parameter("A0", 0.3), Parameter("Lambda", 0.5)]),
+    }
+
+    captured_calls: list[tuple[int, str]] = []
+
+    def _fake_fit(self, dataset, _model_fn, parameters, t_min=None, t_max=None, method="migrad"):
+        captured_calls.append((int(dataset.run_number), method))
+        return FitResult(
+            success=True,
+            chi_squared=float(dataset.run_number),
+            reduced_chi_squared=0.1,
+            parameters=parameters,
+            message=f"single-fit-{int(dataset.run_number)}",
+        )
+
+    monkeypatch.setattr(FitEngine, "fit", _fake_fit)
+
+    results, fitted_global = FitEngine().global_fit(
+        [ds1, ds2],
+        _exp_model,
+        global_params=[],
+        local_params=["A0", "Lambda"],
+        initial_params=init,
+        method="simplex",
+    )
+
+    assert captured_calls == [(1, "simplex"), (2, "simplex")]
+    assert len(fitted_global) == 0
+    assert results[1].message == "single-fit-1"
+    assert results[2].message == "single-fit-2"

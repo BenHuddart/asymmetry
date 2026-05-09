@@ -9,6 +9,10 @@ from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core.fitting.composite import (
+    build_component_expression,
+    parse_component_expression,
+)
 from asymmetry.core.fitting.diffusion import lambda_total
 from asymmetry.core.fitting.parameters import (
     Parameter,
@@ -667,7 +671,13 @@ def component_names_for_x(x_key: str) -> list[str]:
 class ParameterCompositeModel:
     """Flat composite model for parameter-vs-x fitting."""
 
-    def __init__(self, component_names: list[str], operators: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        component_names: list[str],
+        operators: list[str] | None = None,
+        open_parentheses: list[int] | None = None,
+        close_parentheses: list[int] | None = None,
+    ) -> None:
         if not component_names:
             raise ValueError("Model must contain at least one component")
 
@@ -683,8 +693,32 @@ class ParameterCompositeModel:
         if any(op not in _ALLOWED_OPERATORS for op in operators):
             raise ValueError("operators must be one of '+', '-', '*', '/'")
 
+        if open_parentheses is None:
+            open_parentheses = [0] * len(component_names)
+        if close_parentheses is None:
+            close_parentheses = [0] * len(component_names)
+        if len(open_parentheses) != len(component_names):
+            raise ValueError("open_parentheses length must be len(component_names)")
+        if len(close_parentheses) != len(component_names):
+            raise ValueError("close_parentheses length must be len(component_names)")
+        if any((not isinstance(v, int)) or v < 0 for v in open_parentheses):
+            raise ValueError("open_parentheses values must be non-negative integers")
+        if any((not isinstance(v, int)) or v < 0 for v in close_parentheses):
+            raise ValueError("close_parentheses values must be non-negative integers")
+
+        balance = 0
+        for open_count, close_count in zip(open_parentheses, close_parentheses, strict=True):
+            balance += open_count
+            balance -= close_count
+            if balance < 0:
+                raise ValueError("Invalid parentheses: closing before opening")
+        if balance != 0:
+            raise ValueError("Invalid parentheses: unbalanced expression")
+
         self.component_names = list(component_names)
         self.operators = list(operators)
+        self.open_parentheses = list(open_parentheses)
+        self.close_parentheses = list(close_parentheses)
         self.components = [PARAMETER_MODEL_COMPONENTS[name] for name in self.component_names]
         self._param_mappings = self._build_param_mapping()
 
@@ -707,6 +741,31 @@ class ParameterCompositeModel:
         self.param_defaults = param_defaults
         self.param_info = param_info
 
+    @classmethod
+    def from_expression(cls, expression: str) -> ParameterCompositeModel:
+        """Construct a ParameterCompositeModel from a component-name expression."""
+        component_names, operators, open_parentheses, close_parentheses = (
+            parse_component_expression(
+                expression,
+                allowed_components=set(PARAMETER_MODEL_COMPONENTS),
+            )
+        )
+        return cls(
+            component_names=component_names,
+            operators=operators,
+            open_parentheses=open_parentheses,
+            close_parentheses=close_parentheses,
+        )
+
+    def component_expression_string(self) -> str:
+        """Return the builder-facing expression using component names."""
+        return build_component_expression(
+            self.component_names,
+            self.operators,
+            self.open_parentheses,
+            self.close_parentheses,
+        )
+
     def _build_param_mapping(self) -> list[dict[str, str]]:
         counts = Counter(pname for component in self.components for pname in component.param_names)
         mappings: list[dict[str, str]] = []
@@ -723,16 +782,23 @@ class ParameterCompositeModel:
     def formula_string(self) -> str:
         """Return a readable formula string for display."""
         terms: list[str] = []
-        for mapping, component in zip(self._param_mappings, self.components, strict=True):
+        for idx, (mapping, component) in enumerate(
+            zip(self._param_mappings, self.components, strict=True)
+        ):
             mapping_text = {k: mapping[k] for k in component.param_names}
-            terms.append(component.formula_template.format(**mapping_text))
+            term = component.formula_template.format(**mapping_text)
+            if self.open_parentheses[idx] > 0:
+                term = "(" * self.open_parentheses[idx] + term
+            if self.close_parentheses[idx] > 0:
+                term = term + ")" * self.close_parentheses[idx]
+            terms.append(term)
 
         if not terms:
             return "0"
 
         expression = terms[0]
         for op, term in zip(self.operators, terms[1:], strict=True):
-            expression = f"({expression}) {op} ({term})"
+            expression = f"{expression} {op} {term}"
         return expression
 
     def function(self, x: NDArray, **kwargs: float) -> NDArray[np.float64]:
@@ -745,6 +811,9 @@ class ParameterCompositeModel:
 
         if not values:
             return np.zeros_like(xx)
+
+        if any(self.open_parentheses) or any(self.close_parentheses):
+            return self._evaluate_parenthesized(xx, values)
 
         reduced_values: list[NDArray[np.float64]] = [values[0]]
         reduced_ops: list[str] = []
@@ -772,6 +841,65 @@ class ParameterCompositeModel:
                 result = result - value
 
         return result
+
+    def _evaluate_parenthesized(
+        self,
+        xx: NDArray[np.float64],
+        values: list[NDArray[np.float64]],
+    ) -> NDArray[np.float64]:
+        value_stack: list[NDArray[np.float64]] = []
+        op_stack: list[str] = []
+
+        def precedence(op: str) -> int:
+            return 2 if op in {"*", "/"} else 1
+
+        def apply_top_operator() -> None:
+            if len(value_stack) < 2 or not op_stack:
+                raise ValueError("Invalid expression")
+            op = op_stack.pop()
+            rhs = value_stack.pop()
+            lhs = value_stack.pop()
+            if op == "+":
+                value_stack.append(lhs + rhs)
+            elif op == "-":
+                value_stack.append(lhs - rhs)
+            elif op == "*":
+                value_stack.append(lhs * rhs)
+            else:
+                safe_rhs = np.where(np.abs(rhs) < 1e-12, np.nan, rhs)
+                value_stack.append(lhs / safe_rhs)
+
+        for idx, value in enumerate(values):
+            for _ in range(self.open_parentheses[idx]):
+                op_stack.append("(")
+
+            value_stack.append(value)
+
+            for _ in range(self.close_parentheses[idx]):
+                while op_stack and op_stack[-1] != "(":
+                    apply_top_operator()
+                if not op_stack or op_stack[-1] != "(":
+                    raise ValueError("Invalid parentheses in expression")
+                op_stack.pop()
+
+            if idx < len(self.operators):
+                op = self.operators[idx]
+                while (
+                    op_stack and op_stack[-1] != "(" and precedence(op_stack[-1]) >= precedence(op)
+                ):
+                    apply_top_operator()
+                op_stack.append(op)
+
+        while op_stack:
+            if op_stack[-1] == "(":
+                raise ValueError("Invalid parentheses in expression")
+            apply_top_operator()
+
+        if len(value_stack) != 1:
+            raise ValueError("Invalid expression")
+        if value_stack[0].shape != xx.shape:
+            raise ValueError("Invalid expression result shape")
+        return value_stack[0]
 
     def _extract_component_kwargs(
         self,
@@ -822,6 +950,48 @@ class ParameterCompositeModel:
             values = np.asarray(component.function(xx, **local_kwargs), dtype=float)
             out.append((self.component_names[idx], values))
         return out
+
+    def to_dict(self) -> dict[str, list[str] | list[int]]:
+        """Return a JSON-serializable representation of the model."""
+        return {
+            "component_names": list(self.component_names),
+            "operators": list(self.operators),
+            "open_parentheses": list(self.open_parentheses),
+            "close_parentheses": list(self.close_parentheses),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> ParameterCompositeModel:
+        """Construct a ParameterCompositeModel from serialized data."""
+        component_names = data.get("component_names")
+        operators = data.get("operators")
+        open_parentheses = data.get("open_parentheses")
+        close_parentheses = data.get("close_parentheses")
+        if not isinstance(component_names, list) or not all(
+            isinstance(value, str) for value in component_names
+        ):
+            raise ValueError("Invalid parameter composite model data: component_names")
+        if operators is not None:
+            if not isinstance(operators, list) or not all(
+                isinstance(value, str) for value in operators
+            ):
+                raise ValueError("Invalid parameter composite model data: operators")
+        if open_parentheses is not None:
+            if not isinstance(open_parentheses, list) or not all(
+                isinstance(value, int) for value in open_parentheses
+            ):
+                raise ValueError("Invalid parameter composite model data: open_parentheses")
+        if close_parentheses is not None:
+            if not isinstance(close_parentheses, list) or not all(
+                isinstance(value, int) for value in close_parentheses
+            ):
+                raise ValueError("Invalid parameter composite model data: close_parentheses")
+        return cls(
+            component_names=component_names,
+            operators=operators,
+            open_parentheses=open_parentheses,
+            close_parentheses=close_parentheses,
+        )
 
 
 @dataclass

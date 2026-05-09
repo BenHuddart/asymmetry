@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asymmetry"
-version = "0.2.1"
+version = "0.3.0"
 description = "A Python library for muon-spin spectroscopy (μSR) data analysis"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -61,7 +61,7 @@ Documentation = "https://benhuddart.github.io/asymmetry/"
 where = ["src"]
 
 [tool.setuptools.package-data]
-asymmetry = ["resources/*.png"]
+asymmetry = ["resources/*.png", "resources/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

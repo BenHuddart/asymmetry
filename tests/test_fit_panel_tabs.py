@@ -607,6 +607,37 @@ def test_global_fit_parses_type_combo_defaults(qapp: QApplication) -> None:
         assert c1.currentText() == "Local"
 
 
+def test_global_fit_type_combo_includes_file_for_bl_parameters(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    """Parameters like B_L should have File as an option in the Type combo."""
+    from asymmetry.core.fitting.composite import CompositeModel
+
+    tab = GlobalFitTab()
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    tab.set_datasets([dataset, d2])
+
+    # Set an LF-KT model that includes B_L parameter
+    lf_model = CompositeModel(["LongitudinalFieldKT", "Constant"], operators=["+"])
+    tab._set_composite_model(lf_model)
+
+    # Find the B_L row
+    bl_row = None
+    for i in range(tab._param_table.rowCount()):
+        item = tab._param_table.item(i, 0)
+        if item and item.data(Qt.ItemDataRole.UserRole) == "B_L":
+            bl_row = i
+            break
+
+    assert bl_row is not None, "B_L parameter not found in table"
+
+    # The Type combo for B_L should have File as an option
+    type_combo = tab._param_table.cellWidget(bl_row, 2)
+    assert isinstance(type_combo, QComboBox)
+    items = [type_combo.itemText(i) for i in range(type_combo.count())]
+    assert "File" in items
+
+
 def test_single_tab_default_model_includes_background(qapp: QApplication) -> None:
     tab = SingleFitTab()
     assert tab._composite_model.component_names == ["Exponential", "Constant"]
@@ -617,6 +648,18 @@ def test_global_tab_default_model_includes_background(qapp: QApplication) -> Non
     tab = GlobalFitTab()
     assert tab._composite_model.component_names == ["Exponential", "Constant"]
     assert "A_bg" in tab._composite_model.param_names
+
+
+def test_single_tab_keeps_model_tools_inline(qapp: QApplication) -> None:
+    tab = SingleFitTab()
+
+    assert not hasattr(tab, "_model_tools_section")
+
+
+def test_global_tab_keeps_model_tools_inline(qapp: QApplication) -> None:
+    tab = GlobalFitTab()
+
+    assert not hasattr(tab, "_model_tools_section")
 
 
 def test_single_edit_function_updates_parameter_rows(qapp: QApplication) -> None:
@@ -959,7 +1002,8 @@ def test_fit_panel_share_single_function_state_to_other_runs(
     panel._single_tab._param_table.item(0, 1).setText("0.777")
     panel._single_tab._result_label.setText("source fit result")
 
-    copied = panel.share_single_function_state(101, [102, 103])
+    datasets_by_run = {101: d1, 102: d2, 103: d3}
+    copied = panel.share_single_function_state(101, [102, 103], datasets_by_run=datasets_by_run)
     assert copied == 2
 
     panel.set_dataset(d2)
@@ -969,6 +1013,67 @@ def test_fit_panel_share_single_function_state_to_other_runs(
     panel.set_dataset(d3)
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.777)
     assert panel._single_tab._result_label.text() == "No fit performed yet"
+
+
+def test_fit_panel_share_single_function_seeds_bl_from_target_field(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    """B_L parameter should be seeded from each target dataset's applied field."""
+    from asymmetry.core.fitting.composite import CompositeModel
+
+    panel = FitPanel()
+    d1 = MuonDataset(
+        dataset.time,
+        dataset.asymmetry,
+        dataset.error,
+        {"run_number": 101, "field": 50.0},
+    )
+    d2 = MuonDataset(
+        dataset.time,
+        dataset.asymmetry,
+        dataset.error,
+        {"run_number": 102, "field": 150.0},
+    )
+    d3 = MuonDataset(
+        dataset.time,
+        dataset.asymmetry,
+        dataset.error,
+        {"run_number": 103, "field": 300.0},
+    )
+
+    # Set an LF-KT model on d1 and adjust B_L to 50 G (the source field).
+    panel.set_dataset(d1)
+    lf_model = CompositeModel(["LongitudinalFieldKT", "Constant"], operators=["+"])
+    panel._single_tab._set_composite_model(lf_model)
+    # Find the B_L row and set it to the source field.
+    for row in range(panel._single_tab._param_table.rowCount()):
+        item = panel._single_tab._param_table.item(row, 0)
+        if item and item.data(Qt.ItemDataRole.UserRole) == "B_L":
+            panel._single_tab._param_table.item(row, 1).setText("50.0")
+    panel._single_tab._result_label.setText("source fit result")
+
+    datasets_by_run = {101: d1, 102: d2, 103: d3}
+    copied = panel.share_single_function_state(101, [102, 103], datasets_by_run=datasets_by_run)
+    assert copied == 2
+
+    # d2 has field=150 G — B_L in shared state should be overridden to 150.
+    panel.set_dataset(d2)
+    bl_value_d2 = None
+    for row in range(panel._single_tab._param_table.rowCount()):
+        item = panel._single_tab._param_table.item(row, 0)
+        if item and item.data(Qt.ItemDataRole.UserRole) == "B_L":
+            bl_value_d2 = float(panel._single_tab._param_table.item(row, 1).text())
+    assert bl_value_d2 == pytest.approx(150.0)
+
+    # d3 has field=300 G.
+    panel.set_dataset(d3)
+    bl_value_d3 = None
+    for row in range(panel._single_tab._param_table.rowCount()):
+        item = panel._single_tab._param_table.item(row, 0)
+        if item and item.data(Qt.ItemDataRole.UserRole) == "B_L":
+            bl_value_d3 = float(panel._single_tab._param_table.item(row, 1).text())
+    assert bl_value_d3 == pytest.approx(300.0)
 
 
 def test_fit_panel_clear_fits_for_runs_removes_cached_fit_state(

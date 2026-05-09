@@ -583,9 +583,12 @@ Available components in the builder:
 
 * **Exponential**: :math:`A e^{-\lambda t}`
 * **Gaussian**: :math:`A e^{-(\sigma t)^2}`
-* **Oscillatory**: :math:`A\cos(2\pi f t + \phi)`
+* **Oscillatory**: :math:`A\cos(2\pi f t + \phi)` — frequency :math:`f` in MHz
+* **OscillatoryField**: :math:`A\cos(2\pi \gamma_\mu B t + \phi)` — field :math:`B` in Gauss;
+  frequency is derived automatically from :math:`\gamma_\mu = 13.554\,\text{MHz/kG}`
 * **StretchedExponential**: :math:`A e^{-(|\lambda|t)^\beta}`
 * **StaticGKT_ZF**: Static Gaussian Kubo-Toyabe
+* **LongitudinalFieldKT**: Hayano LF-KT; :math:`B_L` initialised from run field. See :ref:`lf-kubo-toyabe`.
 * **Muon-Fluorine / MuF**: Analytical single-``mu-F`` polarization
 * **Muon-Fluorine / FmuF_Linear**: Analytical collinear ``F-mu-F`` polarization
 * **Muon-Fluorine / FmuF_General**: Numerical powder-averaged ``F-mu-F`` polarization
@@ -651,6 +654,10 @@ per-dataset parameters:
    * **Global**: shared value across all selected datasets
    * **Local**: separate value per dataset
    * **Fixed**: held constant at the specified value
+   * **File**: fixed at the per-dataset value read from the run metadata
+     (for example ``B_L`` is set to the applied field in Gauss from the loaded
+     file). Behaves like **Fixed** for the fit itself, but the value
+     differs automatically for each selected dataset.
 
 5. **Click "Run Global Fit"**
 
@@ -815,6 +822,20 @@ Field Series
 1. Sort by field column  
 2. Step through runs in order
 3. Filter by temperature for isothermal scans
+
+UI Scale
+--------
+
+The interface density can be adjusted from **View → UI Scale**. Five preset
+scales are available: 80 %, 90 %, 100 %, 110 %, and 120 %. The selection is
+persisted between sessions. The default is 90 %.
+
+Changing the scale adjusts:
+
+* Base font size across panels and dialogs
+* Table row heights
+* Dock minimum widths
+* Compact padding in parameter and data-browser tables
 
 Keyboard Shortcuts
 ------------------

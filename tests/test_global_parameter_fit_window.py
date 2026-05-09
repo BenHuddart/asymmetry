@@ -245,14 +245,30 @@ def test_window_state_round_trip_controls_and_annotations(qapp: QApplication) ->
             ModelFitRange(
                 x_min=1.0,
                 x_max=10.0,
-                model=ParameterCompositeModel(["Linear"]),
-                parameters=ParameterSet([Parameter("m", value=0.1), Parameter("b", value=1.0)]),
+                model=ParameterCompositeModel.from_expression("Linear + ( Arrhenius * Constant )"),
+                parameters=ParameterSet(
+                    [
+                        Parameter("m", value=0.1),
+                        Parameter("b", value=1.0),
+                        Parameter("a", value=0.4),
+                        Parameter("Ea", value=2.5),
+                        Parameter("c", value=0.05),
+                    ]
+                ),
                 result=ParameterModelFitResult(
                     success=True,
                     chi_squared=1.0,
                     reduced_chi_squared=0.5,
-                    parameters=ParameterSet([Parameter("m", value=0.1), Parameter("b", value=1.0)]),
-                    uncertainties={"m": 0.01, "b": 0.02},
+                    parameters=ParameterSet(
+                        [
+                            Parameter("m", value=0.1),
+                            Parameter("b", value=1.0),
+                            Parameter("a", value=0.4),
+                            Parameter("Ea", value=2.5),
+                            Parameter("c", value=0.05),
+                        ]
+                    ),
+                    uncertainties={"m": 0.01, "b": 0.02, "a": 0.03, "Ea": 0.04, "c": 0.01},
                     message="Fit successful",
                 ),
             )
@@ -290,6 +306,11 @@ def test_window_state_round_trip_controls_and_annotations(qapp: QApplication) ->
     assert "nu" in restored._local_model_fits
     assert restored._local_plot_mode_combo.currentText() == "Subplots"
     assert restored._suppressed_group_label_tags == {"g2"}
+    restored_model = restored._local_model_fits["nu"].ranges[0].model
+    assert restored_model.component_names == ["Linear", "Arrhenius", "Constant"]
+    assert restored_model.operators == ["+", "*"]
+    assert restored_model.open_parentheses == [0, 1, 0]
+    assert restored_model.close_parentheses == [0, 0, 1]
     assert len(restored._plot_annotations) == 1
     assert len(restored._local_plot_annotations) == 1
     assert restored._plot_annotations[0].get("artist") is None
@@ -351,7 +372,7 @@ def test_export_plot_gle_saves_and_compiles(
     )
 
     assert resolved_gle_path.exists()
-    assert save_kwargs[-1]["folder"] is True
+    assert "folder" not in save_kwargs[-1]
     assert compile_calls == [(resolved_gle_path, "eps")]
 
 

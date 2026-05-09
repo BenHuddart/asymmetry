@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QActionGroup, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
@@ -61,12 +61,20 @@ from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 from asymmetry.gui.panels.fourier_panel import FourierPanel
 from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
+from asymmetry.gui.ui_manager import (
+    UI_SCALE_OPTIONS,
+    UI_SCALE_SETTINGS_KEY,
+    UIManager,
+)
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
 
 _MAX_RECENT_PROJECTS = 10
 _PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
+_COMPACT_MODE_SETTINGS_KEY = "ui/compact_mode"
+_UI_SCALE_SETTINGS_KEY = UI_SCALE_SETTINGS_KEY
+_UI_SCALE_OPTIONS = UI_SCALE_OPTIONS
 
 
 def _normalise_source_path(path: str) -> str:
@@ -114,6 +122,21 @@ def _load_window_icon() -> QIcon | None:
     return None
 
 
+def _coerce_bool(value: object, default: bool = False) -> bool:
+    """Return a conservative bool conversion for values loaded from QSettings."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off"}:
+            return False
+    if value is None:
+        return default
+    return bool(value)
+
+
 class MainWindow(QMainWindow):
     """Top-level application window for the Asymmetry μSR analysis GUI.
 
@@ -152,6 +175,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Asymmetry — μSR Data Analysis")
 
+        self.compact_mode = False
+
         # Set window icon from package resources
         icon = _load_window_icon()
         if icon is not None:
@@ -165,10 +190,16 @@ class MainWindow(QMainWindow):
         self._current_project_path: str | None = None  # Path of currently open project
         self._active_group_context: tuple[str, str] | None = None
         self._global_parameter_fit_window: GlobalParameterFitWindow | None = None
+        self._ui_scale_action_group = QActionGroup(self)
+        self._ui_scale_action_group.setExclusive(True)
+        self._ui_scale_actions: dict[float, object] = {}
 
         self._setup_menus()
-        self._setup_toolbar()
-        self._setup_panels()
+        self._create_toolbars()
+        self._create_docks()
+        self._ui_manager = UIManager(self)
+        self._connect_actions()
+        self._ui_manager.restore_settings()
 
         # Check for SciPy availability and warn if using fallback
         from asymmetry.core.fitting.diffusion import is_scipy_available
@@ -216,6 +247,18 @@ class MainWindow(QMainWindow):
         # View
         view_menu = mb.addMenu("&View")
         view_menu.addAction("Reset layout", self._reset_layout)
+        scale_menu = view_menu.addMenu("UI Scale")
+        for scale in _UI_SCALE_OPTIONS:
+            action = scale_menu.addAction(f"{int(round(scale * 100))}%")
+            action.setCheckable(True)
+            self._ui_scale_action_group.addAction(action)
+            self._ui_scale_actions[scale] = action
+        view_menu.addSeparator()
+        view_menu.addAction("Show Data", self._on_show_data)
+        view_menu.addAction("Show Fit", self._on_fit)
+        view_menu.addAction("Show Fourier", self._on_fourier)
+        view_menu.addAction("Show Fit Parameters", self._on_fit_parameters)
+        view_menu.addAction("Show Log", self._on_show_log)
 
         # Options
         options_menu = mb.addMenu("&Options")
@@ -231,26 +274,30 @@ class MainWindow(QMainWindow):
 
     # ── toolbar ────────────────────────────────────────────────────────
 
-    def _setup_toolbar(self) -> None:
-        """Add a non-movable toolbar with shortcuts for the most common actions."""
-        tb = QToolBar("Main")
-        tb.setMovable(False)
-        self.addToolBar(tb)
+    def _create_toolbars(self) -> None:
+        """Create the primary toolbar."""
+        self._main_toolbar = QToolBar("Main")
+        self._main_toolbar.setMovable(False)
+        self.addToolBar(self._main_toolbar)
 
-        tb.addAction("Open", self._on_open)
-        tb.addAction("Export logbook", self._on_export_logbook)
-        tb.addAction("Grouping", self._on_grouping_current)
-        tb.addAction("Fit", self._on_fit)
-        tb.addAction("FFT", self._on_fourier)
-        tb.addAction("Params", self._on_fit_parameters)
-        self._global_parameter_fit_toolbar_action = tb.addAction(
+        self._main_toolbar.addAction("Open", self._on_open)
+        self._main_toolbar.addAction("Export logbook", self._on_export_logbook)
+        self._main_toolbar.addAction("Grouping", self._on_grouping_current)
+        self._main_toolbar.addAction("Fit", self._on_fit)
+        self._main_toolbar.addAction("FFT", self._on_fourier)
+        self._main_toolbar.addAction("Params", self._on_fit_parameters)
+        self._global_parameter_fit_toolbar_action = self._main_toolbar.addAction(
             "Global Fit", self._on_global_parameter_fit
         )
         self._global_parameter_fit_toolbar_action.setEnabled(False)
 
+    def _setup_toolbar(self) -> None:
+        """Backward-compatible wrapper for older tests/tools."""
+        self._create_toolbars()
+
     # ── panels / docks ─────────────────────────────────────────────────
 
-    def _setup_panels(self) -> None:
+    def _create_docks(self) -> None:
         """Create and dock all child panels, then connect inter-panel signals."""
         # Enable dock nesting for proper splitter behavior
         self.setDockNestingEnabled(True)
@@ -261,26 +308,28 @@ class MainWindow(QMainWindow):
 
         # Left dock — data browser / logbook
         self._data_browser = DataBrowserPanel()
-        dock_left = QDockWidget("Data Browser", self)
-        dock_left.setWidget(self._data_browser)
-        dock_left.setMinimumWidth(250)  # Can be shrunk by user, but defaults to larger size below
-        dock_left.setFeatures(
+        self._dock_data_browser = QDockWidget("Data Browser", self)
+        self._dock_data_browser.setWidget(self._data_browser)
+        self._dock_data_browser.setMinimumWidth(220)
+        self._dock_data_browser.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetMovable
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
             | QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock_left)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._dock_data_browser)
 
         # Right dock — fit controls
         self._fit_panel = FitPanel()
         self._dock_fit = QDockWidget("Fit", self)
         self._dock_fit.setWidget(self._fit_panel)
+        self._dock_fit.setMinimumWidth(320)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit)
 
         # Right dock — Fourier controls (tabbed with fit)
         self._fourier_panel = FourierPanel()
         self._dock_fourier = QDockWidget("Fourier", self)
         self._dock_fourier.setWidget(self._fourier_panel)
+        self._dock_fourier.setMinimumWidth(320)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fourier)
         self.tabifyDockWidget(self._dock_fit, self._dock_fourier)
 
@@ -288,6 +337,7 @@ class MainWindow(QMainWindow):
         self._fit_parameters_panel = FitParametersPanel()
         self._dock_fit_parameters = QDockWidget("Fit Parameters", self)
         self._dock_fit_parameters.setWidget(self._fit_parameters_panel)
+        self._dock_fit_parameters.setMinimumWidth(340)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit_parameters)
         self.tabifyDockWidget(self._dock_fit, self._dock_fit_parameters)
 
@@ -298,12 +348,14 @@ class MainWindow(QMainWindow):
 
         # Bottom dock — log panel
         self._log_panel = LogPanel()
-        dock_log = QDockWidget("Log", self)
-        dock_log.setWidget(self._log_panel)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock_log)
+        self._dock_log = QDockWidget("Log", self)
+        self._dock_log.setWidget(self._log_panel)
+        self._dock_log.setMinimumHeight(96)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._dock_log)
 
-        # Set initial dock widths: data browser gets ~480px by default
-        self.resizeDocks([dock_left], [480], Qt.Orientation.Horizontal)
+        # Set compact-friendly defaults while keeping the central plot dominant.
+        self.resizeDocks([self._dock_data_browser], [360], Qt.Orientation.Horizontal)
+        self.resizeDocks([self._dock_log], [140], Qt.Orientation.Vertical)
 
         # Connect signals
         self._data_browser.dataset_selected.connect(self._on_dataset_selected)
@@ -342,6 +394,18 @@ class MainWindow(QMainWindow):
 
         # Update selected datasets for global fitting whenever selection changes
         self._update_selected_datasets()
+
+    def _setup_panels(self) -> None:
+        """Backward-compatible wrapper for older tests/tools."""
+        self._create_docks()
+
+    def _connect_actions(self) -> None:
+        """Connect actions created in menu/toolbar setup methods."""
+        self._ui_manager.bind_actions()
+
+    def _show_panel(self, panel_key: str) -> None:
+        """Show a panel in the standard dock layout."""
+        self._ui_manager.show_panel(panel_key)
 
     def _normalize_vector_axis(self, axis: object) -> str | None:
         """Normalize polarization-axis labels to one of ``P_x``, ``P_y``, ``P_z``."""
@@ -2024,21 +2088,31 @@ class MainWindow(QMainWindow):
 
     def _on_fit(self) -> None:
         """Show and raise the Fit dock panel."""
-        self._dock_fit.show()
-        self._dock_fit.raise_()
+        self._show_panel("fit")
         self._log_panel.log("Opened Fit panel")
 
     def _on_fourier(self) -> None:
         """Show and raise the Fourier dock panel."""
-        self._dock_fourier.show()
-        self._dock_fourier.raise_()
+        self._show_panel("fourier")
         self._log_panel.log("Opened Fourier panel")
 
     def _on_fit_parameters(self) -> None:
         """Show and raise the Fitted Parameters dock panel."""
-        self._dock_fit_parameters.show()
-        self._dock_fit_parameters.raise_()
+        self._show_panel("fit_parameters")
         self._log_panel.log("Opened Fit Parameters panel")
+
+    def _on_show_data(self) -> None:
+        """Show and raise the data browser panel for the current layout mode."""
+        self._show_panel("data")
+
+    def _on_show_log(self) -> None:
+        """Show and raise the log panel for the current layout mode."""
+        self._show_panel("log")
+
+    def set_compact_mode(self, enabled: bool) -> None:
+        """Legacy compatibility shim after compact-mode removal."""
+        del enabled
+        self.compact_mode = False
 
     def _on_global_parameter_fit(self) -> None:
         """Show the Global Parameter Fit window if cross-group results exist."""
@@ -2073,7 +2147,8 @@ class MainWindow(QMainWindow):
         )
 
     def _reset_layout(self) -> None:
-        """Reset dock panels to their default layout positions (not yet implemented)."""
+        """Reset dock panels to the default compact-friendly layout."""
+        self._ui_manager.reset_layout()
 
     def _on_dataset_selected(self, run_number: int) -> None:
         """Handle dataset selection from data browser."""
@@ -2176,10 +2251,24 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Data group has no other members to share with")
             return
 
+        # Resolve target datasets so that file-specific parameter defaults
+        # (e.g. B_L from the run's applied field) can be seeded per member.
+        all_browser_datasets: dict[int, MuonDataset] = {}
+        if hasattr(self._data_browser, "_datasets"):
+            for rn, ds in self._data_browser._datasets.items():
+                try:
+                    all_browser_datasets[int(rn)] = ds
+                except (TypeError, ValueError):
+                    pass
+
         updated = 0
         if hasattr(self._fit_panel, "share_single_function_state"):
             updated = int(
-                self._fit_panel.share_single_function_state(source_run_number, target_runs)
+                self._fit_panel.share_single_function_state(
+                    source_run_number,
+                    target_runs,
+                    datasets_by_run=all_browser_datasets or None,
+                )
             )
 
         group_name = (
@@ -2859,12 +2948,10 @@ class MainWindow(QMainWindow):
         # Open fit-related docks automatically when project contains saved
         # results/state for those panes.
         if _has_saved_fit_results(single_fit_state, global_fit_state):
-            self._dock_fit.show()
-            self._dock_fit.raise_()
+            self._show_panel("fit")
 
         if _has_saved_fit_parameters_results(fit_parameters_state):
-            self._dock_fit_parameters.show()
-            self._dock_fit_parameters.raise_()
+            self._show_panel("fit_parameters")
 
         n_loaded = len(loaded_run_numbers)
         self._log_panel.log(f"Project opened: {n_loaded} run(s) loaded from {project_path}")

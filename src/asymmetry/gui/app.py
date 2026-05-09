@@ -15,6 +15,29 @@ import sys
 QApplication = None
 MainWindow = None
 MACOS_ICON_TILE_SCALE = 0.82
+_SMOKE_QT_PREVIOUS_HANDLER = None
+_SMOKE_QT_MESSAGE_HANDLER = None
+
+
+def _install_smoke_qt_message_filter() -> None:
+    global _SMOKE_QT_PREVIOUS_HANDLER, _SMOKE_QT_MESSAGE_HANDLER
+
+    if _SMOKE_QT_MESSAGE_HANDLER is not None:
+        return
+
+    from PySide6.QtCore import qInstallMessageHandler
+
+    def _handler(msg_type, context, message):
+        text = str(message)
+        if "Populating font family aliases took" in text and '"Sans Serif"' in text:
+            return
+        if "This plugin does not support propagateSizeHints()" in text:
+            return
+        if _SMOKE_QT_PREVIOUS_HANDLER is not None:
+            _SMOKE_QT_PREVIOUS_HANDLER(msg_type, context, message)
+
+    _SMOKE_QT_MESSAGE_HANDLER = _handler
+    _SMOKE_QT_PREVIOUS_HANDLER = qInstallMessageHandler(_handler)
 
 
 def _resource_file_path(filename: str) -> str:
@@ -198,6 +221,9 @@ def main() -> None:
         from PySide6.QtWidgets import QApplication as _QApplication
 
         QApplication = _QApplication
+
+    if smoke_test:
+        _install_smoke_qt_message_filter()
 
     app = QApplication(sys.argv)
 

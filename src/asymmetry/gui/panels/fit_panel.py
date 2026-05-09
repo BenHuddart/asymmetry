@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -61,19 +62,37 @@ def _format_param_label(name: str) -> str:
 
 
 def _field_value_overrides(model: CompositeModel, field_gauss: float) -> dict[str, float]:
-    """Return a dict overriding ``field`` parameter defaults with *field_gauss*.
+    """Return a dict overriding field-like defaults with *field_gauss*.
 
-    Only overrides parameters whose base name is ``"field"`` and only when
-    *field_gauss* is non-zero.
+    Only overrides parameters whose base name is ``"field"`` or ``"B_L"``
+    and only when *field_gauss* is non-zero.
     """
     if field_gauss == 0.0:
         return {}
     overrides: dict[str, float] = {}
     for pname in model.param_names:
         base_name, _index = split_parameter_name(pname)
-        if base_name == "field":
+        if base_name in {"field", "B_L"}:
             overrides[pname] = field_gauss
     return overrides
+
+
+def _get_file_value_for_parameter(dataset: MuonDataset, param_base_name: str) -> float | None:
+    """Get the file-specific value for a parameter from dataset metadata.
+
+    Returns the value in Gauss for field-like parameters, or None if not available.
+    """
+    if param_base_name in {"field", "B_L"}:
+        if dataset.run is not None and hasattr(dataset.run, "field"):
+            return float(dataset.run.field)
+        # Fall back to dataset-level metadata (e.g. datasets without a Run object).
+        raw = dataset.metadata.get("field")
+        if raw is not None:
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                pass
+    return None
 
 
 def _configure_formula_label(label: QLabel) -> None:
@@ -229,12 +248,18 @@ class SingleFitTab(QWidget):
         self._share_group_btn.clicked.connect(self._on_share_function_with_group)
         self._share_group_btn.setEnabled(False)
 
-        # Button row for Edit, Wizard, and Share
-        model_button_layout = QHBoxLayout()
-        model_button_layout.addWidget(self._edit_model_btn)
-        model_button_layout.addWidget(self._fit_wizard_btn)
-        model_button_layout.addWidget(self._share_group_btn)
-        model_button_layout.addStretch()
+        model_button_layout = QGridLayout()
+        model_button_layout.setContentsMargins(0, 0, 0, 0)
+        model_button_layout.setHorizontalSpacing(6)
+        model_button_layout.setVerticalSpacing(6)
+        self._edit_model_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._fit_wizard_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._share_group_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        model_button_layout.addWidget(self._edit_model_btn, 0, 0)
+        model_button_layout.addWidget(self._fit_wizard_btn, 0, 1)
+        model_button_layout.addWidget(self._share_group_btn, 1, 0, 1, 2)
+        model_button_layout.setColumnStretch(0, 1)
+        model_button_layout.setColumnStretch(1, 1)
 
         model_layout.addRow("A(t):", self._formula_label)
         model_layout.addRow("", model_button_layout)
@@ -255,7 +280,10 @@ class SingleFitTab(QWidget):
         layout.addWidget(param_group)
 
         # Buttons
-        btn_layout = QHBoxLayout()
+        btn_layout = QGridLayout()
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setHorizontalSpacing(6)
+        btn_layout.setVerticalSpacing(6)
         self._fit_btn = QPushButton("Fit")
         self._fit_btn.clicked.connect(self._run_fit)
         self._reset_btn = QPushButton("Reset")
@@ -263,10 +291,10 @@ class SingleFitTab(QWidget):
         self._preview_btn = QPushButton("Preview")
         self._preview_btn.clicked.connect(self._on_preview)
         self._preview_btn.setEnabled(False)
-        btn_layout.addWidget(self._fit_btn)
-        btn_layout.addWidget(self._reset_btn)
-        btn_layout.addWidget(self._preview_btn)
-        btn_layout.addStretch()
+        btn_layout.addWidget(self._fit_btn, 0, 0)
+        btn_layout.addWidget(self._reset_btn, 0, 1)
+        btn_layout.addWidget(self._preview_btn, 0, 2)
+        btn_layout.setColumnStretch(3, 1)
         layout.addLayout(btn_layout)
 
         # Results
@@ -905,10 +933,16 @@ class GlobalFitTab(QWidget):
         self._fit_wizard_btn = QPushButton("Global Fit Wizard...")
         self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
         self._fit_wizard_btn.setEnabled(False)
-        model_button_layout = QHBoxLayout()
-        model_button_layout.addWidget(self._edit_model_btn)
-        model_button_layout.addWidget(self._fit_wizard_btn)
-        model_button_layout.addStretch()
+        model_button_layout = QGridLayout()
+        model_button_layout.setContentsMargins(0, 0, 0, 0)
+        model_button_layout.setHorizontalSpacing(6)
+        model_button_layout.setVerticalSpacing(6)
+        self._edit_model_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._fit_wizard_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        model_button_layout.addWidget(self._edit_model_btn, 0, 0)
+        model_button_layout.addWidget(self._fit_wizard_btn, 0, 1)
+        model_button_layout.setColumnStretch(0, 1)
+        model_button_layout.setColumnStretch(1, 1)
         model_layout.addRow("A(t):", self._formula_label)
         model_layout.addRow("", model_button_layout)
         layout.addWidget(model_group)
@@ -921,7 +955,8 @@ class GlobalFitTab(QWidget):
             "Specify how each parameter behaves across datasets:\n"
             "• Global: Same value for all datasets\n"
             "• Local: Different value for each dataset\n"
-            "• Fixed: Held constant at the specified value"
+            "• Fixed: Held constant at the specified value\n"
+            "• File: Use value from dataset metadata (where available)"
         )
         info_label.setWordWrap(True)
         param_layout.addWidget(info_label)
@@ -931,7 +966,7 @@ class GlobalFitTab(QWidget):
         self._param_table.horizontalHeader().setStretchLastSection(False)
         self._param_table.setColumnWidth(0, 80)  # Parameter name
         self._param_table.setColumnWidth(1, 80)  # Initial value
-        self._param_table.setColumnWidth(2, 90)  # Type (dropdown)
+        self._param_table.setColumnWidth(2, 100)  # Type (dropdown)
         self._param_table.setColumnWidth(3, 150)  # Bounds
         param_layout.addWidget(self._param_table)
         layout.addWidget(param_group)
@@ -1379,9 +1414,13 @@ class GlobalFitTab(QWidget):
             value_item = QTableWidgetItem(str(default_val))
             self._param_table.setItem(i, 1, value_item)
 
-            # Type selection (Global/Local/Fixed dropdown)
+            # Type selection (Global/Local/Fixed/File dropdown)
             type_combo = QComboBox()
             type_combo.addItems(["Global", "Local", "Fixed"])
+            # Check if this parameter has file-specific defaults
+            base_name, _index = split_parameter_name(pname)
+            if base_name in {"field", "B_L"}:
+                type_combo.addItem("File")
             # Set default: first parameter (usually amplitude) as Global, others as Local
             type_combo.setCurrentText("Global" if i == 0 else "Local")
             self._param_table.setCellWidget(i, 2, type_combo)
@@ -1519,7 +1558,7 @@ class GlobalFitTab(QWidget):
             except (TypeError, ValueError):
                 continue
 
-            bounds_item = self._param_table.item(row, 3)
+            bounds_item = self._param_table.item(row, 4)
             if bounds_item is not None:
                 bounds_item.setText(_format_bounds_pair(min_val, max_val))
 
@@ -1539,6 +1578,7 @@ class GlobalFitTab(QWidget):
         global_params: list[str] = []
         local_params: list[str] = []
         fixed_params: dict[str, float] = {}
+        file_params: list[str] = []
         param_values: dict[str, float] = {}
         param_bounds: dict[str, tuple[float, float]] = {}
         param_types: dict[str, str] = {}
@@ -1554,10 +1594,17 @@ class GlobalFitTab(QWidget):
             except (ValueError, AttributeError):
                 raise ValueError(f"Error: Invalid value for {_format_param_label(pname)}") from None
 
-            if not np.isfinite(value):
-                raise ValueError(
-                    f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
-                )
+            # Get the Type selection (Global/Local/Fixed/File)
+            type_combo = self._param_table.cellWidget(i, 2)
+            type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Local"
+            param_types[pname] = type_text
+
+            # Only validate value if type is not "File"
+            if type_text != "File":
+                if not np.isfinite(value):
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
+                    )
             param_values[pname] = value
 
             bounds_text = self._param_table.item(i, 3).text()
@@ -1574,31 +1621,32 @@ class GlobalFitTab(QWidget):
                 raise ValueError(
                     f"Error: Parameter {_format_param_label(pname)} has invalid bounds: {min_val} > {max_val}"
                 )
-            if np.isfinite(min_val) and value < min_val:
-                raise ValueError(
-                    f"Error: Parameter {_format_param_label(pname)} value {value} is below minimum {min_val}"
-                )
-            if np.isfinite(max_val) and value > max_val:
-                raise ValueError(
-                    f"Error: Parameter {_format_param_label(pname)} value {value} is above maximum {max_val}"
-                )
+            if type_text != "File":
+                if np.isfinite(min_val) and value < min_val:
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} value {value} is below minimum {min_val}"
+                    )
+                if np.isfinite(max_val) and value > max_val:
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} value {value} is above maximum {max_val}"
+                    )
 
             param_bounds[pname] = (min_val, max_val)
-            type_combo = self._param_table.cellWidget(i, 2)
-            type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Local"
-            param_types[pname] = type_text
 
             if type_text == "Global":
                 global_params.append(pname)
             elif type_text == "Local":
                 local_params.append(pname)
-            else:
+            elif type_text == "File":
+                file_params.append(pname)
+            else:  # Fixed
                 fixed_params[pname] = value
 
         return {
             "global": global_params,
             "local": local_params,
             "fixed": fixed_params,
+            "file": file_params,
             "values": param_values,
             "bounds": param_bounds,
             "types": param_types,
@@ -1668,6 +1716,7 @@ class GlobalFitTab(QWidget):
         fixed_params = dict(parsed["fixed"])
         param_values = dict(parsed["values"])
         param_bounds = dict(parsed["bounds"])
+        file_params = list(parsed.get("file", []))
 
         # Build initial parameter sets for each dataset
         initial_params = {}
@@ -1678,6 +1727,14 @@ class GlobalFitTab(QWidget):
             for pname in model.param_names:
                 min_val, max_val = param_bounds[pname]
                 value = param_values[pname]
+
+                # Check if this parameter is File type
+                if pname in file_params:
+                    base_name, _index = split_parameter_name(pname)
+                    file_value = _get_file_value_for_parameter(ds, base_name)
+                    if file_value is not None:
+                        value = file_value
+
                 if inherited_seed_by_run:
                     if pname in local_params and pname in local_seed_values:
                         value = local_seed_values[pname]
@@ -1685,7 +1742,8 @@ class GlobalFitTab(QWidget):
                         pname in global_params or pname in fixed_params
                     ):
                         value = inherited_averages[pname]
-                fixed = pname in fixed_params
+                # Parameters marked as "File" type are fixed at their file values
+                fixed = pname in fixed_params or pname in file_params
                 params.add(
                     Parameter(
                         name=pname,
@@ -2107,6 +2165,7 @@ class FitPanel(QWidget):
 
         self._single_state_by_run: dict[int, dict] = {}
         self._active_single_run_number: int | None = None
+        self._all_datasets: list[MuonDataset] = []  # Track all datasets for group sharing
 
         # Create tab widget
         self._tabs = QTabWidget()
@@ -2172,7 +2231,8 @@ class FitPanel(QWidget):
             self._single_tab._result_label.setText("No fit performed yet")
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
-        """Set the datasets for global fitting tab."""
+        """Set the datasets for global fitting tab and track for group sharing."""
+        self._all_datasets = datasets
         self._global_tab.set_datasets(datasets)
 
     def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
@@ -2324,19 +2384,36 @@ class FitPanel(QWidget):
         self._single_state_by_run[run_key] = copy.deepcopy(state)
 
     def share_single_function_state(
-        self, source_run_number: int, target_run_numbers: list[int]
+        self,
+        source_run_number: int,
+        target_run_numbers: list[int],
+        datasets_by_run: dict[int, MuonDataset] | None = None,
     ) -> int:
         """Copy source single-fit function/parameter state to target runs.
 
         The copied state intentionally clears fit-result text for targets because
         no fit has been run for those datasets yet.
+
+        For field-specific parameters (like B_L), applies the target dataset's
+        field value when *datasets_by_run* is provided, falling back to the
+        pre-loaded ``_all_datasets`` list if it is not.
         """
         source_state = self.get_single_state_for_run(source_run_number)
         if not isinstance(source_state, dict):
             return 0
 
-        shared_state = copy.deepcopy(source_state)
-        shared_state["result_html"] = "No fit performed yet"
+        # Build a run-number lookup from the supplied mapping, then fall back to
+        # the stale _all_datasets list (populated by set_datasets).
+        def _lookup_dataset(run_key: int) -> MuonDataset | None:
+            if datasets_by_run is not None:
+                return datasets_by_run.get(run_key)
+            for ds in self._all_datasets:
+                try:
+                    if int(ds.run_number) == run_key:
+                        return ds
+                except (TypeError, ValueError):
+                    pass
+            return None
 
         updated = 0
         active_run = self._active_single_run_number
@@ -2347,7 +2424,21 @@ class FitPanel(QWidget):
                 continue
             if run_key == int(source_run_number):
                 continue
-            self._single_state_by_run[run_key] = copy.deepcopy(shared_state)
+
+            shared_state = copy.deepcopy(source_state)
+            shared_state["result_html"] = "No fit performed yet"
+
+            target_dataset = _lookup_dataset(run_key)
+            if target_dataset is not None and isinstance(shared_state.get("parameters"), list):
+                for param_dict in shared_state["parameters"]:
+                    pname = param_dict.get("name")
+                    if isinstance(pname, str):
+                        base_name, _index = split_parameter_name(pname)
+                        file_value = _get_file_value_for_parameter(target_dataset, base_name)
+                        if file_value is not None:
+                            param_dict["value"] = file_value
+
+            self._single_state_by_run[run_key] = shared_state
             if active_run is not None and run_key == active_run:
                 self._single_tab.restore_state(self._single_state_by_run[run_key])
             updated += 1

@@ -2,6 +2,14 @@
 
 from asymmetry.core.fitting import muon_fluorine, sc
 from asymmetry.core.fitting.composite import COMPONENTS, ComponentDefinition, CompositeModel
+from asymmetry.core.fitting.composite_parameters import (
+    CompositeEvaluation,
+    CompositeExpression,
+    CompositeExpressionError,
+    CompositeParameterDefinition,
+    FunctionSpec,
+    validate_composite_expression,
+)
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
@@ -67,6 +75,12 @@ __all__ = [
     "COMPONENTS",
     "ComponentDefinition",
     "CompositeModel",
+    "CompositeParameterDefinition",
+    "CompositeExpression",
+    "CompositeExpressionError",
+    "CompositeEvaluation",
+    "FunctionSpec",
+    "validate_composite_expression",
     "ParameterModelComponentDefinition",
     "ParameterCompositeModel",
     "PARAMETER_MODEL_COMPONENTS",

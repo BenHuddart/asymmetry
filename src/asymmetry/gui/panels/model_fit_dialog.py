@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QMenu,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -37,7 +36,12 @@ from asymmetry.core.fitting.parameter_models import (
     fit_parameter_model,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.gui.widgets.component_info_dialog import show_component_info_dialog
+from asymmetry.gui.widgets.function_expression_builder import (
+    ComponentSelectorButton as _ComponentSelectorButton,  # noqa: F401
+)
+from asymmetry.gui.widgets.function_expression_builder import (
+    FunctionExpressionBuilderDialog,
+)
 
 _OPERATOR_OPTIONS = ["+", "-", "*", "/"]
 
@@ -81,59 +85,12 @@ _POSITIVE_EPS = 1e-12
 _SC_COMPONENT_MENU_TITLE = "Superconducting Gap Models"
 
 
-class _ComponentSelectorButton(QPushButton):
-    """Menu-backed component selector with a superconducting submenu."""
-
-    currentTextChanged = Signal(str)
-
-    def __init__(self, component_pool: list[str], parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._component_pool = sorted(component_pool)
-        self._current_text = self._component_pool[0] if self._component_pool else ""
-        self.setText(self._current_text or "Select component")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setStyleSheet("text-align: left; padding: 2px 8px;")
-        self.clicked.connect(self._open_component_menu)
-
-    def currentText(self) -> str:
-        return self._current_text
-
-    def setCurrentText(self, name: str) -> None:
-        if name not in self._component_pool:
-            return
-        changed = name != self._current_text
-        self._current_text = name
-        self.setText(name)
-        if changed:
-            self.currentTextChanged.emit(name)
-
-    def _open_component_menu(self) -> None:
-        menu = self._build_component_menu()
-        if menu is None:
-            return
-        menu.exec(self.mapToGlobal(self.rect().bottomLeft()))
-
-    def _build_component_menu(self) -> QMenu | None:
-        if not self._component_pool:
-            return None
-
-        menu = QMenu(self)
-        regular_components = [name for name in self._component_pool if not name.startswith("SC_")]
-        sc_components = [name for name in self._component_pool if name.startswith("SC_")]
-
-        for name in regular_components:
-            action = menu.addAction(name)
-            action.triggered.connect(lambda _checked=False, n=name: self.setCurrentText(n))
-
-        if sc_components:
-            if regular_components:
-                menu.addSeparator()
-            sc_menu = menu.addMenu(_SC_COMPONENT_MENU_TITLE)
-            for name in sc_components:
-                action = sc_menu.addAction(name)
-                action.triggered.connect(lambda _checked=False, n=name: self.setCurrentText(n))
-
-        return menu
+def _build_parameter_model_categories(component_pool: list[str]) -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {"General": [], _SC_COMPONENT_MENU_TITLE: []}
+    for name in sorted(component_pool):
+        target = _SC_COMPONENT_MENU_TITLE if name.startswith("SC_") else "General"
+        grouped[target].append(name)
+    return {key: value for key, value in grouped.items() if value}
 
 
 def _base_param_name(name: str) -> str:
@@ -284,7 +241,7 @@ def _show_warning(parent: QWidget, title: str, text: str) -> None:
     QMessageBox.warning(parent, title, text)
 
 
-class ParameterModelBuilderDialog(QDialog):
+class ParameterModelBuilderDialog(FunctionExpressionBuilderDialog):
     """Compose a parameter model from basis components."""
 
     def __init__(
@@ -293,165 +250,26 @@ class ParameterModelBuilderDialog(QDialog):
         parent: QWidget | None = None,
         initial_model: ParameterCompositeModel | None = None,
     ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Build Parameter Model")
-        self.setMinimumWidth(700)
-
         self._component_pool = sorted(component_pool)
-        self._model: ParameterCompositeModel | None = None
-
-        layout = QVBoxLayout(self)
-        self._formula_label = QLabel("")
-        self._formula_label.setWordWrap(True)
-        self._formula_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self._formula_label)
-
-        self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(["Op", "Component", "Info", "Remove"])
-        self._table.setColumnWidth(0, 80)
-        self._table.setColumnWidth(1, 300)
-        self._table.setColumnWidth(2, 80)
-        self._table.setColumnWidth(3, 100)
-        layout.addWidget(self._table)
-
-        row_btn = QPushButton("Add Component")
-        row_btn.clicked.connect(self._add_row)
-        layout.addWidget(row_btn)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        initial_expression = (
+            initial_model.component_expression_string()
+            if initial_model is not None
+            else (self._component_pool[0] if self._component_pool else "Constant")
         )
-        buttons.accepted.connect(self._accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-        if initial_model is not None:
-            for i, cname in enumerate(initial_model.component_names):
-                op = initial_model.operators[i - 1] if i > 0 else "+"
-                self._add_row(cname, op)
-        else:
-            default_name = self._component_pool[0] if self._component_pool else "Constant"
-            self._add_row(default_name, "+")
-
-        self._update_formula()
+        super().__init__(
+            title="Build Parameter Model",
+            expression_prefix="y(x)",
+            components_by_category=_build_parameter_model_categories(self._component_pool),
+            component_definitions=PARAMETER_MODEL_COMPONENTS,
+            model_parser=ParameterCompositeModel.from_expression,
+            initial_expression=initial_expression,
+            expression_placeholder="e.g. Linear + ( Arrhenius * Constant )",
+            parent=parent,
+        )
 
     def get_model(self) -> ParameterCompositeModel | None:
-        return self._model
-
-    def _add_row(self, component_name: str | None = None, op: str = "+") -> None:
-        row = self._table.rowCount()
-        self._table.insertRow(row)
-
-        op_combo = QComboBox()
-        op_combo.addItems(_OPERATOR_OPTIONS)
-        op_combo.setCurrentText(op if op in _OPERATOR_OPTIONS else "+")
-        op_combo.setEnabled(row > 0)
-        op_combo.currentTextChanged.connect(self._update_formula)
-        self._table.setCellWidget(row, 0, op_combo)
-
-        comp_selector = _ComponentSelectorButton(self._component_pool)
-        if component_name and component_name in self._component_pool:
-            comp_selector.setCurrentText(component_name)
-        comp_selector.currentTextChanged.connect(self._update_formula)
-        self._table.setCellWidget(row, 1, comp_selector)
-
-        info_btn = QPushButton("Info")
-        info_btn.clicked.connect(lambda: self._show_component_info(row))
-        self._table.setCellWidget(row, 2, info_btn)
-
-        remove_btn = QPushButton("Remove")
-        remove_btn.clicked.connect(lambda: self._remove_row(row))
-        self._table.setCellWidget(row, 3, remove_btn)
-
-        self._refresh_row_bindings()
-        self._update_formula()
-
-    def _remove_row(self, row: int) -> None:
-        if self._table.rowCount() <= 1:
-            return
-        if row < 0 or row >= self._table.rowCount():
-            return
-        self._table.removeRow(row)
-        self._refresh_row_bindings()
-        self._update_formula()
-
-    def _refresh_row_bindings(self) -> None:
-        for row in range(self._table.rowCount()):
-            op_combo = self._table.cellWidget(row, 0)
-            if isinstance(op_combo, QComboBox):
-                op_combo.setEnabled(row > 0)
-
-            info_btn = self._table.cellWidget(row, 2)
-            if isinstance(info_btn, QPushButton):
-                try:
-                    info_btn.clicked.disconnect()
-                except RuntimeError:
-                    pass
-                info_btn.clicked.connect(lambda _checked=False, r=row: self._show_component_info(r))
-
-            remove_btn = self._table.cellWidget(row, 3)
-            if isinstance(remove_btn, QPushButton):
-                try:
-                    remove_btn.clicked.disconnect()
-                except RuntimeError:
-                    pass
-                remove_btn.clicked.connect(lambda _checked=False, r=row: self._remove_row(r))
-                remove_btn.setEnabled(self._table.rowCount() > 1)
-
-    def _show_component_info(self, row: int) -> None:
-        if row < 0 or row >= self._table.rowCount():
-            return
-
-        comp_widget = self._table.cellWidget(row, 1)
-        if not isinstance(comp_widget, (QComboBox, _ComponentSelectorButton)):
-            return
-
-        component_name = comp_widget.currentText().strip()
-        component = PARAMETER_MODEL_COMPONENTS.get(component_name)
-        if component is None:
-            return
-        show_component_info_dialog(self, component)
-
-    def _read_ui(self) -> tuple[list[str], list[str]]:
-        component_names: list[str] = []
-        operators: list[str] = []
-
-        for row in range(self._table.rowCount()):
-            comp_widget = self._table.cellWidget(row, 1)
-            if not isinstance(comp_widget, (QComboBox, _ComponentSelectorButton)):
-                continue
-            component_names.append(comp_widget.currentText())
-            if row > 0:
-                op_combo = self._table.cellWidget(row, 0)
-                op = op_combo.currentText() if isinstance(op_combo, QComboBox) else "+"
-                operators.append(op)
-
-        return component_names, operators
-
-    def _update_formula(self) -> None:
-        component_names, operators = self._read_ui()
-        if not component_names:
-            self._formula_label.setText("No components")
-            return
-
-        try:
-            model = ParameterCompositeModel(component_names=component_names, operators=operators)
-        except Exception as exc:
-            self._formula_label.setText(f"Invalid model: {exc}")
-            return
-
-        self._formula_label.setText(f"y(x) = {model.formula_string()}")
-
-    def _accept(self) -> None:
-        component_names, operators = self._read_ui()
-        try:
-            self._model = ParameterCompositeModel(
-                component_names=component_names, operators=operators
-            )
-        except Exception as exc:
-            self._formula_label.setText(f"Invalid model: {exc}")
-            return
-        self.accept()
+        model = self.built_model()
+        return model if isinstance(model, ParameterCompositeModel) else None
 
 
 @dataclass
@@ -1091,10 +909,18 @@ class ModelFitDialog(QDialog):
         """Handle fit completion on the dialog (UI) thread."""
         callback = self._fit_done_callback
         thread = self._fit_thread
-        if callback is not None:
-            callback(result)
-        if thread is not None:
-            thread.quit()
+        try:
+            if callback is not None:
+                callback(result)
+        except Exception:
+            _show_warning(
+                self,
+                "Fit failed",
+                "Unexpected error while applying fit results.\n\n" + traceback.format_exc(),
+            )
+        finally:
+            if thread is not None:
+                thread.quit()
 
     def _on_fit_worker_failed(self, trace: str) -> None:
         """Handle fit failure on the dialog (UI) thread."""

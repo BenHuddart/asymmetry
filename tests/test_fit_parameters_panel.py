@@ -11,8 +11,15 @@ import pytest
 
 pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # type: ignore
-from PySide6.QtWidgets import QApplication, QMessageBox  # type: ignore
+from PySide6.QtWidgets import (  # type: ignore
+    QApplication,
+    QDialog,
+    QMessageBox,
+    QSizePolicy,
+    QSplitter,
+)
 
+from asymmetry.core.fitting.composite_parameters import CompositeParameterDefinition
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
@@ -178,6 +185,44 @@ def test_refresh_table_uses_run_label_for_combined_rows(qapp: QApplication) -> N
     assert run_item.text() == "3039 + 3040"
 
 
+def test_fit_parameters_panel_uses_vertical_splitter(panel: FitParametersPanel) -> None:
+    assert isinstance(panel._content_splitter, QSplitter)
+    assert panel._content_splitter.orientation() == Qt.Orientation.Vertical
+    assert panel._content_splitter.count() == 2
+    assert panel._controls_scroll.minimumHeight() == 0
+
+
+def test_secondary_sections_start_collapsed(panel: FitParametersPanel) -> None:
+    assert not panel._derived_section.isExpanded()
+
+
+def test_parameter_plot_hosts_label_and_export_controls(panel: FitParametersPanel) -> None:
+    assert panel._plot_group.isAncestorOf(panel._add_label_btn)
+    assert panel._plot_group.isAncestorOf(panel._clear_labels_btn)
+    assert panel._plot_group.isAncestorOf(panel._export_csv_btn)
+    assert panel._plot_group.isAncestorOf(panel._export_gle_btn)
+    assert panel._plot_group.isAncestorOf(panel._gle_format_combo)
+
+    controls_root = panel._controls_scroll.widget()
+    assert controls_root is not None
+    assert not controls_root.isAncestorOf(panel._add_label_btn)
+    assert not controls_root.isAncestorOf(panel._export_csv_btn)
+
+
+def test_x_axis_log_checkbox_reserves_label_width(panel: FitParametersPanel) -> None:
+    assert panel._log_x_check.minimumWidth() >= panel._log_x_check.fontMetrics().horizontalAdvance(
+        "log"
+    )
+
+
+def test_y_selector_table_reserves_space_for_log_column(panel: FitParametersPanel) -> None:
+    panel._varying_params = ["A0", "Lambda"]
+    panel._rebuild_y_controls()
+
+    assert panel._y_selector_table.columnWidth(2) >= panel._y_controls["A0"].log.minimumWidth()
+    assert panel._y_selector_table.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+
+
 def test_delete_group_fits_removes_group_and_emits_run_numbers(
     qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
@@ -337,7 +382,43 @@ def test_generate_gle_plot_uses_errorbar_from_file(
     assert first["kwargs"]["y_col"] == 4
     assert first["kwargs"]["yerr_col"] == 5
     assert str(gle_path) in fig.saved_paths
-    assert fig.saved_kwargs[-1]["folder"] is True
+    assert "folder" not in fig.saved_kwargs[-1]
+
+
+def test_generate_gle_plot_saves_to_resolved_gle_path(
+    panel: FitParametersPanel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_path = tmp_path / "fit_parameters.dat"
+    data_path.write_text("1 2 3\n", encoding="utf-8")
+    requested_gle_path = tmp_path / "plot.gle"
+    gle_path, _export_dir = resolve_gle_export_paths(requested_gle_path, folder=True)
+
+    axis = _FakeAxis()
+
+    class _CaptureFigure(_FakeFigure):
+        def __init__(self, axis: _FakeAxis) -> None:
+            super().__init__(axis)
+            self.requested_paths: list[str] = []
+
+        def savefig(self, path: str, **kwargs) -> None:
+            self.requested_paths.append(path)
+            super().savefig(path, **kwargs)
+
+    fig = _CaptureFigure(axis)
+    fake_glp = SimpleNamespace(
+        Axes=type("FakeAxes", (), {"errorbar_from_file": staticmethod(lambda *a, **k: None)}),
+        figure=lambda **_kwargs: fig,
+    )
+
+    monkeypatch.setitem(sys.modules, "gleplot", fake_glp)
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    monkeypatch.setattr(panel, "_show_gle_preview", lambda *_a, **_k: None)
+
+    panel._generate_gle_plot(requested_gle_path, gle_path, data_path, "pdf")
+
+    assert fig.requested_paths == [str(gle_path)]
+    assert str(gle_path) in fig.saved_paths
 
 
 def test_generate_gle_plot_warns_for_old_gleplot(
@@ -895,6 +976,44 @@ def test_group_global_params_roundtrip_in_panel_state(panel: FitParametersPanel)
     assert restored_global["A0"].value == pytest.approx(0.25)
 
 
+def test_panel_state_roundtrip_preserves_grouped_parameter_model(panel: FitParametersPanel) -> None:
+    grouped_model = ParameterCompositeModel.from_expression("Linear + ( Arrhenius * Constant )")
+    grouped_fit = ParameterModelFit(
+        parameter_name="Lambda",
+        x_key="temperature",
+        ranges=[
+            ModelFitRange(
+                x_min=5.0,
+                x_max=25.0,
+                model=grouped_model,
+                parameters=ParameterSet(
+                    [
+                        Parameter("m", value=0.01),
+                        Parameter("b", value=0.2),
+                        Parameter("a", value=0.3),
+                        Parameter("Ea", value=2.0),
+                        Parameter("c", value=0.05),
+                    ]
+                ),
+            )
+        ],
+        active=True,
+    )
+    panel._model_fits = {"Lambda": grouped_fit}
+
+    state = panel.get_state()
+
+    restored = FitParametersPanel()
+    restored.restore_state(state)
+
+    restored_fit = restored._model_fits["Lambda"]
+    restored_model = restored_fit.ranges[0].model
+    assert restored_model.component_names == grouped_model.component_names
+    assert restored_model.operators == grouped_model.operators
+    assert restored_model.open_parentheses == grouped_model.open_parentheses
+    assert restored_model.close_parentheses == grouped_model.close_parentheses
+
+
 def test_new_asymmetry_fit_overwrites_existing_group_model_fits(panel: FitParametersPanel) -> None:
     existing_fit = ParameterModelFit(parameter_name="Lambda", x_key="field", ranges=[], active=True)
     panel._group_fit_results = {
@@ -1039,6 +1158,38 @@ def test_group_button_styles_distinguish_single_active_from_multi_highlight(
     assert "2px solid #1f6feb" in panel._group_button_map["g_a"].styleSheet()
     assert "1px solid #d29922" not in panel._group_button_map["g_a"].styleSheet()
     assert "1px solid #d29922" in panel._group_button_map["g_b"].styleSheet()
+
+
+def test_group_button_styles_refresh_after_scale_change(panel: FitParametersPanel) -> None:
+    panel._group_fit_results = {
+        "g_a": _GroupFitData(
+            group_id="g_a",
+            group_name="Group A",
+            rows=list(panel._rows),
+            global_params=None,
+            varying_params=list(panel._varying_params),
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        )
+    }
+    panel._rebuild_group_buttons()
+    panel._set_selected_group_ids(["g_a"], emit=False)
+    panel._apply_group_selection_to_view(sync_active=False)
+
+    panel._on_ui_scale_changed(1.0, 1.1)
+
+    style = panel._group_button_map["g_a"].styleSheet()
+    assert "2px solid #1f6feb" in style
+    assert "border-radius: 13px;" in style
+
+
+def test_model_fit_buttons_get_explicit_width(panel: FitParametersPanel) -> None:
+    panel._rebuild_y_controls()
+
+    controls = panel._y_controls["A0"]
+    assert controls.fit_button.minimumWidth() > 0
+    assert panel._y_selector_table.columnWidth(1) >= controls.fit_button.minimumWidth()
 
 
 def test_shift_click_highlights_group_without_changing_active_selection(
@@ -1460,3 +1611,205 @@ def test_group_variable_value_for_rows_uses_complementary_axis(panel: FitParamet
     assert gv_field_fit == pytest.approx((20.10 + 20.13) / 2.0)
     # For temperature-based fits, group variable should be field.
     assert gv_temp_fit == pytest.approx(20.0)
+
+
+def test_composite_parameter_materializes_and_appears_in_y_selector(
+    panel: FitParametersPanel,
+) -> None:
+    panel._composite_parameters = [
+        CompositeParameterDefinition(name="Lambda_eff", expression="sqrt(A0^2 + Lambda^2)")
+    ]
+    panel._apply_composite_parameters_to_rows(panel._rows, panel._composite_parameters)
+    panel._rebuild_y_controls(preferred_selected=["Lambda_eff"])
+
+    assert "Lambda_eff" in panel._display_y_parameters()
+    assert np.isfinite(panel._rows[0].values["Lambda_eff"])
+
+    table_names = []
+    for row in range(panel._y_selector_table.rowCount()):
+        item = panel._y_selector_table.item(row, 0)
+        assert item is not None
+        table_names.append(item.data(Qt.ItemDataRole.UserRole))
+    assert "Lambda_eff" in table_names
+
+
+def test_open_composite_dialog_adds_definition_and_values(
+    panel: FitParametersPanel,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeDialog:
+        def __init__(self, **kwargs):
+            self._definition = CompositeParameterDefinition(
+                name="A0_plus_Lambda",
+                expression="A0 + Lambda",
+            )
+
+        def exec(self) -> int:
+            return int(QDialog.DialogCode.Accepted)
+
+        def composite_definition(self) -> CompositeParameterDefinition:
+            return self._definition
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.fit_parameters_panel.CompositeParameterDialog",
+        _FakeDialog,
+    )
+
+    panel._open_composite_parameter_dialog()
+
+    assert any(defn.name == "A0_plus_Lambda" for defn in panel._composite_parameters)
+    assert np.isfinite(panel._rows[0].values["A0_plus_Lambda"])
+    assert "A0_plus_Lambda" in panel._display_y_parameters()
+
+
+def test_set_fit_results_preserves_group_composite_definitions(
+    panel: FitParametersPanel,
+) -> None:
+    definition = CompositeParameterDefinition(name="sum_param", expression="A0 + Lambda")
+    panel._group_fit_results = {
+        "g1": _GroupFitData(
+            group_id="g1",
+            group_name="Group 1",
+            rows=[],
+            global_params=None,
+            varying_params=["A0", "Lambda"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+            composite_parameters=[definition],
+        )
+    }
+
+    result = FitResult(
+        success=True,
+        reduced_chi_squared=1.0,
+        parameters=ParameterSet([Parameter("A0", value=0.24), Parameter("Lambda", value=0.11)]),
+        uncertainties={"A0": 0.01, "Lambda": 0.02},
+    )
+    datasets = {
+        101: SimpleNamespace(
+            metadata={
+                "run_label": "101",
+                "field": 150.0,
+                "temperature": 12.0,
+            }
+        )
+    }
+
+    panel.set_fit_results(
+        {101: (result, (np.array([0.0, 1.0]), np.array([0.24, 0.24])))},
+        datasets,
+        global_params=None,
+        group_id="g1",
+        group_name="Group 1",
+    )
+
+    stored = panel._group_fit_results["g1"]
+    assert any(defn.name == "sum_param" for defn in stored.composite_parameters)
+    assert np.isfinite(stored.rows[0].values["sum_param"])
+
+
+def test_edit_selected_composite_parameter_updates_definition(
+    panel: FitParametersPanel,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    panel._composite_parameters = [
+        CompositeParameterDefinition(name="sum_param", expression="A0 + Lambda")
+    ]
+    panel._apply_composite_parameters_to_rows(panel._rows, panel._composite_parameters)
+    panel._rebuild_y_controls(preferred_selected=["sum_param"])
+
+    class _FakeDialog:
+        def __init__(self, **kwargs):
+            self._definition = CompositeParameterDefinition(
+                name="sum_param_edited",
+                expression="A0 - Lambda",
+            )
+
+        def exec(self) -> int:
+            return int(QDialog.DialogCode.Accepted)
+
+        def composite_definition(self) -> CompositeParameterDefinition:
+            return self._definition
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.fit_parameters_panel.CompositeParameterDialog",
+        _FakeDialog,
+    )
+
+    panel._edit_selected_composite_parameter()
+
+    names = [definition.name for definition in panel._composite_parameters]
+    assert "sum_param" not in names
+    assert "sum_param_edited" in names
+    assert "sum_param" not in panel._rows[0].values
+    assert np.isfinite(panel._rows[0].values["sum_param_edited"])
+
+
+def test_remove_selected_composite_parameter_drops_values(
+    panel: FitParametersPanel,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    panel._composite_parameters = [
+        CompositeParameterDefinition(name="sum_param", expression="A0 + Lambda")
+    ]
+    panel._apply_composite_parameters_to_rows(panel._rows, panel._composite_parameters)
+    panel._rebuild_y_controls(preferred_selected=["sum_param"])
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.fit_parameters_panel.QMessageBox.question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    panel._remove_selected_composite_parameters()
+
+    assert panel._composite_parameters == []
+    assert "sum_param" not in panel._rows[0].values
+    assert "sum_param" not in panel._rows[0].errors
+
+
+def test_apply_cross_group_fit_keeps_existing_composite_definitions(
+    panel: FitParametersPanel,
+) -> None:
+    composite = CompositeParameterDefinition(name="sum_param", expression="A0 + Lambda")
+    model = ParameterCompositeModel(["Linear"])
+    fit_result = CrossGroupFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=0.5,
+        global_parameters=ParameterSet([Parameter("m", value=0.002)]),
+        local_parameters={"g1": ParameterSet([Parameter("b", value=0.18)])},
+        fixed_parameters=ParameterSet(),
+        global_uncertainties={"m": 0.0},
+        local_uncertainties={"g1": {"b": 0.01}},
+    )
+
+    group = _GroupFitData(
+        group_id="g1",
+        group_name="Group 1",
+        rows=list(panel._rows),
+        global_params=None,
+        varying_params=list(panel._varying_params),
+        inferred_x_key="field",
+        model_fits={},
+        plot_annotations=[],
+        composite_parameters=[composite],
+    )
+    panel._group_fit_results = {"g1": group}
+
+    output = SimpleNamespace(
+        fit_result=fit_result,
+        model=model,
+        fit_x_min=100.0,
+        fit_x_max=200.0,
+    )
+
+    panel._apply_cross_group_fit_to_groups(
+        parameter_name="Lambda",
+        x_key="field",
+        selected_groups=[group],
+        output=output,
+    )
+
+    updated = panel._group_fit_results["g1"]
+    assert any(defn.name == "sum_param" for defn in updated.composite_parameters)

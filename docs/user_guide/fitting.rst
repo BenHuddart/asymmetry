@@ -197,6 +197,34 @@ Parameters: ``A0``, ``Delta`` (:math:`\Delta`), ``baseline``
 
    model = MODELS["StaticGKT_ZF"]
 
+LongitudinalFieldKT
+~~~~~~~~~~~~~~~~~~~~
+
+Static Gaussian Kubo-Toyabe with applied longitudinal decoupling field
+(Hayano et al. 1979). See :ref:`lf-kubo-toyabe` for detailed documentation.
+
+.. math::
+
+   A(t) = A_0 \, G_z(t; \Delta, B_L) + A_{\mathrm{bg}}
+
+where :math:`G_z(t)` is the depolarization function including the longitudinal
+field contribution. ``B_L`` is specified in Gauss (G).
+
+Parameters: ``A``, ``Delta`` (:math:`\Delta`), ``B_L``
+
+In the Fit panel, ``B_L`` is initialized from the run field ``B (G)`` when the
+dataset metadata includes a field value.
+
+.. code-block:: python
+
+   from asymmetry.core.fitting.composite import COMPONENTS
+   
+   # Use as a component in composite models
+   model = CompositeModel(["LongitudinalFieldKT", "Constant"], ["+"])
+   
+   # Or as a standalone model (if using MODELS registry)
+   # model = MODELS["LFKuboToyabe"]
+
 Custom Models
 ~~~~~~~~~~~~~
 
@@ -828,10 +856,19 @@ GUI Composite Function Builder
 -------------------------------
 
 As of the current GUI workflow, fitting functions are edited as composite
-expressions for :math:`A(t)` using a component builder.
+expressions for :math:`A(t)` using a calculator-style function builder.
 
 In the GUI fit panel (Single and Global tabs), click **Edit Function...** to
 build a composite function for :math:`A(t)`.
+
+The builder treats each basis function as one atomic object. Select a function,
+click **Insert Function**, and combine it with ``+``, ``-``, ``*``, ``/``, and
+parentheses in the expression box. The **Info** button always shows the
+documentation for the currently selected function, so you can inspect equations,
+parameters, and applicability without leaving the builder.
+
+The expression is validated live. The preview line shows the expanded
+parameterized form that will be sent to the fitter.
 
 Default function
 ~~~~~~~~~~~~~~~~
@@ -854,9 +891,13 @@ The builder supports these basis components:
 * ``Oscillatory``: :math:`A\cos(2\pi f t + \phi)`
 * ``StretchedExponential``: :math:`A e^{-(|\Lambda|t)^\beta}`
 * ``StaticGKT_ZF``
+* ``LongitudinalFieldKT``: Static Gaussian Kubo-Toyabe with longitudinal field (see :ref:`lf-kubo-toyabe`)
 * ``Constant``: :math:`A_{bg}`
 
 Use ``+``, ``-``, ``*``, ``/`` operators to combine components.
+
+Parentheses are supported, so you can build grouped expressions such as
+``Exponential * (Gaussian + Constant)`` directly in the GUI.
 
 .. note::
 

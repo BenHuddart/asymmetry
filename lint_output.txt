@@ -1,0 +1,529 @@
+148 files already formatted
+N806 Variable `GAMMA_MU` in function should be lowercase
+   --> src/asymmetry/core/fitting/models.py:165:5
+    |
+163 |     """
+164 |     # Muon gyromagnetic ratio: 2π × 135.5 MHz/T = 2π × 135.5 rad/(us·T)
+165 |     GAMMA_MU = 2.0 * np.pi * 135.5  # rad/(us*T)
+    |     ^^^^^^^^
+166 |
+167 |     # Compute Larmor frequency in rad/us
+    |
+
+N806 Variable `OMEGA0_THRESHOLD` in function should be lowercase
+   --> src/asymmetry/core/fitting/models.py:178:5
+    |
+177 |     # Threshold for treating field as effectively zero
+178 |     OMEGA0_THRESHOLD = 1e-10
+    |     ^^^^^^^^^^^^^^^^
+179 |
+180 |     # Handle the case where omega0 is very small (transition to zero field)
+    |
+
+N806 Variable `Delta_sq` in function should be lowercase
+   --> src/asymmetry/core/fitting/models.py:190:9
+    |
+188 |         omega0_sq = omega0**2
+189 |         omega0_cu = omega0**3
+190 |         Delta_sq = Delta**2
+    |         ^^^^^^^^
+191 |         Delta_qu = Delta_sq**2
+192 |         factor1 = 2.0 * Delta_sq / omega0_sq
+    |
+
+N806 Variable `Delta_qu` in function should be lowercase
+   --> src/asymmetry/core/fitting/models.py:191:9
+    |
+189 |         omega0_cu = omega0**3
+190 |         Delta_sq = Delta**2
+191 |         Delta_qu = Delta_sq**2
+    |         ^^^^^^^^
+192 |         factor1 = 2.0 * Delta_sq / omega0_sq
+193 |         factor2 = 2.0 * Delta_qu / omega0_cu
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/asymmetry/core/fitting/parameter_models.py:3:1
+   |
+ 1 |   """Model fitting for fitted parameters as a function of field or temperature."""
+ 2 |
+ 3 | / from __future__ import annotations
+ 4 | |
+ 5 | | from collections import Counter
+ 6 | | from collections.abc import Callable
+ 7 | | from dataclasses import dataclass, field
+ 8 | |
+ 9 | | import numpy as np
+10 | | from numpy.typing import NDArray
+11 | |
+12 | | from asymmetry.core.fitting.diffusion import lambda_total
+13 | | from asymmetry.core.fitting.composite import (
+14 | |     build_component_expression,
+15 | |     parse_component_expression,
+16 | | )
+17 | | from asymmetry.core.fitting.parameters import (
+18 | |     Parameter,
+19 | |     ParameterSet,
+20 | |     ParamInfo,
+21 | |     get_param_info,
+22 | |     split_parameter_name,
+23 | | )
+24 | | from asymmetry.core.fitting.sc import models as sc_models
+25 | | from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+   | |____________________________________________________________________________________________^
+   |
+help: Organize imports
+
+F401 [*] `typing.override` imported but unused
+  --> src/asymmetry/gui/mainwindow.py:25:20
+   |
+23 | import os
+24 | from pathlib import Path
+25 | from typing import override
+   |                    ^^^^^^^^
+26 |
+27 | import numpy as np
+   |
+help: Remove unused import: `typing.override`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/asymmetry/gui/panels/fit_function_builder.py:3:1
+   |
+ 1 |   """Dialog for building composite fit functions."""
+ 2 |
+ 3 | / from __future__ import annotations
+ 4 | |
+ 5 | | from collections import defaultdict
+ 6 | |
+ 7 | | from PySide6.QtWidgets import QWidget
+ 8 | |
+ 9 | | from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
+10 | | from asymmetry.gui.widgets.function_expression_builder import (
+11 | |     ComponentSelectorButton as _ComponentSelectorButton,
+12 | |     FunctionExpressionBuilderDialog,
+13 | | )
+   | |_^
+   |
+help: Organize imports
+
+F401 [*] `asymmetry.gui.widgets.function_expression_builder.ComponentSelectorButton` imported but unused
+  --> src/asymmetry/gui/panels/fit_function_builder.py:11:32
+   |
+ 9 | from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
+10 | from asymmetry.gui.widgets.function_expression_builder import (
+11 |     ComponentSelectorButton as _ComponentSelectorButton,
+   |                                ^^^^^^^^^^^^^^^^^^^^^^^^
+12 |     FunctionExpressionBuilderDialog,
+13 | )
+   |
+help: Remove unused import: `asymmetry.gui.widgets.function_expression_builder.ComponentSelectorButton`
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/asymmetry/gui/panels/fit_parameters_panel.py:3:1
+   |
+ 1 |   """Panel for inspecting fitted parameters across multiple datasets."""
+ 2 |
+ 3 | / from __future__ import annotations
+ 4 | |
+ 5 | | import csv
+ 6 | | import importlib
+ 7 | | import os
+ 8 | | import shutil
+ 9 | | import subprocess
+10 | | from dataclasses import dataclass, field
+11 | | from pathlib import Path
+12 | | from typing import Any
+13 | |
+14 | | import numpy as np
+15 | | from PySide6.QtCore import Qt, Signal
+16 | | from PySide6.QtWidgets import (
+17 | |     QAbstractItemView,
+18 | |     QApplication,
+19 | |     QCheckBox,
+20 | |     QComboBox,
+21 | |     QDialog,
+22 | |     QFileDialog,
+23 | |     QFormLayout,
+24 | |     QGridLayout,
+25 | |     QGroupBox,
+26 | |     QHBoxLayout,
+27 | |     QHeaderView,
+28 | |     QInputDialog,
+29 | |     QLabel,
+30 | |     QMenu,
+31 | |     QMessageBox,
+32 | |     QPushButton,
+33 | |     QScrollArea,
+34 | |     QSizePolicy,
+35 | |     QSplitter,
+36 | |     QTableWidget,
+37 | |     QTableWidgetItem,
+38 | |     QVBoxLayout,
+39 | |     QWidget,
+40 | | )
+41 | |
+42 | | from asymmetry.core.data.dataset import MuonDataset
+43 | | from asymmetry.core.fitting.composite_parameters import (
+44 | |     CompositeExpression,
+45 | |     CompositeExpressionError,
+46 | |     CompositeParameterDefinition,
+47 | | )
+48 | | from asymmetry.core.fitting.engine import FitResult
+49 | | from asymmetry.core.fitting.parameter_models import (
+50 | |     CrossGroupFitResult,
+51 | |     ModelFitRange,
+52 | |     ParameterCompositeModel,
+53 | |     ParameterGroupData,
+54 | |     ParameterModelFit,
+55 | |     ParameterModelFitResult,
+56 | | )
+57 | | from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
+58 | | from asymmetry.gui.export_paths import (
+59 | |     default_export_path,
+60 | |     remember_export_path,
+61 | |     resolve_gle_export_paths,
+62 | | )
+63 | | from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
+64 | | from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
+65 | | from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
+66 | | from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
+   | |________________________________________________________________^
+   |
+help: Organize imports
+
+N802 Function name `showEvent` should be lowercase
+   --> src/asymmetry/gui/panels/fit_parameters_panel.py:385:9
+    |
+383 |         self._refresh_group_button_styles()
+384 |
+385 |     def showEvent(self, event) -> None:
+    |         ^^^^^^^^^
+386 |         super().showEvent(event)
+387 |         self._ensure_ui_scale_sync()
+    |
+help: Consider adding `@typing.override` if this method overrides a method from a superclass
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> src/asymmetry/gui/panels/model_fit_dialog.py:3:1
+   |
+ 1 |   """Dialog for fitting parameter trends vs field/temperature."""
+ 2 |
+ 3 | / from __future__ import annotations
+ 4 | |
+ 5 | | import os
+ 6 | | import re
+ 7 | | import traceback
+ 8 | | from collections.abc import Callable
+ 9 | | from dataclasses import dataclass
+10 | |
+11 | | import numpy as np
+12 | | from PySide6.QtCore import QObject, Qt, QThread, Signal
+13 | | from PySide6.QtWidgets import (
+14 | |     QCheckBox,
+15 | |     QComboBox,
+16 | |     QDialog,
+17 | |     QDialogButtonBox,
+18 | |     QDoubleSpinBox,
+19 | |     QGroupBox,
+20 | |     QHBoxLayout,
+21 | |     QLabel,
+22 | |     QMessageBox,
+23 | |     QPushButton,
+24 | |     QTableWidget,
+25 | |     QTableWidgetItem,
+26 | |     QVBoxLayout,
+27 | |     QWidget,
+28 | | )
+29 | |
+30 | | from asymmetry.core.fitting.parameter_models import (
+31 | |     PARAMETER_MODEL_COMPONENTS,
+32 | |     ModelFitRange,
+33 | |     ParameterCompositeModel,
+34 | |     ParameterModelFit,
+35 | |     component_names_for_x,
+36 | |     fit_parameter_model,
+37 | | )
+38 | | from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+39 | | from asymmetry.gui.widgets.component_info_dialog import show_component_info_dialog
+40 | | from asymmetry.gui.widgets.function_expression_builder import (
+41 | |     ComponentSelectorButton as _ComponentSelectorButton,
+42 | |     FunctionExpressionBuilderDialog,
+43 | | )
+   | |_^
+44 |
+45 |   _OPERATOR_OPTIONS = ["+", "-", "*", "/"]
+   |
+help: Organize imports
+
+F401 [*] `asymmetry.gui.widgets.component_info_dialog.show_component_info_dialog` imported but unused
+  --> src/asymmetry/gui/panels/model_fit_dialog.py:39:57
+   |
+37 | )
+38 | from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+39 | from asymmetry.gui.widgets.component_info_dialog import show_component_info_dialog
+   |                                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+40 | from asymmetry.gui.widgets.function_expression_builder import (
+41 |     ComponentSelectorButton as _ComponentSelectorButton,
+   |
+help: Remove unused import: `asymmetry.gui.widgets.component_info_dialog.show_component_info_dialog`
+
+F401 [*] `asymmetry.gui.widgets.function_expression_builder.ComponentSelectorButton` imported but unused
+  --> src/asymmetry/gui/panels/model_fit_dialog.py:41:32
+   |
+39 | from asymmetry.gui.widgets.component_info_dialog import show_component_info_dialog
+40 | from asymmetry.gui.widgets.function_expression_builder import (
+41 |     ComponentSelectorButton as _ComponentSelectorButton,
+   |                                ^^^^^^^^^^^^^^^^^^^^^^^^
+42 |     FunctionExpressionBuilderDialog,
+43 | )
+   |
+help: Remove unused import: `asymmetry.gui.widgets.function_expression_builder.ComponentSelectorButton`
+
+N802 Function name `setValue` should be lowercase
+   --> src/asymmetry/gui/panels/plot_panel.py:118:9
+    |
+116 |         return value
+117 |
+118 |     def setValue(self, value: float) -> None:
+    |         ^^^^^^^^
+119 |         """Set the displayed text from a numeric value."""
+120 |         numeric_value = float(value)
+    |
+help: Consider adding `@typing.override` if this method overrides a method from a superclass
+
+N802 Function name `addWidget` should be lowercase
+  --> src/asymmetry/gui/widgets/collapsible_section.py:37:9
+   |
+35 |         self.setExpanded(bool(expanded))
+36 |
+37 |     def addWidget(self, widget: QWidget) -> None:
+   |         ^^^^^^^^^
+38 |         self._content_layout.addWidget(widget)
+   |
+help: Consider adding `@typing.override` if this method overrides a method from a superclass
+
+N802 Function name `addLayout` should be lowercase
+  --> src/asymmetry/gui/widgets/collapsible_section.py:40:9
+   |
+38 |         self._content_layout.addWidget(widget)
+39 |
+40 |     def addLayout(self, layout) -> None:
+   |         ^^^^^^^^^
+41 |         self._content_layout.addLayout(layout)
+   |
+help: Consider adding `@typing.override` if this method overrides a method from a superclass
+
+N802 Function name `contentLayout` should be lowercase
+  --> src/asymmetry/gui/widgets/collapsible_section.py:43:9
+   |
+41 |         self._content_layout.addLayout(layout)
+42 |
+43 |     def contentLayout(self) -> QVBoxLayout:
+   |         ^^^^^^^^^^^^^
+44 |         return self._content_layout
+   |
+help: Consider adding `@typing.override` if this method overrides a method from a superclass
+
+N802 Function name `isExpanded` should be lowercase
+  --> src/asymmetry/gui/widgets/collapsible_section.py:46:9
+   |
+44 |         return self._content_layout
+45 |
+46 |     def isExpanded(self) -> bool:
+   |         ^^^^^^^^^^
+47 |         return self._toggle.isChecked()
+   |
+help: Consider adding `@typing.override` if this method overrides a method from a superclass
+
+N802 Function name `setExpanded` should be lowercase
+  --> src/asymmetry/gui/widgets/collapsible_section.py:49:9
+   |
+47 |         return self._toggle.isChecked()
+48 |
+49 |     def setExpanded(self, expanded: bool) -> None:
+   |         ^^^^^^^^^^^
+50 |         expanded = bool(expanded)
+51 |         self._toggle.blockSignals(True)
+   |
+help: Consider adding `@typing.override` if this method overrides a method from a superclass
+
+N815 Variable `currentTextChanged` in class scope should not be mixedCase
+  --> src/asymmetry/gui/widgets/function_expression_builder.py:29:5
+   |
+27 |     """Menu-backed component selector with optional category submenus."""
+28 |
+29 |     currentTextChanged = Signal(str)
+   |     ^^^^^^^^^^^^^^^^^^
+30 |
+31 |     def __init__(
+   |
+
+N802 Function name `currentText` should be lowercase
+  --> src/asymmetry/gui/widgets/function_expression_builder.py:48:9
+   |
+46 |         self.clicked.connect(self._open_component_menu)
+47 |
+48 |     def currentText(self) -> str:
+   |         ^^^^^^^^^^^
+49 |         return self._current_text
+   |
+help: Consider adding `@typing.override` if this method overrides a method from a superclass
+
+N802 Function name `setCurrentText` should be lowercase
+  --> src/asymmetry/gui/widgets/function_expression_builder.py:51:9
+   |
+49 |         return self._current_text
+50 |
+51 |     def setCurrentText(self, name: str) -> None:
+   |         ^^^^^^^^^^^^^^
+52 |         if name not in self._component_pool:
+53 |             return
+   |
+help: Consider adding `@typing.override` if this method overrides a method from a superclass
+
+N802 Function name `keyPressEvent` should be lowercase
+   --> src/asymmetry/gui/widgets/function_expression_builder.py:168:9
+    |
+166 |         self.setCursorPosition(removal_start)
+167 |
+168 |     def keyPressEvent(self, event) -> None:  # type: ignore[override]
+    |         ^^^^^^^^^^^^^
+169 |         if event.key() == Qt.Key.Key_Backspace:
+170 |             self.remove_token_before_cursor()
+    |
+help: Consider adding `@typing.override` if this method overrides a method from a superclass
+
+N802 Function name `showEvent` should be lowercase
+   --> src/asymmetry/gui/windows/detector_layout_dialog.py:249:9
+    |
+247 |         self._update_preset_status_label()
+248 |
+249 |     def showEvent(self, event) -> None:
+    |         ^^^^^^^^^
+250 |         super().showEvent(event)
+251 |         self._ensure_ui_scale_sync()
+    |
+help: Consider adding `@typing.override` if this method overrides a method from a superclass
+
+N806 Variable `Delta` in function should be lowercase
+  --> tests/test_lf_kubo_toyabe.py:49:9
+   |
+47 |         """
+48 |         t = np.linspace(0, 5, 50)
+49 |         Delta = 0.5
+   |         ^^^^^
+50 |
+51 |         # Zero-field KT result
+   |
+
+N806 Variable `A0_1` in function should be lowercase
+  --> tests/test_lf_kubo_toyabe.py:70:9
+   |
+68 |         """Verify A0 parameter scales the result."""
+69 |         t = np.linspace(0, 5, 50)
+70 |         A0_1 = 1.0
+   |         ^^^^
+71 |         A0_2 = 2.5
+   |
+
+N806 Variable `A0_2` in function should be lowercase
+  --> tests/test_lf_kubo_toyabe.py:71:9
+   |
+69 |         t = np.linspace(0, 5, 50)
+70 |         A0_1 = 1.0
+71 |         A0_2 = 2.5
+   |         ^^^^
+72 |
+73 |         result_1 = longitudinal_field_kubo_toyabe(t, A0=A0_1, Delta=0.5, B_L=0.1, baseline=0.0)
+   |
+
+N806 Variable `Delta` in function should be lowercase
+   --> tests/test_lf_kubo_toyabe.py:103:9
+    |
+101 |         """
+102 |         t = np.linspace(0, 10, 100)
+103 |         Delta = 0.5
+    |         ^^^^^
+104 |
+105 |         # Weak field
+    |
+
+N806 Variable `Delta` in function should be lowercase
+   --> tests/test_lf_kubo_toyabe.py:125:9
+    |
+123 |         """Verify numerical stability for small B_L values."""
+124 |         t = np.linspace(0, 20, 200)
+125 |         Delta = 0.3
+    |         ^^^^^
+126 |
+127 |         # Test with various small B_L values
+    |
+
+N806 Variable `B_L` in function should be lowercase
+   --> tests/test_lf_kubo_toyabe.py:128:13
+    |
+127 |         # Test with various small B_L values
+128 |         for B_L in [1e-5, 1e-6, 1e-8, 1e-10]:
+    |             ^^^
+129 |             result = longitudinal_field_kubo_toyabe(t, A0=1.0, Delta=Delta, B_L=B_L, baseline=0.0)
+130 |             assert np.all(np.isfinite(result))
+    |
+
+F401 [*] `pytest` imported but unused
+  --> tests/test_lf_kubo_toyabe_basic.py:9:8
+   |
+ 8 | import numpy as np
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | from asymmetry.core.fitting.models import (
+   |
+help: Remove unused import: `pytest`
+
+N806 Variable `Delta` in function should be lowercase
+  --> tests/test_lf_kubo_toyabe_basic.py:46:9
+   |
+44 |         """Verify LF-KT reduces to zero-field KT when B_L=0."""
+45 |         t = np.linspace(0, 5, 50)
+46 |         Delta = 0.5
+   |         ^^^^^
+47 |
+48 |         # Zero-field KT result
+   |
+
+N806 Variable `A0_1` in function should be lowercase
+  --> tests/test_lf_kubo_toyabe_basic.py:67:9
+   |
+65 |         """Verify A0 parameter scales the result."""
+66 |         t = np.linspace(0, 5, 50)
+67 |         A0_1 = 1.0
+   |         ^^^^
+68 |         A0_2 = 2.5
+   |
+
+N806 Variable `A0_2` in function should be lowercase
+  --> tests/test_lf_kubo_toyabe_basic.py:68:9
+   |
+66 |         t = np.linspace(0, 5, 50)
+67 |         A0_1 = 1.0
+68 |         A0_2 = 2.5
+   |         ^^^^
+69 |
+70 |         result_1 = longitudinal_field_kubo_toyabe(t, A0=A0_1, Delta=0.5, B_L=0.1, baseline=0.0)
+   |
+
+N806 Variable `Delta` in function should be lowercase
+  --> tests/test_lf_kubo_toyabe_basic.py:96:9
+   |
+94 |         """Verify LF-KT shows field-induced decoupling effect."""
+95 |         t = np.linspace(0, 10, 100)
+96 |         Delta = 0.5
+   |         ^^^^^
+97 |
+98 |         # Weak field
+   |
+
+Found 35 errors.
+[*] 9 fixable with the `--fix` option.
++ /Users/bhuddart/Source/Asymmetry/.venv/bin/python -m ruff format --check src tests tools
++ /Users/bhuddart/Source/Asymmetry/.venv/bin/python -m ruff check src tests tools

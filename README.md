@@ -19,14 +19,22 @@ for later reuse.
 - **Core data workflows**: apply grouping, estimate alpha, compute asymmetry, rebin data, and
   co-add compatible datasets with propagated uncertainties.
 - **Time-domain fitting**: fit single datasets or simultaneous multi-dataset series using built-in
-  μSR models and composite expressions assembled with arithmetic operators.
+  μSR models and calculator-style composite expressions assembled with arithmetic operators and
+  parentheses.
+- **Longitudinal-field KT support**: includes `LongitudinalFieldKT` / `LFKuboToyabe` models with
+  field-aware defaults (`B_L` can be initialized from run metadata where available).
+- **Global-fit parameter typing**: per-parameter role selection for `Global`, `Local`, `Fixed`,
+  and `File` (file-backed, per-dataset value) workflows.
 - **Parameter-model fitting**: fit field-, temperature-, or run-dependent parameter trends,
   including superconducting penetration-depth workflows.
+- **Derived composite parameters**: define expression-based parameters in the Fit Parameters panel
+  with safe parsing and first-order uncertainty propagation (including covariance support when
+  available).
 - **Fourier analysis**: compute FFT spectra with selectable windows and zero padding.
 - **Logbook and metadata handling**: inspect run metadata, build searchable run logbooks, and use
   metadata columns inside the GUI browser.
 - **Interactive GUI**: browse loaded runs, inspect plots, adjust grouping, run fits, trend fitted
-  parameters, and export plots.
+  parameters, adjust UI scale, and export plots.
 - **Project persistence**: save and reopen `.asymp` project files containing datasets, browser
   state, plot state, fit state, and Fourier settings.
 - **Extensible I/O**: register custom loaders at runtime for additional file formats.
@@ -117,6 +125,9 @@ The same `load(...)` entry point works for supported NeXus, PSI, and ROOT files.
 asymmetry-gui
 ```
 
+Within the GUI, use **Edit Function...** (single/global fit) and **Edit Model...** (parameter
+trending) to build expression-based models with grouped terms and live validation.
+
 ## Documentation
 
 The Sphinx documentation source lives in [docs](docs). The intended GitHub Pages site for the
@@ -153,9 +164,11 @@ models, parameter trending, project files, and custom loader registration.
 ## Testing
 
 ```bash
-python -m pytest
+python tools/harness.py test
 python -m pytest --cov=src/asymmetry --cov-report=term
 ```
+
+For agent and CI-aligned validation, prefer the harness ladder in the next section.
 
 ## Agent harness
 
@@ -185,7 +198,7 @@ Executable GUI releases are built in GitHub Actions and attached to GitHub Relea
   - `windows-latest` for NSIS installer
 - Packaging:
   - PyInstaller `onedir` build for fast startup
-  - macOS DMG output per architecture
+  - macOS DMG output per architecture (dmgbuild settings + generated drag-to-Applications background)
   - Windows NSIS installer with desktop/start-menu shortcuts and uninstaller
 
 Release artifacts are built on shared runners and uploaded to the GitHub Release page; executables are not committed to the repository.

@@ -17,6 +17,7 @@ This guide covers the main features and workflows of Asymmetry.
    fit_wizard
    global_fit_wizard
    composite_models
+   lf_kubo_toyabe
    muon_fluorine
    parameter_trending
    sc_penetration_depth

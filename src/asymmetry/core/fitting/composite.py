@@ -7,6 +7,7 @@ with :class:`asymmetry.core.fitting.engine.FitEngine`.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from asymmetry.core.fitting.models import (
     ModelDefinition,
     exponential_relaxation,
     gaussian_relaxation,
+    longitudinal_field_kubo_toyabe,
     static_gkt_zf,
     stretched_exponential,
 )
@@ -83,6 +85,14 @@ def _stretched_component(
 
 def _gkt_component(t: NDArray, A: float, Delta: float) -> NDArray[np.float64]:
     return static_gkt_zf(t, A0=A, Delta=Delta, baseline=0.0)
+
+
+def _lf_kt_component(t: NDArray, A: float, Delta: float, B_L: float) -> NDArray[np.float64]:
+    """Longitudinal-field Kubo-Toyabe depolarization function.
+
+    Wrapper adapting longitudinal_field_kubo_toyabe for use as a composite component.
+    """
+    return longitudinal_field_kubo_toyabe(t, A0=A, Delta=Delta, B_L=B_L, baseline=0.0)
 
 
 def _constant_component(t: NDArray, A_bg: float) -> NDArray[np.float64]:
@@ -186,6 +196,24 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"A(t) = A\left[\frac{1}{3} + \frac{2}{3}\left(1-(\Delta t)^2\right)e^{-(\Delta t)^2/2}\right]"
         ),
     ),
+    "LongitudinalFieldKT": ComponentDefinition(
+        name="LongitudinalFieldKT",
+        description="Static Gaussian Kubo-Toyabe with longitudinal field (Hayano et al. 1979)",
+        function=_lf_kt_component,
+        param_names=["A", "Delta", "B_L"],
+        param_defaults={"A": 25.0, "Delta": 0.5, "B_L": 0.0},
+        param_info={
+            "A": get_param_info("A"),
+            "Delta": get_param_info("Delta"),
+            "B_L": get_param_info("B_L"),
+        },
+        formula_template="{A}*Gz(t; Delta={Delta}, B_L={B_L})",
+        latex_equation=(
+            r"A(t) = A\left[1 - \frac{2\Delta^2}{\omega_0^2}\left(1 - e^{-\Delta^2 t^2/2}\cos(\omega_0 t)\right) "
+            r"+ \frac{2\Delta^4}{\omega_0^3}\int_0^t e^{-\Delta^2\tau^2/2}\sin(\omega_0\tau)\,d\tau\right] "
+            r"\quad\text{where}\quad \omega_0 = \gamma_\mu B_L"
+        ),
+    ),
     "MuF": ComponentDefinition(
         name="MuF",
         description="Analytical mu-F polarization function D_z(t)",
@@ -241,6 +269,118 @@ COMPONENTS: dict[str, ComponentDefinition] = {
 
 _ALLOWED_OPERATORS: frozenset[str] = frozenset({"+", "-", "*", "/"})
 _UNIT_AMPLITUDE_SENTINEL = "__UNIT_AMPLITUDE__"
+
+
+def _tokenize_component_expression(expression: str) -> list[str]:
+    """Return infix expression tokens for component-name expressions."""
+    stripped = expression.strip()
+    if not stripped:
+        raise ValueError("Expression is required")
+
+    token_pattern = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[()+\-*/]")
+    tokens: list[str] = []
+    position = 0
+    for match in token_pattern.finditer(stripped):
+        gap = stripped[position : match.start()]
+        if gap.strip():
+            raise ValueError(f"Unexpected token near '{gap.strip()}'")
+        tokens.append(match.group(0))
+        position = match.end()
+
+    trailing = stripped[position:]
+    if trailing.strip():
+        raise ValueError(f"Unexpected token near '{trailing.strip()}'")
+    return tokens
+
+
+def parse_component_expression(
+    expression: str,
+    *,
+    allowed_components: set[str] | frozenset[str],
+) -> tuple[list[str], list[str], list[int], list[int]]:
+    """Parse a component expression into constructor-ready parts."""
+    tokens = _tokenize_component_expression(expression)
+
+    component_names: list[str] = []
+    operators: list[str] = []
+    open_parentheses: list[int] = []
+    close_parentheses: list[int] = []
+    pending_open = 0
+    expecting_operand = True
+
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        if expecting_operand:
+            if token == "(":
+                pending_open += 1
+                idx += 1
+                continue
+            if token in _ALLOWED_OPERATORS or token == ")":
+                raise ValueError(f"Expected component before '{token}'")
+            if token not in allowed_components:
+                raise ValueError(f"Unknown component '{token}'")
+
+            component_names.append(token)
+            open_parentheses.append(pending_open)
+            close_parentheses.append(0)
+            pending_open = 0
+            expecting_operand = False
+            idx += 1
+            continue
+
+        if token in _ALLOWED_OPERATORS:
+            operators.append(token)
+            expecting_operand = True
+            idx += 1
+            continue
+        if token == ")":
+            if not component_names:
+                raise ValueError("Closing parenthesis has no matching component")
+            close_parentheses[-1] += 1
+            idx += 1
+            continue
+        if token == "(":
+            raise ValueError("Expected operator before '('")
+        raise ValueError(f"Expected operator before '{token}'")
+
+    if pending_open:
+        raise ValueError("Invalid parentheses: unbalanced expression")
+    if expecting_operand:
+        raise ValueError("Expression cannot end with an operator")
+
+    balance = 0
+    for open_count, close_count in zip(open_parentheses, close_parentheses, strict=True):
+        balance += open_count
+        balance -= close_count
+        if balance < 0:
+            raise ValueError("Invalid parentheses: closing before opening")
+    if balance != 0:
+        raise ValueError("Invalid parentheses: unbalanced expression")
+
+    return component_names, operators, open_parentheses, close_parentheses
+
+
+def build_component_expression(
+    component_names: list[str],
+    operators: list[str],
+    open_parentheses: list[int] | None = None,
+    close_parentheses: list[int] | None = None,
+) -> str:
+    """Return a human-editable expression string using component names."""
+    if not component_names:
+        return ""
+
+    opens = list(open_parentheses or [0] * len(component_names))
+    closes = list(close_parentheses or [0] * len(component_names))
+    parts: list[str] = []
+    for idx, name in enumerate(component_names):
+        token = "(" * opens[idx] + name + ")" * closes[idx]
+        if idx == 0:
+            parts.append(token)
+        else:
+            parts.append(f"{operators[idx - 1]} {token}")
+    return " ".join(parts)
 
 
 class CompositeModel:
@@ -316,6 +456,28 @@ class CompositeModel:
         self.param_names = param_names
         self.param_defaults = defaults
         self.param_info = param_info
+
+    @classmethod
+    def from_expression(cls, expression: str) -> CompositeModel:
+        """Construct a CompositeModel from a component-name expression."""
+        component_names, operators, open_parentheses, close_parentheses = (
+            parse_component_expression(expression, allowed_components=set(COMPONENTS))
+        )
+        return cls(
+            component_names=component_names,
+            operators=operators,
+            open_parentheses=open_parentheses,
+            close_parentheses=close_parentheses,
+        )
+
+    def component_expression_string(self) -> str:
+        """Return the builder-facing expression using component names."""
+        return build_component_expression(
+            self.component_names,
+            self.operators,
+            self.open_parentheses,
+            self.close_parentheses,
+        )
 
     def _build_param_mapping(self) -> list[dict[str, str]]:
         name_counts = Counter(

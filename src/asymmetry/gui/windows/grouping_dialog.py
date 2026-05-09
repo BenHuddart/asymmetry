@@ -152,8 +152,9 @@ class GroupingDialog(QDialog):
 
         self._group_table = QTableWidget(0, 3)
         self._group_table.setHorizontalHeaderLabels(["Group", "Name", "Detector Indices (1-based)"])
-        self._group_table.setMinimumHeight(180)
-        self._group_table.setMaximumHeight(320)
+        self._group_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._group_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._group_table.setMinimumHeight(0)
         root.addWidget(self._group_table)
         self._populate_group_table()
 
@@ -695,11 +696,13 @@ class GroupingDialog(QDialog):
             detectors = [str(idx + 1) for idx in self._groups[gid]]
             self._group_table.setItem(row, 2, QTableWidgetItem(", ".join(detectors)))
         self._group_table.resizeColumnsToContents()
-        visible_rows = min(max(len(self._groups), 3), 8)
+        visible_rows = min(max(len(self._groups), 3), 5)
         row_height = max(24, self._group_table.verticalHeader().defaultSectionSize())
         header_height = self._group_table.horizontalHeader().height()
         frame = 2 * self._group_table.frameWidth()
-        self._group_table.setMinimumHeight(header_height + visible_rows * row_height + frame + 8)
+        height = header_height + visible_rows * row_height + frame + 8
+        self._group_table.setMinimumHeight(0)
+        self._group_table.setMaximumHeight(height)
 
     def _detect_vector_axis_pairs(self) -> dict[str, tuple[int, int]]:
         """Return vector-axis group pairs if canonical vector group names exist."""

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -29,6 +30,9 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -36,6 +40,11 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.composite_parameters import (
+    CompositeExpression,
+    CompositeExpressionError,
+    CompositeParameterDefinition,
+)
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
@@ -51,8 +60,10 @@ from asymmetry.gui.export_paths import (
     remember_export_path,
     resolve_gle_export_paths,
 )
+from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
+from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 
 
 def _format_param_label(name: str) -> str:
@@ -132,6 +143,7 @@ class _FitRow:
     values: dict[str, float]
     errors: dict[str, float]
     combined_from: list[int] | None = None
+    covariance: dict[str, dict[str, float]] | None = None
 
 
 @dataclass
@@ -151,6 +163,7 @@ class _GroupFitData:
     model_fits: dict[str, ParameterModelFit]
     plot_annotations: list[dict[str, object]]
     global_param_uncertainties: dict[str, float] = field(default_factory=dict)
+    composite_parameters: list[CompositeParameterDefinition] = field(default_factory=list)
 
 
 class FitParametersPanel(QWidget):
@@ -176,6 +189,7 @@ class FitParametersPanel(QWidget):
         self._y_controls: dict[str, _YParamControls] = {}
         self._selected_y_param_names: list[str] = []
         self._model_fits: dict[str, ParameterModelFit] = {}
+        self._composite_parameters: list[CompositeParameterDefinition] = []
         self._plot_annotations: list[dict[str, object]] = []
         self._axes_tag_map: dict[int, str] = {}
         self._active_annotation_idx: int | None = None
@@ -185,11 +199,15 @@ class FitParametersPanel(QWidget):
         self._active_group_id: str | None = None
         self._last_cross_group_fit: dict[str, object] | None = None
         self._cross_group_fit_configs: dict[str, dict[str, object]] = {}
+        self._group_button_style_scale = 1.0
+        self._ui_scale_sync_connected = False
 
         layout = QVBoxLayout(self)
 
         controls_group = QGroupBox("Parameter settings")
-        controls_form = QFormLayout(controls_group)
+        controls_layout = QVBoxLayout(controls_group)
+        controls_form = QFormLayout()
+        controls_layout.addLayout(controls_form)
 
         self._group_tabs_widget = QWidget()
         self._group_tabs_layout = QHBoxLayout(self._group_tabs_widget)
@@ -208,8 +226,13 @@ class FitParametersPanel(QWidget):
         self._x_combo.currentTextChanged.connect(self._on_x_axis_changed)
         self._x_auto_hint = QLabel("")
         self._log_x_check = QCheckBox("log")
+        log_x_width = self._log_x_check.fontMetrics().horizontalAdvance("log") + 28
+        self._log_x_check.setMinimumWidth(log_x_width)
+        self._log_x_check.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         self._log_x_check.stateChanged.connect(self._refresh_plot)
         x_row = QHBoxLayout()
+        x_row.setContentsMargins(0, 0, 6, 0)
+        x_row.setSpacing(6)
         x_row.addWidget(self._x_combo)
         x_row.addWidget(self._x_auto_hint)
         x_row.addStretch()
@@ -224,17 +247,43 @@ class FitParametersPanel(QWidget):
         self._y_selector_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._y_selector_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._y_selector_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._y_selector_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._y_selector_table.horizontalHeader().setVisible(False)
         self._y_selector_table.verticalHeader().setVisible(False)
         self._y_selector_table.itemSelectionChanged.connect(self._on_y_selection_changed)
 
         y_header = self._y_selector_table.horizontalHeader()
         y_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        y_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        y_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self._y_selector_table.setMinimumWidth(460)
+        y_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        y_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self._y_selector_table.setMinimumWidth(0)
 
         controls_form.addRow("Y parameters:", self._y_selector_table)
+
+        self._create_composite_btn = QPushButton("Create Composite Parameter")
+        self._create_composite_btn.setEnabled(False)
+        self._create_composite_btn.clicked.connect(self._open_composite_parameter_dialog)
+
+        self._edit_composite_btn = QPushButton("Edit Selected Composite")
+        self._edit_composite_btn.setEnabled(False)
+        self._edit_composite_btn.clicked.connect(self._edit_selected_composite_parameter)
+
+        self._remove_composite_btn = QPushButton("Remove Selected Composite")
+        self._remove_composite_btn.setEnabled(False)
+        self._remove_composite_btn.clicked.connect(self._remove_selected_composite_parameters)
+
+        self._derived_section = CollapsibleSection("Derived parameters", expanded=False)
+        self._derived_section.setObjectName("fit-parameters-derived-section")
+        composite_row = QGridLayout()
+        composite_row.setContentsMargins(0, 0, 0, 0)
+        composite_row.setHorizontalSpacing(6)
+        composite_row.setVerticalSpacing(6)
+        composite_row.addWidget(self._create_composite_btn, 0, 0)
+        composite_row.addWidget(self._edit_composite_btn, 0, 1)
+        composite_row.addWidget(self._remove_composite_btn, 1, 0, 1, 2)
+        composite_row.setColumnStretch(2, 1)
+        self._derived_section.addLayout(composite_row)
+        controls_layout.addWidget(self._derived_section)
 
         self._plot_mode_combo = QComboBox()
         self._plot_mode_combo.addItems(["Single Axes", "Subplots"])
@@ -245,18 +294,10 @@ class FitParametersPanel(QWidget):
         self._show_components_check.setChecked(False)
         self._show_components_check.stateChanged.connect(self._on_show_components_changed)
         controls_form.addRow("Model components:", self._show_components_check)
-
-        labels_row = QHBoxLayout()
         self._add_label_btn = QPushButton("Add Label")
         self._add_label_btn.setCheckable(True)
         self._clear_labels_btn = QPushButton("Clear Labels")
         self._clear_labels_btn.clicked.connect(self._clear_plot_labels)
-        labels_row.addWidget(self._add_label_btn)
-        labels_row.addWidget(self._clear_labels_btn)
-        labels_row.addStretch()
-        labels_container = QWidget()
-        labels_container.setLayout(labels_row)
-        controls_form.addRow("Plot labels:", labels_container)
 
         # Hidden global log-y toggle used to mirror selected-series log state.
         self._log_y_check = QCheckBox("log")
@@ -275,40 +316,89 @@ class FitParametersPanel(QWidget):
         self._gle_format_combo.addItems(["PDF", "EPS"])
         self._gle_format_combo.setEnabled(False)
 
-        export_row = QHBoxLayout()
-        export_row.addWidget(self._export_csv_btn)
-        export_row.addWidget(self._export_gle_btn)
-        export_row.addWidget(QLabel("Format:"))
-        export_row.addWidget(self._gle_format_combo)
-        export_row.addStretch()
-        export_container = QWidget()
-        export_container.setLayout(export_row)
-        controls_form.addRow("", export_container)
-
-        layout.addWidget(controls_group)
-
         self._table = QTableWidget(0, 0)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
-        plot_group = QGroupBox("Parameter Plot")
-        plot_layout = QVBoxLayout(plot_group)
+        self._plot_group = QGroupBox("Parameter Plot")
+        plot_layout = QVBoxLayout(self._plot_group)
+        plot_layout.setContentsMargins(8, 8, 8, 8)
+        plot_layout.setSpacing(8)
+
+        self._plot_labels_bar = QWidget(self._plot_group)
+        labels_row = QHBoxLayout(self._plot_labels_bar)
+        labels_row.setContentsMargins(0, 0, 0, 0)
+        labels_row.setSpacing(6)
+        labels_row.addWidget(QLabel("Plot labels:"))
+        labels_row.addWidget(self._add_label_btn)
+        labels_row.addWidget(self._clear_labels_btn)
+        labels_row.addStretch()
+        plot_layout.addWidget(self._plot_labels_bar)
+
         self._has_mpl = False
         try:
             from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
             from matplotlib.figure import Figure
 
-            self._figure = Figure(tight_layout=True)
+            self._figure = Figure(constrained_layout=True)
             self._canvas = FigureCanvasQTAgg(self._figure)
-            plot_layout.addWidget(self._canvas)
+            plot_layout.addWidget(self._canvas, 1)
             self._has_mpl = True
             self._canvas.mpl_connect("button_press_event", self._on_plot_button_press)
             self._canvas.mpl_connect("motion_notify_event", self._on_plot_motion)
             self._canvas.mpl_connect("button_release_event", self._on_plot_button_release)
         except ImportError:
-            plot_layout.addWidget(QLabel("matplotlib not installed - plotting disabled"))
-        layout.addWidget(plot_group)
+            plot_layout.addWidget(QLabel("matplotlib not installed - plotting disabled"), 1)
+
+        self._plot_export_bar = QWidget(self._plot_group)
+        export_row = QHBoxLayout(self._plot_export_bar)
+        export_row.setContentsMargins(0, 0, 0, 0)
+        export_row.setSpacing(6)
+        export_row.addWidget(QLabel("Export:"))
+        export_row.addWidget(self._export_csv_btn)
+        export_row.addWidget(self._export_gle_btn)
+        export_row.addWidget(QLabel("Format:"))
+        export_row.addWidget(self._gle_format_combo)
+        export_row.addStretch()
+        plot_layout.addWidget(self._plot_export_bar)
+
+        controls_group.setMinimumHeight(0)
+        controls_group.setMinimumWidth(0)
+
+        self._controls_scroll = QScrollArea(self)
+        self._controls_scroll.setWidgetResizable(True)
+        self._controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._controls_scroll.setMinimumHeight(0)
+        self._controls_scroll.setWidget(controls_group)
+
+        self._content_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._content_splitter.setObjectName("fit-parameters-splitter")
+        self._content_splitter.addWidget(self._controls_scroll)
+        self._content_splitter.addWidget(self._plot_group)
+        self._content_splitter.setStretchFactor(0, 0)
+        self._content_splitter.setStretchFactor(1, 1)
+        self._content_splitter.setSizes([240, 600])
+        layout.addWidget(self._content_splitter)
 
         self._update_x_axis_auto_hint()
+        self._refresh_group_button_styles()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._ensure_ui_scale_sync()
+
+    def _ensure_ui_scale_sync(self) -> None:
+        if self._ui_scale_sync_connected:
+            return
+        manager = getattr(self.window(), "_ui_manager", None)
+        if manager is None:
+            return
+        manager.ui_scale_changed.connect(self._on_ui_scale_changed)
+        self._ui_scale_sync_connected = True
+        self._on_ui_scale_changed(manager.ui_scale, manager.effective_scale)
+
+    def _on_ui_scale_changed(self, _ui_scale: float, effective_scale: float) -> None:
+        self._group_button_style_scale = max(0.8, float(effective_scale))
+        self._refresh_group_button_styles()
 
     def clear(self) -> None:
         self._rows = []
@@ -316,6 +406,7 @@ class FitParametersPanel(QWidget):
         self._global_params = None
         self._global_param_uncertainties = {}
         self._model_fits = {}
+        self._composite_parameters = []
         self._group_fit_results = {}
         self._group_button_map = {}
         self._active_group_id = None
@@ -324,6 +415,9 @@ class FitParametersPanel(QWidget):
         self._selected_y_param_names = []
         self._rebuild_group_buttons()
         self._show_table_btn.setEnabled(False)
+        self._create_composite_btn.setEnabled(False)
+        self._edit_composite_btn.setEnabled(False)
+        self._remove_composite_btn.setEnabled(False)
         self._rebuild_y_controls()
         self._refresh_plot()
 
@@ -338,6 +432,7 @@ class FitParametersPanel(QWidget):
                 "values": {k: float(v) for k, v in row.values.items()},
                 "errors": {k: float(v) for k, v in row.errors.items()},
                 "combined_from": [int(v) for v in row.combined_from] if row.combined_from else None,
+                "covariance": self._serialize_row_covariance(row.covariance),
             }
             for row in self._rows
         ]
@@ -348,6 +443,9 @@ class FitParametersPanel(QWidget):
         return {
             "rows": rows,
             "varying_params": list(self._varying_params),
+            "composite_parameters": self._serialize_composite_parameters(
+                self._composite_parameters
+            ),
             "inferred_x_key": self._inferred_x_key,
             "x_axis": self._x_combo.currentText(),
             "selected_y_params": selected_y,
@@ -374,6 +472,9 @@ class FitParametersPanel(QWidget):
 
     def restore_state(self, state: dict) -> None:
         rows_data = state.get("rows", [])
+        self._composite_parameters = self._deserialize_composite_parameters(
+            state.get("composite_parameters", [])
+        )
         restored_rows: list[_FitRow] = []
         if isinstance(rows_data, list):
             for entry in rows_data:
@@ -395,6 +496,7 @@ class FitParametersPanel(QWidget):
                             combined_from=[int(v) for v in entry.get("combined_from", [])]
                             if entry.get("combined_from")
                             else None,
+                            covariance=self._deserialize_row_covariance(entry.get("covariance")),
                         )
                     )
                 except Exception:
@@ -405,12 +507,21 @@ class FitParametersPanel(QWidget):
         self._export_csv_btn.setEnabled(bool(self._rows))
         self._export_gle_btn.setEnabled(bool(self._rows))
         self._gle_format_combo.setEnabled(bool(self._rows))
+        self._create_composite_btn.setEnabled(bool(self._rows))
+        self._edit_composite_btn.setEnabled(False)
+        self._remove_composite_btn.setEnabled(False)
 
         varying = state.get("varying_params", [])
         if isinstance(varying, list) and all(isinstance(v, str) for v in varying):
             self._varying_params = list(varying)
         else:
             self._varying_params = self._detect_varying_parameters(self._rows)
+
+        self._apply_composite_parameters_to_rows(
+            self._rows,
+            self._composite_parameters,
+            self._global_param_uncertainties,
+        )
 
         inferred_x = state.get("inferred_x_key", "field")
         self._inferred_x_key = (
@@ -544,6 +655,7 @@ class FitParametersPanel(QWidget):
                     combined_from=[int(v) for v in meta.get("combined_from", [])]
                     if meta.get("combined_from")
                     else None,
+                    covariance=self._fit_result_covariance_map(fit_result),
                 )
             )
 
@@ -567,7 +679,17 @@ class FitParametersPanel(QWidget):
 
         gid = str(group_id).strip() if group_id else "__ungrouped__"
         gname = str(group_name).strip() if group_name else "Ungrouped"
+        existing_group = self._group_fit_results.get(gid)
+        composite_parameters = (
+            list(existing_group.composite_parameters) if existing_group is not None else []
+        )
+
         varying = self._detect_varying_parameters(rows)
+        self._apply_composite_parameters_to_rows(
+            rows,
+            composite_parameters,
+            global_param_uncertainties,
+        )
         inferred_x = self._infer_x_key(rows)
         # A newly completed asymmetry fit replaces prior per-group trend/model-fit
         # state for this group. Keep only the fresh fit-parameter rows.
@@ -586,6 +708,7 @@ class FitParametersPanel(QWidget):
             model_fits=model_fits,
             plot_annotations=plot_annotations,
             global_param_uncertainties=global_param_uncertainties,
+            composite_parameters=composite_parameters,
         )
         self._active_group_id = gid
         self._rebuild_group_buttons()
@@ -611,6 +734,7 @@ class FitParametersPanel(QWidget):
             model_fits=dict(self._model_fits),
             plot_annotations=list(self._plot_annotations),
             global_param_uncertainties=dict(self._global_param_uncertainties),
+            composite_parameters=list(self._composite_parameters),
         )
 
     def _selected_group_ids_from_buttons(self) -> list[str]:
@@ -717,14 +841,19 @@ class FitParametersPanel(QWidget):
         elif selected_ids:
             active_gid = next(iter(selected_ids))
 
+        scale = max(0.8, float(self._group_button_style_scale))
+        border_radius = max(10, round(12 * scale))
+        padding_v = max(4, round(6 * scale))
+        padding_h = max(10, round(14 * scale))
+
         base = (
             "QPushButton {"
-            " border-radius: 12px;"
-            " padding: 6px 14px;"
+            f" border-radius: {border_radius}px;"
+            f" padding: {padding_v}px {padding_h}px;"
             " }"
             "QPushButton:checked {"
-            " border-radius: 12px;"
-            " padding: 6px 14px;"
+            f" border-radius: {border_radius}px;"
+            f" padding: {padding_v}px {padding_h}px;"
             " }"
         )
 
@@ -837,6 +966,7 @@ class FitParametersPanel(QWidget):
         if not selected_groups:
             self._rows = []
             self._varying_params = []
+            self._composite_parameters = []
             self._global_params = None
             self._global_param_uncertainties = {}
             self._inferred_x_key = "run"
@@ -846,6 +976,9 @@ class FitParametersPanel(QWidget):
             self._export_csv_btn.setEnabled(False)
             self._export_gle_btn.setEnabled(False)
             self._gle_format_combo.setEnabled(False)
+            self._create_composite_btn.setEnabled(False)
+            self._edit_composite_btn.setEnabled(False)
+            self._remove_composite_btn.setEnabled(False)
             self._rebuild_y_controls(preferred_selected=previous_selected_y)
             self._refresh_model_fit_button_labels()
             self._update_x_axis_auto_hint()
@@ -865,6 +998,7 @@ class FitParametersPanel(QWidget):
             self._global_param_uncertainties = dict(group.global_param_uncertainties)
             self._inferred_x_key = group.inferred_x_key
             self._model_fits = dict(group.model_fits)
+            self._composite_parameters = list(group.composite_parameters)
             self._plot_annotations = list(group.plot_annotations)
         else:
             active_gid = (
@@ -890,15 +1024,25 @@ class FitParametersPanel(QWidget):
             self._global_param_uncertainties = dict(active_group.global_param_uncertainties)
             self._inferred_x_key = active_group.inferred_x_key
             self._model_fits = dict(active_group.model_fits)
+            self._composite_parameters = list(active_group.composite_parameters)
             self._plot_annotations = list(active_group.plot_annotations)
 
         has_rows = bool(self._rows)
+
+        self._apply_composite_parameters_to_rows(
+            self._rows,
+            self._composite_parameters,
+            self._global_param_uncertainties,
+        )
+
         self._show_table_btn.setEnabled(has_rows)
         self._export_csv_btn.setEnabled(has_rows)
         self._export_gle_btn.setEnabled(has_rows)
         self._gle_format_combo.setEnabled(has_rows)
+        self._create_composite_btn.setEnabled(has_rows)
 
-        self._model_fits = {k: v for k, v in self._model_fits.items() if k in self._varying_params}
+        display_params = set(self._display_y_parameters())
+        self._model_fits = {k: v for k, v in self._model_fits.items() if k in display_params}
 
         self._rebuild_y_controls(preferred_selected=previous_selected_y)
         self._refresh_model_fit_button_labels()
@@ -908,6 +1052,7 @@ class FitParametersPanel(QWidget):
 
     def _on_y_selection_changed(self) -> None:
         self._selected_y_param_names = self._selected_y_parameters()
+        self._update_composite_action_buttons()
         self._refresh_plot()
 
     def _copy_parameter_set(self, source: ParameterSet) -> ParameterSet:
@@ -1056,6 +1201,7 @@ class FitParametersPanel(QWidget):
                 model_fits=next_model_fits,
                 plot_annotations=list(existing.plot_annotations),
                 global_param_uncertainties=dict(existing.global_param_uncertainties),
+                composite_parameters=list(existing.composite_parameters),
             )
 
         self._refresh_model_fit_button_labels()
@@ -1090,10 +1236,14 @@ class FitParametersPanel(QWidget):
                         "combined_from": [int(v) for v in row.combined_from]
                         if row.combined_from
                         else None,
+                        "covariance": self._serialize_row_covariance(row.covariance),
                     }
                     for row in group.rows
                 ],
                 "varying_params": list(group.varying_params),
+                "composite_parameters": self._serialize_composite_parameters(
+                    group.composite_parameters
+                ),
                 "inferred_x_key": group.inferred_x_key,
                 "model_fits": self._serialize_specific_model_fits(group.model_fits),
                 "plot_annotations": [
@@ -1150,6 +1300,9 @@ class FitParametersPanel(QWidget):
                             combined_from=[int(v) for v in row_entry.get("combined_from", [])]
                             if row_entry.get("combined_from")
                             else None,
+                            covariance=self._deserialize_row_covariance(
+                                row_entry.get("covariance")
+                            ),
                         )
                     )
                 except Exception:
@@ -1212,14 +1365,197 @@ class FitParametersPanel(QWidget):
                 model_fits=model_fits,
                 plot_annotations=plot_annotations,
                 global_param_uncertainties=global_param_uncertainties,
+                composite_parameters=self._deserialize_composite_parameters(
+                    entry.get("composite_parameters", [])
+                ),
             )
         return out
+
+    def _serialize_composite_parameters(
+        self,
+        definitions: list[CompositeParameterDefinition],
+    ) -> list[dict[str, str]]:
+        return [
+            {
+                "name": str(definition.name),
+                "expression": str(definition.expression),
+            }
+            for definition in definitions
+            if definition.name and definition.expression
+        ]
+
+    def _deserialize_composite_parameters(
+        self,
+        payload: object,
+    ) -> list[CompositeParameterDefinition]:
+        if not isinstance(payload, list):
+            return []
+
+        definitions: list[CompositeParameterDefinition] = []
+        seen: set[str] = set()
+        for entry in payload:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name", "")).strip()
+            expression = str(entry.get("expression", "")).strip()
+            if not name or not expression or name in seen:
+                continue
+            definitions.append(CompositeParameterDefinition(name=name, expression=expression))
+            seen.add(name)
+        return definitions
+
+    def _serialize_row_covariance(
+        self,
+        covariance: dict[str, dict[str, float]] | None,
+    ) -> dict[str, dict[str, float]] | None:
+        if not covariance:
+            return None
+        out: dict[str, dict[str, float]] = {}
+        for name, row in covariance.items():
+            if not isinstance(name, str) or not isinstance(row, dict):
+                continue
+            out[name] = {}
+            for sub_name, value in row.items():
+                if not isinstance(sub_name, str):
+                    continue
+                try:
+                    out[name][sub_name] = float(value)
+                except (TypeError, ValueError):
+                    continue
+        return out or None
+
+    def _deserialize_row_covariance(
+        self,
+        payload: object,
+    ) -> dict[str, dict[str, float]] | None:
+        if not isinstance(payload, dict):
+            return None
+        out: dict[str, dict[str, float]] = {}
+        for name, row in payload.items():
+            if not isinstance(name, str) or not isinstance(row, dict):
+                continue
+            parsed_row: dict[str, float] = {}
+            for sub_name, value in row.items():
+                if not isinstance(sub_name, str):
+                    continue
+                try:
+                    parsed_row[sub_name] = float(value)
+                except (TypeError, ValueError):
+                    continue
+            if parsed_row:
+                out[name] = parsed_row
+        return out or None
+
+    def _fit_result_covariance_map(
+        self, fit_result: FitResult
+    ) -> dict[str, dict[str, float]] | None:
+        if fit_result.covariance is None:
+            return None
+        cov = np.asarray(fit_result.covariance, dtype=float)
+        if cov.ndim != 2 or cov.shape[0] != cov.shape[1]:
+            return None
+
+        order = list(fit_result.covariance_parameters)
+        if not order:
+            order = [p.name for p in fit_result.parameters if p.name in fit_result.uncertainties]
+        if len(order) != cov.shape[0]:
+            return None
+
+        out: dict[str, dict[str, float]] = {}
+        for i, name_i in enumerate(order):
+            row: dict[str, float] = {}
+            for j, name_j in enumerate(order):
+                val = float(cov[i, j])
+                if np.isfinite(val):
+                    row[name_j] = val
+            if row:
+                out[name_i] = row
+        return out or None
+
+    def _display_y_parameters(self) -> list[str]:
+        params = list(self._varying_params)
+        for definition in self._composite_parameters:
+            if definition.name and definition.name not in params:
+                params.append(definition.name)
+        return params
+
+    def _selected_composite_parameter_names(self) -> list[str]:
+        selected = set(self._selected_y_parameters())
+        composite_names = {definition.name for definition in self._composite_parameters}
+        return [
+            name
+            for name in self._display_y_parameters()
+            if name in selected and name in composite_names
+        ]
+
+    def _update_composite_action_buttons(self) -> None:
+        has_rows = bool(self._rows)
+        selected_composites = self._selected_composite_parameter_names()
+        self._edit_composite_btn.setEnabled(has_rows and len(selected_composites) == 1)
+        self._remove_composite_btn.setEnabled(has_rows and len(selected_composites) >= 1)
+
+    def _available_composite_source_parameters(self) -> list[str]:
+        composite_names = {definition.name for definition in self._composite_parameters}
+        names: set[str] = set()
+        for row in self._rows:
+            names.update(name for name in row.values if name not in composite_names)
+        if self._global_params is not None:
+            names.update(
+                p.name for p in self._global_params if p.name and p.name not in composite_names
+            )
+        return sorted(names)
+
+    def _apply_composite_parameters_to_rows(
+        self,
+        rows: list[_FitRow],
+        definitions: list[CompositeParameterDefinition],
+        global_uncertainties: dict[str, float] | None = None,
+        *,
+        drop_names: set[str] | None = None,
+    ) -> None:
+        if not rows:
+            return
+
+        names_to_clear = set(drop_names or set())
+        names_to_clear.update(definition.name for definition in definitions)
+        if names_to_clear:
+            for row in rows:
+                for name in names_to_clear:
+                    row.values.pop(name, None)
+                    row.errors.pop(name, None)
+
+        if not definitions:
+            return
+
+        for row in rows:
+            symbol_values = dict(row.values)
+            symbol_uncertainties = dict(row.errors)
+            if global_uncertainties:
+                for name, value in global_uncertainties.items():
+                    symbol_uncertainties.setdefault(name, value)
+
+            for definition in definitions:
+                try:
+                    parsed = CompositeExpression(definition.expression)
+                    evaluation = parsed.evaluate_with_uncertainty(
+                        symbol_values,
+                        symbol_uncertainties,
+                        covariance=row.covariance,
+                    )
+                    row.values[definition.name] = float(evaluation.value)
+                    row.errors[definition.name] = float(evaluation.uncertainty)
+                    symbol_values[definition.name] = float(evaluation.value)
+                    symbol_uncertainties[definition.name] = float(evaluation.uncertainty)
+                except (CompositeExpressionError, ValueError):
+                    row.values[definition.name] = float("nan")
+                    row.errors[definition.name] = float("nan")
 
     def _detect_varying_parameters(self, rows: list[_FitRow]) -> list[str]:
         if not rows:
             return []
 
-        all_names = sorted(rows[0].values.keys())
+        composite_names = {definition.name for definition in self._composite_parameters}
+        all_names = sorted(name for name in rows[0].values.keys() if name not in composite_names)
         varying: list[str] = []
         for name in all_names:
             vals = [r.values.get(name, np.nan) for r in rows]
@@ -1427,19 +1763,25 @@ class FitParametersPanel(QWidget):
 
         self._y_controls = {}
 
-        if not self._varying_params:
+        display_params = self._display_y_parameters()
+
+        if not display_params:
             self._set_y_table_visible_rows(3)
             self._y_selector_table.blockSignals(False)
             return
 
-        self._y_selector_table.setRowCount(len(self._varying_params))
+        self._y_selector_table.setRowCount(len(display_params))
 
-        for idx, name in enumerate(self._varying_params):
+        for idx, name in enumerate(display_params):
             name_item = QTableWidgetItem(_format_param_label(name))
             name_item.setData(Qt.ItemDataRole.UserRole, name)
             self._y_selector_table.setItem(idx, 0, name_item)
 
             fit_button = QPushButton("Model Fit")
+            fit_button.setMinimumWidth(
+                fit_button.fontMetrics().horizontalAdvance("Model Fit*") + 36
+            )
+            fit_button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
             fit_button.clicked.connect(
                 lambda _checked=False, p=name: self._open_model_fit_dialog(p)
             )
@@ -1447,8 +1789,13 @@ class FitParametersPanel(QWidget):
 
             log_check = QCheckBox("log")
             log_check.stateChanged.connect(self._refresh_plot)
+            log_check.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+            log_control_width = log_check.fontMetrics().horizontalAdvance("log") + 28
+            log_check.setMinimumWidth(log_control_width)
 
             log_container = QWidget()
+            log_container.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+            log_container.setMinimumWidth(log_control_width + 8)
             log_layout = QHBoxLayout(log_container)
             log_layout.setContentsMargins(0, 0, 0, 0)
             log_layout.addWidget(log_check)
@@ -1461,11 +1808,49 @@ class FitParametersPanel(QWidget):
             )
 
         self._y_selector_table.resizeColumnsToContents()
+        fit_column_width = max(
+            (
+                max(
+                    controls.fit_button.minimumWidth(),
+                    controls.fit_button.minimumSizeHint().width(),
+                )
+                for controls in self._y_controls.values()
+            ),
+            default=120,
+        )
+        log_column_width = max(
+            (
+                max(
+                    controls.log.minimumWidth(),
+                    controls.log.sizeHint().width(),
+                )
+                + 12
+                for controls in self._y_controls.values()
+            ),
+            default=56,
+        )
+        self._y_selector_table.setColumnWidth(1, fit_column_width)
+        self._y_selector_table.setColumnWidth(2, log_column_width)
+        name_column_width = max(
+            (
+                self._y_selector_table.fontMetrics().horizontalAdvance(_format_param_label(name))
+                for name in display_params
+            ),
+            default=120,
+        )
+        frame = 2 * self._y_selector_table.frameWidth()
+        scroll_width = self._y_selector_table.style().pixelMetric(
+            self._y_selector_table.style().PixelMetric.PM_ScrollBarExtent,
+        )
+        minimum_width = (
+            name_column_width + fit_column_width + log_column_width + frame + scroll_width + 28
+        )
+        self._y_selector_table.setMinimumWidth(minimum_width)
         self._set_y_table_visible_rows(3)
 
-        preferred = [name for name in (preferred_selected or []) if name in self._varying_params]
+        preferred = [name for name in (preferred_selected or []) if name in display_params]
         if preferred:
-            for idx, name in enumerate(self._varying_params):
+            for idx, name in enumerate(display_params):
                 item = self._y_selector_table.item(idx, 0)
                 if item is not None and name in preferred:
                     item.setSelected(True)
@@ -1476,6 +1861,7 @@ class FitParametersPanel(QWidget):
 
         self._y_selector_table.blockSignals(False)
         self._selected_y_param_names = self._selected_y_parameters()
+        self._update_composite_action_buttons()
 
     def _set_y_table_visible_rows(self, visible_rows: int = 3) -> None:
         """Set selector table height to show at most ``visible_rows`` rows."""
@@ -1489,7 +1875,7 @@ class FitParametersPanel(QWidget):
             row_height = max(row_height, self._y_selector_table.rowHeight(0))
         frame = 2 * self._y_selector_table.frameWidth()
         height = row_height * rows + frame + 2
-        self._y_selector_table.setMinimumHeight(height)
+        self._y_selector_table.setMinimumHeight(0)
         self._y_selector_table.setMaximumHeight(height)
 
     def _refresh_model_fit_button_labels(self) -> None:
@@ -1507,6 +1893,169 @@ class FitParametersPanel(QWidget):
             if fit_range.result is not None and fit_range.result.success:
                 return True
         return False
+
+    def _show_composite_parameter_dialog(
+        self,
+        *,
+        initial_definition: CompositeParameterDefinition | None = None,
+    ) -> CompositeParameterDefinition | None:
+        if not self._rows:
+            return None
+
+        available_parameters = self._available_composite_source_parameters()
+        if not available_parameters:
+            QMessageBox.information(
+                self,
+                "Create Composite Parameter",
+                "No fitted parameters are available for building a composite expression.",
+            )
+            return None
+
+        rows = sorted(self._rows, key=lambda row: row.run_number)
+        preview_row = rows[0]
+        preview_uncertainties = dict(preview_row.errors)
+        for name, value in self._global_param_uncertainties.items():
+            preview_uncertainties.setdefault(name, value)
+
+        dialog = CompositeParameterDialog(
+            available_parameters=available_parameters,
+            existing_parameter_names=self._display_y_parameters(),
+            initial_definition=initial_definition,
+            preview_values=dict(preview_row.values),
+            preview_uncertainties=preview_uncertainties,
+            preview_covariance=preview_row.covariance,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+
+        return dialog.composite_definition()
+
+    def _refresh_after_composite_change(self, *, preferred_selected: list[str]) -> None:
+        display_params = set(self._display_y_parameters())
+        self._model_fits = {k: v for k, v in self._model_fits.items() if k in display_params}
+        self._selected_y_param_names = [
+            name for name in preferred_selected if name in display_params
+        ]
+        self._sync_active_group_state()
+        self._rebuild_y_controls(preferred_selected=self._selected_y_param_names)
+        self._refresh_model_fit_button_labels()
+        self._refresh_views()
+
+    def _open_composite_parameter_dialog(self) -> None:
+        definition = self._show_composite_parameter_dialog()
+        if definition is None:
+            return
+
+        self._composite_parameters = [
+            existing for existing in self._composite_parameters if existing.name != definition.name
+        ]
+        self._composite_parameters.append(definition)
+        self._apply_composite_parameters_to_rows(
+            self._rows,
+            self._composite_parameters,
+            self._global_param_uncertainties,
+        )
+
+        preferred_selected = list(self._selected_y_param_names)
+        if definition.name not in preferred_selected:
+            preferred_selected.append(definition.name)
+        self._refresh_after_composite_change(preferred_selected=preferred_selected)
+
+    def _edit_selected_composite_parameter(self) -> None:
+        selected = self._selected_composite_parameter_names()
+        if len(selected) != 1:
+            QMessageBox.information(
+                self,
+                "Edit Composite Parameter",
+                "Select exactly one composite parameter to edit.",
+            )
+            return
+
+        selected_name = selected[0]
+        initial_definition = next(
+            (
+                definition
+                for definition in self._composite_parameters
+                if definition.name == selected_name
+            ),
+            None,
+        )
+        if initial_definition is None:
+            return
+
+        updated_definition = self._show_composite_parameter_dialog(
+            initial_definition=initial_definition,
+        )
+        if updated_definition is None:
+            return
+
+        self._composite_parameters = [
+            definition
+            for definition in self._composite_parameters
+            if definition.name not in {selected_name, updated_definition.name}
+        ]
+        self._composite_parameters.append(updated_definition)
+
+        self._apply_composite_parameters_to_rows(
+            self._rows,
+            self._composite_parameters,
+            self._global_param_uncertainties,
+            drop_names={selected_name},
+        )
+
+        self._model_fits.pop(selected_name, None)
+        if updated_definition.name != selected_name:
+            self._model_fits.pop(updated_definition.name, None)
+
+        preferred_selected = [
+            updated_definition.name if name == selected_name else name
+            for name in self._selected_y_param_names
+        ]
+        if updated_definition.name not in preferred_selected:
+            preferred_selected.append(updated_definition.name)
+
+        self._refresh_after_composite_change(preferred_selected=preferred_selected)
+
+    def _remove_selected_composite_parameters(self) -> None:
+        selected = self._selected_composite_parameter_names()
+        if not selected:
+            return
+
+        if len(selected) == 1:
+            message = f"Remove composite parameter '{selected[0]}'?"
+        else:
+            names = ", ".join(selected)
+            message = f"Remove selected composite parameters ({names})?"
+
+        confirm = QMessageBox.question(
+            self,
+            "Remove Composite Parameter",
+            message,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        names_to_remove = set(selected)
+        self._composite_parameters = [
+            definition
+            for definition in self._composite_parameters
+            if definition.name not in names_to_remove
+        ]
+        for name in names_to_remove:
+            self._model_fits.pop(name, None)
+
+        self._apply_composite_parameters_to_rows(
+            self._rows,
+            self._composite_parameters,
+            self._global_param_uncertainties,
+            drop_names=names_to_remove,
+        )
+
+        preferred_selected = [
+            name for name in self._selected_y_param_names if name not in names_to_remove
+        ]
+        self._refresh_after_composite_change(preferred_selected=preferred_selected)
 
     def _open_model_fit_dialog(self, param_name: str) -> None:
         selected_group_ids = self._selected_group_ids_from_buttons()
@@ -1765,10 +2314,7 @@ class FitParametersPanel(QWidget):
             )
 
         config: dict[str, object] = {
-            "model": {
-                "component_names": list(best_range.model.component_names),
-                "operators": list(best_range.model.operators),
-            },
+            "model": best_range.model.to_dict(),
             "fit_x_min": float(best_range.x_min) if best_range.x_min is not None else None,
             "fit_x_max": float(best_range.x_max) if best_range.x_max is not None else None,
             "parameter_rows": rows,
@@ -1889,10 +2435,7 @@ class FitParametersPanel(QWidget):
                 for g in groups
                 if isinstance(g, ParameterGroupData)
             ],
-            "model": {
-                "component_names": list(model.component_names),
-                "operators": list(model.operators),
-            },
+            "model": model.to_dict(),
             "fit_result": {
                 "success": bool(fit_result.success),
                 "chi_squared": float(fit_result.chi_squared),
@@ -1952,10 +2495,7 @@ class FitParametersPanel(QWidget):
             return None
 
         try:
-            model = ParameterCompositeModel(
-                component_names=list(model_state.get("component_names", [])),
-                operators=list(model_state.get("operators", [])),
-            )
+            model = ParameterCompositeModel.from_dict(model_state)
         except Exception:
             return None
 
@@ -2064,8 +2604,9 @@ class FitParametersPanel(QWidget):
         x_key = self._effective_x_key()
         rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
 
+        display_params = self._display_y_parameters()
         columns = ["Run", "𝐵 (G)", "𝑇 (K)"]
-        for name in self._varying_params:
+        for name in display_params:
             label = _format_param_label(name)
             columns.extend([label, f"err {label}"])
 
@@ -2078,7 +2619,7 @@ class FitParametersPanel(QWidget):
             self._table.setItem(i, 1, QTableWidgetItem(f"{row.field:.6g}"))
             self._table.setItem(i, 2, QTableWidgetItem(f"{row.temperature:.6g}"))
             col = 3
-            for name in self._varying_params:
+            for name in display_params:
                 val = row.values.get(name, np.nan)
                 err = row.errors.get(name, np.nan)
                 self._table.setItem(i, col, QTableWidgetItem(f"{val:.6g}"))
@@ -2096,7 +2637,8 @@ class FitParametersPanel(QWidget):
             pname = item.data(Qt.ItemDataRole.UserRole)
             if isinstance(pname, str) and pname:
                 params.append(pname)
-        return [p for p in self._varying_params if p in params]
+        display_params = self._display_y_parameters()
+        return [p for p in display_params if p in params]
 
     def _is_log_y_for(self, name: str) -> bool:
         controls = self._y_controls.get(name)
@@ -2360,7 +2902,12 @@ class FitParametersPanel(QWidget):
 
         self._draw_plot_annotations(axes_by_tag)
 
-        self._figure.tight_layout()
+        if getattr(self._figure, "get_constrained_layout", lambda: False)():
+            layout_engine = getattr(self._figure, "get_layout_engine", lambda: None)()
+            if layout_engine is not None and hasattr(layout_engine, "set"):
+                layout_engine.set(w_pad=0.04, h_pad=0.04, hspace=0.05, wspace=0.05)
+        else:
+            self._figure.tight_layout(pad=1.2)
         self._canvas.draw()
 
     def _x_value(self, row: _FitRow, x_key: str) -> float:
@@ -2447,7 +2994,7 @@ class FitParametersPanel(QWidget):
         remember_export_path(path)
 
         headers = ["Run", "B (G)", "T (K)"]
-        for name in self._varying_params:
+        for name in self._display_y_parameters():
             unit = get_param_info(name).unit
             if unit:
                 headers.extend([f"{name} ({unit})", f"err_{name} ({unit})"])
@@ -2472,8 +3019,7 @@ class FitParametersPanel(QWidget):
                 range_item = {
                     "x_min": fit_range.x_min,
                     "x_max": fit_range.x_max,
-                    "component_names": list(fit_range.model.component_names),
-                    "operators": list(fit_range.model.operators),
+                    "model": fit_range.model.to_dict(),
                     "parameters": [
                         {
                             "name": p.name,
@@ -2531,12 +3077,9 @@ class FitParametersPanel(QWidget):
             for range_state in ranges_state:
                 if not isinstance(range_state, dict):
                     continue
-                component_names = list(range_state.get("component_names", []))
-                operators = list(range_state.get("operators", []))
                 try:
-                    model = ParameterCompositeModel(
-                        component_names=component_names,
-                        operators=operators,
+                    model = ParameterCompositeModel.from_dict(
+                        dict(range_state.get("model", range_state))
                     )
                 except Exception:
                     continue
@@ -2545,7 +3088,7 @@ class FitParametersPanel(QWidget):
                 # C instead of A for the diffusion coupling parameter.
                 uses_diffusion_component = any(
                     name in {"DiffusionLF_1D", "DiffusionLF_2D", "DiffusionLF_3D"}
-                    for name in component_names
+                    for name in model.component_names
                 )
 
                 params = ParameterSet()
@@ -2630,7 +3173,7 @@ class FitParametersPanel(QWidget):
 
     def _iter_active_fit_ranges(self, x_key: str, y_params: list[str] | None = None):
         """Yield (parameter_name, range_index, fit_range) for successful active fits."""
-        allowed = set(y_params or self._varying_params)
+        allowed = set(y_params or self._display_y_parameters())
         for pname, fit in self._model_fits.items():
             if pname not in allowed:
                 continue
@@ -2807,7 +3350,7 @@ class FitParametersPanel(QWidget):
             f.write("!\n")
 
             headers = ["Run", "B_field(G)", "Temperature(K)"]
-            for name in self._varying_params:
+            for name in self._display_y_parameters():
                 unit = get_param_info(name).unit
                 if unit:
                     headers.extend([f"{name} ({unit})", f"err_{name} ({unit})"])
@@ -2833,7 +3376,7 @@ class FitParametersPanel(QWidget):
                     float(row.field),
                     float(row.temperature),
                 ]
-                for name in self._varying_params:
+                for name in self._display_y_parameters():
                     values.append(row.values.get(name, np.nan))
                     values.append(row.errors.get(name, np.nan))
                 f.write(" ".join(f"{v:>16.8g}" for v in values) + "\n")
@@ -2846,9 +3389,10 @@ class FitParametersPanel(QWidget):
         return 3
 
     def _gle_columns_for_param(self, name: str) -> tuple[int, int] | None:
-        if name not in self._varying_params:
+        display_params = self._display_y_parameters()
+        if name not in display_params:
             return None
-        idx = self._varying_params.index(name)
+        idx = display_params.index(name)
         value_col = 4 + idx * 2
         error_col = value_col + 1
         return value_col, error_col
@@ -2977,7 +3521,8 @@ class FitParametersPanel(QWidget):
         data_path = gle_path.with_suffix(".dat")
         self._write_gle_data_file(data_path)
         x_key = self._effective_x_key()
-        self._selected_y_parameters() or ([self._varying_params[0]] if self._varying_params else [])
+        display_params = self._display_y_parameters()
+        self._selected_y_parameters() or ([display_params[0]] if display_params else [])
 
         # Export fit sidecars for all active fits on this x-axis, regardless of
         # current y-selection, so restored projects always emit .fit files.
@@ -3030,9 +3575,8 @@ class FitParametersPanel(QWidget):
             return
 
         x_key = self._effective_x_key()
-        y_params = self._selected_y_parameters() or (
-            [self._varying_params[0]] if self._varying_params else []
-        )
+        display_params = self._display_y_parameters()
+        y_params = self._selected_y_parameters() or ([display_params[0]] if display_params else [])
         if not y_params:
             return
 
@@ -3199,7 +3743,7 @@ class FitParametersPanel(QWidget):
                 ax.set_xscale("log")
 
         try:
-            fig.savefig(str(requested_gle_path), folder=True)
+            fig.savefig(str(gle_path))
         except TypeError as exc:
             if "folder" in str(exc):
                 QMessageBox.warning(

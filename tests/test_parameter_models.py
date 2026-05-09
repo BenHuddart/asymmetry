@@ -290,6 +290,27 @@ def test_formula_string_two_components_uses_operator() -> None:
     assert "b" in formula
 
 
+def test_parameter_component_expression_round_trip() -> None:
+    model = ParameterCompositeModel.from_expression("Linear + ( Arrhenius * Constant )")
+
+    assert model.component_names == ["Linear", "Arrhenius", "Constant"]
+    assert model.operators == ["+", "*"]
+    assert model.open_parentheses == [0, 1, 0]
+    assert model.close_parentheses == [0, 0, 1]
+    assert model.component_expression_string() == "Linear + (Arrhenius * Constant)"
+
+
+def test_parameter_composite_serialization_round_trip_with_parentheses() -> None:
+    model = ParameterCompositeModel.from_expression("Linear + ( Arrhenius * Constant )")
+
+    restored = ParameterCompositeModel.from_dict(model.to_dict())
+
+    assert restored.component_names == model.component_names
+    assert restored.operators == model.operators
+    assert restored.open_parentheses == model.open_parentheses
+    assert restored.close_parentheses == model.close_parentheses
+
+
 # ---------------------------------------------------------------------------
 # ParameterCompositeModel.function evaluation
 # ---------------------------------------------------------------------------
@@ -331,6 +352,15 @@ def test_composite_function_operator_precedence_mul_before_add() -> None:
     # c_1=1, c_2=4, c_3=5 → 1 + 4*5 = 21
     result = model.function(x, c_1=1.0, c_2=4.0, c_3=5.0)
     np.testing.assert_allclose(result, [21.0])
+
+
+def test_parameter_composite_parentheses_override_precedence() -> None:
+    model = ParameterCompositeModel.from_expression("Constant * ( Constant + Constant )")
+    x = np.array([1.0])
+
+    result = model.function(x, c_1=2.0, c_2=3.0, c_3=4.0)
+
+    np.testing.assert_allclose(result, [14.0])
 
 
 def test_composite_function_missing_parameter_raises() -> None:

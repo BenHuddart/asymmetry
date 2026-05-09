@@ -317,6 +317,7 @@ class TestProjectIO:
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset
@@ -328,6 +329,12 @@ def qapp():
     if app is None:
         app = QApplication([])
     return app
+
+
+@pytest.fixture(autouse=True)
+def _set_default_ui_scale():
+    settings = QSettings()
+    settings.setValue("ui/scale", 1.0)
 
 
 def _make_dataset(run_number: int = 42) -> MuonDataset:
@@ -661,6 +668,7 @@ class _StubDataBrowserWithState(_StubDataBrowser):
         super().__init__()
         self._combined_datasets = {}
         self._was_cleared = False
+        self._use_temperature_from_log = False
 
     def clear(self):
         self._was_cleared = True
@@ -679,6 +687,12 @@ class _StubDataBrowserWithState(_StubDataBrowser):
 
     def add_combined_dataset(self, source_run_numbers):
         return None
+
+    def use_temperature_from_log(self):
+        return bool(self._use_temperature_from_log)
+
+    def set_use_temperature_from_log(self, enabled):
+        self._use_temperature_from_log = bool(enabled)
 
 
 class _StubFitParamsClear(_StubFitParams):
@@ -830,6 +844,69 @@ class TestFitParametersPanelState:
 
         out = panel.get_state()
         assert "Lambda" in out["selected_y_params"]
+
+    def test_composite_parameters_round_trip(self, qapp):
+        from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
+
+        panel = FitParametersPanel()
+        state = {
+            "rows": [
+                {
+                    "run_number": 101,
+                    "field": 100.0,
+                    "temperature": 5.0,
+                    "values": {
+                        "A0": 20.0,
+                        "Lambda": 0.4,
+                        "Lambda_eff": 20.004,
+                    },
+                    "errors": {
+                        "A0": 0.5,
+                        "Lambda": 0.02,
+                        "Lambda_eff": 0.5,
+                    },
+                    "covariance": {
+                        "A0": {"A0": 0.25, "Lambda": 0.0},
+                        "Lambda": {"A0": 0.0, "Lambda": 0.0004},
+                    },
+                },
+                {
+                    "run_number": 102,
+                    "field": 200.0,
+                    "temperature": 5.1,
+                    "values": {
+                        "A0": 19.5,
+                        "Lambda": 0.5,
+                        "Lambda_eff": 19.506,
+                    },
+                    "errors": {
+                        "A0": 0.4,
+                        "Lambda": 0.03,
+                        "Lambda_eff": 0.4,
+                    },
+                },
+            ],
+            "varying_params": ["A0", "Lambda"],
+            "composite_parameters": [
+                {
+                    "name": "Lambda_eff",
+                    "expression": "sqrt(A0^2 + Lambda^2)",
+                }
+            ],
+            "inferred_x_key": "field",
+            "x_axis": "Auto",
+            "selected_y_params": ["Lambda_eff"],
+            "log_x": False,
+            "log_y_params": [],
+            "plot_mode": "Single Axes",
+        }
+
+        panel.restore_state(state)
+        out = panel.get_state()
+
+        assert out["composite_parameters"][0]["name"] == "Lambda_eff"
+        assert out["selected_y_params"] == ["Lambda_eff"]
+        assert "covariance" in out["rows"][0]
 
 
 class _StubFourierWithState(_StubFourier):

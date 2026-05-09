@@ -35,6 +35,8 @@ _GROUP_TEMP_REL_TOL = 2e-3
 _GROUP_FIELD_ABS_TOL_G = 1e-3
 _LOG_TEMPERATURE_FOREGROUND = QColor(176, 36, 36)
 _GROUP_FIELD_REL_TOL = 1e-4
+_GROUP_HEADER_BACKGROUND = QColor(200, 210, 225)
+_GROUP_MEMBER_BACKGROUND = QColor(235, 239, 247)
 
 
 def _is_effectively_constant(values: list[float], *, abs_tol: float, rel_tol: float) -> bool:
@@ -503,21 +505,20 @@ class DataBrowserPanel(QWidget):
         font = run_item.font()
         font.setBold(True)
         run_item.setFont(font)
-        shade = QColor(230, 236, 245)
-        run_item.setBackground(shade)
+        run_item.setBackground(_GROUP_HEADER_BACKGROUND)
         self._table.setItem(row, 0, run_item)
 
         count_item = QTableWidgetItem(f"({len(group.member_run_numbers)} datasets)")
         count_item.setFlags(count_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         count_item.setFont(font)
-        count_item.setBackground(shade)
+        count_item.setBackground(_GROUP_HEADER_BACKGROUND)
         self._table.setItem(row, 1, count_item)
 
         for col in range(2, self._table.columnCount()):
             blank = QTableWidgetItem("")
             blank.setFlags(blank.flags() & ~Qt.ItemFlag.ItemIsEditable)
             blank.setFont(font)
-            blank.setBackground(shade)
+            blank.setBackground(_GROUP_HEADER_BACKGROUND)
             self._table.setItem(row, col, blank)
 
     def _add_dataset_row(self, dataset: MuonDataset, *, indent: bool) -> None:
@@ -566,6 +567,12 @@ class DataBrowserPanel(QWidget):
             item = QTableWidgetItem(value)
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._table.setItem(row, i, item)
+
+        if self._run_to_group.get(rn) is not None:
+            for col in range(self._table.columnCount()):
+                item = self._table.item(row, col)
+                if item is not None:
+                    item.setBackground(_GROUP_MEMBER_BACKGROUND)
 
     def _selected_keys(self) -> list[int | str]:
         selected: list[int | str] = []

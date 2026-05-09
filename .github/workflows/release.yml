@@ -39,7 +39,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -c constraints.txt -e ".[gui,gle,hdf5,root]"
-          pip install -c constraints.txt pyinstaller Pillow
+          pip install -c constraints.txt pyinstaller Pillow dmgbuild
 
       - name: Generate macOS icon (.icns)
         shell: bash
@@ -57,67 +57,23 @@ jobs:
           test -x dist/Asymmetry.app/Contents/MacOS/Asymmetry
           dist/Asymmetry.app/Contents/MacOS/Asymmetry --smoke-test
 
-      - name: Install DMG packaging tool
+      - name: Generate DMG background
         shell: bash
-        run: brew install create-dmg
+        run: python scripts/build_dmg_background.py --output build/dmg-bg.png
 
       - name: Build DMG
+        env:
+          ASYMMETRY_APP_BUNDLE: ${{ github.workspace }}/dist/Asymmetry.app
+          ASYMMETRY_DMG_BACKGROUND: ${{ github.workspace }}/build/dmg-bg.png
         shell: bash
         run: |
           VERSION="${{ steps.meta.outputs.version }}"
           DMG_PATH="dist/Asymmetry-${VERSION}-macos-x86_64.dmg"
-          DMG_ROOT="build/dmg-root"
-          DMG_BG="build/dmg-bg.png"
 
           test -d dist/Asymmetry.app
 
-          rm -rf "$DMG_ROOT"
-          mkdir -p "$DMG_ROOT"
-          cp -R dist/Asymmetry.app "$DMG_ROOT/"
-
-          python - <<'PY'
-          import matplotlib
-          matplotlib.use("Agg")
-          import matplotlib.pyplot as plt
-
-          fig = plt.figure(figsize=(8.0, 4.2), dpi=100)
-          ax = fig.add_axes([0, 0, 1, 1])
-          ax.set_xlim(0, 1)
-          ax.set_ylim(0, 1)
-          ax.axis("off")
-
-          fig.patch.set_facecolor("#f6f6f6")
-          ax.annotate(
-              "",
-              xy=(0.72, 0.50),
-              xytext=(0.42, 0.50),
-              arrowprops={"arrowstyle": "-|>", "lw": 6, "color": "#8a8a8a"},
-          )
-          ax.text(
-              0.57,
-              0.62,
-              "Drag to Applications",
-              ha="center",
-              va="center",
-              fontsize=15,
-              color="#666666",
-          )
-          fig.savefig("build/dmg-bg.png", dpi=100)
-          PY
-
           rm -f "$DMG_PATH"
-
-          create-dmg \
-            --volname "Asymmetry" \
-            --background "$DMG_BG" \
-            --window-pos 200 120 \
-            --window-size 800 420 \
-            --icon-size 100 \
-            --icon "Asymmetry.app" 220 210 \
-            --hide-extension "Asymmetry.app" \
-            --app-drop-link 580 210 \
-            "$DMG_PATH" \
-            "$DMG_ROOT"
+          dmgbuild -s packaging/macos/dmg_settings.py "Asymmetry" "$DMG_PATH"
 
       - name: Upload macOS x86_64 artifact
         uses: actions/upload-artifact@v4
@@ -152,7 +108,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -c constraints.txt -e ".[gui,gle,hdf5,root]"
-          pip install -c constraints.txt pyinstaller Pillow
+          pip install -c constraints.txt pyinstaller Pillow dmgbuild
 
       - name: Generate macOS icon (.icns)
         shell: bash
@@ -170,67 +126,23 @@ jobs:
           test -x dist/Asymmetry.app/Contents/MacOS/Asymmetry
           dist/Asymmetry.app/Contents/MacOS/Asymmetry --smoke-test
 
-      - name: Install DMG packaging tool
+      - name: Generate DMG background
         shell: bash
-        run: brew install create-dmg
+        run: python scripts/build_dmg_background.py --output build/dmg-bg.png
 
       - name: Build DMG
+        env:
+          ASYMMETRY_APP_BUNDLE: ${{ github.workspace }}/dist/Asymmetry.app
+          ASYMMETRY_DMG_BACKGROUND: ${{ github.workspace }}/build/dmg-bg.png
         shell: bash
         run: |
           VERSION="${{ steps.meta.outputs.version }}"
           DMG_PATH="dist/Asymmetry-${VERSION}-macos-arm64.dmg"
-          DMG_ROOT="build/dmg-root"
-          DMG_BG="build/dmg-bg.png"
 
           test -d dist/Asymmetry.app
 
-          rm -rf "$DMG_ROOT"
-          mkdir -p "$DMG_ROOT"
-          cp -R dist/Asymmetry.app "$DMG_ROOT/"
-
-          python - <<'PY'
-          import matplotlib
-          matplotlib.use("Agg")
-          import matplotlib.pyplot as plt
-
-          fig = plt.figure(figsize=(8.0, 4.2), dpi=100)
-          ax = fig.add_axes([0, 0, 1, 1])
-          ax.set_xlim(0, 1)
-          ax.set_ylim(0, 1)
-          ax.axis("off")
-
-          fig.patch.set_facecolor("#f6f6f6")
-          ax.annotate(
-              "",
-              xy=(0.72, 0.50),
-              xytext=(0.42, 0.50),
-              arrowprops={"arrowstyle": "-|>", "lw": 6, "color": "#8a8a8a"},
-          )
-          ax.text(
-              0.57,
-              0.62,
-              "Drag to Applications",
-              ha="center",
-              va="center",
-              fontsize=15,
-              color="#666666",
-          )
-          fig.savefig("build/dmg-bg.png", dpi=100)
-          PY
-
           rm -f "$DMG_PATH"
-
-          create-dmg \
-            --volname "Asymmetry" \
-            --background "$DMG_BG" \
-            --window-pos 200 120 \
-            --window-size 800 420 \
-            --icon-size 100 \
-            --icon "Asymmetry.app" 220 210 \
-            --hide-extension "Asymmetry.app" \
-            --app-drop-link 580 210 \
-            "$DMG_PATH" \
-            "$DMG_ROOT"
+          dmgbuild -s packaging/macos/dmg_settings.py "Asymmetry" "$DMG_PATH"
 
       - name: Upload macOS arm64 artifact
         uses: actions/upload-artifact@v4

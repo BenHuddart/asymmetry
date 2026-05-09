@@ -20,15 +20,16 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -62,6 +63,67 @@ _LABEL_FIELDS: list[tuple[str, str]] = [
     ("Temperature (K)", "temperature"),
     ("Comment", "comment"),
 ]
+
+_NAV_BUTTON_STYLE = """
+QPushButton {
+    min-width: 60px;
+    border: 1px solid #9aa4b2;
+    border-radius: 4px;
+}
+QPushButton:checked {
+    font-weight: 600;
+    border: 2px solid #1f6feb;
+    background-color: #dbeafe;
+    color: #0f3d91;
+}
+""".strip()
+
+
+class _FloatLimitField(QLineEdit):
+    """Plain text field that stores a floating-point axis limit."""
+
+    def __init__(
+        self,
+        value: float,
+        *,
+        decimals: int = 3,
+        minimum_width: int = 76,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._decimals = max(0, int(decimals))
+        self._last_value = float(value)
+        self.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.setClearButtonEnabled(False)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(minimum_width)
+        validator = QDoubleValidator(-1e6, 1e6, self._decimals, self)
+        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        self.setValidator(validator)
+        self.editingFinished.connect(self._normalize_text)
+        self.setValue(value)
+
+    def value(self) -> float:
+        """Return the current numeric value, falling back to the last valid value."""
+        text = self.text().strip()
+        if not text:
+            return self._last_value
+        try:
+            value = float(text)
+        except ValueError:
+            return self._last_value
+        self._last_value = value
+        return value
+
+    def setValue(self, value: float) -> None:  # noqa: N802
+        """Set the displayed text from a numeric value."""
+        numeric_value = float(value)
+        self._last_value = numeric_value
+        self.setText(f"{numeric_value:.{self._decimals}f}")
+
+    def _normalize_text(self) -> None:
+        """Rewrite the field using the canonical numeric format."""
+        self.setValue(self.value())
 
 
 class PlotPanel(QWidget):
@@ -141,6 +203,27 @@ class PlotPanel(QWidget):
             alpha_row.addWidget(self._alpha_label)
             layout.addLayout(alpha_row)
 
+            nav_row = QHBoxLayout()
+            nav_row.setContentsMargins(4, 0, 4, 0)
+            nav_row.setSpacing(4)
+            nav_row.addStretch()
+
+            self._pan_btn = QPushButton("Pan")
+            self._pan_btn.setCheckable(True)
+            self._pan_btn.setMaximumWidth(60)
+            self._pan_btn.setStyleSheet(_NAV_BUTTON_STYLE)
+            self._pan_btn.clicked.connect(self._on_pan_button_clicked)
+            nav_row.addWidget(self._pan_btn)
+
+            self._zoom_btn = QPushButton("Zoom")
+            self._zoom_btn.setCheckable(True)
+            self._zoom_btn.setMaximumWidth(60)
+            self._zoom_btn.setStyleSheet(_NAV_BUTTON_STYLE)
+            self._zoom_btn.clicked.connect(self._on_zoom_button_clicked)
+            nav_row.addWidget(self._zoom_btn)
+
+            layout.addLayout(nav_row)
+
             layout.addWidget(self._canvas)
             self._has_mpl = True
 
@@ -195,63 +278,32 @@ class PlotPanel(QWidget):
             self._has_mpl = False
 
     def _create_limit_controls(self) -> None:
-        """Create toolbar for adjusting plot limits.
-
-        Uses two independent HBox rows inside a VBox so that widgets in one
-        row cannot inflate column widths seen by the other row.
-        """
+        """Create inline controls for adjusting plot limits and plot options."""
         self._limit_toolbar = QVBoxLayout()
         self._limit_toolbar.setSpacing(2)
         self._limit_toolbar.setContentsMargins(4, 4, 4, 4)
 
-        # ── Row 0: axis range spinboxes + auto-scale buttons ──────────────
+        # ── Row 0: axis range fields + auto-scale buttons ─────────────────
         row0 = QHBoxLayout()
         row0.setSpacing(4)
 
         # X-axis limits
         row0.addWidget(QLabel("X:"))
-
-        def _finalize_limit_spinbox_width(
-            spinbox: QDoubleSpinBox, *, min_width: int, sample_text: str
-        ) -> None:
-            """Set a fixed width that accounts for platform/style-specific button chrome."""
-            spinbox.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-            text_width = spinbox.fontMetrics().horizontalAdvance(sample_text)
-            # Reserve additional room for frame + up/down button chrome.
-            control_padding = 56 if os.name == "nt" else 34
-            spinbox.setFixedWidth(max(min_width, text_width + control_padding))
-
-        self._x_min = QDoubleSpinBox()
-        self._x_min.setRange(-1e6, 1e6)
-        self._x_min.setDecimals(3)
-        self._x_min.setValue(0.0)
-        _finalize_limit_spinbox_width(self._x_min, min_width=78, sample_text="-1234.567")
+        self._x_min = _FloatLimitField(0.0, minimum_width=76)
         row0.addWidget(self._x_min)
         row0.addWidget(QLabel("–"))
-        self._x_max = QDoubleSpinBox()
-        self._x_max.setRange(-1e6, 1e6)
-        self._x_max.setDecimals(3)
-        self._x_max.setValue(10.0)
-        self._x_max.setSuffix(" μs")
-        _finalize_limit_spinbox_width(self._x_max, min_width=86, sample_text="-1234.567 μs")
+        self._x_max = _FloatLimitField(10.0, minimum_width=76)
         row0.addWidget(self._x_max)
+        row0.addWidget(QLabel("μs"))
 
         # Y-axis limits
         row0.addWidget(QLabel("Y:"))
-        self._y_min = QDoubleSpinBox()
-        self._y_min.setRange(-1e6, 1e6)
-        self._y_min.setDecimals(3)
-        self._y_min.setValue(-30.0)
-        _finalize_limit_spinbox_width(self._y_min, min_width=78, sample_text="-1234.567")
+        self._y_min = _FloatLimitField(-30.0, minimum_width=76)
         row0.addWidget(self._y_min)
         row0.addWidget(QLabel("–"))
-        self._y_max = QDoubleSpinBox()
-        self._y_max.setRange(-1e6, 1e6)
-        self._y_max.setDecimals(3)
-        self._y_max.setValue(30.0)
-        self._y_max.setSuffix(" %")
-        _finalize_limit_spinbox_width(self._y_max, min_width=82, sample_text="-1234.567 %")
+        self._y_max = _FloatLimitField(30.0, minimum_width=76)
         row0.addWidget(self._y_max)
+        row0.addWidget(QLabel("%"))
 
         # Separate axis auto-scale controls.
         auto_x_btn = QPushButton("Auto X")
@@ -264,22 +316,10 @@ class PlotPanel(QWidget):
         self._auto_y_btn.setMaximumWidth(65)
         row0.addWidget(self._auto_y_btn)
 
-        self._pan_btn = QPushButton("Pan")
-        self._pan_btn.setCheckable(True)
-        self._pan_btn.setMaximumWidth(60)
-        self._pan_btn.clicked.connect(self._on_pan_button_clicked)
-        row0.addWidget(self._pan_btn)
-
-        self._zoom_btn = QPushButton("Zoom")
-        self._zoom_btn.setCheckable(True)
-        self._zoom_btn.setMaximumWidth(60)
-        self._zoom_btn.clicked.connect(self._on_zoom_button_clicked)
-        row0.addWidget(self._zoom_btn)
-
         row0.addStretch()
         self._limit_toolbar.addLayout(row0)
 
-        # Apply limit changes immediately from spinbox edits.
+        # Apply limit changes immediately from text field edits.
         self._x_min.editingFinished.connect(self._apply_limits)
         self._x_max.editingFinished.connect(self._apply_limits)
         self._y_min.editingFinished.connect(self._apply_limits)
@@ -294,7 +334,7 @@ class PlotPanel(QWidget):
         self._bunch_factor.valueChanged.connect(self._on_bunch_changed)
         self._bunch_factor.hide()
 
-        # ── Row 1: annotation controls + export controls ───────────────────
+        # ── Row 1: plot options ─────────────────────────────────────────────
         row1 = QHBoxLayout()
         row1.setSpacing(4)
 
@@ -314,6 +354,13 @@ class PlotPanel(QWidget):
 
         row1.addStretch()
 
+        self._limit_toolbar.addLayout(row1)
+
+        # ── Row 2: annotation + export controls ────────────────────────────
+        row2 = QHBoxLayout()
+        row2.setSpacing(4)
+        row2.addStretch()
+
         self._add_label_btn = QPushButton("Add Annotation")
         self._add_label_btn.setCheckable(True)
         # Avoid clipping on platforms/themes where checkable button chrome
@@ -321,9 +368,9 @@ class PlotPanel(QWidget):
         min_btn_width = self._add_label_btn.fontMetrics().horizontalAdvance("Add Annotation") + 32
         self._add_label_btn.setMinimumWidth(min_btn_width)
         self._add_label_btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
-        row1.addWidget(self._add_label_btn)
+        row2.addWidget(self._add_label_btn)
 
-        # Export controls (right side of row 1)
+        # Export controls (right side of row 2)
         self._export_gle_btn = QPushButton("Export Plot(s) to GLE")
         self._export_gle_btn.setEnabled(False)
         self._export_gle_btn.clicked.connect(self.export_plots_to_gle)
@@ -331,11 +378,11 @@ class PlotPanel(QWidget):
         self._gle_format_combo.addItems(["PDF", "EPS"])
         self._gle_format_combo.setEnabled(False)
 
-        row1.addWidget(self._export_gle_btn)
-        row1.addWidget(QLabel("Format:"))
-        row1.addWidget(self._gle_format_combo)
+        row2.addWidget(self._export_gle_btn)
+        row2.addWidget(QLabel("Format:"))
+        row2.addWidget(self._gle_format_combo)
 
-        self._limit_toolbar.addLayout(row1)
+        self._limit_toolbar.addLayout(row2)
 
     def _current_navigation_mode(self) -> str:
         """Return active Matplotlib nav mode as ``none``, ``pan``, or ``zoom``."""
@@ -447,14 +494,14 @@ class PlotPanel(QWidget):
                 except Exception:
                     continue
 
-    def _set_limit_spinbox_value(self, spinbox: QDoubleSpinBox, value: float) -> None:
-        """Set a limit spinbox value without signal churn."""
-        spinbox.blockSignals(True)
-        spinbox.setValue(float(value))
-        spinbox.blockSignals(False)
+    def _set_limit_field_value(self, field: _FloatLimitField, value: float) -> None:
+        """Set a limit field value without signal churn."""
+        field.blockSignals(True)
+        field.setValue(float(value))
+        field.blockSignals(False)
 
     def _sync_limits_from_axes(self, source_axis: object | None = None) -> None:
-        """Update x/y spinboxes from current Matplotlib axis limits."""
+        """Update x/y limit fields from current Matplotlib axis limits."""
         if not self._has_mpl or self._syncing_limits_from_axes:
             return
 
@@ -481,8 +528,8 @@ class PlotPanel(QWidget):
                     return
 
                 x0, x1 = axis_obj.get_xlim()
-                self._set_limit_spinbox_value(self._x_min, x0)
-                self._set_limit_spinbox_value(self._x_max, x1)
+                self._set_limit_field_value(self._x_min, x0)
+                self._set_limit_field_value(self._x_max, x1)
 
                 for axis_key, subplot_axis in self._subplot_axes_by_polarization.items():
                     if not hasattr(subplot_axis, "get_ylim"):
@@ -496,8 +543,8 @@ class PlotPanel(QWidget):
                     current_obj = self._subplot_axes_by_polarization[current_axis]
                     if hasattr(current_obj, "get_ylim"):
                         y0, y1 = current_obj.get_ylim()
-                        self._set_limit_spinbox_value(self._y_min, y0)
-                        self._set_limit_spinbox_value(self._y_max, y1)
+                        self._set_limit_field_value(self._y_min, y0)
+                        self._set_limit_field_value(self._y_max, y1)
                 else:
                     self._sync_y_controls_with_visible_axis()
                 return
@@ -509,10 +556,10 @@ class PlotPanel(QWidget):
 
             x0, x1 = self._ax.get_xlim()
             y0, y1 = self._ax.get_ylim()
-            self._set_limit_spinbox_value(self._x_min, x0)
-            self._set_limit_spinbox_value(self._x_max, x1)
-            self._set_limit_spinbox_value(self._y_min, y0)
-            self._set_limit_spinbox_value(self._y_max, y1)
+            self._set_limit_field_value(self._x_min, x0)
+            self._set_limit_field_value(self._x_max, x1)
+            self._set_limit_field_value(self._y_min, y0)
+            self._set_limit_field_value(self._y_max, y1)
             self._cache_current_y_limits_for_axis()
         finally:
             self._syncing_limits_from_axes = False
@@ -677,6 +724,8 @@ class PlotPanel(QWidget):
             dataset.error,
             bunch_factor,
         )
+        if time.size == 0 or asymmetry.size == 0 or error.size == 0:
+            return dataset
         return MuonDataset(
             time=time,
             asymmetry=asymmetry,
@@ -684,6 +733,34 @@ class PlotPanel(QWidget):
             metadata=dict(dataset.metadata),
             run=dataset.run,
         )
+
+    def _has_plottable_samples(self, dataset: MuonDataset | None) -> bool:
+        """Return True when *dataset* contains at least one aligned sample."""
+        if dataset is None:
+            return False
+        return (
+            np.asarray(dataset.time).size > 0
+            and np.asarray(dataset.asymmetry).size > 0
+            and np.asarray(dataset.error).size > 0
+        )
+
+    def _render_empty_plot_state(self, *, alpha_text: str | None = None) -> None:
+        """Render an empty but valid plot state when no plottable data is available."""
+        self._last_plot_time = None
+        self._last_plot_asymmetry = None
+        self._last_plot_error = None
+        self._last_low_count_mask = None
+        self._fit_x_min = None
+        self._fit_x_max = None
+
+        self._ax.clear()
+        self._ax.set_xlabel("Time (μs)")
+        self._ax.set_ylabel(self._polarization_ylabel(self._current_polarization_axis))
+        self._set_alpha_label(alpha_text)
+        self._draw_annotations()
+        self._draw_fit_range_artists()
+        self._update_export_enabled()
+        self._canvas.draw_idle()
 
     def get_fit_dataset(self, dataset: MuonDataset | None) -> MuonDataset | None:
         """Return *dataset* restricted to the currently selected fit range."""
@@ -1168,7 +1245,7 @@ class PlotPanel(QWidget):
         self._current_dataset = self._current_datasets[-1] if self._current_datasets else None
 
         # Stop listening to old axes before clearing the figure; stale callbacks
-        # can otherwise push default [0, 1] limits into the spinboxes.
+        # can otherwise push default [0, 1] limits into the limit fields.
         self._disconnect_axis_limit_callbacks()
         self._figure.clf()
         self._subplot_axes_by_polarization = {}
@@ -1404,7 +1481,7 @@ class PlotPanel(QWidget):
                 color = self._period_mode_color_variant(period_color, variant_idx)
                 period_color_counts[period_color] = variant_idx + 1
             analysis_dataset = self.get_analysis_dataset(dataset)
-            if analysis_dataset is None:
+            if not self._has_plottable_samples(analysis_dataset):
                 continue
 
             time = analysis_dataset.time
@@ -1462,13 +1539,13 @@ class PlotPanel(QWidget):
         self._ax.set_xlabel("Time (μs)")
         self._ax.set_ylabel(self._polarization_ylabel(self._current_polarization_axis))
         self._draw_annotations()
-        self._ax.legend()
 
         if all_times:
             self._last_plot_time = np.concatenate(all_times)
             self._last_plot_asymmetry = np.concatenate(all_asym)
             self._last_plot_error = np.concatenate(all_err)
             self._last_low_count_mask = np.concatenate(all_low)
+            self._ax.legend()
 
             if not self._limits_initialized:
                 t_all = self._last_plot_time
@@ -1491,6 +1568,13 @@ class PlotPanel(QWidget):
             if self._fit_x_min is None or self._fit_x_max is None:
                 self._fit_x_min = all_t_min
                 self._fit_x_max = all_t_max
+        else:
+            self._last_plot_time = None
+            self._last_plot_asymmetry = None
+            self._last_plot_error = None
+            self._last_low_count_mask = None
+            self._fit_x_min = None
+            self._fit_x_max = None
 
         self._draw_fit_range_artists()
         self._apply_limits()
@@ -1513,7 +1597,8 @@ class PlotPanel(QWidget):
         self._current_datasets = [dataset]
 
         analysis_dataset = self.get_analysis_dataset(dataset)
-        if analysis_dataset is None:
+        if not self._has_plottable_samples(analysis_dataset):
+            self._render_empty_plot_state(alpha_text=self._single_dataset_alpha_label_text(dataset))
             return
         time = analysis_dataset.time
         asymmetry = analysis_dataset.asymmetry
@@ -1621,6 +1706,12 @@ class PlotPanel(QWidget):
         x1 = float(self._x_max.value())
         y0 = float(self._y_min.value())
         y1 = float(self._y_max.value())
+
+        # Matplotlib warns on identical x-limits; expand degenerate ranges slightly.
+        if np.isclose(x0, x1):
+            pad = max(1e-9, abs(x0) * 1e-6)
+            x0 -= pad
+            x1 += pad
 
         if self._subplot_axes_by_polarization:
             for axis_key, axis_obj in self._subplot_axes_by_polarization.items():
@@ -2071,10 +2162,10 @@ class PlotPanel(QWidget):
         current_x_min = float(self._x_min.value())
         current_x_max = float(self._x_max.value())
         if lo < current_x_min:
-            self._set_limit_spinbox_value(self._x_min, lo)
+            self._set_limit_field_value(self._x_min, lo)
             limits_changed = True
         if hi > current_x_max:
-            self._set_limit_spinbox_value(self._x_max, hi)
+            self._set_limit_field_value(self._x_max, hi)
             limits_changed = True
 
         if redraw:
@@ -3331,7 +3422,7 @@ class PlotPanel(QWidget):
             ax.set_xlabel("Time (µs)")
 
         try:
-            fig.savefig(str(requested_gle_path), folder=True)
+            fig.savefig(str(gle_path))
         except TypeError as exc:
             if "folder" in str(exc):
                 QMessageBox.warning(
@@ -3551,7 +3642,7 @@ class PlotPanel(QWidget):
         self._bunch_factor.setValue(1)
         self._bunch_factor.blockSignals(False)
 
-        # Restore axis limit spinboxes (will be applied after optional re-plot).
+        # Restore axis limit fields (will be applied after optional re-plot).
         for spin, key, default in (
             (self._x_min, "x_min", 0.0),
             (self._x_max, "x_max", 10.0),
@@ -3696,7 +3787,7 @@ class PlotPanel(QWidget):
             self.plot_dataset(dataset)
 
         # Re-apply saved axis limits after dataset redraw, which may reset
-        # spinbox values to data-derived defaults.
+        # field values to data-derived defaults.
         for spin, key, default in (
             (self._x_min, "x_min", 0.0),
             (self._x_max, "x_max", 10.0),

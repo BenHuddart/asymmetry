@@ -236,6 +236,30 @@ def test_group_lookup_helpers_return_group_and_members(qapp: QApplication) -> No
     assert members == [61, 62]
 
 
+def test_grouped_dataset_rows_get_faint_background_tint(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(64))
+    panel.add_dataset(_dataset(65))
+    panel.add_dataset(_dataset(66))
+
+    panel.create_data_group([64, 65], name="Tinted Group")
+
+    grouped_background = None
+    ungrouped_background = None
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is None:
+            continue
+        key = item.data(Qt.ItemDataRole.UserRole)
+        if key == 64:
+            grouped_background = panel._table.item(row, 1).background().color()
+        elif key == 66:
+            ungrouped_background = panel._table.item(row, 1).background().style()
+
+    assert grouped_background == QColor(235, 239, 247)
+    assert ungrouped_background == Qt.BrushStyle.NoBrush
+
+
 def test_get_current_dataset_tracks_last_clicked_row_in_multi_selection(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     d1 = _dataset(64)

@@ -289,8 +289,7 @@ class GlobalParameterFitWindow(QMainWindow):
                 range_item: dict[str, object] = {
                     "x_min": fit_range.x_min,
                     "x_max": fit_range.x_max,
-                    "component_names": list(fit_range.model.component_names),
-                    "operators": list(fit_range.model.operators),
+                    "model": fit_range.model.to_dict(),
                     "parameters": [
                         {
                             "name": p.name,
@@ -348,12 +347,9 @@ class GlobalParameterFitWindow(QMainWindow):
             for range_state in ranges_state:
                 if not isinstance(range_state, dict):
                     continue
-                component_names = list(range_state.get("component_names", []))
-                operators = list(range_state.get("operators", []))
                 try:
-                    model = ParameterCompositeModel(
-                        component_names=component_names,
-                        operators=operators,
+                    model = ParameterCompositeModel.from_dict(
+                        dict(range_state.get("model", range_state))
                     )
                 except Exception:
                     continue
@@ -2078,7 +2074,7 @@ class GlobalParameterFitWindow(QMainWindow):
             gle_path, export_dir = resolve_gle_export_paths(requested_gle_path, folder=True)
             export_dir.mkdir(parents=True, exist_ok=True)
             fig = builder(glp, gle_path)
-            fig.savefig(str(requested_gle_path), folder=True)
+            fig.savefig(str(gle_path))
             self._compile_and_preview_gle(gle_path, output_format)
         except ImportError:
             QMessageBox.warning(

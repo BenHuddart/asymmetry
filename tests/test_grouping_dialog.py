@@ -750,3 +750,12 @@ def test_detector_layout_button_exists(qapp: QApplication) -> None:
     buttons = dialog.findChildren(QPushButton)
     labels = [b.text() for b in buttons]
     assert any("Detector Layout" in lbl for lbl in labels)
+
+
+def test_group_table_uses_scrollable_capped_height(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    dataset.run.grouping["groups"] = {idx: [idx] for idx in range(1, 11)}
+    dialog = GroupingDialog([dataset])
+
+    assert dialog._group_table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    assert dialog._group_table.maximumHeight() > 0

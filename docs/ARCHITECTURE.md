@@ -142,16 +142,7 @@ parameter sharing across an ordered series.
 This keeps the recommendation engine scriptable and testable while avoiding a
 second, UI-only implementation of the global-fit logic.
 
-**Toolkit candidates** (to be evaluated in a prototype phase):
-
-| Toolkit | Pros | Cons |
-|---|---|---|
-| **PySide6 (Qt 6)** | Mature widget set, dockable panels, excellent cross-platform support, widely used in scientific apps (Mantid, SasView). | Large dependency; licensing (LGPL) acceptable but needs tracking. |
-| **PyQt6** | Functionally identical to PySide6. | GPL-licensed unless commercial; may conflict with permissive library licensing. |
-| **Dear PyGui** | GPU-accelerated, modern look, easy plotting integration. | Smaller ecosystem; less mature for complex dock layouts. |
-| **Streamlit / Panel (web-based)** | Zero-install for users; notebook-friendly. | Less responsive for heavy interactive fitting; harder to get desktop-app feel. |
-
-**Initial recommendation:** PySide6, due to its maturity, licensing flexibility, and proven track record in large scientific applications.  The GUI layout draws inspiration from **WiMDA** — a data browser / logbook on the left, a central plot canvas, fit and Fourier analysis panels docked on the right, and a log/message panel at the bottom.
+**Implemented toolkit:** PySide6 (Qt 6), chosen for its maturity, licensing flexibility (LGPL), and proven track record in large scientific applications (Mantid, SasView). The GUI layout draws inspiration from **WiMDA** — a data browser / logbook on the left, a central plot canvas, fit and Fourier analysis panels docked on the right, and a log/message panel at the bottom.
 
 ---
 

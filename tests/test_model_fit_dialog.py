@@ -322,20 +322,28 @@ def test_edit_model_to_sc_component_keeps_shape_factor_a_fixed_by_default(
 def test_parameter_model_builder_has_info_column(qapp: QApplication) -> None:
     dialog = ParameterModelBuilderDialog(component_pool=["Linear", "Arrhenius"])
 
-    headers = [
-        dialog._table.horizontalHeaderItem(i).text() for i in range(dialog._table.columnCount())
-    ]
-    assert headers == ["Op", "Component", "Info", "Remove"]
+    assert dialog._info_button.text() == "Info"
+    assert dialog._expression_edit.text() == "Arrhenius"
 
-    info_btn = dialog._table.cellWidget(0, 2)
-    assert info_btn is not None
-    assert info_btn.text() == "Info"
+
+def test_parameter_model_builder_accepts_parenthesized_expression(qapp: QApplication) -> None:
+    dialog = ParameterModelBuilderDialog(component_pool=["Linear", "Arrhenius", "Constant"])
+    dialog._expression_edit.setText("Linear + ( Arrhenius * Constant )")
+
+    dialog._on_accept()
+    model = dialog.get_model()
+
+    assert model is not None
+    assert model.component_names == ["Linear", "Arrhenius", "Constant"]
+    assert model.operators == ["+", "*"]
+    assert model.open_parentheses == [0, 1, 0]
+    assert model.close_parentheses == [0, 0, 1]
 
 
 def test_parameter_model_builder_groups_sc_models_in_submenu(qapp: QApplication) -> None:
     dialog = ParameterModelBuilderDialog(component_pool=["Linear", "SC_SWave", "SC_DWave"])
 
-    selector = dialog._table.cellWidget(0, 1)
+    selector = dialog._component_selector
     assert isinstance(selector, _ComponentSelectorButton)
 
     menu = selector._build_component_menu()

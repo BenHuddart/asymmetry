@@ -80,6 +80,16 @@ def test_formula_and_serialization_round_trip() -> None:
     assert restored.operators == model.operators
 
 
+def test_component_expression_round_trip() -> None:
+    model = CompositeModel.from_expression("Gaussian * ( Constant + Constant )")
+
+    assert model.component_names == ["Gaussian", "Constant", "Constant"]
+    assert model.operators == ["*", "+"]
+    assert model.open_parentheses == [0, 1, 0]
+    assert model.close_parentheses == [0, 0, 1]
+    assert model.component_expression_string() == "Gaussian * (Constant + Constant)"
+
+
 def test_to_model_definition_callable() -> None:
     t = np.linspace(0.0, 1.0, 8)
     model = CompositeModel(["Constant"])

@@ -106,6 +106,56 @@ Use with FitEngine
 If the model contains a multiplicative chain, include only that chain's shared
 amplitude parameter in the fit table.
 
+Available Components
+--------------------
+
+The following components are registered in ``COMPONENTS`` and can be used by
+name in ``CompositeModel``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 40 38
+
+   * - Key
+     - Formula
+     - Parameters
+   * - ``Exponential``
+     - :math:`A e^{-\Lambda t}`
+     - ``A``, ``Lambda``
+   * - ``Gaussian``
+     - :math:`A e^{-(\sigma t)^2}`
+     - ``A``, ``sigma``
+   * - ``Oscillatory``
+     - :math:`A \cos(2\pi f t + \phi)`
+     - ``A``, ``frequency`` (MHz), ``phase``
+   * - ``OscillatoryField``
+     - :math:`A \cos(2\pi \gamma_\mu B t + \phi)`
+     - ``A``, ``field`` (Gauss), ``phase``. The precession frequency is
+       computed internally using :math:`\gamma_\mu = 13.554\,\text{MHz/kG}`.
+       Use this component when the fit parameter should be the applied field
+       rather than the precession frequency directly.
+   * - ``StretchedExponential``
+     - :math:`A e^{-(|\Lambda| t)^\beta}`
+     - ``A``, ``Lambda``, ``beta``
+   * - ``StaticGKT_ZF``
+     - :math:`A \left[\tfrac{1}{3} + \tfrac{2}{3}(1-\Delta^2 t^2)e^{-\Delta^2 t^2/2}\right]`
+     - ``A``, ``Delta``
+   * - ``LongitudinalFieldKT``
+     - Hayano LF-KT :math:`G_z(t;\Delta,B_L)` — see :ref:`lf-kubo-toyabe`
+     - ``A``, ``Delta``, ``B_L`` (Gauss)
+   * - ``MuF``
+     - Analytical single mu-F polarization :math:`D_z(t)`
+     - ``A``, ``r_muF`` (Å)
+   * - ``FmuF_Linear``
+     - Analytical collinear F-mu-F polarization
+     - ``A``, ``r_muF`` (Å)
+   * - ``FmuF_General``
+     - Numerical powder-averaged F-mu-F polarization
+     - ``A``, ``r1`` (Å), ``r2`` (Å), ``theta`` (rad)
+   * - ``Constant``
+     - :math:`A_{\mathrm{bg}}`
+     - ``A_bg``
+
 Runnable Example
 ----------------
 

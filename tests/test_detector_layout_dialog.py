@@ -79,6 +79,16 @@ class TestConstruction:
         dlg = DetectorLayoutDialog(layout, groups={})
         assert len(dlg._group_name_edits) == _MAX_GROUPS
 
+    def test_group_button_styles_scale_geometry(self, qapp):
+        layout = get_instrument_layout("HiFi")
+        dlg = DetectorLayoutDialog(layout, groups={})
+
+        dlg._on_ui_scale_changed(1.0, 1.1)
+
+        assert dlg._group_buttons[1].width() == 84
+        assert dlg._group_name_edits[1].width() == 121
+        assert "border-radius: 15px;" in dlg._group_buttons[1].styleSheet()
+
     def test_instrument_combo_has_all_names(self, qapp):
         layout = get_instrument_layout("HiFi")
         dlg = DetectorLayoutDialog(layout, groups={})

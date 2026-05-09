@@ -17,6 +17,16 @@ Available Basis Components
 Build a Parameter Composite Model
 ---------------------------------
 
+In the GUI parameter-trending workflow, the **Edit Model...** action opens the
+same expression-oriented builder used for time-domain composite functions.
+Each basis model is inserted as a single function token, then combined with
+``+``, ``-``, ``*``, ``/``, and parentheses. The **Info** button reports the
+documentation for the currently selected basis model, including superconducting
+gap-model details when relevant.
+
+The builder validates the expression in real time and shows the expanded
+``y(x)`` preview before you accept it.
+
 .. code-block:: python
 
    from asymmetry.core.fitting import ParameterCompositeModel
@@ -26,6 +36,9 @@ Build a Parameter Composite Model
        operators=["+", "+"],
    )
    print(model.formula_string())
+
+Grouped expressions are also supported programmatically and in the GUI, for
+example ``Linear + (Arrhenius * Constant)``.
 
 Single-Series Fit
 -----------------
@@ -92,6 +105,46 @@ For jointly fitting multiple groups with shared and local parameters, use
        fixed_params={"D_perp": 0.0},
    )
    print(result.success)
+
+Composite Parameters in the Fit Parameters Panel
+------------------------------------------------
+
+In the GUI Fit Parameters panel, you can define a derived parameter from
+existing fitted parameters using **Create Composite Parameter**.
+
+After selecting a derived parameter in the Y-parameter list, you can also use
+**Edit Selected Composite** and **Remove Selected Composite** to manage saved
+definitions.
+
+The expression builder supports:
+
+- Arithmetic: ``+``, ``-``, ``*``, ``/``, ``^``
+- Parentheses and numeric constants
+- Built-in constants: ``pi``, ``e``
+- Built-in functions: ``sin``, ``cos``, ``tan``, ``asin``, ``acos``,
+  ``atan``, ``sinh``, ``cosh``, ``tanh``, ``exp``, ``log``, ``log10``,
+  ``sqrt``, ``abs``
+
+Expressions are parsed safely (no arbitrary code execution) and validated in
+real time against available fitted parameter names.
+
+Derived parameters are integrated into the same workflow as ordinary fit
+parameters:
+
+- They appear in the Y-parameter selector and fitted-parameter table.
+- They can be plotted and used with parameter-model fitting.
+- They are saved/restored with project state.
+- They are recomputed automatically when source fit parameters change.
+
+Uncertainties are propagated using first-order error propagation:
+
+.. math::
+
+    \sigma_f^2 = J\,\Sigma\,J^T
+
+where :math:`J` is the gradient of the expression with respect to source
+parameters and :math:`\Sigma` is the parameter covariance matrix when
+available (falling back to diagonal variances otherwise).
 
 Runnable Example
 ----------------

@@ -19,7 +19,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton  # 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.export_paths import resolve_gle_export_paths
-from asymmetry.gui.panels.plot_panel import PlotPanel
+from asymmetry.gui.panels.plot_panel import PlotPanel, _FloatLimitField
 
 
 class _FakeAxis:
@@ -160,6 +160,15 @@ class TestPlotPanel:
         label_texts = {lbl.text() for lbl in labels}
         assert "Bunch:" not in label_texts
 
+    def test_plot_parameters_are_shown_inline(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        assert isinstance(panel._x_min, _FloatLimitField)
+        assert isinstance(panel._x_max, _FloatLimitField)
+        assert isinstance(panel._y_min, _FloatLimitField)
+        assert isinstance(panel._y_max, _FloatLimitField)
+
     def test_overlay_checkbox_defaults_to_disabled(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
@@ -178,13 +187,46 @@ class TestPlotPanel:
 
         label_combo_pos = row1.indexOf(panel._label_field_combo)
         overlay_pos = row1.indexOf(panel._overlay_checkbox)
-        annotation_pos = row1.indexOf(panel._add_label_btn)
-        export_pos = row1.indexOf(panel._export_gle_btn)
 
         assert label_combo_pos >= 0
         assert overlay_pos > label_combo_pos
-        assert annotation_pos > overlay_pos
+        assert row1.indexOf(panel._add_label_btn) == -1
+        assert row1.indexOf(panel._export_gle_btn) == -1
+
+    def test_third_toolbar_row_right_aligns_annotation_and_export_controls(
+        self, panel: PlotPanel
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        row2 = panel._limit_toolbar.itemAt(2).layout()
+        assert row2 is not None
+
+        annotation_pos = row2.indexOf(panel._add_label_btn)
+        export_pos = row2.indexOf(panel._export_gle_btn)
+        format_pos = row2.indexOf(panel._gle_format_combo)
+
+        assert annotation_pos >= 0
         assert export_pos > annotation_pos
+        assert format_pos > export_pos
+
+    def test_pan_and_zoom_buttons_live_in_separate_right_aligned_row(
+        self, panel: PlotPanel
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        row0 = panel._limit_toolbar.itemAt(0).layout()
+        assert row0 is not None
+        assert row0.indexOf(panel._pan_btn) == -1
+        assert row0.indexOf(panel._zoom_btn) == -1
+
+        top_layout = panel.layout()
+        assert top_layout is not None
+        nav_row = top_layout.itemAt(2).layout()
+        assert nav_row is not None
+        assert nav_row.indexOf(panel._pan_btn) >= 0
+        assert nav_row.indexOf(panel._zoom_btn) > nav_row.indexOf(panel._pan_btn)
 
     def test_pan_and_zoom_buttons_toggle_matplotlib_navigation_mode(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -208,7 +250,15 @@ class TestPlotPanel:
         assert not panel._pan_btn.isChecked()
         assert not panel._zoom_btn.isChecked()
 
-    def test_limit_spinboxes_follow_axis_limit_changes(
+    def test_pan_and_zoom_buttons_have_explicit_checked_style(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        assert "QPushButton:checked" in panel._pan_btn.styleSheet()
+        assert "#1f6feb" in panel._pan_btn.styleSheet()
+        assert panel._pan_btn.styleSheet() == panel._zoom_btn.styleSheet()
+
+    def test_limit_fields_follow_axis_limit_changes(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -1269,6 +1319,42 @@ class TestPlotPanel:
         np.testing.assert_array_equal(sample_dataset.asymmetry, original_asymmetry)
         np.testing.assert_array_equal(sample_dataset.error, original_error)
 
+    def test_oversized_bunch_factor_falls_back_to_source_dataset(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        ds = MuonDataset(
+            time=np.array([0.0, 0.5, 1.0]),
+            asymmetry=np.array([0.2, 0.15, 0.1]),
+            error=np.array([0.01, 0.01, 0.01]),
+            metadata={"run_number": 9981},
+        )
+
+        panel._bunch_factor.setValue(10)
+        analysis_dataset = panel.get_analysis_dataset(ds)
+
+        assert analysis_dataset is ds
+
+    def test_plot_dataset_with_oversized_bunch_factor_keeps_data_visible(
+        self, panel: PlotPanel
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        ds = MuonDataset(
+            time=np.array([0.0, 0.5, 1.0]),
+            asymmetry=np.array([0.2, 0.15, 0.1]),
+            error=np.array([0.01, 0.01, 0.01]),
+            metadata={"run_number": 9982},
+        )
+
+        panel._bunch_factor.setValue(10)
+        panel.plot_dataset(ds)
+
+        assert panel._current_dataset is ds
+        assert panel._last_plot_time is not None
+        assert panel._last_plot_time.size == 3
+
     def test_clear_plot(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test clearing the plot."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -1549,7 +1635,7 @@ class TestPlotPanel:
         assert axis.ylim_calls
         assert axis.xlim_calls[-1] == (1.25, 8.75)
         assert axis.ylim_calls[-1] == (-0.3, 0.4)
-        assert fig.saved_kwargs[-1]["folder"] is True
+        assert "folder" not in fig.saved_kwargs[-1]
         assert axis.xlabel_calls[-1] == "Time (µs)"
         assert subprocess_calls
         assert subprocess_calls[0][:3] == ["gle", "-d", "pdf"]
@@ -1563,6 +1649,22 @@ class TestPlotPanel:
         assert dialogs[0][0] == "Export Successful"
         assert "Data/fit files:" in dialogs[0][2]
         assert previews == [str(resolved_gle)]
+
+    def test_show_gle_preview_returns_early_under_pytest(
+        self,
+        panel: PlotPanel,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        gle_path = tmp_path / "preview.gle"
+        gle_path.write_text("! fake gle", encoding="utf-8")
+
+        monkeypatch.setenv(
+            "PYTEST_CURRENT_TEST",
+            "tests/test_plot_panel.py::test_show_gle_preview_returns_early_under_pytest",
+        )
+
+        panel._show_gle_preview(gle_path)
 
     def test_export_current_plot_sanitizes_gle_text(
         self,

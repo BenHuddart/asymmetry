@@ -107,6 +107,8 @@ class DetectorLayoutDialog(QDialog):
         )
 
         self._active_group: int = 1
+        self._group_button_scale = 1.0
+        self._ui_scale_sync_connected = False
 
         # Build UI -------------------------------------------------------
         # Root: vertical stack of [panel row] + [button box]
@@ -148,27 +150,12 @@ class DetectorLayoutDialog(QDialog):
             btn.setCheckable(True)
             btn.setAutoDefault(False)
             btn.setDefault(False)
-            btn.setFixedWidth(76)
-            btn.setFixedHeight(28)
-            colour = _colour_css(gid)
-            btn.setStyleSheet(
-                "QPushButton {"
-                " border: 1px solid #999;"
-                " border-radius: 14px;"
-                " padding: 2px 10px;"
-                " background-color: #f7f7f7;"
-                "}"
-                f"QPushButton:checked {{ border: 2px solid {colour}; "
-                f"border-radius: 14px; "
-                f"background-color: #e8f0fe; font-weight: bold; }}"
-            )
             self._group_btn_group.addButton(btn, gid)
             self._group_buttons[gid] = btn
 
             name_edit = QLineEdit()
             name_edit.setPlaceholderText(f"Group {gid}")
             name_edit.setText(self._group_names.get(gid, ""))
-            name_edit.setFixedWidth(110)
             name_edit.textChanged.connect(self._on_group_definition_changed)
             self._group_name_edits[gid] = name_edit
 
@@ -254,8 +241,63 @@ class DetectorLayoutDialog(QDialog):
         main_layout.addWidget(buttons)
 
         # Initial schematic state
+        self._apply_group_button_metrics()
+        self._apply_group_button_styles()
         self._sync_schematic()
         self._update_preset_status_label()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._ensure_ui_scale_sync()
+
+    def _ensure_ui_scale_sync(self) -> None:
+        if self._ui_scale_sync_connected:
+            return
+        parent = self.parentWidget()
+        while parent is not None:
+            manager = getattr(parent, "_ui_manager", None)
+            if manager is not None:
+                manager.ui_scale_changed.connect(self._on_ui_scale_changed)
+                self._ui_scale_sync_connected = True
+                self._on_ui_scale_changed(manager.ui_scale, manager.effective_scale)
+                return
+            parent = parent.parentWidget()
+
+    def _on_ui_scale_changed(self, _ui_scale: float, effective_scale: float) -> None:
+        self._group_button_scale = max(0.8, float(effective_scale))
+        self._apply_group_button_metrics()
+        self._apply_group_button_styles()
+
+    def _apply_group_button_metrics(self) -> None:
+        scale = max(0.8, float(self._group_button_scale))
+        button_width = max(68, round(76 * scale))
+        button_height = max(28, round(28 * scale))
+        edit_width = max(100, round(110 * scale))
+        for button in self._group_buttons.values():
+            button.setFixedWidth(button_width)
+            button.setFixedHeight(button_height)
+        for edit in self._group_name_edits.values():
+            edit.setFixedWidth(edit_width)
+
+    def _apply_group_button_styles(self) -> None:
+        scale = max(0.8, float(self._group_button_scale))
+        border_radius = max(12, round(14 * scale))
+        padding_v = max(2, round(2 * scale))
+        padding_h = max(8, round(10 * scale))
+        for gid, button in self._group_buttons.items():
+            colour = _colour_css(gid)
+            button.setStyleSheet(
+                "QPushButton {"
+                " border: 1px solid #999;"
+                f" border-radius: {border_radius}px;"
+                f" padding: {padding_v}px {padding_h}px;"
+                " background-color: #f7f7f7;"
+                "}"
+                f"QPushButton:checked {{ border: 2px solid {colour}; "
+                f"border-radius: {border_radius}px; "
+                f"padding: {padding_v}px {padding_h}px; "
+                f"background-color: #e8f0fe; font-weight: bold; }}"
+            )
 
     # ------------------------------------------------------------------
     # Preset combo management

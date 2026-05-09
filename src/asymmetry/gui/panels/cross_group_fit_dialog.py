@@ -150,10 +150,7 @@ class CrossGroupFitDialog(ModelFitDialog):
             )
 
         return {
-            "model": {
-                "component_names": list(fit_range.model.component_names),
-                "operators": list(fit_range.model.operators),
-            },
+            "model": fit_range.model.to_dict(),
             "fit_x_min": float(fit_range.x_min) if fit_range.x_min is not None else None,
             "fit_x_max": float(fit_range.x_max) if fit_range.x_max is not None else None,
             "parameter_rows": rows,
@@ -212,10 +209,7 @@ class CrossGroupFitDialog(ModelFitDialog):
         model_state = config.get("model")
         if isinstance(model_state, dict):
             try:
-                model = ParameterCompositeModel(
-                    component_names=list(model_state.get("component_names", [])),
-                    operators=list(model_state.get("operators", [])),
-                )
+                model = ParameterCompositeModel.from_dict(model_state)
             except Exception:
                 model = None
             if model is not None:

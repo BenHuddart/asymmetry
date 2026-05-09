@@ -61,6 +61,7 @@ class FitResult:
     parameters: ParameterSet = field(default_factory=ParameterSet)
     uncertainties: dict[str, float] = field(default_factory=dict)
     covariance: NDArray[np.float64] | None = None
+    covariance_parameters: list[str] = field(default_factory=list)
     residuals: NDArray[np.float64] | None = None
     message: str = ""
     function_calls: int = 0
@@ -201,6 +202,7 @@ class FitEngine:
             parameters=result_params,
             uncertainties=uncertainties,
             covariance=m.covariance if m.valid else None,
+            covariance_parameters=list(param_names) if m.valid else [],
             residuals=residuals,
             message=_minuit_status_message(
                 m,
@@ -265,6 +267,39 @@ class FitEngine:
         if not datasets:
             raise ValueError("No datasets provided for global fitting")
 
+        first_params = initial_params[datasets[0].run_number]
+        free_global_params = [pname for pname in global_params if not first_params[pname].fixed]
+
+        # When nothing is actually shared, the joint objective is block-separable.
+        # Solving each dataset independently is equivalent and avoids a large,
+        # ill-conditioned Minuit problem that is less stable than the proven
+        # single-fit path.
+        if not free_global_params:
+            fitted_global = ParameterSet()
+            for pname in global_params:
+                parameter = first_params[pname]
+                fitted_global.add(
+                    Parameter(
+                        name=pname,
+                        value=parameter.value,
+                        min=parameter.min,
+                        max=parameter.max,
+                        fixed=parameter.fixed,
+                    )
+                )
+
+            results = {}
+            for ds in datasets:
+                results[ds.run_number] = self.fit(
+                    ds,
+                    model_fn,
+                    initial_params[ds.run_number],
+                    t_min=t_min,
+                    t_max=t_max,
+                    method=method,
+                )
+            return results, fitted_global
+
         try:
             from iminuit import Minuit
         except ImportError as e:
@@ -290,16 +325,12 @@ class FitEngine:
         param_bounds = []
         initial_values = []
 
-        # Get first dataset's parameters as template for global params
-        first_params = initial_params[datasets[0].run_number]
-
         # Add global parameters
-        for pname in global_params:
+        for pname in free_global_params:
             p = first_params[pname]
-            if not p.fixed:
-                param_names.append(pname)
-                param_bounds.append((p.min, p.max))
-                initial_values.append(p.value)
+            param_names.append(pname)
+            param_bounds.append((p.min, p.max))
+            initial_values.append(p.value)
 
         # Add local parameters for each dataset
         dataset_param_indices = {}  # Maps (run_number, param_name) -> index in param_names
@@ -347,9 +378,9 @@ class FitEngine:
                 p = first_params[pname]
                 if p.fixed:
                     global_values[pname] = p.value
-                else:
-                    global_values[pname] = args[global_idx]
-                    global_idx += 1
+                    continue
+                global_values[pname] = args[global_idx]
+                global_idx += 1
 
             for ds in fitted_datasets:
                 n_points = len(ds.time)
@@ -439,6 +470,12 @@ class FitEngine:
         edm = getattr(fmin, "edm", None)
         edm_value = float(edm) if edm is not None and np.isfinite(edm) else None
         covariance_accurate = bool(getattr(m, "accurate", False))
+        covariance_matrix = None
+        if m.valid and getattr(m, "covariance", None) is not None:
+            try:
+                covariance_matrix = np.asarray(m.covariance, dtype=float)
+            except Exception:
+                covariance_matrix = None
         global_idx = 0
         for pname in global_params:
             p = first_params[pname]
@@ -491,6 +528,26 @@ class FitEngine:
             residuals = np.asarray(ds.asymmetry, dtype=float) - np.asarray(model_vals, dtype=float)
             dataset_chi2 = np.sum(((ds.asymmetry - model_vals) / ds.error) ** 2)
 
+            covariance_subset = None
+            covariance_order: list[str] = []
+            if covariance_matrix is not None and covariance_matrix.ndim == 2:
+                cov_indices: list[int] = []
+
+                for pname in global_params:
+                    if pname in global_uncertainties:
+                        idx = param_names.index(pname)
+                        cov_indices.append(idx)
+                        covariance_order.append(pname)
+
+                for pname in local_params:
+                    if pname in uncertainties:
+                        idx = dataset_param_indices[ds.run_number][pname]
+                        cov_indices.append(idx)
+                        covariance_order.append(pname)
+
+                if cov_indices:
+                    covariance_subset = covariance_matrix[np.ix_(cov_indices, cov_indices)]
+
             ndata = len(ds.time)
             # Count free parameters: global (shared) + local for this dataset
             nfree_global = sum(1 for p in global_params if not first_params[p].fixed)
@@ -505,6 +562,8 @@ class FitEngine:
                 reduced_chi_squared=red_chi2,
                 parameters=result_params,
                 uncertainties=uncertainties,
+                covariance=covariance_subset,
+                covariance_parameters=covariance_order,
                 residuals=residuals,
                 message=_minuit_status_message(
                     m,

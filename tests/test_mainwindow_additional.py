@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 pyside6 = pytest.importorskip("PySide6")
+from PySide6.QtCore import QSettings  # type: ignore
 from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar  # type: ignore
 
 import asymmetry.gui.mainwindow as mw_module
@@ -32,6 +33,8 @@ def qapp() -> QApplication:
 @pytest.fixture
 def mainwindow(qapp: QApplication) -> MainWindow:
     """Create a mainwindow for testing."""
+    settings = QSettings()
+    settings.setValue(mw_module._UI_SCALE_SETTINGS_KEY, 1.0)
     return MainWindow()
 
 
@@ -94,6 +97,36 @@ class TestMainWindowBasic:
         """Test central widget exists."""
         assert mainwindow.centralWidget() is not None
 
+    def test_view_menu_uses_fixed_ui_scale_actions_only(self, mainwindow: MainWindow) -> None:
+        """View menu should only expose fixed UI scale actions."""
+        toolbar = mainwindow.findChild(QToolBar)
+
+        assert not hasattr(mainwindow, "_ui_scale_slider")
+        assert not hasattr(mainwindow, "_ui_scale_value_label")
+        assert toolbar is not None
+
+    def test_view_menu_has_ui_scale_submenu(self, mainwindow: MainWindow) -> None:
+        """View menu should expose the configured UI scale choices."""
+        view_menu = None
+        for action in mainwindow.menuBar().actions():
+            if action.text().replace("&", "") == "View":
+                view_menu = action.menu()
+                break
+
+        assert view_menu is not None
+        scale_menu_action = next(
+            (
+                action
+                for action in view_menu.actions()
+                if action.menu() is not None and action.text() == "UI Scale"
+            ),
+            None,
+        )
+        assert scale_menu_action is not None
+
+        texts = [action.text() for action in scale_menu_action.menu().actions() if action.text()]
+        assert texts == ["80%", "90%", "100%", "110%", "120%"]
+
     def test_window_size(self, mainwindow: MainWindow) -> None:
         """Test window has reasonable size."""
         size = mainwindow.size()
@@ -105,6 +138,39 @@ class TestMainWindowBasic:
         assert mainwindow._dock_fit.isHidden()
         mainwindow._on_fit()
         assert not mainwindow._dock_fit.isHidden()
+
+    def test_set_compact_mode_is_legacy_no_op(self, mainwindow: MainWindow) -> None:
+        """Legacy compact-mode API should leave the standard shell intact."""
+        mainwindow._on_fit()
+        mainwindow.set_compact_mode(True)
+
+        assert not mainwindow.compact_mode
+        assert not mainwindow._dock_fit.isHidden()
+        assert mainwindow._dock_fit.widget() is mainwindow._fit_panel
+
+    def test_ui_scale_action_updates_manager_and_settings(self, mainwindow: MainWindow) -> None:
+        """Scale actions should delegate through UIManager and persist the choice."""
+        mainwindow._ui_scale_actions[1.1].trigger()
+
+        assert mainwindow._ui_manager.ui_scale == pytest.approx(1.1)
+        assert mainwindow._ui_scale_actions[1.1].isChecked()
+
+        settings = QSettings()
+        assert float(settings.value(mw_module._UI_SCALE_SETTINGS_KEY, 1.0)) == pytest.approx(1.1)
+
+    def test_global_stylesheet_enlarges_spinbox_arrow_controls(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """Global stylesheet should reserve larger, legible spinbox arrow controls."""
+        stylesheet = mainwindow._ui_manager.build_stylesheet(1.0)
+
+        assert "QAbstractSpinBox::up-button" in stylesheet
+        assert "QAbstractSpinBox::down-button" in stylesheet
+        assert "QAbstractSpinBox::up-arrow, QAbstractSpinBox::down-arrow" in stylesheet
+        assert "spin_up_arrow.svg" in stylesheet
+        assert "spin_down_arrow.svg" in stylesheet
+        assert "width: 18px;" in stylesheet
+        assert "height: 10px;" in stylesheet
 
     def test_on_fourier_shows_fourier_dock(self, mainwindow: MainWindow) -> None:
         """Fourier action should unhide the Fourier dock if it starts hidden."""

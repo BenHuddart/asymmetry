@@ -11,6 +11,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
+from PySide6.QtCore import QSettings
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -85,7 +86,9 @@ class _StubFitPanel(QWidget):
         self.last_global_results = results_by_run
         return
 
-    def share_single_function_state(self, source_run_number, target_run_numbers):
+    def share_single_function_state(
+        self, source_run_number, target_run_numbers, datasets_by_run=None
+    ):
         self.shared_calls.append((source_run_number, list(target_run_numbers)))
         return len(target_run_numbers)
 
@@ -157,6 +160,12 @@ def qapp() -> QApplication:
     if app is None:
         app = QApplication([])
     return app
+
+
+@pytest.fixture(autouse=True)
+def _set_default_ui_scale() -> None:
+    settings = QSettings()
+    settings.setValue("ui/scale", 1.0)
 
 
 def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplication) -> None:

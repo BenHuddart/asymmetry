@@ -101,6 +101,7 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
         "frequency", "frequency", "f", r"$f$", r"{\it f}", "MHz", default_min=0.0
     ),
     "field": ParamInfo("field", "field", "B", r"$B$", r"{\it B}", "G"),
+    "B_L": ParamInfo("B_L", "B_L", "B_L", r"$B_L$", r"{\it B}_{L}", "G"),
     "r_muF": ParamInfo(
         "r_muF", "r_muF", "r_μF", r"$r_{\mu F}$", r"{\it r}_{\mu F}", "Å", default_min=0.0
     ),
@@ -231,6 +232,7 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "phase": "Phase offset of oscillatory precession.",
     "frequency": "Muon spin precession frequency.",
     "field": "Applied or effective magnetic field magnitude.",
+    "B_L": "Applied longitudinal magnetic field (Gauss) to decouple muons from the static local-field distribution.",
     "r_muF": "Muon-fluorine distance for two-spin or linear F-mu-F polarization functions.",
     "r1": "First muon-fluorine distance in the general F-mu-F geometry.",
     "r2": "Second muon-fluorine distance in the general F-mu-F geometry.",
