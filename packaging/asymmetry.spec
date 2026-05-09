@@ -6,6 +6,8 @@ import os
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_dynamic_libs
+
 
 # SPECPATH points to the directory containing this spec file.
 project_root = Path(SPECPATH).resolve().parent
@@ -30,10 +32,12 @@ hiddenimports = [
     "scipy.special._cdflib",
 ]
 
+binaries = collect_dynamic_libs("awkward_cpp")
+
 a = Analysis(
     [str(entry_script)],
     pathex=[str(src_dir)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

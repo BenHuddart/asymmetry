@@ -210,12 +210,22 @@ def main() -> None:
     global QApplication, MainWindow
 
     smoke_test = "--smoke-test" in sys.argv
+    root_smoke_test = "--smoke-test-root" in sys.argv
     if smoke_test:
         import os
 
         # Force a headless backend so this check can run on CI runners.
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         sys.argv = [arg for arg in sys.argv if arg != "--smoke-test"]
+    if root_smoke_test:
+        sys.argv = [arg for arg in sys.argv if arg != "--smoke-test-root"]
+        import awkward  # noqa: F401
+        import awkward_cpp  # noqa: F401
+        import uproot  # noqa: F401
+
+        from asymmetry.core.io.root import RootLoader
+
+        RootLoader
 
     if QApplication is None:
         from PySide6.QtWidgets import QApplication as _QApplication

@@ -55,7 +55,7 @@ jobs:
         shell: bash
         run: |
           test -x dist/Asymmetry.app/Contents/MacOS/Asymmetry
-          dist/Asymmetry.app/Contents/MacOS/Asymmetry --smoke-test
+          dist/Asymmetry.app/Contents/MacOS/Asymmetry --smoke-test --smoke-test-root
 
       - name: Generate DMG background
         shell: bash
@@ -124,7 +124,7 @@ jobs:
         shell: bash
         run: |
           test -x dist/Asymmetry.app/Contents/MacOS/Asymmetry
-          dist/Asymmetry.app/Contents/MacOS/Asymmetry --smoke-test
+          dist/Asymmetry.app/Contents/MacOS/Asymmetry --smoke-test --smoke-test-root
 
       - name: Generate DMG background
         shell: bash
@@ -197,7 +197,7 @@ jobs:
           if (-not (Test-Path "dist\Asymmetry\Asymmetry.exe")) {
             throw "Packaged executable not found at dist\\Asymmetry\\Asymmetry.exe"
           }
-          & "dist\Asymmetry\Asymmetry.exe" --smoke-test
+          & "dist\Asymmetry\Asymmetry.exe" --smoke-test --smoke-test-root
 
       - name: Install NSIS
         shell: pwsh
