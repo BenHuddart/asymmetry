@@ -246,6 +246,7 @@ jobs:
       - build-macos-arm
       - build-windows
     permissions:
+      actions: write
       contents: write
     steps:
       - name: Download build artifacts
@@ -262,3 +263,28 @@ jobs:
           files: |
             release-assets/**/*.dmg
             release-assets/**/*.exe
+
+      - name: Delete workflow artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const run_id = context.runId;
+            const artifacts = await github.paginate(
+              github.rest.actions.listWorkflowRunArtifacts,
+              {
+                owner,
+                repo,
+                run_id,
+                per_page: 100,
+              },
+            );
+
+            for (const artifact of artifacts) {
+              core.info(`Deleting artifact ${artifact.name} (${artifact.id})`);
+              await github.rest.actions.deleteArtifact({
+                owner,
+                repo,
+                artifact_id: artifact.id,
+              });
+            }
