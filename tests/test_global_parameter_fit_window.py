@@ -401,6 +401,34 @@ def test_export_plot_gle_requires_result(
     assert "Run a cross-group fit first" in infos[0]
 
 
+def test_compile_and_preview_gle_runs_in_export_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+) -> None:
+    window = GlobalParameterFitWindow()
+    gle_path = tmp_path / "export_bundle.gleplot" / "export_bundle.gle"
+    gle_path.parent.mkdir(parents=True, exist_ok=True)
+    gle_path.write_text("! fake gle", encoding="utf-8")
+
+    subprocess_kwargs: list[dict[str, object]] = []
+    infos: list[str] = []
+    previews: list[Path] = []
+
+    monkeypatch.setattr("shutil.which", lambda _name: "gle")
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *args, **kwargs: subprocess_kwargs.append(dict(kwargs)) or None,
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **_kwargs: infos.append("ok"))
+    monkeypatch.setattr(window, "_show_gle_preview", lambda path: previews.append(path))
+
+    window._compile_and_preview_gle(gle_path, "pdf")
+
+    assert subprocess_kwargs
+    assert subprocess_kwargs[0]["cwd"] == str(gle_path.parent)
+    assert infos == ["ok"]
+    assert previews == [gle_path.with_suffix(".pdf")]
+
+
 class _LabelAxis:
     def __init__(self) -> None:
         self.xlabel: str | None = None

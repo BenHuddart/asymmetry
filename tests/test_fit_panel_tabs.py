@@ -662,6 +662,16 @@ def test_global_tab_keeps_model_tools_inline(qapp: QApplication) -> None:
     assert not hasattr(tab, "_model_tools_section")
 
 
+def test_formula_label_wraps_stretched_exponential_for_display(qapp: QApplication) -> None:
+    tab = GlobalFitTab()
+    model = CompositeModel(["StretchedExponential", "Constant"], operators=["+"])
+
+    tab._set_composite_model(model)
+
+    assert "\n" in tab._formula_label.text()
+    assert tab._formula_label.toolTip() == model.formula_string()
+
+
 def test_single_edit_function_updates_parameter_rows(qapp: QApplication) -> None:
     tab = SingleFitTab()
     tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
@@ -987,6 +997,46 @@ def test_fit_panel_global_fit_results_seed_single_state_per_run(
     saved = panel.get_single_state()
     assert "101" in saved.get("states_by_run", {})
     assert "102" in saved.get("states_by_run", {})
+
+
+def test_global_fit_results_preserve_parameter_type_selection(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    panel = FitPanel()
+    d1 = dataset
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    panel.set_datasets([d1, d2])
+
+    first_type = panel._global_tab._param_table.cellWidget(0, 2)
+    second_type = panel._global_tab._param_table.cellWidget(1, 2)
+    assert isinstance(first_type, QComboBox)
+    assert isinstance(second_type, QComboBox)
+    first_type.setCurrentText("Local")
+    second_type.setCurrentText("Global")
+
+    model = panel._global_tab._composite_model
+    pnames = model.param_names
+
+    def _fit_result(values: list[float]) -> FitResult:
+        params = ParameterSet(
+            [Parameter(name=name, value=value) for name, value in zip(pnames, values, strict=False)]
+        )
+        return FitResult(success=True, parameters=params, uncertainties={name: 0.01 for name in pnames})
+
+    results = {
+        101: (_fit_result([0.11, 0.22, 0.33]), (np.array([0.0, 1.0]), np.array([0.2, 0.1])), []),
+        102: (_fit_result([0.44, 0.55, 0.66]), (np.array([0.0, 1.0]), np.array([0.2, 0.1])), []),
+    }
+
+    panel.register_global_fit_results(results)
+
+    first_type_after = panel._global_tab._param_table.cellWidget(0, 2)
+    second_type_after = panel._global_tab._param_table.cellWidget(1, 2)
+    assert isinstance(first_type_after, QComboBox)
+    assert isinstance(second_type_after, QComboBox)
+    assert first_type_after.currentText() == "Local"
+    assert second_type_after.currentText() == "Global"
 
 
 def test_fit_panel_share_single_function_state_to_other_runs(

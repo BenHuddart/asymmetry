@@ -807,9 +807,9 @@ class DataBrowserPanel(QWidget):
     def _temperature_for_display(self, dataset: MuonDataset) -> float:
         """Return the temperature shown in the fixed browser temperature column."""
         if self.dataset_uses_temperature_from_log(int(dataset.run_number)):
-            series_mean = self._series_mean_for_field(dataset, "temperature")
-            if series_mean is not None:
-                return float(series_mean)
+            log_temperature = self._temperature_from_log_for_display(dataset)
+            if log_temperature is not None:
+                return float(log_temperature)
         try:
             return float(dataset.metadata.get("temperature", 0.0))
         except (TypeError, ValueError):
@@ -819,8 +819,41 @@ class DataBrowserPanel(QWidget):
         """Return whether the displayed temperature value came from a log."""
         return (
             self.dataset_uses_temperature_from_log(int(dataset.run_number))
-            and self._series_mean_for_field(dataset, "temperature") is not None
+            and self._temperature_from_log_for_display(dataset) is not None
         )
+
+    def _temperature_from_log_for_display(self, dataset: MuonDataset) -> float | None:
+        """Return the log-derived temperature used by the browser column."""
+        source_datasets = self.get_combined_source_datasets(int(dataset.run_number))
+        if source_datasets:
+            weighted_sum = 0.0
+            total_weight = 0.0
+            fallback_temperatures: list[float] = []
+            for source_dataset in source_datasets:
+                source_temperature = self._series_mean_for_field(source_dataset, "temperature")
+                if source_temperature is None:
+                    continue
+                fallback_temperatures.append(float(source_temperature))
+                event_count = self._event_count_for_dataset(source_dataset)
+                if event_count is None or event_count <= 0.0:
+                    continue
+                weighted_sum += float(source_temperature) * event_count
+                total_weight += event_count
+            if total_weight > 0.0:
+                return weighted_sum / total_weight
+            if fallback_temperatures:
+                return float(np.mean(fallback_temperatures))
+        return self._series_mean_for_field(dataset, "temperature")
+
+    def _event_count_for_dataset(self, dataset: MuonDataset) -> float | None:
+        """Return the total histogram counts used to weight combined-run summaries."""
+        run = dataset.run
+        if run is None or not run.histograms:
+            return None
+        try:
+            return float(np.sum([np.sum(histogram.counts) for histogram in run.histograms]))
+        except (TypeError, ValueError):
+            return None
 
     def _series_mean_for_field(self, dataset: MuonDataset, field_key: str) -> float | None:
         """Return the mean from the time-series log associated with a summary field."""
@@ -1172,10 +1205,8 @@ class DataBrowserPanel(QWidget):
             "bunching_factor": bunching_factor,
             "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
             "dead_time_us": grouping.get("dead_time_us"),
-            "good_frames": grouping.get("good_frames"),
             "period_mode": grouping.get("period_mode"),
             "period_dead_time_us": grouping.get("period_dead_time_us"),
-            "period_good_frames": grouping.get("period_good_frames"),
         }
         return self._normalize_grouping_value(signature)
 

@@ -3760,6 +3760,7 @@ class FitParametersPanel(QWidget):
                     capture_output=True,
                     text=True,
                     check=True,
+                    cwd=str(gle_path.parent),
                 )
                 if not is_test_mode:
                     fit_files = getattr(self, "_last_export_fit_files", [])

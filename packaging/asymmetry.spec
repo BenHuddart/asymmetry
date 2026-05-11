@@ -22,6 +22,7 @@ if not Path(icon_path).is_file():
     icon_path = None
 
 datas = [(str(png_file), "asymmetry/resources") for png_file in resources_dir.glob("*.png")]
+datas += [(str(svg_file), "asymmetry/resources") for svg_file in resources_dir.glob("*.svg")]
 
 hiddenimports = [
     "h5py",

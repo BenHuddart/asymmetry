@@ -3447,6 +3447,7 @@ class PlotPanel(QWidget):
                     capture_output=True,
                     text=True,
                     check=True,
+                    cwd=str(gle_path.parent),
                 )
                 files_text = "\n".join(str(p) for p in written_files)
                 self._show_export_result_dialog(
@@ -3465,6 +3466,7 @@ class PlotPanel(QWidget):
                     "GLE compilation failed",
                     exc.stderr or str(exc),
                 )
+                self._show_gle_preview(gle_path)
         else:
             QMessageBox.information(
                 self,

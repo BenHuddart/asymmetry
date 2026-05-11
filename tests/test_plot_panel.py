@@ -1593,7 +1593,7 @@ class TestPlotPanel:
         fig = _FakeFigure(axis)
         fake_glp = SimpleNamespace(figure=lambda **_kwargs: fig)
 
-        subprocess_calls: list[list[str]] = []
+        subprocess_calls: list[tuple[list[str], str | None]] = []
         dialogs: list[tuple[str, str, str]] = []
         previews: list[str] = []
 
@@ -1612,7 +1612,7 @@ class TestPlotPanel:
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
         monkeypatch.setattr(
             "subprocess.run",
-            lambda args, **_kwargs: subprocess_calls.append(list(args)),
+            lambda args, **kwargs: subprocess_calls.append((list(args), kwargs.get("cwd"))),
         )
         monkeypatch.setattr(
             panel,
@@ -1638,8 +1638,9 @@ class TestPlotPanel:
         assert "folder" not in fig.saved_kwargs[-1]
         assert axis.xlabel_calls[-1] == "Time (µs)"
         assert subprocess_calls
-        assert subprocess_calls[0][:3] == ["gle", "-d", "pdf"]
-        assert str(resolved_gle) in subprocess_calls[0]
+        assert subprocess_calls[0][0][:3] == ["gle", "-d", "pdf"]
+        assert str(resolved_gle) in subprocess_calls[0][0]
+        assert subprocess_calls[0][1] == str(resolved_gle.parent)
 
         fit_files = sorted(resolved_gle.parent.glob("*.fit"))
         assert fit_files

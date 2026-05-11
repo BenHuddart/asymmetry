@@ -2040,6 +2040,7 @@ class GlobalParameterFitWindow(QMainWindow):
                 capture_output=True,
                 text=True,
                 check=True,
+                cwd=str(gle_path.parent),
             )
             QMessageBox.information(
                 self,

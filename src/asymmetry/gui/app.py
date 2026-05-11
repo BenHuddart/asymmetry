@@ -238,6 +238,8 @@ def main() -> None:
     app = QApplication(sys.argv)
 
     startup_pixmap = _load_startup_pixmap("logo_256x256.png")
+    if startup_pixmap is None:
+        startup_pixmap = _load_resource_pixmap("logo_256x256.png")
     icon = _load_app_icon(startup_pixmap)
     if icon is not None:
         app.setWindowIcon(icon)

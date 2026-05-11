@@ -580,6 +580,55 @@ def test_coadd_inserts_at_first_selected_position(qapp: QApplication) -> None:
     assert panel._combined_datasets[rn_at_row_1] == [62, 63]
 
 
+def test_coadded_temperature_from_log_uses_event_weighted_average(
+    qapp: QApplication,
+) -> None:
+    panel = DataBrowserPanel()
+    ds1 = _dataset_with_run(611)
+    ds1.metadata["temperature"] = 40.0
+    ds1.metadata["nexus_time_series"] = {
+        "musrroot_slow_control/Sample Temperature": {
+            "units": "K",
+            "time": [0.0, 10.0],
+            "values": [4.0, 4.0],
+            "mean": 4.0,
+            "min": 4.0,
+            "max": 4.0,
+        }
+    }
+    ds1.run.histograms[0].counts = np.array([100.0, 0.0, 0.0])
+    ds1.run.histograms[1].counts = np.array([0.0, 0.0, 0.0])
+
+    ds2 = _dataset_with_run(612)
+    ds2.metadata["temperature"] = 80.0
+    ds2.metadata["nexus_time_series"] = {
+        "musrroot_slow_control/Sample Temperature": {
+            "units": "K",
+            "time": [0.0, 10.0],
+            "values": [10.0, 10.0],
+            "mean": 10.0,
+            "min": 10.0,
+            "max": 10.0,
+        }
+    }
+    ds2.run.histograms[0].counts = np.array([300.0, 0.0, 0.0])
+    ds2.run.histograms[1].counts = np.array([0.0, 0.0, 0.0])
+
+    panel.add_dataset(ds1)
+    panel.add_dataset(ds2)
+    combined_rn = panel.add_combined_dataset([611, 612])
+
+    assert combined_rn is not None
+    assert panel._table.item(0, 2).text() == "60.00"
+
+    panel.set_use_temperature_from_log(True)
+
+    log_foreground = QColor(176, 36, 36)
+    assert panel._table.item(0, 0).data(Qt.ItemDataRole.UserRole) == combined_rn
+    assert panel._table.item(0, 2).text() == "8.50"
+    assert panel._table.item(0, 2).foreground().color() == log_foreground
+
+
 def test_separate_inserts_at_combined_dataset_position(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     d1 = _dataset_with_run(71)
@@ -746,6 +795,50 @@ def test_coadd_blocks_different_grouping(
     assert 101 in panel._datasets
     assert 102 in panel._datasets
     assert not any(rn < 0 for rn in panel._datasets)
+
+
+def test_coadd_allows_different_good_frames_with_identical_grouping(
+    qapp: QApplication,
+) -> None:
+    panel = DataBrowserPanel()
+    base_grouping = {
+        "groups": {1: [1], 2: [2]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "alpha": 1.0,
+        "first_good_bin": 0,
+        "last_good_bin": 2,
+        "bunching_factor": 1,
+        "deadtime_correction": True,
+        "dead_time_us": [0.01, 0.02],
+    }
+    d1 = _dataset_with_run(
+        201,
+        grouping={
+            **base_grouping,
+            "good_frames": 12345.0,
+        },
+    )
+    d2 = _dataset_with_run(
+        202,
+        grouping={
+            **base_grouping,
+            "good_frames": 54321.0,
+        },
+    )
+    panel.add_dataset(d1)
+    panel.add_dataset(d2)
+
+    panel._table.selectRow(0)
+    idx = panel._table.model().index(1, 0)
+    panel._table.selectionModel().select(
+        idx, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    )
+    panel._coadd_selected()
+
+    combined_runs = [rn for rn in panel._datasets if rn < 0]
+    assert len(combined_runs) == 1
+    assert panel._combined_datasets[combined_runs[0]] == [201, 202]
 
 
 def test_shift_click_selects_full_range_from_anchor(qapp: QApplication) -> None:

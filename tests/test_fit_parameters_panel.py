@@ -367,9 +367,14 @@ def test_generate_gle_plot_uses_errorbar_from_file(
         figure=lambda **_kwargs: fig,
     )
 
+    subprocess_kwargs: list[dict[str, object]] = []
+
     monkeypatch.setitem(sys.modules, "gleplot", fake_glp)
     monkeypatch.setattr("shutil.which", lambda _name: "gle")
-    monkeypatch.setattr("subprocess.run", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *a, **k: subprocess_kwargs.append(dict(k)) or None,
+    )
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
     monkeypatch.setattr(panel, "_show_gle_preview", lambda *_a, **_k: None)
 
@@ -383,6 +388,8 @@ def test_generate_gle_plot_uses_errorbar_from_file(
     assert first["kwargs"]["yerr_col"] == 5
     assert str(gle_path) in fig.saved_paths
     assert "folder" not in fig.saved_kwargs[-1]
+    assert subprocess_kwargs
+    assert subprocess_kwargs[0]["cwd"] == str(gle_path.parent)
 
 
 def test_generate_gle_plot_saves_to_resolved_gle_path(

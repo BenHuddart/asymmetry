@@ -7,6 +7,7 @@ parameters, run the fit, and inspect results.
 from __future__ import annotations
 
 import copy
+import textwrap
 
 import numpy as np
 from PySide6.QtCore import QObject, Qt, QThread, Signal
@@ -102,7 +103,21 @@ def _configure_formula_label(label: QLabel) -> None:
     label.setTextFormat(Qt.TextFormat.PlainText)
     label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
     line_height = label.fontMetrics().lineSpacing()
-    label.setMinimumHeight(line_height * 2 + 8)
+    label.setMinimumHeight(line_height * 4 + 8)
+
+
+def _set_formula_label_text(label: QLabel, formula: str, *, width: int = 24) -> None:
+    """Set a wrapped display version of a fit formula while preserving the raw text."""
+    raw_text = str(formula)
+    label.setText(
+        textwrap.fill(
+            raw_text,
+            width=max(12, int(width)),
+            break_long_words=True,
+            break_on_hyphens=False,
+        )
+    )
+    label.setToolTip(raw_text)
 
 
 def _format_bounds_pair(min_val: float, max_val: float) -> str:
@@ -390,7 +405,7 @@ class SingleFitTab(QWidget):
     def _set_composite_model(self, model: CompositeModel) -> None:
         """Set the active composite model and rebuild the parameter table."""
         self._composite_model = model
-        self._formula_label.setText(model.formula_string())
+        _set_formula_label_text(self._formula_label, model.formula_string())
 
         dataset_field = (
             self._current_dataset.run.field
@@ -1388,10 +1403,31 @@ class GlobalFitTab(QWidget):
                 averages[pname] = float(np.mean(vals))
         return averages
 
+    def _current_parameter_row_state(self) -> dict[str, dict[str, str]]:
+        """Capture current parameter-table edits before rebuilding rows."""
+        state: dict[str, dict[str, str]] = {}
+        for row in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(row, 0)
+            if name_item is None:
+                continue
+            param_name = name_item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(param_name, str):
+                continue
+            value_item = self._param_table.item(row, 1)
+            bounds_item = self._param_table.item(row, 3)
+            type_combo = self._param_table.cellWidget(row, 2)
+            state[param_name] = {
+                "value": value_item.text() if value_item is not None else "",
+                "bounds": bounds_item.text() if bounds_item is not None else "-inf, inf",
+                "type": type_combo.currentText() if isinstance(type_combo, QComboBox) else "",
+            }
+        return state
+
     def _set_composite_model(self, model: CompositeModel) -> None:
         """Set the active composite model and rebuild classification rows."""
+        preserved_state = self._current_parameter_row_state()
         self._composite_model = model
-        self._formula_label.setText(model.formula_string())
+        _set_formula_label_text(self._formula_label, model.formula_string())
 
         # Use the mean field across loaded datasets (if non-zero) as the default
         # for any 'field' parameters.
@@ -1403,6 +1439,7 @@ class GlobalFitTab(QWidget):
 
         self._param_table.setRowCount(len(model.param_names))
         for i, pname in enumerate(model.param_names):
+            previous = preserved_state.get(pname, {})
             # Parameter name
             name_item = QTableWidgetItem(_format_param_label(pname))
             name_item.setData(Qt.ItemDataRole.UserRole, pname)
@@ -1411,7 +1448,7 @@ class GlobalFitTab(QWidget):
 
             # Initial value — use dataset field for 'field' parameters if available
             default_val = field_overrides.get(pname, model.param_defaults.get(pname, 0.0))
-            value_item = QTableWidgetItem(str(default_val))
+            value_item = QTableWidgetItem(previous.get("value") or str(default_val))
             self._param_table.setItem(i, 1, value_item)
 
             # Type selection (Global/Local/Fixed/File dropdown)
@@ -1423,12 +1460,17 @@ class GlobalFitTab(QWidget):
                 type_combo.addItem("File")
             # Set default: first parameter (usually amplitude) as Global, others as Local
             type_combo.setCurrentText("Global" if i == 0 else "Local")
+            previous_type = previous.get("type")
+            if previous_type:
+                previous_index = type_combo.findText(previous_type)
+                if previous_index >= 0:
+                    type_combo.setCurrentIndex(previous_index)
             self._param_table.setCellWidget(i, 2, type_combo)
 
             # Bounds (min, max) — default lower bound to 0 for positive-definite parameters
             default_min = get_param_info(pname).default_min
             min_text = str(default_min) if default_min is not None else "-inf"
-            bounds_item = QTableWidgetItem(f"{min_text}, inf")
+            bounds_item = QTableWidgetItem(previous.get("bounds") or f"{min_text}, inf")
             self._param_table.setItem(i, 3, bounds_item)
 
     def _edit_function(self) -> None:

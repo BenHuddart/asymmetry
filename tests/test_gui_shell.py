@@ -315,6 +315,63 @@ def test_macos_app_icon_pixmap_uses_rounded_mask(
     assert rounded.pixelColor(32, 32).alpha() == 255
 
 
+def test_main_uses_resource_fallback_for_splash_logo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeApp:
+        def __init__(self, _argv):
+            return
+
+        def setApplicationName(self, _name):  # noqa: N802
+            return
+
+        def setOrganizationName(self, _name):  # noqa: N802
+            return
+
+        def setWindowIcon(self, _icon):  # noqa: N802
+            return
+
+        def processEvents(self):  # noqa: N802
+            return
+
+        def exec(self):
+            return 0
+
+    class _FakeWindow:
+        def show(self):
+            return
+
+    class _FakeSplash:
+        def finish(self, _window):
+            return
+
+    startup_fallback = object()
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(app_module, "QApplication", _FakeApp)
+    monkeypatch.setattr(app_module, "MainWindow", _FakeWindow)
+    monkeypatch.setattr(app_module, "_load_startup_pixmap", lambda _filename: None)
+    monkeypatch.setattr(
+        app_module,
+        "_load_resource_pixmap",
+        lambda _filename: startup_fallback,
+    )
+    monkeypatch.setattr(app_module, "_load_app_icon", lambda _pixmap=None: object())
+
+    def _fake_create_splash(_app, logo=None):
+        seen["logo"] = logo
+        return _FakeSplash()
+
+    monkeypatch.setattr(app_module, "_create_splash_screen", _fake_create_splash)
+    monkeypatch.setattr(app_module.sys, "exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
+
+    with pytest.raises(SystemExit) as exc:
+        app_module.main()
+
+    assert exc.value.code == 0
+    assert seen["logo"] is startup_fallback
+
+
 def test_non_macos_app_icon_pixmap_is_unchanged(
     monkeypatch: pytest.MonkeyPatch,
     qapp: QApplication,
