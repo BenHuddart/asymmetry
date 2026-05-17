@@ -269,6 +269,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
 
 _ALLOWED_OPERATORS: frozenset[str] = frozenset({"+", "-", "*", "/"})
 _UNIT_AMPLITUDE_SENTINEL = "__UNIT_AMPLITUDE__"
+_FRACTION_GROUP_DECORATOR = "frac"
 
 
 def _tokenize_component_expression(expression: str) -> list[str]:
@@ -277,7 +278,7 @@ def _tokenize_component_expression(expression: str) -> list[str]:
     if not stripped:
         raise ValueError("Expression is required")
 
-    token_pattern = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[()+\-*/]")
+    token_pattern = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[(){}+\-*/]")
     tokens: list[str] = []
     position = 0
     for match in token_pattern.finditer(stripped):
@@ -291,6 +292,18 @@ def _tokenize_component_expression(expression: str) -> list[str]:
     if trailing.strip():
         raise ValueError(f"Unexpected token near '{trailing.strip()}'")
     return tokens
+
+
+def _parse_group_decorator(tokens: list[str], idx: int) -> tuple[str | None, int]:
+    """Return an optional group decorator starting at ``idx``."""
+    if idx >= len(tokens) or tokens[idx] != "{":
+        return None, idx
+    if idx + 2 >= len(tokens) or tokens[idx + 2] != "}":
+        raise ValueError("Invalid group decorator")
+    decorator = tokens[idx + 1]
+    if decorator != _FRACTION_GROUP_DECORATOR:
+        raise ValueError(f"Unknown group decorator '{decorator}'")
+    return decorator, idx + 3
 
 
 def parse_component_expression(
@@ -361,11 +374,95 @@ def parse_component_expression(
     return component_names, operators, open_parentheses, close_parentheses
 
 
+def parse_composite_expression(
+    expression: str,
+) -> tuple[list[str], list[str], list[int], list[int], list[tuple[int, int]]]:
+    """Parse a composite expression including optional group decorators."""
+    tokens = _tokenize_component_expression(expression)
+
+    component_names: list[str] = []
+    operators: list[str] = []
+    open_parentheses: list[int] = []
+    close_parentheses: list[int] = []
+    fraction_groups: list[tuple[int, int]] = []
+    pending_open = 0
+    expecting_operand = True
+    paren_component_stack: list[int] = []
+    last_closed_group: tuple[int, int] | None = None
+
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        if expecting_operand:
+            if token == "(":
+                pending_open += 1
+                idx += 1
+                continue
+            if token in _ALLOWED_OPERATORS or token in {")", "{", "}"}:
+                raise ValueError(f"Expected component before '{token}'")
+            if token not in COMPONENTS:
+                raise ValueError(f"Unknown component '{token}'")
+
+            component_index = len(component_names)
+            component_names.append(token)
+            open_parentheses.append(pending_open)
+            close_parentheses.append(0)
+            for _ in range(pending_open):
+                paren_component_stack.append(component_index)
+            pending_open = 0
+            expecting_operand = False
+            last_closed_group = None
+            idx += 1
+            continue
+
+        if token in _ALLOWED_OPERATORS:
+            operators.append(token)
+            expecting_operand = True
+            last_closed_group = None
+            idx += 1
+            continue
+        if token == ")":
+            if not component_names:
+                raise ValueError("Closing parenthesis has no matching component")
+            if not paren_component_stack:
+                raise ValueError("Invalid parentheses: closing before opening")
+            close_parentheses[-1] += 1
+            start_index = paren_component_stack.pop()
+            last_closed_group = (start_index, len(component_names) - 1)
+            idx += 1
+            decorator, idx = _parse_group_decorator(tokens, idx)
+            if decorator == _FRACTION_GROUP_DECORATOR:
+                fraction_groups.append(last_closed_group)
+            continue
+        if token == "(":
+            raise ValueError("Expected operator before '('")
+        if token == "{":
+            raise ValueError("Group decorator must follow a closing parenthesis")
+        raise ValueError(f"Expected operator before '{token}'")
+
+    if pending_open:
+        raise ValueError("Invalid parentheses: unbalanced expression")
+    if expecting_operand:
+        raise ValueError("Expression cannot end with an operator")
+
+    balance = 0
+    for open_count, close_count in zip(open_parentheses, close_parentheses, strict=True):
+        balance += open_count
+        balance -= close_count
+        if balance < 0:
+            raise ValueError("Invalid parentheses: closing before opening")
+    if balance != 0:
+        raise ValueError("Invalid parentheses: unbalanced expression")
+
+    return component_names, operators, open_parentheses, close_parentheses, fraction_groups
+
+
 def build_component_expression(
     component_names: list[str],
     operators: list[str],
     open_parentheses: list[int] | None = None,
     close_parentheses: list[int] | None = None,
+    fraction_groups: list[tuple[int, int]] | None = None,
 ) -> str:
     """Return a human-editable expression string using component names."""
     if not component_names:
@@ -373,9 +470,22 @@ def build_component_expression(
 
     opens = list(open_parentheses or [0] * len(component_names))
     closes = list(close_parentheses or [0] * len(component_names))
+    fraction_group_set = set(fraction_groups or [])
     parts: list[str] = []
+    paren_component_stack: list[int] = []
     for idx, name in enumerate(component_names):
-        token = "(" * opens[idx] + name + ")" * closes[idx]
+        prefix = "(" * opens[idx]
+        for _ in range(opens[idx]):
+            paren_component_stack.append(idx)
+
+        suffix_parts: list[str] = []
+        for _ in range(closes[idx]):
+            if not paren_component_stack:
+                raise ValueError("Invalid parentheses while building expression")
+            start_index = paren_component_stack.pop()
+            suffix_parts.append(")" + ("{frac}" if (start_index, idx) in fraction_group_set else "")
+            )
+        token = prefix + name + "".join(suffix_parts)
         if idx == 0:
             parts.append(token)
         else:
@@ -392,6 +502,7 @@ class CompositeModel:
         operators: list[str] | None = None,
         open_parentheses: list[int] | None = None,
         close_parentheses: list[int] | None = None,
+        fraction_groups: list[tuple[int, int]] | None = None,
     ) -> None:
         if not component_names:
             raise ValueError("Composite model must contain at least one component")
@@ -434,6 +545,8 @@ class CompositeModel:
         self.operators = list(operators)
         self.open_parentheses = list(open_parentheses)
         self.close_parentheses = list(close_parentheses)
+        self.fraction_groups = self._validate_fraction_groups(fraction_groups or [])
+        self._fraction_group_by_component = self._build_fraction_group_component_map()
         self.components = [COMPONENTS[name] for name in component_names]
         self._uses_parentheses = any(self.open_parentheses) or any(self.close_parentheses)
         # Keep legacy amplitude-sharing behavior for flat expressions.
@@ -444,7 +557,16 @@ class CompositeModel:
         param_names: list[str] = []
         defaults: dict[str, float] = {}
         param_info: dict[str, ParamInfo] = {}
-        for mapping, component in zip(self._param_mappings, self.components, strict=True):
+        for idx, (mapping, component) in enumerate(
+            zip(self._param_mappings, self.components, strict=True)
+        ):
+            group = self._fraction_group_by_component.get(idx)
+            if group is not None and group[0] == idx:
+                amplitude_name = self._fraction_group_amplitude_name(group)
+                param_names.append(amplitude_name)
+                defaults[amplitude_name] = self._fraction_group_default_amplitude(group)
+                param_info[amplitude_name] = get_param_info(amplitude_name)
+
             for pname in component.param_names:
                 unique_name = mapping[pname]
                 if unique_name == _UNIT_AMPLITUDE_SENTINEL:
@@ -453,6 +575,12 @@ class CompositeModel:
                     param_names.append(unique_name)
                     defaults[unique_name] = component.param_defaults[pname]
                     param_info[unique_name] = get_param_info(unique_name)
+
+            if group is not None:
+                fraction_name = self._fraction_param_name(idx)
+                param_names.append(fraction_name)
+                defaults[fraction_name] = 1.0 / float(group[1] - group[0] + 1)
+                param_info[fraction_name] = get_param_info(fraction_name)
         self.param_names = param_names
         self.param_defaults = defaults
         self.param_info = param_info
@@ -460,14 +588,15 @@ class CompositeModel:
     @classmethod
     def from_expression(cls, expression: str) -> CompositeModel:
         """Construct a CompositeModel from a component-name expression."""
-        component_names, operators, open_parentheses, close_parentheses = (
-            parse_component_expression(expression, allowed_components=set(COMPONENTS))
+        component_names, operators, open_parentheses, close_parentheses, fraction_groups = (
+            parse_composite_expression(expression)
         )
         return cls(
             component_names=component_names,
             operators=operators,
             open_parentheses=open_parentheses,
             close_parentheses=close_parentheses,
+            fraction_groups=fraction_groups,
         )
 
     def component_expression_string(self) -> str:
@@ -477,7 +606,116 @@ class CompositeModel:
             self.operators,
             self.open_parentheses,
             self.close_parentheses,
+            self.fraction_groups,
         )
+
+    def _validate_fraction_groups(
+        self,
+        fraction_groups: list[tuple[int, int]],
+    ) -> list[tuple[int, int]]:
+        actual_groups = set(self._parenthesized_group_ranges())
+        validated: list[tuple[int, int]] = []
+        seen: set[tuple[int, int]] = set()
+        occupied_components: set[int] = set()
+        for group in fraction_groups:
+            if not isinstance(group, tuple) or len(group) != 2:
+                raise ValueError("fraction_groups must contain (start, end) pairs")
+            start, end = group
+            if not isinstance(start, int) or not isinstance(end, int):
+                raise ValueError("fraction_groups indices must be integers")
+            if start < 0 or end >= len(self.component_names) or start >= end:
+                raise ValueError("Invalid fraction group range")
+            if group in seen:
+                raise ValueError("Duplicate fraction group")
+            seen.add(group)
+            if group not in actual_groups:
+                raise ValueError("Fraction groups must map to one parenthesized expression")
+            if any(op != "+" for op in self.operators[start:end]):
+                raise ValueError("Fraction groups only support additive '+' terms")
+            for idx in range(start, end + 1):
+                if idx in occupied_components:
+                    raise ValueError("Fraction groups cannot overlap")
+                occupied_components.add(idx)
+            validated.append(group)
+        validated.sort()
+        return validated
+
+    def _parenthesized_group_ranges(self) -> list[tuple[int, int]]:
+        ranges: list[tuple[int, int]] = []
+        stack: list[int] = []
+        for idx in range(len(self.component_names)):
+            for _ in range(self.open_parentheses[idx]):
+                stack.append(idx)
+            for _ in range(self.close_parentheses[idx]):
+                if not stack:
+                    raise ValueError("Invalid parentheses: closing before opening")
+                ranges.append((stack.pop(), idx))
+        if stack:
+            raise ValueError("Invalid parentheses: unbalanced expression")
+        return ranges
+
+    def _build_fraction_group_component_map(self) -> dict[int, tuple[int, int]]:
+        mapping: dict[int, tuple[int, int]] = {}
+        for group in self.fraction_groups:
+            start, end = group
+            for idx in range(start, end + 1):
+                mapping[idx] = group
+        return mapping
+
+    def _fraction_group_amplitude_name(self, group: tuple[int, int]) -> str:
+        return f"A_{group[0] + 1}"
+
+    def _fraction_param_name(self, component_index: int) -> str:
+        return f"fraction_{component_index + 1}"
+
+    def _fraction_group_default_amplitude(self, group: tuple[int, int]) -> float:
+        start, end = group
+        for idx in range(start, end + 1):
+            component = self.components[idx]
+            for pname in component.param_names:
+                if self._is_scaling_parameter(pname):
+                    return float(component.param_defaults[pname])
+        return 1.0
+
+    def _fraction_group_weights(
+        self,
+        group: tuple[int, int],
+        kwargs: dict[str, float],
+    ) -> dict[int, float]:
+        start, end = group
+        component_indices = list(range(start, end + 1))
+        raw_weights: list[float] = []
+        for idx in component_indices:
+            name = self._fraction_param_name(idx)
+            if name not in kwargs:
+                raise KeyError(f"Missing composite parameter '{name}'")
+            raw_weights.append(max(float(kwargs[name]), 0.0))
+
+        total = sum(raw_weights)
+        if total <= 1e-30:
+            normalized = [1.0 / float(len(raw_weights))] * len(raw_weights)
+        else:
+            normalized = [value / total for value in raw_weights]
+        return dict(zip(component_indices, normalized, strict=True))
+
+    def normalized_parameter_values(self, values: dict[str, float]) -> dict[str, float]:
+        """Return a copy with fraction-group parameters normalized for display."""
+        normalized = dict(values)
+        for group in self.fraction_groups:
+            try:
+                group_weights = self._fraction_group_weights(group, normalized)
+            except KeyError:
+                continue
+            for idx, weight in group_weights.items():
+                normalized[self._fraction_param_name(idx)] = weight
+        return normalized
+
+    def fraction_parameter_groups(self) -> list[list[str]]:
+        """Return fraction-parameter names grouped by additive fraction group."""
+        groups: list[list[str]] = []
+        for start, end in self.fraction_groups:
+            groups.append([self._fraction_param_name(idx) for idx in range(start, end + 1)])
+        return groups
 
     def _build_param_mapping(self) -> list[dict[str, str]]:
         name_counts = Counter(
@@ -498,6 +736,12 @@ class CompositeModel:
         for idx, component in enumerate(self.components, start=1):
             mapping: dict[str, str] = {}
             for pname in component.param_names:
+                if (
+                    self._fraction_group_by_component.get(idx - 1) is not None
+                    and self._is_scaling_parameter(pname)
+                ):
+                    mapping[pname] = _UNIT_AMPLITUDE_SENTINEL
+                    continue
                 if (
                     self._is_scaling_parameter(pname)
                     and self._suppress_component_amplitude[idx - 1]
@@ -658,16 +902,27 @@ class CompositeModel:
         t_arr: NDArray[np.float64],
         kwargs: dict[str, float],
     ) -> NDArray[np.float64]:
+        fraction_group_set = set(self.fraction_groups)
+        fraction_weights: dict[int, float] = {}
+        for group in self.fraction_groups:
+            fraction_weights.update(self._fraction_group_weights(group, kwargs))
+
         values: list[NDArray[np.float64]] = []
-        for component, mapping in zip(self.components, self._param_mappings, strict=True):
+        for idx, (component, mapping) in enumerate(
+            zip(self.components, self._param_mappings, strict=True)
+        ):
             component_kwargs = self._extract_component_kwargs(component, mapping, kwargs)
-            values.append(np.asarray(component.function(t_arr, **component_kwargs), dtype=float))
+            value = np.asarray(component.function(t_arr, **component_kwargs), dtype=float)
+            if idx in fraction_weights:
+                value = fraction_weights[idx] * value
+            values.append(value)
 
         if not values:
             return np.zeros_like(t_arr)
 
         value_stack: list[NDArray[np.float64]] = []
         op_stack: list[str] = []
+        paren_start_stack: list[int] = []
 
         def precedence(op: str) -> int:
             return 2 if op in {"*", "/"} else 1
@@ -693,6 +948,7 @@ class CompositeModel:
         for idx, value in enumerate(values):
             for _ in range(self.open_parentheses[idx]):
                 op_stack.append("(")
+                paren_start_stack.append(idx)
 
             value_stack.append(value)
 
@@ -702,6 +958,14 @@ class CompositeModel:
                 if not op_stack or op_stack[-1] != "(":
                     raise ValueError("Invalid parentheses in expression")
                 op_stack.pop()
+                if not paren_start_stack:
+                    raise ValueError("Invalid parentheses in expression")
+                group = (paren_start_stack.pop(), idx)
+                if group in fraction_group_set:
+                    amplitude_name = self._fraction_group_amplitude_name(group)
+                    if amplitude_name not in kwargs:
+                        raise KeyError(f"Missing composite parameter '{amplitude_name}'")
+                    value_stack[-1] = float(kwargs[amplitude_name]) * value_stack[-1]
 
             if idx < len(self.operators):
                 op = self.operators[idx]
@@ -780,6 +1044,10 @@ class CompositeModel:
         else:
             include = set(range(len(self.components)))
 
+        fraction_weights: dict[int, float] = {}
+        for group in self.fraction_groups:
+            fraction_weights.update(self._fraction_group_weights(group, kwargs))
+
         for idx, (component, mapping) in enumerate(
             zip(self.components, self._param_mappings, strict=True)
         ):
@@ -787,29 +1055,26 @@ class CompositeModel:
                 continue
             component_kwargs = self._extract_component_kwargs(component, mapping, kwargs)
             y_vals = np.asarray(component.function(t_arr, **component_kwargs), dtype=float)
+            group = self._fraction_group_by_component.get(idx)
+            if group is not None:
+                y_vals = (
+                    float(kwargs[self._fraction_group_amplitude_name(group)])
+                    * fraction_weights[idx]
+                    * y_vals
+                )
             curves.append((self.component_names[idx], y_vals))
         return curves
 
     def formula_string(self) -> str:
         """Return a symbolic formula preview string."""
+        if self.fraction_groups:
+            return self._formula_string_with_fraction_groups()
+
         parts: list[str] = []
         for idx, (component, mapping) in enumerate(
             zip(self.components, self._param_mappings, strict=True), start=1
         ):
-            fmt_values = {
-                pname: ("1" if mapping[pname] == _UNIT_AMPLITUDE_SENTINEL else mapping[pname])
-                for pname in component.param_names
-            }
-            if (
-                self._share_chain_amplitude
-                and "A" in fmt_values
-                and idx > 1
-                and self.operators[idx - 2] in {"*", "/"}
-            ):
-                fmt_values["A"] = "1"
-            term = component.formula_template.format(**fmt_values)
-            if fmt_values.get("A") == "1" and term.startswith("1*"):
-                term = term[2:]
+            term = self._component_formula_term(idx - 1, component, mapping)
 
             if self.open_parentheses[idx - 1] > 0:
                 term = "(" * self.open_parentheses[idx - 1] + term
@@ -831,6 +1096,97 @@ class CompositeModel:
             expression = f"{expression} {op} {term}"
         return expression
 
+    def _component_formula_term(
+        self,
+        component_index: int,
+        component: ComponentDefinition,
+        mapping: dict[str, str],
+    ) -> str:
+        fmt_values = {
+            pname: ("1" if mapping[pname] == _UNIT_AMPLITUDE_SENTINEL else mapping[pname])
+            for pname in component.param_names
+        }
+        if (
+            self._share_chain_amplitude
+            and "A" in fmt_values
+            and component_index > 0
+            and self.operators[component_index - 1] in {"*", "/"}
+        ):
+            fmt_values["A"] = "1"
+        term = component.formula_template.format(**fmt_values)
+        if fmt_values.get("A") == "1" and term.startswith("1*"):
+            term = term[2:]
+        return term
+
+    def _formula_string_with_fraction_groups(self) -> str:
+        terms: list[str] = []
+        for idx, (component, mapping) in enumerate(
+            zip(self.components, self._param_mappings, strict=True)
+        ):
+            term = self._component_formula_term(idx, component, mapping)
+            if idx in self._fraction_group_by_component:
+                fraction_name = self._fraction_param_name(idx)
+                term = fraction_name if term == "1" else f"{fraction_name}*{term}"
+            terms.append(term)
+
+        value_stack: list[str] = []
+        op_stack: list[str] = []
+        paren_start_stack: list[int] = []
+        fraction_group_set = set(self.fraction_groups)
+
+        def precedence(op: str) -> int:
+            return 2 if op in {"*", "/"} else 1
+
+        def apply_top_operator() -> None:
+            if len(value_stack) < 2 or not op_stack:
+                raise ValueError("Invalid expression")
+            op = op_stack.pop()
+            rhs = value_stack.pop()
+            lhs = value_stack.pop()
+            value_stack.append(f"({lhs} {op} {rhs})")
+
+        for idx, term in enumerate(terms):
+            for _ in range(self.open_parentheses[idx]):
+                op_stack.append("(")
+                paren_start_stack.append(idx)
+
+            value_stack.append(term)
+
+            for _ in range(self.close_parentheses[idx]):
+                while op_stack and op_stack[-1] != "(":
+                    apply_top_operator()
+                if not op_stack or op_stack[-1] != "(":
+                    raise ValueError("Invalid parentheses in expression")
+                op_stack.pop()
+                if not paren_start_stack:
+                    raise ValueError("Invalid parentheses in expression")
+                group = (paren_start_stack.pop(), idx)
+                if group in fraction_group_set:
+                    amplitude_name = self._fraction_group_amplitude_name(group)
+                    grouped_term = value_stack.pop()
+                    value_stack.append(f"{amplitude_name}*({grouped_term})")
+
+            if idx < len(self.operators):
+                op = self.operators[idx]
+                while (
+                    op_stack and op_stack[-1] != "(" and precedence(op_stack[-1]) >= precedence(op)
+                ):
+                    apply_top_operator()
+                op_stack.append(op)
+
+        while op_stack:
+            if op_stack[-1] == "(":
+                raise ValueError("Invalid parentheses in expression")
+            apply_top_operator()
+
+        if len(value_stack) != 1:
+            raise ValueError("Invalid expression")
+
+        expression = value_stack[0]
+        if expression.startswith("(") and expression.endswith(")"):
+            expression = expression[1:-1]
+        return expression
+
     def to_model_definition(self, name: str = "Composite") -> ModelDefinition:
         """Create a ModelDefinition-compatible wrapper for the fit engine."""
         return ModelDefinition(
@@ -849,6 +1205,7 @@ class CompositeModel:
             "operators": list(self.operators),
             "open_parentheses": list(self.open_parentheses),
             "close_parentheses": list(self.close_parentheses),
+            "fraction_groups": [[start, end] for start, end in self.fraction_groups],
         }
 
     @classmethod
@@ -858,6 +1215,7 @@ class CompositeModel:
         operators = data.get("operators")
         open_parentheses = data.get("open_parentheses")
         close_parentheses = data.get("close_parentheses")
+        fraction_groups = data.get("fraction_groups")
         if not isinstance(component_names, list) or not all(
             isinstance(v, str) for v in component_names
         ):
@@ -875,9 +1233,18 @@ class CompositeModel:
                 isinstance(v, int) for v in close_parentheses
             ):
                 raise ValueError("Invalid composite model data: close_parentheses")
+        if fraction_groups is not None:
+            if not isinstance(fraction_groups, list) or not all(
+                isinstance(value, list)
+                and len(value) == 2
+                and all(isinstance(idx, int) for idx in value)
+                for value in fraction_groups
+            ):
+                raise ValueError("Invalid composite model data: fraction_groups")
         return cls(
             component_names=component_names,
             operators=operators,
             open_parentheses=open_parentheses,
             close_parentheses=close_parentheses,
+            fraction_groups=[(start, end) for start, end in (fraction_groups or [])],
         )

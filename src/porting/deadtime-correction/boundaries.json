@@ -1,0 +1,77 @@
+{
+  "feature": "deadtime-correction",
+  "version": 1,
+  "current_asymmetry_owner": {
+    "core_transform": "src/asymmetry/core/transform/deadtime.py",
+    "gui_entrypoints": [
+      "src/asymmetry/gui/windows/grouping_dialog.py",
+      "src/asymmetry/gui/mainwindow.py"
+    ],
+    "current_source_modes": [
+      "file"
+    ]
+  },
+  "selected_direction": {
+    "reference_program": "WiMDA",
+    "ui_surface": "src/asymmetry/gui/windows/grouping_dialog.py",
+    "mode_family": [
+      "off",
+      "file",
+      "manual",
+      "estimate"
+    ],
+    "estimate_rule": "reference-run-only",
+    "selected_target_rule": "apply-resolved-payload-to-all-selected-datasets",
+    "future_load_rule": "inherit-latest-grouping-payload-for-newly-loaded-datasets"
+  },
+  "candidate_seams": [
+    {
+      "seam_id": "source-normalization",
+      "boundary": "loader-or-import -> grouping metadata -> core transform",
+      "purpose": "Normalize file, manual-table, calibrated, estimated, or external deadtime sources into one per-detector payload.",
+      "recommended": true
+    },
+    {
+      "seam_id": "project-provenance",
+      "boundary": "grouping metadata -> project schema",
+      "purpose": "Persist which deadtime source was selected and where it came from.",
+      "recommended": true
+    },
+    {
+      "seam_id": "reference-adapters",
+      "boundary": "reference-specific import -> normalized source payload",
+      "purpose": "Isolate reference-specific calibration routines and Mantid deadtime tables from the core transform.",
+      "recommended": true
+    },
+    {
+      "seam_id": "grouping-template-inheritance",
+      "boundary": "grouping apply path -> newly loaded datasets",
+      "purpose": "Reuse the existing Asymmetry rule that new datasets inherit the latest grouping payload, including future deadtime estimate/manual/calibrated choices.",
+      "recommended": true
+    }
+  ],
+  "reference_source_modes": {
+    "WiMDA": [
+      "manual",
+      "file",
+      "estimate"
+    ],
+    "musrfit": [
+      "file",
+      "estimate-configured-but-not-implemented-in-main-path",
+      "none"
+    ],
+    "Mantid": [
+      "data-file",
+      "table-workspace",
+      "other-file",
+      "none"
+    ],
+    "Asymmetry": [
+      "file",
+      "manual",
+      "estimate",
+      "manual-calibrated"
+    ]
+  }
+}

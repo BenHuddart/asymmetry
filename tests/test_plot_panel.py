@@ -182,16 +182,18 @@ class TestPlotPanel:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        row1 = panel._limit_toolbar.itemAt(1).layout()
-        assert row1 is not None
+        top_layout = panel.layout()
+        assert top_layout is not None
+        nav_row = top_layout.itemAt(2).layout()
+        assert nav_row is not None
 
-        label_combo_pos = row1.indexOf(panel._label_field_combo)
-        overlay_pos = row1.indexOf(panel._overlay_checkbox)
+        label_combo_pos = nav_row.indexOf(panel._label_field_combo)
+        overlay_pos = nav_row.indexOf(panel._overlay_checkbox)
 
         assert label_combo_pos >= 0
         assert overlay_pos > label_combo_pos
-        assert row1.indexOf(panel._add_label_btn) == -1
-        assert row1.indexOf(panel._export_gle_btn) == -1
+        assert nav_row.indexOf(panel._add_label_btn) == -1
+        assert nav_row.indexOf(panel._export_gle_btn) == -1
 
     def test_third_toolbar_row_right_aligns_annotation_and_export_controls(
         self, panel: PlotPanel
@@ -199,7 +201,7 @@ class TestPlotPanel:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        row2 = panel._limit_toolbar.itemAt(2).layout()
+        row2 = panel._limit_toolbar.itemAt(panel._limit_toolbar.count() - 1).layout()
         assert row2 is not None
 
         annotation_pos = row2.indexOf(panel._add_label_btn)
@@ -303,6 +305,67 @@ class TestPlotPanel:
         x_after_y = panel._ax.get_xlim()
 
         assert x_after_y == pytest.approx(x_after_x)
+
+    def test_auto_x_and_auto_y_buttons_are_persistent_toggles(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+
+        assert panel._auto_x_btn.isCheckable()
+        assert panel._auto_y_btn.isCheckable()
+        assert not panel._auto_x_btn.isChecked()
+        assert not panel._auto_y_btn.isChecked()
+
+        panel._auto_x_btn.click()
+        panel._auto_y_btn.click()
+        assert panel._auto_x_btn.isChecked()
+        assert panel._auto_y_btn.isChecked()
+
+        panel._auto_x_btn.click()
+        panel._auto_y_btn.click()
+        assert not panel._auto_x_btn.isChecked()
+        assert not panel._auto_y_btn.isChecked()
+
+    def test_auto_x_and_auto_y_buttons_have_explicit_checked_style(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        assert "QPushButton:checked" in panel._auto_x_btn.styleSheet()
+        assert "#1f6feb" in panel._auto_x_btn.styleSheet()
+        assert panel._auto_x_btn.styleSheet() == panel._auto_y_btn.styleSheet()
+
+    def test_active_auto_limit_toggles_reapply_on_new_dataset(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        panel._auto_x_btn.click()
+        panel._auto_y_btn.click()
+
+        first_x = panel._ax.get_xlim()
+        first_y = panel._ax.get_ylim()
+
+        shifted_dataset = MuonDataset(
+            time=sample_dataset.time + 50.0,
+            asymmetry=sample_dataset.asymmetry * 4.0,
+            error=sample_dataset.error,
+            metadata=dict(sample_dataset.metadata),
+            run=sample_dataset.run,
+        )
+        panel.plot_dataset(shifted_dataset)
+
+        second_x = panel._ax.get_xlim()
+        second_y = panel._ax.get_ylim()
+
+        assert second_x != pytest.approx(first_x)
+        assert second_y != pytest.approx(first_y)
+        assert second_x[0] > 40.0
+        assert second_y[1] > first_y[1]
 
     def test_auto_y_uses_current_x_range_and_ignores_low_count_points(
         self, panel: PlotPanel

@@ -92,6 +92,86 @@ def test_dialog_builds_parenthesized_model(qapp: QApplication) -> None:
     assert model.close_parentheses == [0, 0, 1]
 
 
+def test_dialog_builds_fraction_group_model(qapp: QApplication) -> None:
+    dialog = FitFunctionBuilderDialog()
+    dialog._expression_edit.setText("Exponential + Gaussian")
+    cursor = dialog._expression_edit.textCursor()
+    cursor.setPosition(0)
+    cursor.setPosition(len("Exponential + Gaussian"), cursor.MoveMode.KeepAnchor)
+    dialog._expression_edit.setTextCursor(cursor)
+    dialog._group_fraction_button.click()
+
+    dialog._on_accept()
+    model = dialog.get_composite_model()
+
+    assert model is not None
+    assert model.fraction_groups == [(0, 1)]
+    assert "fraction_1" in model.param_names
+    assert "fraction_2" in model.param_names
+
+
+def test_dialog_exposes_fraction_group_ui_controls(qapp: QApplication) -> None:
+    dialog = FitFunctionBuilderDialog()
+
+    assert dialog._group_fraction_button.text() == "Fractions"
+    assert dialog._separate_fraction_button.text() == "Separate"
+    assert "matching colors" in dialog._syntax_help_label.text()
+
+
+def test_dialog_normalizes_fraction_syntax_to_color_groups(qapp: QApplication) -> None:
+    dialog = FitFunctionBuilderDialog()
+    dialog._expression_edit.setText("( Exponential + Gaussian ){frac}")
+
+    assert dialog._expression_edit.text() == "Exponential + Gaussian"
+    dialog._on_accept()
+    model = dialog.get_composite_model()
+
+    assert model is not None
+    assert model.fraction_groups == [(0, 1)]
+
+
+def test_fraction_button_groups_selected_components(qapp: QApplication) -> None:
+    dialog = FitFunctionBuilderDialog()
+    text = "Exponential + Gaussian + Constant"
+    dialog._expression_edit.setText(text)
+    cursor = dialog._expression_edit.textCursor()
+    cursor.setPosition(0)
+    cursor.setPosition(len("Exponential + Gaussian"), cursor.MoveMode.KeepAnchor)
+    dialog._expression_edit.setTextCursor(cursor)
+
+    dialog._group_fraction_button.click()
+
+    assert dialog._expression_edit.text() == text
+    dialog._on_accept()
+    model = dialog.get_composite_model()
+
+    assert model is not None
+    assert model.fraction_groups == [(0, 1)]
+    assert "Fractions:" in dialog._preview_label.text()
+
+
+def test_separate_button_removes_fraction_group(qapp: QApplication) -> None:
+    dialog = FitFunctionBuilderDialog()
+    text = "Exponential + Gaussian + Constant"
+    dialog._expression_edit.setText(text)
+    cursor = dialog._expression_edit.textCursor()
+    cursor.setPosition(0)
+    cursor.setPosition(len("Exponential + Gaussian"), cursor.MoveMode.KeepAnchor)
+    dialog._expression_edit.setTextCursor(cursor)
+
+    dialog._group_fraction_button.click()
+    dialog._expression_edit.setTextCursor(cursor)
+
+    dialog._separate_fraction_button.click()
+
+    assert dialog._expression_edit.text() == text
+    dialog._on_accept()
+    model = dialog.get_composite_model()
+
+    assert model is not None
+    assert model.fraction_groups == []
+
+
 def test_backspace_removes_whole_function_token(qapp: QApplication) -> None:
     dialog = FitFunctionBuilderDialog()
     dialog._expression_edit.setText("Exponential + Constant")

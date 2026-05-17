@@ -6,6 +6,7 @@ import re
 from collections.abc import Callable, Mapping
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QPlainTextEdit,
     QPushButton,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -114,6 +116,21 @@ class ExpressionTextEdit(QPlainTextEdit):
     def insert(self, text: str) -> None:
         self.textCursor().insertText(text)
 
+    def selectedText(self) -> str:  # noqa: N802
+        return self.textCursor().selectedText().replace("\u2029", "\n")
+
+    def hasSelection(self) -> bool:  # noqa: N802
+        return self.textCursor().hasSelection()
+
+    def selectionRange(self) -> tuple[int, int]:  # noqa: N802
+        cursor = self.textCursor()
+        return cursor.selectionStart(), cursor.selectionEnd()
+
+    def replaceSelection(self, text: str) -> None:  # noqa: N802
+        cursor = self.textCursor()
+        cursor.insertText(text)
+        self.setTextCursor(cursor)
+
     def cursorPosition(self) -> int:  # noqa: N802
         return self.textCursor().position()
 
@@ -121,6 +138,25 @@ class ExpressionTextEdit(QPlainTextEdit):
         cursor = self.textCursor()
         cursor.setPosition(max(0, min(pos, len(self.text()))))
         self.setTextCursor(cursor)
+
+    def set_highlight_ranges(self, ranges: list[tuple[int, int, str]]) -> None:
+        selections: list[QTextEdit.ExtraSelection] = []
+        for start, end, color in ranges:
+            if end <= start:
+                continue
+            cursor = self.textCursor()
+            cursor.setPosition(start)
+            cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+
+            selection = QTextEdit.ExtraSelection()
+            char_format = QTextCharFormat()
+            char_format.setForeground(QColor(color))
+            char_format.setFontWeight(600)
+            selection.cursor = cursor
+            selection.format = char_format
+            selections.append(selection)
+
+        self.setExtraSelections(selections)
 
     def remove_token_before_cursor(self) -> None:
         text = self.text()
@@ -185,6 +221,8 @@ class FunctionExpressionBuilderDialog(QDialog):
         model_parser: Callable[[str], object],
         initial_expression: str,
         expression_placeholder: str,
+        extra_token_buttons: list[tuple[str, str]] | None = None,
+        syntax_help_text: str | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -244,6 +282,16 @@ class FunctionExpressionBuilderDialog(QDialog):
                 )
                 keypad.addWidget(button, row_idx, col_idx)
 
+        self._extra_token_buttons: dict[str, QPushButton] = {}
+        for offset, entry in enumerate(extra_token_buttons or []):
+            label, token = entry
+            button = QPushButton(label)
+            button.clicked.connect(
+                lambda _checked=False, token_text=token: self._insert_token(token_text)
+            )
+            keypad.addWidget(button, 3, offset)
+            self._extra_token_buttons[label] = button
+
         clear_button = QPushButton("Clear")
         clear_button.clicked.connect(self._clear_expression)
         keypad.addWidget(clear_button, 2, 0, 1, 2)
@@ -259,6 +307,13 @@ class FunctionExpressionBuilderDialog(QDialog):
         keypad_container = QWidget()
         keypad_container.setLayout(keypad)
         root.addWidget(keypad_container)
+
+        self._syntax_help_label = QLabel("")
+        self._syntax_help_label.setWordWrap(True)
+        self._syntax_help_label.setVisible(bool(syntax_help_text))
+        if syntax_help_text:
+            self._syntax_help_label.setText(syntax_help_text)
+        root.addWidget(self._syntax_help_label)
 
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)

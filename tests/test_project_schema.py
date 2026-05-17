@@ -61,7 +61,14 @@ def _minimal_state() -> dict:
         "fourier_state": {
             "window": "none",
             "padding": 1,
-            "display": "Real",
+            "phase_degrees": 0.0,
+            "t0_offset_us": 0.0,
+            "display": "(Power)^1/2",
+            "auto_phase": False,
+            "auto_phase_method": "Peak",
+            "use_phase_table": False,
+            "group_phase_table": {},
+            "group_auto_filled_ids": [],
         },
     }
 
@@ -573,18 +580,50 @@ class TestFourierPanelState:
         from asymmetry.gui.panels.fourier_panel import FourierPanel
 
         panel = FourierPanel()
-        panel._window_combo.setCurrentText("gaussian")
+        panel._filter_gaussian_radio.setChecked(True)
+        panel._filter_start_edit.setText("0.75")
+        panel._filter_time_constant_edit.setText("2.25")
         panel._padding_spin.setValue(4)
-        panel._display_combo.setCurrentText("Power")
+        panel._phase_spin.setText("32.5")
+        panel._t0_offset_spin.setText("0.125")
+        panel._phase_mode_radio.setChecked(True)
+        panel._auto_method_combo.setCurrentText("Average")
+        panel._use_phase_table_check.setChecked(True)
+        panel._estimate_average_error_check.setChecked(True)
+        panel.set_group_definitions({1: "Forward", 2: "Backward"}, {1: 12.5, 2: -8.0})
 
         state = panel.get_state()
-        assert state == {"window": "gaussian", "padding": 4, "display": "Power"}
+        assert state == {
+            "window": "gaussian",
+            "filter_start_us": 0.75,
+            "filter_time_constant_us": 2.25,
+            "padding": 4,
+            "phase_degrees": 32.5,
+            "t0_offset_us": 0.125,
+            "display": "Phase",
+            "subtract_average_signal": True,
+            "auto_phase_method": "Average",
+            "use_phase_table": True,
+            "estimate_average_error": True,
+            "group_enabled_table": {1: True, 2: True},
+            "group_phase_table": {1: 12.5, 2: -8.0},
+            "group_auto_filled_ids": [],
+        }
 
         panel2 = FourierPanel()
         panel2.restore_state(state)
-        assert panel2._window_combo.currentText() == "gaussian"
+        assert panel2._filter_gaussian_radio.isChecked() is True
+        assert panel2._filter_start_edit.text() == "0.75"
+        assert panel2._filter_time_constant_edit.text() == "2.25"
         assert panel2._padding_spin.value() == 4
-        assert panel2._display_combo.currentText() == "Power"
+        assert float(panel2._phase_spin.text()) == pytest.approx(32.5)
+        assert float(panel2._t0_offset_spin.text()) == pytest.approx(0.125)
+        assert panel2._current_display_mode() == "Phase"
+        assert panel2._auto_method_combo.currentText() == "Average"
+        assert panel2._use_phase_table_check.isChecked() is True
+        assert panel2._estimate_average_error_check.isChecked() is True
+        assert panel2.group_enabled_table() == {1: True, 2: True}
+        assert panel2.group_phase_table() == pytest.approx({1: 12.5, 2: -8.0})
 
 
 class TestFitPanelState:
@@ -911,7 +950,22 @@ class TestFitParametersPanelState:
 
 class _StubFourierWithState(_StubFourier):
     def get_state(self):
-        return {"window": "none", "padding": 1, "display": "Real"}
+        return {
+            "window": "none",
+            "filter_start_us": 0.0,
+            "filter_time_constant_us": 1.5,
+            "padding": 1,
+            "phase_degrees": 0.0,
+            "t0_offset_us": 0.0,
+            "display": "(Power)^1/2",
+            "auto_phase": False,
+            "auto_phase_method": "Peak",
+            "use_phase_table": False,
+            "estimate_average_error": False,
+            "group_enabled_table": {},
+            "group_phase_table": {},
+            "group_auto_filled_ids": [],
+        }
 
     def restore_state(self, state):
         pass
@@ -1127,6 +1181,8 @@ class TestMainWindowProjectState:
         assert "fit_parameters_state" in state
         assert "global_parameter_fit_window_state" in state
         assert "fourier_state" in state
+        assert "workspace_state" in state["plot_state"]
+        assert "frequency_plot_state" in state["plot_state"]
 
     def test_restore_project_state_all_mode_renders_subplots_immediately(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
@@ -1270,6 +1326,77 @@ class TestMainWindowProjectState:
         save_project(state, path)
         loaded = load_project(path)
         assert loaded["schema_version"] == CURRENT_SCHEMA_VERSION
+
+    def test_collect_project_state_prunes_regenerated_fit_and_wizard_cache_payloads(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+    ) -> None:
+        class _StubPlotPanelBulkyState(_StubPlotPanelWithState):
+            def get_state(self):
+                state = dict(super().get_state())
+                state.update(
+                    {
+                        "fit_curve": {"t": [0.0, 1.0], "y": [0.2, 0.1], "label": "Fit"},
+                        "fit_curve_run_number": 1001,
+                        "fit_curves": {
+                            "1001": {"t": [0.0, 1.0], "y": [0.2, 0.1], "label": "Fit"}
+                        },
+                        "fit_curves_by_key": {
+                            "1001::P_x": {"t": [0.0, 1.0], "y": [0.2, 0.1], "label": "Fit"}
+                        },
+                        "fit_components": [{"name": "Signal", "y": [0.2, 0.1]}],
+                        "fit_components_by_run": {
+                            "1001": [{"name": "Signal", "y": [0.2, 0.1]}]
+                        },
+                        "fit_components_by_key": {
+                            "1001::P_x": [{"name": "Signal", "y": [0.2, 0.1]}]
+                        },
+                    }
+                )
+                return state
+
+        class _StubFitPanelWizardState(_StubFitPanelWithState):
+            def get_single_state(self):
+                return {
+                    "model_name": "ExponentialRelaxation",
+                    "parameters": [],
+                    "wizard_state": {"log_text": "cached single wizard"},
+                    "states_by_run": {
+                        "1001": {
+                            "model_name": "ExponentialRelaxation",
+                            "parameters": [],
+                            "wizard_state": {"log_text": "cached nested wizard"},
+                        }
+                    },
+                }
+
+            def get_global_state(self):
+                return {
+                    "model_name": "ExponentialRelaxation",
+                    "parameters": [],
+                    "wizard_state": {"log_text": "cached global wizard"},
+                    "wizard_state_by_run_set": [{"log_text": "cached global cache"}],
+                }
+
+        monkeypatch.setattr(mw_module, "DataBrowserPanel", _StubDataBrowserWithState)
+        monkeypatch.setattr(mw_module, "FitPanel", _StubFitPanelWizardState)
+        monkeypatch.setattr(mw_module, "PlotPanel", _StubPlotPanelBulkyState)
+        monkeypatch.setattr(mw_module, "LogPanel", _StubLogPanel)
+        monkeypatch.setattr(mw_module, "FourierPanel", _StubFourierWithState)
+        monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParamsClear)
+
+        window = mw_module.MainWindow()
+        state = window.collect_project_state()
+
+        assert state["plot_state"]["fit_curve"] is None
+        assert state["plot_state"]["fit_curves"] == {}
+        assert state["plot_state"]["fit_curves_by_key"] == {}
+        assert state["plot_state"]["fit_components"] is None
+        assert state["plot_state"]["fit_components_by_run"] == {}
+        assert state["plot_state"]["fit_components_by_key"] == {}
+        assert "wizard_state" not in state["single_fit_state"]
+        assert "wizard_state" not in state["single_fit_state"]["states_by_run"]["1001"]
+        assert "wizard_state" not in state["global_fit_state"]
+        assert "wizard_state_by_run_set" not in state["global_fit_state"]
 
     def test_collect_project_state_includes_sources_for_combined_datasets(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication

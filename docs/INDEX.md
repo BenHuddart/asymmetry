@@ -16,6 +16,7 @@ This directory contains all project documentation.
 - **[README.md](README.md)**: Documentation build instructions
 - **[ARCHITECTURE.md](ARCHITECTURE.md)**: System design, architecture, and specifications
 - **[HARNESS.md](HARNESS.md)**: Agent harness workflow and validation commands
+- **[porting/README.md](porting/README.md)**: Policy and required artifacts for study-first feature ports
 - **[QUALITY.md](QUALITY.md)**: Current quality map, risk areas, and validation paths
 - **[PLANS.md](PLANS.md)**: Active and deferred execution plans for agents
 - **[contributing.rst](contributing.rst)**: Contributing guidelines (Sphinx format)
@@ -48,6 +49,7 @@ docs/
 ├── README.md              # This file
 ├── ARCHITECTURE.md        # System architecture and design principles
 ├── HARNESS.md             # Agent harness workflow
+├── porting/               # Study-first porting workflow and feature studies
 ├── QUALITY.md             # Quality map and risk areas
 ├── PLANS.md               # Agent-facing execution plans
 ├── index.rst              # Sphinx main index

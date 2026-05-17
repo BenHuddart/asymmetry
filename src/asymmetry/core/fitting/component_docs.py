@@ -51,6 +51,18 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
         "Use for isotropic or weakly anisotropic bulk diffusion in three dimensions. "
         "It is the most natural diffusion-LF baseline when no reduced dimensionality is evident."
     ),
+    "BallisticLF_1D": (
+        "Use when LF relaxation is governed by effectively one-dimensional ballistic transport, such as spinon propagation along chains. "
+        "The 1D model is the relevant choice when a logarithmic lambda versus field signature is expected on a semilog field axis."
+    ),
+    "BallisticLF_2D": (
+        "Use when excitations propagate ballistically within an effectively two-dimensional manifold. "
+        "This form is appropriate for coherent in-plane transport where a diffusive random-walk picture is not justified."
+    ),
+    "BallisticLF_3D": (
+        "Use for three-dimensional ballistic transport with coherent propagation across the active volume. "
+        "It is the ballistic analogue of the 3D diffusion LF model when reduced dimensionality is not physically motivated."
+    ),
     "Lambda_bg": (
         "Use as an additive field-independent relaxation background for lambda-like observables. "
         "It is commonly combined with explicit field-dependent terms to capture residual broadening."

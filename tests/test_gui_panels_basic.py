@@ -10,7 +10,8 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QGroupBox, QHeaderView
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.panels.fourier_panel import FourierPanel
@@ -35,10 +36,235 @@ def test_log_panel_appends_message(qapp: QApplication) -> None:
 
 def test_fourier_panel_defaults(qapp: QApplication) -> None:
     panel = FourierPanel()
-    assert panel._window_combo.currentText() == "none"
+    assert not hasattr(panel, "_source_combo")
+    assert not hasattr(panel, "_group_output_combo")
+    assert not hasattr(panel, "_center_range_check")
+    assert panel._filter_none_radio.isChecked() is True
+    assert panel._filter_start_edit.text() == "0.0"
+    assert panel._filter_time_constant_edit.text() == "1.5"
+    assert panel._filter_start_edit.isEnabled() is False
+    assert panel._filter_time_constant_edit.isEnabled() is False
     assert panel._padding_spin.value() == 1
-    assert panel._display_combo.currentText() == "Real"
+    assert float(panel._phase_spin.text()) == pytest.approx(0.0)
+    assert float(panel._t0_offset_spin.text()) == pytest.approx(0.0)
+    assert panel._current_display_mode() == "(Power)^1/2"
+    assert panel._phase_mode_info_btn.text() == "Info"
+    assert panel._phase_spin.isEnabled() is False
+    assert panel._t0_offset_spin.isEnabled() is False
+    assert panel._auto_phase_btn.isEnabled() is False
+    assert panel._subtract_average_signal_check.isChecked() is True
+    assert panel._subtract_average_signal_check.text() == "Subtract average signal"
+    assert panel._auto_method_combo.currentText() == "Peak"
+    assert panel._auto_phase_btn.text() == "Fill Phase Estimates"
+    assert panel._estimate_average_error_check.text() == "Average errors"
+    assert panel._estimate_average_error_check.toolTip() == "Estimate errors for averaged spectra."
+    assert "#0f62fe" in panel._phase_opt_real_radio.styleSheet()
+    assert panel._phase_opt_real_radio.minimumHeight() >= panel._phase_opt_real_radio.sizeHint().height()
+    assert panel._phase_table.horizontalHeaderItem(0).text() == "Include"
+    assert panel._phase_table.horizontalHeader().sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
     assert panel._fft_btn.text() == "Compute FFT"
+
+
+def test_fourier_panel_group_order_matches_workflow(qapp: QApplication) -> None:
+    panel = FourierPanel()
+
+    titles = [group.title() for group in panel.findChildren(QGroupBox) if group.title()]
+
+    assert titles[:4] == ["FFT Phase Mode", "Apodisation", "Groups", "Phase"]
+
+
+def test_fourier_panel_apodisation_radios_enable_text_fields(qapp: QApplication) -> None:
+    panel = FourierPanel()
+
+    panel._filter_gaussian_radio.setChecked(True)
+
+    assert panel._filter_start_edit.isEnabled() is True
+    assert panel._filter_time_constant_edit.isEnabled() is True
+
+    panel._filter_none_radio.setChecked(True)
+
+    assert panel._filter_start_edit.isEnabled() is False
+    assert panel._filter_time_constant_edit.isEnabled() is False
+
+
+def test_fourier_panel_group_table_defaults_to_all_groups_enabled(qapp: QApplication) -> None:
+    panel = FourierPanel()
+    panel.set_group_definitions({1: "Left", 2: "Right"}, {1: 12.0, 2: -4.0})
+
+    assert panel.selected_group_ids() == [1, 2]
+    assert panel.group_enabled_table() == {1: True, 2: True}
+    assert panel._phase_table.isEnabled() is True
+    assert not (panel._phase_table.item(0, 2).flags() & Qt.ItemFlag.ItemIsEditable)
+
+    panel._use_phase_table_check.setChecked(True)
+    panel._phase_mode_radio.setChecked(True)
+    assert panel._phase_table.item(0, 2).flags() & Qt.ItemFlag.ItemIsEditable
+
+    panel._phase_table.item(1, 0).setCheckState(Qt.CheckState.Unchecked)
+
+    assert panel.selected_group_ids() == [1]
+
+
+def test_fourier_panel_phase_mode_controls_follow_selected_mode(qapp: QApplication) -> None:
+    panel = FourierPanel()
+    panel.set_group_definitions({1: "Left", 2: "Right"}, {1: 12.0, 2: -4.0})
+
+    panel._cos_radio.setChecked(True)
+    assert float(panel._phase_spin.text()) == pytest.approx(0.0)
+    assert panel._auto_method_combo.isEnabled() is False
+    assert panel._auto_phase_btn.isEnabled() is False
+
+    panel._sin_radio.setChecked(True)
+    assert float(panel._phase_spin.text()) == pytest.approx(90.0)
+    assert panel._t0_offset_spin.isEnabled() is False
+
+    panel._phase_mode_radio.setChecked(True)
+    assert panel._phase_spin.isEnabled() is True
+    assert panel._t0_offset_spin.isEnabled() is True
+    assert panel._auto_method_combo.isEnabled() is True
+    assert panel._auto_phase_btn.isEnabled() is True
+    assert "#0f62fe" in panel._phase_spin.styleSheet()
+
+    panel._use_phase_table_check.setChecked(True)
+    assert "#6b7280" in panel._phase_spin.styleSheet()
+    assert panel._phase_table.item(0, 2).foreground().color().name() == "#0f62fe"
+
+
+def test_fourier_panel_auto_filled_group_phases_turn_green(qapp: QApplication) -> None:
+    panel = FourierPanel()
+    panel.set_group_definitions({1: "Left", 2: "Right"}, {1: 12.0, 2: -4.0})
+    panel._phase_mode_radio.setChecked(True)
+    panel._use_phase_table_check.setChecked(True)
+
+    panel.set_group_phases({1: 5.0, 2: -3.0}, auto_filled=True)
+
+    assert panel._phase_table.item(0, 2).foreground().color().name() == "#15803d"
+    assert panel._phase_table.item(1, 2).foreground().color().name() == "#15803d"
+
+
+def test_plot_panel_frequency_dataset_skips_rebin_and_uses_metadata_labels(qapp: QApplication) -> None:
+    panel = PlotPanel()
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+
+    dataset = MuonDataset(
+        time=np.array([0.0, 0.5, 1.0]),
+        asymmetry=np.array([1.0, 2.0, 1.5]),
+        error=np.zeros(3, dtype=float),
+        metadata={
+            "run_number": 9,
+            "plot_domain": "frequency",
+            "x_label": "Frequency (MHz)",
+            "y_label": "FFT Magnitude (a.u.)",
+        },
+    )
+
+    panel.set_bunch_factor(4, emit_signal=False)
+    assert panel.get_analysis_dataset(dataset) is dataset
+
+    panel.plot_dataset(dataset)
+
+    assert panel._ax.get_xlabel() == "Frequency (MHz)"
+    assert panel._ax.get_ylabel() == "FFT Magnitude (a.u.)"
+
+
+def test_frequency_plot_panel_switches_between_mhz_and_field_units(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+
+    dataset = MuonDataset(
+        time=np.array([0.0, 1.0, 2.0]),
+        asymmetry=np.array([1.0, 2.0, 1.5]),
+        error=np.zeros(3, dtype=float),
+        metadata={
+            "run_number": 10,
+            "plot_domain": "frequency",
+            "y_label": "FFT Magnitude (a.u.)",
+        },
+    )
+
+    panel.plot_dataset(dataset)
+    panel.set_view_limits(0.0, 2.0, 0.0, 3.0)
+
+    assert panel._ax.get_xlabel() == "Frequency (MHz)"
+    assert panel._x_unit_label.text() == "MHz"
+
+    draw_calls: list[int] = []
+    monkeypatch.setattr(panel._canvas, "draw", lambda: draw_calls.append(1))
+
+    panel._frequency_x_unit_combo.setCurrentText("Field (G)")
+
+    assert panel._ax.get_xlabel() == "Field (G)"
+    assert panel._x_unit_label.text() == "G"
+    assert len(draw_calls) == 1
+    x_min, x_max, _y_min, _y_max = panel.get_view_limits()
+    assert x_min == pytest.approx(0.0)
+    assert x_max == pytest.approx(2.0 / (135.538817 * 1.0e-4), abs=1e-3)
+
+
+def test_frequency_plot_panel_can_show_relative_field_axis(qapp: QApplication) -> None:
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+
+    dataset = MuonDataset(
+        time=np.array([1.0, 1.5, 2.0]),
+        asymmetry=np.array([1.0, 2.0, 1.5]),
+        error=np.zeros(3, dtype=float),
+        metadata={
+            "run_number": 11,
+            "plot_domain": "frequency",
+            "y_label": "FFT Magnitude (a.u.)",
+            "field": 100.0,
+        },
+    )
+
+    panel.plot_dataset(dataset)
+    abs_x_min, abs_x_max, _abs_y_min, _abs_y_max = panel.get_view_limits()
+    abs_axis_min, abs_axis_max = panel._ax.get_xlim()
+    panel.set_frequency_axis_relative_to_reference(True)
+
+    assert panel._ax.get_xlabel() == "Frequency (MHz)"
+    x_min, x_max, _y_min, _y_max = panel.get_view_limits()
+    center = 100.0 * 135.538817 * 1.0e-4
+    assert x_min == pytest.approx(abs_x_min - center, abs=1e-3)
+    assert x_max == pytest.approx(abs_x_max - center, abs=1e-3)
+    assert panel._ax.get_xlim()[0] == pytest.approx(abs_axis_min, abs=1e-3)
+    assert panel._ax.get_xlim()[1] == pytest.approx(abs_axis_max, abs=1e-3)
+
+
+def test_frequency_plot_panel_relative_limits_drive_absolute_axis(qapp: QApplication) -> None:
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+
+    dataset = MuonDataset(
+        time=np.array([1.0, 1.5, 2.0]),
+        asymmetry=np.array([1.0, 2.0, 1.5]),
+        error=np.zeros(3, dtype=float),
+        metadata={
+            "run_number": 12,
+            "plot_domain": "frequency",
+            "y_label": "FFT Magnitude (a.u.)",
+            "field": 100.0,
+        },
+    )
+
+    panel.plot_dataset(dataset)
+    panel.set_frequency_axis_relative_to_reference(True)
+    panel.set_view_limits(-0.5, 0.25, 0.0, 3.0)
+
+    center = 100.0 * 135.538817 * 1.0e-4
+    x_min, x_max, _y_min, _y_max = panel.get_view_limits()
+
+    assert x_min == pytest.approx(-0.5, abs=1e-6)
+    assert x_max == pytest.approx(0.25, abs=1e-6)
+    assert panel._ax.get_xlim()[0] == pytest.approx(center - 0.5, abs=1e-3)
+    assert panel._ax.get_xlim()[1] == pytest.approx(center + 0.25, abs=1e-3)
 
 
 def test_plot_panel_basic_plot_fit_clear_flow(qapp: QApplication) -> None:

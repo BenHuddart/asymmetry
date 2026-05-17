@@ -72,25 +72,25 @@ Basic Fitting Workflow
    from asymmetry.core.fitting.models import MODELS
    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
    from asymmetry.core.io import load
-   
+
    # Load data
    dataset = load("data.nxs")
-   
+
    # Create fit engine
    engine = FitEngine()
-   
+
    # Select model
    model = MODELS["ExponentialRelaxation"]
-   
+
    # Set up parameters
    params = ParameterSet()
    params.add(Parameter(name="A0", value=0.2, min=0, max=1))
    params.add(Parameter(name="Lambda", value=0.5, min=0))
    params.add(Parameter(name="baseline", value=0.0, min=-0.1, max=0.1))
-   
+
    # Perform fit
    result = engine.fit(dataset, model.function, params)
-   
+
    # Print results
    print(f"Success: {result.success}")
    print(f"χ²: {result.chi_squared:.4f}")
@@ -98,6 +98,23 @@ Basic Fitting Workflow
    for param in result.parameters:
        error = result.uncertainties.get(param.name, 0)
        print(f"{param.name}: {param.value} ± {error:.6f}")
+
+Fraction Groups in the GUI
+--------------------------
+
+The ``Build Fit Function`` dialog supports fraction groups for additive terms
+that should share one overall asymmetry. Select two or more additive
+components in the expression editor and press ``Fractions``. The editor and
+the preview then use matching colors to show each grouped block. Use
+``Separate`` to remove the grouping.
+
+When a grouped expression is accepted, the fit table shows one amplitude for
+the whole group and a set of fraction parameters. The first :math:`n-1`
+fractions remain editable, while the final fraction is derived automatically
+so the displayed normalized fractions always add up to 1.
+
+This lets you fit models such as a shared asymmetry split across two relaxing
+channels without manually maintaining the constraint during parameter edits.
 
 Mathematical Notation in Documentation
 --------------------------------------
@@ -456,6 +473,9 @@ includes diffusion-based LF components:
 - ``DiffusionLF_1D``
 - ``DiffusionLF_2D``
 - ``DiffusionLF_3D``
+- ``BallisticLF_1D``
+- ``BallisticLF_2D``
+- ``BallisticLF_3D``
 
 These models fit :math:`\lambda(B_{LF})` directly (not time-domain asymmetry).
 
@@ -504,6 +524,89 @@ The implementation uses the one-sided cosine-transform convention:
 .. math::
 
    J(\omega) = 2\int_0^{\infty} S_{nD}(t)\cos(\omega t)\,dt
+
+Ballistic LF Relaxation (Field-Series Model)
+--------------------------------------------
+
+For ballistic transport, the parameter-model workflow also includes three
+field-dependent components:
+
+- ``BallisticLF_1D``
+- ``BallisticLF_2D``
+- ``BallisticLF_3D``
+
+These models also fit :math:`\lambda(B_{LF})` directly and use the same
+one-sided cosine-transform architecture as the diffusive LF implementation.
+
+Model equations
+~~~~~~~~~~~~~~~
+
+Using the ballistic autocorrelation discussed in *Muon Spectroscopy: An
+Introduction*:
+
+.. math::
+
+   S_{nD}^{ball}(t) = \left[J_0(2 D_{hop} t)\right]^{2n}, \quad n\in\{1,2,3\}
+
+with :math:`J_0` the zeroth-order Bessel function and :math:`D_{hop}` the
+ballistic hopping rate.
+
+The longitudinal-field relaxation is written as
+
+.. math::
+
+   \lambda_{nD}^{ball}(B_{LF}) = \frac{A^2}{4} J(\omega_e),
+   \quad \omega_e = \gamma_e B_{LF}
+
+using the same cosine-transform convention,
+
+.. math::
+
+   J(\omega) = 2\int_0^{\infty} S_{nD}^{ball}(t)\cos(\omega t)\,dt
+
+For the special one-dimensional ballistic case, the low-frequency spectral
+density is well approximated by
+
+.. math::
+
+   J(\omega) \approx \frac{0.318}{D_{hop}}\ln\!\left(\frac{16 D_{hop}}{\omega}\right)
+
+so :math:`\lambda` versus :math:`\log(B)` is expected to be close to linear
+over the corresponding field window.
+
+Units and parameters
+~~~~~~~~~~~~~~~~~~~~
+
+- ``B_LF``: Gauss (G)
+- ``A``: MHz (numerically equivalent to :math:`\mu s^{-1}`)
+- ``D_hop``: :math:`\mu s^{-1}`
+
+Notes on model choice
+~~~~~~~~~~~~~~~~~~~~~
+
+- Use ``BallisticLF_1D`` for coherent transport along chains or other strongly one-dimensional pathways.
+- Use ``BallisticLF_2D`` for layered systems with coherent in-plane propagation.
+- Use ``BallisticLF_3D`` when transport is ballistic and bulk-like rather than diffusive.
+- Prefer the diffusive LF models when a random-walk picture is physically better motivated than coherent propagation.
+
+Example usage
+~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   import numpy as np
+   from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
+
+   b_lf = np.linspace(5.0, 1000.0, 50)  # Gauss
+   model = PARAMETER_MODEL_COMPONENTS["BallisticLF_1D"]
+
+   lam_ball = model.function(
+       b_lf,
+       A=0.8,
+       D_hop=3.0,
+   )
+
+   print(lam_ball[:5])
 
 Units and parameters
 ~~~~~~~~~~~~~~~~~~~~
@@ -648,6 +751,16 @@ Field-specific
 
    Parameters: ``a``, ``B0``, ``c``
 
+``DiffusionLF_1D``, ``DiffusionLF_2D``, ``DiffusionLF_3D``
+   Diffusion-based LF transport terms described in the dedicated section above.
+
+   Parameters: ``A``, ``D_2D``, ``D_perp``
+
+``BallisticLF_1D``, ``BallisticLF_2D``, ``BallisticLF_3D``
+   Ballistic LF transport terms built from the Bessel-function autocorrelation.
+
+   Parameters: ``A``, ``D_hop``
+
 Querying available components
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -655,7 +768,7 @@ Querying available components
 
    from asymmetry.core.fitting.parameter_models import component_names_for_x
 
-   print(component_names_for_x("field"))        # includes Redfield, Lambda_bg, GaussianLCR, Lorentzian
+   print(component_names_for_x("field"))        # includes Redfield, DiffusionLF_*, BallisticLF_*, Lambda_bg, GaussianLCR, Lorentzian
    print(component_names_for_x("temperature"))  # includes Arrhenius, CriticalDivergence
    print(component_names_for_x("run"))          # common components only
 

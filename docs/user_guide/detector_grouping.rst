@@ -17,8 +17,9 @@ The grouping payload stores:
 * instrument and preset metadata
 * optional per-detector ``t0`` metadata for formats such as PSI BIN/MDU and
   MusrRoot/LEM ROOT
-* optional deadtime metadata: ``dead_time_us`` from file data and
-  ``deadtime_method`` describing whether file values were applied
+* optional deadtime metadata: ``deadtime_mode``, ``deadtime_method``, and any
+   resolved ``dead_time_us`` values used for manual, calibrated, or estimated
+   deadtime correction
 * optional background metadata: ``background_correction``,
   ``background_ranges``, ``background_values``, and ``background_method``
 
@@ -74,13 +75,34 @@ constructing the initial asymmetry.
 Deadtime Correction
 -------------------
 
-The Grouping dialog includes a deadtime correction toggle for raw histogram
-formats. It is enabled only when the reference run provides file deadtime
-values, which is typically the ISIS/NeXus path. When enabled, Asymmetry applies
-a non-paralyzable correction. If those file values are absent, no deadtime
-fallback is estimated.
+The Grouping dialog includes a deadtime correction toggle plus three deadtime
+modes for raw histogram formats. ``File`` stays selected by default so the
+deadtime workflow starts from the same file-first assumption WiMDA uses, even
+when the current reference run does not provide file deadtime values.
 
-The file-value correction is the same form used by musrfit
+* ``File`` uses per-detector deadtime values already present in a run file.
+* ``Manual`` exposes a detector-value combo box. It shows one deadtime value
+  per detector, allows direct editing, and is also where calibrated values are
+  stored.
+* ``Estimate`` fits the reference run's early-time average detector rate,
+   following WiMDA's uniform deadtime estimate workflow, then applies that one
+   estimated value to every detector.
+
+The deadtime panel also includes a ``Cal`` button that ports WiMDA's
+per-detector calibration routine. It fits each detector histogram in the
+reference run separately, produces a resolved per-detector deadtime table, and
+then populates the manual detector-value table with those calibrated values.
+
+When the checkbox is off, deadtime correction is disabled. When ``Estimate`` is
+selected, the estimate is calculated from the currently selected reference run
+only, then applied to every checked run in the dialog. ``Cal`` also uses the
+selected reference run only, but calibrates one deadtime value per detector
+instead of a single shared value. The resolved deadtime payload is also
+preserved in grouping metadata, so future datasets loaded into the same project
+inherit the same manual, calibrated, or estimated deadtime values just
+as they already inherit alpha and grouping settings.
+
+All modes use the same non-paralyzable correction form used by musrfit
 ``PRunBase::DeadTimeCorrection`` and Mantid ``ApplyDeadTimeCorr``:
 
 .. math::
@@ -88,10 +110,18 @@ The file-value correction is the same form used by musrfit
    N_\mathrm{corr} =
    \frac{N}{1 - N\,t_\mathrm{dead}/(\Delta t\,N_\mathrm{frames})}
 
-For NeXus data, ``t_dead`` and ``N_frames`` come from the file when available.
-For PSI BIN/MDU and MusrRoot/LEM ROOT data these NeXus-style constants are
-normally absent, so the deadtime toggle is disabled and the background
-correction path is used instead.
+For ``File`` mode, ``t_dead`` comes from the run file when available. For
+``Manual``, ``Cal``, and ``Estimate`` workflows, Asymmetry resolves the
+deadtime values in the Grouping dialog and stores them in grouping metadata
+before the correction is applied. ``N_frames`` still comes from each dataset's
+own good-frame metadata when it is available.
+
+PSI BIN/MDU and MusrRoot/LEM ROOT data usually do not ship NeXus-style file
+deadtime constants, so ``File`` mode is commonly unavailable there. Those runs
+can still use ``Manual`` or ``Estimate`` deadtime correction, with ``Cal``
+available to populate per-detector manual values from the selected reference
+run. The
+background correction path remains separate and optional.
 
 Background Correction
 ---------------------

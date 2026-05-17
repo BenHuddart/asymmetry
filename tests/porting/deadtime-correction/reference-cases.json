@@ -1,0 +1,135 @@
+{
+  "feature": "deadtime-correction",
+  "version": 1,
+  "primary_dataset": "synthetic-formula-cases",
+  "cases": [
+    {
+      "case_id": "file-good-frames-single-spectrum",
+      "status": "active",
+      "description": "Shared non-paralyzable file deadtime formula with good-frame normalization.",
+      "reference_programs": [
+        "musrfit",
+        "Mantid",
+        "Asymmetry"
+      ],
+      "inputs": {
+        "counts": [
+          100.0,
+          200.0
+        ],
+        "dead_time_us": [
+          0.01
+        ],
+        "bin_width_us": 0.02,
+        "good_frames": 1000.0,
+        "use_deadtime": true
+      },
+      "expected": {
+        "corrected_counts": [
+          105.26315789473684,
+          222.22222222222223
+        ],
+        "applied": true,
+        "deadtime_method": "file"
+      }
+    },
+    {
+      "case_id": "missing-file-deadtime-is-noop",
+      "status": "active",
+      "description": "Missing file deadtime values should leave counts unchanged and should not estimate a fallback.",
+      "reference_programs": [
+        "Asymmetry"
+      ],
+      "inputs": {
+        "counts": [
+          100.0,
+          95.0,
+          90.0
+        ],
+        "bin_width_us": 0.02,
+        "good_frames": 1000.0,
+        "use_deadtime": true
+      },
+      "expected": {
+        "corrected_counts": [
+          100.0,
+          95.0,
+          90.0
+        ],
+        "applied": false,
+        "deadtime_method": null
+      }
+    },
+    {
+      "case_id": "mantid-style-subset-correction",
+      "status": "active",
+      "description": "Only the spectra with non-zero tau values should be corrected.",
+      "reference_programs": [
+        "Mantid",
+        "Asymmetry"
+      ],
+      "inputs": {
+        "counts_by_detector": [
+          [
+            100.0,
+            100.0
+          ],
+          [
+            100.0,
+            100.0
+          ]
+        ],
+        "dead_time_us": [
+          0.0,
+          0.01
+        ],
+        "bin_width_us": 0.02,
+        "good_frames": 1000.0,
+        "use_deadtime": true
+      },
+      "expected": {
+        "corrected_counts_by_detector": [
+          [
+            100.0,
+            100.0
+          ],
+          [
+            105.26315789473684,
+            105.26315789473684
+          ]
+        ],
+        "applied": true,
+        "deadtime_method": "file"
+      }
+    },
+    {
+      "case_id": "wimda-manual-and-estimate-gap",
+      "status": "gap",
+      "description": "Placeholder case for WiMDA manual and estimated deadtime sources that are not yet represented in Asymmetry.",
+      "reference_programs": [
+        "WiMDA"
+      ],
+      "inputs": {
+        "source_modes": [
+          "manual",
+          "estimate"
+        ]
+      },
+      "expected": {
+        "implemented_in_asymmetry": false
+      }
+    }
+  ],
+  "external_candidates": [
+    {
+      "source": "Mantid",
+      "identifier": "emu00006473.nxs",
+      "status": "not-vendored"
+    },
+    {
+      "source": "WiMDA",
+      "identifier": "dt*.dat calibration files",
+      "status": "not-selected"
+    }
+  ]
+}

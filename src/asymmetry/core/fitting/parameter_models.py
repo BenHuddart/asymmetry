@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from itertools import product
 
 import numpy as np
 from numpy.typing import NDArray
@@ -13,7 +14,8 @@ from asymmetry.core.fitting.composite import (
     build_component_expression,
     parse_component_expression,
 )
-from asymmetry.core.fitting.diffusion import lambda_total
+from asymmetry.core.fitting.ballistic import lambda_total as ballistic_lambda_total
+from asymmetry.core.fitting.diffusion import lambda_total as diffusion_lambda_total
 from asymmetry.core.fitting.parameters import (
     Parameter,
     ParameterSet,
@@ -22,7 +24,11 @@ from asymmetry.core.fitting.parameters import (
     split_parameter_name,
 )
 from asymmetry.core.fitting.sc import models as sc_models
-from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+from asymmetry.core.utils.constants import (
+    ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G,
+    GAUSS_TO_TESLA,
+    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
+)
 
 
 @dataclass(frozen=True)
@@ -130,7 +136,7 @@ def _diffusion_lf_1d(
     D_perp: float = 0.0,
 ) -> NDArray[np.float64]:
     return np.asarray(
-        lambda_total(x, C=A, D_nD=D_2D, D_perp=D_perp, lambda_0D=0.0, n=1),
+        diffusion_lambda_total(x, C=A, D_nD=D_2D, D_perp=D_perp, lambda_0D=0.0, n=1),
         dtype=float,
     )
 
@@ -142,7 +148,7 @@ def _diffusion_lf_2d(
     D_perp: float = 0.0,
 ) -> NDArray[np.float64]:
     return np.asarray(
-        lambda_total(x, C=A, D_nD=D_2D, D_perp=D_perp, lambda_0D=0.0, n=2),
+        diffusion_lambda_total(x, C=A, D_nD=D_2D, D_perp=D_perp, lambda_0D=0.0, n=2),
         dtype=float,
     )
 
@@ -154,7 +160,40 @@ def _diffusion_lf_3d(
     D_perp: float = 0.0,
 ) -> NDArray[np.float64]:
     return np.asarray(
-        lambda_total(x, C=A, D_nD=D_2D, D_perp=D_perp, lambda_0D=0.0, n=3),
+        diffusion_lambda_total(x, C=A, D_nD=D_2D, D_perp=D_perp, lambda_0D=0.0, n=3),
+        dtype=float,
+    )
+
+
+def _ballistic_lf_1d(
+    x: NDArray,
+    A: float,
+    D_hop: float,
+) -> NDArray[np.float64]:
+    return np.asarray(
+        ballistic_lambda_total(x, C=A, D_hop=D_hop, lambda_0D=0.0, n=1),
+        dtype=float,
+    )
+
+
+def _ballistic_lf_2d(
+    x: NDArray,
+    A: float,
+    D_hop: float,
+) -> NDArray[np.float64]:
+    return np.asarray(
+        ballistic_lambda_total(x, C=A, D_hop=D_hop, lambda_0D=0.0, n=2),
+        dtype=float,
+    )
+
+
+def _ballistic_lf_3d(
+    x: NDArray,
+    A: float,
+    D_hop: float,
+) -> NDArray[np.float64]:
+    return np.asarray(
+        ballistic_lambda_total(x, C=A, D_hop=D_hop, lambda_0D=0.0, n=3),
         dtype=float,
     )
 
@@ -329,6 +368,54 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         },
         formula_template="(({A}^2)/4)*J(x; n=3, D_2D={D_2D}, D_perp={D_perp})",
         latex_equation=(r"\lambda_{3D}(B) = \frac{A^2}{4} J\left(B; n=3, D_{2D}, D_{\perp}\right)"),
+        scopes=("field",),
+    ),
+    "BallisticLF_1D": ParameterModelComponentDefinition(
+        name="BallisticLF_1D",
+        description="(A^2/4) J(gamma_e B; n=1, D_hop)",
+        function=_ballistic_lf_1d,
+        param_names=["A", "D_hop"],
+        param_defaults={"A": 1.0, "D_hop": 1.0},
+        param_info={
+            "A": ParamInfo("A", "A", "A", r"$A$", r"{\it A}", "MHz"),
+            "D_hop": get_param_info("D_hop"),
+        },
+        formula_template="(({A}^2)/4)*J(x; n=1, D_hop={D_hop})",
+        latex_equation=(
+            r"\lambda_{1D}^{ball}(B) = \frac{A^2}{4} J\left(B; n=1, D_{\mathrm{hop}}\right)"
+        ),
+        scopes=("field",),
+    ),
+    "BallisticLF_2D": ParameterModelComponentDefinition(
+        name="BallisticLF_2D",
+        description="(A^2/4) J(gamma_e B; n=2, D_hop)",
+        function=_ballistic_lf_2d,
+        param_names=["A", "D_hop"],
+        param_defaults={"A": 1.0, "D_hop": 1.0},
+        param_info={
+            "A": ParamInfo("A", "A", "A", r"$A$", r"{\it A}", "MHz"),
+            "D_hop": get_param_info("D_hop"),
+        },
+        formula_template="(({A}^2)/4)*J(x; n=2, D_hop={D_hop})",
+        latex_equation=(
+            r"\lambda_{2D}^{ball}(B) = \frac{A^2}{4} J\left(B; n=2, D_{\mathrm{hop}}\right)"
+        ),
+        scopes=("field",),
+    ),
+    "BallisticLF_3D": ParameterModelComponentDefinition(
+        name="BallisticLF_3D",
+        description="(A^2/4) J(gamma_e B; n=3, D_hop)",
+        function=_ballistic_lf_3d,
+        param_names=["A", "D_hop"],
+        param_defaults={"A": 1.0, "D_hop": 1.0},
+        param_info={
+            "A": ParamInfo("A", "A", "A", r"$A$", r"{\it A}", "MHz"),
+            "D_hop": get_param_info("D_hop"),
+        },
+        formula_template="(({A}^2)/4)*J(x; n=3, D_hop={D_hop})",
+        latex_equation=(
+            r"\lambda_{3D}^{ball}(B) = \frac{A^2}{4} J\left(B; n=3, D_{\mathrm{hop}}\right)"
+        ),
         scopes=("field",),
     ),
     "Lambda_bg": ParameterModelComponentDefinition(
@@ -1064,42 +1151,222 @@ class CrossGroupFitResult:
     message: str = ""
 
 
-def fit_parameter_model(
-    x: NDArray,
-    y: NDArray,
-    yerr: NDArray | None,
+_TRANSPORT_RATE_SEED_GRID = (
+    0.3,
+    1.0,
+    3.0,
+    10.0,
+    30.0,
+    100.0,
+    300.0,
+    1.0e3,
+    3.0e3,
+    1.0e4,
+    3.0e4,
+    1.0e5,
+)
+_DYNAMIC_TRANSPORT_RATE_SEED_COUNT = 6
+_PARAMETER_MODEL_ERROR_FLOOR_FRACTION = 0.5
+
+
+def _parameter_values_by_name(parameters: ParameterSet) -> dict[str, float]:
+    return {parameter.name: float(parameter.value) for parameter in parameters}
+
+
+def _stabilize_parameter_model_errors(errors: NDArray[np.float64]) -> NDArray[np.float64]:
+    positive_errors = np.asarray(errors, dtype=float)
+    positive_errors = positive_errors[np.isfinite(positive_errors) & (positive_errors > 0.0)]
+    if positive_errors.size == 0:
+        return np.asarray(errors, dtype=float)
+
+    median_positive_error = float(np.median(positive_errors))
+    floor = _PARAMETER_MODEL_ERROR_FLOOR_FRACTION * median_positive_error
+    if floor <= 0.0:
+        return np.asarray(errors, dtype=float)
+    return np.maximum(np.asarray(errors, dtype=float), floor)
+
+
+def _is_additive_parameter_model(model: ParameterCompositeModel) -> bool:
+    return (not any(model.open_parentheses)) and (not any(model.close_parentheses)) and all(
+        op == "+" for op in model.operators
+    )
+
+
+def _transport_rate_parameter_for_component(component: ParameterModelComponentDefinition) -> str | None:
+    if component.name.startswith("DiffusionLF_"):
+        return "D_2D"
+    if component.name.startswith("BallisticLF_"):
+        return "D_hop"
+    return None
+
+
+def _clip_to_parameter_bounds(value: float, parameter: Parameter) -> float:
+    return float(min(max(value, float(parameter.min)), float(parameter.max)))
+
+
+def _dynamic_transport_rate_seeds(x_fit: NDArray[np.float64]) -> tuple[float, ...]:
+    finite_x = np.asarray(x_fit, dtype=float)
+    positive_fields = np.abs(finite_x[np.isfinite(finite_x) & (np.abs(finite_x) > 0.0)])
+    if positive_fields.size == 0:
+        return ()
+
+    omega = ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G * positive_fields
+    omega_min = float(np.min(omega))
+    omega_max = float(np.max(omega))
+    if omega_max <= 0.0:
+        return ()
+
+    seed_min = max(0.3, omega_min / 100.0)
+    seed_max = max(seed_min, omega_max * 10.0)
+    if np.isclose(seed_min, seed_max):
+        return (seed_min,)
+
+    return tuple(
+        float(value)
+        for value in np.geomspace(seed_min, seed_max, num=_DYNAMIC_TRANSPORT_RATE_SEED_COUNT)
+    )
+
+
+def _candidate_rate_values(parameter: Parameter, x_fit: NDArray[np.float64]) -> list[float]:
+    values = [_clip_to_parameter_bounds(float(parameter.value), parameter)]
+    for seed in _TRANSPORT_RATE_SEED_GRID:
+        if float(parameter.min) <= seed <= float(parameter.max):
+            values.append(float(seed))
+    for seed in _dynamic_transport_rate_seeds(x_fit):
+        if float(parameter.min) <= seed <= float(parameter.max):
+            values.append(float(seed))
+
+    deduped: list[float] = []
+    seen: set[float] = set()
+    for value in values:
+        rounded = round(float(value), 12)
+        if rounded in seen:
+            continue
+        seen.add(rounded)
+        deduped.append(float(value))
+    return deduped
+
+
+def _solve_nonnegative_weighted_linear(
+    design: NDArray[np.float64],
+    target: NDArray[np.float64],
+    sigma: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    if design.size == 0:
+        return np.zeros(0, dtype=float)
+
+    safe_sigma = np.maximum(np.asarray(sigma, dtype=float), 1e-12)
+    weighted_design = np.asarray(design, dtype=float) / safe_sigma[:, None]
+    weighted_target = np.asarray(target, dtype=float) / safe_sigma
+
+    active = np.ones(weighted_design.shape[1], dtype=bool)
+    coefficients = np.zeros(weighted_design.shape[1], dtype=float)
+
+    while np.any(active):
+        solution, *_ = np.linalg.lstsq(weighted_design[:, active], weighted_target, rcond=None)
+        if np.all(solution >= 0.0):
+            coefficients[active] = solution
+            return coefficients
+        active_indices = np.flatnonzero(active)
+        active[active_indices[int(np.argmin(solution))]] = False
+
+    return coefficients
+
+
+def _transport_seed_initial_values(
+    x_fit: NDArray[np.float64],
+    y_fit: NDArray[np.float64],
+    e_fit: NDArray[np.float64],
     model: ParameterCompositeModel,
     parameters: ParameterSet,
-    x_min: float | None = None,
-    x_max: float | None = None,
-    method: str = "migrad",
-) -> ParameterModelFitResult:
-    """Fit a parameter-vs-x model using iminuit."""
-    xx = np.asarray(x, dtype=float)
-    yy = np.asarray(y, dtype=float)
-    if yerr is None:
-        ee = np.ones_like(xx)
-    else:
-        ee = np.asarray(yerr, dtype=float)
+) -> dict[str, float] | None:
+    if not _is_additive_parameter_model(model):
+        return None
 
-    mask = np.isfinite(xx) & np.isfinite(yy) & np.isfinite(ee) & (ee > 0)
-    if x_min is not None:
-        mask &= xx >= float(x_min)
-    if x_max is not None:
-        mask &= xx <= float(x_max)
+    current_values = _parameter_values_by_name(parameters)
+    fixed_contribution = np.zeros_like(y_fit, dtype=float)
+    transport_entries: list[
+        tuple[ParameterModelComponentDefinition, dict[str, str], str, str]
+    ] = []
 
-    if not np.any(mask):
-        return ParameterModelFitResult(success=False, message="No valid points in selected range")
+    for component, mapping in zip(model.components, model._param_mappings, strict=True):
+        rate_name = _transport_rate_parameter_for_component(component)
+        amp_name = mapping.get("A")
+        rate_param_name = mapping.get(rate_name) if rate_name is not None else None
 
-    x_fit = xx[mask]
-    y_fit = yy[mask]
-    e_fit = ee[mask]
+        if amp_name is None or rate_param_name is None:
+            local_kwargs = model._extract_component_kwargs(component, mapping, current_values)
+            fixed_contribution += np.asarray(component.function(x_fit, **local_kwargs), dtype=float)
+            continue
 
+        amp_parameter = parameters[amp_name]
+        rate_parameter = parameters[rate_param_name]
+        if amp_parameter.fixed:
+            local_kwargs = model._extract_component_kwargs(component, mapping, current_values)
+            fixed_contribution += np.asarray(component.function(x_fit, **local_kwargs), dtype=float)
+            continue
+
+        transport_entries.append((component, mapping, amp_name, rate_param_name))
+
+    if not transport_entries:
+        return None
+
+    target = np.asarray(y_fit - fixed_contribution, dtype=float)
+    best_seed: dict[str, float] | None = None
+    best_chi2 = float("inf")
+
+    rate_grids = [
+        _candidate_rate_values(parameters[rate_param_name], x_fit)
+        for _component, _mapping, _amp_name, rate_param_name in transport_entries
+    ]
+
+    for rate_choice in product(*rate_grids):
+        seed_values = dict(current_values)
+        basis_columns: list[NDArray[np.float64]] = []
+
+        for rate_value, (component, mapping, _amp_name, rate_param_name) in zip(
+            rate_choice, transport_entries, strict=True
+        ):
+            seed_values[rate_param_name] = float(rate_value)
+            local_kwargs = model._extract_component_kwargs(component, mapping, seed_values)
+            local_kwargs["A"] = 2.0
+            basis_columns.append(np.asarray(component.function(x_fit, **local_kwargs), dtype=float))
+
+        design = np.column_stack(basis_columns)
+        prefactors = _solve_nonnegative_weighted_linear(design, target, e_fit)
+        model_y = np.zeros_like(target, dtype=float)
+
+        for prefactor, basis, (_component, _mapping, amp_name, _rate_param_name) in zip(
+            prefactors, basis_columns, transport_entries, strict=True
+        ):
+            seed_values[amp_name] = float(2.0 * np.sqrt(max(prefactor, 0.0)))
+            model_y += prefactor * basis
+
+        chi2 = float(np.sum(np.square((target - model_y) / np.maximum(e_fit, 1e-12))))
+        if chi2 < best_chi2:
+            best_chi2 = chi2
+            best_seed = seed_values
+
+    return best_seed
+
+
+def _run_parameter_model_minuit(
+    x_fit: NDArray[np.float64],
+    y_fit: NDArray[np.float64],
+    e_fit: NDArray[np.float64],
+    model: ParameterCompositeModel,
+    parameters: ParameterSet,
+    method: str,
+    initial_values: dict[str, float] | None = None,
+) -> tuple[ParameterModelFitResult, float]:
     try:
         from iminuit import Minuit
         from iminuit.cost import LeastSquares
     except ImportError as exc:
-        return ParameterModelFitResult(success=False, message=f"iminuit import error: {exc}")
+        return (
+            ParameterModelFitResult(success=False, message=f"iminuit import error: {exc}"),
+            float("inf"),
+        )
 
     free = parameters.free_parameters
     fixed_kw = {p.name: p.value for p in parameters if p.fixed}
@@ -1110,7 +1377,10 @@ def fit_parameter_model(
         return model.function(x_local, **kw)
 
     cost = LeastSquares(x_fit, y_fit, e_fit, model_wrapper)
-    init = [p.value for p in free]
+
+    if initial_values is None:
+        initial_values = {}
+    init = [float(initial_values.get(p.name, p.value)) for p in free]
     m = Minuit(cost, *init, name=param_names)
 
     for i, p in enumerate(free):
@@ -1143,14 +1413,84 @@ def fit_parameter_model(
                 uncertainties[p.name] = float(err)
 
     ndof = max(len(x_fit) - len(free), 1)
-    return ParameterModelFitResult(
-        success=bool(m.valid),
-        chi_squared=float(m.fval),
-        reduced_chi_squared=float(m.fval) / ndof,
-        parameters=result_params,
-        uncertainties=uncertainties,
-        message="Fit successful" if m.valid else "Fit failed",
+    return (
+        ParameterModelFitResult(
+            success=bool(m.valid),
+            chi_squared=float(m.fval),
+            reduced_chi_squared=float(m.fval) / ndof,
+            parameters=result_params,
+            uncertainties=uncertainties,
+            message="Fit successful" if m.valid else "Fit failed",
+        ),
+        float(m.fval),
     )
+
+
+def fit_parameter_model(
+    x: NDArray,
+    y: NDArray,
+    yerr: NDArray | None,
+    model: ParameterCompositeModel,
+    parameters: ParameterSet,
+    x_min: float | None = None,
+    x_max: float | None = None,
+    method: str = "migrad",
+) -> ParameterModelFitResult:
+    """Fit a parameter-vs-x model using iminuit."""
+    xx = np.asarray(x, dtype=float)
+    yy = np.asarray(y, dtype=float)
+    if yerr is None:
+        ee = np.ones_like(xx)
+    else:
+        ee = np.asarray(yerr, dtype=float)
+
+    mask = np.isfinite(xx) & np.isfinite(yy) & np.isfinite(ee) & (ee > 0)
+    if x_min is not None:
+        mask &= xx >= float(x_min)
+    if x_max is not None:
+        mask &= xx <= float(x_max)
+
+    if not np.any(mask):
+        return ParameterModelFitResult(success=False, message="No valid points in selected range")
+
+    x_fit = xx[mask]
+    y_fit = yy[mask]
+    e_fit = ee[mask]
+    e_fit = _stabilize_parameter_model_errors(e_fit)
+
+    initial_candidates: list[dict[str, float] | None] = [None]
+    heuristic_seed = _transport_seed_initial_values(x_fit, y_fit, e_fit, model, parameters)
+    if heuristic_seed is not None:
+        initial_candidates.append(heuristic_seed)
+
+    best_result: ParameterModelFitResult | None = None
+    best_fval = float("inf")
+
+    for initial_values in initial_candidates:
+        result, fval = _run_parameter_model_minuit(
+            x_fit=x_fit,
+            y_fit=y_fit,
+            e_fit=e_fit,
+            model=model,
+            parameters=parameters,
+            method=method,
+            initial_values=initial_values,
+        )
+        if best_result is None:
+            best_result = result
+            best_fval = fval
+            continue
+        if result.success and not best_result.success:
+            best_result = result
+            best_fval = fval
+            continue
+        if result.success == best_result.success and fval < best_fval:
+            best_result = result
+            best_fval = fval
+
+    if best_result is None:
+        return ParameterModelFitResult(success=False, message="Fit failed")
+    return best_result
 
 
 def global_fit_parameter_model(

@@ -135,7 +135,7 @@ Behavior and Limits
 -------------------
 
 **Zero-field limit (B_L → 0)**
-   When B_L is very small (|ω₀| < 10⁻¹⁰), the function automatically switches to the
+   When B_L is very small (:math:`|\omega_0| < 10^{-10}`), the function automatically switches to the
    zero-field Kubo–Toyabe formula for numerical stability:
 
    .. math::
@@ -206,7 +206,7 @@ Numerical Integration
 
    This integral can be challenging to compute numerically when:
    
-   - Very small longitudinal fields (|ω₀| < 10⁻⁸): Consider fixing B_L = 0 and using pure zero-field KT
+   - Very small longitudinal fields (:math:`|\omega_0| < 10^{-8}`): Consider fixing B_L = 0 and using pure zero-field KT
    - Very large field distributions (Δ > 10): Integration may require tuning
    - Noisy data with few time points: Parameter recovery (especially Δ) may be degraded
    

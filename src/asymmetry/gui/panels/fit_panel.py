@@ -78,6 +78,122 @@ def _field_value_overrides(model: CompositeModel, field_gauss: float) -> dict[st
     return overrides
 
 
+def _normalized_model_param_values(
+    model: CompositeModel,
+    param_values: dict[str, float],
+) -> dict[str, float]:
+    """Return display-ready values for one composite-model parameter set."""
+    return model.normalized_parameter_values(param_values)
+
+
+def _param_table_rows_by_name(table: QTableWidget) -> dict[str, int]:
+    rows: dict[str, int] = {}
+    for row in range(table.rowCount()):
+        item = table.item(row, 0)
+        name = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        if isinstance(name, str):
+            rows[name] = row
+    return rows
+
+
+def _parse_param_table_float(table: QTableWidget, row: int, default: float = 0.0) -> float:
+    item = table.item(row, 1)
+    if item is None:
+        return float(default)
+    try:
+        value = float(item.text())
+    except (TypeError, ValueError):
+        return float(default)
+    return value if np.isfinite(value) else float(default)
+
+
+def _set_param_table_value(table: QTableWidget, row: int, value: float) -> None:
+    item = table.item(row, 1)
+    if item is not None:
+        item.setText(f"{float(value):.6g}")
+
+
+def _synchronize_fraction_group_values_in_table(
+    table: QTableWidget,
+    model: CompositeModel,
+    *,
+    edited_param_name: str | None = None,
+) -> None:
+    row_by_name = _param_table_rows_by_name(table)
+    for group in model.fraction_parameter_groups():
+        if len(group) < 2:
+            continue
+        if edited_param_name is not None and edited_param_name not in group:
+            continue
+
+        editable_names = group[:-1]
+        final_name = group[-1]
+        values: dict[str, float] = {}
+        for name in editable_names:
+            row = row_by_name.get(name)
+            if row is None:
+                continue
+            values[name] = min(max(_parse_param_table_float(table, row, 0.0), 0.0), 1.0)
+
+        if edited_param_name in editable_names:
+            remaining = 1.0 - sum(values[name] for name in editable_names if name != edited_param_name)
+            values[edited_param_name] = min(values[edited_param_name], max(0.0, remaining))
+        else:
+            running_sum = 0.0
+            for name in editable_names:
+                values[name] = min(values.get(name, 0.0), max(0.0, 1.0 - running_sum))
+                running_sum += values[name]
+
+        for name, value in values.items():
+            row = row_by_name.get(name)
+            if row is not None:
+                _set_param_table_value(table, row, value)
+
+        final_row = row_by_name.get(final_name)
+        if final_row is not None:
+            final_value = max(0.0, 1.0 - sum(values.get(name, 0.0) for name in editable_names))
+            _set_param_table_value(table, final_row, final_value)
+
+
+def _configure_fraction_rows_in_table(
+    table: QTableWidget,
+    model: CompositeModel,
+    *,
+    min_column: int | None = None,
+    max_column: int | None = None,
+    bounds_column: int | None = None,
+) -> None:
+    row_by_name = _param_table_rows_by_name(table)
+    final_fraction_names = {group[-1] for group in model.fraction_parameter_groups() if group}
+    all_fraction_names = {
+        name for group in model.fraction_parameter_groups() for name in group
+    }
+
+    for name in all_fraction_names:
+        row = row_by_name.get(name)
+        if row is None:
+            continue
+        value_item = table.item(row, 1)
+        if value_item is not None:
+            tooltip = "Final fraction is computed automatically." if name in final_fraction_names else "Edit the first n-1 fractions; the final fraction is the remainder to 1."
+            value_item.setToolTip(tooltip)
+            if name in final_fraction_names:
+                value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+        if min_column is not None:
+            min_item = table.item(row, min_column)
+            if min_item is not None:
+                min_item.setText("0.0")
+        if max_column is not None:
+            max_item = table.item(row, max_column)
+            if max_item is not None:
+                max_item.setText("1.0")
+        if bounds_column is not None:
+            bounds_item = table.item(row, bounds_column)
+            if bounds_item is not None:
+                bounds_item.setText("0, 1")
+
+
 def _get_file_value_for_parameter(dataset: MuonDataset, param_base_name: str) -> float | None:
     """Get the file-specific value for a parameter from dataset metadata.
 
@@ -129,6 +245,19 @@ def _format_bounds_pair(min_val: float, max_val: float) -> str:
         return f"{float(value):.6g}"
 
     return f"{_format(min_val)}, {_format(max_val)}"
+
+
+_GLOBAL_FIT_PARAMETER_CLASSIFICATION_HELP_TEXT = (
+    "Specify how each parameter behaves across datasets:\n\n"
+    "Global: Same value for all datasets. Use this for shared physical parameters "
+    "that should be fitted once across the full selection.\n\n"
+    "Local: Different value for each dataset. Use this when the parameter is "
+    "expected to vary from run to run.\n\n"
+    "Fixed: Held constant at the specified value for every dataset. Use this for "
+    "known values or parameters you want excluded from optimization.\n\n"
+    "File: Use the value from dataset metadata where available. This is offered for "
+    "field-like parameters such as B_L when the run file already stores the relevant value."
+)
 
 
 def _fit_curve_sample_count(
@@ -248,6 +377,7 @@ class SingleFitTab(QWidget):
         self._cached_wizard_recommendation: FitWizardRecommendation | None = None
         self._cached_wizard_signature: dict[str, object] | None = None
         self._cached_wizard_log_text = ""
+        self._updating_fraction_values = False
 
         # Model selection
         model_group = QGroupBox("Model")
@@ -291,6 +421,7 @@ class SingleFitTab(QWidget):
         self._param_table.setColumnWidth(2, 40)  # Fix
         self._param_table.setColumnWidth(3, 80)  # Min
         self._param_table.setColumnWidth(4, 80)  # Max
+        self._param_table.itemChanged.connect(self._on_param_table_item_changed)
         param_layout.addWidget(self._param_table)
         layout.addWidget(param_group)
 
@@ -404,6 +535,7 @@ class SingleFitTab(QWidget):
 
     def _set_composite_model(self, model: CompositeModel) -> None:
         """Set the active composite model and rebuild the parameter table."""
+        self._updating_fraction_values = True
         self._composite_model = model
         _set_formula_label_text(self._formula_label, model.formula_string())
 
@@ -447,6 +579,34 @@ class SingleFitTab(QWidget):
             # Max column
             max_item = QTableWidgetItem("inf")
             self._param_table.setItem(i, 4, max_item)
+
+        _configure_fraction_rows_in_table(
+            self._param_table,
+            model,
+            min_column=3,
+            max_column=4,
+        )
+        self._updating_fraction_values = False
+        self._synchronize_fraction_value_rows()
+
+    def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
+        self._updating_fraction_values = True
+        try:
+            _synchronize_fraction_group_values_in_table(
+                self._param_table,
+                self._composite_model,
+                edited_param_name=edited_param_name,
+            )
+        finally:
+            self._updating_fraction_values = False
+
+    def _on_param_table_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._updating_fraction_values or item.column() != 1:
+            return
+        name_item = self._param_table.item(item.row(), 0)
+        param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
+        if isinstance(param_name, str):
+            self._synchronize_fraction_value_rows(param_name)
 
     def _edit_function(self) -> None:
         """Launch the fit-function builder dialog."""
@@ -517,6 +677,11 @@ class SingleFitTab(QWidget):
 
         self._set_composite_model(assessment.template.model)
         fitted_by_name = {parameter.name: parameter for parameter in result.parameters}
+        display_values = _normalized_model_param_values(
+            self._composite_model,
+            {parameter.name: parameter.value for parameter in result.parameters},
+        )
+        self._updating_fraction_values = True
 
         for row in range(self._param_table.rowCount()):
             name_item = self._param_table.item(row, 0)
@@ -529,7 +694,7 @@ class SingleFitTab(QWidget):
 
             value_item = self._param_table.item(row, 1)
             if value_item is not None:
-                value_item.setText(f"{fitted.value:.6f}")
+                value_item.setText(f"{display_values.get(param_name, fitted.value):.6f}")
 
             min_item = self._param_table.item(row, 3)
             if min_item is not None:
@@ -543,6 +708,8 @@ class SingleFitTab(QWidget):
             fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
             if fix_checkbox is not None:
                 fix_checkbox.setChecked(bool(fitted.fixed))
+        self._updating_fraction_values = False
+        self._synchronize_fraction_value_rows()
 
         lines = [
             f"<b>Fit Wizard — {assessment.template.title}</b>",
@@ -560,7 +727,7 @@ class SingleFitTab(QWidget):
         for parameter in result.parameters:
             unc = result.uncertainties.get(parameter.name, 0.0)
             lines.append(
-                f"  {_format_param_label(parameter.name)} = {parameter.value:.6f} ± {unc:.6f}"
+                f"  {_format_param_label(parameter.name)} = {display_values.get(parameter.name, parameter.value):.6f} ± {unc:.6f}"
             )
         self._result_label.setText("<br>".join(lines))
 
@@ -734,6 +901,10 @@ class SingleFitTab(QWidget):
 
         # Update results display
         if result.success:
+            display_values = _normalized_model_param_values(
+                self._composite_model,
+                {parameter.name: parameter.value for parameter in result.parameters},
+            )
             lines = [
                 f"<b>χ² = {result.chi_squared:.4f}</b>",
                 f"<b>χ²ᵣ = {result.reduced_chi_squared:.4f}</b>",
@@ -741,18 +912,23 @@ class SingleFitTab(QWidget):
             ]
             for param in result.parameters:
                 unc = result.uncertainties.get(param.name, 0.0)
-                lines.append(f"  {_format_param_label(param.name)} = {param.value:.6f} ± {unc:.6f}")
+                lines.append(
+                    f"  {_format_param_label(param.name)} = {display_values.get(param.name, param.value):.6f} ± {unc:.6f}"
+                )
             self._result_label.setText("<br>".join(lines))
 
             # Update table with fit results
+            self._updating_fraction_values = True
             for i in range(self._param_table.rowCount()):
                 name_item = self._param_table.item(i, 0)
                 param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
                 if not isinstance(param_name, str):
                     param_name = name_item.text() if name_item else ""
                 if param_name in result.parameters:
-                    fitted_value = result.parameters[param_name].value
+                    fitted_value = display_values.get(param_name, result.parameters[param_name].value)
                     self._param_table.item(i, 1).setText(f"{fitted_value:.6f}")
+            self._updating_fraction_values = False
+            self._synchronize_fraction_value_rows()
 
             param_dict = {p.name: p.value for p in result.parameters}
             n_samples = _fit_curve_sample_count(
@@ -824,10 +1000,21 @@ class SingleFitTab(QWidget):
                 }
             )
 
+        normalized_values = _normalized_model_param_values(
+            self._composite_model,
+            {
+                str(entry["name"]): float(entry.get("value", 0.0))
+                for entry in params
+            },
+        )
+
         state = {
             "model_name": "Composite",
             "composite_model": self._composite_model.to_dict(),
-            "parameters": params,
+            "parameters": [
+                {**entry, "value": normalized_values.get(str(entry["name"]), entry["value"])}
+                for entry in params
+            ],
             "result_html": self._result_label.text(),
         }
         if (
@@ -859,6 +1046,15 @@ class SingleFitTab(QWidget):
                 )
 
         params_data = {p["name"]: p for p in state.get("parameters", [])}
+        normalized_state_values = _normalized_model_param_values(
+            self._composite_model,
+            {
+                str(name): float(entry.get("value", 0.0))
+                for name, entry in params_data.items()
+                if entry.get("value") is not None
+            },
+        )
+        self._updating_fraction_values = True
         for i in range(self._param_table.rowCount()):
             name_item = self._param_table.item(i, 0)
             param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
@@ -871,7 +1067,9 @@ class SingleFitTab(QWidget):
 
             value_item = self._param_table.item(i, 1)
             if value_item:
-                value_item.setText(str(p_data.get("value", 0.0)))
+                value_item.setText(
+                    str(normalized_state_values.get(param_name, p_data.get("value", 0.0)))
+                )
 
             fix_widget = self._param_table.cellWidget(i, 2)
             fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
@@ -885,6 +1083,8 @@ class SingleFitTab(QWidget):
             max_item = self._param_table.item(i, 4)
             if max_item:
                 max_item.setText(str(p_data.get("max", "inf")))
+        self._updating_fraction_values = False
+        self._synchronize_fraction_value_rows()
 
         result_html = state.get("result_html")
         if isinstance(result_html, str) and result_html:
@@ -937,6 +1137,7 @@ class GlobalFitTab(QWidget):
         self._cached_wizard_recommendation: GlobalFitWizardRecommendation | None = None
         self._cached_wizard_signature: dict[str, object] | None = None
         self._cached_wizard_log_text = ""
+        self._updating_fraction_values = False
 
         # Model selection
         model_group = QGroupBox("Model")
@@ -966,15 +1167,14 @@ class GlobalFitTab(QWidget):
         param_group = QGroupBox("Parameter Classification")
         param_layout = QVBoxLayout(param_group)
 
-        info_label = QLabel(
-            "Specify how each parameter behaves across datasets:\n"
-            "• Global: Same value for all datasets\n"
-            "• Local: Different value for each dataset\n"
-            "• Fixed: Held constant at the specified value\n"
-            "• File: Use value from dataset metadata (where available)"
-        )
-        info_label.setWordWrap(True)
-        param_layout.addWidget(info_label)
+        param_header_layout = QHBoxLayout()
+        param_header_layout.addStretch()
+        self._param_help_btn = QPushButton("?")
+        self._param_help_btn.setFixedWidth(28)
+        self._param_help_btn.setToolTip("Explain Global, Local, Fixed, and File parameter roles")
+        self._param_help_btn.clicked.connect(self._show_parameter_classification_help)
+        param_header_layout.addWidget(self._param_help_btn)
+        param_layout.addLayout(param_header_layout)
 
         self._param_table = QTableWidget(0, 4)
         self._param_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
@@ -983,6 +1183,7 @@ class GlobalFitTab(QWidget):
         self._param_table.setColumnWidth(1, 80)  # Initial value
         self._param_table.setColumnWidth(2, 100)  # Type (dropdown)
         self._param_table.setColumnWidth(3, 150)  # Bounds
+        self._param_table.itemChanged.connect(self._on_param_table_item_changed)
         param_layout.addWidget(self._param_table)
         layout.addWidget(param_group)
 
@@ -1012,6 +1213,13 @@ class GlobalFitTab(QWidget):
         self._fit_worker: GlobalFitWorker | None = None
 
         self._set_composite_model(self._composite_model)
+
+    def _show_parameter_classification_help(self) -> None:
+        QMessageBox.information(
+            self,
+            "Parameter Classification Help",
+            _GLOBAL_FIT_PARAMETER_CLASSIFICATION_HELP_TEXT,
+        )
 
     def register_single_fit_seed(
         self, run_number: int, model: CompositeModel, fit_result: object
@@ -1370,6 +1578,7 @@ class GlobalFitTab(QWidget):
             inherited_model.param_names,
         )
         if averages:
+            self._updating_fraction_values = True
             for row in range(self._param_table.rowCount()):
                 name_item = self._param_table.item(row, 0)
                 pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
@@ -1380,6 +1589,8 @@ class GlobalFitTab(QWidget):
                 value_item = self._param_table.item(row, 1)
                 if value_item is not None:
                     value_item.setText(f"{averages[pname]:.6g}")
+            self._updating_fraction_values = False
+            self._synchronize_fraction_value_rows()
 
         self._inherited_seed_by_run = inherited_values_by_run
         self._inherited_model_dict = inherited_model.to_dict()
@@ -1426,6 +1637,7 @@ class GlobalFitTab(QWidget):
     def _set_composite_model(self, model: CompositeModel) -> None:
         """Set the active composite model and rebuild classification rows."""
         preserved_state = self._current_parameter_row_state()
+        self._updating_fraction_values = True
         self._composite_model = model
         _set_formula_label_text(self._formula_label, model.formula_string())
 
@@ -1472,6 +1684,33 @@ class GlobalFitTab(QWidget):
             min_text = str(default_min) if default_min is not None else "-inf"
             bounds_item = QTableWidgetItem(previous.get("bounds") or f"{min_text}, inf")
             self._param_table.setItem(i, 3, bounds_item)
+
+        _configure_fraction_rows_in_table(
+            self._param_table,
+            model,
+            bounds_column=3,
+        )
+        self._updating_fraction_values = False
+        self._synchronize_fraction_value_rows()
+
+    def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
+        self._updating_fraction_values = True
+        try:
+            _synchronize_fraction_group_values_in_table(
+                self._param_table,
+                self._composite_model,
+                edited_param_name=edited_param_name,
+            )
+        finally:
+            self._updating_fraction_values = False
+
+    def _on_param_table_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._updating_fraction_values or item.column() != 1:
+            return
+        name_item = self._param_table.item(item.row(), 0)
+        param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
+        if isinstance(param_name, str):
+            self._synchronize_fraction_value_rows(param_name)
 
     def _edit_function(self) -> None:
         """Launch the fit-function builder dialog."""
@@ -1960,6 +2199,16 @@ class GlobalFitTab(QWidget):
                 representative_result.parameters if representative_result is not None else []
             )
         }
+        display_values = _normalized_model_param_values(
+            self._composite_model,
+            {
+                parameter.name: parameter.value
+                for parameter in (
+                    representative_result.parameters if representative_result is not None else []
+                )
+            },
+        )
+        self._updating_fraction_values = True
 
         for row in range(self._param_table.rowCount()):
             name_item = self._param_table.item(row, 0)
@@ -1977,13 +2226,15 @@ class GlobalFitTab(QWidget):
             value_item = self._param_table.item(row, 1)
             fitted = fitted_by_name.get(pname)
             if value_item is not None and fitted is not None:
-                value_item.setText(f"{fitted.value:.6g}")
+                value_item.setText(f"{display_values.get(pname, fitted.value):.6g}")
 
             bounds_item = self._param_table.item(row, 3)
             if bounds_item is not None and fitted is not None:
                 min_text = "-inf" if not np.isfinite(fitted.min) else f"{float(fitted.min):g}"
                 max_text = "inf" if not np.isfinite(fitted.max) else f"{float(fitted.max):g}"
                 bounds_item.setText(f"{min_text}, {max_text}")
+        self._updating_fraction_values = False
+        self._synchronize_fraction_value_rows()
 
         self._current_model = assessment.template.model
         self._current_global_params = list(assessment.global_param_names)
@@ -2101,10 +2352,21 @@ class GlobalFitTab(QWidget):
                 }
             )
 
+        normalized_values = _normalized_model_param_values(
+            self._composite_model,
+            {
+                str(entry["name"]): float(entry.get("value", 0.0))
+                for entry in params
+            },
+        )
+
         state = {
             "model_name": "Composite",
             "composite_model": self._composite_model.to_dict(),
-            "parameters": params,
+            "parameters": [
+                {**entry, "value": normalized_values.get(str(entry["name"]), entry["value"])}
+                for entry in params
+            ],
             "result_html": self._result_text.toHtml(),
         }
         wizard_state_by_run_set = self._serialize_wizard_cache_store()
@@ -2138,6 +2400,15 @@ class GlobalFitTab(QWidget):
                 )
 
         params_data = {p["name"]: p for p in state.get("parameters", [])}
+        normalized_state_values = _normalized_model_param_values(
+            self._composite_model,
+            {
+                str(name): float(entry.get("value", 0.0))
+                for name, entry in params_data.items()
+                if entry.get("value") is not None
+            },
+        )
+        self._updating_fraction_values = True
         for i in range(self._param_table.rowCount()):
             name_item = self._param_table.item(i, 0)
             param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
@@ -2150,7 +2421,9 @@ class GlobalFitTab(QWidget):
 
             value_item = self._param_table.item(i, 1)
             if value_item:
-                value_item.setText(str(p_data.get("value", 0.0)))
+                value_item.setText(
+                    str(normalized_state_values.get(param_name, p_data.get("value", 0.0)))
+                )
 
             type_combo = self._param_table.cellWidget(i, 2)
             if isinstance(type_combo, QComboBox):
@@ -2162,6 +2435,8 @@ class GlobalFitTab(QWidget):
             bounds_item = self._param_table.item(i, 3)
             if bounds_item:
                 bounds_item.setText(p_data.get("bounds", "-inf, inf"))
+        self._updating_fraction_values = False
+        self._synchronize_fraction_value_rows()
 
         result_html = state.get("result_html")
         if isinstance(result_html, str) and result_html:

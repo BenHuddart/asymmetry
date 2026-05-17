@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QComboBox
+from PySide6.QtWidgets import QApplication, QComboBox, QMessageBox
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
@@ -636,6 +636,31 @@ def test_global_fit_type_combo_includes_file_for_bl_parameters(
     assert isinstance(type_combo, QComboBox)
     items = [type_combo.itemText(i) for i in range(type_combo.count())]
     assert "File" in items
+
+
+def test_global_fit_parameter_help_button_opens_dialog(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tab = GlobalFitTab()
+    captured: dict[str, object] = {}
+
+    def _fake_information(parent, title, text):
+        captured["parent"] = parent
+        captured["title"] = title
+        captured["text"] = text
+        return QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(fit_panel_module.QMessageBox, "information", _fake_information)
+
+    assert tab._param_help_btn.text() == "?"
+    tab._param_help_btn.click()
+
+    assert captured["parent"] is tab
+    assert captured["title"] == "Parameter Classification Help"
+    assert "Global: Same value for all datasets" in str(captured["text"])
+    assert "Local: Different value for each dataset" in str(captured["text"])
+    assert "Fixed: Held constant at the specified value" in str(captured["text"])
+    assert "File: Use the value from dataset metadata" in str(captured["text"])
 
 
 def test_single_tab_default_model_includes_background(qapp: QApplication) -> None:
@@ -1350,6 +1375,44 @@ def test_global_tab_state_roundtrip_preserves_cached_wizard_results(
     assert restored._cached_wizard_recommendation.summary == recommendation.summary
     assert restored._cached_wizard_signature == signature
     assert restored._cached_wizard_log_text == "cached log"
+
+
+def test_single_fit_fraction_rows_auto_complete_final_fraction(qapp: QApplication) -> None:
+    tab = SingleFitTab()
+    tab._set_composite_model(CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}"))
+
+    row_by_name = {
+        tab._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._param_table.rowCount())
+    }
+    final_item = tab._param_table.item(row_by_name["fraction_3"], 1)
+    assert final_item is not None
+    assert not bool(final_item.flags() & Qt.ItemFlag.ItemIsEditable)
+
+    tab._param_table.item(row_by_name["fraction_1"], 1).setText("0.2")
+    tab._param_table.item(row_by_name["fraction_2"], 1).setText("0.3")
+
+    assert tab._param_table.item(row_by_name["fraction_3"], 1).text() == "0.5"
+
+
+def test_global_fit_fraction_rows_auto_complete_final_fraction(qapp: QApplication) -> None:
+    tab = GlobalFitTab()
+    tab._set_composite_model(CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}"))
+
+    row_by_name = {
+        tab._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._param_table.rowCount())
+    }
+    final_item = tab._param_table.item(row_by_name["fraction_3"], 1)
+    bounds_item = tab._param_table.item(row_by_name["fraction_3"], 3)
+    assert final_item is not None
+    assert not bool(final_item.flags() & Qt.ItemFlag.ItemIsEditable)
+    assert bounds_item is not None and bounds_item.text() == "0, 1"
+
+    tab._param_table.item(row_by_name["fraction_1"], 1).setText("0.25")
+    tab._param_table.item(row_by_name["fraction_2"], 1).setText("0.5")
+
+    assert tab._param_table.item(row_by_name["fraction_3"], 1).text() == "0.25"
 
 
 def test_global_tab_reopens_cached_results_for_prior_run_set_after_switching_groups(

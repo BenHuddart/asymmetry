@@ -127,6 +127,15 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "D_2D": ParamInfo(
         "D_2D", "D_2D", "D_2D", r"$D_{2D}$", r"{\it D}_{2D}", "μs⁻¹", default_min=0.0
     ),
+    "D_hop": ParamInfo(
+        "D_hop",
+        "D_hop",
+        "D_hop",
+        r"$D_{\mathrm{hop}}$",
+        r"{\it D}_{hop}",
+        "μs⁻¹",
+        default_min=0.0,
+    ),
     "D_nD": ParamInfo(
         "D_nD", "D_nD", "D_nD", r"$D_{nD}$", r"{\it D}_{nD}", "μs⁻¹", default_min=0.0
     ),
@@ -216,6 +225,14 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "beta_nm": ParamInfo("beta_nm", "beta_nm", "β_nm", r"$\beta_{nm}$", r"\beta_{nm}"),
     "alpha_sc": ParamInfo("alpha_sc", "alpha_sc", "α", r"$\alpha$", r"\alpha", default_min=0.0),
     "weight": ParamInfo("weight", "weight", "w", r"$w$", r"{\it w}", default_min=0.0),
+    "fraction": ParamInfo(
+        "fraction",
+        "fraction",
+        "fraction",
+        r"$f$",
+        r"{\it f}",
+        default_min=0.0,
+    ),
     "signed_gap": ParamInfo(
         "signed_gap", "signed_gap", "signed", "signed", "signed", default_min=0.0
     ),
@@ -252,11 +269,12 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "m": "Field-dependence exponent in generalized Redfield-like denominators.",
     "f": "Amplitude of the Gaussian level-crossing resonance contribution.",
     "D_2D": "In-plane diffusion rate used in diffusion-assisted LF relaxation models.",
+    "D_hop": "Ballistic hopping rate entering the Bessel-function transport autocorrelation.",
     "D_nD": "Effective n-dimensional diffusion rate.",
     "D_perp": "Perpendicular (interlayer) diffusion rate component.",
     "lambda_BG": "Field-independent background relaxation contribution.",
     "lambda_0D": "Field-independent local (0D) dynamic relaxation contribution.",
-    "C": "Overall coupling prefactor in diffusion-based relaxation expressions.",
+    "C": "Overall coupling prefactor in transport-based relaxation expressions.",
     "sigma_0": "Additive superconducting scale in sigma(T)=sigma_0*rho_s(T)+sigma_bg; approximately the T->0 superconducting linewidth.",
     "sigma_bg": "Additive non-superconducting background linewidth (temperature-independent within the model).",
     "sigma_sc": "Quadrature superconducting linewidth scale in sigma(T)=sqrt((sigma_sc*rho_s)^2+sigma_nm^2).",
@@ -271,6 +289,7 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "beta_nm": "Harmonic-mixing parameter in nonmonotonic d-wave g(phi)=beta*cos(2phi)+(1-beta)*cos(6phi).",
     "alpha_sc": "Alpha-model scaling factor multiplying the weak-coupling s-wave ratio: Delta_0/(k_B T_c)=alpha_sc*1.764.",
     "weight": "Band mixing weight w constrained to [0,1] for weighted sums rho=w*rho_1+(1-w)*rho_2.",
+    "fraction": "Normalized mixture fraction within a fraction-defined composite component group.",
     "signed_gap": "Flag-like control for extended-s convention; nonzero values preserve sign of cos(2phi), zero uses magnitude |cos(2phi)|.",
 }
 

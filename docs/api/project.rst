@@ -82,7 +82,9 @@ structure::
         "fit_ui_state": { "active_tab_index": 0 },
         "fit_parameters_state": { "rows": [...], "x_axis": "Auto", ... },
         "fourier_state": {
-            "window": "Hanning",
+            "window": "gaussian",
+            "filter_start_us": 0.0,
+            "filter_time_constant_us": 1.5,
             "padding": 4,
             "display": "Power"
         }
