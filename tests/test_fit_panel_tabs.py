@@ -1047,7 +1047,9 @@ def test_global_fit_results_preserve_parameter_type_selection(
         params = ParameterSet(
             [Parameter(name=name, value=value) for name, value in zip(pnames, values, strict=False)]
         )
-        return FitResult(success=True, parameters=params, uncertainties={name: 0.01 for name in pnames})
+        return FitResult(
+            success=True, parameters=params, uncertainties={name: 0.01 for name in pnames}
+        )
 
     results = {
         101: (_fit_result([0.11, 0.22, 0.33]), (np.array([0.0, 1.0]), np.array([0.2, 0.1])), []),
@@ -1379,7 +1381,9 @@ def test_global_tab_state_roundtrip_preserves_cached_wizard_results(
 
 def test_single_fit_fraction_rows_auto_complete_final_fraction(qapp: QApplication) -> None:
     tab = SingleFitTab()
-    tab._set_composite_model(CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}"))
+    tab._set_composite_model(
+        CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}")
+    )
 
     row_by_name = {
         tab._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
@@ -1397,7 +1401,9 @@ def test_single_fit_fraction_rows_auto_complete_final_fraction(qapp: QApplicatio
 
 def test_global_fit_fraction_rows_auto_complete_final_fraction(qapp: QApplication) -> None:
     tab = GlobalFitTab()
-    tab._set_composite_model(CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}"))
+    tab._set_composite_model(
+        CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}")
+    )
 
     row_by_name = {
         tab._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row

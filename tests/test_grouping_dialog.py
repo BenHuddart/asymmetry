@@ -106,8 +106,7 @@ def _dataset_with_deadtime_profile(run_number: int, tau_us: float) -> MuonDatase
     frame_scale = num_good_frames * bin_width
     true_counts = amplitude * np.exp(-times / lifetime_us)
     observed = true_counts * (
-        1.0
-        - (true_counts / frame_scale) * lifetime_us * (1.0 - np.exp(-tau_us / lifetime_us))
+        1.0 - (true_counts / frame_scale) * lifetime_us * (1.0 - np.exp(-tau_us / lifetime_us))
     )
     histograms = [Histogram(observed.copy(), bin_width=bin_width) for _ in range(4)]
     run = Run(

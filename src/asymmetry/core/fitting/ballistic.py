@@ -44,7 +44,6 @@ from scipy.special import j0
 
 from asymmetry.core.utils.constants import ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G
 
-
 _QUAD_LIMIT = 500
 _QUAD_EPSABS = 1e-8
 _QUAD_EPSREL = 1e-6

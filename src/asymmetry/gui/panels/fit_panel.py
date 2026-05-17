@@ -136,7 +136,9 @@ def _synchronize_fraction_group_values_in_table(
             values[name] = min(max(_parse_param_table_float(table, row, 0.0), 0.0), 1.0)
 
         if edited_param_name in editable_names:
-            remaining = 1.0 - sum(values[name] for name in editable_names if name != edited_param_name)
+            remaining = 1.0 - sum(
+                values[name] for name in editable_names if name != edited_param_name
+            )
             values[edited_param_name] = min(values[edited_param_name], max(0.0, remaining))
         else:
             running_sum = 0.0
@@ -165,9 +167,7 @@ def _configure_fraction_rows_in_table(
 ) -> None:
     row_by_name = _param_table_rows_by_name(table)
     final_fraction_names = {group[-1] for group in model.fraction_parameter_groups() if group}
-    all_fraction_names = {
-        name for group in model.fraction_parameter_groups() for name in group
-    }
+    all_fraction_names = {name for group in model.fraction_parameter_groups() for name in group}
 
     for name in all_fraction_names:
         row = row_by_name.get(name)
@@ -175,7 +175,11 @@ def _configure_fraction_rows_in_table(
             continue
         value_item = table.item(row, 1)
         if value_item is not None:
-            tooltip = "Final fraction is computed automatically." if name in final_fraction_names else "Edit the first n-1 fractions; the final fraction is the remainder to 1."
+            tooltip = (
+                "Final fraction is computed automatically."
+                if name in final_fraction_names
+                else "Edit the first n-1 fractions; the final fraction is the remainder to 1."
+            )
             value_item.setToolTip(tooltip)
             if name in final_fraction_names:
                 value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -925,7 +929,9 @@ class SingleFitTab(QWidget):
                 if not isinstance(param_name, str):
                     param_name = name_item.text() if name_item else ""
                 if param_name in result.parameters:
-                    fitted_value = display_values.get(param_name, result.parameters[param_name].value)
+                    fitted_value = display_values.get(
+                        param_name, result.parameters[param_name].value
+                    )
                     self._param_table.item(i, 1).setText(f"{fitted_value:.6f}")
             self._updating_fraction_values = False
             self._synchronize_fraction_value_rows()
@@ -1002,10 +1008,7 @@ class SingleFitTab(QWidget):
 
         normalized_values = _normalized_model_param_values(
             self._composite_model,
-            {
-                str(entry["name"]): float(entry.get("value", 0.0))
-                for entry in params
-            },
+            {str(entry["name"]): float(entry.get("value", 0.0)) for entry in params},
         )
 
         state = {
@@ -2354,10 +2357,7 @@ class GlobalFitTab(QWidget):
 
         normalized_values = _normalized_model_param_values(
             self._composite_model,
-            {
-                str(entry["name"]): float(entry.get("value", 0.0))
-                for entry in params
-            },
+            {str(entry["name"]): float(entry.get("value", 0.0)) for entry in params},
         )
 
         state = {

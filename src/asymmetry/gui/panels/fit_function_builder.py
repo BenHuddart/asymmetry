@@ -22,7 +22,6 @@ from asymmetry.gui.widgets.function_expression_builder import (
     FunctionExpressionBuilderDialog,
 )
 
-
 _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _FRACTION_GROUP_COLORS = ["#005A9C", "#A44A00", "#0B6E4F", "#8A1C1C", "#6B4F00"]
 
@@ -50,9 +49,9 @@ class FitFunctionBuilderDialog(FunctionExpressionBuilderDialog):
         self._fraction_groups = (
             sorted(initial_model.fraction_groups) if initial_model is not None else []
         )
-        self._last_valid_structure: tuple[
-            tuple[str, ...], tuple[str, ...], tuple[int, ...], tuple[int, ...]
-        ] | None = None
+        self._last_valid_structure: (
+            tuple[tuple[str, ...], tuple[str, ...], tuple[int, ...], tuple[int, ...]] | None
+        ) = None
         self._preserve_fraction_groups_once = False
         self._normalizing_fraction_syntax = False
         initial_expression = (
@@ -239,9 +238,11 @@ class FitFunctionBuilderDialog(FunctionExpressionBuilderDialog):
             return None
 
         expression = self._expression_edit.text().strip()
-        component_names, operators, open_parentheses, close_parentheses = parse_component_expression(
-            expression,
-            allowed_components=self._allowed_components,
+        component_names, operators, open_parentheses, close_parentheses = (
+            parse_component_expression(
+                expression,
+                allowed_components=self._allowed_components,
+            )
         )
         spans = self._component_spans(expression, component_names)
         selection_start, selection_end = self._expression_edit.selectionRange()
@@ -297,9 +298,11 @@ class FitFunctionBuilderDialog(FunctionExpressionBuilderDialog):
         if not expression:
             return False, "Expression is required.", None
 
-        component_names, operators, open_parentheses, close_parentheses = parse_component_expression(
-            expression,
-            allowed_components=self._allowed_components,
+        component_names, operators, open_parentheses, close_parentheses = (
+            parse_component_expression(
+                expression,
+                allowed_components=self._allowed_components,
+            )
         )
         current_structure = self._structure_key(
             component_names,
@@ -349,21 +352,18 @@ class FitFunctionBuilderDialog(FunctionExpressionBuilderDialog):
 
         self._model = model
         color_ranges = self._apply_fraction_visuals(model.component_names)
-        expression_html = self._render_colored_text(self._expression_edit.text().strip(), color_ranges)
+        expression_html = self._render_colored_text(
+            self._expression_edit.text().strip(), color_ranges
+        )
         preview = (
             f"Preview: <b>{html.escape(self._expression_prefix)}</b> = "
             f"{html.escape(model.formula_string())}<br>"
             f"Expression: {expression_html}"
         )
         if self._fraction_groups:
-            preview += (
-                "<br>Fractions: "
-                + ", ".join(
-                    html.escape(
-                        self._expression_edit.text().strip()[start:end]
-                    )
-                    for start, end, _color in color_ranges
-                )
+            preview += "<br>Fractions: " + ", ".join(
+                html.escape(self._expression_edit.text().strip()[start:end])
+                for start, end, _color in color_ranges
             )
         self._preview_label.setText(preview)
         self._set_status("Expression is valid.", valid=True)
@@ -431,7 +431,9 @@ class FitFunctionBuilderDialog(FunctionExpressionBuilderDialog):
             )
             return
 
-        self._fraction_groups = [existing for existing in self._fraction_groups if existing != group]
+        self._fraction_groups = [
+            existing for existing in self._fraction_groups if existing != group
+        ]
         self._preserve_fraction_groups_once = True
         self._on_fields_changed()
         self._expression_edit.setFocus()

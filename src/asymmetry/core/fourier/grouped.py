@@ -45,7 +45,9 @@ def _rebin_group_counts(
 
     n_new = counts.size // bunch_factor
     trimmed = n_new * bunch_factor
-    rebinned_time = np.asarray(time[:trimmed], dtype=np.float64).reshape(n_new, bunch_factor).mean(axis=1)
+    rebinned_time = (
+        np.asarray(time[:trimmed], dtype=np.float64).reshape(n_new, bunch_factor).mean(axis=1)
+    )
     rebinned_counts = (
         np.asarray(counts[:trimmed], dtype=np.float64).reshape(n_new, bunch_factor).sum(axis=1)
     )
@@ -227,7 +229,9 @@ def build_group_signal_dataset(
         apply_deadtime = bool(grouping.get("deadtime_correction", False))
         if use_deadtime is not None:
             apply_deadtime = bool(use_deadtime)
-        prepared_histograms, _ = prepare_histograms_with_deadtime(histograms, grouping, apply_deadtime)
+        prepared_histograms, _ = prepare_histograms_with_deadtime(
+            histograms, grouping, apply_deadtime
+        )
     else:
         prepared_histograms = list(prepared_histograms)
         if not prepared_histograms:

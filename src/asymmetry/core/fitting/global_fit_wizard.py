@@ -414,6 +414,32 @@ def _spawn_context() -> mp.context.BaseContext:
     return mp.get_context("spawn")
 
 
+def _try_open_process_pool(
+    *,
+    max_workers: int,
+    progress_callback: Callable[[str], None] | None = None,
+    activity: str,
+) -> ProcessPoolExecutor | None:
+    try:
+        return ProcessPoolExecutor(
+            max_workers=max_workers,
+            mp_context=_spawn_context(),
+        )
+    except (OSError, PermissionError, ValueError):
+        _progress_log(
+            progress_callback,
+            f"{activity}: spawn-safe workers unavailable in this environment; "
+            "falling back to serial execution.",
+        )
+        return None
+
+
+def _shutdown_process_pool(executor: ProcessPoolExecutor) -> None:
+    shutdown = getattr(executor, "shutdown", None)
+    if callable(shutdown):
+        shutdown()
+
+
 def _layer_assignments(
     free_param_names: tuple[str, ...],
 ) -> tuple[tuple[tuple[str, ...], ...], ...]:
@@ -686,28 +712,46 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
             progress_callback,
             f"Running phase-1 single-fit table generation with {worker_count} spawn-safe workers.",
         )
-        with ProcessPoolExecutor(
+        executor = _try_open_process_pool(
             max_workers=worker_count,
-            mp_context=_spawn_context(),
-        ) as executor:
-            future_to_dataset = {}
+            progress_callback=progress_callback,
+            activity="Phase-1 single-fit table generation",
+        )
+        if executor is None:
             for dataset in missing_datasets:
                 _progress_log(
                     progress_callback,
                     f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
                 )
-                future_to_dataset[
-                    executor.submit(
-                        _single_fit_recommendation_task,
-                        dataset,
-                        portfolio.templates,
-                        SelectionMetric.AICC,
-                    )
-                ] = dataset
-            for future in as_completed(future_to_dataset):
-                run_number, recommendation = future.result()
+                run_number, recommendation = _single_fit_recommendation_task(
+                    dataset,
+                    portfolio.templates,
+                    SelectionMetric.AICC,
+                )
                 complete_by_run[run_number] = recommendation
                 generated_run_numbers.append(run_number)
+        else:
+            try:
+                future_to_dataset = {}
+                for dataset in missing_datasets:
+                    _progress_log(
+                        progress_callback,
+                        f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
+                    )
+                    future_to_dataset[
+                        executor.submit(
+                            _single_fit_recommendation_task,
+                            dataset,
+                            portfolio.templates,
+                            SelectionMetric.AICC,
+                        )
+                    ] = dataset
+                for future in as_completed(future_to_dataset):
+                    run_number, recommendation = future.result()
+                    complete_by_run[run_number] = recommendation
+                    generated_run_numbers.append(run_number)
+            finally:
+                _shutdown_process_pool(executor)
 
     complete_by_run = _sync_single_fit_recommendation_store(
         existing_recommendations_by_run,
@@ -5380,9 +5424,10 @@ def _run_exhaustive_wavefront_search(
 
     executor: ProcessPoolExecutor | None = None
     if worker_count > 1 and total_assignments > 1:
-        executor = ProcessPoolExecutor(
+        executor = _try_open_process_pool(
             max_workers=worker_count,
-            mp_context=_spawn_context(),
+            progress_callback=progress_callback,
+            activity="Exhaustive global/local role search",
         )
 
     try:
@@ -5477,7 +5522,7 @@ def _run_exhaustive_wavefront_search(
             )
     finally:
         if executor is not None:
-            executor.shutdown()
+            _shutdown_process_pool(executor)
 
     optimized_assessments: list[GlobalCandidateAssessment] = []
     for state in states:

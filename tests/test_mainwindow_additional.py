@@ -125,7 +125,10 @@ class TestMainWindowFourier:
         phases = mainwindow._fourier_panel.group_phase_table()
         assert mainwindow._fourier_panel._use_phase_table_check.isChecked() is True
         assert set(phases) == {1, 2}
-        assert mainwindow._fourier_panel._phase_table.item(0, 2).foreground().color().name() == "#15803d"
+        assert (
+            mainwindow._fourier_panel._phase_table.item(0, 2).foreground().color().name()
+            == "#15803d"
+        )
 
     def test_compute_fourier_plots_frequency_domain_dataset(self, mainwindow: MainWindow) -> None:
         dataset = _make_fourier_ready_dataset(8802, with_grouping=True)
@@ -216,7 +219,9 @@ class TestMainWindowFourier:
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8804)
         mainwindow._fourier_panel._use_phase_table_check.setChecked(True)
-        mainwindow._fourier_panel.set_group_definitions({1: "Left", 2: "Right"}, {1: 32.0, 2: -18.0})
+        mainwindow._fourier_panel.set_group_definitions(
+            {1: "Left", 2: "Right"}, {1: 32.0, 2: -18.0}
+        )
 
         mainwindow._on_compute_fourier()
 
@@ -244,7 +249,9 @@ class TestMainWindowFourier:
         assert plotted.metadata["run_label"] == "8805 Average (Left)"
         assert plotted.metadata["group_ids"] == [1]
 
-    def test_compute_group_fourier_can_average_selected_groups(self, mainwindow: MainWindow) -> None:
+    def test_compute_group_fourier_can_average_selected_groups(
+        self, mainwindow: MainWindow
+    ) -> None:
         dataset = _make_fourier_ready_dataset(8806, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8806)
@@ -277,7 +284,9 @@ class TestMainWindowFourier:
 
         calls: list[tuple[float | None, float | None]] = []
 
-        def _fake_fft_complex_asymmetry(_dataset: MuonDataset, **kwargs: object) -> tuple[np.ndarray, np.ndarray]:
+        def _fake_fft_complex_asymmetry(
+            _dataset: MuonDataset, **kwargs: object
+        ) -> tuple[np.ndarray, np.ndarray]:
             calls.append((kwargs.get("t_min"), kwargs.get("t_max")))
             return np.array([0.0, 1.0]), np.array([0.0 + 0.0j, 1.0 + 0.0j])
 
@@ -308,7 +317,10 @@ class TestMainWindowFourier:
                 time=np.array([0.0, 1.0]),
                 asymmetry=np.array([1.0, 0.5]),
                 error=np.array([0.1, 0.1]),
-                metadata={"run_number": run.run_number, "run_label": f"{run.run_number} G{group_id}"},
+                metadata={
+                    "run_number": run.run_number,
+                    "run_label": f"{run.run_number} G{group_id}",
+                },
                 run=run,
             )
 
@@ -318,7 +330,9 @@ class TestMainWindowFourier:
         ) -> tuple[np.ndarray, np.ndarray]:
             return np.array([0.0, 1.0]), np.array([1.0 + 0.0j, 0.5 + 0.0j])
 
-        monkeypatch.setattr(mw_module, "build_group_signal_dataset", _fake_build_group_signal_dataset)
+        monkeypatch.setattr(
+            mw_module, "build_group_signal_dataset", _fake_build_group_signal_dataset
+        )
         monkeypatch.setattr(mw_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
 
         mainwindow._on_compute_fourier()
@@ -331,7 +345,9 @@ class TestMainWindowFourier:
         assert first_t0 is not None
         assert build_calls[1].get("reference_t0_bin") == first_t0
 
-    def test_compute_group_fourier_average_can_estimate_errors(self, mainwindow: MainWindow) -> None:
+    def test_compute_group_fourier_average_can_estimate_errors(
+        self, mainwindow: MainWindow
+    ) -> None:
         dataset = _make_fourier_ready_dataset(8807, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8807)
@@ -415,18 +431,26 @@ class TestMainWindowFourier:
 
         mainwindow._on_dataset_selected(8820)
         assert mainwindow._fourier_panel.group_phase_table() == pytest.approx({1: 11.0, 2: -7.0})
-        assert mainwindow._fourier_panel._phase_table.item(0, 2).foreground().color().name() == "#15803d"
+        assert (
+            mainwindow._fourier_panel._phase_table.item(0, 2).foreground().color().name()
+            == "#15803d"
+        )
 
         mainwindow._on_dataset_selected(8821)
         assert mainwindow._fourier_panel.group_phase_table() == pytest.approx({1: 3.0, 2: 4.0})
-        assert mainwindow._fourier_panel._phase_table.item(0, 2).foreground().color().name() == "#0f62fe"
+        assert (
+            mainwindow._fourier_panel._phase_table.item(0, 2).foreground().color().name()
+            == "#0f62fe"
+        )
 
     def test_frequency_axis_toggle_can_show_relative_values(self, mainwindow: MainWindow) -> None:
         dataset = _make_fourier_ready_dataset(8811, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8811)
         mainwindow._on_compute_fourier()
-        abs_x_min, abs_x_max, _abs_y_min, _abs_y_max = mainwindow._frequency_plot_panel.get_view_limits()
+        abs_x_min, abs_x_max, _abs_y_min, _abs_y_max = (
+            mainwindow._frequency_plot_panel.get_view_limits()
+        )
         abs_axis_min, abs_axis_max = mainwindow._frequency_plot_panel._ax.get_xlim()
 
         mainwindow._frequency_axis_relative_check.setChecked(True)
@@ -439,8 +463,12 @@ class TestMainWindowFourier:
         assert mainwindow._frequency_plot_panel._ax.get_xlabel() == "Frequency (MHz)"
         assert x_min == pytest.approx(abs_x_min - center, abs=1e-3)
         assert x_max == pytest.approx(abs_x_max - center, abs=1e-3)
-        assert mainwindow._frequency_plot_panel._ax.get_xlim()[0] == pytest.approx(abs_axis_min, abs=1e-3)
-        assert mainwindow._frequency_plot_panel._ax.get_xlim()[1] == pytest.approx(abs_axis_max, abs=1e-3)
+        assert mainwindow._frequency_plot_panel._ax.get_xlim()[0] == pytest.approx(
+            abs_axis_min, abs=1e-3
+        )
+        assert mainwindow._frequency_plot_panel._ax.get_xlim()[1] == pytest.approx(
+            abs_axis_max, abs=1e-3
+        )
 
     def test_frequency_phase_window_narrows_wide_relative_view(
         self,
@@ -479,8 +507,12 @@ class TestMainWindowFourier:
 
         assert x_min == pytest.approx(-0.75, abs=1e-6)
         assert x_max == pytest.approx(0.25, abs=1e-6)
-        assert mainwindow._frequency_plot_panel._ax.get_xlim()[0] == pytest.approx(center - 0.75, abs=1e-3)
-        assert mainwindow._frequency_plot_panel._ax.get_xlim()[1] == pytest.approx(center + 0.25, abs=1e-3)
+        assert mainwindow._frequency_plot_panel._ax.get_xlim()[0] == pytest.approx(
+            center - 0.75, abs=1e-3
+        )
+        assert mainwindow._frequency_plot_panel._ax.get_xlim()[1] == pytest.approx(
+            center + 0.25, abs=1e-3
+        )
 
     def test_project_restore_persists_cached_fourier_spectra(
         self,
@@ -527,8 +559,13 @@ class TestMainWindowFourier:
         assert restored_dataset.metadata.get("run_number") == 8816
         assert restored_window._frequency_plot_panel.is_frequency_axis_relative_to_reference()
         assert "group_phase_state_by_run" in state.get("fourier_state", {})
-        assert restored_window._fourier_panel.group_phase_table() == pytest.approx({1: 14.0, 2: -9.0})
-        assert restored_window._fourier_panel._phase_table.item(0, 2).foreground().color().name() == "#15803d"
+        assert restored_window._fourier_panel.group_phase_table() == pytest.approx(
+            {1: 14.0, 2: -9.0}
+        )
+        assert (
+            restored_window._fourier_panel._phase_table.item(0, 2).foreground().color().name()
+            == "#15803d"
+        )
 
 
 class TestMainWindowBasic:

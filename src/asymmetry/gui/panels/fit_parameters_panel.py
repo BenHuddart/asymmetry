@@ -65,7 +65,6 @@ from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 
-
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
 

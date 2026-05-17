@@ -11,7 +11,6 @@ import re
 from typing import Any
 
 import numpy as np
-
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -29,12 +28,12 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
-    QSizePolicy,
 )
 
 from asymmetry.core.data.dataset import MuonDataset
@@ -286,7 +285,9 @@ class GroupingDialog(QDialog):
 
         self._deadtime_status_label = QLabel("")
         self._deadtime_status_label.setWordWrap(True)
-        self._deadtime_status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self._deadtime_status_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
         self._deadtime_status_label.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.MinimumExpanding,
@@ -670,7 +671,9 @@ class GroupingDialog(QDialog):
 
     def _default_deadtime_mode(self, grouping: dict[str, Any]) -> str:
         """Return preferred deadtime mode for the current grouping state."""
-        mode = str(grouping.get("deadtime_mode", grouping.get("deadtime_method", ""))).strip().lower()
+        mode = (
+            str(grouping.get("deadtime_mode", grouping.get("deadtime_method", ""))).strip().lower()
+        )
         if mode in {"file", "manual", "estimate"}:
             return mode
         if mode == "load":
@@ -724,7 +727,9 @@ class GroupingDialog(QDialog):
             normalized.append(max(0.0, tau_us))
         return normalized
 
-    def _reference_file_deadtime_values(self, grouping: dict[str, Any] | None = None) -> list[float]:
+    def _reference_file_deadtime_values(
+        self, grouping: dict[str, Any] | None = None
+    ) -> list[float]:
         """Return file deadtime values for the current reference run, if any."""
         if grouping is None:
             grouping = self._run.grouping if self._run is not None else {}
@@ -735,7 +740,9 @@ class GroupingDialog(QDialog):
     def _initial_manual_deadtime_values(self, grouping: dict[str, Any]) -> list[float]:
         """Return initial explicit deadtime values for manual editing."""
         values = self._normalize_deadtime_values(grouping.get("dead_time_us"))
-        mode = str(grouping.get("deadtime_mode", grouping.get("deadtime_method", ""))).strip().lower()
+        mode = (
+            str(grouping.get("deadtime_mode", grouping.get("deadtime_method", ""))).strip().lower()
+        )
         method = str(grouping.get("deadtime_method", "")).strip().lower()
         if values and (mode in {"manual", "load"} or method in {"manual", "calibrate", "load"}):
             return values
@@ -762,7 +769,9 @@ class GroupingDialog(QDialog):
                 index,
             )
         if values_us:
-            self._deadtime_value_combo.setCurrentIndex(min(max(current_index, 0), len(values_us) - 1))
+            self._deadtime_value_combo.setCurrentIndex(
+                min(max(current_index, 0), len(values_us) - 1)
+            )
         self._deadtime_value_combo.blockSignals(False)
         self._updating_deadtime_value_combo = False
 
@@ -779,7 +788,9 @@ class GroupingDialog(QDialog):
             return None
         return value_ns
 
-    def _current_deadtime_display_values(self, grouping: dict[str, Any] | None = None) -> list[float]:
+    def _current_deadtime_display_values(
+        self, grouping: dict[str, Any] | None = None
+    ) -> list[float]:
         """Return detector deadtime values that should be shown in the combo."""
         if grouping is None:
             grouping = self._run.grouping if self._run is not None else {}
@@ -974,7 +985,9 @@ class GroupingDialog(QDialog):
         line_edit = self._deadtime_value_combo.lineEdit()
         if line_edit is not None:
             line_edit.setReadOnly(not (enabled and mode == "manual"))
-        self._deadtime_calibrate_btn.setEnabled(enabled and mode == "manual" and bool(self._run.histograms))
+        self._deadtime_calibrate_btn.setEnabled(
+            enabled and mode == "manual" and bool(self._run.histograms)
+        )
         self._set_deadtime_combo_values(self._current_deadtime_display_values(grouping))
 
         if not enabled:
@@ -1039,7 +1052,10 @@ class GroupingDialog(QDialog):
                 "Last good bin must be greater than or equal to t0 + t_good offset.",
             )
             return
-        if self._deadtime_checkbox.isChecked() and self._resolve_deadtime_payload(show_warnings=True) is None:
+        if (
+            self._deadtime_checkbox.isChecked()
+            and self._resolve_deadtime_payload(show_warnings=True) is None
+        ):
             return
         self.accept()
 
@@ -1468,35 +1484,41 @@ class GroupingDialog(QDialog):
         if vector_mode:
             alpha_value = float(self._vector_alpha_spins["P_z"].value())
 
-        return {
-            "groups": {gid: [idx + 1 for idx in values] for gid, values in self._groups.items()},
-            "group_names": dict(self._group_names),
-            "grouping_preset": self._grouping_preset_name,
-            "instrument": self._detector_layout_instrument_name,
-            "forward_group": forward_gid,
-            "backward_group": backward_gid,
-            "forward_indices": list(self._groups.get(forward_gid, [])),
-            "backward_indices": list(self._groups.get(backward_gid, [])),
-            "alpha": alpha_value,
-            "t0_bin": int(t0_bin),
-            "t_good_offset": int(t_good_offset),
-            "first_good_bin": int(first_good_bin),
-            "last_good_bin": int(last_good_bin),
-            "bunching_factor": int(self._bunch_spin.value()),
-            "background_correction": bool(
-                self._background_checkbox.isEnabled() and self._background_checkbox.isChecked()
-            ),
-            "period_mode": self._current_period_mode(),
-            "bin_index_base": self._bin_index_base(),
-        } | (
+        return (
             {
-                "alpha_x": float(self._vector_alpha_spins["P_x"].value()),
-                "alpha_y": float(self._vector_alpha_spins["P_y"].value()),
-                "alpha_z": float(self._vector_alpha_spins["P_z"].value()),
+                "groups": {
+                    gid: [idx + 1 for idx in values] for gid, values in self._groups.items()
+                },
+                "group_names": dict(self._group_names),
+                "grouping_preset": self._grouping_preset_name,
+                "instrument": self._detector_layout_instrument_name,
+                "forward_group": forward_gid,
+                "backward_group": backward_gid,
+                "forward_indices": list(self._groups.get(forward_gid, [])),
+                "backward_indices": list(self._groups.get(backward_gid, [])),
+                "alpha": alpha_value,
+                "t0_bin": int(t0_bin),
+                "t_good_offset": int(t_good_offset),
+                "first_good_bin": int(first_good_bin),
+                "last_good_bin": int(last_good_bin),
+                "bunching_factor": int(self._bunch_spin.value()),
+                "background_correction": bool(
+                    self._background_checkbox.isEnabled() and self._background_checkbox.isChecked()
+                ),
+                "period_mode": self._current_period_mode(),
+                "bin_index_base": self._bin_index_base(),
             }
-            if vector_mode
-            else {}
-        ) | deadtime_payload
+            | (
+                {
+                    "alpha_x": float(self._vector_alpha_spins["P_x"].value()),
+                    "alpha_y": float(self._vector_alpha_spins["P_y"].value()),
+                    "alpha_z": float(self._vector_alpha_spins["P_z"].value()),
+                }
+                if vector_mode
+                else {}
+            )
+            | deadtime_payload
+        )
 
     def _save_grp_file(self) -> None:
         """Save current grouping configuration to a ``.grp`` file."""

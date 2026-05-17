@@ -8,8 +8,8 @@ from __future__ import annotations
 import html
 from functools import lru_cache
 
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QDoubleValidator, QColor
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor, QDoubleValidator
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -17,8 +17,8 @@ from PySide6.QtWidgets import (
     QDialog,
     QFormLayout,
     QGridLayout,
-    QHBoxLayout,
     QGroupBox,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -34,7 +34,6 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.gui.utils.latex_renderer import render_latex_to_html_image
-
 
 _PHASE_MODE_LABELS = (
     "(Power)^1/2",
@@ -127,15 +126,17 @@ def _build_fourier_mode_info_html(render_latex_images: bool) -> str:
     ]
     for title, latex, text in sections:
         block = (latex,) if isinstance(latex, str) else latex
-        equations = "".join(_latex_html(item, render_latex_images=render_latex_images) for item in block)
-        section_html.extend((f"<h3>{html.escape(title)}</h3>", equations, f"<p>{html.escape(text)}</p>"))
-    section_html.append(
-        (
-            "<p><b>Practical note:</b> (Power)^1/2, Phase Spectrum, Cos, and Sin are all derived "
-            "from the uncorrected complex FFT. Phase applies the selected phase correction first and then "
-            "plots the phase-corrected real projection. phaseOptReal automatically determines the "
-            "best phase using entropy minimisation; all manual phase controls are ignored.</p>"
+        equations = "".join(
+            _latex_html(item, render_latex_images=render_latex_images) for item in block
         )
+        section_html.extend(
+            (f"<h3>{html.escape(title)}</h3>", equations, f"<p>{html.escape(text)}</p>")
+        )
+    section_html.append(
+        "<p><b>Practical note:</b> (Power)^1/2, Phase Spectrum, Cos, and Sin are all derived "
+        "from the uncorrected complex FFT. Phase applies the selected phase correction first and then "
+        "plots the phase-corrected real projection. phaseOptReal automatically determines the "
+        "best phase using entropy minimisation; all manual phase controls are ignored.</p>"
     )
     section_html.append("</body></html>")
     return "".join(section_html)
@@ -271,9 +272,13 @@ class FourierPanel(QWidget):
         self._phase_table.verticalHeader().setVisible(False)
         self._phase_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self._phase_table.setEditTriggers(QTableWidget.EditTrigger.AllEditTriggers)
-        self._phase_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self._phase_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
         self._phase_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self._phase_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._phase_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.ResizeToContents
+        )
         groups_layout.addWidget(self._phase_table)
         groups_form = QFormLayout()
         self._use_phase_table_check = QCheckBox("Use per-group phase table")
@@ -320,9 +325,7 @@ class FourierPanel(QWidget):
 
         self._estimate_average_error_check = QCheckBox("Estimate errors for averaged spectra")
         self._estimate_average_error_check.setText("Average errors")
-        self._estimate_average_error_check.setToolTip(
-            "Estimate errors for averaged spectra."
-        )
+        self._estimate_average_error_check.setToolTip("Estimate errors for averaged spectra.")
         fft_settings_form.addRow(self._estimate_average_error_check)
 
         self._average_summary_label = QLabel("")
@@ -498,7 +501,11 @@ class FourierPanel(QWidget):
     def _on_phase_table_item_changed(self, item: QTableWidgetItem) -> None:
         if self._phase_table_updating or item.column() != 2:
             return
-        group_id = self._table_group_ids[item.row()] if 0 <= item.row() < len(self._table_group_ids) else None
+        group_id = (
+            self._table_group_ids[item.row()]
+            if 0 <= item.row() < len(self._table_group_ids)
+            else None
+        )
         if group_id is not None and int(group_id) in self._auto_filled_group_ids:
             self._auto_filled_group_ids.discard(int(group_id))
         self._update_phase_colors()
@@ -623,7 +630,9 @@ class FourierPanel(QWidget):
             "group_auto_filled_ids": sorted(self.group_auto_filled_ids()),
         }
 
-    def restore_group_phase_state(self, state: dict[str, object] | None, group_names: dict[int, str]) -> None:
+    def restore_group_phase_state(
+        self, state: dict[str, object] | None, group_names: dict[int, str]
+    ) -> None:
         """Restore per-run group-phase state into the table."""
         enabled_table: dict[int, bool] = {}
         phase_table: dict[int, float] = {}
@@ -657,7 +666,9 @@ class FourierPanel(QWidget):
         """Clear the averaged-spectrum summary text."""
         self._average_summary_label.setText("")
 
-    def set_average_summary(self, *, mean_error: float, peak_signal_to_noise: float, group_count: int) -> None:
+    def set_average_summary(
+        self, *, mean_error: float, peak_signal_to_noise: float, group_count: int
+    ) -> None:
         """Show a short summary for an averaged grouped FFT spectrum."""
         if group_count <= 0:
             self.clear_average_summary()
@@ -721,7 +732,9 @@ class FourierPanel(QWidget):
         if idx >= 0:
             self._auto_method_combo.setCurrentIndex(idx)
         self._use_phase_table_check.setChecked(bool(state.get("use_phase_table", False)))
-        self._estimate_average_error_check.setChecked(bool(state.get("estimate_average_error", False)))
+        self._estimate_average_error_check.setChecked(
+            bool(state.get("estimate_average_error", False))
+        )
         enabled_table_raw = state.get("group_enabled_table", {})
         parsed_enabled: dict[int, bool] = {}
         if isinstance(enabled_table_raw, dict):
