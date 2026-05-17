@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
@@ -88,6 +89,22 @@ def test_component_expression_round_trip() -> None:
     assert model.open_parentheses == [0, 1, 0]
     assert model.close_parentheses == [0, 0, 1]
     assert model.component_expression_string() == "Gaussian * (Constant + Constant)"
+
+
+def test_fraction_group_expression_round_trip() -> None:
+    model = CompositeModel.from_expression("( Exponential + Gaussian + Constant ){frac}")
+
+    assert model.component_names == ["Exponential", "Gaussian", "Constant"]
+    assert model.operators == ["+", "+"]
+    assert model.open_parentheses == [1, 0, 0]
+    assert model.close_parentheses == [0, 0, 1]
+    assert model.fraction_groups == [(0, 2)]
+    assert model.component_expression_string() == "(Exponential + Gaussian + Constant){frac}"
+
+
+def test_fraction_group_rejects_non_additive_group() -> None:
+    with pytest.raises(ValueError, match="additive"):
+        CompositeModel.from_expression("( Exponential * Gaussian ){frac}")
 
 
 def test_to_model_definition_callable() -> None:
@@ -209,6 +226,54 @@ def test_parenthesized_model_serialization_round_trip() -> None:
     assert restored.operators == model.operators
     assert restored.open_parentheses == model.open_parentheses
     assert restored.close_parentheses == model.close_parentheses
+
+
+def test_fraction_group_serialization_round_trip() -> None:
+    model = CompositeModel.from_expression("( Exponential + Gaussian ){frac}")
+
+    restored = CompositeModel.from_dict(model.to_dict())
+    assert restored.fraction_groups == [(0, 1)]
+    assert restored.component_expression_string() == "(Exponential + Gaussian){frac}"
+
+
+def test_fraction_group_uses_group_amplitude_and_fraction_parameters() -> None:
+    model = CompositeModel.from_expression("( Exponential + Gaussian ){frac}")
+
+    assert "A_1" in model.param_names
+    assert "Lambda" in model.param_names
+    assert "sigma" in model.param_names
+    assert "fraction_1" in model.param_names
+    assert "fraction_2" in model.param_names
+    assert "A_2" not in model.param_names
+
+
+def test_fraction_group_evaluation_normalizes_component_weights() -> None:
+    t = np.linspace(0.0, 1.0, 5)
+    model = CompositeModel.from_expression("( Exponential + Exponential + Constant ){frac}")
+
+    out = model.function(
+        t,
+        A_1=12.0,
+        Lambda_1=0.2,
+        Lambda_2=0.5,
+        fraction_1=1.0,
+        fraction_2=1.0,
+        fraction_3=2.0,
+    )
+    expected = 12.0 * (
+        0.25 * np.exp(-0.2 * t) + 0.25 * np.exp(-0.5 * t) + 0.5 * np.ones_like(t)
+    )
+
+    assert np.allclose(out, expected)
+
+
+def test_fraction_group_preserves_outer_multiplicative_amplitude_suppression() -> None:
+    model = CompositeModel.from_expression("Oscillatory * ( Exponential + Gaussian ){frac}")
+
+    assert "A_1" not in model.param_names
+    assert "A_2" in model.param_names
+    assert "fraction_2" in model.param_names
+    assert "fraction_3" in model.param_names
 
 
 def test_parenthesized_product_suppresses_leading_amplitude() -> None:

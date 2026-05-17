@@ -12,7 +12,11 @@ from asymmetry.core.transform.background import (
 )
 from asymmetry.core.transform.deadtime import (
     apply_deadtime_correction,
+    calibrate_deadtime_from_histograms,
+    estimate_deadtime_from_histograms,
     has_file_deadtime,
+    has_resolved_deadtime,
+    parse_deadtime_calibration_text,
     prepare_histograms_with_deadtime,
 )
 from asymmetry.core.transform.grouping import (
@@ -30,7 +34,11 @@ __all__ = [
     "apply_grouped_background_correction",
     "supports_background_correction",
     "apply_deadtime_correction",
+    "calibrate_deadtime_from_histograms",
+    "estimate_deadtime_from_histograms",
     "has_file_deadtime",
+    "has_resolved_deadtime",
+    "parse_deadtime_calibration_text",
     "prepare_histograms_with_deadtime",
     "apply_grouping",
     "apply_grouping_aligned",

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import os
 import re
 import subprocess
@@ -31,10 +32,20 @@ REQUIRED_KNOWLEDGE_FILES = (
     "docs/INDEX.md",
     "docs/ARCHITECTURE.md",
     "docs/HARNESS.md",
+    "docs/porting/README.md",
+    "docs/porting/index.json",
     "docs/QUALITY.md",
     "docs/PLANS.md",
 )
 LINT_TARGETS = ("src", "tests", "tools")
+PORTING_REQUIRED_STUDY_FILES = (
+    "README.md",
+    "comparison.md",
+    "implementation-options.md",
+    "test-data.md",
+    "verification-plan.md",
+)
+PORTING_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 @dataclass(frozen=True)
@@ -173,11 +184,187 @@ def find_knowledge_base_violations(root: Path = ROOT) -> list[HarnessFailure]:
     return failures
 
 
+def find_porting_policy_violations(root: Path = ROOT) -> list[HarnessFailure]:
+    """Return porting-study layout issues that break the study-first workflow."""
+
+    failures: list[HarnessFailure] = []
+    porting_root = root / "docs" / "porting"
+    index_path = porting_root / "index.json"
+
+    if not porting_root.is_dir():
+        failures.append(
+            HarnessFailure(
+                porting_root,
+                0,
+                "Missing `docs/porting/` directory for study-first feature ports.",
+            )
+        )
+        return failures
+
+    if not index_path.is_file():
+        failures.append(
+            HarnessFailure(
+                index_path,
+                0,
+                "Missing `docs/porting/index.json` machine-readable study index.",
+            )
+        )
+        return failures
+
+    try:
+        index_data = json.loads(index_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        failures.append(
+            HarnessFailure(index_path, exc.lineno, f"Invalid JSON: {exc.msg}"),
+        )
+        return failures
+
+    if not isinstance(index_data, dict):
+        failures.append(
+            HarnessFailure(index_path, 0, "Porting index must be a JSON object."),
+        )
+        return failures
+
+    version = index_data.get("version")
+    studies = index_data.get("studies")
+    if not isinstance(version, int) or version < 1:
+        failures.append(
+            HarnessFailure(index_path, 0, "Porting index must define an integer `version` >= 1."),
+        )
+    if not isinstance(studies, list):
+        failures.append(
+            HarnessFailure(index_path, 0, "Porting index must define a `studies` array."),
+        )
+        return failures
+
+    study_dirs = {path.name: path for path in sorted(porting_root.iterdir()) if path.is_dir()}
+    indexed_slugs: dict[str, dict[str, object]] = {}
+
+    for entry in studies:
+        if not isinstance(entry, dict):
+            failures.append(
+                HarnessFailure(index_path, 0, "Each porting study entry must be a JSON object."),
+            )
+            continue
+
+        slug = entry.get("slug")
+        feature_name = entry.get("feature_name")
+        status = entry.get("status")
+        path_value = entry.get("path")
+        references = entry.get("references")
+        docs = entry.get("docs")
+
+        if not isinstance(slug, str) or not PORTING_SLUG_RE.fullmatch(slug):
+            failures.append(
+                HarnessFailure(index_path, 0, "Each study entry needs a kebab-case `slug`."),
+            )
+            continue
+        if slug in indexed_slugs:
+            failures.append(
+                HarnessFailure(index_path, 0, f"Duplicate porting study slug `{slug}` in index."),
+            )
+            continue
+        indexed_slugs[slug] = entry
+
+        if not isinstance(feature_name, str) or not feature_name.strip():
+            failures.append(
+                HarnessFailure(
+                    index_path, 0, f"Porting study `{slug}` needs a non-empty `feature_name`."
+                ),
+            )
+        if not isinstance(status, str) or not status.strip():
+            failures.append(
+                HarnessFailure(
+                    index_path, 0, f"Porting study `{slug}` needs a non-empty `status`."
+                ),
+            )
+        expected_path = f"docs/porting/{slug}"
+        if path_value != expected_path:
+            failures.append(
+                HarnessFailure(
+                    index_path, 0, f"Porting study `{slug}` must use `path: {expected_path}`."
+                ),
+            )
+        if not isinstance(references, list) or not all(
+            isinstance(item, str) for item in references
+        ):
+            failures.append(
+                HarnessFailure(
+                    index_path, 0, f"Porting study `{slug}` needs a string `references` list."
+                ),
+            )
+        if not isinstance(docs, dict):
+            failures.append(
+                HarnessFailure(index_path, 0, f"Porting study `{slug}` needs a `docs` object."),
+            )
+            continue
+
+        expected_docs = {
+            "readme": f"{expected_path}/README.md",
+            "comparison": f"{expected_path}/comparison.md",
+            "implementation_options": f"{expected_path}/implementation-options.md",
+            "test_data": f"{expected_path}/test-data.md",
+            "verification_plan": f"{expected_path}/verification-plan.md",
+        }
+        for key, expected_doc_path in expected_docs.items():
+            if docs.get(key) != expected_doc_path:
+                failures.append(
+                    HarnessFailure(
+                        index_path,
+                        0,
+                        f"Porting study `{slug}` must define `docs.{key}` as `{expected_doc_path}`.",
+                    )
+                )
+
+    for slug, study_dir in study_dirs.items():
+        if not PORTING_SLUG_RE.fullmatch(slug):
+            failures.append(
+                HarnessFailure(
+                    study_dir,
+                    0,
+                    "Porting study directories must use kebab-case feature slugs.",
+                )
+            )
+
+        for filename in PORTING_REQUIRED_STUDY_FILES:
+            file_path = study_dir / filename
+            if not file_path.is_file():
+                failures.append(
+                    HarnessFailure(
+                        file_path,
+                        0,
+                        "Missing required study-pass artifact for feature port.",
+                    )
+                )
+
+        if slug not in indexed_slugs:
+            failures.append(
+                HarnessFailure(
+                    study_dir,
+                    0,
+                    "Porting study directory is missing from `docs/porting/index.json`.",
+                )
+            )
+
+    for slug in indexed_slugs:
+        if slug not in study_dirs:
+            failures.append(
+                HarnessFailure(
+                    index_path,
+                    0,
+                    f"Porting index entry `{slug}` does not have a matching study directory.",
+                )
+            )
+
+    return failures
+
+
 def run_structural_checks() -> int:
     """Run fast structural checks that do not require third-party packages."""
 
     failures = [
         *find_knowledge_base_violations(),
+        *find_porting_policy_violations(),
         *find_dependency_boundary_violations(),
         *find_core_boundary_violations(),
     ]

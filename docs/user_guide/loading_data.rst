@@ -145,11 +145,17 @@ reimplemented.
 The optional ``uproot`` dependency is required for ROOT loading. Install with
 the ``root`` extra if it is not already present.
 
-Deadtime correction remains controlled by the Grouping dialog, but it is only
-available when a loaded file provides per-detector deadtime values and
-good-frame metadata. This keeps deadtime correction on the ISIS/NeXus-style
-path. PSI BIN/MDU and MusrRoot/LEM ROOT files do not normally contain those
-NeXus-style deadtime constants, so Asymmetry does not estimate a fallback.
+Deadtime correction remains controlled by the Grouping dialog. ``File`` mode
+uses per-detector deadtime values already supplied by a run file, while
+``Manual``, ``Cal``, and ``Estimate`` resolve their deadtime payload in the
+Grouping dialog and then apply that same payload to all selected runs. The
+resolved payload is also reused for future datasets loaded into the same
+project, matching the existing grouping-template workflow.
+
+PSI BIN/MDU and MusrRoot/LEM ROOT files do not normally contain NeXus-style
+file deadtime constants, so ``File`` mode is often unavailable there. Those
+formats can still use manual per-detector values, the WiMDA-style ``Cal``
+per-detector calibration routine, or the reference-run deadtime estimate.
 
 Background correction is a separate Grouping dialog toggle for PSI-style data
 (``.bin``, ``.mdu``, and PSI/LEM ``.root``). It subtracts a count background
@@ -184,12 +190,15 @@ does not invent format rules:
   by musrfit ``PRunBase::DeadTimeCorrection`` and Mantid
   ``ApplyDeadTimeCorr``:
   ``N_corr = N / (1 - N * dead_time / (time_bin * good_frames))``.
-* musrfit's ``estimate`` deadtime mode is not implemented there. Asymmetry does
-  not add its own deadtime estimator; if file deadtime values are missing,
-  deadtime correction is unavailable for that run.
+* The Grouping dialog also exposes WiMDA-style manual, calibrated, and
+  estimated deadtime workflows alongside file-provided deadtimes. ``Estimate``
+  is calculated from the selected reference run only and then broadcast to all
+  selected detectors and runs. ``Cal`` fits each detector separately on that
+  reference run and persists the resulting explicit per-detector table through
+  the manual detector-value editor.
 * Mantid's PSI-BIN loader can emit a deadtime table, but it fills the PSI-BIN
   table with zeros. Asymmetry therefore treats PSI deadtime as absent and uses
-  the background-correction path instead.
+  ``File`` mode only when non-zero file values are actually present.
 * PSI-BIN ``.mon`` temperature sidecar loading follows Mantid
   ``LoadPSIMuonBin`` rather than musrfit, because musrfit was found to read
   embedded PSI temperature fields but not these external log files.

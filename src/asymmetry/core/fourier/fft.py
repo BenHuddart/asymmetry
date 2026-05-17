@@ -1,4 +1,4 @@
-"""FFT of μSR asymmetry data."""
+"""FFT helpers for μSR asymmetry and grouped detector signals."""
 
 from __future__ import annotations
 
@@ -6,7 +6,174 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fourier.window import apply_window
+from asymmetry.core.fourier.window import apply_fft_filter, apply_window
+
+_DISPLAY_ALIASES = {
+    "(power)^1/2": "power_sqrt",
+    "(power)1/2": "power_sqrt",
+    "(power)½": "power_sqrt",
+    "cos": "cos",
+    "imaginary": "imaginary",
+    "magnitude": "magnitude",
+    "phase": "phase_corrected",
+    "phase spectrum": "phase_spectrum",
+    "phase_opt_real": "phase_opt_real",
+    "phaseoptreal": "phase_opt_real",
+    "power": "power",
+    "real": "real",
+    "sin": "sin",
+}
+_DISPLAY_MODES = frozenset(_DISPLAY_ALIASES.values())
+
+
+def canonical_fourier_display_mode(display: str) -> str:
+    """Return the canonical Fourier display-mode key for *display*."""
+    mode = _DISPLAY_ALIASES.get(str(display).strip().lower())
+    if mode is None:
+        raise ValueError(
+            f"Unknown Fourier display mode {display!r}. Expected one of "
+            "'(Power)^1/2', 'Phase Spectrum', 'Cos', 'Sin', 'Phase', 'phaseOptReal', "
+            "or the legacy modes 'Real', 'Imaginary', 'Magnitude', 'Power'."
+        )
+    return mode
+
+
+def fourier_mode_uses_phase_correction(display: str) -> bool:
+    """Return whether *display* consumes the phase-corrected spectrum."""
+    return canonical_fourier_display_mode(display) == "phase_corrected"
+
+
+def fourier_mode_uses_entropy_optimizer(display: str) -> bool:
+    """Return whether *display* requires the entropy-based phase optimizer.
+
+    The ``phaseOptReal`` mode runs musrfit's ``PFTPhaseCorrection`` algorithm
+    (entropy + penalty minimisation) on the averaged complex spectrum rather
+    than consuming a manually supplied or table-driven phase correction.
+    """
+    return canonical_fourier_display_mode(display) == "phase_opt_real"
+
+
+def _normalize_phase_degrees(value: float) -> float:
+    """Wrap an angle into the half-open interval [-180, 180)."""
+    wrapped = (float(value) + 180.0) % 360.0 - 180.0
+    if np.isclose(wrapped, -180.0):
+        return 180.0
+    return wrapped
+
+
+def _subtract_average_signal(
+    signal: NDArray[np.float64],
+    error: NDArray[np.float64] | None = None,
+) -> NDArray[np.float64]:
+    """Return ``signal`` with its WiMDA-style average removed.
+
+    WiMDA subtracts an error-weighted average before filtering and FFT. Its
+    implementation uses weights proportional to ``1 / error``. When no usable
+    errors are available, fall back to the finite arithmetic mean.
+    """
+    values = np.asarray(signal, dtype=np.float64).copy()
+    finite_mask = np.isfinite(values)
+    if not np.any(finite_mask):
+        return values
+
+    average = 0.0
+    if error is not None:
+        err = np.asarray(error, dtype=np.float64)
+        if err.shape == values.shape:
+            weights = np.zeros_like(values, dtype=np.float64)
+            valid_weights = finite_mask & np.isfinite(err) & (err > 0.0)
+            weights[valid_weights] = 1.0 / err[valid_weights]
+            weight_sum = float(np.sum(weights[valid_weights], dtype=np.float64))
+            if weight_sum > 0.0:
+                average = float(np.sum(weights * values, dtype=np.float64) / weight_sum)
+            else:
+                average = float(np.mean(values[finite_mask], dtype=np.float64))
+        else:
+            average = float(np.mean(values[finite_mask], dtype=np.float64))
+    else:
+        average = float(np.mean(values[finite_mask], dtype=np.float64))
+
+    values[finite_mask] -= average
+    return values
+
+
+def fft_complex_asymmetry(
+    dataset: MuonDataset,
+    window: str = "none",
+    padding_factor: int = 1,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    phase_degrees: float = 0.0,
+    t0_offset_us: float = 0.0,
+    subtract_average_signal: bool = True,
+    filter_start_us: float = 0.0,
+    filter_time_constant_us: float = 1.5,
+) -> tuple[NDArray[np.float64], NDArray[np.complex128]]:
+    """Compute the phase-rotated complex FFT of the asymmetry signal.
+
+    Parameters
+    ----------
+    dataset
+        The time-domain data.
+    window
+        Apodization window name (``"none"``, ``"gaussian"``, ``"hann"``, ``"cosine"``).
+    padding_factor
+        Zero-pad the signal to ``padding_factor × N``.
+    t_min, t_max
+        Restrict the time range before transforming.
+    phase_degrees
+        Manual phase correction in degrees. A positive value applies the usual
+        phase-correction rotation ``exp(-i * phi)`` to the complex spectrum.
+    t0_offset_us
+        Additional WiMDA-style time-zero offset in microseconds. This applies a
+        frequency-dependent phase term ``exp(-i * 2π f t0)`` after the FFT.
+    subtract_average_signal
+        When true, subtract the WiMDA-style pre-FFT average signal before any
+        window is applied.
+    filter_start_us
+        WiMDA-style filter start time in microseconds for ``"gaussian"`` and
+        ``"lorentzian"`` FFT filtering.
+    filter_time_constant_us
+        WiMDA-style filter time constant in microseconds for ``"gaussian"`` and
+        ``"lorentzian"`` FFT filtering.
+
+    Returns
+    -------
+    frequencies, spectrum
+        Frequency axis (MHz) and the complex, optionally phase-rotated spectrum.
+    """
+    ds = dataset.time_range(t_min, t_max) if (t_min is not None or t_max is not None) else dataset
+
+    signal = ds.asymmetry.copy()
+    error = np.asarray(ds.error, dtype=np.float64) if ds.error is not None else None
+    dt = np.mean(np.diff(ds.time)) if len(ds.time) > 1 else 1.0
+
+    if subtract_average_signal:
+        signal = _subtract_average_signal(signal, error)
+
+    window_key = str(window).strip().lower()
+    if window_key in {"none", "gaussian", "lorentzian"}:
+        signal = apply_fft_filter(
+            signal,
+            np.asarray(ds.time, dtype=np.float64),
+            mode=window_key,
+            start_time_us=float(filter_start_us),
+            time_constant_us=float(filter_time_constant_us),
+        )
+    elif window_key != "none":
+        signal = apply_window(signal, window_key)
+
+    n = len(signal)
+    n_padded = n * max(padding_factor, 1)
+
+    spectrum = np.fft.rfft(signal, n=n_padded)
+    freqs = np.fft.rfftfreq(n_padded, d=dt)  # MHz (since dt is in μs)
+
+    if phase_degrees or t0_offset_us:
+        phase = np.deg2rad(float(phase_degrees)) + 2.0 * np.pi * freqs * float(t0_offset_us)
+        spectrum = spectrum * np.exp(-1j * phase)
+
+    return freqs, spectrum
 
 
 def fft_asymmetry(
@@ -15,6 +182,11 @@ def fft_asymmetry(
     padding_factor: int = 1,
     t_min: float | None = None,
     t_max: float | None = None,
+    phase_degrees: float = 0.0,
+    t0_offset_us: float = 0.0,
+    subtract_average_signal: bool = True,
+    filter_start_us: float = 0.0,
+    filter_time_constant_us: float = 1.5,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Compute the FFT of the asymmetry signal.
 
@@ -28,26 +200,277 @@ def fft_asymmetry(
         Zero-pad the signal to ``padding_factor × N``.
     t_min, t_max
         Restrict the time range before transforming.
+    phase_degrees
+        Manual phase correction in degrees applied to the complex spectrum
+        before the real and magnitude outputs are derived.
+    t0_offset_us
+        Additional WiMDA-style time-zero offset in microseconds. This adds the
+        frequency-dependent phase term before the real and magnitude outputs are
+        derived.
+    subtract_average_signal
+        When true, subtract the WiMDA-style pre-FFT average signal before any
+        window is applied.
+    filter_start_us
+        WiMDA-style filter start time in microseconds for ``"gaussian"`` and
+        ``"lorentzian"`` FFT filtering.
+    filter_time_constant_us
+        WiMDA-style filter time constant in microseconds for ``"gaussian"`` and
+        ``"lorentzian"`` FFT filtering.
 
     Returns
     -------
     frequencies, real_part, magnitude
         Frequency axis (MHz) and the real and magnitude spectra.
     """
-    ds = dataset.time_range(t_min, t_max) if (t_min is not None or t_max is not None) else dataset
-
-    signal = ds.asymmetry.copy()
-    dt = np.mean(np.diff(ds.time)) if len(ds.time) > 1 else 1.0
-
-    # Apply window
-    if window != "none":
-        signal = apply_window(signal, window)
-
-    # Zero-pad
-    n = len(signal)
-    n_padded = n * max(padding_factor, 1)
-
-    spectrum = np.fft.rfft(signal, n=n_padded)
-    freqs = np.fft.rfftfreq(n_padded, d=dt)  # MHz (since dt is in μs)
+    freqs, spectrum = fft_complex_asymmetry(
+        dataset,
+        window=window,
+        padding_factor=padding_factor,
+        t_min=t_min,
+        t_max=t_max,
+        phase_degrees=phase_degrees,
+        t0_offset_us=t0_offset_us,
+        subtract_average_signal=subtract_average_signal,
+        filter_start_us=filter_start_us,
+        filter_time_constant_us=filter_time_constant_us,
+    )
 
     return freqs, spectrum.real, np.abs(spectrum)
+
+
+def estimate_fft_phase(
+    freqs: NDArray[np.float64],
+    spectrum: NDArray[np.complex128],
+    *,
+    method: str = "peak",
+    min_frequency: float = 0.0,
+    max_frequency: float | None = None,
+) -> float:
+    """Estimate the phase, in degrees, that best projects a spectrum onto the real axis.
+
+    Parameters
+    ----------
+    freqs
+        Frequency axis in MHz.
+    spectrum
+        Complex FFT spectrum.
+    method
+        ``"peak"`` uses the dominant non-zero frequency bin. ``"average"`` uses a
+        power-weighted circular mean across the selected spectrum.
+    min_frequency
+        Ignore bins below this frequency threshold when estimating the phase.
+    max_frequency
+        Ignore bins above this frequency threshold when estimating the phase.
+    """
+    frequencies = np.asarray(freqs, dtype=float)
+    values = np.asarray(spectrum, dtype=np.complex128)
+    if frequencies.size == 0 or values.size == 0:
+        return 0.0
+
+    mask = np.isfinite(frequencies) & np.isfinite(values.real) & np.isfinite(values.imag)
+    mask &= frequencies > float(min_frequency)
+    if max_frequency is not None:
+        mask &= frequencies <= float(max_frequency)
+    if not np.any(mask):
+        return 0.0
+
+    selected = values[mask]
+    method_key = str(method).strip().lower()
+    if method_key == "peak":
+        idx = int(np.argmax(np.abs(selected)))
+        return _normalize_phase_degrees(np.rad2deg(np.angle(selected[idx])))
+    if method_key == "average":
+        weights = np.abs(selected) ** 2
+        if not np.any(weights > 0.0):
+            return 0.0
+        phasor = np.sum(weights * np.exp(1j * np.angle(selected)))
+        if np.isclose(np.abs(phasor), 0.0):
+            return 0.0
+        return _normalize_phase_degrees(np.rad2deg(np.angle(phasor)))
+
+    raise ValueError(
+        f"Unknown phase-estimation method {method!r}. Expected one of 'peak', 'average'."
+    )
+
+
+def optimize_phase_entropy(
+    spectrum: NDArray[np.complex128],
+    *,
+    min_bin: int = 1,
+    max_bin: int | None = None,
+    gamma: float = 1.0,
+) -> tuple[NDArray[np.float64], float, float]:
+    """Find the linear phase (c₀ + c₁·i/N) that maximises spectral compactness.
+
+    Implements musrfit's ``PFTPhaseCorrection`` algorithm: minimise an entropy
+    + penalty functional over the phase-corrected real spectrum using iminuit.
+
+    The phase model is ``φ(i) = c₀ + c₁ · (i − min_bin) / span`` where
+    ``span = max_bin − min_bin``.  The optimisation targets the bins in the
+    range ``[min_bin, max_bin]`` but the returned real spectrum covers all
+    input bins.
+
+    Parameters
+    ----------
+    spectrum
+        Complex FFT spectrum, **not** pre-rotated.
+    min_bin
+        First bin index to include in the optimisation (default 1 to skip DC).
+    max_bin
+        Last bin index to include (default: last bin).
+    gamma
+        Weight of the negativity penalty relative to the entropy term.
+
+    Returns
+    -------
+    real_values, c0_rad, c1_rad
+        Optimised real-valued display spectrum and the phase parameters in
+        radians.
+    """
+    values = np.asarray(spectrum, dtype=np.complex128)
+    n = values.size
+    if n == 0:
+        return np.zeros(0, dtype=np.float64), 0.0, 0.0
+
+    lo = max(0, int(min_bin))
+    hi = int(max_bin) if max_bin is not None else n - 1
+    hi = min(hi, n - 1)
+    span = float(max(1, hi - lo))
+
+    re = values.real
+    im = values.imag
+
+    def _apply(c0: float, c1: float) -> NDArray[np.float64]:
+        weights = (np.arange(n, dtype=np.float64) - lo) / span
+        angles = float(c0) + float(c1) * weights
+        return re * np.cos(angles) - im * np.sin(angles)
+
+    def _cost(c0: float, c1: float) -> float:
+        real_part = _apply(c0, c1)[lo : hi + 1]
+        delta = np.abs(np.diff(real_part))
+        total = float(np.sum(delta))
+        if total <= 0.0:
+            # Mirrors musrfit PFTPhaseCorrection: return a large cost for the
+            # trivial zero-spectrum solution so the optimizer avoids it.
+            return 1.0e10
+        p = delta / total
+        p_pos = p[p > 0.0]
+        entropy = float(-np.sum(p_pos * np.log(p_pos)))
+        neg = real_part[real_part < 0.0]
+        penalty = float(np.sum(neg * neg))
+        return entropy + float(gamma) * penalty
+
+    c0_opt = 0.0
+    c1_opt = 0.0
+    try:
+        from iminuit import Minuit  # noqa: PLC0415
+
+        # Coarse grid scan over c0 to find a good initial point before
+        # Minuit refines.  The entropy cost has a complex landscape, so a
+        # gradient-only start from c0=0 frequently misses the true minimum.
+        grid = np.linspace(-np.pi, np.pi, 37, endpoint=False)
+        best_c0 = 0.0
+        best_val = _cost(0.0, 0.0)
+        for c0_trial in grid:
+            val = _cost(float(c0_trial), 0.0)
+            if val < best_val:
+                best_val = val
+                best_c0 = float(c0_trial)
+
+        m = Minuit(_cost, c0=best_c0, c1=0.0)
+        m.errordef = 1.0
+        m.errors = (np.deg2rad(10.0), np.deg2rad(5.0))
+        m.migrad()
+        c0_opt = float(m.values["c0"])
+        c1_opt = float(m.values["c1"])
+    except Exception:
+        pass
+
+    return _apply(c0_opt, c1_opt).astype(np.float64), c0_opt, c1_opt
+
+
+def fourier_display_values(
+    spectrum: NDArray[np.complex128],
+    *,
+    display: str = "Real",
+) -> NDArray[np.float64]:
+    """Return one real-valued display channel derived from a complex spectrum.
+
+    For ``phaseOptReal`` mode the caller must first run
+    :func:`optimize_phase_entropy` and pass the resulting already-optimised
+    real spectrum wrapped in a complex array (imaginary part zero), or pass
+    the real array directly as a complex dtype.  The function simply returns
+    the real part in that case.
+    """
+    values = np.asarray(spectrum, dtype=np.complex128)
+    mode = canonical_fourier_display_mode(display)
+    if mode in {"real", "cos", "phase_corrected", "phase_opt_real"}:
+        return values.real.astype(np.float64, copy=False)
+    if mode in {"imaginary", "sin"}:
+        return values.imag.astype(np.float64, copy=False)
+    magnitude = np.abs(values)
+    if mode in {"magnitude", "power_sqrt"}:
+        return magnitude.astype(np.float64, copy=False)
+    if mode == "power":
+        return np.square(magnitude, dtype=np.float64)
+
+    phase = np.rad2deg(np.angle(values))
+    phase = np.where(magnitude > 0.0, phase, 0.0)
+    return phase.astype(np.float64, copy=False)
+
+
+def exclude_frequency_ranges(
+    freqs: NDArray[np.float64],
+    values: NDArray[np.float64],
+    exclusion_ranges: list[tuple[float, float]] | tuple[tuple[float, float], ...],
+) -> NDArray[np.float64]:
+    """Zero spectral values inside one or more symmetric exclusion ranges.
+
+    Parameters
+    ----------
+    freqs
+        Frequency axis in MHz.
+    values
+        Real-valued Fourier display channel to be filtered.
+    exclusion_ranges
+        Iterable of ``(center_mhz, half_width_mhz)`` pairs.
+    """
+    frequencies = np.asarray(freqs, dtype=float)
+    filtered = np.asarray(values, dtype=float).copy()
+    if frequencies.size == 0 or filtered.size == 0 or not exclusion_ranges:
+        return filtered
+
+    mask = np.zeros(frequencies.shape, dtype=bool)
+    for center, half_width in exclusion_ranges:
+        width = max(0.0, float(half_width))
+        if width <= 0.0 or not np.isfinite(center):
+            continue
+        mask |= np.abs(frequencies - float(center)) <= width
+    filtered[mask] = 0.0
+    return filtered
+
+
+def average_fourier_display_values(
+    display_channels: list[NDArray[np.float64]] | tuple[NDArray[np.float64], ...],
+    *,
+    estimate_error: bool = False,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Average real-valued Fourier display channels across groups.
+
+    When ``estimate_error`` is true, the returned error follows the same
+    WiMDA-style grouped-average estimate used for averaged FFT spectra,
+    computed from the per-bin second moment and mean across the selected
+    groups.
+    """
+    if not display_channels:
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+
+    stacked = np.asarray(display_channels, dtype=np.float64)
+    averaged = np.mean(stacked, axis=0, dtype=np.float64)
+    if not estimate_error or stacked.shape[0] <= 1:
+        return averaged, np.zeros_like(averaged)
+
+    mean_square = np.mean(np.square(stacked, dtype=np.float64), axis=0, dtype=np.float64)
+    variance = np.clip(mean_square - np.square(averaged, dtype=np.float64), 0.0, None)
+    error = np.sqrt(variance / float(stacked.shape[0]), dtype=np.float64)
+    return averaged, error

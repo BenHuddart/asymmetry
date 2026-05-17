@@ -66,6 +66,9 @@ from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 
 
+_PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
+
+
 def _format_param_label(name: str) -> str:
     return get_param_info(name).unicode_label()
 
@@ -2656,7 +2659,11 @@ class FitParametersPanel(QWidget):
         show_components = self._show_components_check.isChecked()
         component_colors = ["#8ecae6", "#90be6d", "#f4a261", "#e5989b", "#bdb2ff", "#ffd166"]
 
-        curves = self._sampled_fit_curves(param_name, x_key=fit.x_key, num_points=200)
+        curves = self._sampled_fit_curves(
+            param_name,
+            x_key=fit.x_key,
+            num_points=_PARAMETER_FIT_CURVE_SAMPLE_COUNT,
+        )
         for idx, (range_index, xs, ys) in enumerate(curves):
             line_color = _fit_overlay_color(idx) if len(curves) > 1 else color
 
@@ -3187,11 +3194,23 @@ class FitParametersPanel(QWidget):
     def _count_fit_curves(self, x_key: str, y_params: list[str]) -> int:
         count = 0
         for pname in y_params:
-            count += len(self._sampled_fit_curves(pname, x_key, num_points=200))
+            count += len(
+                self._sampled_fit_curves(
+                    pname,
+                    x_key,
+                    num_points=_PARAMETER_FIT_CURVE_SAMPLE_COUNT,
+                )
+            )
         return count
 
     def _count_fit_curves_for_param(self, x_key: str, param_name: str) -> int:
-        return len(self._sampled_fit_curves(param_name, x_key, num_points=200))
+        return len(
+            self._sampled_fit_curves(
+                param_name,
+                x_key,
+                num_points=_PARAMETER_FIT_CURVE_SAMPLE_COUNT,
+            )
+        )
 
     def _x_domain_for_sampling(self, x_key: str) -> tuple[float, float] | None:
         if not self._rows:
@@ -3206,7 +3225,7 @@ class FitParametersPanel(QWidget):
         self,
         fit_range: ModelFitRange,
         x_key: str,
-        num_points: int = 200,
+        num_points: int = _PARAMETER_FIT_CURVE_SAMPLE_COUNT,
     ) -> tuple[np.ndarray, np.ndarray] | None:
         result = fit_range.result
         if result is None or not result.success:
@@ -3226,7 +3245,11 @@ class FitParametersPanel(QWidget):
         if x_max <= x_min:
             return None
 
-        xs = np.linspace(float(x_min), float(x_max), num=max(2, int(num_points)), dtype=float)
+        sample_count = max(2, int(num_points))
+        if x_key == "field" and float(x_min) > 0.0 and float(x_max) > 0.0:
+            xs = np.geomspace(float(x_min), float(x_max), num=sample_count, dtype=float)
+        else:
+            xs = np.linspace(float(x_min), float(x_max), num=sample_count, dtype=float)
         kwargs = {p.name: p.value for p in result.parameters}
         try:
             ys = fit_range.model.function(xs, **kwargs)
@@ -3245,7 +3268,7 @@ class FitParametersPanel(QWidget):
         self,
         param_name: str,
         x_key: str,
-        num_points: int = 200,
+        num_points: int = _PARAMETER_FIT_CURVE_SAMPLE_COUNT,
     ) -> list[tuple[int, np.ndarray, np.ndarray]]:
         fit = self._model_fits.get(param_name)
         if fit is None or not fit.active or fit.x_key != x_key:
@@ -3300,7 +3323,11 @@ class FitParametersPanel(QWidget):
             result = fit_range.result
             assert result is not None
 
-            sampled = self._sample_fit_range_curve(fit_range, x_key=x_key, num_points=200)
+            sampled = self._sample_fit_range_curve(
+                fit_range,
+                x_key=x_key,
+                num_points=_PARAMETER_FIT_CURVE_SAMPLE_COUNT,
+            )
             if sampled is None:
                 continue
             x_vals, y_vals = sampled
@@ -3415,7 +3442,11 @@ class FitParametersPanel(QWidget):
         show_components = self._show_components_check.isChecked()
         component_colors = ["lightblue", "lightgreen", "pink", "lightgray", "cyan", "yellow"]
 
-        curves = self._sampled_fit_curves(param_name, x_key=fit.x_key, num_points=200)
+        curves = self._sampled_fit_curves(
+            param_name,
+            x_key=fit.x_key,
+            num_points=_PARAMETER_FIT_CURVE_SAMPLE_COUNT,
+        )
         for idx, (range_index, xs, ys) in enumerate(curves):
             line_color = _fit_overlay_color(idx) if len(curves) > 1 else color
             line_label = (

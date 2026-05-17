@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel
 
+import asymmetry.gui.windows.grouping_dialog as grouping_dialog_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
@@ -91,6 +92,42 @@ def _vector_dataset_with_histograms(run_number: int = 4010) -> MuonDataset:
         time=t,
         asymmetry=np.zeros_like(t),
         error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number},
+        run=run,
+    )
+
+
+def _dataset_with_deadtime_profile(run_number: int, tau_us: float) -> MuonDataset:
+    amplitude = 120.0
+    bin_width = 0.01
+    num_good_frames = 1000.0
+    lifetime_us = 2.1969811
+    times = (np.arange(12, dtype=float) + 1.0) * bin_width
+    frame_scale = num_good_frames * bin_width
+    true_counts = amplitude * np.exp(-times / lifetime_us)
+    observed = true_counts * (
+        1.0
+        - (true_counts / frame_scale) * lifetime_us * (1.0 - np.exp(-tau_us / lifetime_us))
+    )
+    histograms = [Histogram(observed.copy(), bin_width=bin_width) for _ in range(4)]
+    run = Run(
+        run_number=run_number,
+        histograms=histograms,
+        metadata={"run_number": run_number, "title": f"Deadtime Run {run_number}"},
+        grouping={
+            "groups": {1: [1, 2], 2: [3, 4]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 11,
+            "good_frames": num_good_frames,
+        },
+    )
+    return MuonDataset(
+        time=np.arange(12, dtype=float) * bin_width,
+        asymmetry=np.zeros(12, dtype=float),
+        error=np.full(12, 0.01, dtype=float),
         metadata={"run_number": run_number},
         run=run,
     )
@@ -228,11 +265,109 @@ def test_grouping_dialog_does_not_show_bunching_rules(qapp: QApplication) -> Non
     assert dialog._bunch_spin.toolTip() == "Set any bunching factor >= 1."
 
 
-def test_deadtime_checkbox_disabled_without_file_deadtime(qapp: QApplication) -> None:
+def test_deadtime_modes_available_without_file_deadtime(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    payload = dialog._current_grouping_payload()
+
+    assert dialog._deadtime_checkbox.isEnabled()
+    assert dialog._deadtime_checkbox.isChecked() is False
+    assert dialog._deadtime_mode_buttons["file"].isChecked()
+    assert "load" not in dialog._deadtime_mode_buttons
+    assert payload["deadtime_correction"] is False
+    dialog._deadtime_checkbox.setChecked(True)
+    assert dialog._deadtime_mode_buttons["file"].isEnabled()
+    assert dialog._deadtime_mode_buttons["file"].isChecked()
+    assert dialog._deadtime_mode_buttons["manual"].isEnabled()
+    assert dialog._deadtime_mode_buttons["estimate"].isEnabled()
+
+
+def test_manual_deadtime_payload_resolves_uniform_values(qapp: QApplication) -> None:
     dialog = GroupingDialog([_dataset_with_histograms()])
 
-    assert not dialog._deadtime_checkbox.isEnabled()
-    assert dialog._current_grouping_payload()["deadtime_correction"] is False
+    dialog._deadtime_checkbox.setChecked(True)
+    dialog._set_deadtime_mode("manual")
+    dialog._update_deadtime_controls()
+    dialog._deadtime_value_combo.setCurrentIndex(0)
+    dialog._deadtime_value_combo.setEditText("25.0")
+    dialog._on_deadtime_value_edited()
+    dialog._deadtime_value_combo.setCurrentIndex(1)
+    dialog._deadtime_value_combo.setEditText("25.0")
+    dialog._on_deadtime_value_edited()
+
+    payload = dialog.get_grouping_result()
+
+    assert payload is not None
+    assert payload["deadtime_correction"] is True
+    assert payload["deadtime_mode"] == "manual"
+    assert payload["deadtime_method"] == "manual"
+    assert payload["dead_time_us"] == pytest.approx([0.025, 0.025])
+
+
+def test_file_deadtime_updates_detector_value_combo(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.grouping["dead_time_us"] = [0.011, 0.022]
+    dialog = GroupingDialog([dataset])
+
+    dialog._deadtime_checkbox.setChecked(True)
+    dialog._set_deadtime_mode("file")
+    dialog._update_deadtime_controls()
+
+    assert dialog._deadtime_value_combo.count() == 2
+    assert dialog._deadtime_value_combo.itemText(0) == "H1: 11.000 ns"
+    assert dialog._deadtime_value_combo.itemText(1) == "H2: 22.000 ns"
+
+
+def test_estimate_deadtime_uses_reference_run_only(qapp: QApplication) -> None:
+    reference = _dataset_with_deadtime_profile(4101, 0.02)
+    other = _dataset_with_deadtime_profile(4102, 0.04)
+    dialog = GroupingDialog(
+        [reference, other],
+        selected_run_number=4101,
+        selected_run_numbers=[4101, 4102],
+    )
+
+    dialog._deadtime_checkbox.setChecked(True)
+    dialog._set_deadtime_mode("estimate")
+
+    payload = dialog.get_grouping_result()
+
+    assert payload is not None
+    assert payload["deadtime_mode"] == "estimate"
+    assert payload["deadtime_method"] == "estimate"
+    assert payload["deadtime_reference_run"] == 4101
+    assert payload["run_numbers"] == [4101, 4102]
+    assert payload["dead_time_us"] == pytest.approx([0.02, 0.02, 0.02, 0.02], rel=1e-2, abs=5e-4)
+    assert dialog._deadtime_value_combo.itemText(0).startswith("H1: 20.000")
+
+
+def test_calibrate_deadtime_populates_explicit_table(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+
+    monkeypatch.setattr(
+        grouping_dialog_module,
+        "calibrate_deadtime_from_histograms",
+        lambda *args, **kwargs: [0.011, 0.022],
+    )
+
+    dialog._deadtime_checkbox.setChecked(True)
+    dialog._set_deadtime_mode("manual")
+    dialog._update_deadtime_controls()
+    assert dialog._deadtime_calibrate_btn.isEnabled()
+    assert "Fit one deadtime value per detector" in dialog._deadtime_calibrate_btn.toolTip()
+    dialog._calibrate_deadtime_from_reference()
+    payload = dialog.get_grouping_result()
+
+    assert payload is not None
+    assert dialog._deadtime_mode_buttons["manual"].isChecked()
+    assert payload["deadtime_mode"] == "manual"
+    assert payload["deadtime_method"] == "calibrate"
+    assert payload["dead_time_us"] == pytest.approx([0.011, 0.022])
+    assert payload["deadtime_reference_run"] == 4001
+    assert dialog._deadtime_value_combo.itemText(0) == "H1: 11.000 ns"
 
 
 def test_background_checkbox_disabled_for_non_psi_data(qapp: QApplication) -> None:
@@ -373,6 +508,29 @@ def test_grp_round_trip_parser_and_serializer() -> None:
     assert parsed["deadtime_correction"] is True
     assert parsed["background_correction"] is True
     assert parsed["period_mode"] == str(PeriodMode.GREEN_PLUS_RED)
+
+
+def test_grp_round_trip_preserves_deadtime_mode_metadata() -> None:
+    payload = {
+        "groups": {1: [1, 2], 2: [3, 4]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "alpha": 1.0,
+        "deadtime_correction": True,
+        "deadtime_mode": "manual",
+        "deadtime_method": "manual",
+        "deadtime_manual_us": 0.025,
+        "dead_time_us": [0.025, 0.025],
+    }
+
+    text = GroupingDialog.serialize_grp(payload)
+    parsed = GroupingDialog.parse_grp(text)
+
+    assert parsed["deadtime_correction"] is True
+    assert parsed["deadtime_mode"] == "manual"
+    assert parsed["deadtime_method"] == "manual"
+    assert parsed["deadtime_manual_us"] == pytest.approx(0.025)
+    assert parsed["dead_time_us"] == pytest.approx([0.025, 0.025])
 
 
 def test_grp_round_trip_parser_and_serializer_with_vector_alphas() -> None:

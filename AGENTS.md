@@ -10,6 +10,7 @@ repo-local docs and use this file as the map.
 - [docs/INDEX.md](docs/INDEX.md): documentation table of contents.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): system design, domain boundaries, and feature specs.
 - [docs/HARNESS.md](docs/HARNESS.md): agent harness workflow and validation ladder.
+- [docs/porting/README.md](docs/porting/README.md): mandatory study-first workflow for feature ports.
 - [docs/QUALITY.md](docs/QUALITY.md): quality map and current risk areas.
 - [docs/PLANS.md](docs/PLANS.md): active and deferred execution plans.
 
@@ -36,6 +37,8 @@ repo-local docs and use this file as the map.
 - Preserve experiment provenance. Loaders and transforms should keep run
   metadata, detector grouping, t0, good-bin ranges, deadtime, and background
   assumptions explicit.
+- Feature ports from reference programs must start with a study pass in
+  `docs/porting/<feature-slug>/` before implementation begins.
 - Prefer small, focused changes with tests beside the behavior they protect.
 - When a repeated review comment exposes a rule, encode it in
   `tools/harness.py`, tests, or docs so future agents can discover it.

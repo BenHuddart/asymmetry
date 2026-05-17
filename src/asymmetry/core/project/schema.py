@@ -46,6 +46,18 @@ Current schema (version 4)
             "x_max": 10.0,
             "y_min": -30.0,
             "y_max": 30.0,
+            "workspace_state": {
+                "active_domain": "time"
+            },
+            "frequency_plot_state": {
+                "plot_panel_domain": "frequency",
+                "x_min": 0.0,
+                "x_max": 100.0,
+                "y_min": -1.0,
+                "y_max": 10.0,
+                "frequency_x_unit": "frequency_mhz",
+                "frequency_x_limits_by_unit": {}
+            },
             "fit_curve": null,
             "fit_curves": {}
         },
@@ -63,8 +75,18 @@ Current schema (version 4)
         },
         "fourier_state": {
             "window": "none",
+            "filter_start_us": 0.0,
+            "filter_time_constant_us": 1.5,
             "padding": 1,
-            "display": "Real"
+            "phase_degrees": 0.0,
+            "t0_offset_us": 0.0,
+            "display": "(Power)^1/2",
+            "auto_phase": false,
+            "auto_phase_method": "Peak",
+            "use_phase_table": false,
+            "estimate_average_error": false,
+            "group_enabled_table": {},
+            "group_phase_table": {}
         }
     }
 """

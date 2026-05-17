@@ -583,6 +583,36 @@ def test_write_fit_files_restored_fit_without_bounds(
     assert data_lines, "Expected numeric x,y rows in exported .fit file"
 
 
+def test_sample_fit_range_curve_uses_log_spacing_for_field(panel: FitParametersPanel) -> None:
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=0.21)])
+    result = ParameterModelFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        parameters=params,
+        uncertainties={"c": 0.01},
+        message="Fit successful",
+    )
+
+    fit_range = ModelFitRange(
+        x_min=100.0,
+        x_max=10000.0,
+        model=model,
+        parameters=params,
+        result=result,
+    )
+
+    sampled = panel._sample_fit_range_curve(fit_range, x_key="field", num_points=5)
+
+    assert sampled is not None
+    xs, ys = sampled
+    np.testing.assert_allclose(xs[[0, -1]], [100.0, 10000.0])
+    np.testing.assert_allclose(ys, np.full(5, 0.21))
+    ratios = xs[1:] / xs[:-1]
+    np.testing.assert_allclose(ratios, np.full_like(ratios, ratios[0]))
+
+
 def test_export_gle_writes_fit_files_for_active_unselected_fit_param(
     panel: FitParametersPanel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

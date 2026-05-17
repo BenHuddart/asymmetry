@@ -911,7 +911,8 @@ What is saved
 * Active fit panel tab (Single or Global)
 * Fitted Parameters panel rows, axis settings, plot mode, component-display
    toggle, and plot labels
-* Fourier window type, padding factor, and display mode (amplitude / power)
+* Fourier panel state, including apodisation settings, phase mode, per-run
+  group phase tables, included groups, and phase-estimation settings
 
 What is **not** saved
 ~~~~~~~~~~~~~~~~~~~~~

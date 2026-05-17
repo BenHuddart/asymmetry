@@ -49,6 +49,9 @@ from asymmetry.gui.export_paths import (
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 
 
+_PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
+
+
 class GlobalParameterFitWindow(QMainWindow):
     """Display cross-group fit data, fitted model curves, and global/local values."""
 
@@ -782,7 +785,12 @@ class GlobalParameterFitWindow(QMainWindow):
         if xx.size < 2:
             return None
 
-        xs = np.linspace(float(np.nanmin(xx)), float(np.nanmax(xx)), 200)
+        x_min = float(np.nanmin(xx))
+        x_max = float(np.nanmax(xx))
+        if self._local_group_x_key() == "field" and x_min > 0.0 and x_max > 0.0:
+            xs = np.geomspace(x_min, x_max, _PARAMETER_FIT_CURVE_SAMPLE_COUNT)
+        else:
+            xs = np.linspace(x_min, x_max, _PARAMETER_FIT_CURVE_SAMPLE_COUNT)
         try:
             ys = np.asarray(self._model.function(xs, **kwargs), dtype=float)
         except KeyError:
@@ -947,7 +955,12 @@ class GlobalParameterFitWindow(QMainWindow):
                     xx = xx[mask]
 
                 if xx.size >= 2:
-                    xx = np.linspace(float(np.nanmin(xx)), float(np.nanmax(xx)), 200)
+                    x_min = float(np.nanmin(xx))
+                    x_max = float(np.nanmax(xx))
+                    if self._x_key == "field" and x_min > 0.0 and x_max > 0.0:
+                        xx = np.geomspace(x_min, x_max, _PARAMETER_FIT_CURVE_SAMPLE_COUNT)
+                    else:
+                        xx = np.linspace(x_min, x_max, _PARAMETER_FIT_CURVE_SAMPLE_COUNT)
 
                 try:
                     if self._show_components_check.isChecked():

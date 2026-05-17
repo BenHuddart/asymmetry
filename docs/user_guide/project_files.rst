@@ -12,6 +12,8 @@ Project files store:
 * Browser state (sorting, filters, selected runs, dynamic columns)
 * Plot state (ranges, selected run, bunch factor)
 * Fit-panel and Fourier-panel state
+* Per-run Fourier group-phase tables, included groups, and auto-estimated
+  phase markers
 * Cached single-fit and global-fit wizard analysis payloads when present
 
 For two-period NeXus runs, grouping metadata persisted with each dataset also

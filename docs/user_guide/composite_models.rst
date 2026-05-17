@@ -17,6 +17,28 @@ Building a Composite Function
    )
    print(model.formula_string())
 
+Fraction Groups
+---------------
+
+Composite models can also share one overall amplitude across several additive
+components while fitting normalized fractions inside that group. In Python,
+write the grouped sum as ``(...){frac}``:
+
+.. code-block:: python
+
+  fraction_model = CompositeModel.from_expression(
+     "( Exponential + Gaussian ){frac} + Constant"
+  )
+
+This creates one amplitude for the grouped sum together with fraction
+parameters ``fraction_1``, ``fraction_2``, ... that are normalized internally
+so the effective fractions always satisfy :math:`\sum_i f_i = 1`.
+
+In the GUI fit-function builder, you do not need to type ``{frac}``. Instead,
+select two or more additive components, press ``Fractions``, and the dialog
+uses matching colors in the expression editor and preview to show which terms
+belong to the same fraction group.
+
 Parameter Naming Rules
 ----------------------
 
@@ -26,6 +48,8 @@ Composite models generate unique parameter names automatically:
 * Components joined by ``*`` or ``/`` share a single amplitude for that
     multiplicative chain. For example, ``Exponential * Gaussian`` uses only
     ``A_1``.
+* Fraction groups share one amplitude across the whole grouped sum and add
+  normalized fraction parameters: ``A_1``, ``fraction_1``, ``fraction_2``, ...
 * Repeated symbols are indexed: ``Lambda_1``, ``Lambda_2``
 * Unique symbols remain unindexed: ``frequency``
 * Constant background uses ``A_bg``
@@ -33,6 +57,10 @@ Composite models generate unique parameter names automatically:
 This keeps the parameterization closer to the usual physics notation for
 products such as an exponentially damped oscillation, where the envelope and
 oscillation share one overall asymmetry.
+
+For fraction groups, the final effective weights are always normalized even if
+the raw fit parameters move during minimization, so the grouped amplitudes stay
+on a physically interpretable simplex.
 
 Evaluate Model and Components
 -----------------------------

@@ -27,14 +27,29 @@ import numpy as np
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QActionGroup, QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QDockWidget,
     QFileDialog,
+    QLabel,
     QMainWindow,
     QMessageBox,
+    QPushButton,
+    QSpinBox,
     QToolBar,
 )
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset
+from asymmetry.core.fourier import (
+    average_fourier_display_values,
+    build_group_signal_dataset,
+    canonical_fourier_display_mode,
+    estimate_fft_phase,
+    fft_complex_asymmetry,
+    fourier_display_values,
+    fourier_mode_uses_entropy_optimizer,
+    fourier_mode_uses_phase_correction,
+    optimize_phase_entropy,
+)
 from asymmetry.core.project import (
     CURRENT_SCHEMA_VERSION,
     UnsupportedSchemaVersion,
@@ -49,11 +64,13 @@ from asymmetry.core.transform import (
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
     has_file_deadtime,
+    has_resolved_deadtime,
     prepare_histograms_with_deadtime,
     supports_background_correction,
 )
 from asymmetry.core.transform.rebin import rebin
 from asymmetry.core.utils.constants import PeriodMode
+from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
 from asymmetry.gui.panels.fit_panel import FitPanel
@@ -61,6 +78,7 @@ from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 from asymmetry.gui.panels.fourier_panel import FourierPanel
 from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
+from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
 from asymmetry.gui.ui_manager import (
     UI_SCALE_OPTIONS,
     UI_SCALE_SETTINGS_KEY,
@@ -75,6 +93,7 @@ _PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
 _COMPACT_MODE_SETTINGS_KEY = "ui/compact_mode"
 _UI_SCALE_SETTINGS_KEY = UI_SCALE_SETTINGS_KEY
 _UI_SCALE_OPTIONS = UI_SCALE_OPTIONS
+_VIEW_MODE_COUNT = 3
 
 
 def _normalise_source_path(path: str) -> str:
@@ -163,12 +182,12 @@ class MainWindow(QMainWindow):
     * Single-fit and global-fit model selection and parameter table contents
     * Fourier panel window, zero-pad factor, and display mode
 
-    Not saved:
+    Previously not saved (now persisted where available):
 
     * Raw asymmetry / time / error arrays (reloaded from source files)
     * Fit *result* statistics (χ², uncertainties) — only the fitted
       parameter values that were written back to the parameter table
-    * Fourier transform output (settings only)
+    * Fourier transform output (cached spectra are now saved when computed)
     """
 
     def __init__(self) -> None:
@@ -189,10 +208,17 @@ class MainWindow(QMainWindow):
         self._current_dataset = None  # Track currently selected dataset
         self._current_project_path: str | None = None  # Path of currently open project
         self._active_group_context: tuple[str, str] | None = None
+        self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
+        self._fourier_group_phase_state_by_run: dict[int, dict[str, object]] = {}
         self._global_parameter_fit_window: GlobalParameterFitWindow | None = None
         self._ui_scale_action_group = QActionGroup(self)
         self._ui_scale_action_group.setExclusive(True)
         self._ui_scale_actions: dict[float, object] = {}
+        self._view_modes = [self._default_view_mode_state() for _ in range(_VIEW_MODE_COUNT)]
+        self._active_view_mode_index = 0
+        self._syncing_view_mode_ui = False
+        self._applying_view_mode = False
+        self._syncing_bunch_context = False
 
         self._setup_menus()
         self._create_toolbars()
@@ -200,6 +226,7 @@ class MainWindow(QMainWindow):
         self._ui_manager = UIManager(self)
         self._connect_actions()
         self._ui_manager.restore_settings()
+        self._restore_plot_ranges_from_settings()
 
         # Check for SciPy availability and warn if using fallback
         from asymmetry.core.fitting.diffusion import is_scipy_available
@@ -291,9 +318,283 @@ class MainWindow(QMainWindow):
         )
         self._global_parameter_fit_toolbar_action.setEnabled(False)
 
+        self._main_toolbar.addSeparator()
+        self._main_toolbar.addWidget(QLabel("View:"))
+
+        self._view_mode_button_group = QButtonGroup(self)
+        self._view_mode_button_group.setExclusive(True)
+        self._view_mode_buttons: list[QPushButton] = []
+        button_style = (
+            "QPushButton { min-width: 28px; padding: 2px 6px; }"
+            "QPushButton:checked { background-color: #1f6feb; color: white; font-weight: 600; }"
+        )
+        for index in range(_VIEW_MODE_COUNT):
+            button = QPushButton(str(index + 1))
+            button.setCheckable(True)
+            button.setStyleSheet(button_style)
+            button.clicked.connect(
+                lambda _checked=False, idx=index: self._on_view_mode_button_clicked(idx)
+            )
+            self._view_mode_button_group.addButton(button, index)
+            self._view_mode_buttons.append(button)
+            self._main_toolbar.addWidget(button)
+
+        self._main_toolbar.addSeparator()
+        self._main_toolbar.addWidget(QLabel("Bunch:"))
+        self._view_bunch_spin = QSpinBox()
+        self._view_bunch_spin.setRange(1, 1000)
+        self._view_bunch_spin.setMaximumWidth(70)
+        self._view_bunch_spin.valueChanged.connect(self._on_main_bunch_factor_changed)
+        self._main_toolbar.addWidget(self._view_bunch_spin)
+
+        self._set_view_mode_button_states(self._active_view_mode_index)
+        self._set_view_bunch_spin_value(self._view_modes[self._active_view_mode_index]["bunch_factor"])
+
     def _setup_toolbar(self) -> None:
         """Backward-compatible wrapper for older tests/tools."""
         self._create_toolbars()
+
+    @staticmethod
+    def _default_view_mode_state() -> dict[str, float | int]:
+        """Return the default persisted state for one main-window view mode."""
+        return {
+            "bunch_factor": 1,
+            "x_min": 0.0,
+            "x_max": 10.0,
+            "y_min": -30.0,
+            "y_max": 30.0,
+        }
+
+    def _set_view_mode_button_states(self, active_index: int) -> None:
+        """Highlight the currently active saved view mode."""
+        self._syncing_view_mode_ui = True
+        try:
+            for index, button in enumerate(getattr(self, "_view_mode_buttons", [])):
+                button.setChecked(index == active_index)
+        finally:
+            self._syncing_view_mode_ui = False
+
+    def _set_view_bunch_spin_value(self, value: int) -> None:
+        """Update the visible bunch-factor spinbox without re-entering handlers."""
+        if not hasattr(self, "_view_bunch_spin"):
+            return
+        previous = self._view_bunch_spin.blockSignals(True)
+        self._view_bunch_spin.setValue(max(1, int(value)))
+        self._view_bunch_spin.blockSignals(previous)
+
+    def _snapshot_active_view_mode(self) -> None:
+        """Store the current bunch factor and axis limits into the active mode."""
+        if not self._view_modes:
+            return
+        mode = self._view_modes[self._active_view_mode_index]
+        if hasattr(self, "_view_bunch_spin"):
+            mode["bunch_factor"] = max(1, int(self._view_bunch_spin.value()))
+        if hasattr(self, "_plot_panel") and hasattr(self._plot_panel, "get_view_limits"):
+            x_min, x_max, y_min, y_max = self._plot_panel.get_view_limits()
+            mode["x_min"] = float(x_min)
+            mode["x_max"] = float(x_max)
+            mode["y_min"] = float(y_min)
+            mode["y_max"] = float(y_max)
+
+    def _collect_view_modes_state(self) -> dict[str, object]:
+        """Return a serializable payload for the saved main-window view modes."""
+        self._snapshot_active_view_mode()
+        return {
+            "active_index": int(self._active_view_mode_index),
+            "modes": [dict(mode) for mode in self._view_modes],
+        }
+
+    def _restore_view_modes_state(self, state: object) -> None:
+        """Restore persisted main-window view modes from project state."""
+        restored_modes = [self._default_view_mode_state() for _ in range(_VIEW_MODE_COUNT)]
+        active_index = 0
+
+        if isinstance(state, dict):
+            raw_modes = state.get("modes")
+            if isinstance(raw_modes, list):
+                for index in range(min(len(raw_modes), _VIEW_MODE_COUNT)):
+                    raw_mode = raw_modes[index]
+                    if not isinstance(raw_mode, dict):
+                        continue
+                    mode = self._default_view_mode_state()
+                    for key, default in mode.items():
+                        raw_value = raw_mode.get(key, default)
+                        try:
+                            mode[key] = int(raw_value) if key == "bunch_factor" else float(raw_value)
+                        except (TypeError, ValueError):
+                            mode[key] = default
+                    mode["bunch_factor"] = max(1, int(mode["bunch_factor"]))
+                    restored_modes[index] = mode
+            try:
+                active_index = int(state.get("active_index", 0))
+            except (TypeError, ValueError):
+                active_index = 0
+
+        self._view_modes = restored_modes
+        self._active_view_mode_index = max(0, min(_VIEW_MODE_COUNT - 1, active_index))
+        self._set_view_mode_button_states(self._active_view_mode_index)
+        self._set_view_bunch_spin_value(self._view_modes[self._active_view_mode_index]["bunch_factor"])
+
+    def _resolve_view_bunch_targets(self) -> tuple[list[MuonDataset], set[int]]:
+        """Return datasets that should receive a bunch-factor update."""
+        resolved: list[MuonDataset] = []
+        seen_run_numbers: set[int] = set()
+        combined_targets: set[int] = set()
+
+        for dataset in self._selected_or_current_datasets():
+            try:
+                run_number = int(dataset.run_number)
+            except (TypeError, ValueError):
+                continue
+
+            if (
+                hasattr(self._data_browser, "is_combined_dataset")
+                and self._data_browser.is_combined_dataset(run_number)
+                and hasattr(self._data_browser, "get_combined_source_datasets")
+            ):
+                combined_targets.add(run_number)
+                for source_dataset in self._data_browser.get_combined_source_datasets(run_number):
+                    try:
+                        source_run = int(source_dataset.run_number)
+                    except (TypeError, ValueError):
+                        continue
+                    if source_run in seen_run_numbers:
+                        continue
+                    seen_run_numbers.add(source_run)
+                    resolved.append(source_dataset)
+                continue
+
+            if run_number in seen_run_numbers:
+                continue
+            seen_run_numbers.add(run_number)
+            resolved.append(dataset)
+
+        return resolved, combined_targets
+
+    def _apply_bunch_factor_to_context(self, bunch_factor: int) -> None:
+        """Apply the visible bunch factor using grouping where possible."""
+        bunch_factor = max(1, int(bunch_factor))
+        if self._syncing_bunch_context:
+            return
+
+        self._syncing_bunch_context = True
+        try:
+            targets, combined_targets = self._resolve_view_bunch_targets()
+            grouping_targets: list[tuple[MuonDataset, dict]] = []
+            for dataset in targets:
+                payload = self._extract_grouping_overrides(dataset)
+                if isinstance(payload, dict):
+                    payload["bunching_factor"] = bunch_factor
+                    grouping_targets.append((dataset, payload))
+                    continue
+
+                run = getattr(dataset, "run", None)
+                grouping = getattr(run, "grouping", None)
+                if isinstance(grouping, dict):
+                    grouping["bunching_factor"] = bunch_factor
+
+            if grouping_targets:
+                updated = 0
+                for dataset, payload in grouping_targets:
+                    applied, _dt_applied = self._apply_grouping_settings_to_dataset(dataset, payload)
+                    if applied:
+                        updated += 1
+
+                if hasattr(self._plot_panel, "set_bunch_factor"):
+                    self._plot_panel.set_bunch_factor(1, emit_signal=False)
+
+                if updated > 0:
+                    for combined_run_number in combined_targets:
+                        if not hasattr(self._data_browser, "rebuild_combined_dataset"):
+                            continue
+                        rebuilt_combined_dataset = self._data_browser.rebuild_combined_dataset(
+                            combined_run_number
+                        )
+                        if (
+                            rebuilt_combined_dataset is not None
+                            and self._current_dataset is not None
+                            and int(self._current_dataset.run_number) == int(combined_run_number)
+                        ):
+                            self._current_dataset = rebuilt_combined_dataset
+
+                    if hasattr(self._data_browser, "_rebuild_table"):
+                        self._data_browser._rebuild_table()
+                    if self._current_dataset is not None:
+                        self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
+                    self._render_current_selection_plot()
+                    self._refresh_vector_axis_selector()
+                    self._update_fit_block_state()
+                    self._update_selected_datasets()
+                return
+
+            if hasattr(self._plot_panel, "set_bunch_factor"):
+                self._plot_panel.set_bunch_factor(bunch_factor, emit_signal=False)
+            if self._current_dataset is not None:
+                self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
+            if targets:
+                self._render_current_selection_plot()
+            self._update_selected_datasets()
+        finally:
+            self._syncing_bunch_context = False
+
+    def _apply_view_mode(self, mode_index: int) -> None:
+        """Activate one saved view mode and redraw the current view."""
+        mode = self._view_modes[mode_index]
+        self._applying_view_mode = True
+        try:
+            self._set_view_bunch_spin_value(int(mode["bunch_factor"]))
+            self._apply_bunch_factor_to_context(int(mode["bunch_factor"]))
+            if hasattr(self._plot_panel, "set_view_limits"):
+                self._plot_panel.set_view_limits(
+                    float(mode["x_min"]),
+                    float(mode["x_max"]),
+                    float(mode["y_min"]),
+                    float(mode["y_max"]),
+                )
+        finally:
+            self._applying_view_mode = False
+
+    def _on_view_mode_button_clicked(self, mode_index: int) -> None:
+        """Switch between saved main-window view modes."""
+        if self._syncing_view_mode_ui or mode_index == self._active_view_mode_index:
+            return
+        self._snapshot_active_view_mode()
+        self._active_view_mode_index = mode_index
+        self._set_view_mode_button_states(mode_index)
+        self._apply_view_mode(mode_index)
+
+    def _on_main_bunch_factor_changed(self, value: int) -> None:
+        """Apply bunch-factor edits from the main toolbar and persist them into the active mode."""
+        bunch_factor = max(1, int(value))
+        self._view_modes[self._active_view_mode_index]["bunch_factor"] = bunch_factor
+        if self._applying_view_mode:
+            return
+        self._apply_bunch_factor_to_context(bunch_factor)
+
+    def _set_frequency_axis_relative_check(self, enabled: bool) -> None:
+        """Synchronize the frequency-axis checkbox without re-entry."""
+        check = getattr(self, "_frequency_axis_relative_check", None)
+        if check is None:
+            return
+        previous = check.blockSignals(True)
+        check.setChecked(bool(enabled))
+        check.blockSignals(previous)
+
+    def _on_plot_view_limits_changed(
+        self,
+        x_min: float,
+        x_max: float,
+        y_min: float,
+        y_max: float,
+    ) -> None:
+        """Persist live x/y limit edits into the active saved view mode."""
+        if self._applying_view_mode:
+            return
+        mode = self._view_modes[self._active_view_mode_index]
+        mode["x_min"] = float(x_min)
+        mode["x_max"] = float(x_max)
+        mode["y_min"] = float(y_min)
+        mode["y_max"] = float(y_max)
 
     # ── panels / docks ─────────────────────────────────────────────────
 
@@ -303,8 +604,23 @@ class MainWindow(QMainWindow):
         self.setDockNestingEnabled(True)
 
         # Central plot
-        self._plot_panel = PlotPanel()
-        self.setCentralWidget(self._plot_panel)
+        try:
+            self._plot_panel = PlotPanel(domain="time")
+        except TypeError:
+            self._plot_panel = PlotPanel()
+        try:
+            self._frequency_plot_panel = PlotPanel(domain="frequency")
+        except TypeError:
+            self._frequency_plot_panel = PlotPanel()
+        self._plot_workspace = PlotWorkspacePanel(
+            time_panel=self._plot_panel,
+            frequency_panel=self._frequency_plot_panel,
+        )
+        self._plot_workspace.active_domain_changed.connect(self._on_plot_workspace_domain_changed)
+        self._frequency_axis_relative_check = getattr(
+            self._frequency_plot_panel, "_frequency_axis_relative_check", None
+        )
+        self.setCentralWidget(self._plot_workspace)
 
         # Left dock — data browser / logbook
         self._data_browser = DataBrowserPanel()
@@ -329,7 +645,7 @@ class MainWindow(QMainWindow):
         self._fourier_panel = FourierPanel()
         self._dock_fourier = QDockWidget("Fourier", self)
         self._dock_fourier.setWidget(self._fourier_panel)
-        self._dock_fourier.setMinimumWidth(320)
+        self._dock_fourier.setMinimumWidth(280)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fourier)
         self.tabifyDockWidget(self._dock_fit, self._dock_fourier)
 
@@ -369,6 +685,8 @@ class MainWindow(QMainWindow):
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         if hasattr(self._plot_panel, "bunch_factor_changed"):
             self._plot_panel.bunch_factor_changed.connect(self._update_selected_datasets)
+        if hasattr(self._plot_panel, "view_limits_changed"):
+            self._plot_panel.view_limits_changed.connect(self._on_plot_view_limits_changed)
         if hasattr(self._plot_panel, "overlay_toggled"):
             self._plot_panel.overlay_toggled.connect(self._on_overlay_toggled)
         if hasattr(self._plot_panel, "polarization_axis_changed"):
@@ -392,8 +710,26 @@ class MainWindow(QMainWindow):
                 self._on_fit_parameters_group_fits_deleted
             )
 
+        if hasattr(self._fourier_panel, "_fft_btn"):
+            self._fourier_panel._fft_btn.clicked.connect(self._on_compute_fourier)
+        if hasattr(self._fourier_panel, "_auto_phase_btn"):
+            self._fourier_panel._auto_phase_btn.clicked.connect(self._on_fill_fourier_phases)
+
+
         # Update selected datasets for global fitting whenever selection changes
         self._update_selected_datasets()
+
+    def _on_plot_workspace_domain_changed(self, _domain: str) -> None:
+        """Refresh fit blocking when the active plot workspace tab changes."""
+        if self._plot_workspace.active_domain() == "frequency":
+            self._sync_frequency_plot_for_current_dataset()
+            self._fit_panel.set_dataset(None)
+            self._fit_panel.set_datasets([])
+        else:
+            if self._current_dataset is not None:
+                self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
+            self._update_selected_datasets()
+        self._update_fit_block_state()
 
     def _setup_panels(self) -> None:
         """Backward-compatible wrapper for older tests/tools."""
@@ -770,6 +1106,13 @@ class MainWindow(QMainWindow):
         if not hasattr(self._fit_panel, "set_fit_blocked"):
             return
 
+        if hasattr(self, "_plot_workspace") and self._plot_workspace.active_domain() == "frequency":
+            self._fit_panel.set_fit_blocked(
+                True,
+                "Frequency-domain plots are view-only. Switch back to Time Domain before fitting.",
+            )
+            return
+
         active_axis = None
         if hasattr(self._plot_panel, "get_current_polarization_axis"):
             active_axis = self._normalize_vector_axis(
@@ -855,7 +1198,7 @@ class MainWindow(QMainWindow):
 
     def _on_export_current_plot(self) -> None:
         """Export the current main plot view to GLE/PDF/EPS."""
-        self._plot_panel.export_current_plot()
+        self._plot_workspace.export_current_plot()
 
     def _on_export_logbook(self) -> None:
         """Export the data-browser logbook table to TSV or RTF."""
@@ -1308,6 +1651,11 @@ class MainWindow(QMainWindow):
                     self._fit_panel.set_dataset(self._get_fit_dataset(rebuilt_combined_dataset))
 
         if updated > 0:
+            bunch_factor = max(1, int(grouping_result.get("bunching_factor", 1)))
+            self._view_modes[self._active_view_mode_index]["bunch_factor"] = bunch_factor
+            self._set_view_bunch_spin_value(bunch_factor)
+            if hasattr(self._plot_panel, "set_bunch_factor"):
+                self._plot_panel.set_bunch_factor(1, emit_signal=False)
             self._data_browser._rebuild_table()
             self._render_current_selection_plot()
             self._refresh_vector_axis_selector()
@@ -1446,6 +1794,20 @@ class MainWindow(QMainWindow):
             "background_correction": bool(grouping.get("background_correction", False)),
         }
 
+        deadtime_mode = str(grouping.get("deadtime_mode", grouping.get("deadtime_method", "off")))
+        if deadtime_mode == "load":
+            deadtime_mode = "manual"
+        payload["deadtime_mode"] = deadtime_mode
+        if grouping.get("deadtime_method"):
+            payload["deadtime_method"] = str(grouping.get("deadtime_method"))
+        for key in (
+            "deadtime_manual_us",
+            "deadtime_estimated_us",
+            "deadtime_reference_run",
+        ):
+            if key in grouping:
+                payload[key] = grouping.get(key)
+
         for axis in ("P_x", "P_y", "P_z"):
             key = self._vector_alpha_key(axis)
             legacy_key = self._legacy_vector_alpha_key(axis)
@@ -1475,8 +1837,11 @@ class MainWindow(QMainWindow):
         if instrument_name:
             payload["instrument"] = str(instrument_name)
 
-        if "dead_time_us" in grouping and isinstance(grouping.get("dead_time_us"), list):
-            payload["dead_time_us"] = list(grouping.get("dead_time_us", []))
+        if deadtime_mode != "file":
+            if isinstance(grouping.get("dead_time_us"), list):
+                payload["dead_time_us"] = list(grouping.get("dead_time_us", []))
+            elif isinstance(grouping.get("deadtime_loaded_us"), list):
+                payload["dead_time_us"] = list(grouping.get("deadtime_loaded_us", []))
         if "good_frames" in grouping:
             payload["good_frames"] = grouping.get("good_frames")
         for key in (
@@ -1669,6 +2034,14 @@ class MainWindow(QMainWindow):
         period_mode = str(grouping_result.get("period_mode", PeriodMode.RED))
         bunch_factor = max(1, bunch_factor)
         use_deadtime = bool(grouping_result.get("deadtime_correction", False))
+        deadtime_mode = str(
+            grouping_result.get(
+                "deadtime_mode",
+                existing_grouping.get("deadtime_mode", existing_grouping.get("deadtime_method", "off")),
+            )
+        ).strip().lower() or "off"
+        if deadtime_mode == "load":
+            deadtime_mode = "manual"
         use_background = bool(
             grouping_result.get("background_correction", False)
             and self._dataset_supports_background_correction(dataset)
@@ -1710,7 +2083,28 @@ class MainWindow(QMainWindow):
             run.grouping["last_good_bin"] = last_good
             run.grouping["bin_index_base"] = bin_index_base
             run.grouping["bunching_factor"] = bunch_factor
-            run.grouping["deadtime_correction"] = False
+            run.grouping["deadtime_correction"] = bool(grouping_result.get("deadtime_correction", False))
+            run.grouping["deadtime_mode"] = deadtime_mode
+            if grouping_result.get("deadtime_method"):
+                run.grouping["deadtime_method"] = str(grouping_result.get("deadtime_method"))
+            else:
+                run.grouping.pop("deadtime_method", None)
+            for key in (
+                "deadtime_manual_us",
+                "deadtime_estimated_us",
+                "deadtime_reference_run",
+            ):
+                if key in grouping_result:
+                    run.grouping[key] = grouping_result.get(key)
+                else:
+                    run.grouping.pop(key, None)
+            run.grouping.pop("deadtime_source_path", None)
+            run.grouping.pop("deadtime_loaded_us", None)
+            if deadtime_mode != "file":
+                if isinstance(grouping_result.get("dead_time_us"), list):
+                    run.grouping["dead_time_us"] = list(grouping_result.get("dead_time_us", []))
+                elif isinstance(grouping_result.get("deadtime_loaded_us"), list):
+                    run.grouping["dead_time_us"] = list(grouping_result.get("deadtime_loaded_us", []))
             run.grouping["background_correction"] = use_background
             if not use_background:
                 run.grouping.pop("background_method", None)
@@ -1790,8 +2184,35 @@ class MainWindow(QMainWindow):
                 for hist in run.histograms
             ]
 
-        if isinstance(grouping_result.get("dead_time_us"), list):
+        if has_file_deadtime(existing_grouping, len(run.histograms)):
+            run.grouping["deadtime_file_us"] = list(existing_grouping.get("dead_time_us", []))
+        elif isinstance(existing_grouping.get("deadtime_file_us"), list):
+            run.grouping["deadtime_file_us"] = list(existing_grouping.get("deadtime_file_us", []))
+
+        run.grouping["deadtime_mode"] = deadtime_mode
+        if grouping_result.get("deadtime_method"):
+            run.grouping["deadtime_method"] = str(grouping_result.get("deadtime_method"))
+        else:
+            run.grouping.pop("deadtime_method", None)
+        for key in (
+            "deadtime_manual_us",
+            "deadtime_estimated_us",
+            "deadtime_reference_run",
+        ):
+            if key in grouping_result:
+                run.grouping[key] = grouping_result.get(key)
+            else:
+                run.grouping.pop(key, None)
+        run.grouping.pop("deadtime_source_path", None)
+        run.grouping.pop("deadtime_loaded_us", None)
+
+        if deadtime_mode == "file":
+            if isinstance(run.grouping.get("deadtime_file_us"), list):
+                run.grouping["dead_time_us"] = list(run.grouping.get("deadtime_file_us", []))
+        elif isinstance(grouping_result.get("dead_time_us"), list):
             run.grouping["dead_time_us"] = list(grouping_result.get("dead_time_us", []))
+        elif isinstance(grouping_result.get("deadtime_loaded_us"), list):
+            run.grouping["dead_time_us"] = list(grouping_result.get("deadtime_loaded_us", []))
         if "good_frames" in grouping_result:
             run.grouping["good_frames"] = grouping_result.get("good_frames")
         for key in (
@@ -1806,7 +2227,12 @@ class MainWindow(QMainWindow):
             if key in grouping_result:
                 run.grouping[key] = grouping_result.get(key)
 
-        use_deadtime = bool(use_deadtime and has_file_deadtime(run.grouping, len(run.histograms)))
+        if deadtime_mode == "file":
+            use_deadtime = bool(use_deadtime and has_file_deadtime(run.grouping, len(run.histograms)))
+        else:
+            use_deadtime = bool(
+                use_deadtime and has_resolved_deadtime(run.grouping, len(run.histograms))
+            )
         if not use_deadtime:
             run.grouping.pop("deadtime_method", None)
 
@@ -1924,6 +2350,7 @@ class MainWindow(QMainWindow):
                 "bin_index_base": bin_index_base,
                 "bunching_factor": bunch_factor,
                 "deadtime_correction": use_deadtime,
+                "deadtime_mode": deadtime_mode,
                 "background_correction": use_background,
                 "period_mode": period_mode,
             }
@@ -2094,7 +2521,600 @@ class MainWindow(QMainWindow):
     def _on_fourier(self) -> None:
         """Show and raise the Fourier dock panel."""
         self._show_panel("fourier")
+        if self._current_dataset is not None:
+            self._sync_fourier_panel_for_dataset(self._current_dataset)
         self._log_panel.log("Opened Fourier panel")
+
+    def _set_fourier_status(self, message: str) -> None:
+        """Update the Fourier panel status text and main-window status bar."""
+        self._fourier_panel._status_label.setText(str(message))
+        self.statusBar().showMessage(str(message))
+
+    def _fourier_group_names_for_dataset(self, dataset: MuonDataset | None) -> dict[int, str]:
+        """Return detector-group names for the provided dataset, if available."""
+        if dataset is None or dataset.run is None or not isinstance(dataset.run.grouping, dict):
+            return {}
+        groups = dataset.run.grouping.get("groups")
+        if not isinstance(groups, dict):
+            return {}
+        group_names = (
+            dataset.run.grouping.get("group_names")
+            if isinstance(dataset.run.grouping.get("group_names"), dict)
+            else {}
+        )
+
+        resolved: dict[int, str] = {}
+        for raw_group_id in sorted(groups):
+            try:
+                group_id = int(raw_group_id)
+            except (TypeError, ValueError):
+                continue
+            resolved[group_id] = str(group_names.get(group_id, f"Group {group_id}"))
+        return resolved
+
+    def _sync_fourier_panel_for_dataset(self, dataset: MuonDataset | None) -> None:
+        """Refresh the Fourier group-phase table for the active run."""
+        group_names = self._fourier_group_names_for_dataset(dataset)
+        run_number = None if dataset is None else int(dataset.run_number)
+        state = None if run_number is None else self._fourier_group_phase_state_by_run.get(run_number)
+        self._fourier_panel.restore_group_phase_state(state, group_names)
+
+    def _store_fourier_group_phase_state_for_dataset(self, dataset: MuonDataset | None) -> None:
+        """Persist the current Fourier group-phase UI state for one dataset/run."""
+        if dataset is None:
+            return
+        try:
+            run_number = int(dataset.run_number)
+        except (TypeError, ValueError):
+            return
+        self._fourier_group_phase_state_by_run[run_number] = self._fourier_panel.group_phase_state()
+
+    def _estimate_dataset_fourier_phase(self, dataset: MuonDataset, state: dict) -> float:
+        """Estimate a single phase correction for one time-domain dataset."""
+        freqs, spectrum = fft_complex_asymmetry(
+            dataset,
+            window=str(state.get("window", "none")),
+            padding_factor=int(state.get("padding", 1)),
+            phase_degrees=0.0,
+            t0_offset_us=float(state.get("t0_offset_us", 0.0)),
+            subtract_average_signal=bool(state.get("subtract_average_signal", True)),
+            filter_start_us=float(state.get("filter_start_us", 0.0)),
+            filter_time_constant_us=float(state.get("filter_time_constant_us", 1.5)),
+        )
+        min_frequency, max_frequency = self._resolve_fourier_phase_window_mhz(dataset, freqs)
+        return estimate_fft_phase(
+            freqs,
+            spectrum,
+            method=str(state.get("auto_phase_method", "Peak")).strip().lower(),
+            min_frequency=min_frequency,
+            max_frequency=max_frequency,
+        )
+
+    def _fourier_center_frequency_mhz(self, dataset: MuonDataset | None) -> float | None:
+        """Return the expected FFT center frequency from the run field, if available."""
+        if dataset is None:
+            return None
+        field_value = dataset.metadata.get("field")
+        if field_value is None and dataset.run is not None:
+            field_value = dataset.run.metadata.get("field")
+        try:
+            field_gauss = float(field_value)
+        except (TypeError, ValueError):
+            return None
+        return field_gauss * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
+
+    def _resolve_fourier_phase_window_mhz(
+        self,
+        dataset: MuonDataset,
+        freqs: np.ndarray,
+    ) -> tuple[float, float | None]:
+        """Return the MHz window that should drive automatic phase estimation."""
+        frequencies = np.asarray(freqs, dtype=float)
+        positive = frequencies[np.isfinite(frequencies) & (frequencies > 0.0)]
+        if positive.size == 0:
+            return 0.0, None
+
+        expected_center = self._fourier_center_frequency_mhz(dataset)
+        preferred_half_width_mhz = 10.0
+        candidate_window: tuple[float, float] | None = None
+        if hasattr(self._frequency_plot_panel, "get_frequency_view_window_mhz"):
+            raw_window = self._frequency_plot_panel.get_frequency_view_window_mhz(
+                reference_dataset=dataset
+            )
+            if raw_window is not None:
+                lo, hi = sorted((float(raw_window[0]), float(raw_window[1])))
+                if hi > 0.0:
+                    if expected_center is None:
+                        candidate_window = (max(0.0, lo), hi)
+                    elif (
+                        hasattr(
+                            self._frequency_plot_panel,
+                            "is_frequency_axis_relative_to_reference",
+                        )
+                        and self._frequency_plot_panel.is_frequency_axis_relative_to_reference()
+                    ) or (lo <= expected_center <= hi):
+                        narrowed_lo = max(lo, expected_center - preferred_half_width_mhz)
+                        narrowed_hi = min(hi, expected_center + preferred_half_width_mhz)
+                        if narrowed_hi > narrowed_lo:
+                            candidate_window = (max(0.0, narrowed_lo), narrowed_hi)
+                        else:
+                            candidate_window = (max(0.0, lo), hi)
+
+        if candidate_window is None and expected_center is not None:
+            candidate_window = (
+                max(0.0, expected_center - preferred_half_width_mhz),
+                expected_center + preferred_half_width_mhz,
+            )
+
+        if candidate_window is None:
+            return 0.0, None
+
+        lo, hi = candidate_window
+        has_overlap = np.any((positive >= lo) & (positive <= hi))
+        if has_overlap:
+            return lo, hi
+
+        if expected_center is not None:
+            fallback_lo = max(0.0, expected_center - preferred_half_width_mhz)
+            fallback_hi = expected_center + preferred_half_width_mhz
+            if np.any((positive >= fallback_lo) & (positive <= fallback_hi)):
+                return fallback_lo, fallback_hi
+
+        return 0.0, None
+
+    def _estimate_group_fourier_phases(self, dataset: MuonDataset, state: dict) -> dict[int, float]:
+        """Estimate one phase correction per detector group."""
+        if dataset.run is None:
+            return {}
+        phases: dict[int, float] = {}
+        prepared_histograms, reference_t0_bin = self._precompute_group_fourier_inputs(dataset)
+        for group_id in self._fourier_group_names_for_dataset(dataset):
+            group_dataset = build_group_signal_dataset(
+                dataset.run,
+                group_id,
+                center_signal=False,
+                reference_t0_bin=reference_t0_bin,
+                prepared_histograms=prepared_histograms,
+            )
+            phases[group_id] = self._estimate_dataset_fourier_phase(group_dataset, state)
+        return phases
+
+    def _fourier_display_ylabel(self, display: str) -> str:
+        """Return a display-specific y-axis label for FFT plots."""
+        return {
+            "cos": "FFT Cos (a.u.)",
+            "imaginary": "FFT Imaginary (a.u.)",
+            "magnitude": "FFT Magnitude (a.u.)",
+            "phase_corrected": "FFT Phase-Corrected (a.u.)",
+            "phase_opt_real": "FFT phaseOptReal (a.u.)",
+            "phase_spectrum": "FFT Phase Spectrum (deg)",
+            "power": "FFT Power (a.u.)",
+            "power_sqrt": "FFT (Power)^1/2 (a.u.)",
+            "real": "FFT Real (a.u.)",
+            "sin": "FFT Sin (a.u.)",
+        }.get(canonical_fourier_display_mode(display), "FFT (a.u.)")
+
+    def _build_fourier_value_dataset(
+        self,
+        source_dataset: MuonDataset,
+        freqs: np.ndarray,
+        values: np.ndarray,
+        *,
+        display: str,
+        run_label: str,
+        error: np.ndarray | None = None,
+    ) -> MuonDataset:
+        """Convert one real-valued Fourier display channel into a plottable dataset."""
+        metadata = dict(source_dataset.metadata)
+        metadata.update(
+            {
+                "run_number": source_dataset.run_number,
+                "run_label": str(run_label),
+                "plot_domain": "frequency",
+                "x_label": "Frequency (MHz)",
+                "y_label": self._fourier_display_ylabel(display),
+                "fourier_display": str(display),
+            }
+        )
+        return MuonDataset(
+            time=np.asarray(freqs, dtype=float),
+            asymmetry=np.asarray(values, dtype=float),
+            error=(
+                np.asarray(error, dtype=float)
+                if error is not None
+                else np.zeros_like(values, dtype=float)
+            ),
+            metadata=metadata,
+            run=None,
+        )
+
+    def _store_frequency_spectra_for_run(
+        self,
+        run_number: int,
+        spectra: list[MuonDataset],
+    ) -> None:
+        """Cache computed frequency spectra for one run-number context."""
+        self._frequency_spectra_by_run[int(run_number)] = list(spectra)
+
+    def _serialize_frequency_spectra_state(self) -> dict[str, list[dict[str, object]]]:
+        """Return a serializable snapshot of cached Fourier spectra."""
+        serialized: dict[str, list[dict[str, object]]] = {}
+        for run_number, spectra in self._frequency_spectra_by_run.items():
+            run_payload: list[dict[str, object]] = []
+            for spectrum in spectra:
+                run_payload.append(
+                    {
+                        "time": np.asarray(spectrum.time, dtype=float).tolist(),
+                        "asymmetry": np.asarray(spectrum.asymmetry, dtype=float).tolist(),
+                        "error": np.asarray(spectrum.error, dtype=float).tolist(),
+                        "metadata": dict(spectrum.metadata),
+                    }
+                )
+            serialized[str(int(run_number))] = run_payload
+        return serialized
+
+    def _restore_frequency_spectra_state(self, state: object) -> None:
+        """Restore cached Fourier spectra from serialized project state."""
+        self._frequency_spectra_by_run = {}
+        if not isinstance(state, dict):
+            return
+
+        for run_key, entries in state.items():
+            try:
+                run_number = int(run_key)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(entries, list):
+                continue
+
+            restored: list[MuonDataset] = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    time = np.asarray(entry.get("time", []), dtype=float)
+                    asymmetry = np.asarray(entry.get("asymmetry", []), dtype=float)
+                    error = np.asarray(entry.get("error", []), dtype=float)
+                except (TypeError, ValueError):
+                    continue
+                if time.size == 0 or asymmetry.size == 0:
+                    continue
+                if error.size != asymmetry.size:
+                    error = np.zeros_like(asymmetry, dtype=float)
+                metadata = entry.get("metadata", {})
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                metadata = dict(metadata)
+                metadata.setdefault("run_number", run_number)
+                restored.append(
+                    MuonDataset(
+                        time=time,
+                        asymmetry=asymmetry,
+                        error=error,
+                        metadata=metadata,
+                        run=None,
+                    )
+                )
+
+            if restored:
+                self._frequency_spectra_by_run[run_number] = restored
+
+    def _sync_frequency_plot_for_run(
+        self,
+        run_number: int | None,
+        *,
+        preserve_x_limits: bool = False,
+    ) -> None:
+        """Render the cached frequency spectra for *run_number*, or clear the tab."""
+        preserved_x_limits: tuple[float, float] | None = None
+        preserved_y_limits: tuple[float, float] | None = None
+        if hasattr(self._frequency_plot_panel, "get_view_limits"):
+            current_dataset = getattr(self._frequency_plot_panel, "_current_dataset", None)
+            current_run_number: int | None = None
+            if current_dataset is not None:
+                try:
+                    current_run_number = int(current_dataset.run_number)
+                except (TypeError, ValueError):
+                    current_run_number = None
+            same_run = run_number is not None and current_run_number == int(run_number)
+            if preserve_x_limits or same_run:
+                x_min, x_max, y_min, y_max = self._frequency_plot_panel.get_view_limits()
+                preserved_x_limits = (float(x_min), float(x_max))
+                preserved_y_limits = (float(y_min), float(y_max))
+
+        if run_number is None:
+            self._frequency_plot_panel.clear()
+            if preserved_x_limits is not None and preserved_y_limits is not None:
+                self._frequency_plot_panel.set_view_limits(
+                    preserved_x_limits[0],
+                    preserved_x_limits[1],
+                    preserved_y_limits[0],
+                    preserved_y_limits[1],
+                )
+            return
+
+        spectra = list(self._frequency_spectra_by_run.get(int(run_number), []))
+        if not spectra:
+            self._frequency_plot_panel.clear()
+            if preserved_x_limits is not None and preserved_y_limits is not None:
+                self._frequency_plot_panel.set_view_limits(
+                    preserved_x_limits[0],
+                    preserved_x_limits[1],
+                    preserved_y_limits[0],
+                    preserved_y_limits[1],
+                )
+            return
+
+        if len(spectra) == 1:
+            self._frequency_plot_panel.plot_dataset(spectra[0])
+        else:
+            self._frequency_plot_panel.plot_datasets(spectra)
+
+        if preserved_x_limits is not None:
+            _current_x_min, _current_x_max, y_min, y_max = self._frequency_plot_panel.get_view_limits()
+            self._frequency_plot_panel.set_view_limits(
+                preserved_x_limits[0],
+                preserved_x_limits[1],
+                y_min,
+                y_max,
+            )
+
+    def _sync_frequency_plot_for_current_dataset(self) -> None:
+        """Render the cached frequency spectra for the current dataset selection."""
+        run_number = None if self._current_dataset is None else int(self._current_dataset.run_number)
+        self._sync_frequency_plot_for_run(run_number)
+
+    def _selected_fourier_group_ids(self, dataset: MuonDataset) -> list[int]:
+        """Return the detector groups currently enabled for grouped Fourier transforms."""
+        group_names = self._fourier_group_names_for_dataset(dataset)
+        enabled = self._fourier_panel.group_enabled_table()
+        return [group_id for group_id in group_names if enabled.get(int(group_id), True)]
+
+    def _precompute_group_fourier_inputs(
+        self,
+        dataset: MuonDataset,
+    ) -> tuple[list[Histogram] | None, int | None]:
+        """Prepare grouped Fourier intermediates once per run.
+
+        Reusing deadtime-prepared histograms and a shared reference t0 avoids
+        repeating setup work for each detector-group FFT.
+        """
+        if dataset.run is None:
+            return None, None
+        grouping = dataset.run.grouping if isinstance(dataset.run.grouping, dict) else {}
+        groups = grouping.get("groups") if isinstance(grouping, dict) else None
+        histograms = list(dataset.run.histograms)
+        if not isinstance(groups, dict) or not histograms:
+            return None, None
+
+        apply_deadtime = bool(grouping.get("deadtime_correction", False))
+        prepared_histograms, _ = prepare_histograms_with_deadtime(
+            histograms,
+            grouping,
+            apply_deadtime,
+        )
+
+        all_group_indices: list[list[int]] = []
+        for values in groups.values():
+            if not isinstance(values, list):
+                continue
+            normalized: list[int] = []
+            for value in values:
+                detector = value[0] if isinstance(value, (list, tuple)) and value else value
+                try:
+                    normalized.append(max(0, int(detector) - 1))
+                except (TypeError, ValueError):
+                    continue
+            if normalized:
+                all_group_indices.append(normalized)
+
+        reference_t0_bin = 0
+        if all_group_indices:
+            reference_t0_bin = common_t0_for_groups(prepared_histograms, *all_group_indices)
+        return prepared_histograms, int(reference_t0_bin)
+
+    def _current_fourier_time_window_us(self) -> tuple[float | None, float | None]:
+        """Return the active time-domain window to use for grouped FFTs."""
+        if not hasattr(self._plot_panel, "get_fit_range"):
+            return None, None
+        fit_range = self._plot_panel.get_fit_range()
+        if fit_range is None:
+            return None, None
+        try:
+            t_min = float(fit_range[0])
+            t_max = float(fit_range[1])
+        except (TypeError, ValueError, IndexError):
+            return None, None
+        if not np.isfinite(t_min) or not np.isfinite(t_max):
+            return None, None
+        if t_max < t_min:
+            t_min, t_max = t_max, t_min
+        return t_min, t_max
+
+    def _on_fill_fourier_phases(self) -> None:
+        """Estimate one phase correction per included detector group."""
+        state = self._fourier_panel.get_state()
+        if self._current_dataset is None:
+            self._set_fourier_status("Select a run before estimating group phases.")
+            return
+        self._sync_fourier_panel_for_dataset(self._current_dataset)
+        phases = self._estimate_group_fourier_phases(self._current_dataset, state)
+        if not phases:
+            self._set_fourier_status("No detector groups are available for phase estimation.")
+            return
+        self._fourier_panel.set_group_phases(phases, auto_filled=True)
+        self._fourier_panel._use_phase_table_check.setChecked(True)
+        self._set_fourier_status(f"Estimated phases for {len(phases)} detector groups.")
+
+    def _on_compute_fourier(self) -> None:
+        """Compute one averaged grouped FFT spectrum for the active run."""
+        state = self._fourier_panel.get_state()
+        display = str(state.get("display", "Real"))
+        apply_phase_correction = fourier_mode_uses_phase_correction(display)
+        is_entropy_mode = fourier_mode_uses_entropy_optimizer(display)
+        window = str(state.get("window", "none"))
+        filter_start_us = float(state.get("filter_start_us", 0.0))
+        filter_time_constant_us = float(state.get("filter_time_constant_us", 1.5))
+        padding = int(state.get("padding", 1))
+        t0_offset_us = float(state.get("t0_offset_us", 0.0))
+        manual_phase = float(state.get("phase_degrees", 0.0))
+        auto_phase = bool(state.get("auto_phase", False))
+        use_phase_table = bool(state.get("use_phase_table", False))
+        estimate_average_error = bool(state.get("estimate_average_error", False))
+        subtract_average_signal = bool(state.get("subtract_average_signal", True))
+        group_phase_table = {
+            int(group_id): float(phase)
+            for group_id, phase in self._fourier_panel.group_phase_table().items()
+        }
+        self._fourier_panel.clear_average_summary()
+
+        spectra: list[MuonDataset] = []
+        spectra_by_run: dict[int, list[MuonDataset]] = {}
+
+        if self._current_dataset is None or self._current_dataset.run is None:
+            self._set_fourier_status("Select a grouped run before computing the Fourier transform.")
+            return
+
+        self._sync_fourier_panel_for_dataset(self._current_dataset)
+        if auto_phase and apply_phase_correction:
+            estimated = self._estimate_group_fourier_phases(self._current_dataset, state)
+            if use_phase_table and estimated:
+                self._fourier_panel.set_group_phases(estimated, auto_filled=True)
+                group_phase_table.update(estimated)
+        group_names = self._fourier_group_names_for_dataset(self._current_dataset)
+        if not group_names:
+            self._set_fourier_status("The active run does not define detector groups.")
+            return
+
+        selected_group_ids = self._selected_fourier_group_ids(self._current_dataset)
+        if not selected_group_ids:
+            self._set_fourier_status("Select at least one detector group before computing the Fourier transform.")
+            return
+
+        fourier_t_min_us, fourier_t_max_us = self._current_fourier_time_window_us()
+        prepared_histograms, reference_t0_bin = self._precompute_group_fourier_inputs(
+            self._current_dataset
+        )
+
+        averaged_values: list[np.ndarray] = []
+        averaged_complex_spectra: list[np.ndarray] = []
+        average_freqs: np.ndarray | None = None
+        first_group_dataset: MuonDataset | None = None
+        selected_group_names: list[str] = []
+
+        for group_id in selected_group_ids:
+            group_name = group_names.get(group_id, f"Group {group_id}")
+            group_dataset = build_group_signal_dataset(
+                self._current_dataset.run,
+                group_id,
+                center_signal=False,
+                reference_t0_bin=reference_t0_bin,
+                prepared_histograms=prepared_histograms,
+            )
+            if first_group_dataset is None:
+                first_group_dataset = group_dataset
+            selected_group_names.append(str(group_name))
+            phase_degrees = 0.0
+            group_t0_offset_us = 0.0
+            if apply_phase_correction:
+                phase_degrees = manual_phase
+                group_t0_offset_us = t0_offset_us
+                if auto_phase and not use_phase_table:
+                    phase_degrees = self._estimate_dataset_fourier_phase(group_dataset, state)
+                elif use_phase_table:
+                    phase_degrees = group_phase_table.get(group_id, manual_phase)
+
+            freqs, spectrum = fft_complex_asymmetry(
+                group_dataset,
+                window=window,
+                padding_factor=padding,
+                t_min=fourier_t_min_us,
+                t_max=fourier_t_max_us,
+                phase_degrees=phase_degrees,
+                t0_offset_us=group_t0_offset_us,
+                subtract_average_signal=subtract_average_signal,
+                filter_start_us=filter_start_us,
+                filter_time_constant_us=filter_time_constant_us,
+            )
+            if average_freqs is None:
+                average_freqs = freqs
+            if is_entropy_mode:
+                averaged_complex_spectra.append(spectrum)
+            else:
+                averaged_values.append(fourier_display_values(spectrum, display=display))
+
+        if is_entropy_mode and averaged_complex_spectra and average_freqs is not None:
+            avg_complex = np.mean(
+                np.vstack([s[np.newaxis, :] for s in averaged_complex_spectra]), axis=0
+            )
+            averaged_display, _c0, _c1 = optimize_phase_entropy(avg_complex)
+            averaged_error = np.zeros_like(averaged_display)
+
+        elif averaged_values and average_freqs is not None:
+            averaged_display, averaged_error = average_fourier_display_values(
+                averaged_values,
+                estimate_error=estimate_average_error,
+            )
+        else:
+            averaged_display = None
+            averaged_error = None
+
+        if averaged_display is not None and average_freqs is not None:
+            average_dataset = self._build_fourier_value_dataset(
+                first_group_dataset if first_group_dataset is not None else self._current_dataset,
+                average_freqs,
+                averaged_display,
+                display=display,
+                run_label=(
+                    f"{self._current_dataset.run_number} Average"
+                    if len(selected_group_names) == len(group_names)
+                    else f"{self._current_dataset.run_number} Average ({', '.join(selected_group_names)})"
+                ),
+                error=averaged_error,
+            )
+            average_dataset.metadata["fourier_group_output"] = "average"
+            average_dataset.metadata["group_ids"] = list(selected_group_ids)
+            if averaged_error.size > 0 and np.any(averaged_error > 0.0):
+                peak_signal_to_noise = 0.0
+                if np.any(averaged_error > 0.0):
+                    sn = np.divide(
+                        np.abs(averaged_display),
+                        averaged_error,
+                        out=np.zeros_like(averaged_display),
+                        where=averaged_error > 0.0,
+                    )
+                    peak_signal_to_noise = float(np.nanmax(sn)) if sn.size else 0.0
+                self._fourier_panel.set_average_summary(
+                    mean_error=float(np.nanmean(averaged_error)) if averaged_error.size else 0.0,
+                    peak_signal_to_noise=peak_signal_to_noise,
+                    group_count=len(selected_group_ids),
+                )
+            spectra.append(average_dataset)
+            spectra_by_run[int(self._current_dataset.run_number)] = list(spectra)
+
+        if not spectra:
+            self._set_fourier_status("No FFT spectra could be generated from the current selection.")
+            return
+
+        for run_number, run_spectra in spectra_by_run.items():
+            self._store_frequency_spectra_for_run(run_number, run_spectra)
+
+        active_run_number = None
+        if self._current_dataset is not None:
+            current_run_number = int(self._current_dataset.run_number)
+            if current_run_number in spectra_by_run:
+                active_run_number = current_run_number
+        if active_run_number is None and spectra_by_run:
+            active_run_number = next(iter(spectra_by_run))
+
+        self._sync_frequency_plot_for_run(active_run_number, preserve_x_limits=True)
+        self._plot_workspace.set_active_domain("frequency")
+        self._show_panel("fourier")
+        suffix = "s" if len(spectra) != 1 else ""
+        self._set_fourier_status(f"Computed {len(spectra)} Fourier spectrum{suffix}.")
+        self._log_panel.log(
+            f"Computed averaged grouped Fourier spectrum using {display.lower()} display."
+        )
 
     def _on_fit_parameters(self) -> None:
         """Show and raise the Fitted Parameters dock panel."""
@@ -2152,12 +3172,14 @@ class MainWindow(QMainWindow):
 
     def _on_dataset_selected(self, run_number: int) -> None:
         """Handle dataset selection from data browser."""
+        self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
         self._active_group_context = None
         if hasattr(self._plot_panel, "set_active_label_group"):
             self._plot_panel.set_active_label_group(None)
         dataset = self._data_browser.get_dataset(run_number)
         if dataset:
             self._current_dataset = dataset
+            self._sync_fourier_panel_for_dataset(dataset)
             active_axis = None
             if hasattr(self._plot_panel, "get_current_polarization_axis"):
                 active_axis = self._normalize_vector_axis(
@@ -2166,6 +3188,7 @@ class MainWindow(QMainWindow):
             if active_axis in {"P_x", "P_y", "P_z"}:
                 self._synchronize_targets_to_axis([dataset], active_axis)
             self._render_current_selection_plot()
+            self._sync_frequency_plot_for_current_dataset()
             self._refresh_vector_axis_selector()
             self._update_fit_block_state()
             self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
@@ -2496,6 +3519,7 @@ class MainWindow(QMainWindow):
             if self._data_browser.get_dataset(current_run) is None:
                 self._current_dataset = None
                 self._plot_panel.clear()
+                self._frequency_plot_panel.clear()
                 self._fit_panel.set_dataset(None)
 
         # Multi-selection render mode depends on the plot-panel Overlay toggle.
@@ -2684,15 +3708,52 @@ class MainWindow(QMainWindow):
             for crn, src_runs in self._data_browser._combined_datasets.items()
         ]
 
+
+        plot_state = self._plot_panel.get_state()
+        plot_state["fit_curve"] = None
+        plot_state["fit_curves"] = {}
+        plot_state["fit_curves_by_key"] = {}
+        plot_state["fit_components"] = None
+        plot_state["fit_components_by_run"] = {}
+        plot_state["fit_components_by_key"] = {}
+        plot_state["workspace_state"] = self._plot_workspace.get_state()
+        plot_state["frequency_plot_state"] = self._frequency_plot_panel.get_state()
+        self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
+
+        def _prune_single_fit_state(state: dict | None) -> dict | None:
+            if not isinstance(state, dict):
+                return state
+            pruned = dict(state)
+            pruned.pop("wizard_state", None)
+            raw_states = pruned.get("states_by_run")
+            if isinstance(raw_states, dict):
+                pruned["states_by_run"] = {
+                    str(run_number): {
+                        key: value for key, value in dict(run_state).items() if key != "wizard_state"
+                    }
+                    for run_number, run_state in raw_states.items()
+                    if isinstance(run_state, dict)
+                }
+            return pruned
+
+        def _prune_global_fit_state(state: dict | None) -> dict | None:
+            if not isinstance(state, dict):
+                return state
+            pruned = dict(state)
+            pruned.pop("wizard_state", None)
+            pruned.pop("wizard_state_by_run_set", None)
+            return pruned
+
         return {
             "schema_version": CURRENT_SCHEMA_VERSION,
             "created_with_app_version": __version__,
             "datasets": datasets,
             "combined_datasets": combined_datasets,
             "browser_state": self._data_browser.get_state(),
-            "plot_state": self._plot_panel.get_state(),
-            "single_fit_state": self._fit_panel.get_single_state(),
-            "global_fit_state": self._fit_panel.get_global_state(),
+            "plot_state": plot_state,
+            "view_modes_state": self._collect_view_modes_state(),
+            "single_fit_state": _prune_single_fit_state(self._fit_panel.get_single_state()),
+            "global_fit_state": _prune_global_fit_state(self._fit_panel.get_global_state()),
             "fit_ui_state": self._fit_panel.get_ui_state(),
             "fit_parameters_state": self._fit_parameters_panel.get_state(),
             "global_parameter_fit_window_state": (
@@ -2700,7 +3761,14 @@ class MainWindow(QMainWindow):
                 if self._global_parameter_fit_window is not None
                 else None
             ),
-            "fourier_state": self._fourier_panel.get_state(),
+            "fourier_state": {
+                **self._fourier_panel.get_state(),
+                "group_phase_state_by_run": {
+                    str(run_number): dict(run_state)
+                    for run_number, run_state in self._fourier_group_phase_state_by_run.items()
+                },
+            },
+            "fourier_spectra_state": self._serialize_frequency_spectra_state(),
         }
 
     def restore_project_state(self, state: dict, project_path: str) -> None:
@@ -2869,6 +3937,35 @@ class MainWindow(QMainWindow):
         if current_dataset is not None:
             self._current_dataset = current_dataset
         self._plot_panel.restore_state(plot_state, current_dataset)
+        self._frequency_plot_panel.restore_state(plot_state.get("frequency_plot_state", {}), None)
+        self._restore_view_modes_state(state.get("view_modes_state"))
+        if state.get("view_modes_state") is not None:
+            self._apply_view_mode(self._active_view_mode_index)
+        else:
+            self._snapshot_active_view_mode()
+        self._plot_workspace.restore_state(plot_state.get("workspace_state"))
+        self._restore_frequency_spectra_state(state.get("fourier_spectra_state"))
+        if self._plot_workspace.active_domain() == "frequency":
+            self._sync_frequency_plot_for_current_dataset()
+        if (
+            current_dataset is not None
+            and hasattr(self._plot_panel, "get_fit_range")
+            and hasattr(self._plot_panel, "_set_fit_range")
+        ):
+            fit_range = self._plot_panel.get_fit_range()
+            if fit_range is not None:
+                self._plot_panel._set_fit_range(
+                    float(fit_range[0]),
+                    float(fit_range[1]),
+                    emit_signal=False,
+                    redraw=True,
+                )
+        if (
+            self._plot_workspace.active_domain() == "frequency"
+            and hasattr(self._frequency_plot_panel, "has_plot_content")
+            and not self._frequency_plot_panel.has_plot_content()
+        ):
+            self._plot_workspace.set_active_domain("time")
 
         # Propagate current dataset to fit panel.
         if current_dataset is not None:
@@ -2943,7 +4040,25 @@ class MainWindow(QMainWindow):
         # ── restore Fourier state ──────────────────────────────────────
         fourier_state = state.get("fourier_state")
         if fourier_state:
+            raw_group_phase_states = fourier_state.get("group_phase_state_by_run", {})
+            self._fourier_group_phase_state_by_run = {}
+            if isinstance(raw_group_phase_states, dict):
+                for run_number, run_state in raw_group_phase_states.items():
+                    try:
+                        parsed_run = int(run_number)
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(run_state, dict):
+                        self._fourier_group_phase_state_by_run[parsed_run] = dict(run_state)
             self._fourier_panel.restore_state(fourier_state)
+            if current_dataset is not None:
+                if int(current_dataset.run_number) not in self._fourier_group_phase_state_by_run:
+                    self._fourier_group_phase_state_by_run[int(current_dataset.run_number)] = {
+                        "group_enabled_table": dict(fourier_state.get("group_enabled_table", {})),
+                        "group_phase_table": dict(fourier_state.get("group_phase_table", {})),
+                        "group_auto_filled_ids": list(fourier_state.get("group_auto_filled_ids", [])),
+                    }
+                self._sync_fourier_panel_for_dataset(current_dataset)
 
         # Open fit-related docks automatically when project contains saved
         # results/state for those panes.
@@ -2960,8 +4075,14 @@ class MainWindow(QMainWindow):
     def _clear_all_state(self) -> None:
         """Reset every panel to its empty initial state."""
         self._current_dataset = None
+        self._frequency_spectra_by_run = {}
+        self._fourier_group_phase_state_by_run = {}
         self._data_browser.clear()
-        self._plot_panel.clear()
+        self._plot_workspace.clear()
+        if hasattr(self._frequency_plot_panel, "_frequency_x_unit_combo"):
+            self._frequency_plot_panel._frequency_x_unit_combo.setCurrentIndex(0)
+        if hasattr(self._frequency_plot_panel, "set_frequency_axis_relative_to_reference"):
+            self._frequency_plot_panel.set_frequency_axis_relative_to_reference(False)
         self._fit_panel.set_dataset(None)
         self._fit_panel.set_datasets([])
         self._fit_parameters_panel.clear()
@@ -3010,6 +4131,48 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(f"Asymmetry — {name}")
         else:
             self.setWindowTitle("Asymmetry \u2014 \u03bcSR Data Analysis")
+
+    def closeEvent(self, event) -> None:
+        """Save plot axis ranges to QSettings before closing."""
+        if hasattr(self, "_plot_panel") and hasattr(self._plot_panel, "get_view_limits"):
+            x_min, x_max, y_min, y_max = self._plot_panel.get_view_limits()
+            self._settings.setValue("plot/time_x_min", float(x_min))
+            self._settings.setValue("plot/time_x_max", float(x_max))
+            self._settings.setValue("plot/time_y_min", float(y_min))
+            self._settings.setValue("plot/time_y_max", float(y_max))
+        if hasattr(self, "_frequency_plot_panel") and hasattr(
+            self._frequency_plot_panel, "get_view_limits"
+        ):
+            x_min, x_max, y_min, y_max = self._frequency_plot_panel.get_view_limits()
+            self._settings.setValue("plot/freq_x_min", float(x_min))
+            self._settings.setValue("plot/freq_x_max", float(x_max))
+            self._settings.setValue("plot/freq_y_min", float(y_min))
+            self._settings.setValue("plot/freq_y_max", float(y_max))
+        self._settings.sync()
+        super().closeEvent(event)
+
+    def _restore_plot_ranges_from_settings(self) -> None:
+        """Restore saved x/y axis ranges from QSettings if available."""
+        if self._settings.contains("plot/time_x_min") and hasattr(
+            self._plot_panel, "set_view_limits"
+        ):
+            x_min = self._settings.value("plot/time_x_min", 0.0, float)
+            x_max = self._settings.value("plot/time_x_max", 10.0, float)
+            y_min = self._settings.value("plot/time_y_min", -30.0, float)
+            y_max = self._settings.value("plot/time_y_max", 30.0, float)
+            self._plot_panel.set_view_limits(x_min, x_max, y_min, y_max)
+            if hasattr(self._plot_panel, "_limits_initialized"):
+                self._plot_panel._limits_initialized = True
+        if self._settings.contains("plot/freq_x_min") and hasattr(
+            self._frequency_plot_panel, "set_view_limits"
+        ):
+            x_min = self._settings.value("plot/freq_x_min", 0.0, float)
+            x_max = self._settings.value("plot/freq_x_max", 20.0, float)
+            y_min = self._settings.value("plot/freq_y_min", 0.0, float)
+            y_max = self._settings.value("plot/freq_y_max", 10.0, float)
+            self._frequency_plot_panel.set_view_limits(x_min, x_max, y_min, y_max)
+            if hasattr(self._frequency_plot_panel, "_limits_initialized"):
+                self._frequency_plot_panel._limits_initialized = True
 
 
 def _has_saved_fit_results(single_fit_state: dict | None, global_fit_state: dict | None) -> bool:

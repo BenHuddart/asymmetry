@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.optimize import curve_fit
 
 from asymmetry.core.data.dataset import Histogram
+from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
 def apply_deadtime_correction(
@@ -28,8 +30,215 @@ def apply_deadtime_correction(
     return n / denom
 
 
+def estimate_deadtime_from_histograms(
+    histograms: list[Histogram],
+    *,
+    t_good_offset: int = 0,
+    last_good_bin: int | None = None,
+    num_good_frames: float = 1.0,
+    max_bins: int = 400,
+) -> float | None:
+    """Estimate a uniform deadtime value from early-time detector counts.
+
+    The fit mirrors WiMDA's ``countfit`` workflow: average the early-time count
+    rate per detector and fit a muon-lifetime decay with a deadtime-loss term.
+    The returned value is a single detector deadtime in microseconds that can be
+    broadcast across grouped histograms.
+    """
+    calibrated = calibrate_deadtime_from_histograms(
+        histograms,
+        t_good_offset=t_good_offset,
+        last_good_bin=last_good_bin,
+        num_good_frames=num_good_frames,
+        max_bins=max_bins,
+    )
+    if not calibrated:
+        return None
+    return float(np.mean(calibrated))
+
+
+def calibrate_deadtime_from_histograms(
+    histograms: list[Histogram],
+    *,
+    t_good_offset: int = 0,
+    last_good_bin: int | None = None,
+    num_good_frames: float = 1.0,
+    max_bins: int = 400,
+) -> list[float] | None:
+    """Calibrate per-detector deadtime values from early-time count data.
+
+    This mirrors WiMDA's ``Cal`` button behavior: fit each detector histogram
+    independently using the same ``countfit`` model and return one deadtime
+    value per detector in microseconds.
+    """
+    if not histograms:
+        return None
+
+    try:
+        frame_scale = float(num_good_frames) * float(histograms[0].bin_width)
+    except (TypeError, ValueError):
+        return None
+    if frame_scale <= 0.0:
+        return None
+
+    try:
+        offset = max(0, int(t_good_offset))
+        window_limit = max(1, int(max_bins))
+    except (TypeError, ValueError):
+        return None
+
+    calibrated: list[float] = []
+    for histogram in histograms:
+        counts = np.asarray(histogram.counts, dtype=np.float64)
+        if counts.size <= 0:
+            return None
+
+        start = max(0, int(histogram.t0_bin) + offset)
+        end = counts.size - 1
+        if last_good_bin is not None:
+            try:
+                end = min(end, int(last_good_bin))
+            except (TypeError, ValueError):
+                pass
+        if start > end:
+            return None
+
+        n_fit = min(window_limit, end - start + 1)
+        if n_fit < 3:
+            return None
+
+        observed = counts[start : start + n_fit]
+        sigma = np.sqrt(np.clip(observed, 1.0, None))
+        times_us = (np.arange(n_fit, dtype=np.float64) + 1.0) * float(histogram.bin_width)
+        tau_us = _fit_deadtime_tau(times_us, observed, sigma, frame_scale)
+        if tau_us is None:
+            return None
+        calibrated.append(tau_us)
+
+    return calibrated
+
+
+def _fit_deadtime_tau(
+    times_us: np.ndarray,
+    observed: np.ndarray,
+    sigma: np.ndarray,
+    frame_scale: float,
+) -> float | None:
+    """Fit the WiMDA deadtime model and return deadtime in microseconds."""
+    if observed.size < 3:
+        return None
+
+    def _countfit(time_us, amplitude, tau_us):
+        cc = amplitude * np.exp(-time_us / MUON_LIFETIME_US)
+        n_rate = cc / frame_scale
+        return cc * (
+            1.0 - n_rate * MUON_LIFETIME_US * (1.0 - np.exp(-tau_us / MUON_LIFETIME_US))
+        )
+
+    guess_amplitude = max(float(observed[0]), 1.0)
+    tau_upper = max(0.5, 10.0 * float(times_us[0]))
+    try:
+        params, _ = curve_fit(
+            _countfit,
+            times_us,
+            observed,
+            p0=(guess_amplitude, 0.01),
+            sigma=sigma,
+            absolute_sigma=True,
+            bounds=((0.0, 0.0), (np.inf, tau_upper)),
+            maxfev=10000,
+        )
+    except (RuntimeError, ValueError, TypeError):
+        return None
+
+    try:
+        tau_us = float(params[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+    if not np.isfinite(tau_us):
+        return None
+    return max(0.0, tau_us)
+
+
+def parse_deadtime_calibration_text(text: str, *, n_histograms: int | None = None) -> list[float]:
+    """Parse a WiMDA-style deadtime calibration text file.
+
+    The accepted format is the simple line-oriented form written by WiMDA:
+
+    - optional first line with the histogram count
+    - subsequent lines of ``<index> <tau_us>``
+    - optional trailing metadata lines such as ``Run 1234``
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")]
+    if not lines:
+        raise ValueError("Deadtime calibration file is empty.")
+
+    expected_count = None
+    start_index = 0
+    first_tokens = lines[0].split()
+    if len(first_tokens) == 1:
+        try:
+            expected_count = int(first_tokens[0])
+            start_index = 1
+        except ValueError:
+            expected_count = None
+
+    indexed_values: dict[int, float] = {}
+    sequential_values: list[float] = []
+    for line in lines[start_index:]:
+        tokens = line.split()
+        if not tokens:
+            continue
+        if tokens[0].lower() == "run":
+            break
+        if len(tokens) >= 2:
+            try:
+                detector_index = int(tokens[0])
+                tau_us = float(tokens[1])
+            except ValueError:
+                continue
+            indexed_values[detector_index] = tau_us
+            continue
+        try:
+            sequential_values.append(float(tokens[0]))
+        except ValueError:
+            continue
+
+    if indexed_values:
+        count = expected_count or max(indexed_values)
+        values = [0.0] * count
+        for detector_index, tau_us in indexed_values.items():
+            if detector_index <= 0:
+                continue
+            if detector_index > len(values):
+                values.extend([0.0] * (detector_index - len(values)))
+            values[detector_index - 1] = tau_us
+    else:
+        values = sequential_values
+
+    if expected_count is not None and len(values) != expected_count:
+        raise ValueError(
+            f"Deadtime calibration expected {expected_count} values but parsed {len(values)}."
+        )
+    if n_histograms is not None and len(values) != int(n_histograms):
+        raise ValueError(
+            f"Deadtime calibration provides {len(values)} values but the run has {int(n_histograms)} histograms."
+        )
+    return [float(value) for value in values]
+
+
 def has_file_deadtime(grouping: dict, n_histograms: int = 0) -> bool:
     """Return ``True`` when grouping metadata contains file deadtime values."""
+    if not isinstance(grouping, dict):
+        return False
+    method = str(grouping.get("deadtime_method", "")).strip().lower()
+    if method not in {"", "file"}:
+        return False
+    return has_resolved_deadtime(grouping, n_histograms)
+
+
+def has_resolved_deadtime(grouping: dict, n_histograms: int = 0) -> bool:
+    """Return ``True`` when grouping metadata contains usable deadtime values."""
     if not isinstance(grouping, dict):
         return False
     dead_time_us = grouping.get("dead_time_us")
@@ -50,12 +259,12 @@ def prepare_histograms_with_deadtime(
 
     dead_time_us = grouping.get("dead_time_us") if isinstance(grouping, dict) else None
     if isinstance(dead_time_us, list) and len(dead_time_us) >= len(histograms):
-        return _prepare_histograms_with_file_deadtime(histograms, grouping, dead_time_us)
+        return _prepare_histograms_with_resolved_deadtime(histograms, grouping, dead_time_us)
 
     return list(histograms), False
 
 
-def _prepare_histograms_with_file_deadtime(
+def _prepare_histograms_with_resolved_deadtime(
     histograms: list[Histogram],
     grouping: dict,
     dead_time_us: list,
@@ -88,7 +297,8 @@ def _prepare_histograms_with_file_deadtime(
         corrected.append(_copy_histogram_with_counts(hist, counts))
 
     if applied_any and isinstance(grouping, dict):
-        grouping["deadtime_method"] = "file"
+        method = str(grouping.get("deadtime_method", "")).strip().lower()
+        grouping["deadtime_method"] = method or "file"
 
     return corrected, applied_any
 

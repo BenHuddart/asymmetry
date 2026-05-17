@@ -30,13 +30,15 @@ for later reuse.
 - **Derived composite parameters**: define expression-based parameters in the Fit Parameters panel
   with safe parsing and first-order uncertainty propagation (including covariance support when
   available).
-- **Fourier analysis**: compute FFT spectra with selectable windows and zero padding.
+- **Fourier analysis**: compute WiMDA-style grouped FFT spectra with explicit
+  apodisation, selectable phase modes, per-run phase tables, and manual or
+  estimated phase correction workflows.
 - **Logbook and metadata handling**: inspect run metadata, build searchable run logbooks, and use
   metadata columns inside the GUI browser.
 - **Interactive GUI**: browse loaded runs, inspect plots, adjust grouping, run fits, trend fitted
   parameters, adjust UI scale, and export plots.
 - **Project persistence**: save and reopen `.asymp` project files containing datasets, browser
-  state, plot state, fit state, and Fourier settings.
+  state, plot state, fit state, Fourier settings, and per-run Fourier phase-table state.
 - **Extensible I/O**: register custom loaders at runtime for additional file formats.
 - **Optional publication export**: export trend and plot data for GLE-based figure generation.
 

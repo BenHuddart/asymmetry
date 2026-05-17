@@ -129,6 +129,48 @@ def test_local_parameter_plot_uses_complementary_group_axis_label(qapp: QApplica
     assert window._local_figure.axes[-1].get_xlabel() == "$T$ (K)"
 
 
+def test_sample_group_fit_curve_uses_log_spacing_for_complementary_field_axis(
+    qapp: QApplication,
+) -> None:
+    window = GlobalParameterFitWindow()
+    model = ParameterCompositeModel(["Constant"])
+
+    group = ParameterGroupData(
+        group_id="g0",
+        group_name="T=5K",
+        x=np.array([100.0, 1000.0, 10000.0], dtype=float),
+        y=np.array([0.2, 0.2, 0.2], dtype=float),
+        yerr=np.array([0.01, 0.01, 0.01], dtype=float),
+        group_variable_value=5.0,
+    )
+
+    result = CrossGroupFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        global_parameters=ParameterSet([Parameter("c", value=0.2)]),
+        local_parameters={},
+        fixed_parameters=ParameterSet(),
+    )
+
+    window.set_results(
+        parameter_name="Lambda",
+        x_key="temperature",
+        groups=[group],
+        model=model,
+        result=result,
+    )
+
+    sampled = window._sample_group_fit_curve(group)
+
+    assert sampled is not None
+    xs, ys = sampled
+    np.testing.assert_allclose(xs[[0, -1]], [100.0, 10000.0])
+    np.testing.assert_allclose(ys, np.full(xs.shape, 0.2))
+    ratios = xs[1:] / xs[:-1]
+    np.testing.assert_allclose(ratios, np.full_like(ratios, ratios[0]))
+
+
 def test_local_parameter_subplots_do_not_show_titles(qapp: QApplication) -> None:
     window = GlobalParameterFitWindow()
     window._local_plot_mode_combo.setCurrentText("Subplots")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -72,11 +73,470 @@ def _make_dataset(run_number: int, *, with_grouping: bool) -> MuonDataset:
     )
 
 
+def _make_fourier_ready_dataset(run_number: int, *, with_grouping: bool) -> MuonDataset:
+    time = np.arange(256, dtype=float) * 0.05
+    frequency = 12.0 / (time.size * 0.05)
+    phase_a = np.deg2rad(32.0)
+    phase_b = np.deg2rad(-18.0)
+    counts_a = 1000.0 + 150.0 * np.cos(2.0 * np.pi * frequency * time + phase_a)
+    counts_b = 900.0 + 120.0 * np.cos(2.0 * np.pi * frequency * time + phase_b)
+    run = Run(
+        run_number=run_number,
+        histograms=[
+            Histogram(counts=counts_a, bin_width=0.05),
+            Histogram(counts=counts_b, bin_width=0.05),
+        ],
+        metadata={"run_number": run_number, "field": 100.0},
+        grouping=(
+            {
+                "groups": {1: [1], 2: [2]},
+                "group_names": {1: "Left", 2: "Right"},
+                "forward_group": 1,
+                "backward_group": 2,
+                "alpha": 1.0,
+                "first_good_bin": 0,
+                "last_good_bin": 255,
+                "bunching_factor": 1,
+                "deadtime_correction": False,
+            }
+            if with_grouping
+            else {}
+        ),
+    )
+    asymmetry = 0.2 * np.cos(2.0 * np.pi * frequency * time + phase_a)
+    return MuonDataset(
+        time=time,
+        asymmetry=asymmetry,
+        error=np.full_like(time, 0.01),
+        metadata={"run_number": run_number, "field": 100.0},
+        run=run,
+    )
+
+
+class TestMainWindowFourier:
+    def test_fill_fourier_phases_populates_group_phase_table(self, mainwindow: MainWindow) -> None:
+        dataset = _make_fourier_ready_dataset(8801, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8801)
+        mainwindow._fourier_panel._phase_mode_radio.setChecked(True)
+
+        mainwindow._on_fill_fourier_phases()
+
+        phases = mainwindow._fourier_panel.group_phase_table()
+        assert mainwindow._fourier_panel._use_phase_table_check.isChecked() is True
+        assert set(phases) == {1, 2}
+        assert mainwindow._fourier_panel._phase_table.item(0, 2).foreground().color().name() == "#15803d"
+
+    def test_compute_fourier_plots_frequency_domain_dataset(self, mainwindow: MainWindow) -> None:
+        dataset = _make_fourier_ready_dataset(8802, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8802)
+        mainwindow._fourier_panel._power_sqrt_radio.setChecked(True)
+
+        mainwindow._on_compute_fourier()
+
+        plotted = mainwindow._frequency_plot_panel._current_dataset
+        assert plotted is not None
+        assert mainwindow._plot_workspace.active_domain() == "frequency"
+        assert plotted.metadata["plot_domain"] == "frequency"
+        assert plotted.metadata["x_label"] == "Frequency (MHz)"
+        assert plotted.metadata["y_label"] == "FFT (Power)^1/2 (a.u.)"
+        assert plotted.metadata["fourier_group_output"] == "average"
+        assert plotted.metadata["group_ids"] == [1, 2]
+
+    def test_group_phase_estimation_uses_field_centered_window(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dt = 0.0000244140625
+        time = np.arange(8192, dtype=float) * dt
+        field_frequency = 25000.0 * 135.538817 * 1.0e-4
+        shared_low_frequency = 0.08
+        phase_a = 25.0
+        phase_b = 110.0
+
+        def _counts(phase_degrees: float) -> np.ndarray:
+            envelope = np.exp(-time / 2.1969811)
+            low = 600.0 * np.cos(2.0 * np.pi * shared_low_frequency * time - 0.45)
+            high = 120.0 * np.cos(2.0 * np.pi * field_frequency * time + np.deg2rad(phase_degrees))
+            return 1500.0 + envelope * (low + high)
+
+        run = Run(
+            run_number=8812,
+            histograms=[
+                Histogram(counts=_counts(phase_a), bin_width=dt, t0_bin=0),
+                Histogram(counts=_counts(phase_b), bin_width=dt, t0_bin=0),
+            ],
+            metadata={"run_number": 8812, "field": 25000.0},
+            grouping={
+                "groups": {1: [1], 2: [2]},
+                "group_names": {1: "A", 2: "B"},
+                "forward_group": 1,
+                "backward_group": 2,
+                "alpha": 1.0,
+                "first_good_bin": 0,
+                "last_good_bin": int(time.size - 1),
+                "bunching_factor": 1,
+                "deadtime_correction": False,
+            },
+        )
+        dataset = MuonDataset(
+            time=time,
+            asymmetry=np.zeros_like(time),
+            error=np.full_like(time, 0.01),
+            metadata={"run_number": 8812, "field": 25000.0},
+            run=run,
+        )
+
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8812)
+
+        phases = mainwindow._estimate_group_fourier_phases(
+            dataset,
+            {
+                "window": "none",
+                "padding": 8,
+                "t0_offset_us": 0.0,
+                "auto_phase_method": "Peak",
+            },
+        )
+
+        def _angle_distance(actual: float, expected: float) -> float:
+            return float(abs(np.angle(np.exp(1j * np.deg2rad(actual - expected)), deg=True)))
+
+        assert _angle_distance(phases[1], phase_a) < 15.0
+        assert _angle_distance(phases[2], phase_b) < 15.0
+        assert _angle_distance(phases[1], phases[2]) > 45.0
+
+    def test_compute_group_fourier_always_plots_average_selected_groups(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8804, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8804)
+        mainwindow._fourier_panel._use_phase_table_check.setChecked(True)
+        mainwindow._fourier_panel.set_group_definitions({1: "Left", 2: "Right"}, {1: 32.0, 2: -18.0})
+
+        mainwindow._on_compute_fourier()
+
+        plotted = mainwindow._frequency_plot_panel._current_dataset
+        assert plotted is not None
+        assert mainwindow._plot_workspace.active_domain() == "frequency"
+        assert plotted.metadata["fourier_group_output"] == "average"
+        assert plotted.metadata["run_label"] == "8804 Average"
+        assert plotted.metadata["group_ids"] == [1, 2]
+
+    def test_compute_group_fourier_honours_enabled_groups(self, mainwindow: MainWindow) -> None:
+        dataset = _make_fourier_ready_dataset(8805, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8805)
+        mainwindow._fourier_panel.set_group_definitions(
+            {1: "Left", 2: "Right"},
+            {1: 32.0, 2: -18.0},
+            {1: True, 2: False},
+        )
+
+        mainwindow._on_compute_fourier()
+
+        plotted = mainwindow._frequency_plot_panel._current_dataset
+        assert plotted is not None
+        assert plotted.metadata["run_label"] == "8805 Average (Left)"
+        assert plotted.metadata["group_ids"] == [1]
+
+    def test_compute_group_fourier_can_average_selected_groups(self, mainwindow: MainWindow) -> None:
+        dataset = _make_fourier_ready_dataset(8806, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8806)
+        mainwindow._fourier_panel._estimate_average_error_check.setChecked(True)
+        mainwindow._fourier_panel._use_phase_table_check.setChecked(True)
+        mainwindow._fourier_panel.set_group_definitions(
+            {1: "Left", 2: "Right"},
+            {1: 32.0, 2: -18.0},
+            {1: True, 2: False},
+        )
+
+        mainwindow._on_compute_fourier()
+
+        plotted = mainwindow._frequency_plot_panel._current_dataset
+        assert plotted is not None
+        assert plotted.metadata["fourier_group_output"] == "average"
+        assert plotted.metadata["group_ids"] == [1]
+        assert plotted.metadata["run_label"] == "8806 Average (Left)"
+        assert np.allclose(plotted.error, np.zeros_like(plotted.error))
+
+    def test_compute_group_fourier_uses_active_fit_range(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8815, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8815)
+        mainwindow._plot_panel._set_fit_range(1.0, 4.0, emit_signal=False, redraw=False)
+
+        calls: list[tuple[float | None, float | None]] = []
+
+        def _fake_fft_complex_asymmetry(_dataset: MuonDataset, **kwargs: object) -> tuple[np.ndarray, np.ndarray]:
+            calls.append((kwargs.get("t_min"), kwargs.get("t_max")))
+            return np.array([0.0, 1.0]), np.array([0.0 + 0.0j, 1.0 + 0.0j])
+
+        monkeypatch.setattr(mw_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
+
+        mainwindow._on_compute_fourier()
+
+        assert calls == [(1.0, 4.0), (1.0, 4.0)]
+
+    def test_compute_group_fourier_reuses_precomputed_group_inputs(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8817, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8817)
+
+        build_calls: list[dict[str, object]] = []
+
+        def _fake_build_group_signal_dataset(
+            run: Run,
+            group_id: int,
+            **kwargs: object,
+        ) -> MuonDataset:
+            build_calls.append(dict(kwargs))
+            return MuonDataset(
+                time=np.array([0.0, 1.0]),
+                asymmetry=np.array([1.0, 0.5]),
+                error=np.array([0.1, 0.1]),
+                metadata={"run_number": run.run_number, "run_label": f"{run.run_number} G{group_id}"},
+                run=run,
+            )
+
+        def _fake_fft_complex_asymmetry(
+            _dataset: MuonDataset,
+            **_kwargs: object,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            return np.array([0.0, 1.0]), np.array([1.0 + 0.0j, 0.5 + 0.0j])
+
+        monkeypatch.setattr(mw_module, "build_group_signal_dataset", _fake_build_group_signal_dataset)
+        monkeypatch.setattr(mw_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
+
+        mainwindow._on_compute_fourier()
+
+        assert len(build_calls) == 2
+        first_prepared = build_calls[0].get("prepared_histograms")
+        assert first_prepared is not None
+        assert build_calls[1].get("prepared_histograms") is first_prepared
+        first_t0 = build_calls[0].get("reference_t0_bin")
+        assert first_t0 is not None
+        assert build_calls[1].get("reference_t0_bin") == first_t0
+
+    def test_compute_group_fourier_average_can_estimate_errors(self, mainwindow: MainWindow) -> None:
+        dataset = _make_fourier_ready_dataset(8807, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8807)
+        mainwindow._fourier_panel._estimate_average_error_check.setChecked(True)
+
+        mainwindow._on_compute_fourier()
+
+        plotted = mainwindow._frequency_plot_panel._current_dataset
+        assert plotted is not None
+        assert np.any(plotted.error > 0.0)
+        assert "Mean error" in mainwindow._fourier_panel._average_summary_label.text()
+
+    def test_frequency_plot_is_cached_per_dataset(self, mainwindow: MainWindow) -> None:
+        dataset_a = _make_fourier_ready_dataset(8809, with_grouping=True)
+        dataset_b = _make_fourier_ready_dataset(8810, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset_a)
+        mainwindow._data_browser.add_dataset(dataset_b)
+
+        mainwindow._on_dataset_selected(8809)
+        mainwindow._on_compute_fourier()
+        plotted_a = mainwindow._frequency_plot_panel._current_dataset
+
+        mainwindow._on_dataset_selected(8810)
+        assert mainwindow._frequency_plot_panel._current_dataset is None
+
+        mainwindow._on_dataset_selected(8809)
+        restored = mainwindow._frequency_plot_panel._current_dataset
+
+        assert plotted_a is not None
+        assert restored is not None
+        assert restored.metadata["run_number"] == 8809
+        assert np.allclose(restored.asymmetry, plotted_a.asymmetry)
+
+    def test_frequency_switch_to_uncached_dataset_preserves_x_limits(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset_a = _make_fourier_ready_dataset(8812, with_grouping=True)
+        dataset_b = _make_fourier_ready_dataset(8815, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset_a)
+        mainwindow._data_browser.add_dataset(dataset_b)
+
+        mainwindow._on_dataset_selected(8812)
+        mainwindow._on_compute_fourier()
+        _x_min, _x_max, y_min, y_max = mainwindow._frequency_plot_panel.get_view_limits()
+        mainwindow._frequency_plot_panel.set_view_limits(1.25, 3.75, y_min, y_max)
+
+        mainwindow._on_dataset_selected(8815)
+
+        x_min, x_max, _y_min, _y_max = mainwindow._frequency_plot_panel.get_view_limits()
+        assert mainwindow._frequency_plot_panel._current_dataset is None
+        assert x_min == pytest.approx(1.25)
+        assert x_max == pytest.approx(3.75)
+
+        mainwindow._on_compute_fourier()
+
+        computed_x_min, computed_x_max, _computed_y_min, _computed_y_max = (
+            mainwindow._frequency_plot_panel.get_view_limits()
+        )
+        assert computed_x_min == pytest.approx(1.25)
+        assert computed_x_max == pytest.approx(3.75)
+
+    def test_fourier_phase_tables_persist_per_dataset(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset_a = _make_fourier_ready_dataset(8820, with_grouping=True)
+        dataset_b = _make_fourier_ready_dataset(8821, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset_a)
+        mainwindow._data_browser.add_dataset(dataset_b)
+
+        mainwindow._on_dataset_selected(8820)
+        mainwindow._fourier_panel._phase_mode_radio.setChecked(True)
+        mainwindow._fourier_panel._use_phase_table_check.setChecked(True)
+        mainwindow._fourier_panel.set_group_phases({1: 11.0, 2: -7.0}, auto_filled=True)
+
+        mainwindow._on_dataset_selected(8821)
+        mainwindow._fourier_panel._phase_mode_radio.setChecked(True)
+        mainwindow._fourier_panel._use_phase_table_check.setChecked(True)
+        mainwindow._fourier_panel.set_group_phases({1: 3.0, 2: 4.0}, auto_filled=False)
+
+        mainwindow._on_dataset_selected(8820)
+        assert mainwindow._fourier_panel.group_phase_table() == pytest.approx({1: 11.0, 2: -7.0})
+        assert mainwindow._fourier_panel._phase_table.item(0, 2).foreground().color().name() == "#15803d"
+
+        mainwindow._on_dataset_selected(8821)
+        assert mainwindow._fourier_panel.group_phase_table() == pytest.approx({1: 3.0, 2: 4.0})
+        assert mainwindow._fourier_panel._phase_table.item(0, 2).foreground().color().name() == "#0f62fe"
+
+    def test_frequency_axis_toggle_can_show_relative_values(self, mainwindow: MainWindow) -> None:
+        dataset = _make_fourier_ready_dataset(8811, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8811)
+        mainwindow._on_compute_fourier()
+        abs_x_min, abs_x_max, _abs_y_min, _abs_y_max = mainwindow._frequency_plot_panel.get_view_limits()
+        abs_axis_min, abs_axis_max = mainwindow._frequency_plot_panel._ax.get_xlim()
+
+        mainwindow._frequency_axis_relative_check.setChecked(True)
+
+        x_min, x_max, _y_min, _y_max = mainwindow._frequency_plot_panel.get_view_limits()
+        center = 100.0 * 135.538817 * 1.0e-4
+        plotted = mainwindow._frequency_plot_panel._current_dataset
+
+        assert plotted is not None
+        assert mainwindow._frequency_plot_panel._ax.get_xlabel() == "Frequency (MHz)"
+        assert x_min == pytest.approx(abs_x_min - center, abs=1e-3)
+        assert x_max == pytest.approx(abs_x_max - center, abs=1e-3)
+        assert mainwindow._frequency_plot_panel._ax.get_xlim()[0] == pytest.approx(abs_axis_min, abs=1e-3)
+        assert mainwindow._frequency_plot_panel._ax.get_xlim()[1] == pytest.approx(abs_axis_max, abs=1e-3)
+
+    def test_frequency_phase_window_narrows_wide_relative_view(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8813, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8813)
+        mainwindow._on_compute_fourier()
+
+        mainwindow._frequency_axis_relative_check.setChecked(True)
+        _x_min, _x_max, y_min, y_max = mainwindow._frequency_plot_panel.get_view_limits()
+        mainwindow._frequency_plot_panel.set_view_limits(-40.0, 40.0, y_min, y_max)
+
+        freqs = np.linspace(0.0, 80.0, 801)
+        lo, hi = mainwindow._resolve_fourier_phase_window_mhz(dataset, freqs)
+        center = 100.0 * 135.538817 * 1.0e-4
+
+        assert lo == pytest.approx(max(0.0, center - 10.0), abs=1e-3)
+        assert hi == pytest.approx(center + 10.0, abs=1e-3)
+
+    def test_frequency_recompute_preserves_x_limits(self, mainwindow: MainWindow) -> None:
+        dataset = _make_fourier_ready_dataset(8814, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8814)
+        mainwindow._on_compute_fourier()
+
+        mainwindow._frequency_axis_relative_check.setChecked(True)
+        _x_min, _x_max, y_min, y_max = mainwindow._frequency_plot_panel.get_view_limits()
+        mainwindow._frequency_plot_panel.set_view_limits(-0.75, 0.25, y_min, y_max)
+
+        mainwindow._on_compute_fourier()
+
+        x_min, x_max, _y_min, _y_max = mainwindow._frequency_plot_panel.get_view_limits()
+        center = 100.0 * 135.538817 * 1.0e-4
+
+        assert x_min == pytest.approx(-0.75, abs=1e-6)
+        assert x_max == pytest.approx(0.25, abs=1e-6)
+        assert mainwindow._frequency_plot_panel._ax.get_xlim()[0] == pytest.approx(center - 0.75, abs=1e-3)
+        assert mainwindow._frequency_plot_panel._ax.get_xlim()[1] == pytest.approx(center + 0.25, abs=1e-3)
+
+    def test_project_restore_persists_cached_fourier_spectra(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8816, with_grouping=True)
+        assert dataset.run is not None
+        source_file = tmp_path / "run_8816.mdu"
+        source_file.write_text("placeholder", encoding="utf-8")
+        dataset.run.source_file = str(source_file)
+        dataset.metadata["source_file"] = str(source_file)
+
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8816)
+        mainwindow._on_compute_fourier()
+        mainwindow._fourier_panel._phase_mode_radio.setChecked(True)
+        mainwindow._fourier_panel._use_phase_table_check.setChecked(True)
+        mainwindow._fourier_panel.set_group_phases({1: 14.0, 2: -9.0}, auto_filled=True)
+        mainwindow._frequency_axis_relative_check.setChecked(True)
+        _x_min, _x_max, y_min, y_max = mainwindow._frequency_plot_panel.get_view_limits()
+        mainwindow._frequency_plot_panel.set_view_limits(-0.8, 0.4, y_min, y_max)
+
+        state = mainwindow.collect_project_state()
+        assert str(8816) in state.get("fourier_spectra_state", {})
+
+        restored_window = MainWindow()
+
+        def _fake_load_file(_path: str) -> MuonDataset:
+            loaded = _make_fourier_ready_dataset(8816, with_grouping=True)
+            assert loaded.run is not None
+            loaded.run.source_file = str(source_file)
+            loaded.metadata["source_file"] = str(source_file)
+            return loaded
+
+        monkeypatch.setattr(restored_window, "_load_file", _fake_load_file)
+
+        restored_window.restore_project_state(state, str(tmp_path / "restored.asymp"))
+
+        assert restored_window._plot_workspace.active_domain() == "frequency"
+        restored_dataset = restored_window._frequency_plot_panel._current_dataset
+        assert restored_dataset is not None
+        assert restored_dataset.metadata.get("run_number") == 8816
+        assert restored_window._frequency_plot_panel.is_frequency_axis_relative_to_reference()
+        assert "group_phase_state_by_run" in state.get("fourier_state", {})
+        assert restored_window._fourier_panel.group_phase_table() == pytest.approx({1: 14.0, 2: -9.0})
+        assert restored_window._fourier_panel._phase_table.item(0, 2).foreground().color().name() == "#15803d"
+
+
 class TestMainWindowBasic:
     def test_initialization(self, mainwindow: MainWindow) -> None:
         """Test mainwindow initializes correctly."""
         assert mainwindow is not None
         assert mainwindow.windowTitle() != ""
+        assert mainwindow._dock_fourier.minimumWidth() == 280
 
     def test_has_menu_bar(self, mainwindow: MainWindow) -> None:
         """Test menubar exists."""
@@ -195,6 +655,19 @@ class TestMainWindowBasic:
         mainwindow._on_export_current_plot()
         assert called["count"] == 1
 
+    def test_on_export_current_plot_uses_active_frequency_tab(self, mainwindow: MainWindow) -> None:
+        """Export should follow the active time/frequency workspace tab."""
+        called = {"count": 0}
+
+        def _mark_called() -> None:
+            called["count"] += 1
+
+        mainwindow._frequency_plot_panel.export_current_plot = _mark_called
+        mainwindow._plot_workspace.set_active_domain("frequency")
+        mainwindow._on_export_current_plot()
+
+        assert called["count"] == 1
+
     def test_on_export_logbook_delegates_to_data_browser(
         self,
         mainwindow: MainWindow,
@@ -282,6 +755,53 @@ class TestMainWindowBasic:
         assert "Open" in texts
         assert "Export logbook" in texts
         assert texts.index("Export logbook") == texts.index("Open") + 1
+
+    def test_toolbar_exposes_three_view_modes_and_main_bunch_control(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """Main toolbar should expose three saved view buttons and a bunch control."""
+        assert [button.text() for button in mainwindow._view_mode_buttons] == ["1", "2", "3"]
+        assert mainwindow._view_mode_buttons[0].isChecked()
+        assert mainwindow._view_bunch_spin.value() == 1
+
+    def test_view_modes_restore_per_mode_limits_and_bunch(self, mainwindow: MainWindow) -> None:
+        """Switching between view modes should restore the saved limits and bunch factor."""
+        mainwindow._plot_panel.set_view_limits(0.5, 8.0, -5.0, 12.0)
+        mainwindow._view_bunch_spin.setValue(3)
+
+        mainwindow._view_mode_buttons[1].click()
+        mainwindow._plot_panel.set_view_limits(1.0, 4.0, -2.0, 6.0)
+        mainwindow._view_bunch_spin.setValue(5)
+
+        mainwindow._view_mode_buttons[0].click()
+
+        assert mainwindow._view_bunch_spin.value() == 3
+        assert mainwindow._plot_panel.get_view_limits() == pytest.approx((0.5, 8.0, -5.0, 12.0))
+
+    def test_main_window_bunch_control_updates_grouping_bunch_factor(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """Toolbar bunch changes should stay synchronized with grouping metadata."""
+        dataset = _make_dataset(4101, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(int(dataset.run_number))
+
+        mainwindow._view_bunch_spin.setValue(4)
+
+        assert dataset.run is not None
+        assert int(dataset.run.grouping.get("bunching_factor", 1)) == 4
+
+    def test_collect_project_state_includes_view_modes(self, mainwindow: MainWindow) -> None:
+        """Project state should persist saved view modes and the active mode index."""
+        mainwindow._plot_panel.set_view_limits(0.25, 7.5, -4.0, 9.0)
+        mainwindow._view_bunch_spin.setValue(2)
+
+        state = mainwindow.collect_project_state()
+
+        assert state["view_modes_state"]["active_index"] == 0
+        assert state["view_modes_state"]["modes"][0]["bunch_factor"] == 2
+        assert state["view_modes_state"]["modes"][0]["x_min"] == pytest.approx(0.25)
+        assert state["view_modes_state"]["modes"][0]["x_max"] == pytest.approx(7.5)
 
     def test_toolbar_grouping_before_fit(self, mainwindow: MainWindow) -> None:
         """Toolbar should expose Grouping action before Fit for discoverability."""
@@ -700,6 +1220,102 @@ class TestMainWindowBasic:
             2: [(3, 100), (4, 100)],
         }
         assert payload["bunching_factor"] == 4
+
+    def test_extract_grouping_overrides_omits_file_deadtime_values(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_dataset(7455, with_grouping=True)
+        assert dataset.run is not None
+        dataset.run.grouping["deadtime_correction"] = True
+        dataset.run.grouping["deadtime_mode"] = "file"
+        dataset.run.grouping["deadtime_method"] = "file"
+        dataset.run.grouping["dead_time_us"] = [0.01, 0.02]
+
+        payload = mainwindow._extract_grouping_overrides(dataset)
+
+        assert payload is not None
+        assert payload["deadtime_mode"] == "file"
+        assert payload["deadtime_method"] == "file"
+        assert "dead_time_us" not in payload
+
+    def test_extract_grouping_overrides_preserves_manual_deadtime_values(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_dataset(7456, with_grouping=True)
+        assert dataset.run is not None
+        dataset.run.grouping.update(
+            {
+                "deadtime_correction": True,
+                "deadtime_mode": "manual",
+                "deadtime_method": "manual",
+                "deadtime_manual_us": 0.025,
+                "dead_time_us": [0.025, 0.025],
+            }
+        )
+
+        payload = mainwindow._extract_grouping_overrides(dataset)
+
+        assert payload is not None
+        assert payload["deadtime_mode"] == "manual"
+        assert payload["deadtime_method"] == "manual"
+        assert payload["deadtime_manual_us"] == pytest.approx(0.025)
+        assert payload["dead_time_us"] == pytest.approx([0.025, 0.025])
+
+    def test_extract_grouping_overrides_preserves_calibrated_deadtime_values(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_dataset(7458, with_grouping=True)
+        assert dataset.run is not None
+        dataset.run.grouping.update(
+            {
+                "deadtime_correction": True,
+                "deadtime_mode": "manual",
+                "deadtime_method": "calibrate",
+                "dead_time_us": [0.011, 0.022],
+                "deadtime_reference_run": 7458,
+            }
+        )
+
+        payload = mainwindow._extract_grouping_overrides(dataset)
+
+        assert payload is not None
+        assert payload["deadtime_mode"] == "manual"
+        assert payload["deadtime_method"] == "calibrate"
+        assert payload["dead_time_us"] == pytest.approx([0.011, 0.022])
+        assert payload["deadtime_reference_run"] == 7458
+
+    def test_apply_grouping_settings_uses_manual_deadtime_payload(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_dataset(7457, with_grouping=False)
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "deadtime_correction": True,
+            "deadtime_mode": "manual",
+            "deadtime_method": "manual",
+            "deadtime_manual_us": 0.01,
+            "dead_time_us": [0.01, 0.01],
+            "good_frames": 1000.0,
+        }
+
+        applied, deadtime_applied = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert deadtime_applied is True
+        assert dataset.run is not None
+        assert dataset.run.grouping["deadtime_correction"] is True
+        assert dataset.run.grouping["deadtime_mode"] == "manual"
+        assert dataset.run.grouping["deadtime_method"] == "manual"
+        assert dataset.run.grouping["dead_time_us"] == pytest.approx([0.01, 0.01])
 
     def test_apply_grouping_vector_axis_falls_back_to_scalar_alpha_when_axis_keys_missing(
         self,
@@ -1274,6 +1890,44 @@ class TestMainWindowBasic:
         assert len(applied_payloads) == 1
         assert applied_payloads[0]["forward_group"] == 1
         assert applied_payloads[0]["backward_group"] == 2
+
+    def test_load_files_auto_applies_existing_manual_deadtime_grouping(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        existing = _make_dataset(7003, with_grouping=True)
+        incoming = _make_dataset(7004, with_grouping=False)
+        assert existing.run is not None
+        existing.run.grouping.update(
+            {
+                "deadtime_correction": True,
+                "deadtime_mode": "manual",
+                "deadtime_method": "manual",
+                "deadtime_manual_us": 0.02,
+                "dead_time_us": [0.02, 0.02],
+            }
+        )
+        mainwindow._data_browser.add_dataset(existing)
+
+        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: incoming)
+        monkeypatch.setattr(mainwindow, "_maybe_apply_comment_field", lambda *a, **k: "none")
+
+        applied_payloads: list[dict] = []
+
+        def _stub_apply(dataset, payload):
+            assert int(dataset.run_number) == 7004
+            applied_payloads.append(payload)
+            return True, False
+
+        monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
+
+        mainwindow._load_files(["/tmp/new_run_with_manual_deadtime.nxs"])
+
+        assert len(applied_payloads) == 1
+        assert applied_payloads[0]["deadtime_mode"] == "manual"
+        assert applied_payloads[0]["deadtime_method"] == "manual"
+        assert applied_payloads[0]["dead_time_us"] == pytest.approx([0.02, 0.02])
 
     def test_load_files_auto_applies_grouping_from_highest_run_dataset(
         self,

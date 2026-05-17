@@ -49,7 +49,11 @@ from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
 )
 from asymmetry.core.transform.rebin import rebin
-from asymmetry.core.utils.constants import PeriodMode
+from asymmetry.core.utils.constants import (
+    GAUSS_TO_TESLA,
+    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
+    PeriodMode,
+)
 from asymmetry.gui.export_paths import (
     default_export_path,
     remember_export_path,
@@ -138,11 +142,17 @@ class PlotPanel(QWidget):
 
     bunch_factor_changed = Signal(int)
     fit_range_changed = Signal(float, float)
+    view_limits_changed = Signal(float, float, float, float)
     polarization_axis_changed = Signal(str)
     overlay_toggled = Signal(bool)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, domain: str = "time") -> None:
         super().__init__(parent)
+        self._domain = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        self._current_frequency_x_unit = "frequency_mhz"
+        self._frequency_axis_relative_to_reference = False
+        self._frequency_reference_mhz: float | None = None
+        self._frequency_x_limits_by_unit: dict[str, tuple[float, float]] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
@@ -159,8 +169,9 @@ class PlotPanel(QWidget):
             self._axis_limit_callback_ids: list[tuple[object, int, int]] = []
             self._syncing_limits_from_axes = False
             self._connect_axis_limit_callbacks([self._ax])
-            self._ax.set_xlabel("Time (μs)")
-            self._ax.set_ylabel("Asymmetry (%)")
+            default_x_label, default_y_label = self._default_axis_labels()
+            self._ax.set_xlabel(default_x_label)
+            self._ax.set_ylabel(default_y_label)
 
             # Fit-range interaction state.
             self._fit_x_min: float | None = None
@@ -203,9 +214,13 @@ class PlotPanel(QWidget):
             alpha_row.addWidget(self._alpha_label)
             layout.addLayout(alpha_row)
 
+
             nav_row = QHBoxLayout()
             nav_row.setContentsMargins(4, 0, 4, 0)
             nav_row.setSpacing(4)
+            nav_row.addWidget(QLabel("Label:"))
+            nav_row.addWidget(self._label_field_combo)
+            nav_row.addWidget(self._overlay_checkbox)
             nav_row.addStretch()
 
             self._pan_btn = QPushButton("Pan")
@@ -294,7 +309,8 @@ class PlotPanel(QWidget):
         row0.addWidget(QLabel("–"))
         self._x_max = _FloatLimitField(10.0, minimum_width=76)
         row0.addWidget(self._x_max)
-        row0.addWidget(QLabel("μs"))
+        self._x_unit_label = QLabel("MHz" if self._is_frequency_plot_panel() else "μs")
+        row0.addWidget(self._x_unit_label)
 
         # Y-axis limits
         row0.addWidget(QLabel("Y:"))
@@ -303,16 +319,21 @@ class PlotPanel(QWidget):
         row0.addWidget(QLabel("–"))
         self._y_max = _FloatLimitField(30.0, minimum_width=76)
         row0.addWidget(self._y_max)
-        row0.addWidget(QLabel("%"))
+        self._y_unit_label = QLabel("a.u." if self._is_frequency_plot_panel() else "%")
+        row0.addWidget(self._y_unit_label)
 
         # Separate axis auto-scale controls.
-        auto_x_btn = QPushButton("Auto X")
-        auto_x_btn.clicked.connect(self._auto_x_limits)
-        auto_x_btn.setMaximumWidth(65)
-        row0.addWidget(auto_x_btn)
+        self._auto_x_btn = QPushButton("Auto X")
+        self._auto_x_btn.setCheckable(True)
+        self._auto_x_btn.setStyleSheet(_NAV_BUTTON_STYLE)
+        self._auto_x_btn.clicked.connect(self._on_auto_x_button_clicked)
+        self._auto_x_btn.setMaximumWidth(65)
+        row0.addWidget(self._auto_x_btn)
 
         self._auto_y_btn = QPushButton("Auto Y")
-        self._auto_y_btn.clicked.connect(self._auto_y_limits)
+        self._auto_y_btn.setCheckable(True)
+        self._auto_y_btn.setStyleSheet(_NAV_BUTTON_STYLE)
+        self._auto_y_btn.clicked.connect(self._on_auto_y_button_clicked)
         self._auto_y_btn.setMaximumWidth(65)
         row0.addWidget(self._auto_y_btn)
 
@@ -334,27 +355,39 @@ class PlotPanel(QWidget):
         self._bunch_factor.valueChanged.connect(self._on_bunch_changed)
         self._bunch_factor.hide()
 
-        # ── Row 1: plot options ─────────────────────────────────────────────
-        row1 = QHBoxLayout()
-        row1.setSpacing(4)
-
-        row1.addWidget(QLabel("Label:"))
+        # Label and Overlay widgets are created here but placed in the nav row below.
         self._label_field_combo = QComboBox()
         for display, key in _LABEL_FIELDS:
             self._label_field_combo.addItem(display, userData=key)
         self._label_field_combo.setMaximumWidth(140)
         self._label_field_combo.currentIndexChanged.connect(self._on_label_field_changed)
-        row1.addWidget(self._label_field_combo)
 
         self._overlay_checkbox = QCheckBox("Overlay")
-        # Default off: overlays disabled by default
         self._overlay_checkbox.setChecked(False)
         self._overlay_checkbox.toggled.connect(self.overlay_toggled.emit)
-        row1.addWidget(self._overlay_checkbox)
 
-        row1.addStretch()
+        # ── Row 1: frequency-specific controls (X units and relative axis) ──
+        if self._is_frequency_plot_panel():
+            row1 = QHBoxLayout()
+            row1.setSpacing(4)
+            row1.addWidget(QLabel("X Units:"))
+            self._frequency_x_unit_combo = QComboBox()
+            self._frequency_x_unit_combo.addItem("Frequency (MHz)", userData="frequency_mhz")
+            self._frequency_x_unit_combo.addItem("Field (G)", userData="field_gauss")
+            self._frequency_x_unit_combo.currentIndexChanged.connect(
+                self._on_frequency_x_unit_changed
+            )
+            row1.addWidget(self._frequency_x_unit_combo)
 
-        self._limit_toolbar.addLayout(row1)
+            self._frequency_axis_relative_check = QCheckBox("X relative to field")
+            self._frequency_axis_relative_check.setChecked(self._frequency_axis_relative_to_reference)
+            self._frequency_axis_relative_check.toggled.connect(
+                self.set_frequency_axis_relative_to_reference
+            )
+            row1.addWidget(self._frequency_axis_relative_check)
+
+            row1.addStretch()
+            self._limit_toolbar.addLayout(row1)
 
         # ── Row 2: annotation + export controls ────────────────────────────
         row2 = QHBoxLayout()
@@ -383,6 +416,294 @@ class PlotPanel(QWidget):
         row2.addWidget(self._gle_format_combo)
 
         self._limit_toolbar.addLayout(row2)
+
+    def _is_frequency_plot_panel(self) -> bool:
+        """Return True when this panel is dedicated to frequency-domain viewing."""
+        return self._domain == "frequency"
+
+    def _default_axis_labels(self) -> tuple[str, str]:
+        """Return fallback axis labels for this panel domain."""
+        if self._is_frequency_plot_panel():
+            return self._display_x_label(), "FFT (a.u.)"
+        return "Time (μs)", "Asymmetry (%)"
+
+    def _mhz_per_gauss(self) -> float:
+        """Return the frequency equivalent of one Gauss in MHz."""
+        return MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
+
+    def _frequency_limit_mode_key(
+        self,
+        *,
+        unit: str | None = None,
+        relative: bool | None = None,
+    ) -> str:
+        """Return a stable storage key for frequency x-limit display modes."""
+        resolved_unit = self._current_frequency_x_unit if unit is None else str(unit)
+        resolved_relative = (
+            self._frequency_axis_relative_to_reference if relative is None else bool(relative)
+        )
+        return f"{resolved_unit}:{'relative' if resolved_relative else 'absolute'}"
+
+    def _frequency_reference_for_dataset(self, dataset: MuonDataset | None) -> float | None:
+        """Return the applied-field reference frequency in MHz for *dataset*."""
+        if dataset is None:
+            return None
+        field_value = dataset.metadata.get("field")
+        try:
+            field_gauss = float(field_value)
+        except (TypeError, ValueError):
+            run = getattr(dataset, "run", None)
+            metadata = getattr(run, "metadata", {}) if run is not None else {}
+            try:
+                field_gauss = float(metadata.get("field"))
+            except (TypeError, ValueError):
+                return None
+        return field_gauss * self._mhz_per_gauss()
+
+    def _display_frequency_reference(self, *, unit: str | None = None) -> float:
+        """Return the current frequency reference in the requested display unit."""
+        reference_mhz = self._frequency_reference_mhz
+        if reference_mhz is None:
+            return 0.0
+        resolved_unit = self._current_frequency_x_unit if unit is None else str(unit)
+        if resolved_unit == "field_gauss":
+            return reference_mhz / self._mhz_per_gauss()
+        return reference_mhz
+
+    def _display_x_label(self) -> str:
+        """Return the x-axis label for the current display unit."""
+        if not self._is_frequency_plot_panel():
+            return "Time (μs)"
+        if self._current_frequency_x_unit == "field_gauss":
+            return "Field (G)"
+        return "Frequency (MHz)"
+
+    def _display_x_unit_suffix(self) -> str:
+        """Return the compact unit suffix for the x-limit controls."""
+        if not self._is_frequency_plot_panel():
+            return "μs"
+        return "G" if self._current_frequency_x_unit == "field_gauss" else "MHz"
+
+    def _display_y_unit_suffix(self, y_label: str | None = None) -> str:
+        """Return the compact unit suffix for the y-limit controls."""
+        if not self._is_frequency_plot_panel():
+            return "%"
+        text = str(y_label or "").strip().lower()
+        return "deg" if "deg" in text else "a.u."
+
+    def _convert_frequency_axis_for_display(self, x_values) -> np.ndarray:
+        """Convert canonical MHz axis data into the selected absolute display unit."""
+        arr = np.asarray(x_values, dtype=float)
+        if not self._is_frequency_plot_panel():
+            return arr
+        if self._current_frequency_x_unit != "field_gauss":
+            return arr
+        return arr / self._mhz_per_gauss()
+
+    def _convert_frequency_axis_limit_to_control_value(self, value: float) -> float:
+        """Convert one absolute axis x-limit into the toolbar control value."""
+        if not self._is_frequency_plot_panel():
+            return float(value)
+        control_value = float(value)
+        if self._frequency_axis_relative_to_reference:
+            control_value -= self._display_frequency_reference(unit=self._current_frequency_x_unit)
+        return control_value
+
+    def _convert_frequency_control_value_to_axis_limit(self, value: float) -> float:
+        """Convert one toolbar x-limit value into the absolute plotted axis value."""
+        if not self._is_frequency_plot_panel():
+            return float(value)
+        axis_value = float(value)
+        if self._frequency_axis_relative_to_reference:
+            axis_value += self._display_frequency_reference(unit=self._current_frequency_x_unit)
+        return axis_value
+
+    def _convert_display_limit_between_units(
+        self,
+        value: float,
+        *,
+        from_unit: str,
+        to_unit: str,
+    ) -> float:
+        """Convert one x-limit value between frequency-view display units."""
+        if from_unit == to_unit:
+            return float(value)
+        if from_unit == "frequency_mhz" and to_unit == "field_gauss":
+            return float(value) / self._mhz_per_gauss()
+        if from_unit == "field_gauss" and to_unit == "frequency_mhz":
+            return float(value) * self._mhz_per_gauss()
+        return float(value)
+
+    def _convert_display_limit_to_canonical_mhz(
+        self,
+        value: float,
+        *,
+        unit: str,
+        relative: bool,
+    ) -> float:
+        """Convert one displayed x value back into canonical absolute MHz."""
+        canonical = self._convert_display_limit_between_units(value, from_unit=unit, to_unit="frequency_mhz")
+        if relative:
+            canonical += self._display_frequency_reference(unit="frequency_mhz")
+        return canonical
+
+    def _convert_canonical_mhz_to_display_limit(
+        self,
+        value: float,
+        *,
+        unit: str,
+        relative: bool,
+    ) -> float:
+        """Convert one canonical absolute MHz value into the current display mode."""
+        display_value = float(value)
+        if relative:
+            display_value -= self._display_frequency_reference(unit="frequency_mhz")
+        return self._convert_display_limit_between_units(
+            display_value,
+            from_unit="frequency_mhz",
+            to_unit=unit,
+        )
+
+    def _set_view_limits_fields(self, x_min: float, x_max: float, y_min: float, y_max: float) -> None:
+        """Update toolbar-backed view-limit fields without drawing."""
+        self._set_limit_field_value(self._x_min, float(x_min))
+        self._set_limit_field_value(self._x_max, float(x_max))
+        self._set_limit_field_value(self._y_min, float(y_min))
+        self._set_limit_field_value(self._y_max, float(y_max))
+
+    def set_frequency_axis_relative_to_reference(self, enabled: bool) -> None:
+        """Toggle between absolute and reference-relative frequency axes."""
+        if not self._is_frequency_plot_panel():
+            return
+        self._switch_frequency_axis_display(relative=bool(enabled))
+        if hasattr(self, "_frequency_axis_relative_check"):
+            prev = self._frequency_axis_relative_check.blockSignals(True)
+            self._frequency_axis_relative_check.setChecked(
+                bool(self._frequency_axis_relative_to_reference)
+            )
+            self._frequency_axis_relative_check.blockSignals(prev)
+
+    def is_frequency_axis_relative_to_reference(self) -> bool:
+        """Return whether the frequency x axis is shown relative to the field."""
+        return bool(self._frequency_axis_relative_to_reference)
+
+    def get_frequency_view_window_mhz(
+        self,
+        *,
+        reference_dataset: MuonDataset | None = None,
+    ) -> tuple[float, float] | None:
+        """Return the current frequency-view x window in canonical absolute MHz."""
+        if not self._is_frequency_plot_panel() or not self._has_mpl:
+            return None
+
+        x_min, x_max, _y_min, _y_max = self.get_view_limits()
+        reference_mhz = self._frequency_reference_mhz
+        if reference_dataset is not None:
+            dataset_reference = self._frequency_reference_for_dataset(reference_dataset)
+            if dataset_reference is not None:
+                reference_mhz = dataset_reference
+        if reference_mhz is None:
+            reference_mhz = 0.0
+
+        def _to_absolute_mhz(value: float) -> float:
+            absolute = self._convert_display_limit_between_units(
+                value,
+                from_unit=self._current_frequency_x_unit,
+                to_unit="frequency_mhz",
+            )
+            if self._frequency_axis_relative_to_reference:
+                absolute += float(reference_mhz)
+            return float(absolute)
+
+        lo = _to_absolute_mhz(float(x_min))
+        hi = _to_absolute_mhz(float(x_max))
+        return (lo, hi) if lo <= hi else (hi, lo)
+
+    def _switch_frequency_axis_display(
+        self,
+        *,
+        unit: str | None = None,
+        relative: bool | None = None,
+    ) -> None:
+        """Switch frequency-axis display mode with a single redraw."""
+        if not self._is_frequency_plot_panel():
+            return
+
+        old_unit = self._current_frequency_x_unit
+        old_relative = self._frequency_axis_relative_to_reference
+        new_unit = old_unit if unit is None else str(unit)
+        new_relative = old_relative if relative is None else bool(relative)
+        if new_unit == old_unit and new_relative == old_relative:
+            return
+
+        current_x_min, current_x_max, current_y_min, current_y_max = self.get_view_limits()
+        old_key = self._frequency_limit_mode_key(unit=old_unit, relative=old_relative)
+        self._frequency_x_limits_by_unit[old_key] = (float(current_x_min), float(current_x_max))
+
+        new_key = self._frequency_limit_mode_key(unit=new_unit, relative=new_relative)
+        if new_key in self._frequency_x_limits_by_unit:
+            new_x_min, new_x_max = self._frequency_x_limits_by_unit[new_key]
+        else:
+            canonical_min = self._convert_display_limit_to_canonical_mhz(
+                current_x_min,
+                unit=old_unit,
+                relative=old_relative,
+            )
+            canonical_max = self._convert_display_limit_to_canonical_mhz(
+                current_x_max,
+                unit=old_unit,
+                relative=old_relative,
+            )
+            new_x_min = self._convert_canonical_mhz_to_display_limit(
+                canonical_min,
+                unit=new_unit,
+                relative=new_relative,
+            )
+            new_x_max = self._convert_canonical_mhz_to_display_limit(
+                canonical_max,
+                unit=new_unit,
+                relative=new_relative,
+            )
+
+        self._current_frequency_x_unit = new_unit
+        self._frequency_axis_relative_to_reference = new_relative
+        self._set_view_limits_fields(new_x_min, new_x_max, current_y_min, current_y_max)
+
+        if self.has_plot_content():
+            self._redraw_current_view()
+        else:
+            self._apply_axis_labels(*self._default_axis_labels())
+            self._apply_limits()
+
+    def _current_axis_labels(self) -> tuple[str, str]:
+        """Return the axis labels for the currently plotted datasets."""
+        dataset = self._current_datasets[0] if self._current_datasets else self._current_dataset
+        return self._axis_labels_for_dataset(dataset, self._current_polarization_axis)
+
+    def _apply_axis_labels(self, x_label: str, y_label: str) -> None:
+        """Apply axis labels and keep the limit-unit helpers in sync."""
+        self._ax.set_xlabel(x_label)
+        self._ax.set_ylabel(y_label)
+        if hasattr(self, "_x_unit_label"):
+            self._x_unit_label.setText(self._display_x_unit_suffix())
+        if hasattr(self, "_y_unit_label"):
+            self._y_unit_label.setText(self._display_y_unit_suffix(y_label))
+
+    def _on_frequency_x_unit_changed(self, _index: int) -> None:
+        """Switch the displayed frequency x-axis between MHz and Gauss."""
+        if not self._is_frequency_plot_panel() or not hasattr(self, "_frequency_x_unit_combo"):
+            return
+
+        new_unit = str(self._frequency_x_unit_combo.currentData() or "frequency_mhz")
+        self._switch_frequency_axis_display(unit=new_unit)
+
+    def active_domain(self) -> str:
+        """Return the fixed domain represented by this panel."""
+        return self._domain
+
+    def has_plot_content(self) -> bool:
+        """Return True when the panel currently holds plotted datasets."""
+        return bool(self._current_dataset is not None or self._current_datasets)
 
     def _current_navigation_mode(self) -> str:
         """Return active Matplotlib nav mode as ``none``, ``pan``, or ``zoom``."""
@@ -528,8 +849,14 @@ class PlotPanel(QWidget):
                     return
 
                 x0, x1 = axis_obj.get_xlim()
-                self._set_limit_field_value(self._x_min, x0)
-                self._set_limit_field_value(self._x_max, x1)
+                self._set_limit_field_value(
+                    self._x_min,
+                    self._convert_frequency_axis_limit_to_control_value(x0),
+                )
+                self._set_limit_field_value(
+                    self._x_max,
+                    self._convert_frequency_axis_limit_to_control_value(x1),
+                )
 
                 for axis_key, subplot_axis in self._subplot_axes_by_polarization.items():
                     if not hasattr(subplot_axis, "get_ylim"):
@@ -556,11 +883,18 @@ class PlotPanel(QWidget):
 
             x0, x1 = self._ax.get_xlim()
             y0, y1 = self._ax.get_ylim()
-            self._set_limit_field_value(self._x_min, x0)
-            self._set_limit_field_value(self._x_max, x1)
+            self._set_limit_field_value(
+                self._x_min,
+                self._convert_frequency_axis_limit_to_control_value(x0),
+            )
+            self._set_limit_field_value(
+                self._x_max,
+                self._convert_frequency_axis_limit_to_control_value(x1),
+            )
             self._set_limit_field_value(self._y_min, y0)
             self._set_limit_field_value(self._y_max, y1)
             self._cache_current_y_limits_for_axis()
+            self._emit_view_limits_changed()
         finally:
             self._syncing_limits_from_axes = False
 
@@ -714,6 +1048,9 @@ class PlotPanel(QWidget):
         if dataset is None:
             return None
 
+        if self._is_frequency_plot_panel() or self._is_frequency_domain_dataset(dataset):
+            return dataset
+
         bunch_factor = self._bunch_factor.value()
         if bunch_factor <= 1:
             return dataset
@@ -734,6 +1071,32 @@ class PlotPanel(QWidget):
             run=dataset.run,
         )
 
+    def _is_frequency_domain_dataset(self, dataset: MuonDataset | None) -> bool:
+        """Return True when *dataset* carries frequency-domain plot metadata."""
+        if dataset is None:
+            return False
+        return str(dataset.metadata.get("plot_domain", "")).strip().lower() == "frequency"
+
+    def _axis_labels_for_dataset(
+        self,
+        dataset: MuonDataset | None,
+        axis_key: str | None,
+    ) -> tuple[str, str]:
+        """Return axis labels, preferring explicit metadata for special plots."""
+        if self._is_frequency_plot_panel():
+            y_label = "FFT (a.u.)"
+            if dataset is not None and isinstance(dataset.metadata, dict):
+                raw_y_label = dataset.metadata.get("y_label")
+                if isinstance(raw_y_label, str) and raw_y_label.strip():
+                    y_label = raw_y_label
+            return self._display_x_label(), y_label
+        if dataset is not None and isinstance(dataset.metadata, dict):
+            x_label = dataset.metadata.get("x_label")
+            y_label = dataset.metadata.get("y_label")
+            if isinstance(x_label, str) and x_label.strip() and isinstance(y_label, str) and y_label.strip():
+                return x_label, y_label
+        return "Time (μs)", self._polarization_ylabel(axis_key)
+
     def _has_plottable_samples(self, dataset: MuonDataset | None) -> bool:
         """Return True when *dataset* contains at least one aligned sample."""
         if dataset is None:
@@ -744,6 +1107,12 @@ class PlotPanel(QWidget):
             and np.asarray(dataset.error).size > 0
         )
 
+    def _set_frequency_reference_from_dataset(self, dataset: MuonDataset | None) -> None:
+        """Update the reference frequency used by relative frequency displays."""
+        if not self._is_frequency_plot_panel():
+            return
+        self._frequency_reference_mhz = self._frequency_reference_for_dataset(dataset)
+
     def _render_empty_plot_state(self, *, alpha_text: str | None = None) -> None:
         """Render an empty but valid plot state when no plottable data is available."""
         self._last_plot_time = None
@@ -752,10 +1121,11 @@ class PlotPanel(QWidget):
         self._last_low_count_mask = None
         self._fit_x_min = None
         self._fit_x_max = None
+        if self._is_frequency_plot_panel():
+            self._frequency_reference_mhz = None
 
         self._ax.clear()
-        self._ax.set_xlabel("Time (μs)")
-        self._ax.set_ylabel(self._polarization_ylabel(self._current_polarization_axis))
+        self._apply_axis_labels(*self._axis_labels_for_dataset(None, self._current_polarization_axis))
         self._set_alpha_label(alpha_text)
         self._draw_annotations()
         self._draw_fit_range_artists()
@@ -778,6 +1148,44 @@ class PlotPanel(QWidget):
             return None, None
         return float(self._fit_x_min), float(self._fit_x_max)
 
+    def get_view_limits(self) -> tuple[float, float, float, float]:
+        """Return the currently displayed x/y limits from the toolbar fields."""
+        if not self._has_mpl:
+            return 0.0, 10.0, -30.0, 30.0
+        return (
+            float(self._x_min.value()),
+            float(self._x_max.value()),
+            float(self._y_min.value()),
+            float(self._y_max.value()),
+        )
+
+    def set_view_limits(self, x_min: float, x_max: float, y_min: float, y_max: float) -> None:
+        """Apply x/y limits through the existing toolbar-backed controls."""
+        if not self._has_mpl:
+            return
+        self._set_view_limits_fields(x_min, x_max, y_min, y_max)
+        self._apply_limits()
+
+    def get_bunch_factor(self) -> int:
+        """Return the currently configured plot-panel bunch factor."""
+        if not self._has_mpl:
+            return 1
+        return int(self._bunch_factor.value())
+
+    def set_bunch_factor(self, value: int, *, emit_signal: bool = True) -> None:
+        """Set the plot-panel bunch factor and optionally emit the normal signal."""
+        if not self._has_mpl:
+            return
+        bunch_factor = max(1, int(value))
+        if emit_signal:
+            self._bunch_factor.setValue(bunch_factor)
+            return
+
+        previous = self._bunch_factor.blockSignals(True)
+        self._bunch_factor.setValue(bunch_factor)
+        self._bunch_factor.blockSignals(previous)
+        self._redraw_current_view()
+
     def _redraw_current_view(self) -> None:
         """Redraw using the active single- or multi-dataset context."""
         if self._current_polarization_axis == "ALL" and self._vector_subplot_datasets:
@@ -791,6 +1199,12 @@ class PlotPanel(QWidget):
             self.plot_dataset(self._current_dataset)
         elif self._current_datasets:
             self.plot_dataset(self._current_datasets[-1])
+
+    def _emit_view_limits_changed(self) -> None:
+        """Broadcast the current view limits to external UI owners."""
+        if not self._has_mpl:
+            return
+        self.view_limits_changed.emit(*self.get_view_limits())
 
     def _set_alpha_label(self, text: str | None) -> None:
         """Show or hide the alpha label above the plot."""
@@ -1169,7 +1583,7 @@ class PlotPanel(QWidget):
             if analysis_dataset is None:
                 continue
 
-            time = analysis_dataset.time
+            time = self._convert_frequency_axis_for_display(analysis_dataset.time)
             asymmetry = analysis_dataset.asymmetry
             error = analysis_dataset.error
             low_count_mask = self._low_count_mask_for_dataset(
@@ -1220,7 +1634,8 @@ class PlotPanel(QWidget):
                 all_err.append(error[finite_mask])
                 all_low.append(low_count_mask[finite_mask])
 
-        ax.set_ylabel(self._polarization_ylabel(axis_key))
+        _, y_label = self._axis_labels_for_dataset(datasets[0] if datasets else None, axis_key)
+        ax.set_ylabel(y_label)
         if all_times:
             return (
                 np.concatenate(all_times),
@@ -1265,7 +1680,11 @@ class PlotPanel(QWidget):
                 y0, y1 = self._y_limits_by_polarization[axis_key]
                 ax.set_ylim(y0, y1)
             if idx == len(order) - 1:
-                ax.set_xlabel("Time (μs)")
+                x_label, _ = self._axis_labels_for_dataset(
+                    self._vector_subplot_datasets.get(axis_key, [None])[0],
+                    axis_key,
+                )
+                ax.set_xlabel(x_label)
             else:
                 ax.tick_params(labelbottom=False)
             if idx == 0:
@@ -1282,8 +1701,12 @@ class PlotPanel(QWidget):
             x_min = float(np.min(self._last_plot_time))
             x_max = float(np.max(self._last_plot_time))
             xpad = (x_max - x_min) * 0.05
-            self._x_min.setValue(x_min - xpad)
-            self._x_max.setValue(x_max + xpad)
+            self._x_min.setValue(
+                self._convert_frequency_axis_limit_to_control_value(x_min - xpad)
+            )
+            self._x_max.setValue(
+                self._convert_frequency_axis_limit_to_control_value(x_max + xpad)
+            )
             self._limits_initialized = True
 
         if self._current_polarization_axis in self._subplot_axes_by_polarization:
@@ -1335,6 +1758,8 @@ class PlotPanel(QWidget):
 
     def _single_dataset_alpha_label_text(self, dataset: MuonDataset) -> str | None:
         """Return alpha label text for single-dataset views when available."""
+        if self._is_frequency_domain_dataset(dataset):
+            return None
         alpha = self._alpha_value_for_dataset(dataset)
         if alpha is None:
             return None
@@ -1465,6 +1890,7 @@ class PlotPanel(QWidget):
         self._set_alpha_label(None)
         self._current_dataset = datasets[-1]
         self._current_datasets = list(datasets)
+        self._set_frequency_reference_from_dataset(datasets[0])
         self._ax.clear()
 
         all_times: list[np.ndarray] = []
@@ -1484,7 +1910,7 @@ class PlotPanel(QWidget):
             if not self._has_plottable_samples(analysis_dataset):
                 continue
 
-            time = analysis_dataset.time
+            time = self._convert_frequency_axis_for_display(analysis_dataset.time)
             asymmetry = analysis_dataset.asymmetry
             error = analysis_dataset.error
             low_count_mask = self._low_count_mask_for_dataset(
@@ -1536,8 +1962,8 @@ class PlotPanel(QWidget):
                 all_err.append(error[finite_mask])
                 all_low.append(low_count_mask[finite_mask])
 
-        self._ax.set_xlabel("Time (μs)")
-        self._ax.set_ylabel(self._polarization_ylabel(self._current_polarization_axis))
+        x_label, y_label = self._axis_labels_for_dataset(datasets[0], self._current_polarization_axis)
+        self._apply_axis_labels(x_label, y_label)
         self._draw_annotations()
 
         if all_times:
@@ -1556,8 +1982,12 @@ class PlotPanel(QWidget):
                 y_max = float((a_all + e_all).max())
                 xpad = (x_max - x_min) * 0.05
                 ypad = (y_max - y_min) * 0.05
-                self._x_min.setValue(x_min - xpad)
-                self._x_max.setValue(x_max + xpad)
+                self._x_min.setValue(
+                    self._convert_frequency_axis_limit_to_control_value(x_min - xpad)
+                )
+                self._x_max.setValue(
+                    self._convert_frequency_axis_limit_to_control_value(x_max + xpad)
+                )
                 self._y_min.setValue(y_min - ypad)
                 self._y_max.setValue(y_max + ypad)
                 self._limits_initialized = True
@@ -1578,6 +2008,7 @@ class PlotPanel(QWidget):
 
         self._draw_fit_range_artists()
         self._apply_limits()
+        self._apply_auto_limits_if_enabled()
         self._update_export_enabled()
         self._connect_axis_limit_callbacks([self._ax])
 
@@ -1595,12 +2026,13 @@ class PlotPanel(QWidget):
         # Store the original dataset
         self._current_dataset = dataset
         self._current_datasets = [dataset]
+        self._set_frequency_reference_from_dataset(dataset)
 
         analysis_dataset = self.get_analysis_dataset(dataset)
         if not self._has_plottable_samples(analysis_dataset):
             self._render_empty_plot_state(alpha_text=self._single_dataset_alpha_label_text(dataset))
             return
-        time = analysis_dataset.time
+        time = self._convert_frequency_axis_for_display(analysis_dataset.time)
         asymmetry = analysis_dataset.asymmetry
         error = analysis_dataset.error
         low_count_mask = self._low_count_mask_for_dataset(
@@ -1643,8 +2075,8 @@ class PlotPanel(QWidget):
             ecolor=point_color,
             label=self._dataset_label_for(dataset),
         )
-        self._ax.set_xlabel("Time (μs)")
-        self._ax.set_ylabel(self._polarization_ylabel(self._current_polarization_axis))
+        x_label, y_label = self._axis_labels_for_dataset(dataset, self._current_polarization_axis)
+        self._apply_axis_labels(x_label, y_label)
         self._set_alpha_label(self._single_dataset_alpha_label_text(dataset))
 
         # Re-plot fit curve if it exists (check both single and global fits)
@@ -1678,8 +2110,12 @@ class PlotPanel(QWidget):
             x_padding = (x_max - x_min) * 0.05
             y_padding = (y_max - y_min) * 0.05
 
-            self._x_min.setValue(x_min - x_padding)
-            self._x_max.setValue(x_max + x_padding)
+            self._x_min.setValue(
+                self._convert_frequency_axis_limit_to_control_value(x_min - x_padding)
+            )
+            self._x_max.setValue(
+                self._convert_frequency_axis_limit_to_control_value(x_max + x_padding)
+            )
             self._y_min.setValue(y_min - y_padding)
             self._y_max.setValue(y_max + y_padding)
             self._limits_initialized = True
@@ -1694,6 +2130,7 @@ class PlotPanel(QWidget):
 
         # Apply the limits
         self._apply_limits()
+        self._apply_auto_limits_if_enabled()
         self._update_export_enabled()
         self._connect_axis_limit_callbacks([self._ax])
 
@@ -1704,6 +2141,9 @@ class PlotPanel(QWidget):
 
         x0 = float(self._x_min.value())
         x1 = float(self._x_max.value())
+        if self._is_frequency_plot_panel():
+            x0 = self._convert_frequency_control_value_to_axis_limit(x0)
+            x1 = self._convert_frequency_control_value_to_axis_limit(x1)
         y0 = float(self._y_min.value())
         y1 = float(self._y_max.value())
 
@@ -1726,6 +2166,7 @@ class PlotPanel(QWidget):
                     # Fallback for axes without cached limits yet.
                     axis_obj.set_ylim(y0, y1)
             self._canvas.draw()
+            self._emit_view_limits_changed()
             return
 
         self._ax.set_xlim(x0, x1)
@@ -1733,6 +2174,27 @@ class PlotPanel(QWidget):
         self._cache_current_y_limits_for_axis()
         self._draw_fit_range_artists()
         self._canvas.draw()
+        self._emit_view_limits_changed()
+
+    def _apply_auto_limits_if_enabled(self) -> None:
+        """Re-apply persistent auto-limit toggles after a dataset redraw."""
+        if not self._has_mpl:
+            return
+
+        if self._auto_x_btn.isChecked():
+            self._auto_x_limits()
+        if self._auto_y_btn.isChecked():
+            self._auto_y_limits()
+
+    def _on_auto_x_button_clicked(self, checked: bool) -> None:
+        """Apply auto X immediately when the toggle is enabled."""
+        if checked:
+            self._auto_x_limits()
+
+    def _on_auto_y_button_clicked(self, checked: bool) -> None:
+        """Apply auto Y immediately when the toggle is enabled."""
+        if checked:
+            self._auto_y_limits()
 
     def _draw_annotations(self) -> None:
         """Recreate annotation artists on the active axis."""
@@ -1752,14 +2214,28 @@ class PlotPanel(QWidget):
         if not self._has_mpl:
             return
 
-        self._ax.relim()
-        self._ax.autoscale(enable=True, axis="x", tight=False)
-        x_lim = self._ax.get_xlim()
-        self._x_min.setValue(x_lim[0])
-        self._x_max.setValue(x_lim[1])
+        if self._last_plot_time is None:
+            return
 
-        self._draw_fit_range_artists()
-        self._canvas.draw()
+        finite_mask = np.isfinite(self._last_plot_time)
+        if not np.any(finite_mask):
+            return
+
+        time = self._last_plot_time[finite_mask]
+        x_min = float(np.min(time))
+        x_max = float(np.max(time))
+        if x_max <= x_min:
+            delta = max(abs(x_min) * 0.05, 1e-6)
+            x_min -= delta
+            x_max += delta
+        else:
+            padding = (x_max - x_min) * 0.05
+            x_min -= padding
+            x_max += padding
+
+        self._x_min.setValue(self._convert_frequency_axis_limit_to_control_value(x_min))
+        self._x_max.setValue(self._convert_frequency_axis_limit_to_control_value(x_max))
+        self._apply_limits()
 
     def _auto_y_limits(self) -> None:
         """Auto-scale y-axis from visible, non-low-count points only."""
@@ -1779,6 +2255,9 @@ class PlotPanel(QWidget):
 
         x_lo = float(self._x_min.value())
         x_hi = float(self._x_max.value())
+        if self._is_frequency_plot_panel():
+            x_lo = self._convert_frequency_control_value_to_axis_limit(x_lo)
+            x_hi = self._convert_frequency_control_value_to_axis_limit(x_hi)
         lo, hi = (x_lo, x_hi) if x_lo <= x_hi else (x_hi, x_lo)
 
         time = self._last_plot_time
@@ -1829,6 +2308,12 @@ class PlotPanel(QWidget):
         """Return mask of low-count bins (plotted gray) for *dataset* points."""
         time = np.asarray(dataset.time, dtype=float)
         mask = np.zeros_like(time, dtype=bool)
+        if (
+            self._is_frequency_plot_panel()
+            or self._is_frequency_domain_dataset(dataset)
+            or self._is_frequency_domain_dataset(source_dataset)
+        ):
+            return mask
 
         low_confidence = self._low_confidence_mask_for_dataset(
             dataset,
@@ -2152,6 +2637,8 @@ class PlotPanel(QWidget):
         redraw: bool,
     ) -> None:
         """Set fit range with ordering and optional signaling."""
+        if self._is_frequency_plot_panel():
+            return
         lo = float(min(x_min, x_max))
         hi = float(max(x_min, x_max))
 
@@ -2181,6 +2668,8 @@ class PlotPanel(QWidget):
     def _draw_fit_range_artists(self) -> None:
         """Draw highlight and edge handles for the selected fit range."""
         if not self._has_mpl:
+            return
+        if self._is_frequency_plot_panel():
             return
         if self._subplot_axes_by_polarization:
             return
@@ -2568,6 +3057,9 @@ class PlotPanel(QWidget):
             self._y_limits_by_polarization = {}
             self._subplot_axes_by_polarization = {}
             self._vector_subplot_datasets = {}
+            if self._is_frequency_plot_panel():
+                self._frequency_reference_mhz = None
+                self._apply_axis_labels(*self._default_axis_labels())
             self._update_export_enabled()
 
     def clear_fit(self) -> None:
@@ -3494,6 +3986,7 @@ class PlotPanel(QWidget):
             Plot state suitable for inclusion in a project file.
         """
         state: dict = {
+            "plot_panel_domain": self._domain,
             "current_run_number": (
                 self._current_dataset.run_number if self._current_dataset is not None else None
             ),
@@ -3502,6 +3995,8 @@ class PlotPanel(QWidget):
             "label_field_by_group": dict(self._label_field_by_group),
             "overlay_enabled": self.is_overlay_enabled(),
             "bunch_factor": self._bunch_factor.value() if self._has_mpl else 1,
+            "auto_x_enabled": self._auto_x_btn.isChecked() if self._has_mpl else False,
+            "auto_y_enabled": self._auto_y_btn.isChecked() if self._has_mpl else False,
             "x_min": self._x_min.value() if self._has_mpl else 0.0,
             "x_max": self._x_max.value() if self._has_mpl else 10.0,
             "y_min": self._y_min.value() if self._has_mpl else -30.0,
@@ -3523,6 +4018,16 @@ class PlotPanel(QWidget):
             "fit_x_min": self._fit_x_min,
             "fit_x_max": self._fit_x_max,
         }
+
+        if self._is_frequency_plot_panel():
+            state["frequency_x_unit"] = self._current_frequency_x_unit
+            state["frequency_axis_relative_to_reference"] = bool(
+                self._frequency_axis_relative_to_reference
+            )
+            state["frequency_x_limits_by_unit"] = {
+                unit: [float(limits[0]), float(limits[1])]
+                for unit, limits in self._frequency_x_limits_by_unit.items()
+            }
 
         if self._has_mpl:
             if self._fit_curve is not None:
@@ -3590,6 +4095,9 @@ class PlotPanel(QWidget):
 
         import numpy as np
 
+        self._auto_x_btn.setChecked(bool(state.get("auto_x_enabled", False)))
+        self._auto_y_btn.setChecked(bool(state.get("auto_y_enabled", False)))
+
         valid_label_fields = {key for _, key in _LABEL_FIELDS}
         default_label_field = state.get("default_label_field", state.get("label_field", "run"))
         if default_label_field not in valid_label_fields:
@@ -3638,6 +4146,52 @@ class PlotPanel(QWidget):
                 self._default_label_field = str(selected_field)
 
         self.set_overlay_enabled(bool(state.get("overlay_enabled", True)), emit_signal=False)
+
+        if self._is_frequency_plot_panel():
+            self._frequency_x_limits_by_unit = {}
+            raw_limits_by_unit = state.get("frequency_x_limits_by_unit", {})
+            if isinstance(raw_limits_by_unit, dict):
+                for raw_unit, raw_limits in raw_limits_by_unit.items():
+                    if (
+                        raw_unit not in {
+                            "frequency_mhz",
+                            "field_gauss",
+                            "frequency_mhz:absolute",
+                            "frequency_mhz:relative",
+                            "field_gauss:absolute",
+                            "field_gauss:relative",
+                        }
+                        or not isinstance(raw_limits, (list, tuple))
+                        or len(raw_limits) != 2
+                    ):
+                        continue
+                    try:
+                        lo = float(raw_limits[0])
+                        hi = float(raw_limits[1])
+                    except (TypeError, ValueError):
+                        continue
+                    self._frequency_x_limits_by_unit[str(raw_unit)] = (lo, hi)
+
+            restored_unit = str(state.get("frequency_x_unit", "frequency_mhz"))
+            if restored_unit not in {"frequency_mhz", "field_gauss"}:
+                restored_unit = "frequency_mhz"
+            self._current_frequency_x_unit = restored_unit
+            self._frequency_axis_relative_to_reference = bool(
+                state.get("frequency_axis_relative_to_reference", False)
+            )
+            if hasattr(self, "_frequency_x_unit_combo"):
+                idx = self._frequency_x_unit_combo.findData(restored_unit)
+                if idx >= 0:
+                    previous = self._frequency_x_unit_combo.blockSignals(True)
+                    self._frequency_x_unit_combo.setCurrentIndex(idx)
+                    self._frequency_x_unit_combo.blockSignals(previous)
+            if hasattr(self, "_frequency_axis_relative_check"):
+                prev = self._frequency_axis_relative_check.blockSignals(True)
+                self._frequency_axis_relative_check.setChecked(
+                    self._frequency_axis_relative_to_reference
+                )
+                self._frequency_axis_relative_check.blockSignals(prev)
+            self._apply_axis_labels(*self._axis_labels_for_dataset(dataset, self._current_polarization_axis))
 
         # Keep bunch factor at default in restored projects; control is hidden.
         self._bunch_factor.blockSignals(True)
