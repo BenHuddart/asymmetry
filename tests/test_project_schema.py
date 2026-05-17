@@ -1337,16 +1337,12 @@ class TestMainWindowProjectState:
                     {
                         "fit_curve": {"t": [0.0, 1.0], "y": [0.2, 0.1], "label": "Fit"},
                         "fit_curve_run_number": 1001,
-                        "fit_curves": {
-                            "1001": {"t": [0.0, 1.0], "y": [0.2, 0.1], "label": "Fit"}
-                        },
+                        "fit_curves": {"1001": {"t": [0.0, 1.0], "y": [0.2, 0.1], "label": "Fit"}},
                         "fit_curves_by_key": {
                             "1001::P_x": {"t": [0.0, 1.0], "y": [0.2, 0.1], "label": "Fit"}
                         },
                         "fit_components": [{"name": "Signal", "y": [0.2, 0.1]}],
-                        "fit_components_by_run": {
-                            "1001": [{"name": "Signal", "y": [0.2, 0.1]}]
-                        },
+                        "fit_components_by_run": {"1001": [{"name": "Signal", "y": [0.2, 0.1]}]},
                         "fit_components_by_key": {
                             "1001::P_x": [{"name": "Signal", "y": [0.2, 0.1]}]
                         },

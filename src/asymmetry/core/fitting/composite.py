@@ -483,7 +483,8 @@ def build_component_expression(
             if not paren_component_stack:
                 raise ValueError("Invalid parentheses while building expression")
             start_index = paren_component_stack.pop()
-            suffix_parts.append(")" + ("{frac}" if (start_index, idx) in fraction_group_set else "")
+            suffix_parts.append(
+                ")" + ("{frac}" if (start_index, idx) in fraction_group_set else "")
             )
         token = prefix + name + "".join(suffix_parts)
         if idx == 0:
@@ -736,10 +737,9 @@ class CompositeModel:
         for idx, component in enumerate(self.components, start=1):
             mapping: dict[str, str] = {}
             for pname in component.param_names:
-                if (
-                    self._fraction_group_by_component.get(idx - 1) is not None
-                    and self._is_scaling_parameter(pname)
-                ):
+                if self._fraction_group_by_component.get(
+                    idx - 1
+                ) is not None and self._is_scaling_parameter(pname):
                     mapping[pname] = _UNIT_AMPLITUDE_SENTINEL
                     continue
                 if (

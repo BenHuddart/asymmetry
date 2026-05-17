@@ -131,9 +131,7 @@ def _fit_deadtime_tau(
     def _countfit(time_us, amplitude, tau_us):
         cc = amplitude * np.exp(-time_us / MUON_LIFETIME_US)
         n_rate = cc / frame_scale
-        return cc * (
-            1.0 - n_rate * MUON_LIFETIME_US * (1.0 - np.exp(-tau_us / MUON_LIFETIME_US))
-        )
+        return cc * (1.0 - n_rate * MUON_LIFETIME_US * (1.0 - np.exp(-tau_us / MUON_LIFETIME_US)))
 
     guess_amplitude = max(float(observed[0]), 1.0)
     tau_upper = max(0.5, 10.0 * float(times_us[0]))
@@ -169,7 +167,9 @@ def parse_deadtime_calibration_text(text: str, *, n_histograms: int | None = Non
     - subsequent lines of ``<index> <tau_us>``
     - optional trailing metadata lines such as ``Run 1234``
     """
-    lines = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")]
+    lines = [
+        line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")
+    ]
     if not lines:
         raise ValueError("Deadtime calibration file is empty.")
 

@@ -17,7 +17,9 @@ from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
-def _make_dataset(*, frequency_mhz: float, phase_degrees: float, n: int = 256, dt_us: float = 0.05) -> MuonDataset:
+def _make_dataset(
+    *, frequency_mhz: float, phase_degrees: float, n: int = 256, dt_us: float = 0.05
+) -> MuonDataset:
     time = np.arange(n, dtype=float) * dt_us
     phase_radians = np.deg2rad(phase_degrees)
     asymmetry = 0.2 * np.cos(2 * np.pi * frequency_mhz * time + phase_radians)
@@ -52,10 +54,14 @@ def _wimda_projected_real(
 def _wimda_group_lifetime_correction(signal: np.ndarray, time_us: np.ndarray) -> np.ndarray:
     """Apply WiMDA's grouped-count FFT lifetime correction."""
 
-    return np.asarray(signal, dtype=float) * np.exp(np.asarray(time_us, dtype=float) / MUON_LIFETIME_US)
+    return np.asarray(signal, dtype=float) * np.exp(
+        np.asarray(time_us, dtype=float) / MUON_LIFETIME_US
+    )
 
 
-def _musrfit_lifetime_correction(signal: np.ndarray, dt_us: float, fudge: float = 1.0) -> np.ndarray:
+def _musrfit_lifetime_correction(
+    signal: np.ndarray, dt_us: float, fudge: float = 1.0
+) -> np.ndarray:
     """Apply musrfit's theory-free lifetime correction to one trace."""
 
     indices = np.arange(signal.size, dtype=float)

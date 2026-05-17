@@ -48,7 +48,6 @@ from asymmetry.gui.export_paths import (
 )
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 
-
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
 

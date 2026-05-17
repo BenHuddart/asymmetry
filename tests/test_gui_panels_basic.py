@@ -59,9 +59,14 @@ def test_fourier_panel_defaults(qapp: QApplication) -> None:
     assert panel._estimate_average_error_check.text() == "Average errors"
     assert panel._estimate_average_error_check.toolTip() == "Estimate errors for averaged spectra."
     assert "#0f62fe" in panel._phase_opt_real_radio.styleSheet()
-    assert panel._phase_opt_real_radio.minimumHeight() >= panel._phase_opt_real_radio.sizeHint().height()
+    assert (
+        panel._phase_opt_real_radio.minimumHeight()
+        >= panel._phase_opt_real_radio.sizeHint().height()
+    )
     assert panel._phase_table.horizontalHeaderItem(0).text() == "Include"
-    assert panel._phase_table.horizontalHeader().sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
+    assert (
+        panel._phase_table.horizontalHeader().sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
+    )
     assert panel._fft_btn.text() == "Compute FFT"
 
 
@@ -142,7 +147,9 @@ def test_fourier_panel_auto_filled_group_phases_turn_green(qapp: QApplication) -
     assert panel._phase_table.item(1, 2).foreground().color().name() == "#15803d"
 
 
-def test_plot_panel_frequency_dataset_skips_rebin_and_uses_metadata_labels(qapp: QApplication) -> None:
+def test_plot_panel_frequency_dataset_skips_rebin_and_uses_metadata_labels(
+    qapp: QApplication,
+) -> None:
     panel = PlotPanel()
     if not getattr(panel, "_has_mpl", False):
         pytest.skip("matplotlib backend not available in this environment")

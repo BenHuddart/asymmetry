@@ -10,11 +10,11 @@ from itertools import product
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core.fitting.ballistic import lambda_total as ballistic_lambda_total
 from asymmetry.core.fitting.composite import (
     build_component_expression,
     parse_component_expression,
 )
-from asymmetry.core.fitting.ballistic import lambda_total as ballistic_lambda_total
 from asymmetry.core.fitting.diffusion import lambda_total as diffusion_lambda_total
 from asymmetry.core.fitting.parameters import (
     Parameter,
@@ -1187,12 +1187,16 @@ def _stabilize_parameter_model_errors(errors: NDArray[np.float64]) -> NDArray[np
 
 
 def _is_additive_parameter_model(model: ParameterCompositeModel) -> bool:
-    return (not any(model.open_parentheses)) and (not any(model.close_parentheses)) and all(
-        op == "+" for op in model.operators
+    return (
+        (not any(model.open_parentheses))
+        and (not any(model.close_parentheses))
+        and all(op == "+" for op in model.operators)
     )
 
 
-def _transport_rate_parameter_for_component(component: ParameterModelComponentDefinition) -> str | None:
+def _transport_rate_parameter_for_component(
+    component: ParameterModelComponentDefinition,
+) -> str | None:
     if component.name.startswith("DiffusionLF_"):
         return "D_2D"
     if component.name.startswith("BallisticLF_"):
@@ -1285,9 +1289,7 @@ def _transport_seed_initial_values(
 
     current_values = _parameter_values_by_name(parameters)
     fixed_contribution = np.zeros_like(y_fit, dtype=float)
-    transport_entries: list[
-        tuple[ParameterModelComponentDefinition, dict[str, str], str, str]
-    ] = []
+    transport_entries: list[tuple[ParameterModelComponentDefinition, dict[str, str], str, str]] = []
 
     for component, mapping in zip(model.components, model._param_mappings, strict=True):
         rate_name = _transport_rate_parameter_for_component(component)
@@ -1300,7 +1302,6 @@ def _transport_seed_initial_values(
             continue
 
         amp_parameter = parameters[amp_name]
-        rate_parameter = parameters[rate_param_name]
         if amp_parameter.fixed:
             local_kwargs = model._extract_component_kwargs(component, mapping, current_values)
             fixed_contribution += np.asarray(component.function(x_fit, **local_kwargs), dtype=float)

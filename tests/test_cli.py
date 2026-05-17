@@ -41,4 +41,4 @@ def test_version_flag_exits_with_version(capsys) -> None:
         cli.main(["--version"])
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    assert "asymmetry 0.2.1" in out
+    assert f"asymmetry {cli.__version__}" in out

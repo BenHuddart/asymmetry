@@ -363,7 +363,9 @@ def test_main_uses_resource_fallback_for_splash_logo(
         return _FakeSplash()
 
     monkeypatch.setattr(app_module, "_create_splash_screen", _fake_create_splash)
-    monkeypatch.setattr(app_module.sys, "exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
+    monkeypatch.setattr(
+        app_module.sys, "exit", lambda code: (_ for _ in ()).throw(SystemExit(code))
+    )
 
     with pytest.raises(SystemExit) as exc:
         app_module.main()

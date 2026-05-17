@@ -78,10 +78,7 @@ def test_estimate_deadtime_from_histograms_recovers_uniform_tau() -> None:
     frame_scale = num_good_frames * bin_width
     true_counts = amplitude * np.exp(-times / 2.1969811)
     observed = true_counts * (
-        1.0
-        - (true_counts / frame_scale)
-        * 2.1969811
-        * (1.0 - np.exp(-tau_us / 2.1969811))
+        1.0 - (true_counts / frame_scale) * 2.1969811 * (1.0 - np.exp(-tau_us / 2.1969811))
     )
     histograms = [Histogram(observed.copy(), bin_width=bin_width) for _ in range(4)]
 
@@ -108,10 +105,7 @@ def test_calibrate_deadtime_from_histograms_recovers_per_detector_tau() -> None:
         frame_scale = num_good_frames * bin_width
         true_counts = amplitude * np.exp(-times / lifetime_us)
         observed = true_counts * (
-            1.0
-            - (true_counts / frame_scale)
-            * lifetime_us
-            * (1.0 - np.exp(-tau_us / lifetime_us))
+            1.0 - (true_counts / frame_scale) * lifetime_us * (1.0 - np.exp(-tau_us / lifetime_us))
         )
         histograms.append(Histogram(observed.copy(), bin_width=bin_width))
 

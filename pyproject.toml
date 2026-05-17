@@ -76,6 +76,7 @@ select = ["E", "F", "W", "I", "N", "UP"]
 ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings are intentional.
 
 [tool.ruff.lint.per-file-ignores]
+"src/asymmetry/core/fitting/ballistic.py" = ["N802", "N803"]  # Physics notation (nD, B_LF, D_hop, lambda_0D)
 "src/asymmetry/core/fitting/composite.py" = ["N803"]  # Physics parameter names (A, Lambda, Delta)
 "src/asymmetry/core/fitting/diffusion.py" = ["N802", "N803"]  # Physics notation (nD, D_nD)
 "src/asymmetry/core/fitting/models.py" = ["N803"]  # Physics parameter names (A0, Lambda, Delta)
@@ -83,6 +84,7 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "src/asymmetry/core/fitting/parameter_models.py" = ["N803", "N806"]  # Physics parameter names (Tc, B0, D_2D)
 "src/asymmetry/core/fitting/sc/models.py" = ["N803"]  # Physics parameter names (Tc)
 "src/asymmetry/core/project/schema.py" = ["N818"]  # Public API exception class predates the suffix rule
+"src/asymmetry/gui/mainwindow.py" = ["N802"]  # Qt closeEvent override
 "src/asymmetry/gui/panels/fit_function_builder.py" = ["N802", "N815"]  # Qt-compatible shim names
 "src/asymmetry/gui/panels/model_fit_dialog.py" = ["N802", "N815"]  # Qt-compatible shim names
 "src/asymmetry/gui/widgets/detector_schematic.py" = ["N802"]  # Qt sizeHint override

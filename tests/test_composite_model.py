@@ -260,9 +260,7 @@ def test_fraction_group_evaluation_normalizes_component_weights() -> None:
         fraction_2=1.0,
         fraction_3=2.0,
     )
-    expected = 12.0 * (
-        0.25 * np.exp(-0.2 * t) + 0.25 * np.exp(-0.5 * t) + 0.5 * np.ones_like(t)
-    )
+    expected = 12.0 * (0.25 * np.exp(-0.2 * t) + 0.25 * np.exp(-0.5 * t) + 0.5 * np.ones_like(t))
 
     assert np.allclose(out, expected)
 
