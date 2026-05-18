@@ -15,7 +15,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QComboBox, QMessageBox
 
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import (
@@ -32,6 +32,11 @@ from asymmetry.core.fitting.global_fit_wizard import (
     RunResidualDiagnostic,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.utils.constants import (
+    GAUSS_TO_TESLA,
+    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
+    MUON_LIFETIME_US,
+)
 from asymmetry.gui.panels import fit_panel as fit_panel_module
 from asymmetry.gui.panels.fit_panel import FitPanel, GlobalFitTab, SingleFitTab
 
@@ -588,12 +593,145 @@ def test_global_fit_finished_failure_lists_failed_runs(
     assert "Global fit failed" in tab._result_text.toPlainText()
 
 
-def test_global_fit_error_sets_message(qapp: QApplication) -> None:
+def test_global_fit_error_sets_message(qapp: QApplication, dataset: MuonDataset) -> None:
     tab = GlobalFitTab()
+    tab.set_datasets(
+        [
+            dataset,
+            replace(dataset, metadata={**dataset.metadata, "run_number": 102}),
+        ]
+    )
     tab._fit_btn.setEnabled(False)
     tab._on_fit_error("boom")
     assert tab._fit_btn.isEnabled() is True
+    assert "Error during global fit" in tab._result_text.toPlainText()
     assert "boom" in tab._result_text.toPlainText()
+
+
+def test_grouped_fit_error_formats_keyerror_message(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    grouped_groups = [
+        SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
+        SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+    ]
+    monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
+    tab.set_current_dataset(dataset)
+
+    tab._on_fit_error(fit_panel_module._format_fit_worker_exception(KeyError(1651)))
+
+    assert "Error during grouped fit" in tab._result_text.toPlainText()
+    assert "Missing fit parameter mapping" in tab._result_text.toPlainText()
+    assert "1651" in tab._result_text.toPlainText()
+
+
+def test_grouped_fit_finished_updates_grouped_tables(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    time = np.linspace(0.0, 4.0, 80)
+    field = 150.0
+    dataset = MuonDataset(
+        time=time,
+        asymmetry=np.zeros_like(time),
+        error=np.full_like(time, 0.01),
+        metadata={"run_number": 101, "field": field},
+        run=Run(run_number=101, metadata={"field": field}),
+    )
+    grouped_groups = [
+        SimpleNamespace(
+            group_id=1,
+            group_name="Forward",
+            time=time,
+            counts=np.full_like(time, 120.0),
+            error=np.full_like(time, 1.0),
+            metadata={"field": field},
+        ),
+        SimpleNamespace(
+            group_id=2,
+            group_name="Backward",
+            time=time,
+            counts=np.full_like(time, 80.0),
+            error=np.full_like(time, 1.0),
+            metadata={"field": field},
+        ),
+    ]
+    grouped_datasets = [
+        MuonDataset(
+            time=np.array([0.0, 0.5, 1.0]),
+            asymmetry=np.array([120.0, 110.0, 95.0]),
+            error=np.array([1.0, 1.0, 1.0]),
+            metadata={"group_id": 1, "grouped_time_domain": True, "run_number": 9001, "run_label": "Forward"},
+            run=dataset.run,
+        ),
+        MuonDataset(
+            time=np.array([0.0, 0.5, 1.0]),
+            asymmetry=np.array([80.0, 75.0, 70.0]),
+            error=np.array([1.0, 1.0, 1.0]),
+            metadata={"group_id": 2, "grouped_time_domain": True, "run_number": 9002, "run_label": "Backward"},
+            run=dataset.run,
+        ),
+    ]
+
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, grouped_datasets, "ready"))
+    tab.set_current_dataset(dataset)
+
+    forward_params = ParameterSet(
+        [
+            Parameter("N0", 101.0, min=0.0, max=500.0),
+            Parameter("background", 6.0, min=0.0, max=50.0),
+            Parameter("amplitude", 0.21, min=-1.0, max=1.0),
+            Parameter("relative_phase", 0.33, min=-np.pi, max=np.pi),
+            Parameter("field", 151.0, min=0.0, max=1000.0),
+            Parameter("phase", 0.42, min=-np.pi, max=np.pi),
+        ]
+    )
+    backward_params = ParameterSet(
+        [
+            Parameter("N0", 202.0, min=0.0, max=500.0),
+            Parameter("background", 7.0, min=0.0, max=50.0),
+            Parameter("amplitude", 0.27, min=-1.0, max=1.0),
+            Parameter("relative_phase", -0.41, min=-np.pi, max=np.pi),
+            Parameter("field", 151.0, min=0.0, max=1000.0),
+            Parameter("phase", 0.42, min=-np.pi, max=np.pi),
+        ]
+    )
+    grouped_result = SimpleNamespace(
+        shared_parameters=ParameterSet(
+            [
+                Parameter("field", 151.0, min=0.0, max=1000.0),
+                Parameter("phase", 0.42, min=-np.pi, max=np.pi),
+            ]
+        ),
+        group_results={
+            1: FitResult(success=True, chi_squared=1.0, reduced_chi_squared=0.1, parameters=forward_params),
+            2: FitResult(success=True, chi_squared=1.0, reduced_chi_squared=0.1, parameters=backward_params),
+        },
+    )
+
+    tab._current_model = tab._composite_model
+    tab._on_grouped_fit_finished(grouped_datasets, grouped_result)
+
+    group_param_rows = {
+        tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_param_table.rowCount())
+    }
+    group_model_rows = {
+        tab._group_model_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_model_table.rowCount())
+    }
+
+    assert float(tab._group_param_table.item(group_param_rows["N0"], 1).text()) == pytest.approx(101.0)
+    assert float(tab._group_param_table.item(group_param_rows["N0"], 2).text()) == pytest.approx(202.0)
+    assert float(tab._group_param_table.item(group_param_rows["relative_phase"], 1).text()) == pytest.approx(0.33)
+    assert float(tab._group_param_table.item(group_param_rows["relative_phase"], 2).text()) == pytest.approx(-0.41)
+    assert float(tab._group_model_table.item(group_model_rows["field"], 1).text()) == pytest.approx(151.0)
+    assert float(tab._group_model_table.item(group_model_rows["phase"], 1).text()) == pytest.approx(0.42)
+    assert "Grouped Time-Domain Fit Successful" in tab._result_text.toPlainText()
 
 
 def test_global_fit_parses_type_combo_defaults(qapp: QApplication) -> None:
@@ -673,6 +811,681 @@ def test_global_tab_default_model_includes_background(qapp: QApplication) -> Non
     tab = GlobalFitTab()
     assert tab._composite_model.component_names == ["Exponential", "Constant"]
     assert "A_bg" in tab._composite_model.param_names
+
+
+def test_grouped_tab_shows_one_value_column_per_group(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    grouped_groups = [
+        SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
+        SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+    ]
+    monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
+
+    tab.set_current_dataset(dataset)
+
+    headers = [
+        tab._group_param_table.horizontalHeaderItem(column).text()
+        for column in range(tab._group_param_table.columnCount())
+    ]
+    row_by_name = {
+        tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_param_table.rowCount())
+    }
+    forward_background, forward_n0, _forward_amplitude = fit_panel_module._seed_group_background_and_n0(
+        np.array([120.0, 118.0])
+    )
+    backward_background, backward_n0, _backward_amplitude = fit_panel_module._seed_group_background_and_n0(
+        np.array([80.0, 79.0])
+    )
+
+    assert headers == ["Parameter", "Forward", "Backward", "Type", "Bounds"]
+    assert float(tab._group_param_table.item(row_by_name["N0"], 1).text()) == pytest.approx(
+        forward_n0
+    )
+    assert float(tab._group_param_table.item(row_by_name["N0"], 2).text()) == pytest.approx(
+        backward_n0
+    )
+    assert float(
+        tab._group_param_table.item(row_by_name["background"], 1).text()
+    ) == pytest.approx(forward_background)
+    assert float(
+        tab._group_param_table.item(row_by_name["background"], 2).text()
+    ) == pytest.approx(backward_background)
+    assert tab._group_param_table.cellWidget(row_by_name["N0"], 2) is None
+    assert isinstance(tab._group_param_table.cellWidget(row_by_name["N0"], 3), QComboBox)
+
+    group_model_row_by_name = {
+        tab._group_model_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_model_table.rowCount())
+    }
+    assert "A_1" not in group_model_row_by_name
+    assert "field" in group_model_row_by_name
+
+
+def test_grouped_tab_defaults_to_oscillatory_field_model(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = MuonDataset(
+        time=np.linspace(0.0, 4.0, 80),
+        asymmetry=np.zeros(80),
+        error=np.full(80, 0.01),
+        metadata={"run_number": 101},
+        run=Run(run_number=101, metadata={"field": 150.0}),
+    )
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    grouped_groups = [
+        SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
+        SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+    ]
+    monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
+
+    tab.set_current_dataset(dataset)
+
+    assert tab._composite_model.component_names == ["OscillatoryField"]
+    assert "field*t" in tab._formula_label.toolTip()
+    row_by_name = {
+        tab._group_model_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_model_table.rowCount())
+    }
+    assert set(row_by_name) == {"field", "phase"}
+    assert tab._group_model_table.item(row_by_name["field"], 1).text() == "150"
+
+
+def test_grouped_tab_clearing_current_dataset_does_not_crash(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    grouped_groups = [
+        SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
+        SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+    ]
+    monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
+
+    tab.set_current_dataset(dataset)
+    tab.set_current_dataset(None)
+
+    assert tab._current_dataset is None
+
+
+def test_grouped_tab_fractionizes_additive_fit_function(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    grouped_groups = [
+        SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
+        SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+    ]
+    monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
+
+    tab.set_current_dataset(dataset)
+    tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
+
+    assert "fraction_1" in tab._formula_label.text()
+    assert "A_1" not in tab._formula_label.text()
+    row_by_name = {
+        tab._group_model_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_model_table.rowCount())
+    }
+    assert set(row_by_name) == {"Lambda", "fraction_1", "fraction_2"}
+
+
+def test_grouped_tab_synchronizes_fraction_rows(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    grouped_groups = [
+        SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
+        SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+    ]
+    monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
+    tab.set_current_dataset(dataset)
+    tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
+
+    row_by_name = {
+        tab._group_model_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_model_table.rowCount())
+    }
+    tab._group_model_table.item(row_by_name["fraction_1"], 1).setText("0.2")
+    final_type_combo = tab._group_model_table.cellWidget(row_by_name["fraction_2"], 2)
+
+    assert tab._group_model_table.item(row_by_name["fraction_1"], 1).text() == "0.2"
+    assert tab._group_model_table.item(row_by_name["fraction_2"], 1).text() == "0.8"
+    assert isinstance(final_type_combo, QComboBox)
+    assert final_type_combo.currentText() == "Fixed"
+    assert not final_type_combo.isEnabled()
+
+
+def test_grouped_fit_uses_per_group_seed_values_from_group_columns(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    grouped_groups = [
+        SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
+        SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+    ]
+    monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
+    tab.set_current_dataset(dataset)
+
+    row_by_name = {
+        tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_param_table.rowCount())
+    }
+    forward_background, forward_n0, forward_amplitude = fit_panel_module._seed_group_background_and_n0(
+        np.array([120.0, 118.0])
+    )
+    backward_background, backward_n0, backward_amplitude = fit_panel_module._seed_group_background_and_n0(
+        np.array([80.0, 79.0])
+    )
+    tab._group_param_table.item(row_by_name["N0"], 1).setText("101")
+    tab._group_param_table.item(row_by_name["N0"], 2).setText("202")
+    tab._group_param_table.item(row_by_name["amplitude"], 1).setText("0.1")
+    tab._group_param_table.item(row_by_name["amplitude"], 2).setText("0.3")
+
+    captured: dict[str, object] = {}
+
+    class _DummySignal:
+        def connect(self, *_args, **_kwargs):
+            return None
+
+    class _FakeThread:
+        def __init__(self):
+            self.started = _DummySignal()
+            self.finished = _DummySignal()
+
+        def start(self):
+            return None
+
+        def quit(self):
+            return None
+
+        def wait(self):
+            return None
+
+        def deleteLater(self):
+            return None
+
+    class _FakeWorker:
+        def __init__(
+            self,
+            _grouped_groups,
+            _grouped_datasets,
+            _model_fn,
+            _global_params,
+            _local_params,
+            initial_params,
+        ):
+            captured["initial_params"] = initial_params
+            self.finished = _DummySignal()
+            self.error = _DummySignal()
+
+        def moveToThread(self, _thread):
+            return None
+
+        def run(self):
+            return None
+
+        def deleteLater(self):
+            return None
+
+    monkeypatch.setattr(fit_panel_module, "QThread", _FakeThread)
+    monkeypatch.setattr(fit_panel_module, "GroupedTimeDomainFitWorker", _FakeWorker)
+
+    tab._run_global_fit()
+
+    initial_params = captured["initial_params"]
+    assert initial_params[1]["N0"].value == pytest.approx(101.0)
+    assert initial_params[2]["N0"].value == pytest.approx(202.0)
+    assert initial_params[1]["amplitude"].value == pytest.approx(0.1)
+    assert initial_params[2]["amplitude"].value == pytest.approx(0.3)
+
+
+def test_grouped_phase_seed_uses_fft_peak_estimate_relative_to_first_group() -> None:
+    time = np.linspace(0.0, 8.0, 801)
+    frequency = 3.2
+    background = 8.0
+    n0 = 100.0
+    amplitude = 0.18
+    phase_a = np.deg2rad(25.0)
+    phase_b = np.deg2rad(-55.0)
+
+    def _counts(phase: float) -> np.ndarray:
+        return n0 * (1.0 + amplitude * np.cos(2.0 * np.pi * frequency * time + phase)) + (
+            background * np.exp(time / float(MUON_LIFETIME_US))
+        )
+
+    grouped_groups = [
+        SimpleNamespace(
+            group_id=1,
+            group_name="Forward",
+            time=time,
+            counts=_counts(phase_a),
+            error=np.full_like(time, 0.05),
+            metadata={"field": frequency / (MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA)},
+        ),
+        SimpleNamespace(
+            group_id=2,
+            group_name="Backward",
+            time=time,
+            counts=_counts(phase_b),
+            error=np.full_like(time, 0.05),
+            metadata={"field": frequency / (MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA)},
+        ),
+    ]
+
+    phases = fit_panel_module._seed_group_relative_phases(grouped_groups)
+
+    expected_delta = float(np.angle(np.exp(1j * (phase_b - phase_a))))
+    assert phases["1"] == pytest.approx(0.0, abs=0.2)
+    assert phases["2"] == pytest.approx(expected_delta, abs=0.3)
+
+
+def test_grouped_model_phase_seed_uses_first_group_estimate(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    time = np.linspace(0.0, 8.0, 801)
+    frequency = 3.2
+    field = frequency / (MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA)
+    n0 = 100.0
+    background = 8.0
+    amplitude = 0.18
+    phase_a = np.deg2rad(25.0)
+    phase_b = np.deg2rad(-55.0)
+
+    def _counts(phase: float) -> np.ndarray:
+        return n0 * (1.0 + amplitude * np.cos(2.0 * np.pi * frequency * time + phase)) + (
+            background * np.exp(time / float(MUON_LIFETIME_US))
+        )
+
+    dataset = MuonDataset(
+        time=time,
+        asymmetry=np.zeros_like(time),
+        error=np.full_like(time, 0.05),
+        metadata={"run_number": 101, "field": field},
+        run=Run(run_number=101, metadata={"field": field}),
+    )
+    grouped_groups = [
+        SimpleNamespace(
+            group_id=1,
+            group_name="Forward",
+            time=time,
+            counts=_counts(phase_a),
+            error=np.full_like(time, 0.05),
+            metadata={"field": field},
+        ),
+        SimpleNamespace(
+            group_id=2,
+            group_name="Backward",
+            time=time,
+            counts=_counts(phase_b),
+            error=np.full_like(time, 0.05),
+            metadata={"field": field},
+        ),
+    ]
+
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
+    tab.set_current_dataset(dataset)
+
+    row_by_name = {
+        tab._group_model_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_model_table.rowCount())
+    }
+    reference_phase, _relative_phases = fit_panel_module._seed_group_phase_estimates(grouped_groups)
+
+    assert float(tab._group_model_table.item(row_by_name["phase"], 1).text()) == pytest.approx(
+        reference_phase,
+        abs=0.2,
+    )
+
+
+def test_grouped_tab_reset_button_restores_estimated_values(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    grouped_groups = [
+        SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
+        SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+    ]
+    monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
+    tab.set_current_dataset(dataset)
+
+    row_by_name = {
+        tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_param_table.rowCount())
+    }
+    forward_background, forward_n0, forward_amplitude = fit_panel_module._seed_group_background_and_n0(
+        np.array([120.0, 118.0])
+    )
+    backward_background, backward_n0, backward_amplitude = fit_panel_module._seed_group_background_and_n0(
+        np.array([80.0, 79.0])
+    )
+    relative_phase_defaults = fit_panel_module._seed_group_relative_phases(grouped_groups)
+    tab._group_param_table.item(row_by_name["N0"], 1).setText("101")
+    tab._group_param_table.item(row_by_name["N0"], 2).setText("202")
+    tab._group_param_table.item(row_by_name["background"], 1).setText("1.5")
+    tab._group_param_table.item(row_by_name["background"], 2).setText("2.5")
+    tab._group_param_table.item(row_by_name["amplitude"], 1).setText("0.1")
+    tab._group_param_table.item(row_by_name["amplitude"], 2).setText("0.3")
+    tab._group_param_table.item(row_by_name["relative_phase"], 1).setText("0.4")
+    tab._group_param_table.item(row_by_name["relative_phase"], 2).setText("-0.2")
+    n0_type = tab._group_param_table.cellWidget(row_by_name["N0"], 3)
+    assert isinstance(n0_type, QComboBox)
+    assert n0_type.currentText() == "Local"
+
+    tab._group_param_reset_btn.click()
+
+    assert float(tab._group_param_table.item(row_by_name["N0"], 1).text()) == pytest.approx(
+        forward_n0
+    )
+    assert float(tab._group_param_table.item(row_by_name["N0"], 2).text()) == pytest.approx(
+        backward_n0
+    )
+    assert float(
+        tab._group_param_table.item(row_by_name["background"], 1).text()
+    ) == pytest.approx(forward_background)
+    assert float(
+        tab._group_param_table.item(row_by_name["background"], 2).text()
+    ) == pytest.approx(backward_background)
+    assert float(
+        tab._group_param_table.item(row_by_name["amplitude"], 1).text()
+    ) == pytest.approx(forward_amplitude)
+    assert float(
+        tab._group_param_table.item(row_by_name["amplitude"], 2).text()
+    ) == pytest.approx(backward_amplitude)
+    assert float(
+        tab._group_param_table.item(row_by_name["relative_phase"], 1).text()
+    ) == pytest.approx(relative_phase_defaults["1"])
+    assert float(
+        tab._group_param_table.item(row_by_name["relative_phase"], 2).text()
+    ) == pytest.approx(relative_phase_defaults["2"])
+    reset_n0_type = tab._group_param_table.cellWidget(row_by_name["N0"], 3)
+    assert isinstance(reset_n0_type, QComboBox)
+    assert reset_n0_type.currentText() == "Local"
+
+
+def test_grouped_tab_state_roundtrip_preserves_per_group_parameter_columns(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    grouped_groups = [
+        SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
+        SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+    ]
+
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
+    tab.set_current_dataset(dataset)
+    row_by_name = {
+        tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_param_table.rowCount())
+    }
+    tab._group_param_table.item(row_by_name["background"], 1).setText("1.5")
+    tab._group_param_table.item(row_by_name["background"], 2).setText("2.5")
+
+    saved = tab.get_state()
+
+    restored = GlobalFitTab(allowed_modes=("grouped",))
+    monkeypatch.setattr(restored, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
+    restored.set_current_dataset(dataset)
+    restored.restore_state(saved)
+
+    restored_row_by_name = {
+        restored._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(restored._group_param_table.rowCount())
+    }
+    assert restored._group_param_table.item(restored_row_by_name["background"], 1).text() == "1.5"
+    assert restored._group_param_table.item(restored_row_by_name["background"], 2).text() == "2.5"
+
+
+def test_grouped_tab_preview_emits_curves_for_each_group(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    grouped_groups = [
+        SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
+        SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+    ]
+    grouped_datasets = [
+        MuonDataset(
+            time=np.array([0.0, 0.5, 1.0]),
+            asymmetry=np.array([120.0, 110.0, 95.0]),
+            error=np.array([1.0, 1.0, 1.0]),
+            metadata={
+                "group_id": 1,
+                "grouped_time_domain": True,
+                "run_number": 9001,
+                "run_label": "Forward",
+            },
+            run=dataset.run,
+        ),
+        MuonDataset(
+            time=np.array([0.0, 0.5, 1.0]),
+            asymmetry=np.array([80.0, 75.0, 70.0]),
+            error=np.array([1.0, 1.0, 1.0]),
+            metadata={
+                "group_id": 2,
+                "grouped_time_domain": True,
+                "run_number": 9002,
+                "run_label": "Backward",
+            },
+            run=dataset.run,
+        ),
+    ]
+
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    monkeypatch.setattr(
+        tab,
+        "_grouped_mode_context",
+        lambda: (grouped_groups, grouped_datasets, "ready"),
+    )
+    tab.set_current_dataset(dataset)
+
+    row_by_name = {
+        tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_param_table.rowCount())
+    }
+    tab._group_param_table.item(row_by_name["N0"], 1).setText("101")
+    tab._group_param_table.item(row_by_name["N0"], 2).setText("202")
+
+    emitted: dict[str, object] = {}
+    tab.grouped_preview_requested.connect(
+        lambda datasets, curves: emitted.update({"datasets": datasets, "curves": curves})
+    )
+
+    tab._on_preview_requested()
+
+    assert emitted["datasets"] == grouped_datasets
+    curves = emitted["curves"]
+    assert set(curves) == {9001, 9002}
+    assert curves[9001][0] is not None
+    assert len(curves[9001][1][0]) >= len(grouped_datasets[0].time)
+
+
+def test_grouped_mode_context_uses_current_fit_window(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dataset = MuonDataset(
+        time=np.array([1.0, 2.0, 3.0]),
+        asymmetry=np.array([0.0, 0.0, 0.0]),
+        error=np.array([1.0, 1.0, 1.0]),
+        metadata={"run_number": 101},
+        run=Run(run_number=101),
+    )
+    captured: dict[str, tuple[float | None, float | None]] = {}
+
+    def _fake_groups(_dataset, *, t_min=None, t_max=None):
+        captured["groups"] = (t_min, t_max)
+        return [
+            SimpleNamespace(group_id=1, group_name="Forward"),
+            SimpleNamespace(group_id=2, group_name="Backward"),
+        ]
+
+    def _fake_datasets(_dataset, *, t_min=None, t_max=None):
+        captured["datasets"] = (t_min, t_max)
+        return [
+            MuonDataset(
+                time=np.array([1.0, 2.0, 3.0]),
+                asymmetry=np.array([1.0, 1.0, 1.0]),
+                error=np.array([1.0, 1.0, 1.0]),
+                metadata={"run_number": -101001, "group_id": 1},
+            ),
+            MuonDataset(
+                time=np.array([1.0, 2.0, 3.0]),
+                asymmetry=np.array([1.0, 1.0, 1.0]),
+                error=np.array([1.0, 1.0, 1.0]),
+                metadata={"run_number": -101002, "group_id": 2},
+            ),
+        ]
+
+    monkeypatch.setattr(fit_panel_module, "build_grouped_time_domain_groups", _fake_groups)
+    monkeypatch.setattr(fit_panel_module, "build_grouped_time_domain_datasets", _fake_datasets)
+
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab.set_current_dataset(dataset)
+
+    grouped_groups, grouped_datasets, _message = tab._grouped_mode_context()
+
+    assert grouped_groups is not None
+    assert grouped_datasets is not None
+    assert captured["groups"] == pytest.approx((1.0, 3.0))
+    assert captured["datasets"] == (None, None)
+
+
+def test_grouped_tab_preview_rejects_conflicting_fit_function_amplitude(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    grouped_groups = [
+        SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
+        SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+    ]
+    grouped_datasets = [
+        MuonDataset(
+            time=np.array([0.0, 0.5, 1.0]),
+            asymmetry=np.array([120.0, 110.0, 95.0]),
+            error=np.array([1.0, 1.0, 1.0]),
+            metadata={"group_id": 1, "grouped_time_domain": True, "run_number": 9001},
+            run=dataset.run,
+        ),
+        MuonDataset(
+            time=np.array([0.0, 0.5, 1.0]),
+            asymmetry=np.array([80.0, 75.0, 70.0]),
+            error=np.array([1.0, 1.0, 1.0]),
+            metadata={"group_id": 2, "grouped_time_domain": True, "run_number": 9002},
+            run=dataset.run,
+        ),
+    ]
+
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    monkeypatch.setattr(
+        tab,
+        "_grouped_mode_context",
+        lambda: (grouped_groups, grouped_datasets, "ready"),
+    )
+    tab.set_current_dataset(dataset)
+
+    row_by_name = {
+        tab._group_model_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_model_table.rowCount())
+    }
+    assert "A_1" not in row_by_name
+
+    emitted: dict[str, object] = {}
+    tab.grouped_preview_requested.connect(
+        lambda datasets, curves: emitted.update({"datasets": datasets, "curves": curves})
+    )
+
+    tab._on_preview_requested()
+
+    assert "datasets" in emitted
+    assert "curves" in emitted
+
+
+def test_grouped_mode_ui_refresh_rebuilds_group_value_columns_when_groups_appear(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tab = GlobalFitTab(allowed_modes=("grouped",))
+    grouped_groups = [
+        SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
+        SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+    ]
+    state = {"ready": False}
+
+    def _context():
+        if not state["ready"]:
+            return None, None, "not ready"
+        return grouped_groups, [], "ready"
+
+    monkeypatch.setattr(tab, "_grouped_mode_context", _context)
+
+    tab.set_current_dataset(dataset)
+    assert tab._group_param_table.columnCount() == 4
+
+    state["ready"] = True
+    tab._update_mode_ui(preserve_result=True)
+
+    headers = [
+        tab._group_param_table.horizontalHeaderItem(column).text()
+        for column in range(tab._group_param_table.columnCount())
+    ]
+    row_by_name = {
+        tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._group_param_table.rowCount())
+    }
+    _background_seed, backward_n0_seed, _amplitude_seed = fit_panel_module._seed_group_background_and_n0(
+        np.array([80.0, 79.0])
+    )
+    assert headers == ["Parameter", "Forward", "Backward", "Type", "Bounds"]
+    assert float(tab._group_param_table.item(row_by_name["N0"], 2).text()) == pytest.approx(
+        backward_n0_seed
+    )
+    assert tab._group_param_table.cellWidget(row_by_name["N0"], 2) is None
+    assert isinstance(tab._group_param_table.cellWidget(row_by_name["N0"], 3), QComboBox)
+
+
+def test_grouped_seed_estimates_background_n0_and_amplitude_from_counts_definition() -> None:
+    time = np.linspace(0.0, 8.0, 801)
+    n0 = 100.0
+    background = 12.0
+    amplitude = 0.18
+    polarization = amplitude * np.cos(2.0 * np.pi * 1.2 * time)
+    fast_component = 80.0 * np.exp(-time / 0.05)
+    counts = n0 * (1.0 + polarization) + background * np.exp(
+        time / float(MUON_LIFETIME_US)
+    ) + fast_component
+
+    estimated_background, estimated_n0, estimated_amplitude = (
+        fit_panel_module._seed_group_background_and_n0(
+        counts,
+        time=time,
+        )
+    )
+
+    assert estimated_background == pytest.approx(background, rel=0.2)
+    assert estimated_n0 == pytest.approx(n0, rel=0.2)
+    assert estimated_amplitude == pytest.approx(amplitude, rel=0.25)
 
 
 def test_single_tab_keeps_model_tools_inline(qapp: QApplication) -> None:

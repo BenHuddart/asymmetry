@@ -250,9 +250,24 @@ def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:
     assert "forward_indices" in result
     assert "backward_indices" in result
     assert "alpha" in result
+    assert "included_groups" in result
+    assert result["included_groups"] == {1: True, 2: True}
     assert result["deadtime_correction"] is True
     assert result["background_correction"] is True
     assert result["bunching_factor"] == 1234
+
+
+def test_grouping_result_respects_group_include_checkbox(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+
+    include_item = dialog._group_table.item(1, 1)
+    assert include_item is not None
+    include_item.setCheckState(Qt.CheckState.Unchecked)
+
+    result = dialog.get_grouping_result()
+
+    assert result is not None
+    assert result["included_groups"] == {1: True, 2: False}
 
 
 def test_grouping_dialog_does_not_show_bunching_rules(qapp: QApplication) -> None:
@@ -842,6 +857,7 @@ def test_psi_detector_layout_result_is_swapped_for_analysis_dropdowns(
 def test_grp_round_trip_with_group_names() -> None:
     payload = {
         "groups": {1: [1, 2], 2: [3, 4]},
+        "included_groups": {1: True, 2: False},
         "forward_group": 1,
         "backward_group": 2,
         "alpha": 1.0,
@@ -854,9 +870,13 @@ def test_grp_round_trip_with_group_names() -> None:
     text = GroupingDialog.serialize_grp(payload)
     assert "group_name.1=Forward" in text
     assert "group_name.2=Backward" in text
+    assert "group_include.1=1" in text
+    assert "group_include.2=0" in text
     parsed = GroupingDialog.parse_grp(text)
     assert parsed.get("group_names", {}).get(1) == "Forward"
     assert parsed.get("group_names", {}).get(2) == "Backward"
+    assert parsed.get("included_groups", {}).get(1) is True
+    assert parsed.get("included_groups", {}).get(2) is False
 
 
 def test_grp_round_trip_without_group_names_backwards_compat() -> None:

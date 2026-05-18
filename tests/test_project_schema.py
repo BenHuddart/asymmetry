@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -325,7 +326,7 @@ class TestProjectIO:
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset
 
@@ -664,6 +665,22 @@ class TestFitPanelState:
         assert "model_name" in state
         assert "parameters" in state
 
+    def test_fit_panel_legacy_grouped_mode_state_falls_back_to_datasets_mode(self, qapp):
+        from asymmetry.gui.panels.fit_panel import FitPanel
+
+        panel = FitPanel()
+        state = panel.get_global_state()
+        state["mode"] = "grouped"
+        state["group_parameters"] = {
+            "N0": {"value": 1234.0, "type": "Local", "bounds": "0, inf"}
+        }
+
+        panel2 = FitPanel()
+        panel2.restore_global_state(state)
+
+        assert panel2._global_tab.is_grouped_time_domain_mode() is False
+        assert panel2._global_tab._mode_combo.currentData() == "datasets"
+
     def test_fit_panel_round_trips_result_text_and_ui_tab(self, qapp):
         from asymmetry.gui.panels.fit_panel import FitPanel
 
@@ -803,6 +820,33 @@ class _StubFitPanelWithState(_StubFitPanel):
 
     def restore_ui_state(self, state):
         self._ui_state = state
+
+
+class _StubMultiGroupFitWindowWithState(QWidget):
+    def __init__(self, *_args, **_kwargs):
+        super().__init__()
+        self.grouped_fit_completed = SimpleNamespace(connect=lambda _callback: None)
+        self.grouped_preview_requested = SimpleNamespace(connect=lambda _callback: None)
+        self._state = {"model_name": "Composite", "parameters": [], "result_html": ""}
+        self.restored_state = None
+
+    def set_dataset(self, dataset):
+        self._dataset = dataset
+
+    def set_fit_blocked(self, blocked, reason=""):
+        self._blocked = (blocked, reason)
+
+    def dock_title(self):
+        return "Multi-Group Fit"
+
+    def grouped_fit_formula_string(self):
+        return "A(t)"
+
+    def get_state(self):
+        return dict(self._state)
+
+    def restore_state(self, state):
+        self.restored_state = state
 
 
 class TestFitParametersPanelState:
@@ -1436,6 +1480,7 @@ class TestMainWindowProjectState:
                 ds = _make_dataset(4042)
                 ds.run.grouping = {
                     "groups": {1: [1, 2], 2: [3, 4]},
+                    "included_groups": {1: True, 2: False},
                     "forward_group": 1,
                     "backward_group": 2,
                     "alpha": 1.23,
@@ -1462,8 +1507,39 @@ class TestMainWindowProjectState:
         assert grouping is not None
         assert grouping["forward_group"] == 1
         assert grouping["backward_group"] == 2
+        assert grouping["included_groups"] == {1: True, 2: False}
         assert grouping["bunching_factor"] == 4
         assert grouping["instrument"] == "MuSR"
+
+    def test_collect_project_state_includes_multi_group_fit_state(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication
+    ) -> None:
+        monkeypatch.setattr(mw_module, "DataBrowserPanel", _StubDataBrowserWithState)
+        monkeypatch.setattr(mw_module, "FitPanel", _StubFitPanelWithState)
+        monkeypatch.setattr(mw_module, "PlotPanel", _StubPlotPanelWithState)
+        monkeypatch.setattr(mw_module, "LogPanel", _StubLogPanel)
+        monkeypatch.setattr(mw_module, "FourierPanel", _StubFourierWithState)
+        monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParamsClear)
+        monkeypatch.setattr(
+            mw_module,
+            "MultiGroupFitWindow",
+            _StubMultiGroupFitWindowWithState,
+        )
+
+        window = mw_module.MainWindow()
+        assert isinstance(window._multi_group_fit_window, _StubMultiGroupFitWindowWithState)
+        window._multi_group_fit_window._state = {
+            "model_name": "Composite",
+            "parameters": [{"name": "A_1", "value": 0.25, "type": "Free", "bounds": "0, 1"}],
+            "result_html": "<b>Saved grouped fit</b>",
+            "wizard_state": {"should": "be pruned"},
+        }
+
+        state = window.collect_project_state()
+
+        assert "multi_group_fit_state" in state
+        assert state["multi_group_fit_state"]["result_html"] == "<b>Saved grouped fit</b>"
+        assert "wizard_state" not in state["multi_group_fit_state"]
 
     def test_restore_project_state_selects_matching_dataset_from_multiperiod_load(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
@@ -1556,6 +1632,50 @@ class TestMainWindowProjectState:
         window.restore_project_state(state, str(tmp_path / "project.asymp"))
 
         assert applied_payloads == [grouping_payload]
+
+    def test_restore_project_state_restores_multi_group_fit_state(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
+    ) -> None:
+        monkeypatch.setattr(mw_module, "DataBrowserPanel", _StubDataBrowserWithState)
+        monkeypatch.setattr(mw_module, "FitPanel", _StubFitPanelWithState)
+        monkeypatch.setattr(mw_module, "PlotPanel", _StubPlotPanelWithState)
+        monkeypatch.setattr(mw_module, "LogPanel", _StubLogPanel)
+        monkeypatch.setattr(mw_module, "FourierPanel", _StubFourierWithState)
+        monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParamsClear)
+        monkeypatch.setattr(
+            mw_module,
+            "MultiGroupFitWindow",
+            _StubMultiGroupFitWindowWithState,
+        )
+
+        file_path = tmp_path / "run43.nxs"
+        file_path.write_bytes(b"\x00")
+
+        def _stub_load_file(self_inner, path):
+            assert path == str(file_path)
+            return _make_dataset(43)
+
+        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+
+        window = mw_module.MainWindow()
+        state = _minimal_state()
+        state["datasets"] = [
+            {
+                "run_number": 43,
+                "source_file": str(file_path),
+                "metadata_overrides": {"field": 100.0},
+            }
+        ]
+        state["multi_group_fit_state"] = {
+            "model_name": "Composite",
+            "parameters": [{"name": "A_1", "value": 0.33, "type": "Free", "bounds": "0, 1"}],
+            "result_html": "<b>Saved grouped fit</b>",
+        }
+
+        window.restore_project_state(state, str(tmp_path / "project.asymp"))
+
+        assert isinstance(window._multi_group_fit_window, _StubMultiGroupFitWindowWithState)
+        assert window._multi_group_fit_window.restored_state == state["multi_group_fit_state"]
 
     def test_clear_all_state_clears_browser_and_panel(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication

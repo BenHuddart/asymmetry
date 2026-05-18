@@ -244,6 +244,33 @@ reimplemented.
 | FT-8 | Report fit statistics: $\chi^2$, $\chi^2_\text{red}$, parameter uncertainties, covariance matrix. |
 | FT-9 | Visualize fit residuals. |
 | FT-10 | Guide single-spectrum time-domain fitting with a wizard that fingerprints the active dataset, compares a curated portfolio of supported composite models, and applies the chosen result back into the fit panel. |
+| FT-11 | Support grouped time-domain fitting for one active dataset, with one shared polarization model plus explicit per-group ``N0``, background, amplitude, and relative-phase controls. |
+
+### 4.3.1 Grouped Time-Domain Boundary
+
+The first grouped time-domain slice follows the same core/GUI split used by the
+other fit workflows.
+
+- `asymmetry.core.fitting.grouped_time_domain` owns grouped-domain preparation
+  and grouped fitting. It builds lifetime-corrected grouped count traces from
+  the active run's grouping payload, applies deadtime-aware histogram
+  preparation when requested by grouping state, and adapts those grouped traces
+  onto the existing simultaneous-fit engine.
+- `asymmetry.gui.windows.multi_group_fit_window.MultiGroupFitWindow` owns the
+  grouped-fit surface. It reuses the grouped branch of
+  `asymmetry.gui.panels.fit_panel.GlobalFitTab` to present the per-group
+  parameter block, the fit-function parameter block, and grouped-fit result
+  presentation inside the main fit dock when the time-domain plot is switched
+  to grouped view.
+- `asymmetry.gui.mainwindow.MainWindow` remains the integration point that ties
+  grouped mode to the active dataset, the current time-domain plot, and the
+  grouping definitions already owned by the grouping dialog and run metadata.
+- `asymmetry.gui.panels.plot_panel.PlotPanel` owns the stacked grouped trace
+  display in the time-domain workspace.
+
+This keeps grouped-count objective construction out of the GUI and leaves room
+for later extensions such as detector-level fitting, explicit detector phase
+tables, or grouped fit wizards without redesigning the current split.
 
 ### 4.4 Fourier Analysis — Frequency Domain
 
@@ -277,6 +304,41 @@ reimplemented.
 | PL-5 | Support for **multiple plot tabs/tiles** with linked or independent axes. |
 | PL-6 | Export figures to PNG, SVG, PDF. |
 | PL-7 | Matplotlib as the default rendering back-end, with the option to explore faster alternatives (e.g. PyQtGraph) later. |
+
+### 4.6.1 Plot Responsiveness Policy
+
+The current plot-responsiveness strategy keeps analysis fidelity separate from
+display density.
+
+- `asymmetry.gui.panels.plot_panel.PlotPanel` retains full-resolution
+  `MuonDataset.time`, `asymmetry`, and `error` arrays in memory for the active
+  view. These arrays remain the source of truth for fit inputs, auto-limit
+  calculations, annotations, and export payloads.
+- Dense matplotlib `errorbar()` artists are reduced only at render time. The
+  panel applies a bounded per-trace sample cap before drawing visible points so
+  large time-domain, grouped-time, and frequency-domain views do not emit every
+  original sample into the canvas.
+- Decimation is viewport-aware once limits have been established. The panel
+  prefers points inside the current x-range and re-renders when the user pans,
+  zooms, presses Auto X/Auto Y, or edits axis limits directly.
+- Viewport-triggered redraws are deferred onto the Qt event loop and coalesced
+  so paired `xlim_changed`/`ylim_changed` callbacks do not recursively trigger
+  repeated redraws.
+- Figure export intentionally bypasses this display-density policy. Export data
+  is rebuilt from the full analysis arrays and fit payloads so saved `.dat`,
+  `.fit`, and GLE/PDF/EPS outputs preserve the underlying resolution.
+- This policy improves interaction cost without changing the core data model.
+  Raw histograms, regrouping, and grouped Fourier preparation still use the
+  full run payloads owned by `Run.histograms` and the existing grouping state.
+
+Current limitations:
+
+- The render cap is still a simple bounded sample strategy rather than a true
+  min/max envelope reducer per pixel column.
+- Y-only navigation still redraws the current view because the panel treats a
+  limit change as a signal to rebuild the visible artists.
+- Grouped Fourier compute cost is independent of this policy; only the plotted
+  spectrum density changes here, not the FFT generation itself.
 
 ---
 

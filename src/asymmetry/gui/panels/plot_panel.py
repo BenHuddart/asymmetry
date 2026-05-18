@@ -19,7 +19,7 @@ import subprocess
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QTextEdit,
@@ -68,6 +69,11 @@ _LABEL_FIELDS: list[tuple[str, str]] = [
     ("Comment", "comment"),
 ]
 
+_TIME_VIEW_FIELDS: list[tuple[str, str]] = [
+    ("FB Asymmetry", "fb_asymmetry"),
+    ("Individual Groups", "groups"),
+]
+
 _NAV_BUTTON_STYLE = """
 QPushButton {
     min-width: 60px;
@@ -79,6 +85,27 @@ QPushButton:checked {
     border: 2px solid #1f6feb;
     background-color: #dbeafe;
     color: #0f3d91;
+}
+""".strip()
+
+_PLOT_SCROLLBAR_STYLE = """
+QScrollBar:vertical {
+    background: #eef2f7;
+    width: 12px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #8fa1b8;
+    min-height: 28px;
+    border-radius: 5px;
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: #eef2f7;
 }
 """.strip()
 
@@ -145,10 +172,15 @@ class PlotPanel(QWidget):
     view_limits_changed = Signal(float, float, float, float)
     polarization_axis_changed = Signal(str)
     overlay_toggled = Signal(bool)
+    time_view_changed = Signal(str)
 
     def __init__(self, parent: QWidget | None = None, *, domain: str = "time") -> None:
         super().__init__(parent)
         self._domain = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        self._current_time_view_mode = "fb_asymmetry"
+        self._available_time_view_modes = ["fb_asymmetry"]
+        self._default_canvas_min_height = 360
+        self._subplot_canvas_height_per_axis = 220
         self._current_frequency_x_unit = "frequency_mhz"
         self._frequency_axis_relative_to_reference = False
         self._frequency_reference_mhz: float | None = None
@@ -163,6 +195,31 @@ class PlotPanel(QWidget):
 
             self._figure = Figure(tight_layout=True)
             self._canvas = FigureCanvasQTAgg(self._figure)
+            self._canvas.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Preferred,
+            )
+            self._canvas.setMinimumHeight(self._default_canvas_min_height)
+            self._canvas_host = QWidget(self)
+            self._canvas_host.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Preferred,
+            )
+            self._canvas_host_layout = QVBoxLayout(self._canvas_host)
+            self._canvas_host_layout.setContentsMargins(0, 0, 0, 0)
+            self._canvas_host_layout.setSpacing(0)
+            self._canvas_host_layout.addWidget(self._canvas)
+            self._canvas_scroll_area = QScrollArea(self)
+            self._canvas_scroll_area.setWidget(self._canvas_host)
+            self._canvas_scroll_area.setWidgetResizable(True)
+            self._canvas_scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+            self._canvas_scroll_area.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            )
+            self._canvas_scroll_area.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
+            self._canvas_scroll_area.verticalScrollBar().setStyleSheet(_PLOT_SCROLLBAR_STYLE)
             self._ax = self._figure.add_subplot(111)
             self._nav_toolbar = NavigationToolbar2QT(self._canvas, self)
             self._nav_toolbar.hide()
@@ -172,14 +229,17 @@ class PlotPanel(QWidget):
             default_x_label, default_y_label = self._default_axis_labels()
             self._ax.set_xlabel(default_x_label)
             self._ax.set_ylabel(default_y_label)
+            self._default_x_axis_label_color = self._x_axis_label_color(self._ax)
+            self._default_x_axis_tick_color = self._x_axis_tick_color(self._ax)
 
             # Fit-range interaction state.
             self._fit_x_min: float | None = None
             self._fit_x_max: float | None = None
-            self._fit_span_artist = None
-            self._fit_min_handle = None
-            self._fit_max_handle = None
+            self._fit_span_artists: list[object] = []
+            self._fit_min_handles: list[object] = []
+            self._fit_max_handles: list[object] = []
             self._active_fit_handle: str | None = None
+            self._active_fit_axis = None
             self._drag_started = False
 
             # Add plot limit controls toolbar
@@ -219,6 +279,8 @@ class PlotPanel(QWidget):
             nav_row.setSpacing(4)
             nav_row.addWidget(QLabel("Label:"))
             nav_row.addWidget(self._label_field_combo)
+            nav_row.addWidget(self._time_view_label)
+            nav_row.addWidget(self._time_view_combo)
             nav_row.addWidget(self._overlay_checkbox)
             nav_row.addStretch()
 
@@ -238,7 +300,7 @@ class PlotPanel(QWidget):
 
             layout.addLayout(nav_row)
 
-            layout.addWidget(self._canvas)
+            layout.addWidget(self._canvas_scroll_area)
             self._has_mpl = True
 
             # Store current dataset for rebunching
@@ -249,6 +311,7 @@ class PlotPanel(QWidget):
             self._y_limits_by_polarization: dict[str, tuple[float, float]] = {}
             self._subplot_axes_by_polarization: dict[str, object] = {}
             self._vector_subplot_datasets: dict[str, list[MuonDataset]] = {}
+            self._grouped_time_subplot_datasets: list[MuonDataset] = []
 
             # Legend label field preferences can be scoped per Data Group.
             self._active_label_group_id: str | None = None
@@ -282,6 +345,11 @@ class PlotPanel(QWidget):
             self._last_plot_asymmetry = None
             self._last_plot_error = None
             self._last_low_count_mask = None
+            self._decimation_enabled = True
+            self._decimation_applied_for_current_view = False
+            self._max_render_points_per_trace = 4000
+            self._viewport_refresh_pending = False
+            self._viewport_refresh_in_progress = False
 
             self._canvas.mpl_connect("button_press_event", self._on_canvas_button_press)
             self._canvas.mpl_connect("motion_notify_event", self._on_canvas_motion_notify)
@@ -340,10 +408,10 @@ class PlotPanel(QWidget):
         self._limit_toolbar.addLayout(row0)
 
         # Apply limit changes immediately from text field edits.
-        self._x_min.editingFinished.connect(self._apply_limits)
-        self._x_max.editingFinished.connect(self._apply_limits)
-        self._y_min.editingFinished.connect(self._apply_limits)
-        self._y_max.editingFinished.connect(self._apply_limits)
+        self._x_min.editingFinished.connect(self._on_limit_fields_edited)
+        self._x_max.editingFinished.connect(self._on_limit_fields_edited)
+        self._y_min.editingFinished.connect(self._on_limit_fields_edited)
+        self._y_max.editingFinished.connect(self._on_limit_fields_edited)
 
         # Keep bunching control internal (hidden) for backward compatibility
         # with project state and tests; it is intentionally not shown in UI.
@@ -360,6 +428,14 @@ class PlotPanel(QWidget):
             self._label_field_combo.addItem(display, userData=key)
         self._label_field_combo.setMaximumWidth(140)
         self._label_field_combo.currentIndexChanged.connect(self._on_label_field_changed)
+
+        self._time_view_label = QLabel("Time View:")
+        self._time_view_combo = QComboBox()
+        self._time_view_combo.setMaximumWidth(160)
+        self._time_view_combo.currentIndexChanged.connect(self._on_time_view_mode_changed)
+        self.set_time_view_modes(self._available_time_view_modes, self._current_time_view_mode)
+        self._time_view_label.hide()
+        self._time_view_combo.hide()
 
         self._overlay_checkbox = QCheckBox("Overlay")
         self._overlay_checkbox.setChecked(False)
@@ -421,6 +497,61 @@ class PlotPanel(QWidget):
     def _is_frequency_plot_panel(self) -> bool:
         """Return True when this panel is dedicated to frequency-domain viewing."""
         return self._domain == "frequency"
+
+    def _set_canvas_minimum_height_for_axes(self, axis_count: int) -> None:
+        """Scale the canvas height so stacked subplot views scroll vertically."""
+        if not hasattr(self, "_canvas"):
+            return
+        count = max(1, int(axis_count))
+        height = max(self._default_canvas_min_height, self._subplot_canvas_height_per_axis * count)
+        self._canvas.setMinimumHeight(height)
+        self._sync_canvas_scroll_geometry(axis_count=count, target_height=height)
+        self._canvas.updateGeometry()
+
+    def _sync_canvas_scroll_geometry(
+        self,
+        *,
+        axis_count: int | None = None,
+        target_height: int | None = None,
+    ) -> None:
+        """Keep the canvas sized correctly for single-axis fill vs stacked-axis scrolling."""
+        if (
+            not hasattr(self, "_canvas")
+            or not hasattr(self, "_canvas_host")
+            or not hasattr(self, "_canvas_scroll_area")
+        ):
+            return
+
+        count = max(
+            1,
+            int(axis_count)
+            if axis_count is not None
+            else max(1, len(getattr(self, "_subplot_axes_by_polarization", {}))),
+        )
+        height = (
+            int(target_height)
+            if target_height is not None
+            else max(self._default_canvas_min_height, int(self._canvas.minimumHeight()))
+        )
+        stacked_mode = count > 1
+        self._canvas_scroll_area.setWidgetResizable(not stacked_mode)
+        self._canvas_scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+            if stacked_mode
+            else Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+
+        if stacked_mode:
+            viewport = self._canvas_scroll_area.viewport()
+            viewport_width = viewport.width() if viewport is not None else self.width()
+            self._canvas_host.setFixedWidth(max(1, int(viewport_width)))
+            self._canvas_host.setFixedHeight(height)
+        else:
+            self._canvas_host.setMinimumHeight(height)
+            self._canvas_host.setMaximumHeight(16777215)
+            self._canvas_host.setMinimumWidth(0)
+            self._canvas_host.setMaximumWidth(16777215)
+        self._canvas_host.updateGeometry()
 
     def _default_axis_labels(self) -> tuple[str, str]:
         """Return fallback axis labels for this panel domain."""
@@ -689,10 +820,49 @@ class PlotPanel(QWidget):
         """Apply axis labels and keep the limit-unit helpers in sync."""
         self._ax.set_xlabel(x_label)
         self._ax.set_ylabel(y_label)
+        self._apply_x_axis_decimation_indicator(self._ax)
         if hasattr(self, "_x_unit_label"):
             self._x_unit_label.setText(self._display_x_unit_suffix())
         if hasattr(self, "_y_unit_label"):
             self._y_unit_label.setText(self._display_y_unit_suffix(y_label))
+
+    def _x_axis_label_color(self, ax) -> str:
+        """Return the current x-axis label color for ``ax``."""
+        xaxis = getattr(ax, "xaxis", None)
+        label = getattr(xaxis, "label", None)
+        color_getter = getattr(label, "get_color", None)
+        if callable(color_getter):
+            return str(color_getter())
+        return "black"
+
+    def _x_axis_tick_color(self, ax) -> str:
+        """Return the current x-axis tick-label color for ``ax``."""
+        xaxis = getattr(ax, "xaxis", None)
+        ticklabels_getter = getattr(xaxis, "get_ticklabels", None)
+        if callable(ticklabels_getter):
+            for tick in ticklabels_getter():
+                color_getter = getattr(tick, "get_color", None)
+                if callable(color_getter):
+                    return str(color_getter())
+        return self._x_axis_label_color(ax)
+
+    def _apply_x_axis_decimation_indicator(self, ax) -> None:
+        """Highlight the x-axis when the current view is display-decimated."""
+        active = bool(getattr(self, "_decimation_applied_for_current_view", False))
+        label_color = "red" if active else getattr(self, "_default_x_axis_label_color", "black")
+        tick_color = "red" if active else getattr(
+            self,
+            "_default_x_axis_tick_color",
+            label_color,
+        )
+        xaxis = getattr(ax, "xaxis", None)
+        label = getattr(xaxis, "label", None)
+        label_setter = getattr(label, "set_color", None)
+        if callable(label_setter):
+            label_setter(label_color)
+        tick_params = getattr(ax, "tick_params", None)
+        if callable(tick_params):
+            tick_params(axis="x", colors=tick_color)
 
     def _on_frequency_x_unit_changed(self, _index: int) -> None:
         """Switch the displayed frequency x-axis between MHz and Gauss."""
@@ -826,10 +996,10 @@ class PlotPanel(QWidget):
         field.setValue(float(value))
         field.blockSignals(False)
 
-    def _sync_limits_from_axes(self, source_axis: object | None = None) -> None:
+    def _sync_limits_from_axes(self, source_axis: object | None = None) -> bool:
         """Update x/y limit fields from current Matplotlib axis limits."""
         if not self._has_mpl or self._syncing_limits_from_axes:
-            return
+            return False
 
         self._syncing_limits_from_axes = True
         try:
@@ -838,7 +1008,7 @@ class PlotPanel(QWidget):
                 if source_axis is not None and not any(
                     source_axis is axis for axis in subplot_axes
                 ):
-                    return
+                    return False
 
                 axis_obj = None
                 if source_axis in self._subplot_axes_by_polarization.values():
@@ -851,7 +1021,7 @@ class PlotPanel(QWidget):
                         axis_obj = next(iter(self._subplot_axes_by_polarization.values()), None)
 
                 if axis_obj is None or not hasattr(axis_obj, "get_xlim"):
-                    return
+                    return False
 
                 x0, x1 = axis_obj.get_xlim()
                 self._set_limit_field_value(
@@ -879,12 +1049,12 @@ class PlotPanel(QWidget):
                         self._set_limit_field_value(self._y_max, y1)
                 else:
                     self._sync_y_controls_with_visible_axis()
-                return
+                return True
 
             if not hasattr(self._ax, "get_xlim") or not hasattr(self._ax, "get_ylim"):
-                return
+                return False
             if source_axis is not None and source_axis is not self._ax:
-                return
+                return False
 
             x0, x1 = self._ax.get_xlim()
             y0, y1 = self._ax.get_ylim()
@@ -900,18 +1070,51 @@ class PlotPanel(QWidget):
             self._set_limit_field_value(self._y_max, y1)
             self._cache_current_y_limits_for_axis()
             self._emit_view_limits_changed()
+            return True
         finally:
             self._syncing_limits_from_axes = False
 
+    def _schedule_viewport_refresh(self) -> None:
+        """Coalesce viewport-triggered density refreshes onto the next event loop turn."""
+        if (
+            not self._has_mpl
+            or not self._current_datasets
+            or self._viewport_refresh_in_progress
+            or self._viewport_refresh_pending
+        ):
+            return
+        self._viewport_refresh_pending = True
+        QTimer.singleShot(0, self._apply_viewport_refresh)
+
+    def _apply_viewport_refresh(self) -> None:
+        """Re-render the current view using the latest visible-axis limits."""
+        if not self._viewport_refresh_pending:
+            return
+        self._viewport_refresh_pending = False
+        if not self._current_datasets or self._viewport_refresh_in_progress:
+            return
+
+        self._viewport_refresh_in_progress = True
+        try:
+            self._redraw_current_view()
+        finally:
+            self._viewport_refresh_in_progress = False
+
     def _on_axis_limits_changed(self, axis_obj) -> None:
         """Sync limit controls when Matplotlib axes change via pan/zoom."""
-        self._sync_limits_from_axes(source_axis=axis_obj)
+        synced = self._sync_limits_from_axes(source_axis=axis_obj)
+        if synced and not self._viewport_refresh_in_progress:
+            self._schedule_viewport_refresh()
 
     def _on_canvas_draw_event(self, _event) -> None:
         """Keep nav buttons and limit controls aligned after Matplotlib redraws."""
         self._sync_navigation_buttons()
         if self._current_navigation_mode() != "none":
             self._sync_limits_from_axes()
+
+    def _on_limit_fields_edited(self) -> None:
+        """Apply edited limits and refresh display density for the new viewport."""
+        self._apply_limits(schedule_viewport_refresh=True)
 
     def _dataset_label_for(self, dataset: MuonDataset) -> str:
         """Return the legend label for *dataset* using the selected label field."""
@@ -949,6 +1152,88 @@ class PlotPanel(QWidget):
         if not self._has_mpl or not self._current_datasets:
             return
         self._redraw_current_view()
+
+    def _normalize_time_view_mode(self, mode: object) -> str:
+        """Normalize a stored time-view token to a supported internal key."""
+        token = str(mode or "").strip().lower().replace(" ", "_")
+        if token in {"groups", "group", "individual_groups", "grouped", "grouped_counts"}:
+            return "groups"
+        return "fb_asymmetry"
+
+    def _time_view_display_text(self, mode: str) -> str:
+        """Return user-facing label for a time-view mode."""
+        normalized = self._normalize_time_view_mode(mode)
+        for label, key in _TIME_VIEW_FIELDS:
+            if key == normalized:
+                return label
+        return "FB Asymmetry"
+
+    def _on_time_view_mode_changed(self, _index: int) -> None:
+        """Propagate explicit time-view changes from the main plot toolbar."""
+        if not hasattr(self, "_time_view_combo"):
+            return
+        mode = self._normalize_time_view_mode(self._time_view_combo.currentData())
+        if mode == self._current_time_view_mode:
+            return
+        self._current_time_view_mode = mode
+        self.time_view_changed.emit(mode)
+
+    def current_time_view_mode(self) -> str:
+        """Return current main time-domain plot mode."""
+        return self._current_time_view_mode
+
+    def set_time_view_modes(
+        self,
+        modes: list[str],
+        current_mode: str | None = None,
+    ) -> None:
+        """Update the explicit time-domain view selector."""
+        if not hasattr(self, "_time_view_combo"):
+            return
+
+        cleaned: list[str] = []
+        for mode in modes:
+            normalized = self._normalize_time_view_mode(mode)
+            if normalized not in cleaned:
+                cleaned.append(normalized)
+        if not cleaned:
+            cleaned = ["fb_asymmetry"]
+
+        selected = self._normalize_time_view_mode(
+            self._current_time_view_mode if current_mode is None else current_mode
+        )
+        if selected not in cleaned:
+            selected = cleaned[0]
+
+        self._available_time_view_modes = list(cleaned)
+        self._current_time_view_mode = selected
+
+        self._time_view_combo.blockSignals(True)
+        self._time_view_combo.clear()
+        for mode in cleaned:
+            self._time_view_combo.addItem(self._time_view_display_text(mode), mode)
+        idx = self._time_view_combo.findData(selected)
+        if idx < 0:
+            idx = 0
+        self._time_view_combo.setCurrentIndex(idx)
+        self._time_view_combo.blockSignals(False)
+        self._time_view_combo.setEnabled(len(cleaned) > 1)
+
+    def set_current_time_view_mode(self, mode: str, *, emit_signal: bool = False) -> None:
+        """Select the active time-domain view mode."""
+        if not hasattr(self, "_time_view_combo"):
+            return
+
+        normalized = self._normalize_time_view_mode(mode)
+        if normalized not in self._available_time_view_modes:
+            normalized = self._available_time_view_modes[0]
+        idx = self._time_view_combo.findData(normalized)
+        if idx < 0:
+            idx = 0
+        previous = self._time_view_combo.blockSignals(not emit_signal)
+        self._time_view_combo.setCurrentIndex(idx)
+        self._time_view_combo.blockSignals(previous)
+        self._current_time_view_mode = normalized
 
     def is_overlay_enabled(self) -> bool:
         """Return whether multi-selection overlays are currently enabled."""
@@ -1117,6 +1402,76 @@ class PlotPanel(QWidget):
             and np.asarray(dataset.error).size > 0
         )
 
+    def _visible_plot_indices(self, time: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """Return indices inside the current viewport before any density reduction."""
+        indices = np.flatnonzero(np.asarray(mask, dtype=bool))
+        if indices.size <= 0:
+            return indices
+
+        visible_indices = indices
+        if self._limits_initialized:
+            x_lo = float(self._x_min.value())
+            x_hi = float(self._x_max.value())
+            if self._is_frequency_plot_panel():
+                x_lo = self._convert_frequency_control_value_to_axis_limit(x_lo)
+                x_hi = self._convert_frequency_control_value_to_axis_limit(x_hi)
+            lo, hi = (x_lo, x_hi) if x_lo <= x_hi else (x_hi, x_lo)
+            visible_mask = (
+                np.asarray(mask, dtype=bool)
+                & np.isfinite(time)
+                & (np.asarray(time, dtype=float) >= lo)
+                & (np.asarray(time, dtype=float) <= hi)
+            )
+            candidate = np.flatnonzero(visible_mask)
+            if candidate.size > 0:
+                visible_indices = candidate
+        return visible_indices
+
+    def _decimated_plot_indices(self, time: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """Return bounded sample indices for display-only errorbar rendering."""
+        visible_indices = self._visible_plot_indices(time, mask)
+        if visible_indices.size <= 0:
+            return visible_indices
+        if not self.decimation_enabled():
+            return visible_indices
+
+        max_points = max(1, int(getattr(self, "_max_render_points_per_trace", 4000)))
+        if visible_indices.size <= max_points:
+            return visible_indices
+
+        stride = max(1, int(np.ceil(visible_indices.size / float(max_points))))
+        sampled = visible_indices[::stride]
+        if sampled.size == 0:
+            return visible_indices[:1]
+        if sampled[-1] != visible_indices[-1]:
+            sampled = np.append(sampled, visible_indices[-1])
+        return sampled
+
+    def _plot_errorbar_masked(
+        self,
+        ax,
+        time: np.ndarray,
+        asymmetry: np.ndarray,
+        error: np.ndarray,
+        mask: np.ndarray,
+        **kwargs,
+    ) -> int:
+        """Plot a masked errorbar series using bounded display density."""
+        visible_indices = self._visible_plot_indices(time, mask)
+        indices = self._decimated_plot_indices(time, mask)
+        if indices.size <= 0:
+            return 0
+        if self.decimation_enabled() and indices.size < visible_indices.size:
+            self._decimation_applied_for_current_view = True
+
+        ax.errorbar(
+            time[indices],
+            asymmetry[indices],
+            yerr=error[indices],
+            **kwargs,
+        )
+        return int(indices.size)
+
     def _set_frequency_reference_from_dataset(self, dataset: MuonDataset | None) -> None:
         """Update the reference frequency used by relative frequency displays."""
         if not self._is_frequency_plot_panel():
@@ -1129,6 +1484,7 @@ class PlotPanel(QWidget):
         self._last_plot_asymmetry = None
         self._last_plot_error = None
         self._last_low_count_mask = None
+        self._decimation_applied_for_current_view = False
         self._fit_x_min = None
         self._fit_x_max = None
         if self._is_frequency_plot_panel():
@@ -1176,13 +1532,23 @@ class PlotPanel(QWidget):
         if not self._has_mpl:
             return
         self._set_view_limits_fields(x_min, x_max, y_min, y_max)
-        self._apply_limits()
+        self._apply_limits(schedule_viewport_refresh=True)
 
     def get_bunch_factor(self) -> int:
         """Return the currently configured plot-panel bunch factor."""
         if not self._has_mpl:
             return 1
         return int(self._bunch_factor.value())
+
+    def decimation_enabled(self) -> bool:
+        """Return whether display-only plot decimation is enabled."""
+        return bool(getattr(self, "_decimation_enabled", True))
+
+    def set_decimation_enabled(self, enabled: bool, *, redraw: bool = True) -> None:
+        """Enable or disable display-only plot decimation."""
+        self._decimation_enabled = bool(enabled)
+        if redraw and getattr(self, "_current_datasets", None):
+            self._redraw_current_view()
 
     def set_bunch_factor(self, value: int, *, emit_signal: bool = True) -> None:
         """Set the plot-panel bunch factor and optionally emit the normal signal."""
@@ -1200,6 +1566,9 @@ class PlotPanel(QWidget):
 
     def _redraw_current_view(self) -> None:
         """Redraw using the active single- or multi-dataset context."""
+        if self._grouped_time_subplot_datasets:
+            self.plot_grouped_time_domain_subplots(self._grouped_time_subplot_datasets)
+            return
         if self._current_polarization_axis == "ALL" and self._vector_subplot_datasets:
             self.plot_vector_subplots(self._vector_subplot_datasets)
             return
@@ -1479,9 +1848,12 @@ class PlotPanel(QWidget):
         """Return the axis order currently visible in ALL mode."""
         if not self._subplot_axes_by_polarization:
             return []
-        return [
+        ordered = [
             axis for axis in ("P_x", "P_y", "P_z") if axis in self._subplot_axes_by_polarization
         ]
+        if ordered:
+            return ordered
+        return list(self._subplot_axes_by_polarization)
 
     def _sync_y_controls_with_visible_axis(self) -> None:
         """Keep Y controls aligned with currently visible polarization context."""
@@ -1573,6 +1945,31 @@ class PlotPanel(QWidget):
         self._ax = self._figure.add_subplot(111)
         self._subplot_axes_by_polarization = {}
         self._vector_subplot_datasets = {}
+        self._sync_canvas_scroll_geometry(axis_count=1, target_height=self._default_canvas_min_height)
+
+    def _fit_range_axes(self) -> list[object]:
+        """Return axes that should show fit-range handles for the current view."""
+        if self._grouped_time_subplot_datasets and self._subplot_axes_by_polarization:
+            return list(self._subplot_axes_by_polarization.values())
+        return [self._ax] if hasattr(self, "_ax") else []
+
+    def _clear_fit_range_artists(self) -> None:
+        """Remove existing fit-range span and handle artists from all axes."""
+        for artists in (
+            getattr(self, "_fit_span_artists", []),
+            getattr(self, "_fit_min_handles", []),
+            getattr(self, "_fit_max_handles", []),
+        ):
+            for artist in artists:
+                try:
+                    artist.remove()
+                except NotImplementedError:
+                    continue
+                except Exception:
+                    continue
+        self._fit_span_artists = []
+        self._fit_min_handles = []
+        self._fit_max_handles = []
 
     def _plot_datasets_on_axis(
         self, ax, datasets: list[MuonDataset], axis_key: str | None
@@ -1608,10 +2005,12 @@ class PlotPanel(QWidget):
             valid_main = finite_mask & ~low_count_mask
 
             if np.any(valid_low):
-                ax.errorbar(
-                    time[valid_low],
-                    asymmetry[valid_low],
-                    yerr=error[valid_low],
+                self._plot_errorbar_masked(
+                    ax,
+                    time,
+                    asymmetry,
+                    error,
+                    valid_low,
                     fmt=".",
                     markersize=3,
                     color="0.6",
@@ -1620,10 +2019,12 @@ class PlotPanel(QWidget):
                 )
 
             draw_mask = valid_main if np.any(valid_main) else finite_mask
-            ax.errorbar(
-                time[draw_mask],
-                asymmetry[draw_mask],
-                yerr=error[draw_mask],
+            self._plot_errorbar_masked(
+                ax,
+                time,
+                asymmetry,
+                error,
+                draw_mask,
                 fmt=".",
                 markersize=3,
                 color=color,
@@ -1632,11 +2033,12 @@ class PlotPanel(QWidget):
 
             fit_to_plot = self._fit_curve_for_dataset(dataset, axis_override=axis_key)
             if fit_to_plot is not None:
-                t_fit, y_fit, _fit_label = fit_to_plot
+                t_fit, y_fit, fit_label = fit_to_plot
                 fit_color = self._fit_line_color_for_dataset(
                     dataset,
                     default_color=color,
                     variant_index=i,
+                    fit_label=fit_label,
                 )
                 ax.plot(t_fit, y_fit, "-", color=fit_color, linewidth=2, label="_nolegend_")
 
@@ -1648,6 +2050,7 @@ class PlotPanel(QWidget):
 
         _, y_label = self._axis_labels_for_dataset(datasets[0] if datasets else None, axis_key)
         ax.set_ylabel(y_label)
+        self._apply_x_axis_decimation_indicator(ax)
         if all_times:
             return (
                 np.concatenate(all_times),
@@ -1665,8 +2068,11 @@ class PlotPanel(QWidget):
         order = [axis for axis in ("P_x", "P_y", "P_z") if datasets_by_axis.get(axis)]
         if not order:
             return
+        self._set_canvas_minimum_height_for_axes(len(order))
 
         self._set_alpha_label(None)
+        self._grouped_time_subplot_datasets = []
+        self._decimation_applied_for_current_view = False
         self._vector_subplot_datasets = {k: list(v) for k, v in datasets_by_axis.items() if v}
         self._current_datasets = list(self._vector_subplot_datasets.get(order[0], []))
         self._current_dataset = self._current_datasets[-1] if self._current_datasets else None
@@ -1699,6 +2105,7 @@ class PlotPanel(QWidget):
                 ax.set_xlabel(x_label)
             else:
                 ax.tick_params(labelbottom=False)
+            self._apply_x_axis_decimation_indicator(ax)
             if idx == 0:
                 ax.legend()
             if t is not None:
@@ -1727,7 +2134,83 @@ class PlotPanel(QWidget):
 
         self._update_y_limit_controls_for_axis(self._current_polarization_axis)
 
-        self._apply_limits()
+        self._apply_limits(schedule_viewport_refresh=True)
+        self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
+
+    def plot_grouped_time_domain_subplots(self, datasets: list[MuonDataset]) -> None:
+        """Render grouped time-domain traces as stacked subplots."""
+        if not self._has_mpl or not datasets:
+            return
+        self._set_canvas_minimum_height_for_axes(len(datasets))
+
+        self._set_alpha_label(None)
+        self._disconnect_axis_limit_callbacks()
+        self._figure.clf()
+        self._subplot_axes_by_polarization = {}
+        self._vector_subplot_datasets = {}
+        self._decimation_applied_for_current_view = False
+        self._grouped_time_subplot_datasets = list(datasets)
+        self._current_datasets = list(datasets)
+        self._current_dataset = datasets[-1]
+        self._current_polarization_axis = None
+        if hasattr(self, "_polarization_label"):
+            self._polarization_label.hide()
+        if hasattr(self, "_polarization_combo"):
+            self._polarization_combo.hide()
+
+        shared_ax = None
+        last_arrays = (None, None, None, None)
+        ordered_keys: list[str] = []
+        grouped_x_ranges: list[tuple[float, float]] = []
+        for idx, dataset in enumerate(datasets):
+            axis_key = str(dataset.run_number)
+            ordered_keys.append(axis_key)
+            ax = self._figure.add_subplot(len(datasets), 1, idx + 1, sharex=shared_ax)
+            if shared_ax is None:
+                shared_ax = ax
+            self._subplot_axes_by_polarization[axis_key] = ax
+            if idx == 0:
+                self._ax = ax
+
+            t, a, e, low = self._plot_datasets_on_axis(ax, [dataset], axis_key)
+            ax.set_title(str(dataset.run_label), loc="left", fontsize=10)
+            if axis_key in self._y_limits_by_polarization:
+                y0, y1 = self._y_limits_by_polarization[axis_key]
+                ax.set_ylim(y0, y1)
+            if idx == len(datasets) - 1:
+                x_label, _ = self._axis_labels_for_dataset(dataset, axis_key)
+                ax.set_xlabel(x_label)
+            else:
+                ax.tick_params(labelbottom=False)
+            self._apply_x_axis_decimation_indicator(ax)
+            ax.legend(loc="upper right")
+            if t is not None:
+                last_arrays = (t, a, e, low)
+                grouped_x_ranges.append((float(np.min(t)), float(np.max(t))))
+
+        self._current_polarization_axis = ordered_keys[0] if ordered_keys else None
+        self._last_plot_time = last_arrays[0]
+        self._last_plot_asymmetry = last_arrays[1]
+        self._last_plot_error = last_arrays[2]
+        self._last_low_count_mask = last_arrays[3]
+
+        if (not self._limits_initialized) and self._last_plot_time is not None:
+            x_min = float(np.min(self._last_plot_time))
+            x_max = float(np.max(self._last_plot_time))
+            xpad = (x_max - x_min) * 0.05
+            self._x_min.setValue(self._convert_frequency_axis_limit_to_control_value(x_min - xpad))
+            self._x_max.setValue(self._convert_frequency_axis_limit_to_control_value(x_max + xpad))
+            self._limits_initialized = True
+
+        if grouped_x_ranges and (self._fit_x_min is None or self._fit_x_max is None):
+            fit_min = min(lo for lo, _ in grouped_x_ranges)
+            fit_max = max(hi for _, hi in grouped_x_ranges)
+            self._fit_x_min = float(fit_min)
+            self._fit_x_max = float(fit_max)
+
+        self._sync_y_controls_with_visible_axis()
+        self._update_y_limit_controls_for_axis(self._current_polarization_axis)
+        self._apply_limits(schedule_viewport_refresh=True)
         self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
 
     def _alpha_value_for_dataset(self, dataset: MuonDataset) -> float | None:
@@ -1860,8 +2343,11 @@ class PlotPanel(QWidget):
         *,
         default_color: str,
         variant_index: int = 0,
+        fit_label: str | None = None,
     ) -> str:
         """Return a fit-line color with improved visibility in period mode."""
+        if isinstance(fit_label, str) and ("preview" in fit_label.lower() or "fit" in fit_label.lower()):
+            return "#d73a49"
         if self._period_mode_color_for_dataset(dataset) is None:
             return default_color
 
@@ -1894,8 +2380,12 @@ class PlotPanel(QWidget):
             self.plot_dataset(datasets[0])
             return
 
+        self._set_canvas_minimum_height_for_axes(1)
+
         self._ensure_single_axis_mode()
+        self._grouped_time_subplot_datasets = []
         self._set_alpha_label(None)
+        self._decimation_applied_for_current_view = False
         self._current_dataset = datasets[-1]
         self._current_datasets = list(datasets)
         self._set_frequency_reference_from_dataset(datasets[0])
@@ -1931,10 +2421,12 @@ class PlotPanel(QWidget):
             valid_main = finite_mask & ~low_count_mask
 
             if np.any(valid_low):
-                self._ax.errorbar(
-                    time[valid_low],
-                    asymmetry[valid_low],
-                    yerr=error[valid_low],
+                self._plot_errorbar_masked(
+                    self._ax,
+                    time,
+                    asymmetry,
+                    error,
+                    valid_low,
                     fmt=".",
                     markersize=3,
                     color="0.6",
@@ -1943,10 +2435,12 @@ class PlotPanel(QWidget):
                 )
 
             draw_mask = valid_main if np.any(valid_main) else finite_mask
-            self._ax.errorbar(
-                time[draw_mask],
-                asymmetry[draw_mask],
-                yerr=error[draw_mask],
+            self._plot_errorbar_masked(
+                self._ax,
+                time,
+                asymmetry,
+                error,
+                draw_mask,
                 fmt=".",
                 markersize=3,
                 color=color,
@@ -1961,6 +2455,7 @@ class PlotPanel(QWidget):
                     dataset,
                     default_color=color,
                     variant_index=i,
+                    fit_label=fit_label,
                 )
                 self._ax.plot(t_fit, y_fit, "-", color=fit_color, linewidth=2, label="_nolegend_")
 
@@ -2032,7 +2527,11 @@ class PlotPanel(QWidget):
         if not self._has_mpl:
             return
 
+        self._set_canvas_minimum_height_for_axes(1)
+
         self._ensure_single_axis_mode()
+        self._grouped_time_subplot_datasets = []
+        self._decimation_applied_for_current_view = False
         # Store the original dataset
         self._current_dataset = dataset
         self._current_datasets = [dataset]
@@ -2062,10 +2561,12 @@ class PlotPanel(QWidget):
         valid_main = finite_mask & ~low_count_mask
 
         if np.any(valid_low):
-            self._ax.errorbar(
-                time[valid_low],
-                asymmetry[valid_low],
-                yerr=error[valid_low],
+            self._plot_errorbar_masked(
+                self._ax,
+                time,
+                asymmetry,
+                error,
+                valid_low,
                 fmt=".",
                 markersize=3,
                 color="0.6",
@@ -2075,10 +2576,12 @@ class PlotPanel(QWidget):
 
         draw_mask = valid_main if np.any(valid_main) else finite_mask
         point_color = self._period_mode_color_for_dataset(dataset)
-        self._ax.errorbar(
-            time[draw_mask],
-            asymmetry[draw_mask],
-            yerr=error[draw_mask],
+        self._plot_errorbar_masked(
+            self._ax,
+            time,
+            asymmetry,
+            error,
+            draw_mask,
             fmt=".",
             markersize=3,
             color=point_color,
@@ -2097,6 +2600,7 @@ class PlotPanel(QWidget):
             fit_color = self._fit_line_color_for_dataset(
                 dataset,
                 default_color="r",
+                fit_label=fit_label,
             )
             self._ax.plot(
                 t_fit,
@@ -2144,7 +2648,7 @@ class PlotPanel(QWidget):
         self._update_export_enabled()
         self._connect_axis_limit_callbacks([self._ax])
 
-    def _apply_limits(self) -> None:
+    def _apply_limits(self, *, schedule_viewport_refresh: bool = False) -> None:
         """Apply the specified axis limits to the plot."""
         if not self._has_mpl:
             return
@@ -2164,6 +2668,7 @@ class PlotPanel(QWidget):
             x1 += pad
 
         if self._subplot_axes_by_polarization:
+            self._draw_fit_range_artists()
             for axis_key, axis_obj in self._subplot_axes_by_polarization.items():
                 axis_obj.set_xlim(x0, x1)
                 if self._current_polarization_axis == axis_key:
@@ -2177,6 +2682,8 @@ class PlotPanel(QWidget):
                     axis_obj.set_ylim(y0, y1)
             self._canvas.draw()
             self._emit_view_limits_changed()
+            if schedule_viewport_refresh and not self._viewport_refresh_in_progress:
+                self._schedule_viewport_refresh()
             return
 
         self._ax.set_xlim(x0, x1)
@@ -2185,6 +2692,8 @@ class PlotPanel(QWidget):
         self._draw_fit_range_artists()
         self._canvas.draw()
         self._emit_view_limits_changed()
+        if schedule_viewport_refresh and not self._viewport_refresh_in_progress:
+            self._schedule_viewport_refresh()
 
     def _apply_auto_limits_if_enabled(self) -> None:
         """Re-apply persistent auto-limit toggles after a dataset redraw."""
@@ -2419,15 +2928,25 @@ class PlotPanel(QWidget):
         non-positive grouped denominator as low-confidence, rendered in gray.
         """
         reference_dataset = source_dataset if source_dataset is not None else dataset
+        reference_metadata = getattr(reference_dataset, "metadata", None)
+        analysis_metadata = getattr(dataset, "metadata", None)
+        is_grouped_time_domain = bool(
+            isinstance(reference_metadata, dict)
+            and reference_metadata.get("grouped_time_domain")
+            or isinstance(analysis_metadata, dict)
+            and analysis_metadata.get("grouped_time_domain")
+        )
         reference_asym = np.asarray(reference_dataset.asymmetry, dtype=float)
         if reference_asym.size == 0:
             return np.zeros_like(dataset.time, dtype=bool)
 
-        saturated = (np.abs(reference_asym) > 100.0) | np.isclose(
-            np.abs(reference_asym),
-            100.0,
-            atol=1e-12,
-        )
+        saturated = np.zeros_like(reference_asym, dtype=bool)
+        if not is_grouped_time_domain:
+            saturated = (np.abs(reference_asym) > 100.0) | np.isclose(
+                np.abs(reference_asym),
+                100.0,
+                atol=1e-12,
+            )
 
         run = reference_dataset.run
         if (
@@ -2681,66 +3200,68 @@ class PlotPanel(QWidget):
             return
         if self._is_frequency_plot_panel():
             return
-        if self._subplot_axes_by_polarization:
+        if self._subplot_axes_by_polarization and not self._grouped_time_subplot_datasets:
+            self._clear_fit_range_artists()
             return
-
-        if self._fit_span_artist is not None:
-            try:
-                self._fit_span_artist.remove()
-            except NotImplementedError:
-                pass
-            self._fit_span_artist = None
-        if self._fit_min_handle is not None:
-            try:
-                self._fit_min_handle.remove()
-            except NotImplementedError:
-                pass
-            self._fit_min_handle = None
-        if self._fit_max_handle is not None:
-            try:
-                self._fit_max_handle.remove()
-            except NotImplementedError:
-                pass
-            self._fit_max_handle = None
+        self._clear_fit_range_artists()
 
         if self._fit_x_min is None or self._fit_x_max is None:
             return
 
-        self._fit_span_artist = self._ax.axvspan(
-            self._fit_x_min,
-            self._fit_x_max,
-            color="gold",
-            alpha=0.18,
-            zorder=1,
-        )
-        self._fit_min_handle = self._ax.axvline(
-            self._fit_x_min,
-            color="darkorange",
-            linestyle="--",
-            linewidth=1.5,
-            zorder=4,
-        )
-        self._fit_max_handle = self._ax.axvline(
-            self._fit_x_max,
-            color="darkorange",
-            linestyle="--",
-            linewidth=1.5,
-            zorder=4,
-        )
+        axes = self._fit_range_axes()
+        if not axes:
+            return
+
+        for axis in axes:
+            self._fit_span_artists.append(
+                axis.axvspan(
+                    self._fit_x_min,
+                    self._fit_x_max,
+                    color="gold",
+                    alpha=0.18,
+                    zorder=1,
+                )
+            )
+            self._fit_min_handles.append(
+                axis.axvline(
+                    self._fit_x_min,
+                    color="darkorange",
+                    linestyle="--",
+                    linewidth=1.5,
+                    zorder=4,
+                )
+            )
+            self._fit_max_handles.append(
+                axis.axvline(
+                    self._fit_x_max,
+                    color="darkorange",
+                    linestyle="--",
+                    linewidth=1.5,
+                    zorder=4,
+                )
+            )
 
     def _detect_handle_hit(self, event) -> str | None:
         """Return which fit handle (min/max) was clicked, if any."""
         if (
             self._fit_x_min is None
             or self._fit_x_max is None
-            or event.inaxes != self._ax
+            or event.inaxes is None
             or event.x is None
             or event.y is None
         ):
             return None
 
-        min_px = self._ax.transData.transform((self._fit_x_min, 0.0))[0]
-        max_px = self._ax.transData.transform((self._fit_x_max, 0.0))[0]
+        hit_axis = None
+        for axis in self._fit_range_axes():
+            if event.inaxes is axis:
+                hit_axis = axis
+                break
+        if hit_axis is None:
+            return None
+
+        min_px = hit_axis.transData.transform((self._fit_x_min, 0.0))[0]
+        max_px = hit_axis.transData.transform((self._fit_x_max, 0.0))[0]
         tolerance_px = 8.0
 
         if abs(event.x - min_px) <= tolerance_px:
@@ -2818,6 +3339,7 @@ class PlotPanel(QWidget):
         handle = self._detect_handle_hit(event)
         if handle is not None:
             self._active_fit_handle = handle
+            self._active_fit_axis = event.inaxes
             self._drag_started = False
             return
 
@@ -2833,9 +3355,10 @@ class PlotPanel(QWidget):
 
         if (
             self._active_fit_handle is not None
-            and event.inaxes == self._ax
             and event.xdata is not None
         ):
+            if not any(event.inaxes is axis for axis in self._fit_range_axes()):
+                return
             self._drag_started = True
             if self._active_fit_handle == "min":
                 self._set_fit_range(event.xdata, self._fit_x_max, emit_signal=True, redraw=True)
@@ -2867,6 +3390,7 @@ class PlotPanel(QWidget):
             was_drag = self._drag_started
 
             self._active_fit_handle = None
+            self._active_fit_axis = None
             self._drag_started = False
 
             if not was_drag and event.button == 1:
@@ -3032,6 +3556,7 @@ class PlotPanel(QWidget):
     def clear(self) -> None:
         """Clear the plot and reset stored data."""
         if self._has_mpl:
+            self._set_canvas_minimum_height_for_axes(1)
             self._set_navigation_mode("none")
             self._set_alpha_label(None)
             self.set_polarization_axes([])
@@ -3060,9 +3585,10 @@ class PlotPanel(QWidget):
             self._annotation_drag_started = False
             self._fit_x_min = None
             self._fit_x_max = None
-            self._fit_span_artist = None
-            self._fit_min_handle = None
-            self._fit_max_handle = None
+            self._fit_span_artists = []
+            self._fit_min_handles = []
+            self._fit_max_handles = []
+            self._active_fit_axis = None
             self._current_polarization_axis = None
             self._y_limits_by_polarization = {}
             self._subplot_axes_by_polarization = {}
@@ -3071,6 +3597,16 @@ class PlotPanel(QWidget):
                 self._frequency_reference_mhz = None
                 self._apply_axis_labels(*self._default_axis_labels())
             self._update_export_enabled()
+
+    def resizeEvent(self, event) -> None:
+        """Keep the canvas width aligned with the viewport during grouped scrolling."""
+        super().resizeEvent(event)
+        if not getattr(self, "_has_mpl", False):
+            return
+        axis_count = max(1, len(getattr(self, "_subplot_axes_by_polarization", {})))
+        target_height = max(self._default_canvas_min_height, int(self._canvas.minimumHeight()))
+        self._sync_canvas_scroll_geometry(axis_count=axis_count, target_height=target_height)
+        self._canvas.draw_idle()
 
     def clear_fit(self) -> None:
         """Clear all fit curves and redraw the plot."""
@@ -4000,6 +4536,7 @@ class PlotPanel(QWidget):
             "current_run_number": (
                 self._current_dataset.run_number if self._current_dataset is not None else None
             ),
+            "time_view_mode": self.current_time_view_mode(),
             "label_field": self._label_field_combo.currentData() if self._has_mpl else "run",
             "default_label_field": self._default_label_field,
             "label_field_by_group": dict(self._label_field_by_group),
@@ -4156,6 +4693,10 @@ class PlotPanel(QWidget):
                 self._default_label_field = str(selected_field)
 
         self.set_overlay_enabled(bool(state.get("overlay_enabled", True)), emit_signal=False)
+        self.set_time_view_modes(
+            self._available_time_view_modes,
+            current_mode=state.get("time_view_mode", self._current_time_view_mode),
+        )
 
         if self._is_frequency_plot_panel():
             self._frequency_x_limits_by_unit = {}

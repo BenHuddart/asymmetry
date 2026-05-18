@@ -6,6 +6,7 @@ without scipy dependencies (important for Python 3.13+ compatibility).
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -266,6 +267,20 @@ class FitEngine:
         """
         if not datasets:
             raise ValueError("No datasets provided for global fitting")
+
+        dataset_run_numbers = [int(ds.run_number) for ds in datasets]
+        duplicate_runs = [run for run, count in Counter(dataset_run_numbers).items() if count > 1]
+        if duplicate_runs:
+            raise ValueError(
+                "Global fitting requires unique dataset run numbers; duplicates found: "
+                f"{sorted(duplicate_runs)}"
+            )
+
+        missing_initial = [run for run in dataset_run_numbers if run not in initial_params]
+        if missing_initial:
+            raise KeyError(
+                f"initial parameter sets missing for dataset run numbers {sorted(missing_initial)}"
+            )
 
         first_params = initial_params[datasets[0].run_number]
         free_global_params = [pname for pname in global_params if not first_params[pname].fixed]

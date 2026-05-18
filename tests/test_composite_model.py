@@ -107,6 +107,56 @@ def test_fraction_group_rejects_non_additive_group() -> None:
         CompositeModel.from_expression("( Exponential * Gaussian ){frac}")
 
 
+def test_fraction_group_accepts_sum_of_products() -> None:
+    t = np.linspace(0.0, 1.0, 5)
+    model = CompositeModel.from_expression(
+        "( Exponential * Gaussian + Exponential * Gaussian ){frac}"
+    )
+
+    assert model.fraction_parameter_groups() == [["fraction_1", "fraction_2"]]
+    assert model.param_names == [
+        "A_1",
+        "Lambda_1",
+        "fraction_1",
+        "sigma_1",
+        "Lambda_2",
+        "fraction_2",
+        "sigma_2",
+    ]
+    assert "Lambda_1" in model.formula_string()
+    assert "sigma_1" in model.formula_string()
+    assert "Lambda_2" in model.formula_string()
+    assert "sigma_2" in model.formula_string()
+
+    out = model.function(
+        t,
+        A_1=2.0,
+        Lambda_1=0.3,
+        sigma_1=0.2,
+        Lambda_2=0.6,
+        sigma_2=0.4,
+        fraction_1=0.25,
+        fraction_2=0.75,
+    )
+    expected = 2.0 * (
+        0.25 * np.exp(-0.3 * t) * np.exp(-(0.2 * t) ** 2)
+        + 0.75 * np.exp(-0.6 * t) * np.exp(-(0.4 * t) ** 2)
+    )
+
+    assert np.allclose(out, expected)
+
+
+def test_with_default_fraction_groups_wraps_top_level_additive_expression() -> None:
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+
+    grouped_model = model.with_default_fraction_groups()
+
+    assert grouped_model is not model
+    assert grouped_model.fraction_groups == [(0, 1)]
+    assert grouped_model.component_expression_string() == "(Exponential + Constant){frac}"
+    assert grouped_model.param_names == ["A_1", "Lambda", "fraction_1", "fraction_2"]
+
+
 def test_to_model_definition_callable() -> None:
     t = np.linspace(0.0, 1.0, 8)
     model = CompositeModel(["Constant"])
@@ -270,8 +320,8 @@ def test_fraction_group_preserves_outer_multiplicative_amplitude_suppression() -
 
     assert "A_1" not in model.param_names
     assert "A_2" in model.param_names
+    assert "fraction_1" in model.param_names
     assert "fraction_2" in model.param_names
-    assert "fraction_3" in model.param_names
 
 
 def test_parenthesized_product_suppresses_leading_amplitude() -> None:

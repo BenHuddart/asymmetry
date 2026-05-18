@@ -16,6 +16,7 @@ This guide covers the main features and workflows of Asymmetry.
    fitting
    fit_wizard
    global_fit_wizard
+   grouped_time_domain_fitting
    composite_models
    lf_kubo_toyabe
    muon_fluorine

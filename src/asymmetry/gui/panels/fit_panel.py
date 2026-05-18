@@ -7,6 +7,7 @@ parameters, run the fit, and inspect results.
 from __future__ import annotations
 
 import copy
+import re
 import textwrap
 
 import numpy as np
@@ -31,8 +32,17 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fourier.fft import estimate_fft_phase, fft_complex_asymmetry
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine, FitResult
+from asymmetry.core.fitting.grouped_time_domain import (
+    GROUP_NUISANCE_PARAMS,
+    build_grouped_count_model,
+    build_grouped_time_domain_datasets,
+    build_grouped_time_domain_groups,
+    fit_grouped_time_domain,
+    validate_grouped_model_contract,
+)
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     FitWizardRecommendation,
@@ -51,7 +61,15 @@ from asymmetry.core.fitting.parameters import (
     get_param_info,
     split_parameter_name,
 )
-from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+from asymmetry.core.fitting.global_search.heuristics import (
+    is_amplitude_parameter,
+    is_background_parameter,
+)
+from asymmetry.core.utils.constants import (
+    GAUSS_TO_TESLA,
+    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
+    MUON_LIFETIME_US,
+)
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
@@ -76,6 +94,252 @@ def _field_value_overrides(model: CompositeModel, field_gauss: float) -> dict[st
         if base_name in {"field", "B_L"}:
             overrides[pname] = field_gauss
     return overrides
+
+
+def _seed_group_background_and_n0(
+    counts: np.ndarray,
+    *,
+    time: np.ndarray | None = None,
+) -> tuple[float, float, float]:
+    """Return heuristic grouped-count seeds for background, N0, and amplitude."""
+    count_arr = np.asarray(counts, dtype=float)
+    time_arr = np.asarray(time, dtype=float) if time is not None else None
+    if time_arr is not None and time_arr.shape == count_arr.shape:
+        finite_mask = np.isfinite(count_arr) & np.isfinite(time_arr)
+        count_arr = count_arr[finite_mask]
+        time_arr = time_arr[finite_mask]
+    else:
+        time_arr = None
+        count_arr = count_arr[np.isfinite(count_arr)]
+
+    if count_arr.size == 0:
+        return 0.0, 100.0, 0.2
+
+    if time_arr is None:
+        time_arr = np.arange(count_arr.size, dtype=float)
+        background_scale = np.ones_like(time_arr)
+    else:
+        background_scale = np.exp(time_arr / float(MUON_LIFETIME_US))
+
+    def _window_mask(sample_time: np.ndarray, *, tail: bool) -> np.ndarray:
+        if sample_time.size <= 1:
+            return np.ones(sample_time.size, dtype=bool)
+
+        start = float(np.min(sample_time))
+        stop = float(np.max(sample_time))
+        span = max(0.0, stop - start)
+        width = min(1.0, span * 0.25) if span > 0.0 else 0.0
+        if width > 0.0:
+            mask = sample_time >= (stop - width) if tail else sample_time <= (start + width)
+            if np.count_nonzero(mask) >= min(5, sample_time.size):
+                return mask
+
+        window_size = min(sample_time.size, max(1, int(np.ceil(sample_time.size * 0.2))))
+        mask = np.zeros(sample_time.size, dtype=bool)
+        if tail:
+            mask[-window_size:] = True
+        else:
+            mask[:window_size] = True
+        return mask
+
+    late_mask = _window_mask(time_arr, tail=True)
+    early_mask = _window_mask(time_arr, tail=False)
+
+    raw_like_counts = count_arr / background_scale
+    if time is not None and np.count_nonzero(late_mask) >= 2:
+        late_time = np.asarray(time_arr[late_mask], dtype=float)
+        late_raw_like = np.asarray(raw_like_counts[late_mask], dtype=float)
+        design = np.column_stack(
+            [np.exp(-late_time / float(MUON_LIFETIME_US)), np.ones_like(late_time)]
+        )
+        coeffs, *_ = np.linalg.lstsq(design, late_raw_like, rcond=None)
+        background = max(float(coeffs[1]), 0.0)
+    else:
+        background = float(np.mean(raw_like_counts[late_mask]))
+    residual = count_arr - background * background_scale
+    if not np.any(np.isfinite(residual)):
+        return float(background), 100.0, 0.2
+
+    core_mask = early_mask if np.count_nonzero(early_mask) >= 3 else np.ones_like(residual, dtype=bool)
+    core_residual = np.asarray(residual[core_mask], dtype=float)
+    core_residual = core_residual[np.isfinite(core_residual)]
+    if core_residual.size == 0:
+        core_residual = np.asarray(residual[np.isfinite(residual)], dtype=float)
+
+    n0 = max(float(np.median(core_residual)), 1.0)
+    centered = core_residual - n0
+    if centered.size >= 2:
+        lower = float(np.percentile(centered, 10.0))
+        upper = float(np.percentile(centered, 90.0))
+        amplitude_scale = 0.5 * max(upper - lower, 0.0)
+    elif centered.size == 1:
+        amplitude_scale = abs(float(centered[0]))
+    else:
+        amplitude_scale = 0.0
+
+    amplitude = amplitude_scale / n0 if n0 > 0.0 else 0.0
+    amplitude = float(np.clip(amplitude, 0.01, 1.0))
+
+    return float(background), n0, amplitude
+
+
+def _group_phase_window_mhz(
+    metadata: dict[str, object] | None,
+    freqs: np.ndarray,
+) -> tuple[float, float | None]:
+    """Return a field-guided FFT phase-estimation window for one grouped trace."""
+    frequencies = np.asarray(freqs, dtype=float)
+    positive = frequencies[np.isfinite(frequencies) & (frequencies > 0.0)]
+    if positive.size == 0:
+        return 0.0, None
+
+    field_value = None if metadata is None else metadata.get("field")
+    try:
+        field_gauss = abs(float(field_value))
+    except (TypeError, ValueError):
+        return 0.0, None
+    if not np.isfinite(field_gauss) or np.isclose(field_gauss, 0.0):
+        return 0.0, None
+
+    center = field_gauss * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
+    half_width = 10.0
+    lo = max(0.0, center - half_width)
+    hi = center + half_width
+    if np.any((positive >= lo) & (positive <= hi)):
+        return lo, hi
+    return 0.0, None
+
+
+def _seed_group_phase_estimates(grouped_groups: list[object]) -> tuple[float, dict[str, float]]:
+    """Return the first-group absolute phase and per-group relative phases in radians."""
+    phase_degrees_by_group: dict[str, float] = {}
+    for group in grouped_groups:
+        group_id = str(getattr(group, "group_id", ""))
+        time = np.asarray(getattr(group, "time", []), dtype=float)
+        counts = np.asarray(getattr(group, "counts", []), dtype=float)
+        if time.size < 4 or counts.size != time.size:
+            phase_degrees_by_group[group_id] = 0.0
+            continue
+
+        finite_mask = np.isfinite(time) & np.isfinite(counts)
+        time = time[finite_mask]
+        counts = counts[finite_mask]
+        if time.size < 4:
+            phase_degrees_by_group[group_id] = 0.0
+            continue
+
+        error = np.asarray(getattr(group, "error", np.ones_like(counts)), dtype=float)
+        if error.shape != counts.shape:
+            error = np.ones_like(counts, dtype=float)
+        else:
+            error = error[finite_mask]
+
+        metadata = dict(getattr(group, "metadata", {}) or {})
+        background_seed, n0_seed, _amplitude_seed = _seed_group_background_and_n0(
+            counts,
+            time=time,
+        )
+        residual = counts - (background_seed * np.exp(time / float(MUON_LIFETIME_US))) - n0_seed
+        dataset = MuonDataset(
+            time=time.copy(),
+            asymmetry=np.asarray(residual, dtype=float),
+            error=error.copy(),
+            metadata=metadata,
+            run=None,
+        )
+        freqs, spectrum = fft_complex_asymmetry(
+            dataset,
+            window="none",
+            padding_factor=8,
+            subtract_average_signal=True,
+        )
+        min_frequency, max_frequency = _group_phase_window_mhz(metadata, freqs)
+        phase_degrees_by_group[group_id] = estimate_fft_phase(
+            freqs,
+            spectrum,
+            method="peak",
+            min_frequency=min_frequency,
+            max_frequency=max_frequency,
+        )
+
+    if not phase_degrees_by_group:
+        return 0.0, {}
+
+    reference_group_id = str(getattr(grouped_groups[0], "group_id", ""))
+    reference_phase = phase_degrees_by_group.get(reference_group_id, 0.0)
+    reference_phase_rad = float(np.angle(np.exp(1j * np.deg2rad(reference_phase))))
+    relative_phases = {
+        group_id: float(np.angle(np.exp(1j * np.deg2rad(phase_deg - reference_phase))))
+        for group_id, phase_deg in phase_degrees_by_group.items()
+    }
+    return reference_phase_rad, relative_phases
+
+
+def _seed_group_relative_phases(grouped_groups: list[object]) -> dict[str, float]:
+    """Return per-group relative phase seeds in radians using FFT auto-phase estimation."""
+    _reference_phase, relative_phases = _seed_group_phase_estimates(grouped_groups)
+    return relative_phases
+
+
+def _grouped_model_phase_defaults(
+    grouped_model: CompositeModel,
+    grouped_groups: list[object],
+) -> dict[str, float]:
+    """Return grouped-model phase defaults seeded from the first group."""
+    reference_phase, _relative_phases = _seed_group_phase_estimates(grouped_groups)
+    phase_defaults: dict[str, float] = {}
+    for pname in grouped_model.param_names:
+        base_name, _index = split_parameter_name(pname)
+        if base_name == "phase":
+            phase_defaults[pname] = reference_phase
+    return phase_defaults
+
+
+def _grouped_formula_string(model: CompositeModel) -> str:
+    """Return grouped-fit formula text with fit-function amplitudes suppressed."""
+    formula = model.formula_string()
+    formula = re.sub(r"\bA(?:_\d+)?\*\(", "(", formula)
+    formula = re.sub(r"\bA(?:_\d+)?\*", "", formula)
+    return formula
+
+
+def _refresh_field_defaults_in_table(
+    table: QTableWidget,
+    model: CompositeModel,
+    *,
+    previous_field_gauss: float,
+    current_field_gauss: float,
+) -> None:
+    """Update field-like parameter rows when they still hold the prior auto-default."""
+    if np.isclose(previous_field_gauss, current_field_gauss):
+        return
+
+    previous_overrides = _field_value_overrides(model, previous_field_gauss)
+    current_overrides = _field_value_overrides(model, current_field_gauss)
+    if not previous_overrides and not current_overrides:
+        return
+
+    row_by_name = _param_table_rows_by_name(table)
+    previous_signal_state = table.blockSignals(True)
+    try:
+        for pname in set(previous_overrides) | set(current_overrides):
+            row = row_by_name.get(pname)
+            if row is None:
+                continue
+            value_item = table.item(row, 1)
+            if value_item is None:
+                continue
+            previous_value = previous_overrides.get(pname, model.param_defaults.get(pname, 0.0))
+            current_value = current_overrides.get(pname, model.param_defaults.get(pname, 0.0))
+            try:
+                existing_value = float(value_item.text())
+            except (TypeError, ValueError):
+                existing_value = previous_value
+            if value_item.text().strip() and not np.isclose(existing_value, previous_value):
+                continue
+            value_item.setText(f"{float(current_value):.6g}")
+    finally:
+        table.blockSignals(previous_signal_state)
 
 
 def _normalized_model_param_values(
@@ -164,6 +428,7 @@ def _configure_fraction_rows_in_table(
     min_column: int | None = None,
     max_column: int | None = None,
     bounds_column: int | None = None,
+    type_column: int | None = None,
 ) -> None:
     row_by_name = _param_table_rows_by_name(table)
     final_fraction_names = {group[-1] for group in model.fraction_parameter_groups() if group}
@@ -184,6 +449,18 @@ def _configure_fraction_rows_in_table(
             if name in final_fraction_names:
                 value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
+        if type_column is not None:
+            type_combo = table.cellWidget(row, type_column)
+            if isinstance(type_combo, QComboBox):
+                type_combo.setToolTip(tooltip)
+                if name in final_fraction_names:
+                    fixed_index = type_combo.findText("Fixed")
+                    if fixed_index >= 0:
+                        type_combo.setCurrentIndex(fixed_index)
+                    type_combo.setEnabled(False)
+                else:
+                    type_combo.setEnabled(True)
+
         if min_column is not None:
             min_item = table.item(row, min_column)
             if min_item is not None:
@@ -198,11 +475,16 @@ def _configure_fraction_rows_in_table(
                 bounds_item.setText("0, 1")
 
 
-def _get_file_value_for_parameter(dataset: MuonDataset, param_base_name: str) -> float | None:
+def _get_file_value_for_parameter(
+    dataset: MuonDataset | None,
+    param_base_name: str,
+) -> float | None:
     """Get the file-specific value for a parameter from dataset metadata.
 
     Returns the value in Gauss for field-like parameters, or None if not available.
     """
+    if dataset is None:
+        return None
     if param_base_name in {"field", "B_L"}:
         if dataset.run is not None and hasattr(dataset.run, "field"):
             return float(dataset.run.field)
@@ -249,6 +531,21 @@ def _format_bounds_pair(min_val: float, max_val: float) -> str:
         return f"{float(value):.6g}"
 
     return f"{_format(min_val)}, {_format(max_val)}"
+
+
+def _format_fit_worker_exception(exc: Exception) -> str:
+    """Return a clearer user-facing error message for fit worker failures."""
+    if isinstance(exc, KeyError):
+        missing = exc.args[0] if exc.args else "unknown"
+        return f"Missing fit parameter mapping for dataset/group key: {missing!r}"
+
+    exc_name = type(exc).__name__
+    text = str(exc).strip()
+    if not text:
+        return exc_name
+    if text == exc_name:
+        return text
+    return f"{exc_name}: {text}"
 
 
 _GLOBAL_FIT_PARAMETER_CLASSIFICATION_HELP_TEXT = (
@@ -339,7 +636,45 @@ class GlobalFitWorker(QObject):
             )
             self.finished.emit(results_dict, fitted_global)
         except Exception as e:
-            self.error.emit(str(e))
+            self.error.emit(_format_fit_worker_exception(e))
+
+
+class GroupedTimeDomainFitWorker(QObject):
+    """Worker for grouped time-domain fitting in a background thread."""
+
+    finished = Signal(object, object)  # grouped_datasets, fit_result_bundle
+    error = Signal(str)
+
+    def __init__(
+        self,
+        grouped_groups,
+        grouped_datasets,
+        model_fn,
+        global_params,
+        local_params,
+        initial_params,
+    ):
+        super().__init__()
+        self.grouped_groups = grouped_groups
+        self.grouped_datasets = grouped_datasets
+        self.model_fn = model_fn
+        self.global_params = global_params
+        self.local_params = local_params
+        self.initial_params = initial_params
+
+    def run(self):
+        """Execute the grouped time-domain fit."""
+        try:
+            result = fit_grouped_time_domain(
+                self.grouped_groups,
+                self.model_fn,
+                self.global_params,
+                self.local_params,
+                self.initial_params,
+            )
+            self.finished.emit(self.grouped_datasets, result)
+        except Exception as e:
+            self.error.emit(_format_fit_worker_exception(e))
 
 
 class SingleFitTab(QWidget):
@@ -1120,16 +1455,30 @@ class GlobalFitTab(QWidget):
 
     # Use object/object to avoid Qt container coercion (which can alter key types).
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
+    grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
+    grouped_preview_requested = Signal(object, object)  # (grouped_datasets, preview_curves)
+    grouped_mode_changed = Signal(bool)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        allowed_modes: tuple[str, ...] = ("datasets", "grouped"),
+    ) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
+        self._allowed_modes = tuple(str(mode) for mode in allowed_modes if str(mode).strip()) or (
+            "datasets",
+        )
 
         self._fit_engine = FitEngine()
         self._datasets = []  # Will be set by parent
+        self._current_dataset: MuonDataset | None = None
         self._fit_blocked = False
         self._fit_block_reason = ""
-        self._composite_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+        self._composite_model = self._default_composite_model()
+        self._applied_field_default_gauss = 0.0
+        self._applied_group_phase_default_rad = 0.0
         # Successful single-fit seeds keyed by run number.
         self._single_fit_seed_by_run: dict[int, dict[str, object]] = {}
         # Inherited seed cache for current dataset selection.
@@ -1141,10 +1490,21 @@ class GlobalFitTab(QWidget):
         self._cached_wizard_signature: dict[str, object] | None = None
         self._cached_wizard_log_text = ""
         self._updating_fraction_values = False
+        self._updating_group_model_fraction_values = False
+        self._updating_group_param_values = False
+        self._group_param_group_specs: list[tuple[object, str]] = []
 
         # Model selection
         model_group = QGroupBox("Model")
         model_layout = QFormLayout(model_group)
+        self._mode_combo = QComboBox()
+        mode_labels = {
+            "datasets": "Selected datasets",
+            "grouped": "Groups in active dataset",
+        }
+        for mode in self._allowed_modes:
+            self._mode_combo.addItem(mode_labels.get(mode, mode.title()), userData=mode)
+        self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self._formula_label = QLabel()
         _configure_formula_label(self._formula_label)
         self._edit_model_btn = QPushButton("Edit Function...")
@@ -1162,13 +1522,15 @@ class GlobalFitTab(QWidget):
         model_button_layout.addWidget(self._fit_wizard_btn, 0, 1)
         model_button_layout.setColumnStretch(0, 1)
         model_button_layout.setColumnStretch(1, 1)
+        if len(self._allowed_modes) > 1:
+            model_layout.addRow("Scope:", self._mode_combo)
         model_layout.addRow("A(t):", self._formula_label)
         model_layout.addRow("", model_button_layout)
         layout.addWidget(model_group)
 
         # Parameter classification table
-        param_group = QGroupBox("Parameter Classification")
-        param_layout = QVBoxLayout(param_group)
+        self._param_group = QGroupBox("Parameter Classification")
+        param_layout = QVBoxLayout(self._param_group)
 
         param_header_layout = QHBoxLayout()
         param_header_layout.addStretch()
@@ -1188,7 +1550,45 @@ class GlobalFitTab(QWidget):
         self._param_table.setColumnWidth(3, 150)  # Bounds
         self._param_table.itemChanged.connect(self._on_param_table_item_changed)
         param_layout.addWidget(self._param_table)
-        layout.addWidget(param_group)
+        layout.addWidget(self._param_group)
+
+        self._grouped_context_label = QLabel()
+        self._grouped_context_label.setWordWrap(True)
+        self._grouped_context_label.hide()
+        layout.addWidget(self._grouped_context_label)
+
+        self._group_param_group = QGroupBox("Per-Group Parameters")
+        group_param_layout = QVBoxLayout(self._group_param_group)
+        self._group_param_table = QTableWidget(0, 4)
+        self._group_param_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
+        self._group_param_table.horizontalHeader().setStretchLastSection(False)
+        self._group_param_table.setColumnWidth(0, 110)
+        self._group_param_table.setColumnWidth(1, 90)
+        self._group_param_table.setColumnWidth(2, 100)
+        self._group_param_table.setColumnWidth(3, 150)
+        self._group_param_table.itemChanged.connect(self._on_group_param_item_changed)
+        group_param_layout.addWidget(self._group_param_table)
+        group_param_button_layout = QHBoxLayout()
+        group_param_button_layout.setContentsMargins(0, 0, 0, 0)
+        group_param_button_layout.addStretch()
+        self._group_param_reset_btn = QPushButton("Reset to Estimates")
+        self._group_param_reset_btn.clicked.connect(self._reset_group_parameter_estimates)
+        group_param_button_layout.addWidget(self._group_param_reset_btn)
+        group_param_layout.addLayout(group_param_button_layout)
+        layout.addWidget(self._group_param_group)
+
+        self._group_model_group = QGroupBox("Fit-Function Parameters")
+        group_model_layout = QVBoxLayout(self._group_model_group)
+        self._group_model_table = QTableWidget(0, 4)
+        self._group_model_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
+        self._group_model_table.horizontalHeader().setStretchLastSection(False)
+        self._group_model_table.setColumnWidth(0, 110)
+        self._group_model_table.setColumnWidth(1, 90)
+        self._group_model_table.setColumnWidth(2, 100)
+        self._group_model_table.setColumnWidth(3, 150)
+        self._group_model_table.itemChanged.connect(self._on_group_model_table_item_changed)
+        group_model_layout.addWidget(self._group_model_table)
+        layout.addWidget(self._group_model_group)
 
         # Fit button
         btn_layout = QHBoxLayout()
@@ -1196,6 +1596,10 @@ class GlobalFitTab(QWidget):
         self._fit_btn.clicked.connect(self._run_global_fit)
         self._fit_btn.setEnabled(False)
         btn_layout.addWidget(self._fit_btn)
+        self._preview_btn = QPushButton("Preview")
+        self._preview_btn.clicked.connect(self._on_preview_requested)
+        self._preview_btn.setEnabled(False)
+        btn_layout.addWidget(self._preview_btn)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
@@ -1215,7 +1619,15 @@ class GlobalFitTab(QWidget):
         self._fit_thread: QThread | None = None
         self._fit_worker: GlobalFitWorker | None = None
 
+        self._setup_group_nuisance_table()
         self._set_composite_model(self._composite_model)
+        self._update_mode_ui(preserve_result=False)
+
+    def _default_composite_model(self) -> CompositeModel:
+        """Return the initial composite model for the allowed fitting modes."""
+        if self._allowed_modes == ("grouped",):
+            return CompositeModel(["OscillatoryField"])
+        return CompositeModel(["Exponential", "Constant"], operators=["+"])
 
     def _show_parameter_classification_help(self) -> None:
         QMessageBox.information(
@@ -1275,24 +1687,70 @@ class GlobalFitTab(QWidget):
         """Set the datasets for global fitting."""
         self._datasets = datasets
         self._invalidate_wizard_cache_if_stale()
-        n = len(datasets)
-        self._fit_btn.setEnabled((n > 1) and (not self._fit_blocked))
-        self._fit_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
-        self._fit_wizard_btn.setEnabled((n > 1) and (not self._fit_blocked))
-        self._fit_wizard_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
-        if n == 0:
-            self._result_text.setText(
-                "No datasets selected.\nSelect datasets in the browser to run a global fit."
-            )
-        elif n == 1:
-            self._result_text.setText(
-                "Global fitting requires at least 2 datasets.\nCurrently have 1 selected dataset."
-            )
-        else:
-            self._result_text.setText(
-                f"{n} datasets selected. Configure parameters and click Run Global Fit."
-            )
+        self._update_mode_ui(preserve_result=False)
         self._refresh_inherited_single_fit_defaults()
+
+    def set_current_dataset(self, dataset: MuonDataset | None) -> None:
+        """Set the active dataset used by grouped time-domain mode."""
+        self._current_dataset = dataset
+        self._refresh_field_parameter_defaults_for_current_dataset()
+        self._refresh_group_phase_defaults_for_current_dataset()
+        self._update_group_parameter_defaults()
+        self._update_mode_ui(preserve_result=False)
+
+    def _refresh_field_parameter_defaults_for_current_dataset(self) -> None:
+        """Refresh auto-seeded field values when the active dataset changes."""
+        field_gauss = _get_file_value_for_parameter(self._current_dataset, "field")
+        target_field = float(field_gauss) if field_gauss is not None else 0.0
+        _refresh_field_defaults_in_table(
+            self._param_table,
+            self._composite_model,
+            previous_field_gauss=self._applied_field_default_gauss,
+            current_field_gauss=target_field,
+        )
+        _refresh_field_defaults_in_table(
+            self._group_model_table,
+            self._grouped_fit_model(),
+            previous_field_gauss=self._applied_field_default_gauss,
+            current_field_gauss=target_field,
+        )
+        self._applied_field_default_gauss = target_field
+
+    def _refresh_group_phase_defaults_for_current_dataset(self) -> None:
+        """Refresh grouped-model phase defaults when the active dataset changes."""
+        if self._group_model_table.rowCount() == 0:
+            self._applied_group_phase_default_rad = 0.0
+            return
+
+        grouped_model = self._grouped_fit_model()
+        grouped_groups, _grouped_datasets, _message = self._grouped_mode_context()
+        phase_defaults = _grouped_model_phase_defaults(grouped_model, grouped_groups or [])
+        if not phase_defaults:
+            self._applied_group_phase_default_rad = 0.0
+            return
+
+        previous_phase = float(self._applied_group_phase_default_rad)
+        current_phase = float(next(iter(phase_defaults.values())))
+        row_by_name = _param_table_rows_by_name(self._group_model_table)
+        previous_signal_state = self._group_model_table.blockSignals(True)
+        try:
+            for pname, default_value in phase_defaults.items():
+                row = row_by_name.get(pname)
+                if row is None:
+                    continue
+                value_item = self._group_model_table.item(row, 1)
+                if value_item is None:
+                    continue
+                try:
+                    existing_value = float(value_item.text())
+                except (TypeError, ValueError):
+                    existing_value = previous_phase
+                if value_item.text().strip() and not np.isclose(existing_value, previous_phase):
+                    continue
+                value_item.setText(f"{float(default_value):.6g}")
+        finally:
+            self._group_model_table.blockSignals(previous_signal_state)
+        self._applied_group_phase_default_rad = current_phase
 
     def _invalidate_wizard_cache_if_stale(self) -> None:
         self._sync_active_wizard_cache_from_selection()
@@ -1516,10 +1974,7 @@ class GlobalFitTab(QWidget):
         """Enable/disable global-fit execution while preserving selected datasets."""
         self._fit_blocked = bool(blocked)
         self._fit_block_reason = str(reason)
-        self._fit_btn.setEnabled((len(self._datasets) > 1) and (not self._fit_blocked))
-        self._fit_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
-        self._fit_wizard_btn.setEnabled((len(self._datasets) > 1) and (not self._fit_blocked))
-        self._fit_wizard_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
+        self._update_mode_ui(preserve_result=True)
 
     def _refresh_inherited_single_fit_defaults(self) -> None:
         """Apply single-fit seeds when every selected dataset shares one model."""
@@ -1640,6 +2095,7 @@ class GlobalFitTab(QWidget):
     def _set_composite_model(self, model: CompositeModel) -> None:
         """Set the active composite model and rebuild classification rows."""
         preserved_state = self._current_parameter_row_state()
+        grouped_model_state = self._current_grouped_model_row_state()
         self._updating_fraction_values = True
         self._composite_model = model
         _set_formula_label_text(self._formula_label, model.formula_string())
@@ -1651,6 +2107,7 @@ class GlobalFitTab(QWidget):
         ]
         mean_field = float(np.mean(dataset_fields)) if dataset_fields else 0.0
         field_overrides = _field_value_overrides(model, mean_field)
+        self._applied_field_default_gauss = mean_field
 
         self._param_table.setRowCount(len(model.param_names))
         for i, pname in enumerate(model.param_names):
@@ -1692,9 +2149,17 @@ class GlobalFitTab(QWidget):
             self._param_table,
             model,
             bounds_column=3,
+            type_column=2,
         )
+        self._rebuild_grouped_model_table(grouped_model_state)
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
+        if self.is_grouped_time_domain_mode():
+            _set_formula_label_text(self._formula_label, _grouped_formula_string(self._grouped_fit_model()))
+
+    def _grouped_fit_model(self) -> CompositeModel:
+        """Return the grouped-mode model with default fraction semantics applied."""
+        return self._composite_model.with_default_fraction_groups()
 
     def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
         self._updating_fraction_values = True
@@ -1715,6 +2180,28 @@ class GlobalFitTab(QWidget):
         if isinstance(param_name, str):
             self._synchronize_fraction_value_rows(param_name)
 
+    def _synchronize_grouped_model_fraction_rows(
+        self,
+        edited_param_name: str | None = None,
+    ) -> None:
+        self._updating_group_model_fraction_values = True
+        try:
+            _synchronize_fraction_group_values_in_table(
+                self._group_model_table,
+                self._grouped_fit_model(),
+                edited_param_name=edited_param_name,
+            )
+        finally:
+            self._updating_group_model_fraction_values = False
+
+    def _on_group_model_table_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._updating_group_model_fraction_values or item.column() != 1:
+            return
+        name_item = self._group_model_table.item(item.row(), 0)
+        param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
+        if isinstance(param_name, str):
+            self._synchronize_grouped_model_fraction_rows(param_name)
+
     def _edit_function(self) -> None:
         """Launch the fit-function builder dialog."""
         dialog = FitFunctionBuilderDialog(self, initial_model=self._composite_model)
@@ -1725,6 +2212,12 @@ class GlobalFitTab(QWidget):
 
     def _open_fit_wizard(self) -> None:
         """Launch or refresh the non-modal global fit wizard window."""
+        if self.is_grouped_time_domain_mode():
+            self._result_text.setText(
+                "Grouped time-domain mode uses its own parameter blocks. "
+                "The Global Fit Wizard is unavailable in this mode."
+            )
+            return
         if self._fit_blocked:
             self._result_text.setText(
                 self._fit_block_reason or "Global fit is unavailable for the current selection."
@@ -1961,6 +2454,10 @@ class GlobalFitTab(QWidget):
 
     def _run_global_fit(self) -> None:
         """Execute global fit on all datasets."""
+        if self.is_grouped_time_domain_mode():
+            self._run_grouped_time_domain_fit()
+            return
+
         if self._fit_blocked:
             self._result_text.setText(
                 self._fit_block_reason or "Global fit is unavailable for the current selection."
@@ -2074,6 +2571,192 @@ class GlobalFitTab(QWidget):
 
         # Start the thread
         self._fit_thread.start()
+
+    def _run_grouped_time_domain_fit(self) -> None:
+        """Execute grouped time-domain fitting for the active dataset."""
+        if self._fit_blocked:
+            self._result_text.setText(
+                self._fit_block_reason
+                or "Grouped time-domain fit is unavailable for the current selection."
+            )
+            return
+
+        grouped_groups, grouped_datasets, message = self._grouped_mode_context()
+        if grouped_groups is None or grouped_datasets is None:
+            self._result_text.setText(message)
+            return
+
+        try:
+            grouped_config = self._parse_grouped_parameter_configuration()
+        except ValueError as exc:
+            self._result_text.setText(str(exc))
+            return
+        grouped_model = self._grouped_fit_model()
+        try:
+            validate_grouped_model_contract(
+                grouped_model.param_names,
+                model_values=dict(grouped_config["model_values"]),
+                fixed_params=set(grouped_config["fixed"]),
+            )
+        except ValueError as exc:
+            self._result_text.setText(str(exc))
+            return
+
+        global_params = list(grouped_config["global"])
+        local_params = list(grouped_config["local"])
+        initial_params = self._build_grouped_initial_params(grouped_groups, grouped_config)
+
+        self._result_text.setText("Fitting grouped time-domain data...")
+        self._fit_btn.setEnabled(False)
+
+        if self._fit_thread is not None:
+            self._fit_thread.quit()
+            self._fit_thread.wait()
+
+        self._fit_thread = QThread()
+        self._fit_worker = GroupedTimeDomainFitWorker(
+            grouped_groups,
+            grouped_datasets,
+            grouped_model.function,
+            global_params,
+            local_params,
+            initial_params,
+        )
+        self._fit_worker.moveToThread(self._fit_thread)
+        self._current_model = grouped_model
+        self._current_global_params = global_params
+
+        self._fit_thread.started.connect(self._fit_worker.run)
+        self._fit_worker.finished.connect(self._on_grouped_fit_finished)
+        self._fit_worker.error.connect(self._on_fit_error)
+        self._fit_worker.finished.connect(self._fit_thread.quit)
+        self._fit_worker.error.connect(self._fit_thread.quit)
+        self._fit_thread.finished.connect(self._cleanup_thread)
+        self._fit_thread.start()
+
+    def _on_preview_requested(self) -> None:
+        """Preview grouped time-domain curves using the current parameter values."""
+        if not self.is_grouped_time_domain_mode():
+            self._result_text.setText(
+                "Preview is currently available only in grouped time-domain mode."
+            )
+            return
+
+        if self._fit_blocked:
+            self._result_text.setText(
+                self._fit_block_reason
+                or "Grouped time-domain preview is unavailable for the current selection."
+            )
+            return
+
+        grouped_groups, grouped_datasets, message = self._grouped_mode_context()
+        if grouped_groups is None or grouped_datasets is None:
+            self._result_text.setText(message)
+            return
+
+        try:
+            grouped_config = self._parse_grouped_parameter_configuration()
+        except ValueError as exc:
+            self._result_text.setText(str(exc))
+            return
+        grouped_model = self._grouped_fit_model()
+        try:
+            validate_grouped_model_contract(
+                grouped_model.param_names,
+                model_values=dict(grouped_config["model_values"]),
+                fixed_params=set(grouped_config["fixed"]),
+            )
+        except ValueError as exc:
+            self._result_text.setText(str(exc))
+            return
+
+        preview_curves = self._build_grouped_preview_curves(
+            grouped_groups=grouped_groups,
+            grouped_datasets=grouped_datasets,
+            grouped_config=grouped_config,
+        )
+        self._result_text.setText(
+            f"Previewing grouped time-domain curves for {len(grouped_datasets)} groups."
+        )
+        self.grouped_preview_requested.emit(grouped_datasets, preview_curves)
+
+    def _build_grouped_initial_params(
+        self,
+        grouped_groups: list[object],
+        grouped_config: dict[str, object],
+    ) -> dict[object, ParameterSet]:
+        """Build grouped parameter seeds from the current UI state."""
+        initial_params: dict[object, ParameterSet] = {}
+        nuisance_group_values = dict(grouped_config["group_values"])
+        model_values = dict(grouped_config["model_values"])
+        bounds = dict(grouped_config["bounds"])
+        fixed = set(grouped_config["fixed"])
+
+        for group in grouped_groups:
+            params = ParameterSet()
+            for name in GROUP_NUISANCE_PARAMS:
+                per_group_values = nuisance_group_values.get(name, {})
+                value = float(per_group_values.get(group.group_id, 0.0))
+                min_val, max_val = bounds[name]
+                params.add(
+                    Parameter(
+                        name=name,
+                        value=value,
+                        min=min_val,
+                        max=max_val,
+                        fixed=name in fixed,
+                    )
+                )
+            for name, value in model_values.items():
+                min_val, max_val = bounds[name]
+                params.add(
+                    Parameter(
+                        name=name,
+                        value=value,
+                        min=min_val,
+                        max=max_val,
+                        fixed=name in fixed,
+                    )
+                )
+            initial_params[group.group_id] = params
+
+        return initial_params
+
+    def _build_grouped_preview_curves(
+        self,
+        *,
+        grouped_groups: list[object],
+        grouped_datasets: list[MuonDataset],
+        grouped_config: dict[str, object],
+    ) -> dict[int, tuple[object, tuple[np.ndarray, np.ndarray], tuple]]:
+        """Build preview overlays for grouped time-domain mode."""
+        initial_params = self._build_grouped_initial_params(grouped_groups, grouped_config)
+        fit_model = self._grouped_fit_model()
+        grouped_model = build_grouped_count_model(fit_model.function)
+        preview_curves: dict[int, tuple[object, tuple[np.ndarray, np.ndarray], tuple]] = {}
+
+        for group, dataset in zip(grouped_groups, grouped_datasets, strict=False):
+            params = initial_params.get(group.group_id)
+            if params is None:
+                continue
+            param_dict = {parameter.name: parameter.value for parameter in params}
+            fit_time = np.asarray(getattr(group, "time", dataset.time), dtype=float)
+            finite_mask = np.isfinite(fit_time)
+            if not np.any(finite_mask):
+                continue
+            fit_t_min = float(np.min(fit_time[finite_mask]))
+            fit_t_max = float(np.max(fit_time[finite_mask]))
+            n_samples = _fit_curve_sample_count(
+                fit_model,
+                param_dict,
+                fit_t_min,
+                fit_t_max,
+            )
+            t_fit = np.linspace(fit_t_min, fit_t_max, n_samples)
+            y_fit = grouped_model(t_fit, **param_dict)
+            preview_curves[int(dataset.run_number)] = (object(), (t_fit, y_fit), tuple())
+
+        return preview_curves
 
     def _render_global_fit_success(
         self,
@@ -2272,7 +2955,7 @@ class GlobalFitTab(QWidget):
 
     def _on_fit_finished(self, results_dict: dict, fitted_global: list) -> None:
         """Handle successful fit completion."""
-        self._fit_btn.setEnabled(True)
+        self._update_mode_ui(preserve_result=True)
 
         model = self._current_model
         global_params = self._current_global_params
@@ -2295,8 +2978,120 @@ class GlobalFitTab(QWidget):
 
     def _on_fit_error(self, error_msg: str) -> None:
         """Handle fit error."""
-        self._fit_btn.setEnabled(True)
-        self._result_text.setText(f"<b>Error during global fit:</b><br>{error_msg}")
+        self._update_mode_ui(preserve_result=True)
+        mode_label = "grouped fit" if self.is_grouped_time_domain_mode() else "global fit"
+        self._result_text.setText(f"<b>Error during {mode_label}:</b><br>{error_msg}")
+
+    def _on_grouped_fit_finished(self, grouped_datasets: list[MuonDataset], grouped_result) -> None:
+        """Handle successful grouped fit completion."""
+        self._update_mode_ui(preserve_result=True)
+
+        results_with_curves: dict[int, tuple[FitResult, tuple[np.ndarray, np.ndarray], tuple]] = {}
+        grouped_model = build_grouped_count_model(self._current_model.function)
+        datasets_by_group_id = {
+            dataset.metadata.get("group_id"): dataset for dataset in grouped_datasets
+        }
+
+        shared_values = {
+            parameter.name: parameter.value for parameter in getattr(grouped_result, "shared_parameters", [])
+        }
+        display_shared_values = _normalized_model_param_values(self._grouped_fit_model(), shared_values)
+        shared_by_name = {
+            parameter.name: parameter
+            for parameter in getattr(grouped_result, "shared_parameters", [])
+        }
+        group_fit_by_id = {
+            str(group_id): fit_result
+            for group_id, fit_result in getattr(grouped_result, "group_results", {}).items()
+        }
+        model_row_by_name = _param_table_rows_by_name(self._group_model_table)
+        previous_model_signal_state = self._group_model_table.blockSignals(True)
+        try:
+            for pname, row in model_row_by_name.items():
+                value_item = self._group_model_table.item(row, 1)
+                fitted = shared_by_name.get(pname)
+                if value_item is not None and pname in display_shared_values:
+                    value_item.setText(f"{float(display_shared_values[pname]):.6g}")
+                bounds_item = self._group_model_table.item(row, 3)
+                if bounds_item is not None and fitted is not None:
+                    min_text = "-inf" if not np.isfinite(fitted.min) else f"{float(fitted.min):g}"
+                    max_text = "inf" if not np.isfinite(fitted.max) else f"{float(fitted.max):g}"
+                    bounds_item.setText(f"{min_text}, {max_text}")
+        finally:
+            self._group_model_table.blockSignals(previous_model_signal_state)
+        self._synchronize_grouped_model_fraction_rows()
+
+        previous_group_signal_state = self._group_param_table.blockSignals(True)
+        try:
+            for row in range(self._group_param_table.rowCount()):
+                name_item = self._group_param_table.item(row, 0)
+                pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
+                if not isinstance(pname, str):
+                    continue
+                for offset, entry in enumerate(self._group_param_value_column_entries(), start=1):
+                    fit_result = group_fit_by_id.get(str(entry))
+                    if fit_result is None:
+                        continue
+                    fitted_by_name = {parameter.name: parameter for parameter in fit_result.parameters}
+                    fitted = fitted_by_name.get(pname)
+                    value_item = self._group_param_table.item(row, offset)
+                    if value_item is not None and fitted is not None:
+                        value_item.setText(f"{float(fitted.value):.6g}")
+                first_entry = str(self._group_param_value_column_entries()[0])
+                first_fit = group_fit_by_id.get(first_entry)
+                if first_fit is not None:
+                    fitted_by_name = {parameter.name: parameter for parameter in first_fit.parameters}
+                    fitted = fitted_by_name.get(pname)
+                    bounds_item = self._group_param_table.item(row, self._group_param_bounds_column())
+                    if bounds_item is not None and fitted is not None:
+                        min_text = "-inf" if not np.isfinite(fitted.min) else f"{float(fitted.min):g}"
+                        max_text = "inf" if not np.isfinite(fitted.max) else f"{float(fitted.max):g}"
+                        bounds_item.setText(f"{min_text}, {max_text}")
+        finally:
+            self._group_param_table.blockSignals(previous_group_signal_state)
+
+        lines = ["<b>Grouped Time-Domain Fit Successful!</b><br>", "<b>Shared Parameters:</b>"]
+        if len(grouped_result.shared_parameters) == 0:
+            lines.append("  None")
+        else:
+            for parameter in grouped_result.shared_parameters:
+                lines.append(f"  {_format_param_label(parameter.name)} = {parameter.value:.6f}")
+
+        lines.append("<br><b>Groups:</b>")
+        for group_id, fit_result in grouped_result.group_results.items():
+            dataset = datasets_by_group_id.get(group_id)
+            if dataset is None:
+                continue
+            param_dict = {parameter.name: parameter.value for parameter in fit_result.parameters}
+            for pname in self._grouped_fit_model().param_names:
+                if is_amplitude_parameter(pname):
+                    param_dict.setdefault(pname, 1.0)
+            fit_source_time = np.asarray(
+                self._current_dataset.time if self._current_dataset is not None else dataset.time,
+                dtype=float,
+            )
+            finite_mask = np.isfinite(fit_source_time)
+            if np.any(finite_mask):
+                fit_t_min = float(np.min(fit_source_time[finite_mask]))
+                fit_t_max = float(np.max(fit_source_time[finite_mask]))
+            else:
+                fit_t_min = float(dataset.time.min())
+                fit_t_max = float(dataset.time.max())
+            n_samples = _fit_curve_sample_count(
+                self._current_model,
+                param_dict,
+                fit_t_min,
+                fit_t_max,
+            )
+            t_fit = np.linspace(fit_t_min, fit_t_max, n_samples)
+            y_fit = grouped_model(t_fit, **param_dict)
+            results_with_curves[int(dataset.run_number)] = (fit_result, (t_fit, y_fit), tuple())
+            lines.append(
+                f"  {dataset.run_label}: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}"
+            )
+
+        self._result_text.setHtml("<br>".join(lines))
+        self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
 
     def _cleanup_thread(self) -> None:
         """Clean up thread resources."""
@@ -2362,12 +3157,24 @@ class GlobalFitTab(QWidget):
 
         state = {
             "model_name": "Composite",
+            "mode": self._mode_token(),
             "composite_model": self._composite_model.to_dict(),
             "parameters": [
                 {**entry, "value": normalized_values.get(str(entry["name"]), entry["value"])}
                 for entry in params
             ],
             "result_html": self._result_text.toHtml(),
+            "group_parameters": [
+                {
+                    "name": name,
+                    "value": entry.get("value", 0.0),
+                    "group_values": dict(entry.get("group_values", {})),
+                    "type": entry.get("type", ""),
+                    "bounds": entry.get("bounds", "-inf, inf"),
+                }
+                for name, entry in self._current_group_param_table_state().items()
+            ],
+            "group_model_parameters": self._table_state_for(self._group_model_table),
         }
         wizard_state_by_run_set = self._serialize_wizard_cache_store()
         if wizard_state_by_run_set:
@@ -2389,6 +3196,12 @@ class GlobalFitTab(QWidget):
         """Restore global-fit tab state from a saved dict."""
         self._wizard_cache_by_run_set = {}
         self._set_active_wizard_cache(None, signature=None, log_text="")
+
+        mode = state.get("mode")
+        if isinstance(mode, str):
+            idx = self._mode_combo.findData(mode)
+            if idx >= 0:
+                self._mode_combo.setCurrentIndex(idx)
 
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):
@@ -2435,8 +3248,24 @@ class GlobalFitTab(QWidget):
             bounds_item = self._param_table.item(i, 3)
             if bounds_item:
                 bounds_item.setText(p_data.get("bounds", "-inf, inf"))
+        _configure_fraction_rows_in_table(
+            self._param_table,
+            self._composite_model,
+            bounds_column=3,
+            type_column=2,
+        )
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
+
+        self._restore_group_param_table_state(state.get("group_parameters"))
+        self._restore_table_state(self._group_model_table, state.get("group_model_parameters"))
+        _configure_fraction_rows_in_table(
+            self._group_model_table,
+            self._grouped_fit_model(),
+            bounds_column=3,
+            type_column=2,
+        )
+        self._synchronize_grouped_model_fraction_rows()
 
         result_html = state.get("result_html")
         if isinstance(result_html, str) and result_html:
@@ -2459,6 +3288,634 @@ class GlobalFitTab(QWidget):
                     log_text=str(wizard_state.get("log_text", "")),
                 )
         self._sync_active_wizard_cache_from_selection()
+        self._update_mode_ui(preserve_result=True)
+
+    def is_grouped_time_domain_mode(self) -> bool:
+        """Return whether grouped time-domain mode is active."""
+        return self._mode_token() == "grouped"
+
+    def _mode_token(self) -> str:
+        token = self._mode_combo.currentData()
+        mode = str(token or "datasets")
+        if mode not in self._allowed_modes:
+            return self._allowed_modes[0]
+        return mode
+
+    def _on_mode_changed(self, _index: int) -> None:
+        self._update_mode_ui(preserve_result=False)
+        self.grouped_mode_changed.emit(self.is_grouped_time_domain_mode())
+
+    def _update_mode_ui(self, *, preserve_result: bool) -> None:
+        grouped = self.is_grouped_time_domain_mode()
+        self._param_group.setVisible(not grouped)
+        self._grouped_context_label.setVisible(grouped)
+        self._group_param_group.setVisible(grouped)
+        self._group_model_group.setVisible(grouped)
+        self._fit_btn.setText("Run Grouped Fit" if grouped else "Run Global Fit")
+        self._preview_btn.setVisible(grouped)
+        _set_formula_label_text(
+            self._formula_label,
+            (_grouped_formula_string(self._grouped_fit_model()) if grouped else self._composite_model.formula_string()),
+        )
+
+        if grouped:
+            grouped_groups, grouped_datasets, message = self._grouped_mode_context()
+            desired_group_specs = self._grouped_parameter_specs(grouped_groups)
+            if desired_group_specs != self._group_param_group_specs:
+                preserved_state = self._current_group_param_table_state()
+                if grouped_groups and not self._group_param_group_specs:
+                    self._reset_initial_group_nuisance_placeholders(preserved_state)
+                self._rebuild_group_nuisance_table(
+                    preserved_state,
+                    grouped_groups=grouped_groups if grouped_groups is not None else [],
+                )
+            ready = grouped_groups is not None and grouped_datasets is not None
+            self._grouped_context_label.setText(message)
+            self._fit_btn.setEnabled(ready and (not self._fit_blocked))
+            self._fit_btn.setToolTip(self._fit_block_reason if self._fit_blocked else message)
+            self._preview_btn.setEnabled(ready and (not self._fit_blocked))
+            self._preview_btn.setToolTip(self._fit_block_reason if self._fit_blocked else message)
+            self._fit_wizard_btn.setEnabled(False)
+            self._fit_wizard_btn.setToolTip(
+                "Global Fit Wizard is unavailable in grouped time-domain mode."
+            )
+            if not preserve_result:
+                self._result_text.setText(message)
+            return
+
+        n = len(self._datasets)
+        self._fit_btn.setEnabled((n > 1) and (not self._fit_blocked))
+        self._fit_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
+        self._preview_btn.setEnabled(False)
+        self._preview_btn.setToolTip("Preview is available only in grouped time-domain mode.")
+        self._fit_wizard_btn.setEnabled((n > 1) and (not self._fit_blocked))
+        self._fit_wizard_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
+        if preserve_result:
+            return
+        if n == 0:
+            self._result_text.setText(
+                "No datasets selected.\nSelect datasets in the browser to run a global fit."
+            )
+        elif n == 1:
+            self._result_text.setText(
+                "Global fitting requires at least 2 datasets.\nCurrently have 1 selected dataset."
+            )
+        else:
+            self._result_text.setText(
+                f"{n} datasets selected. Configure parameters and click Run Global Fit."
+            )
+
+    def _grouped_mode_context(
+        self,
+    ) -> tuple[list[object] | None, list[MuonDataset] | None, str]:
+        if self._fit_blocked:
+            return None, None, self._fit_block_reason or "Grouped fitting is unavailable."
+        if self._current_dataset is None:
+            return (
+                None,
+                None,
+                "Grouped time-domain mode requires an active dataset in the FB Asymmetry or Individual Groups workspace.",
+            )
+        if np.asarray(self._current_dataset.time).size == 0:
+            return None, None, "Grouped time-domain mode requires a non-empty active dataset."
+        fit_t_min: float | None = None
+        fit_t_max: float | None = None
+        time_values = np.asarray(self._current_dataset.time, dtype=float)
+        finite_mask = np.isfinite(time_values)
+        if np.any(finite_mask):
+            fit_t_min = float(np.min(time_values[finite_mask]))
+            fit_t_max = float(np.max(time_values[finite_mask]))
+        try:
+            grouped_groups = build_grouped_time_domain_groups(
+                self._current_dataset,
+                t_min=fit_t_min,
+                t_max=fit_t_max,
+            )
+            grouped_datasets = build_grouped_time_domain_datasets(self._current_dataset)
+        except ValueError as exc:
+            return None, None, str(exc)
+
+        run_label = getattr(self._current_dataset, "run_label", str(self._current_dataset.run_number))
+        return (
+            grouped_groups,
+            grouped_datasets,
+            f"{len(grouped_datasets)} grouped traces from {run_label} are ready for fitting.",
+        )
+
+    def _setup_group_nuisance_table(self) -> None:
+        self._rebuild_group_nuisance_table(preserved_state=None)
+
+    def _grouped_parameter_specs(
+        self,
+        grouped_groups: list[object] | None = None,
+    ) -> list[tuple[object, str]]:
+        if grouped_groups is None:
+            grouped_groups, _grouped_datasets, _message = self._grouped_mode_context()
+        if not grouped_groups:
+            return []
+        specs: list[tuple[object, str]] = []
+        for index, group in enumerate(grouped_groups, start=1):
+            group_id = getattr(group, "group_id", index)
+            group_name = str(getattr(group, "group_name", f"Group {group_id}"))
+            specs.append((group_id, group_name))
+        return specs
+
+    def _group_param_value_column_count(self) -> int:
+        return max(1, len(self._group_param_group_specs))
+
+    def _group_param_type_column(self) -> int:
+        return 1 + self._group_param_value_column_count()
+
+    def _group_param_bounds_column(self) -> int:
+        return self._group_param_type_column() + 1
+
+    def _group_param_value_column_entries(self) -> list[object]:
+        if self._group_param_group_specs:
+            return [group_id for group_id, _name in self._group_param_group_specs]
+        return ["default"]
+
+    def _current_group_param_table_state(self) -> dict[str, dict[str, object]]:
+        state: dict[str, dict[str, object]] = {}
+        value_entries = self._group_param_value_column_entries()
+        type_column = self._group_param_type_column()
+        bounds_column = self._group_param_bounds_column()
+        for row in range(self._group_param_table.rowCount()):
+            name_item = self._group_param_table.item(row, 0)
+            if name_item is None:
+                continue
+            param_name = name_item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(param_name, str):
+                continue
+            group_values: dict[str, str] = {}
+            fallback_value = ""
+            for offset, entry in enumerate(value_entries, start=1):
+                value_item = self._group_param_table.item(row, offset)
+                value_text = value_item.text() if value_item is not None else ""
+                group_values[str(entry)] = value_text
+                if offset == 1:
+                    fallback_value = value_text
+            type_combo = self._group_param_table.cellWidget(row, type_column)
+            bounds_item = self._group_param_table.item(row, bounds_column)
+            state[param_name] = {
+                "value": fallback_value,
+                "group_values": group_values,
+                "bounds": bounds_item.text() if bounds_item is not None else "-inf, inf",
+                "type": type_combo.currentText() if isinstance(type_combo, QComboBox) else "",
+            }
+        return state
+
+    def _rebuild_group_nuisance_table(
+        self,
+        preserved_state: dict[str, dict[str, object]] | None,
+        *,
+        grouped_groups: list[object] | None = None,
+    ) -> None:
+        defaults = {
+            "N0": (100.0, "Local", "0, inf"),
+            "background": (0.0, "Local", "0, inf"),
+            "amplitude": (0.2, "Local", "-1, 1"),
+            "relative_phase": (0.0, "Local", f"{-np.pi:.6g}, {np.pi:.6g}"),
+        }
+        grouped_groups = grouped_groups or []
+        self._group_param_group_specs = self._grouped_parameter_specs(grouped_groups)
+        value_headers = [name for _group_id, name in self._group_param_group_specs] or ["Value"]
+        column_count = 1 + len(value_headers) + 2
+        previous_signal_state = self._group_param_table.blockSignals(True)
+        previous_rows = self._group_param_table.rowCount()
+        previous_columns = self._group_param_table.columnCount()
+        for row in range(previous_rows):
+            for column in range(previous_columns):
+                if self._group_param_table.cellWidget(row, column) is not None:
+                    self._group_param_table.removeCellWidget(row, column)
+        self._group_param_table.clearContents()
+        self._group_param_table.setColumnCount(column_count)
+        self._group_param_table.setHorizontalHeaderLabels(
+            ["Parameter", *value_headers, "Type", "Bounds"]
+        )
+        self._group_param_table.setColumnWidth(0, 110)
+        for offset in range(len(value_headers)):
+            self._group_param_table.setColumnWidth(1 + offset, 90)
+        self._group_param_table.setColumnWidth(self._group_param_type_column(), 100)
+        self._group_param_table.setColumnWidth(self._group_param_bounds_column(), 150)
+        self._group_param_table.setRowCount(len(GROUP_NUISANCE_PARAMS))
+
+        n0_defaults_by_group: dict[str, float] = {}
+        background_defaults_by_group: dict[str, float] = {}
+        amplitude_defaults_by_group: dict[str, float] = {}
+        relative_phase_defaults_by_group = _seed_group_relative_phases(grouped_groups)
+        for group in grouped_groups:
+            counts = np.asarray(getattr(group, "counts", []), dtype=float)
+            if counts.size == 0:
+                continue
+            group_id = getattr(group, "group_id", None)
+            background_default, n0_default, amplitude_default = _seed_group_background_and_n0(
+                counts,
+                time=getattr(group, "time", None),
+            )
+            n0_defaults_by_group[str(group_id)] = n0_default
+            background_defaults_by_group[str(group_id)] = background_default
+            amplitude_defaults_by_group[str(group_id)] = amplitude_default
+
+        for row, name in enumerate(GROUP_NUISANCE_PARAMS):
+            label_item = QTableWidgetItem(_format_param_label(name))
+            label_item.setData(Qt.ItemDataRole.UserRole, name)
+            label_item.setFlags(label_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._group_param_table.setItem(row, 0, label_item)
+
+            previous = preserved_state.get(name, {}) if isinstance(preserved_state, dict) else {}
+            default_value, type_text, bounds = defaults[name]
+            previous_group_values = previous.get("group_values")
+            if not isinstance(previous_group_values, dict):
+                previous_group_values = {}
+            previous_value = previous.get("value")
+            fallback_value = str(previous_value) if previous_value not in (None, "") else ""
+            for offset, entry in enumerate(self._group_param_value_column_entries(), start=1):
+                entry_key = str(entry)
+                entry_default = (
+                    n0_defaults_by_group.get(entry_key, default_value)
+                    if name == "N0"
+                    else (
+                        background_defaults_by_group.get(entry_key, default_value)
+                        if name == "background"
+                        else (
+                            amplitude_defaults_by_group.get(entry_key, default_value)
+                            if name == "amplitude"
+                            else (
+                                relative_phase_defaults_by_group.get(entry_key, default_value)
+                                if name == "relative_phase"
+                                else default_value
+                            )
+                        )
+                    )
+                )
+                value_text = str(previous_group_values.get(entry_key, fallback_value))
+                if not value_text:
+                    value_text = f"{entry_default:.6g}"
+                self._group_param_table.setItem(row, offset, QTableWidgetItem(value_text))
+
+            type_combo = QComboBox()
+            type_combo.addItems(["Global", "Local", "Fixed"])
+            type_combo.setCurrentText(str(previous.get("type") or type_text))
+            type_combo.currentTextChanged.connect(
+                lambda _text, row=row: self._on_group_param_type_changed(row)
+            )
+            self._group_param_table.setCellWidget(row, self._group_param_type_column(), type_combo)
+            self._group_param_table.setItem(
+                row,
+                self._group_param_bounds_column(),
+                QTableWidgetItem(str(previous.get("bounds") or bounds)),
+            )
+            self._sync_group_param_row_values(row)
+        self._group_param_table.blockSignals(previous_signal_state)
+
+    def _sync_group_param_row_values(self, row: int, edited_column: int | None = None) -> None:
+        if self._updating_group_param_values:
+            return
+        type_combo = self._group_param_table.cellWidget(row, self._group_param_type_column())
+        if not isinstance(type_combo, QComboBox):
+            return
+        if type_combo.currentText() == "Local":
+            return
+        source_column = 1 if edited_column is None or edited_column < 1 else edited_column
+        source_item = self._group_param_table.item(row, source_column)
+        source_text = source_item.text() if source_item is not None else ""
+        self._updating_group_param_values = True
+        try:
+            for column in range(1, 1 + self._group_param_value_column_count()):
+                if column == source_column:
+                    continue
+                item = self._group_param_table.item(row, column)
+                if item is None:
+                    item = QTableWidgetItem(source_text)
+                    self._group_param_table.setItem(row, column, item)
+                else:
+                    item.setText(source_text)
+        finally:
+            self._updating_group_param_values = False
+
+    def _on_group_param_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._updating_group_param_values:
+            return
+        if item.column() < 1 or item.column() >= self._group_param_type_column():
+            return
+        self._sync_group_param_row_values(item.row(), edited_column=item.column())
+
+    def _on_group_param_type_changed(self, row: int) -> None:
+        self._sync_group_param_row_values(row)
+
+    def _current_grouped_model_row_state(self) -> dict[str, dict[str, str]]:
+        return self._table_state_map(self._group_model_table)
+
+    def _rebuild_grouped_model_table(self, preserved_state: dict[str, dict[str, str]]) -> None:
+        grouped_model = self._grouped_fit_model()
+        grouped_groups, _grouped_datasets, _message = self._grouped_mode_context()
+        phase_defaults = _grouped_model_phase_defaults(grouped_model, grouped_groups or [])
+        visible_param_names = [
+            pname for pname in grouped_model.param_names if not is_amplitude_parameter(pname)
+        ]
+        self._updating_group_model_fraction_values = True
+        self._group_model_table.setRowCount(len(visible_param_names))
+        for row, pname in enumerate(visible_param_names):
+            previous = preserved_state.get(pname, {})
+            name_item = QTableWidgetItem(_format_param_label(pname))
+            name_item.setData(Qt.ItemDataRole.UserRole, pname)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._group_model_table.setItem(row, 0, name_item)
+
+            default_val = grouped_model.param_defaults.get(pname, 0.0)
+            default_type = "Free"
+            if is_background_parameter(pname):
+                default_val = 0.0
+                default_type = "Fixed"
+            elif pname in phase_defaults:
+                default_val = phase_defaults[pname]
+            self._group_model_table.setItem(
+                row,
+                1,
+                QTableWidgetItem(str(previous.get("value") or default_val)),
+            )
+            type_combo = QComboBox()
+            type_combo.addItems(["Free", "Fixed"])
+            type_combo.setCurrentText(str(previous.get("type") or default_type))
+            self._group_model_table.setCellWidget(row, 2, type_combo)
+            default_min = get_param_info(pname).default_min
+            min_text = str(default_min) if default_min is not None else "-inf"
+            bounds_text = str(previous.get("bounds") or f"{min_text}, inf")
+            self._group_model_table.setItem(row, 3, QTableWidgetItem(bounds_text))
+        _configure_fraction_rows_in_table(
+            self._group_model_table,
+            grouped_model,
+            bounds_column=3,
+            type_column=2,
+        )
+        self._updating_group_model_fraction_values = False
+        self._synchronize_grouped_model_fraction_rows()
+
+    def _parse_grouped_parameter_configuration(self) -> dict[str, object]:
+        global_params: list[str] = []
+        local_params: list[str] = []
+        fixed_params: list[str] = []
+        model_values: dict[str, float] = {}
+        group_values: dict[str, dict[object, float]] = {}
+        bounds: dict[str, tuple[float, float]] = {}
+
+        group_value_entries = self._group_param_value_column_entries()
+        group_type_column = self._group_param_type_column()
+        group_bounds_column = self._group_param_bounds_column()
+        actual_group_ids = [group_id for group_id, _name in self._group_param_group_specs]
+        for row in range(self._group_param_table.rowCount()):
+            name_item = self._group_param_table.item(row, 0)
+            pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(pname, str):
+                pname = name_item.text() if name_item else f"group_param_{row}"
+
+            row_values: dict[object, float] = {}
+            first_value: float | None = None
+            for offset, entry in enumerate(group_value_entries, start=1):
+                try:
+                    value = float(self._group_param_table.item(row, offset).text())
+                except (TypeError, ValueError, AttributeError):
+                    raise ValueError(
+                        f"Error: Invalid value for {_format_param_label(pname)}"
+                    ) from None
+                if not np.isfinite(value):
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
+                    )
+                if first_value is None:
+                    first_value = value
+                row_values[entry] = value
+
+            bounds_text = self._group_param_table.item(row, group_bounds_column).text()
+            try:
+                lo_text, hi_text = [part.strip() for part in bounds_text.split(",", maxsplit=1)]
+                min_val = float(lo_text) if lo_text != "-inf" else -float("inf")
+                max_val = float(hi_text) if hi_text != "inf" else float("inf")
+            except (TypeError, ValueError):
+                min_val, max_val = -float("inf"), float("inf")
+
+            for value in row_values.values():
+                if np.isfinite(min_val) and value < min_val:
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} value {value} is below minimum {min_val}"
+                    )
+                if np.isfinite(max_val) and value > max_val:
+                    raise ValueError(
+                        f"Error: Parameter {_format_param_label(pname)} value {value} is above maximum {max_val}"
+                    )
+
+            type_combo = self._group_param_table.cellWidget(row, group_type_column)
+            type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Local"
+            if type_text == "Global":
+                global_params.append(pname)
+            elif type_text == "Local":
+                local_params.append(pname)
+            else:
+                fixed_params.append(pname)
+
+            if type_text == "Local" and actual_group_ids:
+                group_values[pname] = {
+                    group_id: row_values.get(group_id, first_value if first_value is not None else 0.0)
+                    for group_id in actual_group_ids
+                }
+            else:
+                shared_value = first_value if first_value is not None else 0.0
+                target_ids = actual_group_ids or list(row_values.keys())
+                group_values[pname] = {group_id: shared_value for group_id in target_ids}
+            bounds[pname] = (min_val, max_val)
+
+        for row in range(self._group_model_table.rowCount()):
+            name_item = self._group_model_table.item(row, 0)
+            pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(pname, str):
+                pname = name_item.text() if name_item else f"model_param_{row}"
+
+            try:
+                value = float(self._group_model_table.item(row, 1).text())
+            except (TypeError, ValueError, AttributeError):
+                raise ValueError(f"Error: Invalid value for {_format_param_label(pname)}") from None
+            if not np.isfinite(value):
+                raise ValueError(
+                    f"Error: Parameter {_format_param_label(pname)} must be finite, got {value}"
+                )
+
+            bounds_text = self._group_model_table.item(row, 3).text()
+            try:
+                lo_text, hi_text = [part.strip() for part in bounds_text.split(",", maxsplit=1)]
+                min_val = float(lo_text) if lo_text != "-inf" else -float("inf")
+                max_val = float(hi_text) if hi_text != "inf" else float("inf")
+            except (TypeError, ValueError):
+                min_val, max_val = -float("inf"), float("inf")
+
+            if np.isfinite(min_val) and value < min_val:
+                raise ValueError(
+                    f"Error: Parameter {_format_param_label(pname)} value {value} is below minimum {min_val}"
+                )
+            if np.isfinite(max_val) and value > max_val:
+                raise ValueError(
+                    f"Error: Parameter {_format_param_label(pname)} value {value} is above maximum {max_val}"
+                )
+
+            type_combo = self._group_model_table.cellWidget(row, 2)
+            type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Free"
+            if type_text == "Free":
+                global_params.append(pname)
+            else:
+                fixed_params.append(pname)
+
+            model_values[pname] = value
+            bounds[pname] = (min_val, max_val)
+
+        grouped_model = self._grouped_fit_model()
+        for pname in grouped_model.param_names:
+            if pname in model_values:
+                continue
+            if is_amplitude_parameter(pname):
+                model_values[pname] = 1.0
+                bounds[pname] = (1.0, 1.0)
+                if pname not in fixed_params:
+                    fixed_params.append(pname)
+
+        return {
+            "global": global_params,
+            "local": local_params,
+            "fixed": fixed_params,
+            "group_values": group_values,
+            "model_values": model_values,
+            "bounds": bounds,
+        }
+
+    def _table_state_map(self, table: QTableWidget) -> dict[str, dict[str, str]]:
+        state: dict[str, dict[str, str]] = {}
+        for row in range(table.rowCount()):
+            name_item = table.item(row, 0)
+            if name_item is None:
+                continue
+            param_name = name_item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(param_name, str):
+                continue
+            value_item = table.item(row, 1)
+            bounds_item = table.item(row, 3)
+            type_combo = table.cellWidget(row, 2)
+            state[param_name] = {
+                "value": value_item.text() if value_item is not None else "",
+                "bounds": bounds_item.text() if bounds_item is not None else "-inf, inf",
+                "type": type_combo.currentText() if isinstance(type_combo, QComboBox) else "",
+            }
+        return state
+
+    def _table_state_for(self, table: QTableWidget) -> list[dict[str, object]]:
+        state: list[dict[str, object]] = []
+        for name, entry in self._table_state_map(table).items():
+            try:
+                value = float(entry.get("value", 0.0))
+            except (TypeError, ValueError):
+                value = 0.0
+            state.append(
+                {
+                    "name": name,
+                    "value": value,
+                    "type": entry.get("type", ""),
+                    "bounds": entry.get("bounds", "-inf, inf"),
+                }
+            )
+        return state
+
+    def _restore_table_state(self, table: QTableWidget, payload: object) -> None:
+        if not isinstance(payload, list):
+            return
+        by_name = {str(entry.get("name")): entry for entry in payload if isinstance(entry, dict)}
+        for row in range(table.rowCount()):
+            name_item = table.item(row, 0)
+            pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(pname, str) or pname not in by_name:
+                continue
+            entry = by_name[pname]
+            value_item = table.item(row, 1)
+            if value_item is not None:
+                value_item.setText(str(entry.get("value", 0.0)))
+            type_combo = table.cellWidget(row, 2)
+            if isinstance(type_combo, QComboBox):
+                idx = type_combo.findText(str(entry.get("type", "")))
+                if idx >= 0:
+                    type_combo.setCurrentIndex(idx)
+            bounds_item = table.item(row, 3)
+            if bounds_item is not None:
+                bounds_item.setText(str(entry.get("bounds", "-inf, inf")))
+
+    def _restore_group_param_table_state(self, payload: object) -> None:
+        if not isinstance(payload, list):
+            return
+        by_name = {str(entry.get("name")): entry for entry in payload if isinstance(entry, dict)}
+        type_column = self._group_param_type_column()
+        bounds_column = self._group_param_bounds_column()
+        self._updating_group_param_values = True
+        try:
+            for row in range(self._group_param_table.rowCount()):
+                name_item = self._group_param_table.item(row, 0)
+                pname = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+                if not isinstance(pname, str) or pname not in by_name:
+                    continue
+                entry = by_name[pname]
+                raw_group_values = entry.get("group_values")
+                group_values = raw_group_values if isinstance(raw_group_values, dict) else {}
+                fallback_value = str(entry.get("value", 0.0))
+                for offset, group_entry in enumerate(self._group_param_value_column_entries(), start=1):
+                    value_item = self._group_param_table.item(row, offset)
+                    if value_item is None:
+                        continue
+                    value_item.setText(str(group_values.get(str(group_entry), fallback_value)))
+                type_combo = self._group_param_table.cellWidget(row, type_column)
+                if isinstance(type_combo, QComboBox):
+                    idx = type_combo.findText(str(entry.get("type", "")))
+                    if idx >= 0:
+                        type_combo.setCurrentIndex(idx)
+                bounds_item = self._group_param_table.item(row, bounds_column)
+                if bounds_item is not None:
+                    bounds_item.setText(str(entry.get("bounds", "-inf, inf")))
+                self._sync_group_param_row_values(row)
+        finally:
+            self._updating_group_param_values = False
+
+    def _update_group_parameter_defaults(self) -> None:
+        had_group_columns = bool(self._group_param_group_specs)
+        grouped_groups, _grouped_datasets, _message = self._grouped_mode_context()
+        preserved_state = self._current_group_param_table_state()
+        if grouped_groups and not had_group_columns:
+            self._reset_initial_group_nuisance_placeholders(preserved_state)
+        self._rebuild_group_nuisance_table(
+            preserved_state,
+            grouped_groups=grouped_groups if grouped_groups is not None else [],
+        )
+
+    def _reset_initial_group_nuisance_placeholders(
+        self,
+        preserved_state: dict[str, dict[str, object]],
+    ) -> None:
+        self._clear_group_parameter_value_placeholders(preserved_state, ("N0", "background"))
+
+    def _clear_group_parameter_value_placeholders(
+        self,
+        preserved_state: dict[str, dict[str, object]],
+        param_names: tuple[str, ...] | list[str],
+    ) -> None:
+        for pname in param_names:
+            state = preserved_state.get(pname)
+            if not isinstance(state, dict):
+                continue
+            updated_state = dict(state)
+            updated_state["value"] = ""
+            updated_state["group_values"] = {}
+            preserved_state[pname] = updated_state
+
+    def _reset_group_parameter_estimates(self) -> None:
+        grouped_groups, _grouped_datasets, _message = self._grouped_mode_context()
+        preserved_state = self._current_group_param_table_state()
+        self._clear_group_parameter_value_placeholders(preserved_state, GROUP_NUISANCE_PARAMS)
+        self._rebuild_group_nuisance_table(
+            preserved_state,
+            grouped_groups=grouped_groups if grouped_groups is not None else [],
+        )
 
 
 class FitPanel(QWidget):
@@ -2473,6 +3930,8 @@ class FitPanel(QWidget):
     )  # (preview_result, fitted_curve, component_curves)
     # Keep payload generic to preserve Python dict key/value types end-to-end.
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
+    grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
+    grouped_time_domain_mode_changed = Signal(bool)
     share_function_with_group_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -2497,8 +3956,10 @@ class FitPanel(QWidget):
         self._tabs.addTab(self._single_tab, "Single")
 
         # Global fit tab
-        self._global_tab = GlobalFitTab()
+        self._global_tab = GlobalFitTab(allowed_modes=("datasets",))
         self._global_tab.global_fit_completed.connect(self.global_fit_completed.emit)
+        self._global_tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
+        self._global_tab.grouped_mode_changed.connect(self.grouped_time_domain_mode_changed.emit)
         self._tabs.addTab(self._global_tab, "Global")
 
         layout.addWidget(self._tabs)
@@ -2531,6 +3992,7 @@ class FitPanel(QWidget):
             self._single_state_by_run[self._active_single_run_number] = self._single_tab.get_state()
 
         self._single_tab.set_dataset(dataset)
+        self._global_tab.set_current_dataset(dataset)
 
         run_number = self._run_number_from_dataset(dataset)
         self._active_single_run_number = run_number
@@ -2551,6 +4013,10 @@ class FitPanel(QWidget):
         """Set the datasets for global fitting tab and track for group sharing."""
         self._all_datasets = datasets
         self._global_tab.set_datasets(datasets)
+
+    def is_grouped_time_domain_mode(self) -> bool:
+        """Return whether the global tab is in grouped time-domain mode."""
+        return self._global_tab.is_grouped_time_domain_mode()
 
     def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
         """Apply fit-action blocking to both single and global tabs."""

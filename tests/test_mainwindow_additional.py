@@ -10,7 +10,7 @@ import pytest
 
 pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings  # type: ignore
-from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar  # type: ignore
+from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QWidget  # type: ignore
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
@@ -575,6 +575,38 @@ class TestMainWindowBasic:
         assert mainwindow.windowTitle() != ""
         assert mainwindow._dock_fourier.minimumWidth() == 280
 
+    def test_perf_logging_reports_selection_and_fourier_when_enabled(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8830, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        monkeypatch.setenv("ASYMMETRY_PERF_LOGGING", "1")
+
+        mainwindow._on_dataset_selected(8830)
+        mainwindow._on_compute_fourier()
+
+        log_text = mainwindow._log_panel.to_plain_text()
+        assert "PERF selection_plot:" in log_text
+        assert "PERF dataset_selected:" in log_text
+        assert "PERF compute_fourier:" in log_text
+
+    def test_perf_logging_reports_load_file_batches_when_enabled(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_dataset(8831, with_grouping=True)
+        monkeypatch.setenv("ASYMMETRY_PERF_LOGGING", "1")
+        monkeypatch.setattr(mainwindow, "_load_file", lambda _path: dataset)
+
+        mainwindow._load_files(["/tmp/run8831.nxs"])
+
+        log_text = mainwindow._log_panel.to_plain_text()
+        assert "PERF load_files_batch:" in log_text
+        assert "files=1" in log_text
+
     def test_has_menu_bar(self, mainwindow: MainWindow) -> None:
         """Test menubar exists."""
         assert mainwindow.menuBar() is not None
@@ -589,6 +621,37 @@ class TestMainWindowBasic:
 
         assert options_menu is not None
         assert any(action.text() == "Use temperature from log" for action in options_menu.actions())
+        assert any(
+            action.text() == "Enable performance logging" for action in options_menu.actions()
+        )
+        assert any(action.text() == "Enable plot decimation" for action in options_menu.actions())
+
+    def test_perf_logging_option_persists_and_updates_action(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        action = mainwindow._perf_logging_action
+
+        action.setChecked(True)
+
+        assert mainwindow._settings.value("debug/perf_logging", False, bool) is True
+        assert "Performance logging enabled." in mainwindow._log_panel.to_plain_text()
+        assert action.isChecked() is True
+
+    def test_plot_decimation_option_defaults_on_and_updates_both_plot_panels(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        assert mainwindow._plot_decimation_action.isChecked() is True
+        assert mainwindow._plot_panel.decimation_enabled() is True
+        assert mainwindow._frequency_plot_panel.decimation_enabled() is True
+
+        mainwindow._plot_decimation_action.setChecked(False)
+
+        assert mainwindow._settings.value("plot/enable_decimation", True, bool) is False
+        assert mainwindow._plot_panel.decimation_enabled() is False
+        assert mainwindow._frequency_plot_panel.decimation_enabled() is False
+        assert "Plot decimation disabled." in mainwindow._log_panel.to_plain_text()
 
     def test_has_central_widget(self, mainwindow: MainWindow) -> None:
         """Test central widget exists."""
@@ -630,11 +693,158 @@ class TestMainWindowBasic:
         assert size.width() > 0
         assert size.height() > 0
 
+    def test_plot_workspace_uses_fb_groups_and_frequency_tabs(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """The central workspace should expose FB, grouped, and frequency tabs."""
+        labels = [
+            mainwindow._plot_workspace._tab_bar.tabText(index)
+            for index in range(mainwindow._plot_workspace._tab_bar.count())
+        ]
+
+        assert labels == ["FB Asymmetry", "Individual Groups", "Frequency Domain"]
+
     def test_on_fit_shows_fit_dock(self, mainwindow: MainWindow) -> None:
         """Fit action should unhide the fit dock if it starts hidden."""
         assert mainwindow._dock_fit.isHidden()
         mainwindow._on_fit()
         assert not mainwindow._dock_fit.isHidden()
+
+    def test_on_fit_switches_dock_to_multi_group_fit_panel_from_group_view(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Fit action should swap the fit dock to grouped-fit content from group view."""
+
+        class _StubMultiGroupFitWindow(QWidget):
+            def __init__(self, *_args, **_kwargs) -> None:
+                super().__init__()
+                self.grouped_fit_completed = SimpleNamespace(connect=lambda _callback: None)
+                self.grouped_preview_requested = SimpleNamespace(connect=lambda _callback: None)
+                self.last_dataset = None
+                self.last_block_state = None
+                self._title = "Multi-Group Fit"
+
+            def set_dataset(self, dataset) -> None:
+                self.last_dataset = dataset
+                if dataset is None:
+                    self._title = "Multi-Group Fit"
+                    return
+                self._title = f"Multi-Group Fit — {getattr(dataset, 'run_label', dataset.run_number)}"
+
+            def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
+                self.last_block_state = (blocked, reason)
+
+            def dock_title(self) -> str:
+                return self._title
+
+            def grouped_fit_formula_string(self) -> str:
+                return "A(t)"
+
+        dataset = _make_dataset(4201, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._current_dataset = dataset
+        monkeypatch.setattr(mw_module, "MultiGroupFitWindow", _StubMultiGroupFitWindow)
+        mainwindow._multi_group_fit_window = _StubMultiGroupFitWindow()
+        mainwindow._fit_stack.addWidget(mainwindow._multi_group_fit_window)
+        monkeypatch.setattr(
+            mainwindow,
+            "_grouped_time_domain_display_datasets",
+            lambda dataset=None: [dataset or mainwindow._current_dataset],
+        )
+        mainwindow._refresh_time_view_selector()
+        mainwindow._plot_workspace.set_active_view("groups")
+
+        assert mainwindow._dock_fit.isHidden()
+        mainwindow._on_fit()
+
+        assert isinstance(mainwindow._multi_group_fit_window, _StubMultiGroupFitWindow)
+        assert mainwindow._fit_stack.currentWidget() is mainwindow._multi_group_fit_window
+        assert not mainwindow._dock_fit.isHidden()
+
+    def test_grouped_preview_request_updates_group_plots_without_fit_result(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        grouped_datasets = [
+            _make_dataset(4204, with_grouping=True),
+            _make_dataset(4205, with_grouping=True),
+        ]
+        captured: dict[str, object] = {}
+
+        mainwindow._plot_panel.set_global_fits = lambda payload: captured.update({"payload": payload})
+        mainwindow._plot_panel.plot_grouped_time_domain_subplots = lambda datasets: captured.update(
+            {"datasets": list(datasets)}
+        )
+
+        preview_curves = {
+            4204: (object(), (np.array([0.0, 1.0]), np.array([1.0, 0.5])), tuple()),
+            4205: (object(), (np.array([0.0, 1.0]), np.array([0.8, 0.4])), tuple()),
+        }
+
+        mainwindow._on_grouped_preview_requested(
+            grouped_datasets,
+            preview_curves,
+            fit_function="A(t)",
+        )
+
+        assert captured["datasets"] == grouped_datasets
+        payload = captured["payload"]
+        assert payload[4204][2] == "Grouped Preview"
+        assert payload[4204][4] is None
+        assert payload[4204][5] == "A(t)"
+
+    def test_time_view_switch_replaces_visible_fit_dock_with_grouped_panel(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Switching between FB asymmetry and grouped view should swap the visible fit dock."""
+        dataset = _make_dataset(4202, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._current_dataset = dataset
+        monkeypatch.setattr(
+            mainwindow,
+            "_grouped_time_domain_display_datasets",
+            lambda dataset=None: [dataset or mainwindow._current_dataset],
+        )
+        mainwindow._refresh_time_view_selector()
+
+        mainwindow._on_fit()
+        assert mainwindow._fit_stack.currentWidget() is mainwindow._fit_panel
+
+        mainwindow._plot_workspace.set_active_view("groups")
+        assert mainwindow._fit_stack.currentWidget() is mainwindow._multi_group_fit_window
+
+        mainwindow._plot_workspace.set_active_view("fb_asymmetry")
+        assert mainwindow._fit_stack.currentWidget() is mainwindow._fit_panel
+
+    def test_frequency_view_can_switch_directly_to_grouped_time_view(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_dataset(4203, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._current_dataset = dataset
+        monkeypatch.setattr(
+            mainwindow,
+            "_grouped_time_domain_display_datasets",
+            lambda dataset=None: [dataset or mainwindow._current_dataset],
+        )
+
+        mainwindow._plot_workspace.set_active_view("frequency")
+        mainwindow._refresh_time_view_selector()
+
+        assert mainwindow._plot_workspace.active_view() == "frequency"
+        assert mainwindow._plot_workspace._tab_bar.isTabEnabled(1)
+
+        mainwindow._plot_workspace.set_active_view("groups")
+
+        assert mainwindow._plot_workspace.active_view() == "groups"
+        assert mainwindow._plot_panel.current_time_view_mode() == "groups"
 
     def test_set_compact_mode_is_legacy_no_op(self, mainwindow: MainWindow) -> None:
         """Legacy compact-mode API should leave the standard shell intact."""
@@ -643,7 +853,7 @@ class TestMainWindowBasic:
 
         assert not mainwindow.compact_mode
         assert not mainwindow._dock_fit.isHidden()
-        assert mainwindow._dock_fit.widget() is mainwindow._fit_panel
+        assert mainwindow._fit_stack.currentWidget() is mainwindow._fit_panel
 
     def test_ui_scale_action_updates_manager_and_settings(self, mainwindow: MainWindow) -> None:
         """Scale actions should delegate through UIManager and persist the choice."""
@@ -1234,6 +1444,19 @@ class TestMainWindowBasic:
         assert payload["t0_bin"] == 2
         assert payload["t_good_offset"] == 3
         assert payload["first_good_bin"] == 5
+
+    def test_extract_grouping_overrides_includes_group_include_flags(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_dataset(7455, with_grouping=True)
+        assert dataset.run is not None
+        dataset.run.grouping["included_groups"] = {1: True, 2: False}
+
+        payload = mainwindow._extract_grouping_overrides(dataset)
+
+        assert payload is not None
+        assert payload["included_groups"] == {1: True, 2: False}
 
     def test_extract_grouping_overrides_preserves_hist_t0_pairs(
         self,

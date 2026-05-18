@@ -98,6 +98,7 @@ class GroupingDialog(QDialog):
 
         self._groups = self._load_groups(self._run)
         self._group_names: dict[int, str] = self._load_group_names(self._run)
+        self._included_groups: dict[int, bool] = self._load_included_groups(self._run)
         self._vector_axis_pairs: dict[str, tuple[int, int]] = {}
         self._vector_alpha_spins: dict[str, QDoubleSpinBox] = {}
         self._vector_forward_labels: dict[str, QLabel] = {}
@@ -158,8 +159,10 @@ class GroupingDialog(QDialog):
         root.addLayout(dataset_buttons)
         root.addWidget(self._dataset_list)
 
-        self._group_table = QTableWidget(0, 3)
-        self._group_table.setHorizontalHeaderLabels(["Group", "Name", "Detector Indices (1-based)"])
+        self._group_table = QTableWidget(0, 4)
+        self._group_table.setHorizontalHeaderLabels(
+            ["Group", "Include", "Name", "Detector Indices (1-based)"]
+        )
         self._group_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._group_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._group_table.setMinimumHeight(0)
@@ -455,6 +458,22 @@ class GroupingDialog(QDialog):
                 continue
         return result
 
+    def _load_included_groups(self, run) -> dict[int, bool]:
+        """Load per-group include flags from run metadata, defaulting missing rows to True."""
+        grouping = run.grouping or {}
+        raw = grouping.get("included_groups")
+        result: dict[int, bool] = {}
+        if isinstance(raw, dict):
+            for key, val in raw.items():
+                try:
+                    gid = int(key)
+                except (TypeError, ValueError):
+                    continue
+                result[gid] = bool(val)
+        for gid in self._groups:
+            result.setdefault(int(gid), True)
+        return result
+
     def _reference_is_psi(self) -> bool:
         """Return True when the current reference run uses PSI detector conventions."""
         metadata: dict[str, Any] = {}
@@ -618,6 +637,7 @@ class GroupingDialog(QDialog):
             else None
         )
         self._group_names = self._load_group_names(self._run)
+        self._included_groups = self._load_included_groups(self._run)
         forward_gid, backward_gid = self._analysis_pair_for_reference(
             int(grouping.get("forward_group", 1)),
             int(grouping.get("backward_group", 2)),
@@ -1097,10 +1117,22 @@ class GroupingDialog(QDialog):
         self._group_table.setRowCount(len(self._groups))
         for row, gid in enumerate(sorted(self._groups)):
             self._group_table.setItem(row, 0, QTableWidgetItem(str(gid)))
+            include_item = QTableWidgetItem()
+            include_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsUserCheckable
+            )
+            include_item.setCheckState(
+                Qt.CheckState.Checked
+                if self._included_groups.get(int(gid), True)
+                else Qt.CheckState.Unchecked
+            )
+            self._group_table.setItem(row, 1, include_item)
             name = self._group_names.get(gid, "")
-            self._group_table.setItem(row, 1, QTableWidgetItem(name))
+            self._group_table.setItem(row, 2, QTableWidgetItem(name))
             detectors = [str(idx + 1) for idx in self._groups[gid]]
-            self._group_table.setItem(row, 2, QTableWidgetItem(", ".join(detectors)))
+            self._group_table.setItem(row, 3, QTableWidgetItem(", ".join(detectors)))
         self._group_table.resizeColumnsToContents()
         visible_rows = min(max(len(self._groups), 3), 5)
         row_height = max(24, self._group_table.verticalHeader().defaultSectionSize())
@@ -1109,6 +1141,24 @@ class GroupingDialog(QDialog):
         height = header_height + visible_rows * row_height + frame + 8
         self._group_table.setMinimumHeight(0)
         self._group_table.setMaximumHeight(height)
+
+    def _current_included_groups(self) -> dict[int, bool]:
+        """Return the include-checkbox state from the group table."""
+        included: dict[int, bool] = {}
+        for row in range(self._group_table.rowCount()):
+            gid_item = self._group_table.item(row, 0)
+            include_item = self._group_table.item(row, 1)
+            if gid_item is None or include_item is None:
+                continue
+            try:
+                gid = int(gid_item.text())
+            except (TypeError, ValueError):
+                continue
+            included[gid] = include_item.checkState() == Qt.CheckState.Checked
+        for gid in self._groups:
+            included.setdefault(int(gid), True)
+        self._included_groups = included
+        return dict(included)
 
     def _detect_vector_axis_pairs(self) -> dict[str, tuple[int, int]]:
         """Return vector-axis group pairs if canonical vector group names exist."""
@@ -1332,6 +1382,8 @@ class GroupingDialog(QDialog):
         # Keep any previously defined groups that are not in the result
         # (preserves groups beyond the 8 shown in the editor)
         self._groups = new_groups_0based
+        previous_included = dict(self._included_groups)
+        self._included_groups = {int(gid): bool(previous_included.get(int(gid), True)) for gid in self._groups}
         self._group_names = result.get("group_names", {})
         preset_name = result.get("grouping_preset")
         self._grouping_preset_name = str(preset_name) if preset_name else None
@@ -1489,6 +1541,7 @@ class GroupingDialog(QDialog):
                 "groups": {
                     gid: [idx + 1 for idx in values] for gid, values in self._groups.items()
                 },
+                "included_groups": self._current_included_groups(),
                 "group_names": dict(self._group_names),
                 "grouping_preset": self._grouping_preset_name,
                 "instrument": self._detector_layout_instrument_name,
@@ -1571,6 +1624,13 @@ class GroupingDialog(QDialog):
             groups[gid] = sorted(set(idxs))
 
         self._groups = groups
+        loaded_included_groups = payload.get("included_groups", {})
+        if isinstance(loaded_included_groups, dict):
+            self._included_groups = {
+                int(k): bool(v) for k, v in loaded_included_groups.items() if str(k).strip()
+            }
+        else:
+            self._included_groups = {int(gid): True for gid in groups}
         self._populate_group_table()
         self._refresh_group_combo_items(
             forward_gid=int(payload.get("forward_group", 1)),
@@ -1684,6 +1744,11 @@ class GroupingDialog(QDialog):
                 name = str(group_names.get(gid, "")).strip()
                 if name:
                     lines.append(f"group_name.{gid}={name}")
+        included_groups = payload.get("included_groups", {})
+        if isinstance(included_groups, dict):
+            for gid in sorted(int(k) for k in included_groups.keys()):
+                include = 1 if bool(included_groups.get(gid, True)) else 0
+                lines.append(f"group_include.{gid}={include}")
 
         return "\n".join(lines) + "\n"
 
@@ -1692,6 +1757,7 @@ class GroupingDialog(QDialog):
         """Parse line-based ``.grp`` text into a grouping payload dictionary."""
         payload: dict[str, Any] = {
             "groups": {},
+            "included_groups": {},
             "group_names": {},
             "forward_group": 1,
             "backward_group": 2,
@@ -1720,6 +1786,16 @@ class GroupingDialog(QDialog):
             if key.startswith("group_name."):
                 gid = int(key.split(".", 1)[1])
                 payload["group_names"][gid] = value
+                continue
+
+            if key.startswith("group_include."):
+                gid = int(key.split(".", 1)[1])
+                payload["included_groups"][gid] = value.strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }
                 continue
 
             if key.startswith("group."):
@@ -1783,6 +1859,14 @@ class GroupingDialog(QDialog):
             payload["t_good_offset"] = max(0, int(payload.get("first_good_bin", 0)) - t0_bin)
         payload["first_good_bin"] = max(0, t0_bin + int(payload.get("t_good_offset", 0)))
         payload["bin_index_base"] = 1 if int(payload.get("bin_index_base", 0)) == 1 else 0
+        if isinstance(payload.get("groups"), dict):
+            included_groups = payload.get("included_groups")
+            if not isinstance(included_groups, dict):
+                included_groups = {}
+            payload["included_groups"] = {
+                int(gid): bool(included_groups.get(int(gid), True))
+                for gid in payload["groups"]
+            }
 
         return payload
 

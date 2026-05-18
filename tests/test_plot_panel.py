@@ -31,7 +31,13 @@ class _FakeAxis:
         self.ylim_calls: list[tuple[float, float]] = []
         self.xlabel_calls: list[str] = []
         self.ylabel_calls: list[str] = []
+        self.tick_params_calls: list[dict[str, object]] = []
         self.legend_call_count = 0
+        self.xaxis = SimpleNamespace(label=SimpleNamespace(get_color=lambda: "black", set_color=self._set_x_label_color))
+        self._x_label_color = "black"
+
+    def _set_x_label_color(self, color: str) -> None:
+        self._x_label_color = color
 
     def errorbar(self, *args, **kwargs) -> None:
         self.errorbar_calls.append({"args": args, "kwargs": kwargs})
@@ -47,6 +53,9 @@ class _FakeAxis:
 
     def set_ylabel(self, label: str, *_args, **_kwargs) -> None:
         self.ylabel_calls.append(label)
+
+    def tick_params(self, *args, **kwargs) -> None:
+        self.tick_params_calls.append({"args": args, "kwargs": kwargs})
 
     def legend(self, *_args, **_kwargs) -> None:
         self.legend_call_count += 1
@@ -141,6 +150,8 @@ class TestPlotPanel:
         assert panel is not None
         if hasattr(panel, "_canvas"):
             assert panel._canvas is not None
+        if hasattr(panel, "_canvas_scroll_area"):
+            assert panel._canvas_scroll_area.widget() is panel._canvas
 
     def test_toolbar_does_not_show_apply_or_bunch_controls(self, panel: PlotPanel) -> None:
         """Main plot toolbar should not expose Apply or Bunch controls."""
@@ -680,6 +691,29 @@ class TestPlotPanel:
 
         assert np.array_equal(mask, np.array([False, False, True, True, True]))
 
+    def test_low_count_mask_does_not_treat_grouped_time_domain_counts_as_saturated(
+        self,
+        panel: PlotPanel,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        ds = MuonDataset(
+            time=np.array([0.0, 1.0, 2.0], dtype=float),
+            asymmetry=np.array([80.0, 120.0, 160.0], dtype=float),
+            error=np.ones(3, dtype=float),
+            metadata={
+                "run_number": 999001,
+                "grouped_time_domain": True,
+                "y_label": "Lifetime-corrected counts",
+            },
+            run=None,
+        )
+
+        mask = panel._low_count_mask_for_dataset(ds, source_dataset=ds)
+
+        assert np.array_equal(mask, np.array([False, False, False]))
+
     def test_axis_limits_persist_across_redraw_and_dataset_switch(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
@@ -737,6 +771,84 @@ class TestPlotPanel:
             pytest.skip("matplotlib not available")
         panel.plot_dataset(sample_dataset)
 
+    def test_plot_dataset_decimates_dense_display_but_keeps_full_cached_arrays(
+        self,
+        panel: PlotPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 101)
+        ds = MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-0.25 * t),
+            error=np.full_like(t, 0.01),
+            metadata={"run_number": 7771},
+        )
+        panel._max_render_points_per_trace = 10
+
+        errorbar_calls: list[dict[str, object]] = []
+        original_errorbar = panel._ax.errorbar
+
+        def _capture_errorbar(*args, **kwargs):
+            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
+            return original_errorbar(*args, **kwargs)
+
+        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+
+        panel.plot_dataset(ds)
+
+        assert panel._last_plot_time is not None
+        assert len(panel._last_plot_time) == len(t)
+        assert errorbar_calls
+        plotted_x = np.asarray(errorbar_calls[-1]["args"][0], dtype=float)
+        assert plotted_x.size < t.size
+        assert plotted_x.size <= 11
+        assert panel._ax.xaxis.label.get_color() == "red"
+        panel._canvas.draw()
+        visible_ticks = [tick for tick in panel._ax.get_xticklabels() if tick.get_visible()]
+        assert visible_ticks
+        assert all(tick.get_color() == "red" for tick in visible_ticks)
+
+    def test_plot_dataset_can_disable_decimation_for_dense_display(
+        self,
+        panel: PlotPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 101)
+        ds = MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-0.25 * t),
+            error=np.full_like(t, 0.01),
+            metadata={"run_number": 7775},
+        )
+        panel._max_render_points_per_trace = 10
+        panel.set_decimation_enabled(False, redraw=False)
+
+        errorbar_calls: list[dict[str, object]] = []
+        original_errorbar = panel._ax.errorbar
+
+        def _capture_errorbar(*args, **kwargs):
+            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
+            return original_errorbar(*args, **kwargs)
+
+        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+
+        panel.plot_dataset(ds)
+
+        plotted_x = np.asarray(errorbar_calls[-1]["args"][0], dtype=float)
+        assert plotted_x.size == t.size
+        assert panel._ax.xaxis.label.get_color() == panel._default_x_axis_label_color
+        panel._canvas.draw()
+        visible_ticks = [tick for tick in panel._ax.get_xticklabels() if tick.get_visible()]
+        assert visible_ticks
+        assert all(tick.get_color() == panel._default_x_axis_tick_color for tick in visible_ticks)
+
+
     def test_polarization_combo_uses_subscript_labels(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
@@ -769,6 +881,151 @@ class TestPlotPanel:
         ]
 
         assert labels[0] == "All"
+
+    def test_time_view_selector_supports_group_mode(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.set_time_view_modes(["fb_asymmetry", "groups"], current_mode="groups")
+
+        labels = [panel._time_view_combo.itemText(i) for i in range(panel._time_view_combo.count())]
+
+        assert labels == ["FB Asymmetry", "Individual Groups"]
+        assert panel.current_time_view_mode() == "groups"
+
+    def test_grouped_subplots_expand_canvas_height_for_scrolling(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        original_height = panel._canvas.minimumHeight()
+        datasets = [
+            MuonDataset(
+                time=np.array([0.0, 1.0, 2.0]),
+                asymmetry=np.array([1.0, 0.9, 0.8]),
+                error=np.array([0.01, 0.01, 0.01]),
+                metadata={"run_number": -(index + 1)},
+            )
+            for index in range(6)
+        ]
+
+        panel.plot_grouped_time_domain_subplots(datasets)
+
+        assert panel._canvas.minimumHeight() > original_height
+
+    def test_grouped_subplots_enable_vertical_scrollbar(
+        self,
+        qapp: QApplication,
+        panel: PlotPanel,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        datasets = [
+            MuonDataset(
+                time=np.array([0.0, 1.0, 2.0]),
+                asymmetry=np.array([1.0, 0.9, 0.8]),
+                error=np.array([0.01, 0.01, 0.01]),
+                metadata={"run_number": -(index + 1)},
+            )
+            for index in range(8)
+        ]
+
+        panel.resize(640, 280)
+        panel.show()
+        qapp.processEvents()
+
+        panel.plot_grouped_time_domain_subplots(datasets)
+        qapp.processEvents()
+
+        assert panel._canvas_scroll_area.verticalScrollBar().maximum() > 0
+
+    def test_grouped_subplots_shrink_with_panel_width(
+        self,
+        qapp: QApplication,
+        panel: PlotPanel,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        datasets = [
+            MuonDataset(
+                time=np.array([0.0, 1.0, 2.0]),
+                asymmetry=np.array([1.0, 0.9, 0.8]),
+                error=np.array([0.01, 0.01, 0.01]),
+                metadata={"run_number": -(index + 1)},
+            )
+            for index in range(6)
+        ]
+
+        panel.resize(900, 420)
+        panel.show()
+        qapp.processEvents()
+        panel.plot_grouped_time_domain_subplots(datasets)
+        qapp.processEvents()
+        wide_width = panel._canvas.width()
+
+        panel.resize(520, 420)
+        qapp.processEvents()
+        narrow_width = panel._canvas.width()
+
+        assert narrow_width < wide_width
+
+    def test_single_plot_resets_canvas_height_after_grouped_view(
+        self,
+        panel: PlotPanel,
+        sample_dataset: MuonDataset,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        datasets = [
+            MuonDataset(
+                time=np.array([0.0, 1.0, 2.0]),
+                asymmetry=np.array([1.0, 0.9, 0.8]),
+                error=np.array([0.01, 0.01, 0.01]),
+                metadata={"run_number": -(index + 1)},
+            )
+            for index in range(4)
+        ]
+        panel.plot_grouped_time_domain_subplots(datasets)
+
+        panel.plot_dataset(sample_dataset)
+
+        assert panel._canvas.minimumHeight() == panel._default_canvas_min_height
+
+    def test_grouped_subplots_redraw_preserves_subplot_mode(
+        self,
+        panel: PlotPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        datasets = [
+            MuonDataset(
+                time=np.array([0.0, 1.0, 2.0]),
+                asymmetry=np.array([1.0, 0.9, 0.8]),
+                error=np.array([0.01, 0.01, 0.01]),
+                metadata={"run_number": -(index + 1)},
+            )
+            for index in range(3)
+        ]
+        panel.plot_grouped_time_domain_subplots(datasets)
+
+        grouped_calls: list[list[int]] = []
+
+        def _capture_grouped(captured_datasets: list[MuonDataset]) -> None:
+            grouped_calls.append([int(ds.run_number) for ds in captured_datasets])
+
+        def _fail_overlay(_datasets: list[MuonDataset]) -> None:
+            raise AssertionError("grouped redraw regressed to overlay mode")
+
+        monkeypatch.setattr(panel, "plot_grouped_time_domain_subplots", _capture_grouped)
+        monkeypatch.setattr(panel, "plot_datasets", _fail_overlay)
+
+        panel._redraw_current_view()
+
+        assert grouped_calls == [[-1, -2, -3]]
 
     def test_polarization_axis_remembers_separate_y_limits(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -1073,6 +1330,68 @@ class TestPlotPanel:
         assert isinstance(fit_color, str)
         assert fit_color != point_color
 
+    def test_preview_fit_line_uses_red_overlay(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 100)
+        ds = MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-0.2 * t),
+            error=np.full_like(t, 0.01),
+            metadata={"run_number": 9901},
+        )
+
+        panel.plot_dataset(ds)
+
+        original_plot = panel._ax.plot
+        plot_calls: list[dict[str, object]] = []
+
+        def _capture_plot(*args, **kwargs):
+            plot_calls.append(kwargs)
+            return original_plot(*args, **kwargs)
+
+        panel._ax.plot = _capture_plot
+        try:
+            fit_y = 0.18 * np.exp(-0.15 * t)
+            panel.plot_fit(t, fit_y, label="Preview")
+        finally:
+            panel._ax.plot = original_plot
+
+        assert plot_calls
+        assert plot_calls[-1].get("color") == "#d73a49"
+
+    def test_fit_line_uses_red_overlay(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 100)
+        ds = MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-0.2 * t),
+            error=np.full_like(t, 0.01),
+            metadata={"run_number": 9902},
+        )
+
+        panel.plot_dataset(ds)
+
+        original_plot = panel._ax.plot
+        plot_calls: list[dict[str, object]] = []
+
+        def _capture_plot(*args, **kwargs):
+            plot_calls.append(kwargs)
+            return original_plot(*args, **kwargs)
+
+        panel._ax.plot = _capture_plot
+        try:
+            fit_y = 0.18 * np.exp(-0.15 * t)
+            panel.plot_fit(t, fit_y, label="Fit")
+        finally:
+            panel._ax.plot = original_plot
+
+        assert plot_calls
+        assert plot_calls[-1].get("color") == "#d73a49"
+
     def test_plot_multiple_datasets(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test plotting multiple datasets."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -1149,6 +1468,97 @@ class TestPlotPanel:
         assert panel._alpha_label.isHidden()
         assert panel._alpha_label.text() == ""
 
+    def test_plot_datasets_decimates_each_dense_trace_independently(
+        self,
+        panel: PlotPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 8.0, 121)
+        err = np.full_like(t, 0.01)
+        ds1 = MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-0.2 * t),
+            error=err,
+            metadata={"run_number": 7772},
+        )
+        ds2 = MuonDataset(
+            time=t,
+            asymmetry=0.15 * np.exp(-0.15 * t),
+            error=err,
+            metadata={"run_number": 7773},
+        )
+        panel._max_render_points_per_trace = 12
+
+        errorbar_calls: list[dict[str, object]] = []
+        original_errorbar = panel._ax.errorbar
+
+        def _capture_errorbar(*args, **kwargs):
+            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
+            return original_errorbar(*args, **kwargs)
+
+        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+
+        panel.plot_datasets([ds1, ds2])
+
+        labelled_calls = {
+            str(call["kwargs"].get("label")): np.asarray(call["args"][0], dtype=float)
+            for call in errorbar_calls
+            if call["kwargs"].get("label") not in {None, "_nolegend_"}
+        }
+        assert str(ds1.run_label) in labelled_calls
+        assert str(ds2.run_label) in labelled_calls
+        assert labelled_calls[str(ds1.run_label)].size < t.size
+        assert labelled_calls[str(ds2.run_label)].size < t.size
+        assert labelled_calls[str(ds1.run_label)].size <= 13
+        assert labelled_calls[str(ds2.run_label)].size <= 13
+
+    def test_set_view_limits_rebuilds_dense_trace_for_visible_window(
+        self,
+        panel: PlotPanel,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 101)
+        err = np.full_like(t, 0.01)
+        ds = MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-0.2 * t),
+            error=err,
+            metadata={"run_number": 7774},
+        )
+        panel._max_render_points_per_trace = 50
+
+        errorbar_calls: list[dict[str, object]] = []
+        original_errorbar = panel._ax.errorbar
+
+        def _capture_errorbar(*args, **kwargs):
+            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
+            return original_errorbar(*args, **kwargs)
+
+        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+
+        panel.plot_dataset(ds)
+        initial_visible = np.asarray(errorbar_calls[-1]["args"][0], dtype=float)
+        assert panel._ax.xaxis.label.get_color() == "red"
+
+        panel.set_view_limits(2.0, 4.0, -0.1, 0.3)
+        QApplication.processEvents()
+
+        refreshed_visible = np.asarray(errorbar_calls[-1]["args"][0], dtype=float)
+        assert refreshed_visible.size < initial_visible.size
+        assert np.all(refreshed_visible >= 2.0)
+        assert np.all(refreshed_visible <= 4.0)
+        assert panel._ax.xaxis.label.get_color() == panel._default_x_axis_label_color
+        panel._canvas.draw()
+        visible_ticks = [tick for tick in panel._ax.get_xticklabels() if tick.get_visible()]
+        assert visible_ticks
+        assert all(tick.get_color() == panel._default_x_axis_tick_color for tick in visible_ticks)
+
     def test_add_label_keeps_multi_dataset_redraw(
         self, panel: PlotPanel, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1218,6 +1628,22 @@ class TestPlotPanel:
         restored.restore_state(state, dataset=None)
 
         assert restored.is_overlay_enabled() is False
+
+    def test_time_view_selection_persists_in_panel_state(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.set_time_view_modes(["fb_asymmetry", "groups"], current_mode="fb_asymmetry")
+        panel.set_current_time_view_mode("groups")
+        state = panel.get_state()
+
+        restored = PlotPanel()
+        if not hasattr(restored, "_has_mpl") or not restored._has_mpl:
+            pytest.skip("matplotlib not available")
+        restored.restore_state(state, dataset=None)
+        restored.set_time_view_modes(["fb_asymmetry", "groups"], current_mode=state["time_view_mode"])
+
+        assert restored.current_time_view_mode() == "groups"
 
     def test_axis_specific_fit_curves_round_trip_in_panel_state(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -1451,6 +1877,26 @@ class TestPlotPanel:
         x_min, x_max = panel.get_fit_range()
         assert x_min == pytest.approx(float(sample_dataset.time.min()))
         assert x_max == pytest.approx(float(sample_dataset.time.max()))
+
+    def test_grouped_subplots_draw_fit_range_handles(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        datasets = [
+            MuonDataset(
+                time=np.array([0.0, 1.0, 2.0]),
+                asymmetry=np.array([1.0, 0.9, 0.8]),
+                error=np.array([0.01, 0.01, 0.01]),
+                metadata={"run_number": -(index + 1)},
+            )
+            for index in range(3)
+        ]
+
+        panel.plot_grouped_time_domain_subplots(datasets)
+
+        assert len(panel._fit_span_artists) == len(datasets)
+        assert len(panel._fit_min_handles) == len(datasets)
+        assert len(panel._fit_max_handles) == len(datasets)
 
     def test_get_fit_dataset_applies_selected_range(
         self, panel: PlotPanel, sample_dataset: MuonDataset

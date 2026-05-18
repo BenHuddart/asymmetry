@@ -670,6 +670,38 @@ After a global fit completes:
 * The **Global Parameter Fit** window opens automatically (see below)
 * The log panel shows a summary with average χ²ᵣ
 
+**Grouped Time-Domain Fitting**
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Asymmetry also supports WiMDA-style grouped count fitting inside one selected
+run.
+
+Use this mode when you want one shared physical function across several group
+traces from the same dataset rather than one simultaneous fit across several
+different runs.
+
+The main plot workspace now has three top-level tabs:
+
+* **FB Asymmetry**
+* **Individual Groups**
+* **Frequency Domain**
+
+To launch grouped fitting:
+
+* switch the central workspace to **Individual Groups**
+* click **Fit** to replace the normal fit dock with the **Multi-Group Fit** controls
+
+In that workflow:
+
+* the plot switches to stacked grouped time-domain subplots for the active dataset
+* the grouping definitions come from the current **Grouping** dialog payload
+* the fit UI splits into **Per-Group Parameters** and **Fit-Function Parameters** blocks
+* grouped runs are fitted in count space using lifetime-corrected grouped traces
+* switching the central workspace back to **FB Asymmetry** restores the regular fit dock
+
+See :doc:`grouped_time_domain_fitting` for the detailed workflow and current
+limitations of this first implementation slice.
+
 Global Parameter Fit Window
 ---------------------------
 
