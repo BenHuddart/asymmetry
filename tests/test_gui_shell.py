@@ -69,10 +69,13 @@ class _StubFitPanel(QWidget):
         super().__init__()
         self.fit_completed = _DummySignal()
         self.global_fit_completed = _DummySignal()
+        self.grouped_fit_completed = _DummySignal()
+        self.grouped_time_domain_mode_changed = _DummySignal()
         self.last_dataset = None
         self.last_datasets = None
         self.last_global_results = None
         self.shared_calls = []
+        self._grouped_mode = False
 
     def set_datasets(self, datasets):
         self.last_datasets = datasets
@@ -81,6 +84,9 @@ class _StubFitPanel(QWidget):
     def set_dataset(self, dataset):
         self.last_dataset = dataset
         return
+
+    def is_grouped_time_domain_mode(self):
+        return bool(self._grouped_mode)
 
     def register_global_fit_results(self, results_by_run):
         self.last_global_results = results_by_run
@@ -100,8 +106,12 @@ class _StubPlotPanel(QWidget):
         self._fit_curves = {}
         self.bunch_factor_changed = _DummySignal()
         self.fit_range_changed = _DummySignal()
+        self.time_view_changed = _DummySignal()
         self.factor = 1
         self.last_plotted_dataset = None
+        self.last_grouped_datasets = None
+        self._time_view_mode = "fb_asymmetry"
+        self._time_view_modes = ["fb_asymmetry"]
 
     def plot_dataset(self, dataset):
         self.last_plotted_dataset = dataset
@@ -110,6 +120,25 @@ class _StubPlotPanel(QWidget):
     def plot_datasets(self, datasets):
         self.last_plotted_dataset = datasets[-1] if datasets else None
         return
+
+    def plot_grouped_time_domain_subplots(self, datasets):
+        self.last_grouped_datasets = list(datasets)
+        return
+
+    def current_time_view_mode(self):
+        return self._time_view_mode
+
+    def set_time_view_modes(self, modes, current_mode=None):
+        self._time_view_modes = list(modes)
+        if current_mode is not None:
+            self._time_view_mode = current_mode
+        elif self._time_view_mode not in self._time_view_modes:
+            self._time_view_mode = self._time_view_modes[0]
+
+    def set_current_time_view_mode(self, mode, *, emit_signal=False):
+        self._time_view_mode = mode
+        if emit_signal:
+            self.time_view_changed.emit(mode)
 
     def plot_fit(self, *_args, **_kwargs):
         return
@@ -146,12 +175,45 @@ class _StubLogPanel(QWidget):
 
 
 class _StubFourier(QWidget):
-    pass
+    def restore_group_phase_state(self, *_args, **_kwargs):
+        return
+
+    def clear_group_phase_state(self):
+        return
+
+    def set_group_definitions(self, *_args, **_kwargs):
+        return
 
 
 class _StubFitParams(QWidget):
     def set_fit_results(self, *_args, **_kwargs):
         return
+
+
+class _StubMultiGroupFitWindow(QWidget):
+    def __init__(self, *_args, **_kwargs):
+        super().__init__()
+        self.grouped_fit_completed = _DummySignal()
+        self.grouped_preview_requested = _DummySignal()
+        self.last_dataset = None
+        self.last_block_state = None
+        self._title = "Multi-Group Fit"
+
+    def set_dataset(self, dataset):
+        self.last_dataset = dataset
+        if dataset is None:
+            self._title = "Multi-Group Fit"
+            return
+        self._title = f"Multi-Group Fit — {getattr(dataset, 'run_label', dataset.run_number)}"
+
+    def set_fit_blocked(self, blocked, reason=""):
+        self.last_block_state = (blocked, reason)
+
+    def dock_title(self):
+        return self._title
+
+    def grouped_fit_formula_string(self):
+        return "A(t)"
 
 
 @pytest.fixture(scope="module")
@@ -175,6 +237,7 @@ def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplicat
     monkeypatch.setattr(mw_module, "LogPanel", _StubLogPanel)
     monkeypatch.setattr(mw_module, "FourierPanel", _StubFourier)
     monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParams)
+    monkeypatch.setattr(mw_module, "MultiGroupFitWindow", _StubMultiGroupFitWindow)
 
     window = mw_module.MainWindow()
 
@@ -202,6 +265,26 @@ def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplicat
     assert window._fit_panel.last_dataset is not ds
     assert window._fit_panel.last_dataset.metadata["analysis_factor"] == 2
     assert all(d.metadata["analysis_factor"] == 2 for d in window._fit_panel.last_datasets)
+
+    monkeypatch.setattr(
+        window,
+        "_grouped_time_domain_display_datasets",
+        lambda dataset=None: [
+            MuonDataset(
+                time=np.array([0.0, 1.0]),
+                asymmetry=np.array([1.0, 0.9]),
+                error=np.array([0.0, 0.0]),
+                metadata={"run_number": -4201},
+            )
+        ],
+    )
+    window._plot_panel.set_current_time_view_mode("groups")
+    window._render_current_selection_plot()
+    assert window._plot_panel.last_grouped_datasets is not None
+    window._on_fit()
+    assert isinstance(window._multi_group_fit_window, _StubMultiGroupFitWindow)
+    assert window._fit_stack.currentWidget() is window._multi_group_fit_window
+    assert not window._dock_fit.isHidden()
 
     results_dict = {
         42: (

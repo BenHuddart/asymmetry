@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-05-18
+
+### Added
+- Added grouped time-domain fitting support with a dedicated multi-group fit window, grouped count-model fitting flow, and initial documentation for the new workflow.
+
+### Changed
+- Improved plot responsiveness during navigation and updated grouped plotting so individual-group views retain full traces while fit previews and fitted overlays respect the active fit window.
+- Refined grouped fit parameter handling, including default fractionized multi-group models, stronger dependent-fraction enforcement, improved grouped parameter write-back, and clearer additive-term parameter numbering for fractionized sum-of-products.
+- Restored grouped fit-window controls and scrolling behavior in the individual-groups view, including clearer fit overlays and grouped plot interaction updates.
+
+### Documentation
+- Expanded grouped time-domain fitting and detector-grouping documentation, and recorded the porting study notes for the multi-group time-domain fitting workflow.
+
+### Tests
+- Added regression coverage for grouped time-domain fitting, grouped plot behavior, grouped fit-window handling, grouped parameter synchronization, and composite-model numbering semantics.
+
 ## [0.3.2] - 2026-05-11
 
 ### Changed

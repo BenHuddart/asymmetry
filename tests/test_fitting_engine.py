@@ -103,6 +103,32 @@ def test_global_fit_requires_non_empty_dataset_list() -> None:
         FitEngine().global_fit([], _exp_model, ["A0"], ["Lambda"], {})
 
 
+def test_global_fit_requires_initial_params_for_each_dataset() -> None:
+    t = np.linspace(0.0, 1.0, 10)
+    ds1 = MuonDataset(t, _exp_model(t, 0.2, 0.3), np.full_like(t, 0.01), {"run_number": 1})
+    ds2 = MuonDataset(t, _exp_model(t, 0.2, 0.4), np.full_like(t, 0.01), {"run_number": 2})
+
+    init = {
+        1: ParameterSet([Parameter("A0", 0.2), Parameter("Lambda", 0.3)]),
+    }
+
+    with pytest.raises(KeyError, match=r"initial parameter sets missing for dataset run numbers \[2\]"):
+        FitEngine().global_fit([ds1, ds2], _exp_model, ["A0"], ["Lambda"], init)
+
+
+def test_global_fit_rejects_duplicate_dataset_run_numbers() -> None:
+    t = np.linspace(0.0, 1.0, 10)
+    ds1 = MuonDataset(t, _exp_model(t, 0.2, 0.3), np.full_like(t, 0.01), {"run_number": 1})
+    ds2 = MuonDataset(t, _exp_model(t, 0.2, 0.4), np.full_like(t, 0.01), {"run_number": 1})
+
+    init = {
+        1: ParameterSet([Parameter("A0", 0.2), Parameter("Lambda", 0.3)]),
+    }
+
+    with pytest.raises(ValueError, match="Global fitting requires unique dataset run numbers"):
+        FitEngine().global_fit([ds1, ds2], _exp_model, ["A0"], ["Lambda"], init)
+
+
 def test_global_fit_import_error_returns_failed_results(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_broken_iminuit(monkeypatch)
 

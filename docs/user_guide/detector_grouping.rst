@@ -11,6 +11,7 @@ graphically with the Detector Layout editor.
 The grouping payload stores:
 
 * detector groups (1-based detector IDs)
+* per-group include flags for grouped plotting and grouped fitting
 * group names
 * selected forward/backward groups
 * alpha and bin-range settings
@@ -164,6 +165,11 @@ Detector Layout Editor Workflow
 
 A detector can belong to multiple groups. This is required for transverse and
 vector-polarization workflows.
+
+The Grouping table includes an **Include** checkbox for each group. This does
+not change the stored detector membership of the group. Instead, it controls
+whether that group participates in the **Individual Groups** plot view and in
+grouped time-domain fitting.
 
 In-App Arrangement Schematics
 -----------------------------

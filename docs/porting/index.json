@@ -43,6 +43,27 @@
       "src_path": null,
       "updated": "2026-05-15",
       "notes": "WiMDA-first implementation complete. musrfit comparison pass done 2026-05-15. Phase family investigation done 2026-05-15. Dangerous naming collisions documented: musrfit ‘phase’ = WiMDA ‘Phase Spectrum’; musrfit ‘real’ = WiMDA ‘Phase’; musrfit ‘power’ = |F|^2 != WiMDA ‘(Power)^1/2’ = |F|. Phase family conclusion: musrfit uses linear c0+c1 ONLY inside phaseOptReal optimizer; all manual/CLI paths use constant c0 only. Do NOT expose c1 as a user control; implement as optimizer backend only. t0_offset_us already covers the physical timing-slope case. Recommended follow-on: (1) phaseOptReal mode with entropy optimizer using c0+c1 backend, (2) N0 normalization for single-histogram inputs, (3) range-based background subtraction, (4) Tesla unit, (5) imag/real+imag output modes. musrfit qualitative apodization levels explicitly rejected in favour of WiMDA explicit tau/start. Per-detector FFT deferred."
+    },
+    {
+      "slug": "multi-group-time-domain-fitting",
+      "feature_name": "Multi-group time-domain fitting",
+      "status": "study",
+      "path": "docs/porting/multi-group-time-domain-fitting",
+      "references": [
+        "WiMDA",
+        "musrfit",
+        "Mantid"
+      ],
+      "docs": {
+        "readme": "docs/porting/multi-group-time-domain-fitting/README.md",
+        "comparison": "docs/porting/multi-group-time-domain-fitting/comparison.md",
+        "implementation_options": "docs/porting/multi-group-time-domain-fitting/implementation-options.md",
+        "test_data": "docs/porting/multi-group-time-domain-fitting/test-data.md",
+        "verification_plan": "docs/porting/multi-group-time-domain-fitting/verification-plan.md"
+      },
+      "tests_path": null,
+      "src_path": null,
+      "updated": "2026-05-18"
     }
   ]
 }

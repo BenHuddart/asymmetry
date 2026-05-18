@@ -547,6 +547,8 @@ class CompositeModel:
         self.open_parentheses = list(open_parentheses)
         self.close_parentheses = list(close_parentheses)
         self.fraction_groups = self._validate_fraction_groups(fraction_groups or [])
+        self._fraction_param_number_by_component = self._build_fraction_param_number_map()
+        self._fraction_term_number_by_component = self._build_fraction_term_number_map()
         self._fraction_group_by_component = self._build_fraction_group_component_map()
         self.components = [COMPONENTS[name] for name in component_names]
         self._uses_parentheses = any(self.open_parentheses) or any(self.close_parentheses)
@@ -577,10 +579,10 @@ class CompositeModel:
                     defaults[unique_name] = component.param_defaults[pname]
                     param_info[unique_name] = get_param_info(unique_name)
 
-            if group is not None:
+            if group is not None and idx in self._fraction_group_term_starts(group):
                 fraction_name = self._fraction_param_name(idx)
                 param_names.append(fraction_name)
-                defaults[fraction_name] = 1.0 / float(group[1] - group[0] + 1)
+                defaults[fraction_name] = 1.0 / float(len(self._fraction_group_term_starts(group)))
                 param_info[fraction_name] = get_param_info(fraction_name)
         self.param_names = param_names
         self.param_defaults = defaults
@@ -631,8 +633,9 @@ class CompositeModel:
             seen.add(group)
             if group not in actual_groups:
                 raise ValueError("Fraction groups must map to one parenthesized expression")
-            if any(op != "+" for op in self.operators[start:end]):
-                raise ValueError("Fraction groups only support additive '+' terms")
+            term_ranges = self._fraction_group_term_ranges(group)
+            if len(term_ranges) < 2:
+                raise ValueError("Fraction groups require at least two additive terms")
             for idx in range(start, end + 1):
                 if idx in occupied_components:
                     raise ValueError("Fraction groups cannot overlap")
@@ -663,11 +666,68 @@ class CompositeModel:
                 mapping[idx] = group
         return mapping
 
+    def _build_fraction_param_number_map(self) -> dict[int, int]:
+        mapping: dict[int, int] = {}
+        next_number = 1
+        for group in self.fraction_groups:
+            for idx in self._fraction_group_term_starts(group):
+                mapping[idx] = next_number
+                next_number += 1
+        return mapping
+
+    def _build_fraction_term_number_map(self) -> dict[int, int]:
+        mapping: dict[int, int] = {}
+        next_number = 1
+        for group in self.fraction_groups:
+            for term_start, term_end in self._fraction_group_term_ranges(group):
+                for idx in range(term_start, term_end + 1):
+                    mapping[idx] = next_number
+                next_number += 1
+        return mapping
+
+    def _term_ranges(self, start: int, end: int, *, inside_group: bool) -> list[tuple[int, int]]:
+        """Return top-level additive term ranges within one expression span."""
+        if start < 0 or end >= len(self.component_names) or start > end:
+            raise ValueError("Invalid term range")
+
+        depth = int(self.open_parentheses[start]) - (1 if inside_group else 0)
+        if depth < 0:
+            raise ValueError("Invalid parentheses while parsing term ranges")
+
+        term_ranges: list[tuple[int, int]] = []
+        term_start = start
+        for idx in range(start, end):
+            depth_after = depth - int(self.close_parentheses[idx])
+            if depth_after < 0:
+                raise ValueError("Invalid parentheses while parsing term ranges")
+            operator = self.operators[idx]
+            if depth_after == 0 and operator in {"+", "-"}:
+                if operator != "+":
+                    raise ValueError("Fraction groups only support additive '+' terms")
+                term_ranges.append((term_start, idx))
+                term_start = idx + 1
+            depth = depth_after + int(self.open_parentheses[idx + 1])
+
+        depth -= int(self.close_parentheses[end]) - (1 if inside_group else 0)
+        if depth != 0:
+            raise ValueError("Invalid parentheses while parsing term ranges")
+        term_ranges.append((term_start, end))
+        return term_ranges
+
+    def _fraction_group_term_ranges(self, group: tuple[int, int]) -> list[tuple[int, int]]:
+        """Return the additive term ranges represented by one fraction group."""
+        return self._term_ranges(group[0], group[1], inside_group=True)
+
+    def _fraction_group_term_starts(self, group: tuple[int, int]) -> list[int]:
+        """Return component indices where each weighted fraction term starts."""
+        return [start for start, _end in self._fraction_group_term_ranges(group)]
+
     def _fraction_group_amplitude_name(self, group: tuple[int, int]) -> str:
         return f"A_{group[0] + 1}"
 
     def _fraction_param_name(self, component_index: int) -> str:
-        return f"fraction_{component_index + 1}"
+        number = self._fraction_param_number_by_component.get(component_index, component_index + 1)
+        return f"fraction_{number}"
 
     def _fraction_group_default_amplitude(self, group: tuple[int, int]) -> float:
         start, end = group
@@ -683,8 +743,7 @@ class CompositeModel:
         group: tuple[int, int],
         kwargs: dict[str, float],
     ) -> dict[int, float]:
-        start, end = group
-        component_indices = list(range(start, end + 1))
+        component_indices = self._fraction_group_term_starts(group)
         raw_weights: list[float] = []
         for idx in component_indices:
             name = self._fraction_param_name(idx)
@@ -714,15 +773,44 @@ class CompositeModel:
     def fraction_parameter_groups(self) -> list[list[str]]:
         """Return fraction-parameter names grouped by additive fraction group."""
         groups: list[list[str]] = []
-        for start, end in self.fraction_groups:
-            groups.append([self._fraction_param_name(idx) for idx in range(start, end + 1)])
+        for group in self.fraction_groups:
+            groups.append(
+                [self._fraction_param_name(idx) for idx in self._fraction_group_term_starts(group)]
+            )
         return groups
+
+    def with_default_fraction_groups(self) -> CompositeModel:
+        """Return a copy with a top-level additive fraction group when suitable."""
+        if self.fraction_groups or len(self.component_names) < 2:
+            return self
+
+        try:
+            term_ranges = self._term_ranges(0, len(self.component_names) - 1, inside_group=False)
+        except ValueError:
+            return self
+        if len(term_ranges) < 2:
+            return self
+
+        open_parentheses = list(self.open_parentheses)
+        close_parentheses = list(self.close_parentheses)
+        if (0, len(self.component_names) - 1) not in self._parenthesized_group_ranges():
+            open_parentheses[0] += 1
+            close_parentheses[-1] += 1
+
+        return CompositeModel(
+            component_names=list(self.component_names),
+            operators=list(self.operators),
+            open_parentheses=open_parentheses,
+            close_parentheses=close_parentheses,
+            fraction_groups=[*self.fraction_groups, (0, len(self.component_names) - 1)],
+        )
 
     def _build_param_mapping(self) -> list[dict[str, str]]:
         name_counts = Counter(
             pname for component in self.components for pname in component.param_names
         )
         mappings: list[dict[str, str]] = []
+        used_names: set[str] = set()
         amplitude_group_starts: list[int] = []
         current_start = 1
         for idx in range(1, len(self.components) + 1):
@@ -752,9 +840,16 @@ class CompositeModel:
                     # Share one amplitude within each multiplicative/divisive chain.
                     mapping[pname] = f"{pname}_{amplitude_group_starts[idx - 1]}"
                 elif name_counts[pname] > 1:
-                    mapping[pname] = f"{pname}_{idx}"
+                    term_number = self._fraction_term_number_by_component.get(idx - 1)
+                    if term_number is not None:
+                        candidate = f"{pname}_{term_number}"
+                        mapping[pname] = candidate if candidate not in used_names else f"{pname}_{idx}"
+                    else:
+                        mapping[pname] = f"{pname}_{idx}"
                 else:
                     mapping[pname] = pname
+                if mapping[pname] != _UNIT_AMPLITUDE_SENTINEL:
+                    used_names.add(mapping[pname])
             mappings.append(mapping)
         return mappings
 
@@ -1057,11 +1152,8 @@ class CompositeModel:
             y_vals = np.asarray(component.function(t_arr, **component_kwargs), dtype=float)
             group = self._fraction_group_by_component.get(idx)
             if group is not None:
-                y_vals = (
-                    float(kwargs[self._fraction_group_amplitude_name(group)])
-                    * fraction_weights[idx]
-                    * y_vals
-                )
+                weight = fraction_weights[idx] if idx in fraction_weights else 1.0
+                y_vals = float(kwargs[self._fraction_group_amplitude_name(group)]) * weight * y_vals
             curves.append((self.component_names[idx], y_vals))
         return curves
 
@@ -1120,11 +1212,16 @@ class CompositeModel:
 
     def _formula_string_with_fraction_groups(self) -> str:
         terms: list[str] = []
+        fraction_term_starts = {
+            idx
+            for group in self.fraction_groups
+            for idx in self._fraction_group_term_starts(group)
+        }
         for idx, (component, mapping) in enumerate(
             zip(self.components, self._param_mappings, strict=True)
         ):
             term = self._component_formula_term(idx, component, mapping)
-            if idx in self._fraction_group_by_component:
+            if idx in fraction_term_starts:
                 fraction_name = self._fraction_param_name(idx)
                 term = fraction_name if term == "1" else f"{fraction_name}*{term}"
             terms.append(term)

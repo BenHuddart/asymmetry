@@ -361,3 +361,37 @@ def test_plot_panel_set_global_fits_preserves_other_group_fits(qapp: QApplicatio
     assert 2 in panel._fit_curves, "Group A fit for run 2 was incorrectly removed"
     assert 3 in panel._fit_curves
     assert 4 in panel._fit_curves
+
+
+def test_plot_panel_can_render_grouped_time_domain_subplots(qapp: QApplication) -> None:
+    panel = PlotPanel()
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+
+    t = np.linspace(0.0, 5.0, 50)
+    ds1 = MuonDataset(
+        time=t,
+        asymmetry=100.0 * np.exp(-0.2 * t),
+        error=np.full_like(t, 2.0),
+        metadata={
+            "run_number": -42001,
+            "run_label": "Forward",
+            "y_label": "Lifetime-corrected counts",
+        },
+    )
+    ds2 = MuonDataset(
+        time=t,
+        asymmetry=90.0 * np.exp(-0.2 * t),
+        error=np.full_like(t, 2.0),
+        metadata={
+            "run_number": -42002,
+            "run_label": "Backward",
+            "y_label": "Lifetime-corrected counts",
+        },
+    )
+
+    panel.plot_grouped_time_domain_subplots([ds1, ds2])
+
+    assert len(panel._current_datasets) == 2
+    assert len(panel._subplot_axes_by_polarization) == 2
+    assert panel._current_dataset is ds2
