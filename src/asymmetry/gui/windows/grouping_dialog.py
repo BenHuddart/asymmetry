@@ -1383,7 +1383,9 @@ class GroupingDialog(QDialog):
         # (preserves groups beyond the 8 shown in the editor)
         self._groups = new_groups_0based
         previous_included = dict(self._included_groups)
-        self._included_groups = {int(gid): bool(previous_included.get(int(gid), True)) for gid in self._groups}
+        self._included_groups = {
+            int(gid): bool(previous_included.get(int(gid), True)) for gid in self._groups
+        }
         self._group_names = result.get("group_names", {})
         preset_name = result.get("grouping_preset")
         self._grouping_preset_name = str(preset_name) if preset_name else None
@@ -1864,8 +1866,7 @@ class GroupingDialog(QDialog):
             if not isinstance(included_groups, dict):
                 included_groups = {}
             payload["included_groups"] = {
-                int(gid): bool(included_groups.get(int(gid), True))
-                for gid in payload["groups"]
+                int(gid): bool(included_groups.get(int(gid), True)) for gid in payload["groups"]
             }
 
         return payload

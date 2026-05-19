@@ -32,17 +32,8 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fourier.fft import estimate_fft_phase, fft_complex_asymmetry
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine, FitResult
-from asymmetry.core.fitting.grouped_time_domain import (
-    GROUP_NUISANCE_PARAMS,
-    build_grouped_count_model,
-    build_grouped_time_domain_datasets,
-    build_grouped_time_domain_groups,
-    fit_grouped_time_domain,
-    validate_grouped_model_contract,
-)
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     FitWizardRecommendation,
@@ -55,22 +46,32 @@ from asymmetry.core.fitting.global_fit_wizard import (
     deserialize_global_fit_wizard_recommendation,
     serialize_global_fit_wizard_recommendation,
 )
+from asymmetry.core.fitting.global_search.heuristics import (
+    is_amplitude_parameter,
+    is_background_parameter,
+)
+from asymmetry.core.fitting.grouped_time_domain import (
+    GROUP_NUISANCE_PARAMS,
+    build_grouped_count_model,
+    build_grouped_time_domain_datasets,
+    build_grouped_time_domain_groups,
+    fit_grouped_time_domain,
+    validate_grouped_model_contract,
+)
 from asymmetry.core.fitting.parameters import (
     Parameter,
     ParameterSet,
     get_param_info,
     split_parameter_name,
 )
-from asymmetry.core.fitting.global_search.heuristics import (
-    is_amplitude_parameter,
-    is_background_parameter,
-)
+from asymmetry.core.fourier.fft import estimate_fft_phase, fft_complex_asymmetry
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     MUON_LIFETIME_US,
 )
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
+from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
@@ -160,7 +161,9 @@ def _seed_group_background_and_n0(
     if not np.any(np.isfinite(residual)):
         return float(background), 100.0, 0.2
 
-    core_mask = early_mask if np.count_nonzero(early_mask) >= 3 else np.ones_like(residual, dtype=bool)
+    core_mask = (
+        early_mask if np.count_nonzero(early_mask) >= 3 else np.ones_like(residual, dtype=bool)
+    )
     core_residual = np.asarray(residual[core_mask], dtype=float)
     core_residual = core_residual[np.isfinite(core_residual)]
     if core_residual.size == 0:
@@ -896,6 +899,7 @@ class SingleFitTab(QWidget):
             # Value column — use dataset field for 'field' parameters if available
             default_val = field_overrides.get(pname, model.param_defaults.get(pname, 0.0))
             value_item = QTableWidgetItem(str(default_val))
+            value_item.setFont(mono_font(11.0))
             self._param_table.setItem(i, 1, value_item)
 
             # Fix checkbox column
@@ -913,10 +917,12 @@ class SingleFitTab(QWidget):
             default_min = get_param_info(pname).default_min
             min_text = str(default_min) if default_min is not None else "-inf"
             min_item = QTableWidgetItem(min_text)
+            min_item.setFont(mono_font(11.0))
             self._param_table.setItem(i, 3, min_item)
 
             # Max column
             max_item = QTableWidgetItem("inf")
+            max_item.setFont(mono_font(11.0))
             self._param_table.setItem(i, 4, max_item)
 
         _configure_fraction_rows_in_table(
@@ -2155,7 +2161,9 @@ class GlobalFitTab(QWidget):
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
         if self.is_grouped_time_domain_mode():
-            _set_formula_label_text(self._formula_label, _grouped_formula_string(self._grouped_fit_model()))
+            _set_formula_label_text(
+                self._formula_label, _grouped_formula_string(self._grouped_fit_model())
+            )
 
     def _grouped_fit_model(self) -> CompositeModel:
         """Return the grouped-mode model with default fraction semantics applied."""
@@ -2993,9 +3001,12 @@ class GlobalFitTab(QWidget):
         }
 
         shared_values = {
-            parameter.name: parameter.value for parameter in getattr(grouped_result, "shared_parameters", [])
+            parameter.name: parameter.value
+            for parameter in getattr(grouped_result, "shared_parameters", [])
         }
-        display_shared_values = _normalized_model_param_values(self._grouped_fit_model(), shared_values)
+        display_shared_values = _normalized_model_param_values(
+            self._grouped_fit_model(), shared_values
+        )
         shared_by_name = {
             parameter.name: parameter
             for parameter in getattr(grouped_result, "shared_parameters", [])
@@ -3032,7 +3043,9 @@ class GlobalFitTab(QWidget):
                     fit_result = group_fit_by_id.get(str(entry))
                     if fit_result is None:
                         continue
-                    fitted_by_name = {parameter.name: parameter for parameter in fit_result.parameters}
+                    fitted_by_name = {
+                        parameter.name: parameter for parameter in fit_result.parameters
+                    }
                     fitted = fitted_by_name.get(pname)
                     value_item = self._group_param_table.item(row, offset)
                     if value_item is not None and fitted is not None:
@@ -3040,12 +3053,20 @@ class GlobalFitTab(QWidget):
                 first_entry = str(self._group_param_value_column_entries()[0])
                 first_fit = group_fit_by_id.get(first_entry)
                 if first_fit is not None:
-                    fitted_by_name = {parameter.name: parameter for parameter in first_fit.parameters}
+                    fitted_by_name = {
+                        parameter.name: parameter for parameter in first_fit.parameters
+                    }
                     fitted = fitted_by_name.get(pname)
-                    bounds_item = self._group_param_table.item(row, self._group_param_bounds_column())
+                    bounds_item = self._group_param_table.item(
+                        row, self._group_param_bounds_column()
+                    )
                     if bounds_item is not None and fitted is not None:
-                        min_text = "-inf" if not np.isfinite(fitted.min) else f"{float(fitted.min):g}"
-                        max_text = "inf" if not np.isfinite(fitted.max) else f"{float(fitted.max):g}"
+                        min_text = (
+                            "-inf" if not np.isfinite(fitted.min) else f"{float(fitted.min):g}"
+                        )
+                        max_text = (
+                            "inf" if not np.isfinite(fitted.max) else f"{float(fitted.max):g}"
+                        )
                         bounds_item.setText(f"{min_text}, {max_text}")
         finally:
             self._group_param_table.blockSignals(previous_group_signal_state)
@@ -3086,9 +3107,7 @@ class GlobalFitTab(QWidget):
             t_fit = np.linspace(fit_t_min, fit_t_max, n_samples)
             y_fit = grouped_model(t_fit, **param_dict)
             results_with_curves[int(dataset.run_number)] = (fit_result, (t_fit, y_fit), tuple())
-            lines.append(
-                f"  {dataset.run_label}: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}"
-            )
+            lines.append(f"  {dataset.run_label}: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}")
 
         self._result_text.setHtml("<br>".join(lines))
         self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
@@ -3315,7 +3334,11 @@ class GlobalFitTab(QWidget):
         self._preview_btn.setVisible(grouped)
         _set_formula_label_text(
             self._formula_label,
-            (_grouped_formula_string(self._grouped_fit_model()) if grouped else self._composite_model.formula_string()),
+            (
+                _grouped_formula_string(self._grouped_fit_model())
+                if grouped
+                else self._composite_model.formula_string()
+            ),
         )
 
         if grouped:
@@ -3395,7 +3418,9 @@ class GlobalFitTab(QWidget):
         except ValueError as exc:
             return None, None, str(exc)
 
-        run_label = getattr(self._current_dataset, "run_label", str(self._current_dataset.run_number))
+        run_label = getattr(
+            self._current_dataset, "run_label", str(self._current_dataset.run_number)
+        )
         return (
             grouped_groups,
             grouped_datasets,
@@ -3715,7 +3740,9 @@ class GlobalFitTab(QWidget):
 
             if type_text == "Local" and actual_group_ids:
                 group_values[pname] = {
-                    group_id: row_values.get(group_id, first_value if first_value is not None else 0.0)
+                    group_id: row_values.get(
+                        group_id, first_value if first_value is not None else 0.0
+                    )
                     for group_id in actual_group_ids
                 }
             else:
@@ -3860,7 +3887,9 @@ class GlobalFitTab(QWidget):
                 raw_group_values = entry.get("group_values")
                 group_values = raw_group_values if isinstance(raw_group_values, dict) else {}
                 fallback_value = str(entry.get("value", 0.0))
-                for offset, group_entry in enumerate(self._group_param_value_column_entries(), start=1):
+                for offset, group_entry in enumerate(
+                    self._group_param_value_column_entries(), start=1
+                ):
                     value_item = self._group_param_table.item(row, offset)
                     if value_item is None:
                         continue

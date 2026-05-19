@@ -139,8 +139,8 @@ def test_fraction_group_accepts_sum_of_products() -> None:
         fraction_2=0.75,
     )
     expected = 2.0 * (
-        0.25 * np.exp(-0.3 * t) * np.exp(-(0.2 * t) ** 2)
-        + 0.75 * np.exp(-0.6 * t) * np.exp(-(0.4 * t) ** 2)
+        0.25 * np.exp(-0.3 * t) * np.exp(-((0.2 * t) ** 2))
+        + 0.75 * np.exp(-0.6 * t) * np.exp(-((0.4 * t) ** 2))
     )
 
     assert np.allclose(out, expected)

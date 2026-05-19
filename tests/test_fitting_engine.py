@@ -112,7 +112,9 @@ def test_global_fit_requires_initial_params_for_each_dataset() -> None:
         1: ParameterSet([Parameter("A0", 0.2), Parameter("Lambda", 0.3)]),
     }
 
-    with pytest.raises(KeyError, match=r"initial parameter sets missing for dataset run numbers \[2\]"):
+    with pytest.raises(
+        KeyError, match=r"initial parameter sets missing for dataset run numbers \[2\]"
+    ):
         FitEngine().global_fit([ds1, ds2], _exp_model, ["A0"], ["Lambda"], init)
 
 

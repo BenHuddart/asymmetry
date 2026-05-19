@@ -664,20 +664,32 @@ def test_grouped_fit_finished_updates_grouped_tables(
             time=np.array([0.0, 0.5, 1.0]),
             asymmetry=np.array([120.0, 110.0, 95.0]),
             error=np.array([1.0, 1.0, 1.0]),
-            metadata={"group_id": 1, "grouped_time_domain": True, "run_number": 9001, "run_label": "Forward"},
+            metadata={
+                "group_id": 1,
+                "grouped_time_domain": True,
+                "run_number": 9001,
+                "run_label": "Forward",
+            },
             run=dataset.run,
         ),
         MuonDataset(
             time=np.array([0.0, 0.5, 1.0]),
             asymmetry=np.array([80.0, 75.0, 70.0]),
             error=np.array([1.0, 1.0, 1.0]),
-            metadata={"group_id": 2, "grouped_time_domain": True, "run_number": 9002, "run_label": "Backward"},
+            metadata={
+                "group_id": 2,
+                "grouped_time_domain": True,
+                "run_number": 9002,
+                "run_label": "Backward",
+            },
             run=dataset.run,
         ),
     ]
 
     tab = GlobalFitTab(allowed_modes=("grouped",))
-    monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, grouped_datasets, "ready"))
+    monkeypatch.setattr(
+        tab, "_grouped_mode_context", lambda: (grouped_groups, grouped_datasets, "ready")
+    )
     tab.set_current_dataset(dataset)
 
     forward_params = ParameterSet(
@@ -708,8 +720,12 @@ def test_grouped_fit_finished_updates_grouped_tables(
             ]
         ),
         group_results={
-            1: FitResult(success=True, chi_squared=1.0, reduced_chi_squared=0.1, parameters=forward_params),
-            2: FitResult(success=True, chi_squared=1.0, reduced_chi_squared=0.1, parameters=backward_params),
+            1: FitResult(
+                success=True, chi_squared=1.0, reduced_chi_squared=0.1, parameters=forward_params
+            ),
+            2: FitResult(
+                success=True, chi_squared=1.0, reduced_chi_squared=0.1, parameters=backward_params
+            ),
         },
     )
 
@@ -725,12 +741,24 @@ def test_grouped_fit_finished_updates_grouped_tables(
         for row in range(tab._group_model_table.rowCount())
     }
 
-    assert float(tab._group_param_table.item(group_param_rows["N0"], 1).text()) == pytest.approx(101.0)
-    assert float(tab._group_param_table.item(group_param_rows["N0"], 2).text()) == pytest.approx(202.0)
-    assert float(tab._group_param_table.item(group_param_rows["relative_phase"], 1).text()) == pytest.approx(0.33)
-    assert float(tab._group_param_table.item(group_param_rows["relative_phase"], 2).text()) == pytest.approx(-0.41)
-    assert float(tab._group_model_table.item(group_model_rows["field"], 1).text()) == pytest.approx(151.0)
-    assert float(tab._group_model_table.item(group_model_rows["phase"], 1).text()) == pytest.approx(0.42)
+    assert float(tab._group_param_table.item(group_param_rows["N0"], 1).text()) == pytest.approx(
+        101.0
+    )
+    assert float(tab._group_param_table.item(group_param_rows["N0"], 2).text()) == pytest.approx(
+        202.0
+    )
+    assert float(
+        tab._group_param_table.item(group_param_rows["relative_phase"], 1).text()
+    ) == pytest.approx(0.33)
+    assert float(
+        tab._group_param_table.item(group_param_rows["relative_phase"], 2).text()
+    ) == pytest.approx(-0.41)
+    assert float(tab._group_model_table.item(group_model_rows["field"], 1).text()) == pytest.approx(
+        151.0
+    )
+    assert float(tab._group_model_table.item(group_model_rows["phase"], 1).text()) == pytest.approx(
+        0.42
+    )
     assert "Grouped Time-Domain Fit Successful" in tab._result_text.toPlainText()
 
 
@@ -835,11 +863,11 @@ def test_grouped_tab_shows_one_value_column_per_group(
         tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
         for row in range(tab._group_param_table.rowCount())
     }
-    forward_background, forward_n0, _forward_amplitude = fit_panel_module._seed_group_background_and_n0(
-        np.array([120.0, 118.0])
+    forward_background, forward_n0, _forward_amplitude = (
+        fit_panel_module._seed_group_background_and_n0(np.array([120.0, 118.0]))
     )
-    backward_background, backward_n0, _backward_amplitude = fit_panel_module._seed_group_background_and_n0(
-        np.array([80.0, 79.0])
+    backward_background, backward_n0, _backward_amplitude = (
+        fit_panel_module._seed_group_background_and_n0(np.array([80.0, 79.0]))
     )
 
     assert headers == ["Parameter", "Forward", "Backward", "Type", "Bounds"]
@@ -849,12 +877,12 @@ def test_grouped_tab_shows_one_value_column_per_group(
     assert float(tab._group_param_table.item(row_by_name["N0"], 2).text()) == pytest.approx(
         backward_n0
     )
-    assert float(
-        tab._group_param_table.item(row_by_name["background"], 1).text()
-    ) == pytest.approx(forward_background)
-    assert float(
-        tab._group_param_table.item(row_by_name["background"], 2).text()
-    ) == pytest.approx(backward_background)
+    assert float(tab._group_param_table.item(row_by_name["background"], 1).text()) == pytest.approx(
+        forward_background
+    )
+    assert float(tab._group_param_table.item(row_by_name["background"], 2).text()) == pytest.approx(
+        backward_background
+    )
     assert tab._group_param_table.cellWidget(row_by_name["N0"], 2) is None
     assert isinstance(tab._group_param_table.cellWidget(row_by_name["N0"], 3), QComboBox)
 
@@ -983,11 +1011,11 @@ def test_grouped_fit_uses_per_group_seed_values_from_group_columns(
         tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
         for row in range(tab._group_param_table.rowCount())
     }
-    forward_background, forward_n0, forward_amplitude = fit_panel_module._seed_group_background_and_n0(
-        np.array([120.0, 118.0])
+    forward_background, forward_n0, forward_amplitude = (
+        fit_panel_module._seed_group_background_and_n0(np.array([120.0, 118.0]))
     )
-    backward_background, backward_n0, backward_amplitude = fit_panel_module._seed_group_background_and_n0(
-        np.array([80.0, 79.0])
+    backward_background, backward_n0, backward_amplitude = (
+        fit_panel_module._seed_group_background_and_n0(np.array([80.0, 79.0]))
     )
     tab._group_param_table.item(row_by_name["N0"], 1).setText("101")
     tab._group_param_table.item(row_by_name["N0"], 2).setText("202")
@@ -1169,11 +1197,11 @@ def test_grouped_tab_reset_button_restores_estimated_values(
         tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
         for row in range(tab._group_param_table.rowCount())
     }
-    forward_background, forward_n0, forward_amplitude = fit_panel_module._seed_group_background_and_n0(
-        np.array([120.0, 118.0])
+    forward_background, forward_n0, forward_amplitude = (
+        fit_panel_module._seed_group_background_and_n0(np.array([120.0, 118.0]))
     )
-    backward_background, backward_n0, backward_amplitude = fit_panel_module._seed_group_background_and_n0(
-        np.array([80.0, 79.0])
+    backward_background, backward_n0, backward_amplitude = (
+        fit_panel_module._seed_group_background_and_n0(np.array([80.0, 79.0]))
     )
     relative_phase_defaults = fit_panel_module._seed_group_relative_phases(grouped_groups)
     tab._group_param_table.item(row_by_name["N0"], 1).setText("101")
@@ -1196,18 +1224,18 @@ def test_grouped_tab_reset_button_restores_estimated_values(
     assert float(tab._group_param_table.item(row_by_name["N0"], 2).text()) == pytest.approx(
         backward_n0
     )
-    assert float(
-        tab._group_param_table.item(row_by_name["background"], 1).text()
-    ) == pytest.approx(forward_background)
-    assert float(
-        tab._group_param_table.item(row_by_name["background"], 2).text()
-    ) == pytest.approx(backward_background)
-    assert float(
-        tab._group_param_table.item(row_by_name["amplitude"], 1).text()
-    ) == pytest.approx(forward_amplitude)
-    assert float(
-        tab._group_param_table.item(row_by_name["amplitude"], 2).text()
-    ) == pytest.approx(backward_amplitude)
+    assert float(tab._group_param_table.item(row_by_name["background"], 1).text()) == pytest.approx(
+        forward_background
+    )
+    assert float(tab._group_param_table.item(row_by_name["background"], 2).text()) == pytest.approx(
+        backward_background
+    )
+    assert float(tab._group_param_table.item(row_by_name["amplitude"], 1).text()) == pytest.approx(
+        forward_amplitude
+    )
+    assert float(tab._group_param_table.item(row_by_name["amplitude"], 2).text()) == pytest.approx(
+        backward_amplitude
+    )
     assert float(
         tab._group_param_table.item(row_by_name["relative_phase"], 1).text()
     ) == pytest.approx(relative_phase_defaults["1"])
@@ -1454,8 +1482,8 @@ def test_grouped_mode_ui_refresh_rebuilds_group_value_columns_when_groups_appear
         tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
         for row in range(tab._group_param_table.rowCount())
     }
-    _background_seed, backward_n0_seed, _amplitude_seed = fit_panel_module._seed_group_background_and_n0(
-        np.array([80.0, 79.0])
+    _background_seed, backward_n0_seed, _amplitude_seed = (
+        fit_panel_module._seed_group_background_and_n0(np.array([80.0, 79.0]))
     )
     assert headers == ["Parameter", "Forward", "Backward", "Type", "Bounds"]
     assert float(tab._group_param_table.item(row_by_name["N0"], 2).text()) == pytest.approx(
@@ -1472,14 +1500,16 @@ def test_grouped_seed_estimates_background_n0_and_amplitude_from_counts_definiti
     amplitude = 0.18
     polarization = amplitude * np.cos(2.0 * np.pi * 1.2 * time)
     fast_component = 80.0 * np.exp(-time / 0.05)
-    counts = n0 * (1.0 + polarization) + background * np.exp(
-        time / float(MUON_LIFETIME_US)
-    ) + fast_component
+    counts = (
+        n0 * (1.0 + polarization)
+        + background * np.exp(time / float(MUON_LIFETIME_US))
+        + fast_component
+    )
 
     estimated_background, estimated_n0, estimated_amplitude = (
         fit_panel_module._seed_group_background_and_n0(
-        counts,
-        time=time,
+            counts,
+            time=time,
         )
     )
 

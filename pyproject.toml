@@ -61,7 +61,13 @@ Documentation = "https://benhuddart.github.io/asymmetry/"
 where = ["src"]
 
 [tool.setuptools.package-data]
-asymmetry = ["resources/*.png", "resources/*.svg"]
+asymmetry = [
+    "resources/*.png",
+    "resources/*.svg",
+    "resources/fonts/*.ttf",
+    "resources/fonts/OFL.txt",
+    "gui/styles/*.qss",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -87,11 +93,13 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "src/asymmetry/gui/mainwindow.py" = ["N802"]  # Qt closeEvent override
 "src/asymmetry/gui/panels/fit_function_builder.py" = ["N802", "N815"]  # Qt-compatible shim names
 "src/asymmetry/gui/panels/model_fit_dialog.py" = ["N802", "N815"]  # Qt-compatible shim names
+"src/asymmetry/gui/panels/plot_panel.py" = ["N802"]  # Qt resizeEvent override
 "src/asymmetry/gui/widgets/detector_schematic.py" = ["N802"]  # Qt sizeHint override
 "src/asymmetry/gui/windows/fit_wizard_window.py" = ["N802"]  # Qt closeEvent override
 "tests/test_fit_panel_tabs.py" = ["N802"]  # Qt-style test doubles
 "tests/test_fit_parameters_panel.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/test_fitting_engine.py" = ["N803"]  # Physics-style model parameter names
+"tests/test_grouped_time_domain_fitting.py" = ["N803"]  # Physics parameter names (Lambda)
 "tests/test_global_parameter_fit_window.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/test_mainwindow_additional.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/test_nexus_loader.py" = ["E402"]  # pytest.importorskip before optional h5py import

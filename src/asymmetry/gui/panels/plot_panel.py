@@ -19,7 +19,7 @@ import subprocess
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -60,6 +60,7 @@ from asymmetry.gui.export_paths import (
     remember_export_path,
     resolve_gle_export_paths,
 )
+from asymmetry.gui.styles.fonts import mono_font
 
 # Metadata fields available for dataset labelling in the legend.
 _LABEL_FIELDS: list[tuple[str, str]] = [
@@ -128,6 +129,7 @@ class _FloatLimitField(QLineEdit):
         self.setClearButtonEnabled(False)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setMinimumWidth(minimum_width)
+        self.setFont(mono_font(11.0))
         validator = QDoubleValidator(-1e6, 1e6, self._decimals, self)
         validator.setNotation(QDoubleValidator.Notation.StandardNotation)
         self.setValidator(validator)
@@ -850,10 +852,14 @@ class PlotPanel(QWidget):
         """Highlight the x-axis when the current view is display-decimated."""
         active = bool(getattr(self, "_decimation_applied_for_current_view", False))
         label_color = "red" if active else getattr(self, "_default_x_axis_label_color", "black")
-        tick_color = "red" if active else getattr(
-            self,
-            "_default_x_axis_tick_color",
-            label_color,
+        tick_color = (
+            "red"
+            if active
+            else getattr(
+                self,
+                "_default_x_axis_tick_color",
+                label_color,
+            )
         )
         xaxis = getattr(ax, "xaxis", None)
         label = getattr(xaxis, "label", None)
@@ -1945,7 +1951,9 @@ class PlotPanel(QWidget):
         self._ax = self._figure.add_subplot(111)
         self._subplot_axes_by_polarization = {}
         self._vector_subplot_datasets = {}
-        self._sync_canvas_scroll_geometry(axis_count=1, target_height=self._default_canvas_min_height)
+        self._sync_canvas_scroll_geometry(
+            axis_count=1, target_height=self._default_canvas_min_height
+        )
 
     def _fit_range_axes(self) -> list[object]:
         """Return axes that should show fit-range handles for the current view."""
@@ -2346,7 +2354,9 @@ class PlotPanel(QWidget):
         fit_label: str | None = None,
     ) -> str:
         """Return a fit-line color with improved visibility in period mode."""
-        if isinstance(fit_label, str) and ("preview" in fit_label.lower() or "fit" in fit_label.lower()):
+        if isinstance(fit_label, str) and (
+            "preview" in fit_label.lower() or "fit" in fit_label.lower()
+        ):
             return "#d73a49"
         if self._period_mode_color_for_dataset(dataset) is None:
             return default_color
@@ -3353,10 +3363,7 @@ class PlotPanel(QWidget):
         if self._current_navigation_mode() != "none":
             return
 
-        if (
-            self._active_fit_handle is not None
-            and event.xdata is not None
-        ):
+        if self._active_fit_handle is not None and event.xdata is not None:
             if not any(event.inaxes is axis for axis in self._fit_range_axes()):
                 return
             self._drag_started = True

@@ -60,3 +60,6 @@ Thumbs.db
 # Except example data
 !example*.dat
 !test*.dat
+
+# Claude Design handoff documentation
+design_handoff_main_window_redesign/

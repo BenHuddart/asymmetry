@@ -1,0 +1,182 @@
+/* bench.qss — Asymmetry BENCH palette foundation.
+   Static colour and chrome rules only.
+   Scale-dependent padding, border-radius, and spin-button sizing are
+   managed by UIManager.build_stylesheet, which is concatenated after
+   this sheet at runtime. */
+
+/* ── App shell ──────────────────────────────────────────────────── */
+QMainWindow {
+    background-color: #fafaf9;
+}
+
+QDialog {
+    background-color: #fafaf9;
+}
+
+/* ── Toolbar and menu bar ───────────────────────────────────────── */
+QToolBar {
+    background-color: #f4f3f0;
+    border: none;
+    border-bottom: 1px solid #dedcd6;
+    spacing: 4px;
+}
+
+QMenuBar {
+    background-color: #f4f3f0;
+    color: #1c1d20;
+    border-bottom: 1px solid #dedcd6;
+}
+
+QMenuBar::item {
+    background-color: transparent;
+    color: #1c1d20;
+    padding: 4px 8px;
+}
+
+QMenuBar::item:selected {
+    background-color: #ececea;
+}
+
+/* ── Status bar ─────────────────────────────────────────────────── */
+QStatusBar {
+    background-color: #fafaf9;
+    border-top: 1px solid #dedcd6;
+    color: #67676b;
+}
+
+/* ── Dock widgets ───────────────────────────────────────────────── */
+QDockWidget::title {
+    background-color: #f4f3f0;
+    border-bottom: 1px solid #dedcd6;
+    padding: 4px 6px;
+    color: #67676b;
+    text-align: left;
+}
+
+QDockWidget > QWidget {
+    background-color: #ffffff;
+}
+
+/* ── Table headers ──────────────────────────────────────────────── */
+QHeaderView {
+    background-color: #f4f3f0;
+    border: none;
+}
+
+QHeaderView::section {
+    background-color: #f4f3f0;
+    color: #67676b;
+    border: none;
+    border-right: 1px solid #dedcd6;
+    border-bottom: 1px solid #dedcd6;
+    padding: 3px 6px;
+}
+
+QHeaderView::section:last {
+    border-right: none;
+}
+
+/* ── Tables ─────────────────────────────────────────────────────── */
+QTableWidget {
+    background-color: #ffffff;
+    gridline-color: #dedcd6;
+    selection-background-color: #e8eef7;
+    selection-color: #1c1d20;
+    border: 1px solid #dedcd6;
+}
+
+QListWidget,
+QTreeWidget {
+    background-color: #ffffff;
+    selection-background-color: #e8eef7;
+    selection-color: #1c1d20;
+    border: 1px solid #dedcd6;
+}
+
+/* ── Group boxes ────────────────────────────────────────────────── */
+QGroupBox {
+    border: 1px solid #dedcd6;
+    border-radius: 4px;
+    margin-top: 10px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 8px;
+    padding: 0 4px;
+    color: #67676b;
+}
+
+/* ── Tabs ───────────────────────────────────────────────────────── */
+QTabWidget::pane {
+    border: 1px solid #dedcd6;
+    background-color: #ffffff;
+}
+
+QTabBar {
+    background-color: #f4f3f0;
+}
+
+QTabBar::tab {
+    background-color: #f4f3f0;
+    color: #67676b;
+    border: 1px solid #dedcd6;
+    border-bottom: none;
+    padding: 4px 12px;
+    margin-right: 1px;
+}
+
+QTabBar::tab:selected {
+    background-color: #ffffff;
+    color: #1c1d20;
+    border-bottom: 2px solid #1f4d8a;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #ececea;
+}
+
+/* ── Text inputs (backgrounds/colours; borders managed by UIManager) */
+QLineEdit {
+    background-color: #ffffff;
+    color: #1c1d20;
+    selection-background-color: #e8eef7;
+    selection-color: #1c1d20;
+}
+
+QLineEdit:disabled {
+    background-color: #f4f3f0;
+    color: #9a9a9e;
+}
+
+QTextEdit,
+QPlainTextEdit {
+    background-color: #ffffff;
+    color: #1c1d20;
+    selection-background-color: #e8eef7;
+    selection-color: #1c1d20;
+}
+
+QComboBox {
+    background-color: #ffffff;
+    color: #1c1d20;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #ffffff;
+    border: 1px solid #dedcd6;
+    selection-background-color: #e8eef7;
+    selection-color: #1c1d20;
+}
+
+QAbstractSpinBox {
+    background-color: #ffffff;
+    color: #1c1d20;
+}
+
+/* ── Scroll area ────────────────────────────────────────────────── */
+QScrollArea {
+    background-color: transparent;
+    border: none;
+}

@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset
+from asymmetry.core.fitting import build_grouped_time_domain_datasets
 from asymmetry.core.fourier import (
     average_fourier_display_values,
     build_group_signal_dataset,
@@ -52,7 +53,6 @@ from asymmetry.core.fourier import (
     fourier_mode_uses_phase_correction,
     optimize_phase_entropy,
 )
-from asymmetry.core.fitting import build_grouped_time_domain_datasets
 from asymmetry.core.project import (
     CURRENT_SCHEMA_VERSION,
     UnsupportedSchemaVersion,
@@ -263,7 +263,9 @@ class MainWindow(QMainWindow):
         """Return whether plot display decimation is enabled."""
         return _coerce_bool(self._settings.value(_PLOT_DECIMATION_SETTINGS_KEY), default=True)
 
-    def _perf_dataset_metrics(self, datasets: MuonDataset | list[MuonDataset] | None) -> dict[str, int]:
+    def _perf_dataset_metrics(
+        self, datasets: MuonDataset | list[MuonDataset] | None
+    ) -> dict[str, int]:
         """Return compact metrics for one or more datasets."""
         if datasets is None:
             items: list[MuonDataset] = []
@@ -1248,7 +1250,9 @@ class MainWindow(QMainWindow):
                 and len(targets) == 1
             ):
                 grouped_targets = self._grouped_time_domain_display_datasets(targets[0])
-                if grouped_targets and hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
+                if grouped_targets and hasattr(
+                    self._plot_panel, "plot_grouped_time_domain_subplots"
+                ):
                     render_mode = "grouped_time"
                     rendered_targets = list(grouped_targets)
                     self._plot_panel.plot_grouped_time_domain_subplots(grouped_targets)
@@ -2080,9 +2084,7 @@ class MainWindow(QMainWindow):
             payload["group_names"] = {int(k): str(v) for k, v in group_names_raw.items()}
         included_groups_raw = grouping.get("included_groups")
         if isinstance(included_groups_raw, dict) and included_groups_raw:
-            payload["included_groups"] = {
-                int(k): bool(v) for k, v in included_groups_raw.items()
-            }
+            payload["included_groups"] = {int(k): bool(v) for k, v in included_groups_raw.items()}
 
         grouping_preset = grouping.get("grouping_preset")
         if grouping_preset:
@@ -2640,9 +2642,7 @@ class MainWindow(QMainWindow):
             run.grouping["group_names"] = {int(k): str(v) for k, v in group_names.items()}
         included_groups = grouping_result.get("included_groups")
         if isinstance(included_groups, dict):
-            run.grouping["included_groups"] = {
-                int(k): bool(v) for k, v in included_groups.items()
-            }
+            run.grouping["included_groups"] = {int(k): bool(v) for k, v in included_groups.items()}
         if vector_axis and axis_pairs:
             run.grouping["vector_axis"] = vector_axis
         preset_name = grouping_result.get("grouping_preset")
@@ -2820,7 +2820,9 @@ class MainWindow(QMainWindow):
         self._fit_stack.setCurrentWidget(current_widget)
 
         if show_grouped and self._multi_group_fit_window is not None:
-            dataset = self._get_fit_dataset(self._current_dataset) if self._current_dataset else None
+            dataset = (
+                self._get_fit_dataset(self._current_dataset) if self._current_dataset else None
+            )
             self._multi_group_fit_window.set_dataset(dataset)
             self._dock_fit.setWindowTitle(self._multi_group_fit_window.dock_title())
         else:
@@ -3382,7 +3384,9 @@ class MainWindow(QMainWindow):
 
             if averaged_display is not None and average_freqs is not None:
                 average_dataset = self._build_fourier_value_dataset(
-                    first_group_dataset if first_group_dataset is not None else self._current_dataset,
+                    first_group_dataset
+                    if first_group_dataset is not None
+                    else self._current_dataset,
                     average_freqs,
                     averaged_display,
                     display=display,
@@ -3406,7 +3410,9 @@ class MainWindow(QMainWindow):
                         )
                         peak_signal_to_noise = float(np.nanmax(sn)) if sn.size else 0.0
                     self._fourier_panel.set_average_summary(
-                        mean_error=float(np.nanmean(averaged_error)) if averaged_error.size else 0.0,
+                        mean_error=float(np.nanmean(averaged_error))
+                        if averaged_error.size
+                        else 0.0,
                         peak_signal_to_noise=peak_signal_to_noise,
                         group_count=len(selected_group_ids),
                     )
@@ -3442,7 +3448,9 @@ class MainWindow(QMainWindow):
             self._log_perf_event(
                 "compute_fourier",
                 started_at,
-                run=None if self._current_dataset is None else int(self._current_dataset.run_number),
+                run=None
+                if self._current_dataset is None
+                else int(self._current_dataset.run_number),
                 groups=len(selected_group_ids),
                 padding=padding,
                 display=display,
@@ -3576,7 +3584,10 @@ class MainWindow(QMainWindow):
 
     def _on_plot_time_view_changed(self, _mode: str) -> None:
         """Re-render the main time-domain plot after an explicit view switch."""
-        if hasattr(self._plot_workspace, "active_domain") and self._plot_workspace.active_domain() == "time":
+        if (
+            hasattr(self._plot_workspace, "active_domain")
+            and self._plot_workspace.active_domain() == "time"
+        ):
             if hasattr(self._plot_workspace, "set_active_view"):
                 self._plot_workspace.set_active_view(_mode)
         self._sync_fit_dock_mode()

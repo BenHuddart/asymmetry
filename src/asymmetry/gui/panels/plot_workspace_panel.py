@@ -82,7 +82,11 @@ class PlotWorkspacePanel(QWidget):
             self._tab_bar.setTabEnabled(index, token in self._enabled_views)
 
         if self.active_view() not in self._enabled_views:
-            fallback = self._last_time_view if self._last_time_view in self._enabled_views else "fb_asymmetry"
+            fallback = (
+                self._last_time_view
+                if self._last_time_view in self._enabled_views
+                else "fb_asymmetry"
+            )
             self.set_active_view("frequency" if self.active_domain() == "frequency" else fallback)
 
     def set_active_view(self, view: str) -> None:

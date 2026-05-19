@@ -732,7 +732,9 @@ class TestMainWindowBasic:
                 if dataset is None:
                     self._title = "Multi-Group Fit"
                     return
-                self._title = f"Multi-Group Fit — {getattr(dataset, 'run_label', dataset.run_number)}"
+                self._title = (
+                    f"Multi-Group Fit — {getattr(dataset, 'run_label', dataset.run_number)}"
+                )
 
             def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
                 self.last_block_state = (blocked, reason)
@@ -774,7 +776,9 @@ class TestMainWindowBasic:
         ]
         captured: dict[str, object] = {}
 
-        mainwindow._plot_panel.set_global_fits = lambda payload: captured.update({"payload": payload})
+        mainwindow._plot_panel.set_global_fits = lambda payload: captured.update(
+            {"payload": payload}
+        )
         mainwindow._plot_panel.plot_grouped_time_domain_subplots = lambda datasets: captured.update(
             {"datasets": list(datasets)}
         )
