@@ -35,9 +35,11 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QStackedWidget,
     QToolBar,
+    QWidget,
 )
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset
@@ -380,6 +382,7 @@ class MainWindow(QMainWindow):
 
         self._main_toolbar.addAction("Open", self._on_open)
         self._main_toolbar.addAction("Export logbook", self._on_export_logbook)
+        self._main_toolbar.addSeparator()
         self._main_toolbar.addAction("Grouping", self._on_grouping_current)
         self._main_toolbar.addAction("Fit", self._on_fit)
         self._main_toolbar.addAction("FFT", self._on_fourier)
@@ -388,21 +391,50 @@ class MainWindow(QMainWindow):
             "Global Fit", self._on_global_parameter_fit
         )
         self._global_parameter_fit_toolbar_action.setEnabled(False)
-
         self._main_toolbar.addSeparator()
-        self._main_toolbar.addWidget(QLabel("View:"))
 
+        # Domain segmented control
+        self._main_toolbar.addWidget(QLabel("Domain:"))
+        self._domain_button_group = QButtonGroup(self)
+        self._domain_button_group.setExclusive(True)
+        self._domain_buttons: list[QPushButton] = []
+        _domain_btn_style = (
+            "QPushButton { padding: 2px 10px; font-weight: 600; }"
+            "QPushButton:checked { background-color: #e8eef7; color: #1f4d8a; "
+            "border-color: #1f4d8a; }"
+        )
+        for label, token in (
+            ("F-B asymmetry", "fb_asymmetry"),
+            ("Individual groups", "groups"),
+            ("Frequency", "frequency"),
+        ):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setStyleSheet(_domain_btn_style)
+            btn.clicked.connect(lambda _checked=False, v=token: self._on_domain_button_clicked(v))
+            self._domain_button_group.addButton(btn)
+            self._domain_buttons.append(btn)
+            self._main_toolbar.addWidget(btn)
+        self._domain_buttons[0].setChecked(True)
+
+        # Stretch spacer — pushes View / Bunch to the right edge
+        _stretch = QWidget()
+        _stretch.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._main_toolbar.addWidget(_stretch)
+
+        self._main_toolbar.addWidget(QLabel("View:"))
         self._view_mode_button_group = QButtonGroup(self)
         self._view_mode_button_group.setExclusive(True)
         self._view_mode_buttons: list[QPushButton] = []
-        button_style = (
+        _view_btn_style = (
             "QPushButton { min-width: 28px; padding: 2px 6px; }"
-            "QPushButton:checked { background-color: #1f6feb; color: white; font-weight: 600; }"
+            "QPushButton:checked { background-color: #e8eef7; color: #1f4d8a; "
+            "border-color: #1f4d8a; font-weight: 600; }"
         )
         for index in range(_VIEW_MODE_COUNT):
             button = QPushButton(str(index + 1))
             button.setCheckable(True)
-            button.setStyleSheet(button_style)
+            button.setStyleSheet(_view_btn_style)
             button.clicked.connect(
                 lambda _checked=False, idx=index: self._on_view_mode_button_clicked(idx)
             )
@@ -3600,13 +3632,24 @@ class MainWindow(QMainWindow):
             else:
                 self.statusBar().showMessage(f"Viewing run {self._current_dataset.run_label}")
 
+    def _on_domain_button_clicked(self, view: str) -> None:
+        """Switch the workspace to *view* and keep the Domain buttons in sync."""
+        self._plot_workspace.set_active_view(view)
+        self._sync_domain_buttons(self._plot_workspace.active_view())
+
+    def _sync_domain_buttons(self, view: str) -> None:
+        """Update toolbar Domain button checked state to match *view*."""
+        _tokens = ("fb_asymmetry", "groups", "frequency")
+        for idx, btn in enumerate(getattr(self, "_domain_buttons", [])):
+            btn.setChecked(_tokens[idx] == view)
+
     def _on_plot_workspace_view_changed(self, view: str) -> None:
         """Map top-level workspace tab changes onto the shared time plot panel state."""
-        if view == "frequency":
-            return
-        if hasattr(self._plot_panel, "set_current_time_view_mode"):
-            self._plot_panel.set_current_time_view_mode(view, emit_signal=False)
-        self._on_plot_time_view_changed(view)
+        if view != "frequency":
+            if hasattr(self._plot_panel, "set_current_time_view_mode"):
+                self._plot_panel.set_current_time_view_mode(view, emit_signal=False)
+            self._on_plot_time_view_changed(view)
+        self._sync_domain_buttons(view)
 
     def _on_fit_range_changed(self, _x_min: float, _x_max: float) -> None:
         """Refresh fit inputs when the selected fit x-range changes."""

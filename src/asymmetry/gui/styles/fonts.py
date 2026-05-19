@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtWidgets import QApplication
 
 _FONTS_DIR = Path(__file__).parent.parent.parent / "resources" / "fonts"
 _FAMILY = "IBM Plex Mono"
@@ -17,6 +18,8 @@ def register_bundled_fonts() -> None:
     Must be called after QApplication is created. Safe to call more than once;
     Qt deduplicates by font ID.
     """
+    if not isinstance(QApplication.instance(), QApplication):
+        return
     for ttf in sorted(_FONTS_DIR.glob("IBMPlexMono-*.ttf")):
         QFontDatabase.addApplicationFont(str(ttf))
 

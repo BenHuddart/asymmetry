@@ -153,7 +153,8 @@ class TestPlotPanel:
         if hasattr(panel, "_canvas"):
             assert panel._canvas is not None
         if hasattr(panel, "_canvas_scroll_area"):
-            assert panel._canvas_scroll_area.widget() is panel._canvas
+            # Canvas lives inside _canvas_host; the scroll area holds the host
+            assert panel._canvas_scroll_area.widget() is panel._canvas_host
 
     def test_toolbar_does_not_show_apply_or_bunch_controls(self, panel: PlotPanel) -> None:
         """Main plot toolbar should not expose Apply or Bunch controls."""

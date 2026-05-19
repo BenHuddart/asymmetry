@@ -208,7 +208,7 @@ def test_run_fit_sets_in_progress_state_immediately(qapp: QApplication, monkeypa
         assert "in progress" in dlg._fit_progress_label.text().lower()
     finally:
         gate.set()
-        deadline = time.time() + 2.0
+        deadline = time.time() + 10.0
         while dlg._fit_in_progress and time.time() < deadline:
             qapp.processEvents()
             time.sleep(0.01)
