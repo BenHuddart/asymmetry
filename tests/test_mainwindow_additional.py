@@ -766,7 +766,8 @@ class TestMainWindowBasic:
         mainwindow._refresh_time_view_selector()
         mainwindow._plot_workspace.set_active_view("groups")
 
-        assert mainwindow._dock_fit.isHidden()
+        # Phase 4: switching to groups domain now shows the fit dock automatically.
+        assert not mainwindow._dock_fit.isHidden()
         mainwindow._on_fit()
 
         assert isinstance(mainwindow._multi_group_fit_window, _StubMultiGroupFitWindow)
