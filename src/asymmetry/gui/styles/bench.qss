@@ -76,6 +76,10 @@ QHeaderView::section:last {
     border-right: none;
 }
 
+QHeaderView::section:hover {
+    background-color: #ececea;
+}
+
 /* ── Tables ─────────────────────────────────────────────────────── */
 QTableWidget {
     background-color: #ffffff;
@@ -83,6 +87,11 @@ QTableWidget {
     selection-background-color: #e8eef7;
     selection-color: #1c1d20;
     border: 1px solid #dedcd6;
+}
+
+QTableWidget::item:focus {
+    background-color: #dfe8f4;
+    color: #1f4d8a;
 }
 
 QListWidget,

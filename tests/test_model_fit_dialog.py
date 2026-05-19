@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import threading
-import time
 
 import numpy as np
 import pytest
@@ -12,7 +11,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QCheckBox, QDialog
 
 from asymmetry.core.fitting.parameter_models import (
@@ -208,10 +207,18 @@ def test_run_fit_sets_in_progress_state_immediately(qapp: QApplication, monkeypa
         assert "in progress" in dlg._fit_progress_label.text().lower()
     finally:
         gate.set()
-        deadline = time.time() + 10.0
-        while dlg._fit_in_progress and time.time() < deadline:
-            qapp.processEvents()
-            time.sleep(0.01)
+
+    # Wait for the worker→main-thread signal chain to complete by running a
+    # proper nested event loop.  A manual processEvents() poll is not reliable
+    # after a long test suite run because inter-thread queued signals require
+    # the event loop to be *entered*, not just poked.
+    _loop = QEventLoop()
+    _check = QTimer()
+    _check.timeout.connect(lambda: _loop.quit() if not dlg._fit_in_progress else None)
+    _check.start(20)
+    QTimer.singleShot(30000, _loop.quit)
+    _loop.exec()
+    _check.stop()
 
     assert dlg._fit_in_progress is False
 

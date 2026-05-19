@@ -9,8 +9,17 @@ import uuid
 from dataclasses import dataclass
 
 import numpy as np
-from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, QSignalBlocker, Qt, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import (
+    QEvent,
+    QItemSelectionModel,
+    QPoint,
+    QRect,
+    QSignalBlocker,
+    Qt,
+    QTimer,
+    Signal,
+)
+from PySide6.QtGui import QBrush, QColor, QFont, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -18,10 +27,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
+    QLabel,
     QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -178,6 +191,81 @@ class FilterDialog(QDialog):
         return {checkbox.text() for checkbox in self._checkboxes if checkbox.isChecked()}
 
 
+class _RowHighlightDelegate(QStyledItemDelegate):
+    """Full row-highlight painter implementing the six-state background ladder.
+
+    State                          Background    Left bar (col 0 only)
+    ─────────────────────────────  ────────────  ──────────────────────
+    Group header normal            #c8d2e1       –
+    Group header selected          #a8b8d0       –
+    Group header focused           #8fa3c2       –  (white text)
+    Member / run focused           #dfe8f4       3 px solid #1f4d8a
+    Member / run selected          #e8eef7       2 px rgba(31,77,138,.4)
+    Member / run unselected        item bg role  –
+
+    The delegate strips State_Selected and State_HasFocus from the option copy
+    before calling super().paint() so that QSS selection-background-color and
+    ::item:focus rules never override the custom backgrounds above.
+    """
+
+    _SENTINEL = "group:"
+    _HEADER_SEL_BG = QColor(0xA8, 0xB8, 0xD0)  # #a8b8d0
+    _HEADER_FOC_BG = QColor(0x8F, 0xA3, 0xC2)  # #8fa3c2
+    _MEMBER_FOC_BG = QColor(0xDF, 0xE8, 0xF4)  # #dfe8f4  accentSoft2
+    _MEMBER_SEL_BG = QColor(0xE8, 0xEE, 0xF7)  # #e8eef7  accentSoft
+    _ACCENT = QColor("#1f4d8a")
+    _ACCENT_SOFT = QColor(31, 77, 138, 102)  # 40 % accent
+    _WHITE = QColor("white")
+    _CLEAR_FLAGS = QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_HasFocus
+
+    def paint(self, painter, option, index):
+        table = self.parent()
+        col0 = table.item(index.row(), 0)
+        is_header = (
+            col0 is not None
+            and isinstance(col0.data(Qt.ItemDataRole.UserRole), str)
+            and col0.data(Qt.ItemDataRole.UserRole).startswith(self._SENTINEL)
+        )
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+
+        if is_selected:
+            is_focused = index.row() == table.currentRow()
+            bg = (
+                (self._HEADER_FOC_BG if is_focused else self._HEADER_SEL_BG)
+                if is_header
+                else (self._MEMBER_FOC_BG if is_focused else self._MEMBER_SEL_BG)
+            )
+
+            # initStyleOption() re-reads Qt.BackgroundRole from the model and overwrites
+            # backgroundBrush — so we call it ourselves first, then clear the brush before
+            # passing the option directly to drawControl (bypassing the second initStyleOption
+            # call that super().paint() would trigger).
+            opt = QStyleOptionViewItem(option)
+            self.initStyleOption(opt, index)
+            opt.state = opt.state & ~self._CLEAR_FLAGS
+            opt.backgroundBrush = QBrush()
+
+            painter.fillRect(option.rect, bg)
+
+            if is_header and is_focused:
+                pal = QPalette(opt.palette)
+                pal.setColor(QPalette.ColorRole.Text, self._WHITE)
+                opt.palette = pal
+
+            table.style().drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, table)
+
+            # Left-edge bar on column 0 for member / run rows only
+            if not is_header and index.column() == 0:
+                bar_color = self._ACCENT if is_focused else self._ACCENT_SOFT
+                bar_width = 3 if is_focused else 2
+                painter.fillRect(
+                    QRect(option.rect.left(), option.rect.top(), bar_width, option.rect.height()),
+                    bar_color,
+                )
+        else:
+            super().paint(painter, option, index)
+
+
 class DataBrowserPanel(QWidget):
     """Logbook-style run table with grouping, sorting, filtering and co-add."""
 
@@ -265,7 +353,37 @@ class DataBrowserPanel(QWidget):
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
         self._table.itemChanged.connect(self._on_item_changed)
 
+        self._table.verticalHeader().hide()
+
+        _cell_font = QFont()
+        _cell_font.setPointSizeF(11.0)
+        self._table.setFont(_cell_font)
+
+        _header_font = QFont()
+        _header_font.setPointSizeF(10.0)
+        _header_font.setWeight(QFont.Weight.DemiBold)
+        _header_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.3)
+        self._table.horizontalHeader().setFont(_header_font)
+
+        self._row_delegate = _RowHighlightDelegate(self._table)
+        self._table.setItemDelegate(self._row_delegate)
+        # currentItemChanged doesn't automatically repaint both old and new rows
+        # in all Qt versions; an explicit viewport update is cheap and safe.
+        self._table.currentItemChanged.connect(lambda *_: self._table.viewport().update())
         layout.addWidget(self._table)
+
+        self._footer_hint = QLabel("⌘-click adds · shift-click ranges")
+        self._footer_hint.setWordWrap(True)
+        self._footer_hint.setStyleSheet(
+            "QLabel {"
+            " background-color: #f4f3f0;"
+            " color: #67676b;"
+            " border-top: 1px solid #dedcd6;"
+            " padding: 5px 8px;"
+            " font-size: 10px;"
+            "}"
+        )
+        layout.addWidget(self._footer_hint)
         self.setMinimumWidth(250)
 
     # ------------------------------------------------------------------
@@ -504,22 +622,35 @@ class DataBrowserPanel(QWidget):
         run_item.setFlags(
             (run_item.flags() & ~Qt.ItemFlag.ItemIsEditable) | Qt.ItemFlag.ItemIsSelectable
         )
-        font = run_item.font()
+        font = QFont(self._table.font())
         font.setBold(True)
         run_item.setFont(font)
         run_item.setBackground(_GROUP_HEADER_BACKGROUND)
         self._table.setItem(row, 0, run_item)
 
-        count_item = QTableWidgetItem(f"({len(group.member_run_numbers)} datasets)")
-        count_item.setFlags(count_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        count_item.setFont(font)
-        count_item.setBackground(_GROUP_HEADER_BACKGROUND)
-        self._table.setItem(row, 1, count_item)
-
-        for col in range(2, self._table.columnCount()):
+        # Cols 1–3: blank
+        for col in range(1, min(4, self._table.columnCount())):
             blank = QTableWidgetItem("")
             blank.setFlags(blank.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            blank.setFont(font)
+            blank.setBackground(_GROUP_HEADER_BACKGROUND)
+            self._table.setItem(row, col, blank)
+
+        # Col 4 (Comment): right-aligned member count in muted mono
+        if self._table.columnCount() > 4:
+            n = len(group.member_run_numbers)
+            count_text = f"{n} run" if n == 1 else f"{n} runs"
+            count_item = QTableWidgetItem(count_text)
+            count_item.setFlags(count_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            count_item.setFont(mono_font(10.0))
+            count_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            count_item.setForeground(QColor("#67676b"))
+            count_item.setBackground(_GROUP_HEADER_BACKGROUND)
+            self._table.setItem(row, 4, count_item)
+
+        # Extra columns beyond the fixed five: blank
+        for col in range(5, self._table.columnCount()):
+            blank = QTableWidgetItem("")
+            blank.setFlags(blank.flags() & ~Qt.ItemFlag.ItemIsEditable)
             blank.setBackground(_GROUP_HEADER_BACKGROUND)
             self._table.setItem(row, col, blank)
 
@@ -551,6 +682,7 @@ class DataBrowserPanel(QWidget):
         temp = self._temperature_for_display(dataset)
         temp_item = NumericTableWidgetItem(f"{temp:.2f}")
         temp_item.setFlags(temp_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        temp_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         if self._temperature_uses_log_for_display(dataset):
             temp_item.setForeground(_LOG_TEMPERATURE_FOREGROUND)
         self._table.setItem(row, 2, temp_item)
@@ -558,6 +690,7 @@ class DataBrowserPanel(QWidget):
         field = float(meta.get("field", 0.0))
         field_item = NumericTableWidgetItem(f"{field:.1f}")
         field_item.setFlags(field_item.flags() | Qt.ItemFlag.ItemIsEditable)
+        field_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._table.setItem(row, 3, field_item)
 
         comment = str(meta.get("comment", ""))
@@ -1677,6 +1810,9 @@ class DataBrowserPanel(QWidget):
                 if item is not None:
                     gid = self._group_id_from_key(item.data(self._GROUP_ROLE))
                     if gid is not None:
+                        _chevron_right = self._table.columnViewportPosition(0) + 20
+                        if event.position().toPoint().x() <= _chevron_right:
+                            return True  # single-click already toggled; absorb silently
                         self._toggle_group_collapsed(gid)
                         return True
 
@@ -1689,6 +1825,16 @@ class DataBrowserPanel(QWidget):
                     modifiers = event.modifiers()
                     index = self._table.model().index(row, 0)
                     selection_model = self._table.selectionModel()
+
+                    # Chevron single-click: toggle collapse without changing selection
+                    _item = self._table.item(row, 0)
+                    if _item is not None:
+                        _gid = self._group_id_from_key(_item.data(self._GROUP_ROLE))
+                        if _gid is not None:
+                            _chevron_right = self._table.columnViewportPosition(0) + 20
+                            if event.position().toPoint().x() <= _chevron_right:
+                                self._toggle_group_collapsed(_gid)
+                                return True
 
                     if bool(modifiers & Qt.KeyboardModifier.ShiftModifier):
                         anchor_row = self._selection_anchor_for_row(row)
