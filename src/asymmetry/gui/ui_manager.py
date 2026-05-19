@@ -171,21 +171,21 @@ class UIManager(QObject):
         return f"""
 QPushButton, QToolButton {{
     padding: {button_padding_v}px {button_padding_h}px;
-    border: 1px solid #9aa4b2;
+    border: 1px solid #dedcd6;
     border-radius: {border_radius}px;
     background-color: palette(button);
     color: palette(button-text);
 }}
 QPushButton:hover, QToolButton:hover {{
-    border-color: #697586;
+    border-color: #c2c0b9;
 }}
 QPushButton:disabled, QToolButton:disabled {{
-    border-color: #c7ccd1;
-    color: #7d8590;
+    border-color: #dedcd6;
+    color: #9a9a9e;
 }}
 QLineEdit, QComboBox, QAbstractSpinBox, QTextEdit, QPlainTextEdit {{
     padding: {input_padding_v}px {input_padding_h}px;
-    border: 1px solid #9aa4b2;
+    border: 1px solid #dedcd6;
     border-radius: {border_radius}px;
 }}
 QAbstractSpinBox {{
@@ -194,7 +194,7 @@ QAbstractSpinBox {{
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
     width: {spin_button_width}px;
     background-color: palette(button);
-    border-left: 1px solid #9aa4b2;
+    border-left: 1px solid #dedcd6;
 }}
 QAbstractSpinBox::up-button {{
     subcontrol-origin: border;
@@ -204,7 +204,7 @@ QAbstractSpinBox::up-button {{
 QAbstractSpinBox::down-button {{
     subcontrol-origin: border;
     subcontrol-position: bottom right;
-    border-top: 1px solid #c7ccd1;
+    border-top: 1px solid #dedcd6;
     border-bottom-right-radius: {border_radius}px;
 }}
 QAbstractSpinBox::up-arrow, QAbstractSpinBox::down-arrow {{

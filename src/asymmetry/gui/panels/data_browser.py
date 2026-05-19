@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.gui.styles.fonts import mono_font
 
 _GROUP_TEMP_ABS_TOL_K = 5e-3
 _GROUP_TEMP_REL_TOL = 2e-3
@@ -63,6 +64,7 @@ class NumericTableWidgetItem(QTableWidgetItem):
 
     def __init__(self, value: float | int | str):
         super().__init__(str(value))
+        self.setFont(mono_font(11.0))
         try:
             self._numeric_value = float(value)
         except (ValueError, TypeError):

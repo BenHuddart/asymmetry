@@ -9,8 +9,9 @@ domain.
 from __future__ import annotations
 
 import inspect
+from collections.abc import Hashable
 from dataclasses import dataclass, field
-from typing import Any, Hashable
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -198,7 +199,9 @@ def build_grouped_time_domain_groups(
 
     bin_width = float(prepared_histograms[0].bin_width)
     axis_start = first_good - common_t0
-    group_names = grouping.get("group_names") if isinstance(grouping.get("group_names"), dict) else {}
+    group_names = (
+        grouping.get("group_names") if isinstance(grouping.get("group_names"), dict) else {}
+    )
 
     built_groups: list[GroupedTimeDomainGroup] = []
     for group_id, indices in groups:
@@ -399,10 +402,7 @@ def _supports_phase_parameter(model_fn) -> bool:
     for param in signature.parameters.values():
         if param.kind == inspect.Parameter.VAR_KEYWORD:
             return True
-    return any(
-        split_parameter_name(str(name))[0] == "phase"
-        for name in signature.parameters
-    )
+    return any(split_parameter_name(str(name))[0] == "phase" for name in signature.parameters)
 
 
 def _normalize_group_entries(values) -> list[int]:
@@ -464,7 +464,9 @@ def build_grouped_count_model(polarization_model_fn):
                 phase_keys.append("phase")
             if phase_keys:
                 for phase_key in phase_keys:
-                    model_kwargs[phase_key] = float(model_kwargs.get(phase_key, 0.0)) + relative_phase
+                    model_kwargs[phase_key] = (
+                        float(model_kwargs.get(phase_key, 0.0)) + relative_phase
+                    )
             else:
                 model_kwargs["phase"] = relative_phase
         elif not np.isclose(relative_phase, 0.0):

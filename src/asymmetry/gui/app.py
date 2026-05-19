@@ -46,6 +46,17 @@ def _resource_file_path(filename: str) -> str:
     return f"{package_root}/resources/{filename}"
 
 
+def _load_bench_stylesheet() -> str:
+    """Read bench.qss from gui/styles/ and return its contents."""
+    from pathlib import Path
+
+    qss_path = Path(__file__).parent / "styles" / "bench.qss"
+    try:
+        return qss_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
 def _load_startup_pixmap(filename: str):
     """Load a startup image without importing resource helpers."""
     from PySide6.QtGui import QPixmap
@@ -248,6 +259,14 @@ def main() -> None:
 
     app.setApplicationName("Asymmetry")
     app.setOrganizationName("Asymmetry")
+
+    from asymmetry.gui.styles.fonts import register_bundled_fonts
+
+    register_bundled_fonts()
+
+    bench_css = _load_bench_stylesheet()
+    if bench_css:
+        app.setStyleSheet(bench_css)
 
     if icon is None:
         icon = _load_app_icon()

@@ -23,6 +23,15 @@ if not Path(icon_path).is_file():
 
 datas = [(str(png_file), "asymmetry/resources") for png_file in resources_dir.glob("*.png")]
 datas += [(str(svg_file), "asymmetry/resources") for svg_file in resources_dir.glob("*.svg")]
+fonts_dir = resources_dir / "fonts"
+if fonts_dir.is_dir():
+    datas += [(str(f), "asymmetry/resources/fonts") for f in fonts_dir.glob("*.ttf")]
+    ofl = fonts_dir / "OFL.txt"
+    if ofl.is_file():
+        datas += [(str(ofl), "asymmetry/resources/fonts")]
+styles_dir = src_dir / "asymmetry" / "gui" / "styles"
+if styles_dir.is_dir():
+    datas += [(str(f), "asymmetry/gui/styles") for f in styles_dir.glob("*.qss")]
 
 hiddenimports = [
     "h5py",

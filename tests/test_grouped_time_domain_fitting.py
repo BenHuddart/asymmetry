@@ -11,11 +11,11 @@ from asymmetry.core.fitting import (
     build_grouped_time_domain_datasets,
     fit_grouped_time_domain,
 )
+from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.grouped_time_domain import (
     build_grouped_count_model,
     validate_grouped_model_contract,
 )
-from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
@@ -81,7 +81,9 @@ def test_build_grouped_time_domain_datasets_returns_lifetime_corrected_groups() 
     )
 
 
-def test_build_grouped_time_domain_datasets_applies_group_bunching_before_lifetime_correction() -> None:
+def test_build_grouped_time_domain_datasets_applies_group_bunching_before_lifetime_correction() -> (
+    None
+):
     dataset = _grouped_source_dataset()
     assert dataset.run is not None
     dataset.run.histograms = [
@@ -371,9 +373,9 @@ def test_grouped_count_model_applies_relative_phase_to_numbered_phase_parameters
         frequency=1.0,
         phase_2=0.1,
     )
-    expected = 100.0 * (
-        1.0 + 0.2 * np.cos(2.0 * np.pi * probe + 0.1 + np.pi / 2.0)
-    ) + 5.0 * np.exp(probe / float(MUON_LIFETIME_US))
+    expected = 100.0 * (1.0 + 0.2 * np.cos(2.0 * np.pi * probe + 0.1 + np.pi / 2.0)) + 5.0 * np.exp(
+        probe / float(MUON_LIFETIME_US)
+    )
 
     np.testing.assert_allclose(predicted, expected)
 

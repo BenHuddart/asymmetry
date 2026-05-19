@@ -843,7 +843,9 @@ class CompositeModel:
                     term_number = self._fraction_term_number_by_component.get(idx - 1)
                     if term_number is not None:
                         candidate = f"{pname}_{term_number}"
-                        mapping[pname] = candidate if candidate not in used_names else f"{pname}_{idx}"
+                        mapping[pname] = (
+                            candidate if candidate not in used_names else f"{pname}_{idx}"
+                        )
                     else:
                         mapping[pname] = f"{pname}_{idx}"
                 else:
@@ -1213,9 +1215,7 @@ class CompositeModel:
     def _formula_string_with_fraction_groups(self) -> str:
         terms: list[str] = []
         fraction_term_starts = {
-            idx
-            for group in self.fraction_groups
-            for idx in self._fraction_group_term_starts(group)
+            idx for group in self.fraction_groups for idx in self._fraction_group_term_starts(group)
         }
         for idx, (component, mapping) in enumerate(
             zip(self.components, self._param_mappings, strict=True)

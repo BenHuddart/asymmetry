@@ -33,7 +33,9 @@ class _FakeAxis:
         self.ylabel_calls: list[str] = []
         self.tick_params_calls: list[dict[str, object]] = []
         self.legend_call_count = 0
-        self.xaxis = SimpleNamespace(label=SimpleNamespace(get_color=lambda: "black", set_color=self._set_x_label_color))
+        self.xaxis = SimpleNamespace(
+            label=SimpleNamespace(get_color=lambda: "black", set_color=self._set_x_label_color)
+        )
         self._x_label_color = "black"
 
     def _set_x_label_color(self, color: str) -> None:
@@ -848,7 +850,6 @@ class TestPlotPanel:
         assert visible_ticks
         assert all(tick.get_color() == panel._default_x_axis_tick_color for tick in visible_ticks)
 
-
     def test_polarization_combo_uses_subscript_labels(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
@@ -1641,7 +1642,9 @@ class TestPlotPanel:
         if not hasattr(restored, "_has_mpl") or not restored._has_mpl:
             pytest.skip("matplotlib not available")
         restored.restore_state(state, dataset=None)
-        restored.set_time_view_modes(["fb_asymmetry", "groups"], current_mode=state["time_view_mode"])
+        restored.set_time_view_modes(
+            ["fb_asymmetry", "groups"], current_mode=state["time_view_mode"]
+        )
 
         assert restored.current_time_view_mode() == "groups"
 

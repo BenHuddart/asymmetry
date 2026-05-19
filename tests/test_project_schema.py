@@ -671,9 +671,7 @@ class TestFitPanelState:
         panel = FitPanel()
         state = panel.get_global_state()
         state["mode"] = "grouped"
-        state["group_parameters"] = {
-            "N0": {"value": 1234.0, "type": "Local", "bounds": "0, inf"}
-        }
+        state["group_parameters"] = {"N0": {"value": 1234.0, "type": "Local", "bounds": "0, inf"}}
 
         panel2 = FitPanel()
         panel2.restore_global_state(state)

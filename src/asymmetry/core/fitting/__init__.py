@@ -36,11 +36,11 @@ from asymmetry.core.fitting.global_fit_wizard import (
 )
 from asymmetry.core.fitting.grouped_time_domain import (
     GROUP_NUISANCE_PARAMS,
+    GroupedTimeDomainFitResult,
+    GroupedTimeDomainGroup,
     build_grouped_count_model,
     build_grouped_time_domain_datasets,
     build_grouped_time_domain_groups,
-    GroupedTimeDomainFitResult,
-    GroupedTimeDomainGroup,
     fit_grouped_time_domain,
 )
 from asymmetry.core.fitting.models import MODELS

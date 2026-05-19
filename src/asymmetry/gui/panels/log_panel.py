@@ -6,6 +6,8 @@ from datetime import datetime
 
 from PySide6.QtWidgets import QPlainTextEdit, QVBoxLayout, QWidget
 
+from asymmetry.gui.styles.fonts import mono_font
+
 
 class LogPanel(QWidget):
     """Scrollable text log for status messages."""
@@ -18,6 +20,7 @@ class LogPanel(QWidget):
         self._text = QPlainTextEdit()
         self._text.setReadOnly(True)
         self._text.setMaximumBlockCount(5000)
+        self._text.setFont(mono_font(10.5))
         layout.addWidget(self._text)
 
     def log(self, message: str) -> None:
