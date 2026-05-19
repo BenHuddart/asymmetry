@@ -632,6 +632,9 @@ class TestMainWindowBasic:
     ) -> None:
         action = mainwindow._perf_logging_action
 
+        # Reset to known-off state regardless of any persisted QSettings contamination,
+        # then toggle on so the toggled signal always fires.
+        action.setChecked(False)
         action.setChecked(True)
 
         assert mainwindow._settings.value("debug/perf_logging", False, bool) is True
@@ -642,6 +645,10 @@ class TestMainWindowBasic:
         self,
         mainwindow: MainWindow,
     ) -> None:
+        # Establish known-on state: any persisted QSettings contamination from a prior
+        # run that toggled decimation off will leave the action unchecked on construction.
+        mainwindow._plot_decimation_action.setChecked(True)
+
         assert mainwindow._plot_decimation_action.isChecked() is True
         assert mainwindow._plot_panel.decimation_enabled() is True
         assert mainwindow._frequency_plot_panel.decimation_enabled() is True
@@ -1062,6 +1069,33 @@ class TestMainWindowBasic:
         assert "Grouping" in texts
         assert "Fit" in texts
         assert texts.index("Grouping") < texts.index("Fit")
+
+    def test_toolbar_has_domain_segmented_control(self, mainwindow: MainWindow) -> None:
+        """Toolbar should expose three Domain buttons in the correct order."""
+        assert hasattr(mainwindow, "_domain_buttons")
+        assert [btn.text() for btn in mainwindow._domain_buttons] == [
+            "F-B asymmetry",
+            "Individual groups",
+            "Frequency",
+        ]
+        assert mainwindow._domain_buttons[0].isChecked()
+        assert not mainwindow._domain_buttons[1].isChecked()
+        assert not mainwindow._domain_buttons[2].isChecked()
+
+    def test_domain_button_click_changes_workspace_view(self, mainwindow: MainWindow) -> None:
+        """Clicking the Frequency domain button should switch the workspace view."""
+        mainwindow._domain_buttons[2].click()
+        assert mainwindow._plot_workspace.active_view() == "frequency"
+
+    def test_workspace_view_change_syncs_domain_buttons(self, mainwindow: MainWindow) -> None:
+        """Programmatic workspace view change should update Domain button checked state."""
+        mainwindow._plot_workspace.set_active_view("frequency")
+        assert mainwindow._domain_buttons[2].isChecked()
+        assert not mainwindow._domain_buttons[0].isChecked()
+
+        mainwindow._plot_workspace.set_active_view("fb_asymmetry")
+        assert mainwindow._domain_buttons[0].isChecked()
+        assert not mainwindow._domain_buttons[2].isChecked()
 
     def test_deadtime_correction_uses_good_frames(self, mainwindow: MainWindow) -> None:
         """Deadtime correction should include good-frame normalization (Mantid-style)."""

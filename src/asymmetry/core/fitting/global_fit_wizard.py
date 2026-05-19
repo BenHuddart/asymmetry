@@ -406,8 +406,7 @@ def _wavefront_worker_count(task_count: int) -> int:
 def _single_fit_table_worker_count(task_count: int) -> int:
     if task_count <= 0:
         return 1
-    cpu_count = os.cpu_count() or 1
-    return max(1, min(task_count, cpu_count, _MAX_TEMPLATE_WORKERS))
+    return max(1, min(task_count, _MAX_TEMPLATE_WORKERS))
 
 
 def _spawn_context() -> mp.context.BaseContext:

@@ -265,7 +265,7 @@ def main() -> None:
     register_bundled_fonts()
 
     bench_css = _load_bench_stylesheet()
-    if bench_css:
+    if bench_css and hasattr(app, "setStyleSheet"):
         app.setStyleSheet(bench_css)
 
     if icon is None:
