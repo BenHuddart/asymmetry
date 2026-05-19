@@ -233,6 +233,7 @@ class MainWindow(QMainWindow):
         self._syncing_view_mode_ui = False
         self._applying_view_mode = False
         self._syncing_bunch_context = False
+        self._applying_inspector_domain = False
 
         self._setup_menus()
         self._create_toolbars()
@@ -2860,6 +2861,48 @@ class MainWindow(QMainWindow):
         else:
             self._dock_fit.setWindowTitle("Fit")
 
+    # Maps each toolbar domain token to (ordered visible dock keys, default raised key).
+    # Fourier is hidden in the groups domain; mgfit is surfaced by swapping _fit_stack.
+    _INSPECTOR_DOMAIN_CONFIG: dict[str, tuple[list[str], str]] = {
+        "fb_asymmetry": (["fit", "fourier", "fit_parameters"], "fit"),
+        "groups": (["fit", "fit_parameters"], "fit"),
+        "frequency": (["fourier", "fit", "fit_parameters"], "fourier"),
+    }
+
+    def _apply_inspector_for_domain(self, view: str) -> None:
+        """Show/hide/raise the right inspector docks for *view* and sync the fit stack."""
+        config = self._INSPECTOR_DOMAIN_CONFIG.get(view)
+        if config is None:
+            return
+
+        visible_keys, default_key = config
+        dock_map = {
+            "fit": self._dock_fit,
+            "fourier": self._dock_fourier,
+            "fit_parameters": self._dock_fit_parameters,
+        }
+        visible_set = set(visible_keys)
+
+        self._applying_inspector_domain = True
+        try:
+            for key, dock in dock_map.items():
+                if dock.isFloating():
+                    continue
+                if key in visible_set:
+                    dock.show()
+                else:
+                    dock.hide()
+
+            default_dock = dock_map[default_key]
+            if not default_dock.isFloating():
+                default_dock.raise_()
+        finally:
+            self._applying_inspector_domain = False
+
+        # Sync _fit_stack page: groups domain surfaces mgfit when grouped data is present,
+        # all other domains revert to single-fit so the dock title reads "Fit".
+        self._sync_fit_dock_mode()
+
     def _on_fourier(self) -> None:
         """Show and raise the Fourier dock panel."""
         self._show_panel("fourier")
@@ -3650,6 +3693,7 @@ class MainWindow(QMainWindow):
                 self._plot_panel.set_current_time_view_mode(view, emit_signal=False)
             self._on_plot_time_view_changed(view)
         self._sync_domain_buttons(view)
+        self._apply_inspector_for_domain(view)
 
     def _on_fit_range_changed(self, _x_min: float, _x_max: float) -> None:
         """Refresh fit inputs when the selected fit x-range changes."""
