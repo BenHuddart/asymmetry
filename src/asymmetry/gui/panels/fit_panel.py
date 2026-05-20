@@ -76,11 +76,13 @@ from asymmetry.core.utils.constants import (
     MUON_LIFETIME_US,
 )
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.widgets import (
     RESULTS_GROUP_SUCCESS_STYLE,
     apply_param_table_style,
     configure_formula_label,
+    success_html,
 )
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
@@ -522,10 +524,7 @@ def _fit_success_html(result) -> str:
     stats = f"χ²/ν = {result.reduced_chi_squared:.4f} · npar = {npar} · ndof = {ndof}"
     if result.edm is not None:
         stats += f" · Δ‖p‖ = {result.edm:.2e}"
-    return (
-        '<span style="color:#2a7a3f;font-weight:600;">Fit converged</span>'
-        f'<br><span style="color:#67676b;">{stats}</span>'
-    )
+    return success_html("Fit converged", detail=stats)
 
 
 _apply_param_table_style = apply_param_table_style
@@ -715,7 +714,7 @@ class _ValueUncertaintyDelegate(QStyledItemDelegate):
     """
 
     _UNC_ROLE = Qt.ItemDataRole.UserRole + 1
-    _MUTED = QColor("#67676b")
+    _MUTED = QColor(tokens.TEXT_MUTED)
 
     def paint(self, painter, option, index) -> None:
         super().paint(painter, option, index)
@@ -1183,10 +1182,8 @@ class SingleFitTab(QWidget):
         if assessment.residual_gate_reasons:
             wizard_note += " ⚠"
         self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
-        self._result_label.setText(
-            f'<span style="color:#2a7a3f;font-weight:600;">{wizard_note}</span>'
-            f"<br>{_fit_success_html(result).split('<br>', 1)[1]}"
-        )
+        detail = _fit_success_html(result).split("<br>", 1)[1]
+        self._result_label.setText(success_html(wizard_note, detail=detail))
 
         param_dict = {parameter.name: parameter.value for parameter in result.parameters}
         n_samples = _fit_curve_sample_count(
@@ -2939,12 +2936,8 @@ class GlobalFitTab(QWidget):
         avg_red_chi2 = sum(r.reduced_chi_squared for r in results_dict.values()) / n_datasets
         npar = len(global_param_names)
         stats = f"avg χ²/ν = {avg_red_chi2:.4f} · {n_datasets} datasets · npar = {npar}"
-        html = (
-            '<span style="color:#2a7a3f;font-weight:600;">Global fit converged</span>'
-            f'<br><span style="color:#67676b;">{stats}</span>'
-        )
         self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
-        self._result_text.setHtml(html)
+        self._result_text.setHtml(success_html("Global fit converged", detail=stats))
 
     def _results_with_curves(
         self,
@@ -3262,12 +3255,8 @@ class GlobalFitTab(QWidget):
         )
         n_shared = len(grouped_result.shared_parameters)
         stats = f"{n_groups} groups · avg χ²/ν = {avg_red_chi2:.4f} · shared = {n_shared}"
-        html = (
-            '<span style="color:#2a7a3f;font-weight:600;">Grouped fit converged</span>'
-            f'<br><span style="color:#67676b;">{stats}</span>'
-        )
         self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
-        self._result_text.setHtml(html)
+        self._result_text.setHtml(success_html("Grouped fit converged", detail=stats))
         self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
 
     def _cleanup_thread(self) -> None:

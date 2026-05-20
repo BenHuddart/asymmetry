@@ -57,9 +57,9 @@ _LEGACY_DISPLAY_TO_MODE = {
     "real": "Phase",
 }
 
-_PHASE_ACTIVE_COLOR = "#0f62fe"
-_PHASE_INACTIVE_COLOR = "#6b7280"
-_PHASE_AUTOFILLED_COLOR = "#15803d"
+_PHASE_ACTIVE_COLOR = tokens.ACCENT
+_PHASE_INACTIVE_COLOR = tokens.TEXT_MUTED
+_PHASE_AUTOFILLED_COLOR = tokens.OK
 
 
 def _latex_html(latex: str, *, render_latex_images: bool) -> str:
@@ -205,7 +205,7 @@ class FourierPanel(QWidget):
         self._phase_mode_radio = QRadioButton("Phase")
         self._phase_opt_real_radio = QRadioButton("phaseOptReal")
         self._phase_opt_real_radio.setStyleSheet(
-            "QRadioButton { color: #0f62fe; font-weight: 600; padding-bottom: 2px; }"
+            f"QRadioButton {{ color: {tokens.ACCENT}; font-weight: 600; padding-bottom: 2px; }}"
         )
         self._phase_opt_real_radio.setMinimumHeight(
             self._phase_opt_real_radio.sizeHint().height() + 4

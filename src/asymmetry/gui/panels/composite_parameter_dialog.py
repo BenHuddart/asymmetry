@@ -25,6 +25,7 @@ from asymmetry.core.fitting.composite_parameters import (
     CompositeParameterDefinition,
     validate_composite_expression,
 )
+from asymmetry.gui.styles import tokens
 
 
 class CompositeParameterDialog(QDialog):
@@ -166,7 +167,7 @@ class CompositeParameterDialog(QDialog):
         self._expression_edit.setCursorPosition(cursor_pos - 1)
 
     def _set_status(self, message: str, *, valid: bool) -> None:
-        color = "#157347" if valid else "#B02A37"
+        color = tokens.OK if valid else tokens.ERROR
         self._status_label.setText(f"<span style='color:{color};'>{message}</span>")
 
     def _validate_inputs(self) -> tuple[bool, str | None, CompositeExpression | None]:

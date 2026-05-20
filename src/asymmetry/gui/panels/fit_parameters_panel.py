@@ -63,7 +63,7 @@ from asymmetry.gui.export_paths import (
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
-from asymmetry.gui.styles.widgets import apply_param_table_style
+from asymmetry.gui.styles.widgets import apply_param_table_style, style_group_state_button
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
@@ -863,53 +863,12 @@ class FitParametersPanel(QWidget):
 
         for gid, button in self._group_button_map.items():
             if gid == active_gid:
-                # Active group: included in global fit and additionally marked
-                # as currently selected via a stronger blue border.
-                button.setStyleSheet(
-                    base + "QPushButton {"
-                    " font-weight: 700;"
-                    " border: 2px solid #1f6feb;"
-                    " background: #fff4cc;"
-                    " color: #1f2328;"
-                    " }"
-                    "QPushButton:checked {"
-                    " font-weight: 700;"
-                    " border: 2px solid #1f6feb;"
-                    " background: #ffe9a8;"
-                    " color: #1f2328;"
-                    " }"
-                )
+                state = "active"
             elif gid in selected_ids:
-                # Included for global fit but not currently selected.
-                button.setStyleSheet(
-                    base + "QPushButton {"
-                    " font-weight: 500;"
-                    " border: 1px solid #d29922;"
-                    " background: #fff9db;"
-                    " color: #1f2328;"
-                    " }"
-                    "QPushButton:checked {"
-                    " font-weight: 500;"
-                    " border: 1px solid #d29922;"
-                    " background: #fff9db;"
-                    " color: #1f2328;"
-                    " }"
-                )
+                state = "selected"
             else:
-                button.setStyleSheet(
-                    base + "QPushButton {"
-                    " font-weight: 500;"
-                    " border: 1px solid #d0d7de;"
-                    " background: #f3f4f6;"
-                    " color: #1f2328;"
-                    " }"
-                    "QPushButton:checked {"
-                    " font-weight: 500;"
-                    " border: 1px solid #d0d7de;"
-                    " background: #f3f4f6;"
-                    " color: #1f2328;"
-                    " }"
-                )
+                state = "unselected"
+            style_group_state_button(button, state, base=base)
 
     def _on_group_button_clicked(self) -> None:
         self._sync_active_group_state()
