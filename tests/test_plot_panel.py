@@ -1898,6 +1898,46 @@ class TestPlotPanel:
         assert len(panel._fit_min_handles) == len(datasets)
         assert len(panel._fit_max_handles) == len(datasets)
 
+    def test_vector_all_subplots_draw_fit_range_handles(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.array([0.0, 1.0, 2.0])
+        e = np.array([0.01, 0.01, 0.01])
+        datasets_by_axis = {
+            "P_x": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.array([0.3, 0.2, 0.1]),
+                    error=e,
+                    metadata={"run_number": 6101},
+                )
+            ],
+            "P_y": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.array([0.2, 0.1, 0.05]),
+                    error=e,
+                    metadata={"run_number": 6101},
+                )
+            ],
+            "P_z": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.array([0.1, 0.05, 0.02]),
+                    error=e,
+                    metadata={"run_number": 6101},
+                )
+            ],
+        }
+
+        panel._current_polarization_axis = "ALL"
+        panel.plot_vector_subplots(datasets_by_axis)
+
+        assert len(panel._fit_span_artists) == 3
+        assert len(panel._fit_min_handles) == 3
+        assert len(panel._fit_max_handles) == 3
+
     def test_get_fit_dataset_applies_selected_range(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
@@ -2542,16 +2582,143 @@ class TestPlotPanel:
 
         assert not panel._y_min.isEnabled()
         assert not panel._y_max.isEnabled()
-        assert not panel._auto_y_btn.isEnabled()
+        assert panel._auto_y_btn.isEnabled()
         assert "x, y, and z" in panel._y_min.toolTip()
+        assert "Auto Y updates" in panel._auto_y_btn.toolTip()
         assert panel._y_min.toolTip() == panel._y_max.toolTip()
-        assert panel._y_min.toolTip() == panel._auto_y_btn.toolTip()
 
         panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "P_x")
         assert panel._y_min.isEnabled()
         assert panel._y_max.isEnabled()
         assert panel._auto_y_btn.isEnabled()
         assert panel._y_min.toolTip() == ""
+
+    def test_auto_y_in_all_mode_updates_each_polarization(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 4.0, 5)
+        e = np.full_like(t, 0.01)
+        datasets_by_axis = {
+            "P_x": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.array([0.10, 0.20, 0.15, 0.25, 0.30]),
+                    error=e,
+                    metadata={"run_number": 4301},
+                )
+            ],
+            "P_y": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.array([-0.30, -0.20, -0.10, 0.00, 0.10]),
+                    error=e,
+                    metadata={"run_number": 4301},
+                )
+            ],
+            "P_z": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.array([0.02, 0.03, 0.01, 0.04, 0.02]),
+                    error=e,
+                    metadata={"run_number": 4301},
+                )
+            ],
+        }
+
+        panel._current_polarization_axis = "ALL"
+        panel.plot_vector_subplots(datasets_by_axis)
+        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
+        panel._x_min.setValue(0.0)
+        panel._x_max.setValue(4.0)
+
+        panel._auto_y_limits()
+
+        px_limits = panel._y_limits_by_polarization["P_x"]
+        py_limits = panel._y_limits_by_polarization["P_y"]
+        pz_limits = panel._y_limits_by_polarization["P_z"]
+
+        assert px_limits[1] > pz_limits[1]
+        assert py_limits[0] < px_limits[0]
+        assert panel._subplot_axes_by_polarization["P_x"].get_ylim() == pytest.approx(px_limits)
+        assert panel._subplot_axes_by_polarization["P_y"].get_ylim() == pytest.approx(py_limits)
+        assert panel._subplot_axes_by_polarization["P_z"].get_ylim() == pytest.approx(pz_limits)
+
+    def test_auto_y_toggle_reapplies_on_vector_all_redraw(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 4.0, 5)
+        e = np.full_like(t, 0.01)
+        initial = {
+            "P_x": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.array([0.10, 0.20, 0.15, 0.25, 0.30]),
+                    error=e,
+                    metadata={"run_number": 4401},
+                )
+            ],
+            "P_y": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.array([-0.30, -0.20, -0.10, 0.00, 0.10]),
+                    error=e,
+                    metadata={"run_number": 4401},
+                )
+            ],
+            "P_z": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.array([0.02, 0.03, 0.01, 0.04, 0.02]),
+                    error=e,
+                    metadata={"run_number": 4401},
+                )
+            ],
+        }
+        updated = {
+            "P_x": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.array([0.50, 0.55, 0.60, 0.58, 0.62]),
+                    error=e,
+                    metadata={"run_number": 4402},
+                )
+            ],
+            "P_y": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.array([-0.60, -0.55, -0.50, -0.45, -0.40]),
+                    error=e,
+                    metadata={"run_number": 4402},
+                )
+            ],
+            "P_z": [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.array([0.08, 0.10, 0.12, 0.09, 0.11]),
+                    error=e,
+                    metadata={"run_number": 4402},
+                )
+            ],
+        }
+
+        panel._current_polarization_axis = "ALL"
+        panel.plot_vector_subplots(initial)
+        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
+        panel._auto_y_btn.click()
+
+        first_px_limits = panel._subplot_axes_by_polarization["P_x"].get_ylim()
+
+        panel.plot_vector_subplots(updated)
+
+        second_px_limits = panel._subplot_axes_by_polarization["P_x"].get_ylim()
+        second_py_limits = panel._subplot_axes_by_polarization["P_y"].get_ylim()
+
+        assert panel._auto_y_btn.isChecked()
+        assert second_px_limits != pytest.approx(first_px_limits)
+        assert second_px_limits[1] > first_px_limits[1]
+        assert second_py_limits[0] < first_px_limits[0]
 
     def test_switching_from_all_mode_preserves_zoomed_x_limits(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:

@@ -908,6 +908,7 @@ class MainWindow(QMainWindow):
                     )
             self._update_selected_datasets()
         self._refresh_time_view_selector()
+        self._refresh_vector_axis_selector()
         self._update_fit_block_state()
 
     def _setup_panels(self) -> None:
@@ -1063,6 +1064,16 @@ class MainWindow(QMainWindow):
     def _refresh_vector_axis_selector(self) -> None:
         """Show/hide and synchronize the plot polarization selector."""
         if not hasattr(self._plot_panel, "set_polarization_axes"):
+            return
+
+        if hasattr(self, "_plot_workspace") and self._plot_workspace.active_domain() != "time":
+            self._plot_panel.set_polarization_axes([])
+            return
+        if (
+            hasattr(self._plot_panel, "current_time_view_mode")
+            and self._plot_panel.current_time_view_mode() != "fb_asymmetry"
+        ):
+            self._plot_panel.set_polarization_axes([])
             return
 
         selected = list(self._data_browser.get_selected_datasets())
@@ -3701,6 +3712,8 @@ class MainWindow(QMainWindow):
                 self._plot_workspace.set_active_view(_mode)
         self._sync_fit_dock_mode()
         self._render_current_selection_plot()
+        self._refresh_vector_axis_selector()
+        self._update_fit_block_state()
         if self._current_dataset is not None:
             if _mode == "groups":
                 self.statusBar().showMessage(

@@ -854,6 +854,105 @@ class TestMainWindowBasic:
         assert mainwindow._plot_workspace.active_view() == "groups"
         assert mainwindow._plot_panel.current_time_view_mode() == "groups"
 
+    def test_frequency_round_trip_restores_vector_polarization_selector(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_dataset(4206, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.grouping.update(
+            {
+                "groups": {
+                    1: [1],
+                    2: [2],
+                    3: [1],
+                    4: [2],
+                    5: [1],
+                    6: [2],
+                },
+                "group_names": {
+                    1: "Pz Forward",
+                    2: "Pz Backward",
+                    3: "Py Top",
+                    4: "Py Bottom",
+                    5: "Px Left",
+                    6: "Px Right",
+                },
+                "forward_group": 1,
+                "backward_group": 2,
+                "vector_axis": "P_z",
+            }
+        )
+
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._current_dataset = dataset
+        mainwindow._refresh_vector_axis_selector()
+
+        assert mainwindow._plot_panel._polarization_combo.count() == 4
+        assert not mainwindow._plot_panel._polarization_combo.isHidden()
+
+        mainwindow._plot_workspace.set_active_view("frequency")
+
+        assert mainwindow._plot_panel._polarization_combo.isHidden()
+
+        mainwindow._plot_workspace.set_active_view("fb_asymmetry")
+
+        assert mainwindow._plot_panel._polarization_combo.count() == 4
+        assert not mainwindow._plot_panel._polarization_combo.isHidden()
+
+    def test_grouped_view_hides_vector_selector_until_fb_returns(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_dataset(4207, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.grouping.update(
+            {
+                "groups": {
+                    1: [1],
+                    2: [2],
+                    3: [1],
+                    4: [2],
+                    5: [1],
+                    6: [2],
+                },
+                "group_names": {
+                    1: "Pz Forward",
+                    2: "Pz Backward",
+                    3: "Py Top",
+                    4: "Py Bottom",
+                    5: "Px Left",
+                    6: "Px Right",
+                },
+                "forward_group": 1,
+                "backward_group": 2,
+                "vector_axis": "P_z",
+            }
+        )
+
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._current_dataset = dataset
+        monkeypatch.setattr(
+            mainwindow,
+            "_grouped_time_domain_display_datasets",
+            lambda target=None: [target or mainwindow._current_dataset],
+        )
+        mainwindow._refresh_time_view_selector()
+        mainwindow._refresh_vector_axis_selector()
+
+        assert mainwindow._plot_panel._polarization_combo.count() == 4
+        assert not mainwindow._plot_panel._polarization_combo.isHidden()
+
+        mainwindow._plot_workspace.set_active_view("groups")
+
+        assert mainwindow._plot_panel._polarization_combo.isHidden()
+
+        mainwindow._plot_workspace.set_active_view("fb_asymmetry")
+
+        assert mainwindow._plot_panel._polarization_combo.count() == 4
+        assert not mainwindow._plot_panel._polarization_combo.isHidden()
+
     def test_set_compact_mode_is_legacy_no_op(self, mainwindow: MainWindow) -> None:
         """Legacy compact-mode API should leave the standard shell intact."""
         mainwindow._on_fit()
