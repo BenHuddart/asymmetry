@@ -260,9 +260,10 @@ def main() -> None:
     app.setApplicationName("Asymmetry")
     app.setOrganizationName("Asymmetry")
 
-    from asymmetry.gui.styles.fonts import register_bundled_fonts
+    from asymmetry.gui.styles.fonts import configure_plot_fonts, register_bundled_fonts
 
     register_bundled_fonts()
+    configure_plot_fonts()
 
     bench_css = _load_bench_stylesheet()
     if bench_css and hasattr(app, "setStyleSheet"):

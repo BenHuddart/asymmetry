@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import copy
 import re
-import textwrap
 
 import numpy as np
 from PySide6.QtCore import QObject, QSignalBlocker, Qt, QThread, Signal
@@ -546,17 +545,10 @@ def _make_param_name_item(label: str, raw_name: str) -> QTableWidgetItem:
 _configure_formula_label = configure_formula_label
 
 
-def _set_formula_label_text(label: QLabel, formula: str, *, width: int = 24) -> None:
-    """Set a wrapped display version of a fit formula while preserving the raw text."""
+def _set_formula_label_text(label: QLabel, formula: str, **_kwargs) -> None:
+    """Set formula text; tooltip preserves the raw string for reference."""
     raw_text = str(formula)
-    label.setText(
-        textwrap.fill(
-            raw_text,
-            width=max(12, int(width)),
-            break_long_words=True,
-            break_on_hyphens=False,
-        )
-    )
+    label.setText(raw_text)
     label.setToolTip(raw_text)
 
 

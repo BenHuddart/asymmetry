@@ -1530,13 +1530,13 @@ def test_global_tab_keeps_model_tools_inline(qapp: QApplication) -> None:
     assert not hasattr(tab, "_model_tools_section")
 
 
-def test_formula_label_wraps_stretched_exponential_for_display(qapp: QApplication) -> None:
+def test_formula_label_shows_raw_formula_and_tooltip(qapp: QApplication) -> None:
     tab = GlobalFitTab()
     model = CompositeModel(["StretchedExponential", "Constant"], operators=["+"])
 
     tab._set_composite_model(model)
 
-    assert "\n" in tab._formula_label.text()
+    assert tab._formula_label.text() == model.formula_string()
     assert tab._formula_label.toolTip() == model.formula_string()
 
 
