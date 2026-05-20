@@ -63,6 +63,7 @@ from asymmetry.gui.export_paths import (
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.plots import draw_fit_range_span, style_axes, style_figure, style_legend
 from asymmetry.gui.styles.widgets import build_nav_button_qss
 
 # Metadata fields available for dataset labelling in the legend.
@@ -193,6 +194,8 @@ class PlotPanel(QWidget):
             )
             self._canvas_scroll_area.verticalScrollBar().setObjectName("plotScroll")
             self._ax = self._figure.add_subplot(111)
+            style_figure(self._figure)
+            style_axes(self._ax)
             self._nav_toolbar = NavigationToolbar2QT(self._canvas, self)
             self._nav_toolbar.hide()
             self._axis_limit_callback_ids: list[tuple[object, int, int]] = []
@@ -1523,6 +1526,7 @@ class PlotPanel(QWidget):
             self._frequency_reference_mhz = None
 
         self._ax.clear()
+        style_axes(self._ax)
         self._apply_axis_labels(
             *self._axis_labels_for_dataset(None, self._current_polarization_axis)
         )
@@ -1975,6 +1979,8 @@ class PlotPanel(QWidget):
         self._disconnect_axis_limit_callbacks()
         self._figure.clf()
         self._ax = self._figure.add_subplot(111)
+        style_figure(self._figure)
+        style_axes(self._ax)
         self._subplot_axes_by_polarization = {}
         self._vector_subplot_datasets = {}
         self._sync_canvas_scroll_geometry(
@@ -2115,11 +2121,13 @@ class PlotPanel(QWidget):
         # can otherwise push default [0, 1] limits into the limit fields.
         self._disconnect_axis_limit_callbacks()
         self._figure.clf()
+        style_figure(self._figure)
         self._subplot_axes_by_polarization = {}
         shared_ax = None
         last_arrays = (None, None, None, None)
         for idx, axis_key in enumerate(order):
             ax = self._figure.add_subplot(len(order), 1, idx + 1, sharex=shared_ax)
+            style_axes(ax)
             if shared_ax is None:
                 shared_ax = ax
             self._subplot_axes_by_polarization[axis_key] = ax
@@ -2141,7 +2149,7 @@ class PlotPanel(QWidget):
                 ax.tick_params(labelbottom=False)
             self._apply_x_axis_decimation_indicator(ax)
             if idx == 0:
-                ax.legend()
+                style_legend(ax.legend())
             if t is not None:
                 last_arrays = (t, a, e, low)
 
@@ -2200,6 +2208,7 @@ class PlotPanel(QWidget):
             axis_key = str(dataset.run_number)
             ordered_keys.append(axis_key)
             ax = self._figure.add_subplot(len(datasets), 1, idx + 1, sharex=shared_ax)
+            style_axes(ax)
             if shared_ax is None:
                 shared_ax = ax
             self._subplot_axes_by_polarization[axis_key] = ax
@@ -2217,7 +2226,7 @@ class PlotPanel(QWidget):
             else:
                 ax.tick_params(labelbottom=False)
             self._apply_x_axis_decimation_indicator(ax)
-            ax.legend(loc="upper right")
+            style_legend(ax.legend(loc="upper right"))
             if t is not None:
                 last_arrays = (t, a, e, low)
                 grouped_x_ranges.append((float(np.min(t)), float(np.max(t))))
@@ -2426,6 +2435,7 @@ class PlotPanel(QWidget):
         self._current_datasets = list(datasets)
         self._set_frequency_reference_from_dataset(datasets[0])
         self._ax.clear()
+        style_axes(self._ax)
 
         all_times: list[np.ndarray] = []
         all_asym: list[np.ndarray] = []
@@ -2512,7 +2522,7 @@ class PlotPanel(QWidget):
             self._last_plot_asymmetry = np.concatenate(all_asym)
             self._last_plot_error = np.concatenate(all_err)
             self._last_low_count_mask = np.concatenate(all_low)
-            self._ax.legend()
+            style_legend(self._ax.legend())
 
             if not self._limits_initialized:
                 t_all = self._last_plot_time
@@ -2591,6 +2601,7 @@ class PlotPanel(QWidget):
         self._last_low_count_mask = low_count_mask
 
         self._ax.clear()
+        style_axes(self._ax)
 
         finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
         valid_low = finite_mask & low_count_mask
@@ -2635,7 +2646,7 @@ class PlotPanel(QWidget):
             t_fit, y_fit, fit_label = fit_to_plot
             fit_color = self._fit_line_color_for_dataset(
                 dataset,
-                default_color="r",
+                default_color=tokens.PLOT_FIT,
                 fit_label=fit_label,
             )
             self._ax.plot(
@@ -2649,7 +2660,7 @@ class PlotPanel(QWidget):
 
         self._draw_annotations()
 
-        self._ax.legend()
+        style_legend(self._ax.legend())
 
         # Initialize limits once; preserve user-set limits on redraw.
         if not self._limits_initialized:
@@ -2759,7 +2770,8 @@ class PlotPanel(QWidget):
                 ann["y"],
                 ann["text"],
                 fontsize=9,
-                bbox={"boxstyle": "round,pad=0.2", "facecolor": "white", "alpha": 0.85},
+                bbox={"boxstyle": "round,pad=0.2", "facecolor": tokens.SURFACE,
+                      "edgecolor": tokens.BORDER, "alpha": 0.95},
                 zorder=5,
             )
             ann["artist"] = artist
@@ -3249,33 +3261,12 @@ class PlotPanel(QWidget):
             return
 
         for axis in axes:
-            self._fit_span_artists.append(
-                axis.axvspan(
-                    self._fit_x_min,
-                    self._fit_x_max,
-                    color="gold",
-                    alpha=0.18,
-                    zorder=1,
-                )
+            span, left_line, right_line = draw_fit_range_span(
+                axis, self._fit_x_min, self._fit_x_max
             )
-            self._fit_min_handles.append(
-                axis.axvline(
-                    self._fit_x_min,
-                    color="darkorange",
-                    linestyle="--",
-                    linewidth=1.5,
-                    zorder=4,
-                )
-            )
-            self._fit_max_handles.append(
-                axis.axvline(
-                    self._fit_x_max,
-                    color="darkorange",
-                    linestyle="--",
-                    linewidth=1.5,
-                    zorder=4,
-                )
-            )
+            self._fit_span_artists.append(span)
+            self._fit_min_handles.append(left_line)
+            self._fit_max_handles.append(right_line)
 
     def _detect_handle_hit(self, event) -> str | None:
         """Return which fit handle (min/max) was clicked, if any."""
@@ -3534,8 +3525,8 @@ class PlotPanel(QWidget):
         if self._current_dataset is not None:
             self.plot_dataset(self._current_dataset)
         else:
-            self._ax.plot(t_fit, y_fit, "r-", linewidth=2, label=label)
-            self._ax.legend()
+            self._ax.plot(t_fit, y_fit, "-", color=tokens.PLOT_FIT, linewidth=2, label=label)
+            style_legend(self._ax.legend())
             self._canvas.draw()
 
     def set_global_fits(self, fit_curves_dict: dict) -> None:
@@ -3606,6 +3597,7 @@ class PlotPanel(QWidget):
             self._set_alpha_label(None)
             self.set_polarization_axes([])
             self._ax.clear()
+            style_axes(self._ax)
             self._canvas.draw()
             self._current_dataset = None
             self._current_datasets = []
@@ -4022,7 +4014,7 @@ class PlotPanel(QWidget):
             ax.set_ylim(float(self._y_min.value()), float(self._y_max.value()))
 
         if show_legend:
-            ax.legend(loc="best")
+            style_legend(ax.legend(loc="best"))
 
     def _write_fit_file(self, fit_path: Path, payload: dict) -> None:
         """Write a .fit file with fit-curve data and metadata header."""
