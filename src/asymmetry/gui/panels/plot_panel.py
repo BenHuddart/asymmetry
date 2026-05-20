@@ -19,12 +19,13 @@ import subprocess
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QSignalBlocker, QTimer, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -60,6 +61,7 @@ from asymmetry.gui.export_paths import (
     remember_export_path,
     resolve_gle_export_paths,
 )
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 
 # Metadata fields available for dataset labelling in the legend.
@@ -175,6 +177,7 @@ class PlotPanel(QWidget):
     polarization_axis_changed = Signal(str)
     overlay_toggled = Signal(bool)
     time_view_changed = Signal(str)
+    cursor_coords_changed = Signal(object, object)  # (x: float|None, y: float|None)
 
     def __init__(self, parent: QWidget | None = None, *, domain: str = "time") -> None:
         super().__init__(parent)
@@ -279,8 +282,9 @@ class PlotPanel(QWidget):
             nav_row = QHBoxLayout()
             nav_row.setContentsMargins(4, 0, 4, 0)
             nav_row.setSpacing(4)
-            nav_row.addWidget(QLabel("Label:"))
-            nav_row.addWidget(self._label_field_combo)
+            if not self._is_frequency_plot_panel():
+                nav_row.addWidget(QLabel("Label:"))
+                nav_row.addWidget(self._label_field_combo)
             nav_row.addWidget(self._time_view_label)
             nav_row.addWidget(self._time_view_combo)
             nav_row.addWidget(self._overlay_checkbox)
@@ -443,10 +447,17 @@ class PlotPanel(QWidget):
         self._overlay_checkbox.setChecked(False)
         self._overlay_checkbox.toggled.connect(self.overlay_toggled.emit)
 
-        # ── Row 1: frequency-specific controls (X units and relative axis) ──
+        # ── Row 1: frequency-specific controls (surfaceAlt tinted second row) ──
         if self._is_frequency_plot_panel():
-            row1 = QHBoxLayout()
-            row1.setSpacing(4)
+            row1_widget = QWidget()
+            row1_widget.setStyleSheet(
+                f"QWidget {{ background-color: {tokens.SURFACE_ALT};"
+                f" border-top: 1px solid {tokens.BORDER}; }}"
+            )
+            row1 = QHBoxLayout(row1_widget)
+            row1.setContentsMargins(4, 3, 4, 3)
+            row1.setSpacing(8)
+
             row1.addWidget(QLabel("X Units:"))
             self._frequency_x_unit_combo = QComboBox()
             self._frequency_x_unit_combo.addItem("Frequency (MHz)", userData="frequency_mhz")
@@ -456,17 +467,31 @@ class PlotPanel(QWidget):
             )
             row1.addWidget(self._frequency_x_unit_combo)
 
-            self._frequency_axis_relative_check = QCheckBox("X relative to field")
+            self._frequency_axis_relative_check = QCheckBox("X relative to ref. field")
             self._frequency_axis_relative_check.setChecked(
                 self._frequency_axis_relative_to_reference
             )
             self._frequency_axis_relative_check.toggled.connect(
-                self.set_frequency_axis_relative_to_reference
+                self._on_frequency_relative_check_toggled
             )
             row1.addWidget(self._frequency_axis_relative_check)
 
+            row1.addWidget(QLabel("Reference:"))
+            self._frequency_reference_spin = QDoubleSpinBox()
+            self._frequency_reference_spin.setRange(0.0, 1_000_000.0)
+            self._frequency_reference_spin.setDecimals(2)
+            self._frequency_reference_spin.setSuffix(" G")
+            self._frequency_reference_spin.setValue(0.0)
+            self._frequency_reference_spin.setMinimumWidth(90)
+            self._frequency_reference_spin.setFont(mono_font(11.0))
+            self._frequency_reference_spin.setEnabled(False)
+            self._frequency_reference_spin.editingFinished.connect(
+                self._on_frequency_reference_spin_committed
+            )
+            row1.addWidget(self._frequency_reference_spin)
+
             row1.addStretch()
-            self._limit_toolbar.addLayout(row1)
+            self._limit_toolbar.addWidget(row1_widget)
 
         # ── Row 2: annotation + export controls ────────────────────────────
         row2 = QHBoxLayout()
@@ -558,7 +583,7 @@ class PlotPanel(QWidget):
     def _default_axis_labels(self) -> tuple[str, str]:
         """Return fallback axis labels for this panel domain."""
         if self._is_frequency_plot_panel():
-            return self._display_x_label(), "FFT (a.u.)"
+            return self._display_x_label(), r"$|F|$ (arb.)"
         return "Time (μs)", "Asymmetry (%)"
 
     def _mhz_per_gauss(self) -> float:
@@ -725,6 +750,21 @@ class PlotPanel(QWidget):
         """Return whether the frequency x axis is shown relative to the field."""
         return bool(self._frequency_axis_relative_to_reference)
 
+    def _on_frequency_relative_check_toggled(self, checked: bool) -> None:
+        """Enable/disable the reference spin and apply the axis change."""
+        if hasattr(self, "_frequency_reference_spin"):
+            self._frequency_reference_spin.setEnabled(checked)
+        self.set_frequency_axis_relative_to_reference(checked)
+
+    def _on_frequency_reference_spin_committed(self) -> None:
+        """Apply a user-supplied reference field override on editing commit."""
+        if not hasattr(self, "_frequency_reference_spin"):
+            return
+        value_gauss = self._frequency_reference_spin.value()
+        self._frequency_reference_mhz = float(value_gauss) * self._mhz_per_gauss()
+        if self._frequency_axis_relative_to_reference:
+            self._switch_frequency_axis_display(force=True)
+
     def get_frequency_view_window_mhz(
         self,
         *,
@@ -762,6 +802,7 @@ class PlotPanel(QWidget):
         *,
         unit: str | None = None,
         relative: bool | None = None,
+        force: bool = False,
     ) -> None:
         """Switch frequency-axis display mode with a single redraw."""
         if not self._is_frequency_plot_panel():
@@ -771,7 +812,7 @@ class PlotPanel(QWidget):
         old_relative = self._frequency_axis_relative_to_reference
         new_unit = old_unit if unit is None else str(unit)
         new_relative = old_relative if relative is None else bool(relative)
-        if new_unit == old_unit and new_relative == old_relative:
+        if not force and new_unit == old_unit and new_relative == old_relative:
             return
 
         current_x_min, current_x_max, current_y_min, current_y_max = self.get_view_limits()
@@ -1380,7 +1421,7 @@ class PlotPanel(QWidget):
     ) -> tuple[str, str]:
         """Return axis labels, preferring explicit metadata for special plots."""
         if self._is_frequency_plot_panel():
-            y_label = "FFT (a.u.)"
+            y_label = r"$|F|$ (arb.)"
             if dataset is not None and isinstance(dataset.metadata, dict):
                 raw_y_label = dataset.metadata.get("y_label")
                 if isinstance(raw_y_label, str) and raw_y_label.strip():
@@ -1483,6 +1524,22 @@ class PlotPanel(QWidget):
         if not self._is_frequency_plot_panel():
             return
         self._frequency_reference_mhz = self._frequency_reference_for_dataset(dataset)
+        if hasattr(self, "_frequency_reference_spin"):
+            gauss = (
+                self._frequency_reference_mhz / self._mhz_per_gauss()
+                if self._frequency_reference_mhz is not None
+                else 0.0
+            )
+            with QSignalBlocker(self._frequency_reference_spin):
+                self._frequency_reference_spin.setValue(gauss)
+
+    def update_frequency_reference(self, dataset: MuonDataset | None) -> None:
+        """Public entry-point: sync the reference field from *dataset* metadata.
+
+        Call this whenever the active dataset changes so the Reference spinbox
+        shows the correct value even before an FFT has been computed.
+        """
+        self._set_frequency_reference_from_dataset(dataset)
 
     def _render_empty_plot_state(self, *, alpha_text: str | None = None) -> None:
         """Render an empty but valid plot state when no plottable data is available."""
@@ -3386,6 +3443,18 @@ class PlotPanel(QWidget):
             if artist is not None:
                 artist.set_position((ann["x"], ann["y"]))
                 self._canvas.draw_idle()
+
+        # Emit cursor position for the status bar (no-op during drags).
+        if (
+            self._active_fit_handle is None
+            and self._active_annotation_idx is None
+            and event.inaxes == self._ax
+            and event.xdata is not None
+            and event.ydata is not None
+        ):
+            self.cursor_coords_changed.emit(float(event.xdata), float(event.ydata))
+        else:
+            self.cursor_coords_changed.emit(None, None)
 
     def _on_canvas_button_release(self, event) -> None:
         """End drag and open numeric editor on click without drag."""

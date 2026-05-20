@@ -80,6 +80,8 @@ from asymmetry.core.utils.constants import (
     PeriodMode,
 )
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
+from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
 from asymmetry.gui.panels.fit_panel import FitPanel
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
@@ -253,7 +255,7 @@ class MainWindow(QMainWindow):
                 "Please repair SciPy in your Python environment."
             )
 
-        self.statusBar().showMessage("Ready")
+        self._update_status_selection()
 
     def _perf_logging_is_enabled(self) -> bool:
         """Return whether lightweight GUI performance logging is enabled."""
@@ -815,6 +817,21 @@ class MainWindow(QMainWindow):
         self._dock_log.setMinimumHeight(96)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._dock_log)
 
+        # ── Structured status bar ──────────────────────────────────────────
+        _sb = self.statusBar()
+        _sb.setContentsMargins(4, 0, 4, 0)
+
+        self._status_sel_label = QLabel("")
+        self._status_sel_label.setFont(mono_font(10.5))
+        _sb.addPermanentWidget(self._status_sel_label, 1)
+
+        self._status_coords_label = QLabel("")
+        self._status_coords_label.setFont(mono_font(10.5))
+        self._status_coords_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        _sb.addPermanentWidget(self._status_coords_label)
+
+        self._last_fit_chi2: float | None = None
+
         # Set compact-friendly defaults while keeping the central plot dominant.
         self.resizeDocks([self._dock_data_browser], [360], Qt.Orientation.Horizontal)
         self.resizeDocks([self._dock_log], [140], Qt.Orientation.Vertical)
@@ -829,6 +846,8 @@ class MainWindow(QMainWindow):
             self._data_browser.group_selected.connect(self._on_group_selected)
         self._data_browser.selection_changed.connect(self._update_selected_datasets)
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
+        if hasattr(self._plot_panel, "cursor_coords_changed"):
+            self._plot_panel.cursor_coords_changed.connect(self._on_cursor_coords_changed)
         if hasattr(self._fit_panel, "fit_range_edit_committed"):
             self._fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
         if (
@@ -1583,7 +1602,7 @@ class MainWindow(QMainWindow):
                         last_dataset = dataset
                         successful += 1
                 else:
-                    self._log_panel.log(f"Loaded {path}")
+                    self._log_panel.log(f"Loaded {path}", tag="load")
                     continue
 
                 break
@@ -3614,6 +3633,8 @@ class MainWindow(QMainWindow):
             if dataset:
                 self._current_dataset = dataset
                 self._sync_fourier_panel_for_dataset(dataset)
+                if hasattr(self._frequency_plot_panel, "update_frequency_reference"):
+                    self._frequency_plot_panel.update_frequency_reference(dataset)
                 active_axis = None
                 if hasattr(self._plot_panel, "get_current_polarization_axis"):
                     active_axis = self._normalize_vector_axis(
@@ -3714,6 +3735,7 @@ class MainWindow(QMainWindow):
             self._on_plot_time_view_changed(view)
         self._sync_domain_buttons(view)
         self._apply_inspector_for_domain(view)
+        self._update_status_selection()
 
     def _on_fit_range_changed(self, x_min: float, x_max: float) -> None:
         """Refresh fit inputs when the selected fit x-range changes."""
@@ -3750,7 +3772,8 @@ class MainWindow(QMainWindow):
             fit_result=fit_result,
             fit_function=fit_function,
         )
-        self._log_panel.log(f"Fit completed: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}")
+        self._last_fit_chi2 = float(fit_result.reduced_chi_squared)
+        self._log_panel.log(f"Fit completed: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}", tag="fit")
 
     def _on_preview_requested(self, fit_result, fitted_curve, component_curves) -> None:
         """Handle preview request from fit panel."""
@@ -3939,8 +3962,10 @@ class MainWindow(QMainWindow):
         avg_chi2r = (
             sum(payload[0].reduced_chi_squared for payload in successful_results) / n_datasets
         )
+        self._last_fit_chi2 = float(avg_chi2r)
         self._log_panel.log(
-            f"Global fit completed: {n_datasets} datasets, average χ²ᵣ = {avg_chi2r:.3f}"
+            f"Global fit completed: {n_datasets} datasets, average χ²ᵣ = {avg_chi2r:.3f}",
+            tag="fit",
         )
         self.statusBar().showMessage(f"Global fit completed for {n_datasets} datasets")
 
@@ -4123,6 +4148,7 @@ class MainWindow(QMainWindow):
             self._update_fit_block_state()
         else:
             self._update_fit_block_state()
+        self._update_status_selection()
 
         analysis_datasets = [
             dataset
@@ -4144,6 +4170,50 @@ class MainWindow(QMainWindow):
             return f"Viewing runs {', '.join(run_labels)}"
         preview = ", ".join(run_labels[:12])
         return f"Viewing {len(run_labels)} runs: {preview}, ..."
+
+    def _update_status_selection(self) -> None:
+        """Refresh the center status bar label with current selection + domain."""
+        if not hasattr(self, "_status_sel_label"):
+            return
+        all_ds = self._data_browser.get_all_datasets() if hasattr(self._data_browser, "get_all_datasets") else []
+        selected = list(self._data_browser.get_selected_datasets())
+        n_sel = len(selected)
+        n_total = len(all_ds)
+        _DOMAIN_LABELS = {
+            "fb_asymmetry": "F-B asymmetry",
+            "groups": "individual groups",
+            "frequency": "frequency",
+        }
+        domain = _DOMAIN_LABELS.get(
+            self._plot_workspace.active_view() if hasattr(self, "_plot_workspace") else "",
+            "",
+        )
+        parts = []
+        if n_sel == 1 and selected:
+            parts.append(f"Run {selected[0].run_label}")
+        elif n_sel > 1:
+            parts.append(f"{n_sel} of {n_total} runs selected")
+        elif n_total > 0:
+            parts.append(f"{n_total} run{'s' if n_total != 1 else ''} loaded")
+        if domain:
+            parts.append(f"{domain} view")
+        self._status_sel_label.setText(" · ".join(parts))
+
+    def _on_cursor_coords_changed(self, x: object, y: object) -> None:
+        """Update the status bar right label with the current cursor position."""
+        if not hasattr(self, "_status_coords_label"):
+            return
+        if x is None or y is None:
+            self._status_coords_label.setText("")
+            return
+        domain = self._plot_workspace.active_view() if hasattr(self, "_plot_workspace") else ""
+        if domain == "frequency":
+            text = f"ν = {float(x):.3f} MHz  |F| = {float(y):.4g}"
+        else:
+            text = f"x = {float(x):.3f} μs  y = {float(y):.2f} %"
+            if self._last_fit_chi2 is not None:
+                text += f"  χ²/ν = {self._last_fit_chi2:.3f}"
+        self._status_coords_label.setText(text)
 
     def _get_fit_dataset(self, dataset):
         """Return analysis dataset restricted to the active fit range."""

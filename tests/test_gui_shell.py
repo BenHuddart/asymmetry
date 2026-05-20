@@ -176,7 +176,7 @@ class _StubLogPanel(QWidget):
         super().__init__()
         self.messages = []
 
-    def log(self, message: str):
+    def log(self, message: str, *, tag: str = "") -> None:
         self.messages.append(message)
 
 
