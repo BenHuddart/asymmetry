@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.component_info_dialog import show_component_info_dialog
 
 
@@ -362,7 +363,7 @@ class FunctionExpressionBuilderDialog(QDialog):
         show_component_info_dialog(self, component)
 
     def _set_status(self, message: str, *, valid: bool) -> None:
-        color = "#157347" if valid else "#B02A37"
+        color = tokens.OK if valid else tokens.ERROR
         self._status_label.setText(f"<span style='color:{color};'>{message}</span>")
 
     def _validate_expression(self) -> tuple[bool, str | None, object | None]:

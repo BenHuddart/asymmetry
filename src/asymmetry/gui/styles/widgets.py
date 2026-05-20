@@ -170,8 +170,14 @@ def error_html(label: str) -> str:
 def style_group_state_button(
     button: QPushButton,
     state: Literal["active", "selected", "unselected"],
+    *,
+    base: str = "",
 ) -> None:
     """Apply BENCH styling to a group-state toggle button in fit_parameters_panel.
+
+    Args:
+        base: Optional QSS prefix (e.g. scale-dependent radius/padding rules)
+              prepended before the state rules.
 
     States:
         active:     Currently focused/active group — ACCENT_SOFT fill, ACCENT border.
@@ -180,19 +186,22 @@ def style_group_state_button(
     """
     if state == "active":
         button.setStyleSheet(
-            f"QPushButton {{ border: 2px solid {tokens.ACCENT};"
+            base
+            + f"QPushButton {{ border: 2px solid {tokens.ACCENT};"
             f" background: {tokens.ACCENT_SOFT}; color: {tokens.ACCENT};"
             f" font-weight: 700; }}"
         )
     elif state == "selected":
         button.setStyleSheet(
-            f"QPushButton {{ border: 1px solid {tokens.ACCENT};"
+            base
+            + f"QPushButton {{ border: 1px solid {tokens.ACCENT};"
             f" background: {tokens.ACCENT_SOFT2}; color: {tokens.TEXT};"
             f" font-weight: 500; }}"
         )
     else:
         button.setStyleSheet(
-            f"QPushButton {{ border: 1px solid {tokens.BORDER};"
+            base
+            + f"QPushButton {{ border: 1px solid {tokens.BORDER};"
             f" background: {tokens.SURFACE}; color: {tokens.TEXT_MUTED};"
             f" font-weight: 400; }}"
         )
@@ -205,5 +214,6 @@ def apply_footer_hint(label: QLabel) -> None:
     label.setStyleSheet(
         f"QLabel {{ background-color: {tokens.SURFACE_ALT};"
         f" color: {tokens.TEXT_MUTED};"
-        f" border-top: 1px solid {tokens.BORDER}; }}"
+        f" border-top: 1px solid {tokens.BORDER};"
+        f" padding: 5px 8px; font-size: 10px; }}"
     )

@@ -36,6 +36,7 @@ from asymmetry.core.fitting.parameter_models import (
     fit_parameter_model,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style, configure_formula_label
 from asymmetry.gui.widgets.function_expression_builder import (
     ComponentSelectorButton as _ComponentSelectorButton,  # noqa: F401
@@ -385,7 +386,7 @@ class ModelFitDialog(QDialog):
         params_layout.addWidget(self._chi2_label)
 
         self._fit_progress_label = QLabel("")
-        self._fit_progress_label.setStyleSheet("color: #9a6700;")
+        self._fit_progress_label.setStyleSheet(f"color: {tokens.WARN};")
         self._fit_progress_label.setVisible(False)
         params_layout.addWidget(self._fit_progress_label)
 
@@ -570,10 +571,10 @@ class ModelFitDialog(QDialog):
 
     def _status_text_for_range(self, fit_range: ModelFitRange) -> str:
         if fit_range.result is None:
-            return '<span style="color:#1f6feb;">Not run</span>'
+            return f'<span style="color:{tokens.ACCENT};">Not run</span>'
         if fit_range.result.success:
-            return '<span style="color:#22863a;">Success</span>'
-        return '<span style="color:#d73a49;">Failed</span>'
+            return f'<span style="color:{tokens.OK};">Success</span>'
+        return f'<span style="color:{tokens.ERROR};">Failed</span>'
 
     def _on_range_active_changed(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._fit.ranges):
@@ -723,20 +724,20 @@ class ModelFitDialog(QDialog):
         if fit_range.result is not None:
             if fit_range.result.success:
                 self._chi2_label.setText(
-                    '<span style="color:#22863a;">'
+                    f'<span style="color:{tokens.OK};">'
                     f"Fit successful: chi2 = {fit_range.result.chi_squared:.6g}, "
                     f"reduced chi2 = {fit_range.result.reduced_chi_squared:.6g}"
                     "</span>"
                 )
             else:
                 self._chi2_label.setText(
-                    '<span style="color:#d73a49;">'
+                    f'<span style="color:{tokens.ERROR};">'
                     f"Fit failed: {fit_range.result.message or 'No convergence'}"
                     "</span>"
                 )
         else:
             self._chi2_label.setText(
-                '<span style="color:#1f6feb;">Fitting not yet run for selected range</span>'
+                f'<span style="color:{tokens.ACCENT};">Fitting not yet run for selected range</span>'
             )
 
         self._param_table.blockSignals(True)
@@ -786,7 +787,7 @@ class ModelFitDialog(QDialog):
         self._commit_param_table()
         fit_range.result = None
         self._chi2_label.setText(
-            '<span style="color:#1f6feb;">Fitting not yet run for selected range</span>'
+            f'<span style="color:{tokens.ACCENT};">Fitting not yet run for selected range</span>'
         )
 
     def _commit_param_table(self, *, notify_adjustments: bool = False) -> None:

@@ -12,6 +12,7 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QLabel, QMessageBox, QTableWidgetItem
 
+from asymmetry.gui.styles import tokens
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ParameterCompositeModel,
@@ -104,7 +105,7 @@ class CrossGroupFitDialog(ModelFitDialog):
                 banner_text += f" | Inherited from: <b>{source_name}</b>"
 
         banner = QLabel(banner_text)
-        banner.setStyleSheet("color: #1f6feb;")
+        banner.setStyleSheet(f"color: {tokens.ACCENT};")
         top_layout = self.layout()
         if top_layout is not None:
             top_layout.insertWidget(0, banner)
@@ -288,10 +289,10 @@ class CrossGroupFitDialog(ModelFitDialog):
         idx = self._fit.ranges.index(fit_range) if fit_range in self._fit.ranges else -1
         result = self._range_results.get(idx)
         if result is None:
-            return '<span style="color:#1f6feb;">Not run</span>'
+            return f'<span style="color:{tokens.ACCENT};">Not run</span>'
         if result.success:
-            return '<span style="color:#22863a;">Success</span>'
-        return '<span style="color:#d73a49;">Failed</span>'
+            return f'<span style="color:{tokens.OK};">Success</span>'
+        return f'<span style="color:{tokens.ERROR};">Failed</span>'
 
     def _select_range(self, idx: int) -> None:
         if idx < 0 or idx >= len(self._fit.ranges):
@@ -318,20 +319,20 @@ class CrossGroupFitDialog(ModelFitDialog):
         if result is not None:
             if result.success:
                 self._chi2_label.setText(
-                    '<span style="color:#22863a;">'
+                    f'<span style="color:{tokens.OK};">'
                     f"Cross-group fit successful: chi2 = {result.chi_squared:.6g}, "
                     f"reduced chi2 = {result.reduced_chi_squared:.6g}"
                     "</span>"
                 )
             else:
                 self._chi2_label.setText(
-                    '<span style="color:#d73a49;">'
+                    f'<span style="color:{tokens.ERROR};">'
                     f"Cross-group fit failed: {result.message or 'No convergence'}"
                     "</span>"
                 )
         else:
             self._chi2_label.setText(
-                '<span style="color:#1f6feb;">Fitting not yet run for selected range</span>'
+                f'<span style="color:{tokens.ACCENT};">Fitting not yet run for selected range</span>'
             )
 
         self._param_table.blockSignals(True)

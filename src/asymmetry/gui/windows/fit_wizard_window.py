@@ -36,6 +36,7 @@ from asymmetry.core.fitting.fit_wizard import (
 )
 from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.core.fourier.fft import fft_asymmetry
+from asymmetry.gui.styles import tokens
 
 
 class FitWizardWorker(QObject):
@@ -118,7 +119,7 @@ class FitWizardWindow(QMainWindow):
         self._refresh_btn.clicked.connect(self._start_analysis)
         controls_row.addWidget(self._refresh_btn)
         self._progress_label = QLabel("")
-        self._progress_label.setStyleSheet("color: #9a6700;")
+        self._progress_label.setStyleSheet(f"color: {tokens.WARN};")
         self._progress_label.setVisible(False)
         controls_row.addWidget(self._progress_label)
         self._progress_bar = QProgressBar()

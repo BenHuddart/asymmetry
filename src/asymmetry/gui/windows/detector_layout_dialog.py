@@ -44,6 +44,7 @@ from asymmetry.core.instrument import (
     InstrumentLayout,
     get_instrument_layout,
 )
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.detector_schematic import _GROUP_COLOURS, DetectorSchematicWidget
 
 __all__ = ["DetectorLayoutDialog"]
@@ -213,7 +214,7 @@ class DetectorLayoutDialog(QDialog):
         preset_layout.addWidget(self._preset_combo)
 
         self._preset_status_label = QLabel("(Current: Custom)")
-        self._preset_status_label.setStyleSheet("color: #666;")
+        self._preset_status_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         preset_layout.addWidget(self._preset_status_label)
 
         apply_btn = QPushButton("Apply Grouping")
@@ -234,7 +235,7 @@ class DetectorLayoutDialog(QDialog):
             "multiple groups."
         )
         help_label.setWordWrap(True)
-        help_label.setStyleSheet("color: #555;")
+        help_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         preset_layout.addWidget(help_label)
         preset_layout.addStretch()
 
@@ -301,12 +302,12 @@ class DetectorLayoutDialog(QDialog):
                 " border: 1px solid #999;"
                 f" border-radius: {border_radius}px;"
                 f" padding: {padding_v}px {padding_h}px;"
-                " background-color: #f7f7f7;"
+                f" background-color: {tokens.SURFACE_ALT};"
                 "}"
                 f"QPushButton:checked {{ border: 2px solid {colour}; "
                 f"border-radius: {border_radius}px; "
                 f"padding: {padding_v}px {padding_h}px; "
-                f"background-color: #e8f0fe; font-weight: bold; }}"
+                f"background-color: {tokens.ACCENT_SOFT}; font-weight: bold; }}"
             )
 
     # ------------------------------------------------------------------

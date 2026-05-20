@@ -42,7 +42,10 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.typography import header_font
+from asymmetry.gui.styles.widgets import apply_footer_hint
 
 _GROUP_TEMP_ABS_TOL_K = 5e-3
 _GROUP_TEMP_REL_TOL = 2e-3
@@ -355,15 +358,8 @@ class DataBrowserPanel(QWidget):
 
         self._table.verticalHeader().hide()
 
-        _cell_font = QFont()
-        _cell_font.setPointSizeF(11.0)
-        self._table.setFont(_cell_font)
-
-        _header_font = QFont()
-        _header_font.setPointSizeF(10.0)
-        _header_font.setWeight(QFont.Weight.DemiBold)
-        _header_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.3)
-        self._table.horizontalHeader().setFont(_header_font)
+        self._table.setFont(mono_font(11.0))
+        self._table.horizontalHeader().setFont(header_font())
 
         self._row_delegate = _RowHighlightDelegate(self._table)
         self._table.setItemDelegate(self._row_delegate)
@@ -374,15 +370,7 @@ class DataBrowserPanel(QWidget):
 
         self._footer_hint = QLabel("⌘-click adds · shift-click ranges")
         self._footer_hint.setWordWrap(True)
-        self._footer_hint.setStyleSheet(
-            "QLabel {"
-            " background-color: #f4f3f0;"
-            " color: #67676b;"
-            " border-top: 1px solid #dedcd6;"
-            " padding: 5px 8px;"
-            " font-size: 10px;"
-            "}"
-        )
+        apply_footer_hint(self._footer_hint)
         layout.addWidget(self._footer_hint)
         self.setMinimumWidth(250)
 
@@ -643,7 +631,7 @@ class DataBrowserPanel(QWidget):
             count_item.setFlags(count_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             count_item.setFont(mono_font(10.0))
             count_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            count_item.setForeground(QColor("#67676b"))
+            count_item.setForeground(QColor(tokens.TEXT_MUTED))
             count_item.setBackground(_GROUP_HEADER_BACKGROUND)
             self._table.setItem(row, 4, count_item)
 
