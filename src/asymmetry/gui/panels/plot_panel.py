@@ -1911,19 +1911,24 @@ class PlotPanel(QWidget):
     def _update_y_limit_controls_for_axis(self, axis: str | None) -> None:
         """Enable per-axis Y editing except when in vector ALL mode."""
         disable_y_edit = bool(self._subplot_axes_by_polarization) and axis == "ALL"
-        tooltip = (
+        manual_tooltip = (
             "In All mode, Y limits are inherited from x, y, and z. "
             "Select each polarization to set limits."
             if disable_y_edit
             else ""
         )
+        auto_tooltip = (
+            "In All mode, Auto Y updates the visible x, y, and z polarization limits."
+            if disable_y_edit
+            else ""
+        )
         self._y_min.setEnabled(not disable_y_edit)
         self._y_max.setEnabled(not disable_y_edit)
-        self._y_min.setToolTip(tooltip)
-        self._y_max.setToolTip(tooltip)
+        self._y_min.setToolTip(manual_tooltip)
+        self._y_max.setToolTip(manual_tooltip)
         if hasattr(self, "_auto_y_btn"):
-            self._auto_y_btn.setEnabled(not disable_y_edit)
-            self._auto_y_btn.setToolTip(tooltip)
+            self._auto_y_btn.setEnabled(True)
+            self._auto_y_btn.setToolTip(auto_tooltip)
 
     def _all_mode_axes_order(self) -> list[str]:
         """Return the axis order currently visible in ALL mode."""
@@ -2034,7 +2039,7 @@ class PlotPanel(QWidget):
 
     def _fit_range_axes(self) -> list[object]:
         """Return axes that should show fit-range handles for the current view."""
-        if self._grouped_time_subplot_datasets and self._subplot_axes_by_polarization:
+        if self._subplot_axes_by_polarization:
             return list(self._subplot_axes_by_polarization.values())
         return [self._ax] if hasattr(self, "_ax") else []
 
@@ -2171,6 +2176,7 @@ class PlotPanel(QWidget):
         self._subplot_axes_by_polarization = {}
         shared_ax = None
         last_arrays = (None, None, None, None)
+        vector_x_ranges: list[tuple[float, float]] = []
         for idx, axis_key in enumerate(order):
             ax = self._figure.add_subplot(len(order), 1, idx + 1, sharex=shared_ax)
             style_axes(ax)
@@ -2198,6 +2204,7 @@ class PlotPanel(QWidget):
                 style_legend(ax.legend())
             if t is not None:
                 last_arrays = (t, a, e, low)
+                vector_x_ranges.append((float(np.min(t)), float(np.max(t))))
 
         self._last_plot_time = last_arrays[0]
         self._last_plot_asymmetry = last_arrays[1]
@@ -2212,6 +2219,10 @@ class PlotPanel(QWidget):
             self._x_max.setValue(self._convert_frequency_axis_limit_to_control_value(x_max + xpad))
             self._limits_initialized = True
 
+        if vector_x_ranges and (self._fit_x_min is None or self._fit_x_max is None):
+            self._fit_x_min = min(lo for lo, _ in vector_x_ranges)
+            self._fit_x_max = max(hi for _, hi in vector_x_ranges)
+
         if self._current_polarization_axis in self._subplot_axes_by_polarization:
             y_limits = self._y_limits_by_polarization.get(self._current_polarization_axis)
             if y_limits is not None:
@@ -2223,6 +2234,7 @@ class PlotPanel(QWidget):
         self._update_y_limit_controls_for_axis(self._current_polarization_axis)
 
         self._apply_limits(schedule_viewport_refresh=True)
+        self._apply_auto_limits_if_enabled()
         self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
 
     def plot_grouped_time_domain_subplots(self, datasets: list[MuonDataset]) -> None:
@@ -2765,17 +2777,21 @@ class PlotPanel(QWidget):
 
         if self._subplot_axes_by_polarization:
             self._draw_fit_range_artists()
-            for axis_key, axis_obj in self._subplot_axes_by_polarization.items():
-                axis_obj.set_xlim(x0, x1)
-                if self._current_polarization_axis == axis_key:
-                    lo, hi = (y0, y1) if y0 <= y1 else (y1, y0)
-                    self._y_limits_by_polarization[axis_key] = (lo, hi)
-                limits = self._y_limits_by_polarization.get(axis_key)
-                if limits is not None:
-                    axis_obj.set_ylim(float(limits[0]), float(limits[1]))
-                elif self._current_polarization_axis == "ALL":
-                    # Fallback for axes without cached limits yet.
-                    axis_obj.set_ylim(y0, y1)
+            self._syncing_limits_from_axes = True
+            try:
+                for axis_key, axis_obj in self._subplot_axes_by_polarization.items():
+                    axis_obj.set_xlim(x0, x1)
+                    if self._current_polarization_axis == axis_key:
+                        lo, hi = (y0, y1) if y0 <= y1 else (y1, y0)
+                        self._y_limits_by_polarization[axis_key] = (lo, hi)
+                    limits = self._y_limits_by_polarization.get(axis_key)
+                    if limits is not None:
+                        axis_obj.set_ylim(float(limits[0]), float(limits[1]))
+                    elif self._current_polarization_axis == "ALL":
+                        # Fallback for axes without cached limits yet.
+                        axis_obj.set_ylim(y0, y1)
+            finally:
+                self._syncing_limits_from_axes = False
             self._canvas.draw()
             self._emit_view_limits_changed()
             if schedule_viewport_refresh and not self._viewport_refresh_in_progress:
@@ -2859,7 +2875,19 @@ class PlotPanel(QWidget):
             return
 
         if self._subplot_axes_by_polarization and self._current_polarization_axis == "ALL":
-            # ALL mode inherits per-axis limits from individual polarization views.
+            updated = False
+            for axis_key in self._all_mode_axes_order():
+                limits = self._auto_y_limits_for_datasets(
+                    self._vector_subplot_datasets.get(axis_key, [])
+                )
+                if limits is None:
+                    continue
+                self._y_limits_by_polarization[axis_key] = limits
+                updated = True
+            if not updated:
+                return
+            self._sync_y_controls_with_visible_axis()
+            self._apply_limits()
             return
 
         if (
@@ -2899,6 +2927,26 @@ class PlotPanel(QWidget):
         if not np.any(mask):
             return
 
+        limits = self._auto_y_limits_from_arrays(asymmetry, error, mask)
+        if limits is None:
+            return
+        y_min, y_max = limits
+
+        self._y_min.setValue(y_min)
+        self._y_max.setValue(y_max)
+
+        self._apply_limits()
+
+    def _auto_y_limits_from_arrays(
+        self,
+        asymmetry: np.ndarray,
+        error: np.ndarray,
+        mask: np.ndarray,
+    ) -> tuple[float, float] | None:
+        """Return padded y-limits for the masked asymmetry arrays."""
+        if not np.any(mask):
+            return None
+
         y_min = float(np.min(asymmetry[mask] - error[mask]))
         y_max = float(np.max(asymmetry[mask] + error[mask]))
         if y_max <= y_min:
@@ -2909,11 +2957,69 @@ class PlotPanel(QWidget):
             padding = (y_max - y_min) * 0.05
             y_min -= padding
             y_max += padding
+        return y_min, y_max
 
-        self._y_min.setValue(y_min)
-        self._y_max.setValue(y_max)
+    def _auto_y_limits_for_datasets(
+        self,
+        datasets: list[MuonDataset],
+    ) -> tuple[float, float] | None:
+        """Return auto y-limits for one polarization's datasets."""
+        all_times: list[np.ndarray] = []
+        all_asymmetry: list[np.ndarray] = []
+        all_error: list[np.ndarray] = []
+        all_low_masks: list[np.ndarray] = []
 
-        self._apply_limits()
+        for dataset in datasets:
+            analysis_dataset = self.get_analysis_dataset(dataset)
+            if analysis_dataset is None:
+                continue
+
+            time = self._convert_frequency_axis_for_display(analysis_dataset.time)
+            asymmetry = analysis_dataset.asymmetry
+            error = analysis_dataset.error
+            low_mask = self._low_count_mask_for_dataset(
+                analysis_dataset,
+                source_dataset=dataset,
+            )
+
+            finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
+            if not np.any(finite_mask):
+                continue
+
+            all_times.append(time[finite_mask])
+            all_asymmetry.append(asymmetry[finite_mask])
+            all_error.append(error[finite_mask])
+            all_low_masks.append(low_mask[finite_mask])
+
+        if not all_times:
+            return None
+
+        time = np.concatenate(all_times)
+        asymmetry = np.concatenate(all_asymmetry)
+        error = np.concatenate(all_error)
+        low_mask = np.concatenate(all_low_masks)
+
+        x_lo = float(self._x_min.value())
+        x_hi = float(self._x_max.value())
+        if self._is_frequency_plot_panel():
+            x_lo = self._convert_frequency_control_value_to_axis_limit(x_lo)
+            x_hi = self._convert_frequency_control_value_to_axis_limit(x_hi)
+        lo, hi = (x_lo, x_hi) if x_lo <= x_hi else (x_hi, x_lo)
+
+        mask = (
+            np.isfinite(time)
+            & np.isfinite(asymmetry)
+            & np.isfinite(error)
+            & (time >= lo)
+            & (time <= hi)
+            & (~low_mask)
+        )
+        if not np.any(mask):
+            mask = np.isfinite(asymmetry) & np.isfinite(error) & (~low_mask)
+        if not np.any(mask):
+            mask = np.isfinite(asymmetry) & np.isfinite(error)
+
+        return self._auto_y_limits_from_arrays(asymmetry, error, mask)
 
     def _low_count_mask_for_dataset(
         self,
@@ -3296,9 +3402,6 @@ class PlotPanel(QWidget):
         if not self._has_mpl:
             return
         if self._is_frequency_plot_panel():
-            return
-        if self._subplot_axes_by_polarization and not self._grouped_time_subplot_datasets:
-            self._clear_fit_range_artists()
             return
         self._clear_fit_range_artists()
 

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-05-20
+
+### Changed
+- Vector-polarization plotting now keeps `Auto Y` active in `ALL` mode, recalculates per-polarization Y limits on redraw, and preserves the manual Y-lock for stacked views.
+- Vector-polarization `ALL` views now show fit-range indicators correctly across the stacked polarization subplots.
+- Returning from grouped or frequency views to F-B asymmetry now restores the vector-polarization selector reliably.
+
 ## [0.3.3] - 2026-05-18
 
 ### Added
