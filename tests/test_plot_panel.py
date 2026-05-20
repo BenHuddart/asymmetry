@@ -1070,8 +1070,7 @@ class TestPlotPanel:
         )
 
         panel.plot_dataset(ds)
-        assert not panel._alpha_label.isHidden()
-        assert panel._alpha_label.text() == "(alpha = 1.2345)"
+        assert panel._header_meta_label.text() == "(alpha = 1.2345)"
 
     def test_single_dataset_uses_axis_specific_alpha_in_vector_mode(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -1099,8 +1098,7 @@ class TestPlotPanel:
         )
 
         panel.plot_dataset(ds)
-        assert not panel._alpha_label.isHidden()
-        assert panel._alpha_label.text() == "(alpha = 1.2)"
+        assert panel._header_meta_label.text() == "(alpha = 1.2)"
 
     def test_vector_all_mode_hides_alpha_label(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -1117,8 +1115,7 @@ class TestPlotPanel:
         )
 
         panel.plot_vector_subplots({"P_x": [base], "P_y": [base], "P_z": [base]})
-        assert panel._alpha_label.isHidden()
-        assert panel._alpha_label.text() == ""
+        assert panel._header_meta_label.text() == ""
 
     def test_axis_specific_fits_persist_separately_per_run(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -1467,8 +1464,7 @@ class TestPlotPanel:
         )
 
         panel.plot_datasets([ds1, ds2])
-        assert panel._alpha_label.isHidden()
-        assert panel._alpha_label.text() == ""
+        assert panel._header_meta_label.text() == ""
 
     def test_plot_datasets_decimates_each_dense_trace_independently(
         self,

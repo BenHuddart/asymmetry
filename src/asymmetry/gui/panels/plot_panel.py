@@ -222,12 +222,6 @@ class PlotPanel(QWidget):
             self._sync_navigation_buttons()
             layout.addLayout(self._limit_toolbar)
 
-            self._alpha_label = QLabel("")
-            self._alpha_label.setAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            )
-            self._alpha_label.hide()
-
             self._polarization_label = QLabel("Polarization:")
             self._polarization_label.setAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -239,16 +233,6 @@ class PlotPanel(QWidget):
             self._polarization_combo.currentIndexChanged.connect(self._on_polarization_axis_changed)
             self._polarization_combo.hide()
 
-            alpha_row = QHBoxLayout()
-            alpha_row.setContentsMargins(2, 0, 2, 0)
-            alpha_row.setSpacing(0)
-            alpha_row.addStretch()
-            alpha_row.addWidget(self._polarization_label)
-            alpha_row.addWidget(self._polarization_combo)
-            alpha_row.addSpacing(8)
-            alpha_row.addWidget(self._alpha_label)
-            layout.addLayout(alpha_row)
-
             nav_row = QHBoxLayout()
             nav_row.setContentsMargins(4, 0, 4, 0)
             nav_row.setSpacing(4)
@@ -259,6 +243,9 @@ class PlotPanel(QWidget):
             nav_row.addWidget(self._time_view_combo)
             nav_row.addWidget(self._overlay_checkbox)
             nav_row.addStretch()
+            nav_row.addWidget(self._polarization_label)
+            nav_row.addWidget(self._polarization_combo)
+            nav_row.addSpacing(4)
 
             _nav_qss = build_nav_button_qss()
             self._pan_btn = QPushButton("Pan")
@@ -277,7 +264,11 @@ class PlotPanel(QWidget):
 
             layout.addLayout(nav_row)
 
+            self._plot_header = self._create_plot_header()
+            layout.addWidget(self._plot_header)
             layout.addWidget(self._canvas_scroll_area)
+            self._plot_footer = self._create_plot_footer()
+            layout.addWidget(self._plot_footer)
             self._has_mpl = True
 
             # Store current dataset for rebunching
@@ -465,37 +456,97 @@ class PlotPanel(QWidget):
             row1.addStretch()
             self._limit_toolbar.addWidget(row1_widget)
 
-        # ── Row 2: annotation + export controls ────────────────────────────
-        row2 = QHBoxLayout()
-        row2.setSpacing(4)
-        row2.addStretch()
-
-        self._add_label_btn = QPushButton("Add Annotation")
-        self._add_label_btn.setCheckable(True)
-        # Avoid clipping on platforms/themes where checkable button chrome
-        # adds extra horizontal padding around the label text.
-        min_btn_width = self._add_label_btn.fontMetrics().horizontalAdvance("Add Annotation") + 32
-        self._add_label_btn.setMinimumWidth(min_btn_width)
-        self._add_label_btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
-        row2.addWidget(self._add_label_btn)
-
-        # Export controls (right side of row 2)
-        self._export_gle_btn = QPushButton("Export Plot(s) to GLE")
-        self._export_gle_btn.setEnabled(False)
-        self._export_gle_btn.clicked.connect(self.export_plots_to_gle)
-        self._gle_format_combo = QComboBox()
-        self._gle_format_combo.addItems(["PDF", "EPS"])
-        self._gle_format_combo.setEnabled(False)
-
-        row2.addWidget(self._export_gle_btn)
-        row2.addWidget(QLabel("Format:"))
-        row2.addWidget(self._gle_format_combo)
-
-        self._limit_toolbar.addLayout(row2)
 
     def _is_frequency_plot_panel(self) -> bool:
         """Return True when this panel is dedicated to frequency-domain viewing."""
         return self._domain == "frequency"
+
+    def _create_plot_header(self) -> QWidget:
+        """Return the title strip shown above the canvas."""
+        widget = QWidget()
+        widget.setStyleSheet(
+            f"QWidget {{ background-color: {tokens.SURFACE_ALT};"
+            f" border-bottom: 1px solid {tokens.BORDER}; }}"
+        )
+        row = QHBoxLayout(widget)
+        row.setContentsMargins(10, 6, 10, 6)
+        row.setSpacing(8)
+
+        self._header_title_label = QLabel()
+        title_font = self._header_title_label.font()
+        title_font.setPointSizeF(11.0)
+        title_font.setWeight(title_font.Weight.DemiBold)
+        self._header_title_label.setFont(title_font)
+        self._header_title_label.setStyleSheet(f"color: {tokens.TEXT}; border: none;")
+        row.addWidget(self._header_title_label, 1)
+
+        self._header_meta_label = QLabel()
+        self._header_meta_label.setFont(mono_font(10.5))
+        self._header_meta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._header_meta_label.setStyleSheet(f"color: {tokens.TEXT_MUTED}; border: none;")
+        row.addWidget(self._header_meta_label)
+
+        self._update_plot_header()
+        return widget
+
+    def _create_plot_footer(self) -> QWidget:
+        """Return the control bar shown below the canvas."""
+        widget = QWidget()
+        widget.setStyleSheet(
+            f"QWidget {{ background-color: {tokens.SURFACE_ALT};"
+            f" border-top: 1px solid {tokens.BORDER}; }}"
+        )
+        row = QHBoxLayout(widget)
+        row.setContentsMargins(8, 4, 8, 4)
+        row.setSpacing(6)
+
+        self._add_label_btn = QPushButton("Add Annotation")
+        self._add_label_btn.setCheckable(True)
+        min_btn_width = (
+            self._add_label_btn.fontMetrics().horizontalAdvance("Add Annotation") + 32
+        )
+        self._add_label_btn.setMinimumWidth(min_btn_width)
+        row.addWidget(self._add_label_btn)
+        row.addStretch()
+
+        self._export_gle_btn = QPushButton("Export Plot(s) to GLE")
+        self._export_gle_btn.setEnabled(False)
+        self._export_gle_btn.clicked.connect(self.export_plots_to_gle)
+        row.addWidget(self._export_gle_btn)
+
+        row.addWidget(QLabel("Format:"))
+
+        self._gle_format_combo = QComboBox()
+        self._gle_format_combo.addItems(["PDF", "EPS"])
+        self._gle_format_combo.setEnabled(False)
+        row.addWidget(self._gle_format_combo)
+
+        return widget
+
+    def _update_plot_header(self) -> None:
+        """Refresh the title-strip labels from the current plot state."""
+        if not hasattr(self, "_header_title_label"):
+            return
+        self._header_title_label.setText(self._header_title_text())
+
+    def _header_title_text(self) -> str:
+        """Return the left-side text for the plot title strip."""
+        if self._domain == "frequency":
+            domain = "Fourier spectrum"
+            multi_suffix = "runs overlaid"
+        elif getattr(self, "_current_time_view_mode", "fb_asymmetry") == "groups":
+            domain = "Grouped time-domain"
+            multi_suffix = "runs"
+        else:
+            domain = "Time-domain F-B asymmetry"
+            multi_suffix = "runs highlighted"
+
+        datasets = getattr(self, "_current_datasets", [])
+        if not datasets:
+            return domain
+        if len(datasets) == 1:
+            return f"{domain} — {datasets[0].run_label}"
+        return f"{domain} — {len(datasets)} {multi_suffix}"
 
     def _set_canvas_minimum_height_for_axes(self, axis_count: int) -> None:
         """Scale the canvas height so stacked subplot views scroll vertically."""
@@ -1624,15 +1675,9 @@ class PlotPanel(QWidget):
         self.view_limits_changed.emit(*self.get_view_limits())
 
     def _set_alpha_label(self, text: str | None) -> None:
-        """Show or hide the alpha label above the plot."""
-        if not hasattr(self, "_alpha_label"):
-            return
-        if text:
-            self._alpha_label.setText(text)
-            self._alpha_label.show()
-        else:
-            self._alpha_label.clear()
-            self._alpha_label.hide()
+        """Update the header metadata label with alpha / unit info."""
+        if hasattr(self, "_header_meta_label"):
+            self._header_meta_label.setText(text or "")
 
     def _axis_display_text(self, axis_key: str) -> str:
         """Return UI label for canonical polarization keys."""
@@ -2116,6 +2161,7 @@ class PlotPanel(QWidget):
         self._vector_subplot_datasets = {k: list(v) for k, v in datasets_by_axis.items() if v}
         self._current_datasets = list(self._vector_subplot_datasets.get(order[0], []))
         self._current_dataset = self._current_datasets[-1] if self._current_datasets else None
+        self._update_plot_header()
 
         # Stop listening to old axes before clearing the figure; stale callbacks
         # can otherwise push default [0, 1] limits into the limit fields.
@@ -2194,6 +2240,7 @@ class PlotPanel(QWidget):
         self._grouped_time_subplot_datasets = list(datasets)
         self._current_datasets = list(datasets)
         self._current_dataset = datasets[-1]
+        self._update_plot_header()
         self._current_polarization_axis = None
         if hasattr(self, "_polarization_label"):
             self._polarization_label.hide()
@@ -2433,6 +2480,7 @@ class PlotPanel(QWidget):
         self._decimation_applied_for_current_view = False
         self._current_dataset = datasets[-1]
         self._current_datasets = list(datasets)
+        self._update_plot_header()
         self._set_frequency_reference_from_dataset(datasets[0])
         self._ax.clear()
         style_axes(self._ax)
@@ -2581,6 +2629,7 @@ class PlotPanel(QWidget):
         # Store the original dataset
         self._current_dataset = dataset
         self._current_datasets = [dataset]
+        self._update_plot_header()
         self._set_frequency_reference_from_dataset(dataset)
 
         analysis_dataset = self.get_analysis_dataset(dataset)
@@ -3601,6 +3650,7 @@ class PlotPanel(QWidget):
             self._canvas.draw()
             self._current_dataset = None
             self._current_datasets = []
+            self._update_plot_header()
             self._fit_curve = None
             self._fit_curve_run_number = None
             self._fit_curves = {}
