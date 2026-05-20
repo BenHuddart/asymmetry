@@ -89,28 +89,49 @@ def apply_param_table_header_font(table: QTableWidget) -> None:
 
 # ── Segmented toolbar / toggle-button QSS ────────────────────────────────────
 
-def build_segmented_button_qss(*, min_width: int | None = None) -> str:
-    """Return QSS for a checkable QPushButton used as a segmented-control cell.
+def build_segmented_button_qss(
+    *,
+    min_width: int | None = None,
+    padding_h: int = 10,
+) -> str:
+    """Return a per-widget QSS for a checkable QPushButton segmented-control cell.
 
-    Checked state uses ACCENT_SOFT background with ACCENT border and text.
-    Unchecked state uses SURFACE background with BORDER.
+    Must be applied via widget.setStyleSheet(), NOT the global application
+    stylesheet.  Per-widget application is required because Qt's global
+    stylesheet interacts with UIManager.build_stylesheet's generic QPushButton
+    rules in ways that cause pseudo-state padding to revert unexpectedly.
+
+    Args:
+        min_width:  Optional minimum width in px (e.g. 28 for compact view-mode
+                    buttons showing a single digit).
+        padding_h:  Horizontal padding in px.  Use 10 (default) for domain/label
+                    buttons, 6 for compact numbered buttons.
     """
     width_rule = f" min-width: {min_width}px;" if min_width is not None else ""
     return (
-        f"QPushButton {{{width_rule} background-color: {tokens.SURFACE};"
-        f" color: {tokens.TEXT}; border: 1px solid {tokens.BORDER}; border-radius: 4px; }}"
-        f" QPushButton:checked {{ background-color: {tokens.ACCENT_SOFT};"
-        f" color: {tokens.ACCENT}; border-color: {tokens.ACCENT}; font-weight: 600; }}"
+        # font-weight: 600 is in the base rule so the button is always sized for
+        # bold text — the checked state only changes colours, never triggers reflow.
+        f"QPushButton {{{width_rule} padding: 2px {padding_h}px; font-weight: 600;"
+        f" background-color: {tokens.SURFACE}; color: {tokens.TEXT};"
+        f" border: 1px solid {tokens.BORDER}; border-radius: 4px; }}"
+        f" QPushButton:checked {{ padding: 2px {padding_h}px; font-weight: 600;"
+        f" background-color: {tokens.ACCENT_SOFT}; color: {tokens.ACCENT};"
+        f" border-color: {tokens.ACCENT}; }}"
     )
 
 
 def build_nav_button_qss() -> str:
-    """Return QSS for plot-panel pan/zoom/auto navigation buttons."""
+    """Return a per-widget QSS for plot-panel pan/zoom/auto navigation buttons.
+
+    Must be applied via widget.setStyleSheet() — see build_segmented_button_qss
+    for the rationale.
+    """
     return (
-        f"QPushButton {{ min-width: 60px; border: 1px solid {tokens.BORDER_STRONG};"
-        f" border-radius: 4px; }}"
-        f" QPushButton:checked {{ background-color: {tokens.ACCENT_SOFT};"
-        f" color: {tokens.ACCENT}; border: 2px solid {tokens.ACCENT}; font-weight: 600; }}"
+        f"QPushButton {{ min-width: 60px; padding: 2px 8px; font-weight: 600;"
+        f" border: 1px solid {tokens.BORDER_STRONG}; border-radius: 4px; }}"
+        f" QPushButton:checked {{ min-width: 60px; padding: 2px 8px; font-weight: 600;"
+        f" background-color: {tokens.ACCENT_SOFT}; color: {tokens.ACCENT};"
+        f" border: 2px solid {tokens.ACCENT}; }}"
     )
 
 

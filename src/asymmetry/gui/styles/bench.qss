@@ -189,3 +189,31 @@ QScrollArea {
     background-color: transparent;
     border: none;
 }
+
+/* ── Toolbar segmented-control and nav buttons ───────────────────────
+   Styled per-widget via build_segmented_button_qss() / build_nav_button_qss()
+   in styles/widgets.py.  Per-widget application is required because Qt's
+   global stylesheet interacts with UIManager.build_stylesheet's generic
+   QPushButton rules in ways that cause pseudo-state padding to revert to
+   the platform default rather than the rule-specified value. The style
+   definitions are centralised in widgets.py; only application is per-widget. */
+
+/* ── Plot-canvas scroll bar ─────────────────────────────────────── */
+QScrollBar#plotScroll:vertical {
+    background: #f4f3f0;
+    width: 12px;
+    margin: 0;
+}
+QScrollBar#plotScroll::handle:vertical {
+    background: #c2c0b9;
+    min-height: 28px;
+    border-radius: 5px;
+}
+QScrollBar#plotScroll::add-line:vertical,
+QScrollBar#plotScroll::sub-line:vertical {
+    height: 0;
+}
+QScrollBar#plotScroll::add-page:vertical,
+QScrollBar#plotScroll::sub-page:vertical {
+    background: #f4f3f0;
+}

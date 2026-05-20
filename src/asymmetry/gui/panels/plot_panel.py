@@ -63,6 +63,7 @@ from asymmetry.gui.export_paths import (
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.widgets import build_nav_button_qss
 
 # Metadata fields available for dataset labelling in the legend.
 _LABEL_FIELDS: list[tuple[str, str]] = [
@@ -77,40 +78,6 @@ _TIME_VIEW_FIELDS: list[tuple[str, str]] = [
     ("Individual Groups", "groups"),
 ]
 
-_NAV_BUTTON_STYLE = """
-QPushButton {
-    min-width: 60px;
-    border: 1px solid #9aa4b2;
-    border-radius: 4px;
-}
-QPushButton:checked {
-    font-weight: 600;
-    border: 2px solid #1f6feb;
-    background-color: #dbeafe;
-    color: #0f3d91;
-}
-""".strip()
-
-_PLOT_SCROLLBAR_STYLE = """
-QScrollBar:vertical {
-    background: #eef2f7;
-    width: 12px;
-    margin: 0;
-}
-QScrollBar::handle:vertical {
-    background: #8fa1b8;
-    min-height: 28px;
-    border-radius: 5px;
-}
-QScrollBar::add-line:vertical,
-QScrollBar::sub-line:vertical {
-    height: 0px;
-}
-QScrollBar::add-page:vertical,
-QScrollBar::sub-page:vertical {
-    background: #eef2f7;
-}
-""".strip()
 
 
 class _FloatLimitField(QLineEdit):
@@ -224,7 +191,7 @@ class PlotPanel(QWidget):
             self._canvas_scroll_area.setVerticalScrollBarPolicy(
                 Qt.ScrollBarPolicy.ScrollBarAsNeeded
             )
-            self._canvas_scroll_area.verticalScrollBar().setStyleSheet(_PLOT_SCROLLBAR_STYLE)
+            self._canvas_scroll_area.verticalScrollBar().setObjectName("plotScroll")
             self._ax = self._figure.add_subplot(111)
             self._nav_toolbar = NavigationToolbar2QT(self._canvas, self)
             self._nav_toolbar.hide()
@@ -290,17 +257,18 @@ class PlotPanel(QWidget):
             nav_row.addWidget(self._overlay_checkbox)
             nav_row.addStretch()
 
+            _nav_qss = build_nav_button_qss()
             self._pan_btn = QPushButton("Pan")
             self._pan_btn.setCheckable(True)
             self._pan_btn.setMaximumWidth(60)
-            self._pan_btn.setStyleSheet(_NAV_BUTTON_STYLE)
+            self._pan_btn.setStyleSheet(_nav_qss)
             self._pan_btn.clicked.connect(self._on_pan_button_clicked)
             nav_row.addWidget(self._pan_btn)
 
             self._zoom_btn = QPushButton("Zoom")
             self._zoom_btn.setCheckable(True)
             self._zoom_btn.setMaximumWidth(60)
-            self._zoom_btn.setStyleSheet(_NAV_BUTTON_STYLE)
+            self._zoom_btn.setStyleSheet(_nav_qss)
             self._zoom_btn.clicked.connect(self._on_zoom_button_clicked)
             nav_row.addWidget(self._zoom_btn)
 
@@ -396,16 +364,17 @@ class PlotPanel(QWidget):
         row0.addWidget(self._y_unit_label)
 
         # Separate axis auto-scale controls.
+        _nav_qss = build_nav_button_qss()
         self._auto_x_btn = QPushButton("Auto X")
         self._auto_x_btn.setCheckable(True)
-        self._auto_x_btn.setStyleSheet(_NAV_BUTTON_STYLE)
+        self._auto_x_btn.setStyleSheet(_nav_qss)
         self._auto_x_btn.clicked.connect(self._on_auto_x_button_clicked)
         self._auto_x_btn.setMaximumWidth(65)
         row0.addWidget(self._auto_x_btn)
 
         self._auto_y_btn = QPushButton("Auto Y")
         self._auto_y_btn.setCheckable(True)
-        self._auto_y_btn.setStyleSheet(_NAV_BUTTON_STYLE)
+        self._auto_y_btn.setStyleSheet(_nav_qss)
         self._auto_y_btn.clicked.connect(self._on_auto_y_button_clicked)
         self._auto_y_btn.setMaximumWidth(65)
         row0.addWidget(self._auto_y_btn)
