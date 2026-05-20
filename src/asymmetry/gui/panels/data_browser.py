@@ -216,7 +216,7 @@ class _RowHighlightDelegate(QStyledItemDelegate):
     _HEADER_FOC_BG = QColor(0x8F, 0xA3, 0xC2)  # #8fa3c2
     _MEMBER_FOC_BG = QColor(0xDF, 0xE8, 0xF4)  # #dfe8f4  accentSoft2
     _MEMBER_SEL_BG = QColor(0xE8, 0xEE, 0xF7)  # #e8eef7  accentSoft
-    _ACCENT = QColor("#1f4d8a")
+    _ACCENT = QColor(tokens.ACCENT)
     _ACCENT_SOFT = QColor(31, 77, 138, 102)  # 40 % accent
     _WHITE = QColor("white")
     _CLEAR_FLAGS = QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_HasFocus
