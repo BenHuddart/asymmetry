@@ -190,6 +190,9 @@ class _StubFourier(QWidget):
     def set_group_definitions(self, *_args, **_kwargs):
         return
 
+    def set_fft_status(self, message: str, *, success: bool = False) -> None:
+        return
+
 
 class _StubFitParams(QWidget):
     def set_fit_results(self, *_args, **_kwargs):

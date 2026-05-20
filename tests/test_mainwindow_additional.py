@@ -704,13 +704,9 @@ class TestMainWindowBasic:
         self,
         mainwindow: MainWindow,
     ) -> None:
-        """The central workspace should expose FB, grouped, and frequency tabs."""
-        labels = [
-            mainwindow._plot_workspace._tab_bar.tabText(index)
-            for index in range(mainwindow._plot_workspace._tab_bar.count())
-        ]
-
-        assert labels == ["FB Asymmetry", "Individual Groups", "Frequency Domain"]
+        """The toolbar Domain buttons should expose all three view labels."""
+        labels = [btn.text() for btn in mainwindow._domain_buttons]
+        assert labels == ["F-B asymmetry", "Individual groups", "Frequency"]
 
     def test_on_fit_shows_fit_dock(self, mainwindow: MainWindow) -> None:
         """Fit action should unhide the fit dock if it starts hidden."""
@@ -851,7 +847,7 @@ class TestMainWindowBasic:
         mainwindow._refresh_time_view_selector()
 
         assert mainwindow._plot_workspace.active_view() == "frequency"
-        assert mainwindow._plot_workspace._tab_bar.isTabEnabled(1)
+        assert mainwindow._plot_workspace.is_view_enabled("groups")
 
         mainwindow._plot_workspace.set_active_view("groups")
 
@@ -2752,3 +2748,99 @@ class TestMainWindowBasic:
         assert restored_2 is ds2
         assert restored_1.run.grouping["alpha"] == pytest.approx(2.5)
         assert restored_2.run.grouping["alpha"] == pytest.approx(2.5)
+
+
+class TestPlotWorkspaceDomainPhase7:
+    """Phase 7 — toolbar-driven domain switching."""
+
+    def test_groups_button_disabled_when_no_grouped_data(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Individual-groups toolbar button is disabled when no grouped data exists."""
+        monkeypatch.setattr(
+            mainwindow,
+            "_grouped_time_domain_display_datasets",
+            lambda _dataset=None: [],
+        )
+        mainwindow._refresh_time_view_selector()
+        assert not mainwindow._domain_buttons[1].isEnabled()
+
+    def test_groups_button_enabled_when_grouped_data_present(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Individual-groups toolbar button is enabled when grouped data is available."""
+        monkeypatch.setattr(
+            mainwindow,
+            "_grouped_time_domain_display_datasets",
+            lambda dataset=None: [dataset or mainwindow._current_dataset],
+        )
+        time_arr = np.linspace(0, 8, 100)
+        asym = np.zeros(100)
+        err = np.ones(100) * 0.01
+        run = Run(run_number=42, grouping={}, metadata={})
+        ds = MuonDataset(time=time_arr, asymmetry=asym, error=err, run=run, metadata={})
+        mainwindow._current_dataset = ds
+        mainwindow._refresh_time_view_selector()
+        assert mainwindow._domain_buttons[1].isEnabled()
+
+    def test_no_signal_on_same_view_click(
+        self, mainwindow: MainWindow, qapp: QApplication
+    ) -> None:
+        """Selecting the already-active view emits no active_view_changed signal."""
+        emitted: list[str] = []
+        mainwindow._plot_workspace.active_view_changed.connect(emitted.append)
+        current = mainwindow._plot_workspace.active_view()
+        mainwindow._plot_workspace.set_active_view(current)
+        mainwindow._plot_workspace.active_view_changed.disconnect(emitted.append)
+        assert emitted == []
+
+    def test_view_changed_emits_both_signals_on_domain_hop(
+        self, mainwindow: MainWindow, qapp: QApplication
+    ) -> None:
+        """fb_asymmetry → frequency fires both active_view_changed and active_domain_changed."""
+        mainwindow._plot_workspace.set_active_view("fb_asymmetry")
+        view_emissions: list[str] = []
+        domain_emissions: list[str] = []
+        mainwindow._plot_workspace.active_view_changed.connect(view_emissions.append)
+        mainwindow._plot_workspace.active_domain_changed.connect(domain_emissions.append)
+
+        mainwindow._plot_workspace.set_active_view("frequency")
+
+        mainwindow._plot_workspace.active_view_changed.disconnect(view_emissions.append)
+        mainwindow._plot_workspace.active_domain_changed.disconnect(domain_emissions.append)
+        assert view_emissions == ["frequency"]
+        assert domain_emissions == ["frequency"]
+
+    def test_same_domain_hop_no_domain_signal(
+        self, mainwindow: MainWindow, qapp: QApplication
+    ) -> None:
+        """fb_asymmetry → groups (both time domain) does not emit active_domain_changed."""
+        mainwindow._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
+        mainwindow._plot_workspace.set_active_view("fb_asymmetry")
+        view_emissions: list[str] = []
+        domain_emissions: list[str] = []
+        mainwindow._plot_workspace.active_view_changed.connect(view_emissions.append)
+        mainwindow._plot_workspace.active_domain_changed.connect(domain_emissions.append)
+
+        mainwindow._plot_workspace.set_active_view("groups")
+
+        mainwindow._plot_workspace.active_view_changed.disconnect(view_emissions.append)
+        mainwindow._plot_workspace.active_domain_changed.disconnect(domain_emissions.append)
+        assert view_emissions == ["groups"]
+        assert domain_emissions == []
+
+    def test_state_round_trip(self, mainwindow: MainWindow) -> None:
+        """Workspace state serialises and restores correctly for each view."""
+        from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
+
+        for view in ("fb_asymmetry", "frequency"):
+            mainwindow._plot_workspace.set_active_view(view)
+            state = mainwindow._plot_workspace.get_state()
+            assert state["active_view"] == view
+
+            dummy_workspace = PlotWorkspacePanel(
+                time_panel=mainwindow._plot_panel,
+                frequency_panel=mainwindow._frequency_plot_panel,
+            )
+            dummy_workspace.restore_state(state)
+            assert dummy_workspace.active_view() == view
