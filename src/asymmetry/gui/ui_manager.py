@@ -8,6 +8,7 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QSettings, QSize, Qt, Signal
 from PySide6.QtGui import QAction, QFont
+from asymmetry.gui.styles import tokens
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -168,24 +169,25 @@ class UIManager(QObject):
         table_padding_h = max(2, round(4 * scale))
         spin_button_width = max(16, round(18 * scale))
         spin_arrow_size = max(8, round(10 * scale))
+        t = tokens
         return f"""
 QPushButton, QToolButton {{
     padding: {button_padding_v}px {button_padding_h}px;
-    border: 1px solid #dedcd6;
+    border: 1px solid {t.BORDER};
     border-radius: {border_radius}px;
     background-color: palette(button);
     color: palette(button-text);
 }}
 QPushButton:hover, QToolButton:hover {{
-    border-color: #c2c0b9;
+    border-color: {t.BORDER_STRONG};
 }}
 QPushButton:disabled, QToolButton:disabled {{
-    border-color: #dedcd6;
-    color: #9a9a9e;
+    border-color: {t.BORDER};
+    color: {t.TEXT_DIM};
 }}
 QLineEdit, QComboBox, QAbstractSpinBox, QTextEdit, QPlainTextEdit {{
     padding: {input_padding_v}px {input_padding_h}px;
-    border: 1px solid #dedcd6;
+    border: 1px solid {t.BORDER};
     border-radius: {border_radius}px;
 }}
 QAbstractSpinBox {{
@@ -194,7 +196,7 @@ QAbstractSpinBox {{
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
     width: {spin_button_width}px;
     background-color: palette(button);
-    border-left: 1px solid #dedcd6;
+    border-left: 1px solid {t.BORDER};
 }}
 QAbstractSpinBox::up-button {{
     subcontrol-origin: border;
@@ -204,7 +206,7 @@ QAbstractSpinBox::up-button {{
 QAbstractSpinBox::down-button {{
     subcontrol-origin: border;
     subcontrol-position: bottom right;
-    border-top: 1px solid #dedcd6;
+    border-top: 1px solid {t.BORDER};
     border-bottom-right-radius: {border_radius}px;
 }}
 QAbstractSpinBox::up-arrow, QAbstractSpinBox::down-arrow {{

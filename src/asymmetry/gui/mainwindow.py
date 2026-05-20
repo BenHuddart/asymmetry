@@ -743,7 +743,7 @@ class MainWindow(QMainWindow):
 
         # Left dock — data browser / logbook
         self._data_browser = DataBrowserPanel()
-        self._dock_data_browser = QDockWidget("Data Browser", self)
+        self._dock_data_browser = QDockWidget("DATA BROWSER", self)
         self._dock_data_browser.setWidget(self._data_browser)
         self._dock_data_browser.setMinimumWidth(220)
         self._dock_data_browser.setFeatures(
@@ -792,7 +792,7 @@ class MainWindow(QMainWindow):
 
         # Right dock — fitted parameter trends (tabbed with fit/fourier)
         self._fit_parameters_panel = FitParametersPanel()
-        self._dock_fit_parameters = QDockWidget("Fit Parameters", self)
+        self._dock_fit_parameters = QDockWidget("Parameters", self)
         self._dock_fit_parameters.setWidget(self._fit_parameters_panel)
         self._dock_fit_parameters.setMinimumWidth(340)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit_parameters)
@@ -805,7 +805,7 @@ class MainWindow(QMainWindow):
 
         # Bottom dock — log panel
         self._log_panel = LogPanel()
-        self._dock_log = QDockWidget("Log", self)
+        self._dock_log = QDockWidget("LOG", self)
         self._dock_log.setWidget(self._log_panel)
         self._dock_log.setMinimumHeight(96)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._dock_log)
@@ -2883,7 +2883,7 @@ class MainWindow(QMainWindow):
             self._multi_group_fit_window.set_dataset(dataset)
             self._dock_fit.setWindowTitle(self._multi_group_fit_window.dock_title())
         else:
-            self._dock_fit.setWindowTitle("Fit")
+            self._dock_fit.setWindowTitle("Fit")  # inspector tab label — title case per spec
 
     # Maps each toolbar domain token to (ordered visible dock keys, default raised key).
     # Fourier is hidden in the groups domain; mgfit is surfaced by swapping _fit_stack.
