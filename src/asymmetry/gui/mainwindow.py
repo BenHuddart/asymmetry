@@ -1104,11 +1104,14 @@ class MainWindow(QMainWindow):
                 self._plot_workspace.set_available_views(modes)
                 if self._plot_workspace.active_domain() == "time":
                     self._plot_workspace.set_active_view("fb_asymmetry")
+            self._domain_buttons[1].setEnabled(False)
             return
 
         target = self._current_dataset or (selected[0] if len(selected) == 1 else None)
         if target is not None and self._grouped_time_domain_display_datasets(target):
             modes.append("groups")
+
+        self._domain_buttons[1].setEnabled("groups" in modes)
 
         current_mode = None
         if hasattr(self._plot_panel, "current_time_view_mode"):
@@ -3239,6 +3242,9 @@ class MainWindow(QMainWindow):
                     preserved_y_limits[0],
                     preserved_y_limits[1],
                 )
+            self._set_fourier_status(
+                f"No FFT computed for run {run_number} — use the Fourier panel to compute."
+            )
             return
 
         if len(spectra) == 1:
