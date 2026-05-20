@@ -53,9 +53,7 @@ def style_legend(legend: object) -> None:
         pass
 
 
-def draw_fit_range_span(
-    ax: object, x_min: float, x_max: float
-) -> tuple[object, object, object]:
+def draw_fit_range_span(ax: object, x_min: float, x_max: float) -> tuple[object, object, object]:
     """Draw a BENCH-styled fit-range span on *ax* and return the three artists.
 
     Replaces the ad-hoc "gold" / "darkorange" colours used previously.

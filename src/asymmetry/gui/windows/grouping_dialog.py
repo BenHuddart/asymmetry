@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QSizePolicy,
     QSpinBox,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -83,7 +84,7 @@ class GroupingDialog(QDialog):
         )
 
         self.setWindowTitle("Grouping")
-        self.resize(860, 560)
+        self.resize(860, 500)
 
         if not self._datasets:
             layout = QVBoxLayout(self)
@@ -108,7 +109,9 @@ class GroupingDialog(QDialog):
         self._updating_deadtime_value_combo = False
 
         root = QVBoxLayout(self)
+        root.setSpacing(6)
 
+        # \u2500\u2500 Top bar: dataset count + reference run selector \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
         top_row = QHBoxLayout()
         top_row.addWidget(QLabel(f"Datasets: {len(self._datasets)}"))
 
@@ -122,23 +125,16 @@ class GroupingDialog(QDialog):
         top_row.addStretch()
         root.addLayout(top_row)
 
-        self._dataset_list = QListWidget()
-        for ds in self._datasets:
-            item = QListWidgetItem(ds.run_label)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            run_number = int(ds.run_number)
-            item.setData(Qt.ItemDataRole.UserRole, run_number)
-            if self._selected_run_numbers is None:
-                item.setCheckState(Qt.CheckState.Checked)
-            else:
-                state = (
-                    Qt.CheckState.Checked
-                    if run_number in self._selected_run_numbers
-                    else Qt.CheckState.Unchecked
-                )
-                item.setCheckState(state)
-            self._dataset_list.addItem(item)
-        self._dataset_list.setMaximumHeight(150)
+        # \u2500\u2500 Main split: left pane (datasets + groups) | right pane (form) \u2500
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(1)
+
+        # Left pane
+        left_pane = QWidget()
+        left_layout = QVBoxLayout(left_pane)
+        left_layout.setContentsMargins(0, 0, 4, 0)
+        left_layout.setSpacing(4)
 
         dataset_buttons = QHBoxLayout()
         select_all_btn = QPushButton("Select All")
@@ -157,8 +153,26 @@ class GroupingDialog(QDialog):
         dataset_buttons.addWidget(select_reference_btn)
         dataset_buttons.addWidget(deselect_all_btn)
         dataset_buttons.addStretch()
-        root.addLayout(dataset_buttons)
-        root.addWidget(self._dataset_list)
+        left_layout.addLayout(dataset_buttons)
+
+        self._dataset_list = QListWidget()
+        for ds in self._datasets:
+            item = QListWidgetItem(ds.run_label)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            run_number = int(ds.run_number)
+            item.setData(Qt.ItemDataRole.UserRole, run_number)
+            if self._selected_run_numbers is None:
+                item.setCheckState(Qt.CheckState.Checked)
+            else:
+                state = (
+                    Qt.CheckState.Checked
+                    if run_number in self._selected_run_numbers
+                    else Qt.CheckState.Unchecked
+                )
+                item.setCheckState(state)
+            self._dataset_list.addItem(item)
+        self._dataset_list.setMaximumHeight(150)
+        left_layout.addWidget(self._dataset_list)
 
         self._group_table = QTableWidget(0, 4)
         self._group_table.setHorizontalHeaderLabels(
@@ -168,7 +182,7 @@ class GroupingDialog(QDialog):
         self._group_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._group_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._group_table.setMinimumHeight(0)
-        root.addWidget(self._group_table)
+        left_layout.addWidget(self._group_table)
         self._populate_group_table()
 
         detector_layout_btn = QPushButton("Detector Layout\u2026")
@@ -178,9 +192,19 @@ class GroupingDialog(QDialog):
             "Open the interactive detector schematic editor to assign detectors to groups visually."
         )
         detector_layout_btn.clicked.connect(self._on_detector_layout)
-        root.addWidget(detector_layout_btn)
+        left_layout.addWidget(detector_layout_btn)
+        left_layout.addStretch()
+        splitter.addWidget(left_pane)
+
+        # Right pane
+        right_pane = QWidget()
+        right_layout = QVBoxLayout(right_pane)
+        right_layout.setContentsMargins(4, 4, 0, 0)
+        right_layout.setSpacing(0)
 
         form = QFormLayout()
+        form.setVerticalSpacing(8)
+        form.setHorizontalSpacing(12)
         self._forward_combo = QComboBox()
         self._backward_combo = QComboBox()
         self._forward_combo.setMinimumWidth(220)
@@ -348,26 +372,25 @@ class GroupingDialog(QDialog):
         alpha_row.addWidget(estimate_btn)
         form.addRow(self._alpha_row_label, self._single_alpha_widget)
 
-        self._vector_alpha_label = QLabel("Vector Grouping")
+        # Vector alpha widget: one row per axis (P_z primary, then P_y, P_x)
+        # Columns: axis label | Forward group | Backward group | α spin | Estimate button
         self._vector_alpha_widget = QWidget()
         vector_layout = QGridLayout(self._vector_alpha_widget)
         vector_layout.setContentsMargins(0, 0, 0, 0)
-        vector_layout.setHorizontalSpacing(8)
-        vector_layout.setVerticalSpacing(4)
-        vector_layout.addWidget(QLabel(""), 0, 0)
-        for col, axis in enumerate(("P_x", "P_y", "P_z"), start=1):
-            vector_layout.addWidget(QLabel(axis), 0, col)
+        vector_layout.setHorizontalSpacing(12)
+        vector_layout.setVerticalSpacing(8)
 
-        vector_layout.addWidget(QLabel("Forward Group"), 1, 0)
-        vector_layout.addWidget(QLabel("Backward Group"), 2, 0)
-        vector_layout.addWidget(QLabel("Alpha"), 3, 0)
+        vector_layout.addWidget(QLabel("Forward"), 0, 1)
+        vector_layout.addWidget(QLabel("Backward"), 0, 2)
+        vector_layout.addWidget(QLabel("α"), 0, 3)
 
         grouping_alpha = self._run.grouping if isinstance(self._run.grouping, dict) else {}
-        for col, axis in enumerate(("P_x", "P_y", "P_z"), start=1):
+        for row_idx, axis in enumerate(("P_z", "P_y", "P_x"), start=1):
+            vector_layout.addWidget(QLabel(axis), row_idx, 0)
             fwd_label = QLabel("-")
             bwd_label = QLabel("-")
-            vector_layout.addWidget(fwd_label, 1, col)
-            vector_layout.addWidget(bwd_label, 2, col)
+            vector_layout.addWidget(fwd_label, row_idx, 1)
+            vector_layout.addWidget(bwd_label, row_idx, 2)
             self._vector_forward_labels[axis] = fwd_label
             self._vector_backward_labels[axis] = bwd_label
 
@@ -377,7 +400,7 @@ class GroupingDialog(QDialog):
             spin.setValue(
                 self._alpha_value_for_axis(grouping_alpha, axis, float(self._alpha_spin.value()))
             )
-            vector_layout.addWidget(spin, 3, col)
+            vector_layout.addWidget(spin, row_idx, 3)
             self._vector_alpha_spins[axis] = spin
 
             btn = QPushButton("Estimate α")
@@ -386,16 +409,16 @@ class GroupingDialog(QDialog):
             btn.clicked.connect(
                 lambda _checked=False, axis_key=axis: self._estimate_alpha_for_axis(axis_key)
             )
-            vector_layout.addWidget(btn, 4, col)
+            vector_layout.addWidget(btn, row_idx, 4)
             self._vector_estimate_buttons[axis] = btn
 
         self._estimate_all_btn = QPushButton("Estimate All α")
         self._estimate_all_btn.setAutoDefault(False)
         self._estimate_all_btn.setDefault(False)
         self._estimate_all_btn.clicked.connect(self._estimate_all_alpha)
-        vector_layout.addWidget(self._estimate_all_btn, 5, 1, 1, 3)
+        vector_layout.addWidget(self._estimate_all_btn, 4, 0, 1, 5)
 
-        form.addRow(self._vector_alpha_label, self._vector_alpha_widget)
+        form.addRow(self._vector_alpha_widget)
 
         form.addRow("t0 Bin", self._t0_spin)
         form.addRow("t_good Offset", self._t_good_offset_spin)
@@ -405,10 +428,17 @@ class GroupingDialog(QDialog):
         form.addRow("Deadtime Mode", self._deadtime_mode_widget)
         form.addRow("Background", self._background_checkbox)
         form.addRow(self._period_mode_label, self._period_mode_widget)
-        root.addLayout(form)
+
+        right_layout.addLayout(form)
+        right_layout.addStretch()
+        splitter.addWidget(right_pane)
+
+        splitter.setSizes([330, 520])
+        root.addWidget(splitter, stretch=1)
+
         self._update_vector_mode_controls(grouping)
 
-        file_buttons = QHBoxLayout()
+        # ── Bottom bar: file I/O + action buttons ────────────────────────
         load_btn = QPushButton("Load .grp")
         load_btn.setAutoDefault(False)
         load_btn.setDefault(False)
@@ -417,13 +447,6 @@ class GroupingDialog(QDialog):
         save_btn.setAutoDefault(False)
         save_btn.setDefault(False)
         save_btn.clicked.connect(self._save_grp_file)
-        file_buttons.addWidget(load_btn)
-        file_buttons.addWidget(save_btn)
-        file_buttons.addStretch()
-        root.addLayout(file_buttons)
-
-        buttons = QHBoxLayout()
-        buttons.addStretch()
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setAutoDefault(False)
         cancel_btn.setDefault(False)
@@ -432,9 +455,15 @@ class GroupingDialog(QDialog):
         apply_btn.setAutoDefault(False)
         apply_btn.setDefault(False)
         apply_btn.clicked.connect(self._on_apply)
-        buttons.addWidget(cancel_btn)
-        buttons.addWidget(apply_btn)
-        root.addLayout(buttons)
+
+        bottom_bar = QHBoxLayout()
+        bottom_bar.addWidget(load_btn)
+        bottom_bar.addWidget(save_btn)
+        bottom_bar.addStretch()
+        bottom_bar.addWidget(cancel_btn)
+        bottom_bar.addWidget(apply_btn)
+        root.addLayout(bottom_bar)
+
         self._update_period_mode_visibility()
 
     def _choose_reference_dataset(self) -> MuonDataset:
@@ -1279,7 +1308,6 @@ class GroupingDialog(QDialog):
         self._backward_combo.setVisible(not vector_mode)
         self._alpha_row_label.setVisible(not vector_mode)
         self._single_alpha_widget.setVisible(not vector_mode)
-        self._vector_alpha_label.setVisible(vector_mode)
         self._vector_alpha_widget.setVisible(vector_mode)
 
         if not vector_mode:

@@ -98,9 +98,7 @@ class PlotWorkspacePanel(QWidget):
                 if self._last_time_view in self._enabled_views
                 else "fb_asymmetry"
             )
-            self.set_active_view(
-                "frequency" if self.active_domain() == "frequency" else fallback
-            )
+            self.set_active_view("frequency" if self.active_domain() == "frequency" else fallback)
 
     def set_active_view(self, view: str) -> None:
         """Select the visible top-level plot view and emit change signals.

@@ -17,6 +17,7 @@ from asymmetry.gui.styles import tokens
 @pytest.fixture
 def qapp():
     from PySide6.QtWidgets import QApplication
+
     app = QApplication.instance()
     if app is None:
         app = QApplication([])
@@ -26,12 +27,14 @@ def qapp():
 @pytest.fixture
 def panel(qapp):
     from asymmetry.gui.panels.plot_panel import PlotPanel
+
     return PlotPanel()
 
 
 @pytest.fixture
 def dataset():
     from asymmetry.core.data.dataset import MuonDataset
+
     t = np.linspace(0.0, 10.0, 200)
     a = 0.2 * np.exp(-0.4 * t)
     e = np.full_like(t, 0.01)
@@ -41,9 +44,7 @@ def dataset():
 class TestAxesStyling:
     """style_axes() must have been called after every plot_dataset / clear."""
 
-    def test_axes_facecolor_is_bench_surface_after_plot(
-        self, panel, dataset
-    ) -> None:
+    def test_axes_facecolor_is_bench_surface_after_plot(self, panel, dataset) -> None:
         if not getattr(panel, "_has_mpl", False):
             pytest.skip("matplotlib not available")
         panel.plot_dataset(dataset)
@@ -67,6 +68,7 @@ class TestAxesStyling:
             pytest.skip("matplotlib not available")
         panel.plot_dataset(dataset)
         import matplotlib.colors as mcolors
+
         expected = mcolors.to_rgba(tokens.PLOT_AXIS)
         for spine in panel._ax.spines.values():
             actual = spine.get_edgecolor()
@@ -88,8 +90,7 @@ class TestAxesStyling:
         panel.plot_dataset(dataset)
         # At least one grid line should exist after style_axes()
         has_grid = any(
-            line.get_visible()
-            for line in panel._ax.get_xgridlines() + panel._ax.get_ygridlines()
+            line.get_visible() for line in panel._ax.get_xgridlines() + panel._ax.get_ygridlines()
         )
         assert has_grid, "Grid should be enabled after style_axes()"
 
@@ -107,10 +108,15 @@ class TestFitRangeSpan:
         assert spans, "Expected at least one fit-range span artist"
 
         import matplotlib.colors as mcolors
+
         expected_rgb = mcolors.to_rgb(tokens.PLOT_FIT_RANGE_FACE)
         # get_facecolor() returns RGBA array or tuple depending on mpl version
         raw = spans[0].get_facecolor()
-        actual_rgba = mcolors.to_rgba(raw[0] if hasattr(raw, "__len__") and len(raw) > 1 and hasattr(raw[0], "__len__") else raw)
+        actual_rgba = mcolors.to_rgba(
+            raw[0]
+            if hasattr(raw, "__len__") and len(raw) > 1 and hasattr(raw[0], "__len__")
+            else raw
+        )
         assert actual_rgba[:3] == pytest.approx(expected_rgb, abs=0.02), (
             f"Fit span colour {actual_rgba[:3]} does not match BENCH accent {expected_rgb}"
         )
@@ -124,6 +130,7 @@ class TestFitRangeSpan:
         handles = panel._fit_min_handles
         assert handles, "Expected at least one fit-range handle artist"
         import matplotlib.colors as mcolors
+
         expected = mcolors.to_rgb(tokens.PLOT_FIT_RANGE_EDGE)
         actual_rgba = mcolors.to_rgba(handles[0].get_color())
         assert actual_rgba[:3] == pytest.approx(expected, abs=0.02)
@@ -165,19 +172,20 @@ class TestPlotHeader:
         panel.clear()
         text = panel._header_title_label.text()
         # After clear(), title should revert to just the domain name (no run #)
-        assert "—" not in text, (
-            f"Header should show no run after clear(), got: '{text}'"
-        )
+        assert "—" not in text, f"Header should show no run after clear(), got: '{text}'"
 
     def test_header_meta_label_shows_alpha_after_plot(self, panel) -> None:
         if not getattr(panel, "_has_mpl", False):
             pytest.skip("matplotlib not available")
         from asymmetry.core.data.dataset import MuonDataset, Run
+
         t = np.linspace(0, 10, 100)
         a = 0.2 * np.exp(-0.4 * t)
         e = np.full_like(t, 0.01)
         ds = MuonDataset(
-            time=t, asymmetry=a, error=e,
+            time=t,
+            asymmetry=a,
+            error=e,
             metadata={"run_number": 42},
             run=Run(run_number=42, grouping={"alpha": 1.5}),
         )
@@ -188,6 +196,7 @@ class TestPlotHeader:
         if not getattr(panel, "_has_mpl", False):
             pytest.skip("matplotlib not available")
         from asymmetry.core.data.dataset import MuonDataset
+
         t = np.linspace(0, 10, 50)
         a = 0.1 * np.exp(-0.3 * t)
         e = np.full_like(t, 0.01)
@@ -201,12 +210,12 @@ class TestPlotHeader:
         if not getattr(panel, "_has_mpl", False):
             pytest.skip("matplotlib not available")
         from asymmetry.core.data.dataset import MuonDataset
+
         t = np.linspace(0, 10, 50)
         a = 0.1 * np.exp(-0.3 * t)
         e = np.full_like(t, 0.01)
         datasets = [
-            MuonDataset(time=t, asymmetry=a, error=e, metadata={"run_number": i})
-            for i in range(3)
+            MuonDataset(time=t, asymmetry=a, error=e, metadata={"run_number": i}) for i in range(3)
         ]
         panel.plot_datasets(datasets)
         assert "3" in panel._header_title_label.text()
@@ -223,6 +232,7 @@ class TestPlotFooter:
         # The button must be a child of the footer widget, not the limit toolbar
         footer = panel._plot_footer
         from PySide6.QtWidgets import QPushButton
+
         btns = footer.findChildren(QPushButton)
         btn_texts = [b.text() for b in btns]
         assert "Add Annotation" in btn_texts, (
@@ -233,6 +243,7 @@ class TestPlotFooter:
         assert hasattr(panel, "_export_gle_btn"), "_export_gle_btn missing"
         footer = panel._plot_footer
         from PySide6.QtWidgets import QPushButton
+
         btns = footer.findChildren(QPushButton)
         btn_texts = [b.text() for b in btns]
         assert "Export Plot(s) to GLE" in btn_texts
@@ -241,6 +252,7 @@ class TestPlotFooter:
         assert hasattr(panel, "_gle_format_combo"), "_gle_format_combo missing"
         footer = panel._plot_footer
         from PySide6.QtWidgets import QComboBox
+
         combos = footer.findChildren(QComboBox)
         assert combos, "No QComboBox found in footer"
         texts = [combos[0].itemText(i) for i in range(combos[0].count())]
@@ -256,6 +268,7 @@ class TestPlotFooter:
             pytest.skip("matplotlib not available")
         # The limit_toolbar QVBoxLayout must not contain a button with this text
         from PySide6.QtWidgets import QPushButton
+
         # Walk the limit_toolbar layout tree
         def _collect_buttons(layout) -> list[str]:
             found = []

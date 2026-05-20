@@ -19,7 +19,7 @@ import subprocess
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QSignalBlocker, QTimer, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -78,7 +78,6 @@ _TIME_VIEW_FIELDS: list[tuple[str, str]] = [
     ("FB Asymmetry", "fb_asymmetry"),
     ("Individual Groups", "groups"),
 ]
-
 
 
 class _FloatLimitField(QLineEdit):
@@ -456,7 +455,6 @@ class PlotPanel(QWidget):
             row1.addStretch()
             self._limit_toolbar.addWidget(row1_widget)
 
-
     def _is_frequency_plot_panel(self) -> bool:
         """Return True when this panel is dedicated to frequency-domain viewing."""
         return self._domain == "frequency"
@@ -482,7 +480,9 @@ class PlotPanel(QWidget):
 
         self._header_meta_label = QLabel()
         self._header_meta_label.setFont(mono_font(10.5))
-        self._header_meta_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._header_meta_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         self._header_meta_label.setStyleSheet(f"color: {tokens.TEXT_MUTED}; border: none;")
         row.addWidget(self._header_meta_label)
 
@@ -502,9 +502,7 @@ class PlotPanel(QWidget):
 
         self._add_label_btn = QPushButton("Add Annotation")
         self._add_label_btn.setCheckable(True)
-        min_btn_width = (
-            self._add_label_btn.fontMetrics().horizontalAdvance("Add Annotation") + 32
-        )
+        min_btn_width = self._add_label_btn.fontMetrics().horizontalAdvance("Add Annotation") + 32
         self._add_label_btn.setMinimumWidth(min_btn_width)
         row.addWidget(self._add_label_btn)
         row.addStretch()
@@ -594,8 +592,10 @@ class PlotPanel(QWidget):
         if stacked_mode:
             viewport = self._canvas_scroll_area.viewport()
             viewport_width = viewport.width() if viewport is not None else self.width()
+            viewport_height = viewport.height() if viewport is not None else 0
+            effective_height = max(height, int(viewport_height))
             self._canvas_host.setFixedWidth(max(1, int(viewport_width)))
-            self._canvas_host.setFixedHeight(height)
+            self._canvas_host.setFixedHeight(effective_height)
         else:
             self._canvas_host.setMinimumHeight(height)
             self._canvas_host.setMaximumHeight(16777215)
@@ -2835,8 +2835,12 @@ class PlotPanel(QWidget):
                 ann["y"],
                 ann["text"],
                 fontsize=9,
-                bbox={"boxstyle": "round,pad=0.2", "facecolor": tokens.SURFACE,
-                      "edgecolor": tokens.BORDER, "alpha": 0.95},
+                bbox={
+                    "boxstyle": "round,pad=0.2",
+                    "facecolor": tokens.SURFACE,
+                    "edgecolor": tokens.BORDER,
+                    "alpha": 0.95,
+                },
                 zorder=5,
             )
             ann["artist"] = artist
