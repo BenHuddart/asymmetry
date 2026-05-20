@@ -36,6 +36,7 @@ from asymmetry.core.fitting.parameter_models import (
     fit_parameter_model,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.gui.styles.widgets import apply_param_table_style, configure_formula_label
 from asymmetry.gui.widgets.function_expression_builder import (
     ComponentSelectorButton as _ComponentSelectorButton,  # noqa: F401
 )
@@ -376,7 +377,7 @@ class ModelFitDialog(QDialog):
         params_layout.addWidget(self._range_hint_label)
 
         self._formula_label = QLabel("")
-        self._formula_label.setWordWrap(True)
+        configure_formula_label(self._formula_label)
         params_layout.addWidget(self._formula_label)
 
         self._chi2_label = QLabel("")
@@ -392,6 +393,7 @@ class ModelFitDialog(QDialog):
         self._param_table.setHorizontalHeaderLabels(
             ["Name", "Value", "Min", "Max", "Fixed", "Error"]
         )
+        apply_param_table_style(self._param_table)
         self._param_table.itemChanged.connect(self._on_param_table_edited)
         params_layout.addWidget(self._param_table)
 

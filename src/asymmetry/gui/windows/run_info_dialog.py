@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.gui.styles.widgets import apply_param_table_style
 from asymmetry.gui.windows.log_plot_dialog import LogPlotDialog
 
 
@@ -71,6 +72,7 @@ class RunInfoDialog(QDialog):
         self._summary_table.setHorizontalHeaderLabels(self._TABLE_HEADERS)
         self._summary_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._summary_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        apply_param_table_style(self._summary_table)
         root.addWidget(self._summary_table)
 
         controls = QHBoxLayout()
@@ -421,6 +423,7 @@ class AdvancedRunInfoDialog(QDialog):
         self._table.setHorizontalHeaderLabels(RunInfoDialog._TABLE_HEADERS)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        apply_param_table_style(self._table)
         root.addWidget(self._table)
 
         self._table.setRowCount(len(rows))

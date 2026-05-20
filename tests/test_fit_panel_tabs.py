@@ -577,7 +577,7 @@ def test_global_fit_finished_success_emits(qapp: QApplication, dataset: MuonData
 
     tab._on_fit_finished({101: result, 102: result}, fitted_global)
 
-    assert "Global Fit Successful" in tab._result_text.toHtml()
+    assert "Global fit converged" in tab._result_text.toHtml()
     assert set(emitted["res"]) == {101, 102}
 
 
@@ -759,7 +759,7 @@ def test_grouped_fit_finished_updates_grouped_tables(
     assert float(tab._group_model_table.item(group_model_rows["phase"], 1).text()) == pytest.approx(
         0.42
     )
-    assert "Grouped Time-Domain Fit Successful" in tab._result_text.toPlainText()
+    assert "Grouped fit converged" in tab._result_text.toPlainText()
 
 
 def test_global_fit_parses_type_combo_defaults(qapp: QApplication) -> None:

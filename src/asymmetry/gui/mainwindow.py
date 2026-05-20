@@ -829,6 +829,15 @@ class MainWindow(QMainWindow):
             self._data_browser.group_selected.connect(self._on_group_selected)
         self._data_browser.selection_changed.connect(self._update_selected_datasets)
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
+        if hasattr(self._fit_panel, "fit_range_edit_committed"):
+            self._fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
+        if (
+            self._multi_group_fit_window is not None
+            and hasattr(self._multi_group_fit_window, "fit_range_edit_committed")
+        ):
+            self._multi_group_fit_window.fit_range_edit_committed.connect(
+                self._on_fit_range_edit_committed
+            )
         if hasattr(self._plot_panel, "bunch_factor_changed"):
             self._plot_panel.bunch_factor_changed.connect(self._update_selected_datasets)
         if hasattr(self._plot_panel, "view_limits_changed"):
@@ -2910,9 +2919,9 @@ class MainWindow(QMainWindow):
             self._sync_fourier_panel_for_dataset(self._current_dataset)
         self._log_panel.log("Opened Fourier panel")
 
-    def _set_fourier_status(self, message: str) -> None:
+    def _set_fourier_status(self, message: str, *, success: bool = False) -> None:
         """Update the Fourier panel status text and main-window status bar."""
-        self._fourier_panel._status_label.setText(str(message))
+        self._fourier_panel.set_fft_status(message, success=success)
         self.statusBar().showMessage(str(message))
 
     def _fourier_group_names_for_dataset(self, dataset: MuonDataset | None) -> dict[int, str]:
@@ -3335,7 +3344,7 @@ class MainWindow(QMainWindow):
             return
         self._fourier_panel.set_group_phases(phases, auto_filled=True)
         self._fourier_panel._use_phase_table_check.setChecked(True)
-        self._set_fourier_status(f"Estimated phases for {len(phases)} detector groups.")
+        self._set_fourier_status(f"Estimated phases for {len(phases)} detector groups.", success=True)
 
     def _on_compute_fourier(self) -> None:
         """Compute one averaged grouped FFT spectrum for the active run."""
@@ -3515,7 +3524,7 @@ class MainWindow(QMainWindow):
             self._plot_workspace.set_active_domain("frequency")
             self._show_panel("fourier")
             suffix = "s" if len(spectra) != 1 else ""
-            self._set_fourier_status(f"Computed {len(spectra)} Fourier spectrum{suffix}.")
+            self._set_fourier_status(f"Computed {len(spectra)} Fourier spectrum{suffix}.", success=True)
             self._log_panel.log(
                 f"Computed averaged grouped Fourier spectrum using {display.lower()} display."
             )
@@ -3611,8 +3620,13 @@ class MainWindow(QMainWindow):
                 self._refresh_vector_axis_selector()
                 self._update_fit_block_state()
                 self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
+                _fit_range = self._plot_panel.get_fit_range()
+                if hasattr(self._fit_panel, "set_fit_range_display"):
+                    self._fit_panel.set_fit_range_display(*_fit_range)
                 if self._multi_group_fit_window is not None:
                     self._multi_group_fit_window.set_dataset(self._get_fit_dataset(dataset))
+                    if hasattr(self._multi_group_fit_window, "set_fit_range_display"):
+                        self._multi_group_fit_window.set_fit_range_display(*_fit_range)
                 self._log_panel.log(f"Selected run {run_number}")
                 self.statusBar().showMessage(f"Viewing run {run_number}")
         finally:
@@ -3695,8 +3709,15 @@ class MainWindow(QMainWindow):
         self._sync_domain_buttons(view)
         self._apply_inspector_for_domain(view)
 
-    def _on_fit_range_changed(self, _x_min: float, _x_max: float) -> None:
+    def _on_fit_range_changed(self, x_min: float, x_max: float) -> None:
         """Refresh fit inputs when the selected fit x-range changes."""
+        if hasattr(self._fit_panel, "set_fit_range_display"):
+            self._fit_panel.set_fit_range_display(x_min, x_max)
+        if (
+            self._multi_group_fit_window is not None
+            and hasattr(self._multi_group_fit_window, "set_fit_range_display")
+        ):
+            self._multi_group_fit_window.set_fit_range_display(x_min, x_max)
         if self._current_dataset is not None:
             self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
             if self._multi_group_fit_window is not None:
@@ -3704,6 +3725,10 @@ class MainWindow(QMainWindow):
                     self._get_fit_dataset(self._current_dataset)
                 )
         self._update_selected_datasets()
+
+    def _on_fit_range_edit_committed(self, x_min: float, x_max: float) -> None:
+        """Push a spinbox-committed fit range from the Fit panel to the plot."""
+        self._plot_panel.set_fit_range(x_min, x_max)
 
     def _on_fit_completed(self, fit_result, fitted_curve, component_curves) -> None:
         """Handle completed fit from fit panel."""

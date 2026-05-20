@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QApplication
 
 _FONTS_DIR = Path(__file__).parent.parent.parent / "resources" / "fonts"
 _FAMILY = "IBM Plex Mono"
-_FALLBACKS = ["Cascadia Mono", "JetBrains Mono", "Menlo", "Consolas", "Liberation Mono"]
+_FALLBACKS = ["Menlo", "Consolas", "Liberation Mono"]
 
 
 def register_bundled_fonts() -> None:

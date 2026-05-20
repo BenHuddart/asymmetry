@@ -14,6 +14,7 @@ class MultiGroupFitWindow(QWidget):
 
     grouped_fit_completed = Signal(object, object)
     grouped_preview_requested = Signal(object, object)
+    fit_range_edit_committed = Signal(float, float)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -22,6 +23,7 @@ class MultiGroupFitWindow(QWidget):
         self._fit_tab = GlobalFitTab(self, allowed_modes=("grouped",))
         self._fit_tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
         self._fit_tab.grouped_preview_requested.connect(self.grouped_preview_requested.emit)
+        self._fit_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
         layout.addWidget(self._fit_tab)
         self._run_label = ""
 
@@ -32,6 +34,10 @@ class MultiGroupFitWindow(QWidget):
             self._run_label = ""
             return
         self._run_label = str(getattr(dataset, "run_label", dataset.run_number))
+
+    def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
+        """Update fit-range spinboxes to reflect the plot's current range."""
+        self._fit_tab.set_fit_range_display(x_min, x_max)
 
     def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
         """Apply fit blocking rules from the main window context."""

@@ -146,6 +146,15 @@ class DetectorLayoutDialog(QDialog):
             row = QHBoxLayout()
             row.setSpacing(4)
 
+            swatch = QLabel()
+            swatch.setFixedSize(12, 12)
+            colour = _colour_css(gid)
+            swatch.setStyleSheet(
+                f"background-color: {colour}; border-radius: 2px;"
+                " border: 1px solid rgba(0,0,0,0.15);"
+            )
+            swatch.setToolTip(f"Group {gid} colour")
+
             btn = QPushButton(f"Group {gid}")
             btn.setCheckable(True)
             btn.setAutoDefault(False)
@@ -159,6 +168,7 @@ class DetectorLayoutDialog(QDialog):
             name_edit.textChanged.connect(self._on_group_definition_changed)
             self._group_name_edits[gid] = name_edit
 
+            row.addWidget(swatch)
             row.addWidget(btn)
             row.addWidget(name_edit)
             group_layout.addLayout(row)

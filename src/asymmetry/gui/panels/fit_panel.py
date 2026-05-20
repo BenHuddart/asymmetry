@@ -11,10 +11,13 @@ import re
 import textwrap
 
 import numpy as np
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, QSignalBlocker, Qt, QThread, Signal
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -23,6 +26,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -72,6 +78,11 @@ from asymmetry.core.utils.constants import (
 )
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.widgets import (
+    RESULTS_GROUP_SUCCESS_STYLE,
+    apply_param_table_style,
+    configure_formula_label,
+)
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
@@ -501,14 +512,38 @@ def _get_file_value_for_parameter(
     return None
 
 
-def _configure_formula_label(label: QLabel) -> None:
-    """Configure formula labels to wrap without clipping."""
-    label.setWordWrap(True)
-    label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-    label.setTextFormat(Qt.TextFormat.PlainText)
-    label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
-    line_height = label.fontMetrics().lineSpacing()
-    label.setMinimumHeight(line_height * 4 + 8)
+def _fit_success_html(result) -> str:
+    """Return compact success HTML for the result label."""
+    npar = len(result.parameters.free_parameters)
+    ndof = (
+        round(result.chi_squared / result.reduced_chi_squared)
+        if result.reduced_chi_squared > 0
+        else 0
+    )
+    stats = f"χ²/ν = {result.reduced_chi_squared:.4f} · npar = {npar} · ndof = {ndof}"
+    if result.edm is not None:
+        stats += f" · Δ‖p‖ = {result.edm:.2e}"
+    return (
+        '<span style="color:#2a7a3f;font-weight:600;">Fit converged</span>'
+        f'<br><span style="color:#67676b;">{stats}</span>'
+    )
+
+
+_apply_param_table_style = apply_param_table_style
+
+
+def _make_param_name_item(label: str, raw_name: str) -> QTableWidgetItem:
+    """Return a read-only, bold-mono name item for a parameter table."""
+    item = QTableWidgetItem(label)
+    item.setData(Qt.ItemDataRole.UserRole, raw_name)
+    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+    nf = mono_font(11.0)
+    nf.setBold(True)
+    item.setFont(nf)
+    return item
+
+
+_configure_formula_label = configure_formula_label
 
 
 def _set_formula_label_text(label: QLabel, formula: str, *, width: int = 24) -> None:
@@ -680,6 +715,43 @@ class GroupedTimeDomainFitWorker(QObject):
             self.error.emit(_format_fit_worker_exception(e))
 
 
+class _ValueUncertaintyDelegate(QStyledItemDelegate):
+    """Paints 'value  ±σ' in a table cell; editing shows only the bare value.
+
+    Uncertainty is stored in UserRole+1 alongside the item text. Cleared
+    automatically when the user edits the cell.
+    """
+
+    _UNC_ROLE = Qt.ItemDataRole.UserRole + 1
+    _MUTED = QColor("#67676b")
+
+    def paint(self, painter, option, index) -> None:
+        super().paint(painter, option, index)
+        unc = index.data(self._UNC_ROLE)
+        if unc is None:
+            return
+        val_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        unc_str = f"  ±{float(unc):.4f}"
+        style = option.widget.style() if option.widget else QApplication.style()
+        text_opt = QStyleOptionViewItem(option)
+        self.initStyleOption(text_opt, index)
+        text_rect = style.subElementRect(
+            QStyle.SubElement.SE_ItemViewItemText, text_opt, option.widget
+        )
+        val_w = painter.fontMetrics().horizontalAdvance(val_text)
+        unc_rect = text_rect.adjusted(val_w, 0, 0, 0)
+        painter.save()
+        painter.setPen(self._MUTED)
+        painter.drawText(
+            unc_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, unc_str
+        )
+        painter.restore()
+
+    def setModelData(self, editor, model, index) -> None:  # noqa: N802
+        model.setData(index, None, self._UNC_ROLE)
+        super().setModelData(editor, model, index)
+
+
 class SingleFitTab(QWidget):
     """Single dataset fitting interface.
 
@@ -705,6 +777,7 @@ class SingleFitTab(QWidget):
         object, object, object
     )  # (FitResult, fitted_curve, component_curves)
     share_function_with_group_requested = Signal(int)
+    fit_range_edit_committed = Signal(float, float)  # (x_min, x_max) from spinbox commit
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -752,6 +825,41 @@ class SingleFitTab(QWidget):
         model_layout.addRow("", model_button_layout)
         layout.addWidget(model_group)
 
+        # Fit range section
+        fit_range_group = QGroupBox("Fit range")
+        fit_range_layout = QHBoxLayout(fit_range_group)
+        fit_range_layout.setContentsMargins(6, 4, 6, 4)
+        fit_range_layout.setSpacing(4)
+
+        self._fit_range_min_spin = QDoubleSpinBox()
+        self._fit_range_min_spin.setDecimals(3)
+        self._fit_range_min_spin.setRange(-1000.0, 1000.0)
+        self._fit_range_min_spin.setSingleStep(0.1)
+        self._fit_range_min_spin.setMinimumWidth(90)
+        self._fit_range_min_spin.setFont(mono_font(11.0))
+
+        _t_label = QLabel("≤ <i>t</i> ≤")
+        _t_label.setTextFormat(Qt.TextFormat.RichText)
+
+        self._fit_range_max_spin = QDoubleSpinBox()
+        self._fit_range_max_spin.setDecimals(3)
+        self._fit_range_max_spin.setRange(-1000.0, 1000.0)
+        self._fit_range_max_spin.setSingleStep(0.1)
+        self._fit_range_max_spin.setMinimumWidth(90)
+        self._fit_range_max_spin.setFont(mono_font(11.0))
+
+        _us_label = QLabel("μs")
+
+        fit_range_layout.addWidget(self._fit_range_min_spin)
+        fit_range_layout.addWidget(_t_label)
+        fit_range_layout.addWidget(self._fit_range_max_spin)
+        fit_range_layout.addWidget(_us_label)
+        fit_range_layout.addStretch()
+        layout.addWidget(fit_range_group)
+
+        self._fit_range_min_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
+        self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
+
         # Parameter table
         param_group = QGroupBox("Parameters")
         param_layout = QVBoxLayout(param_group)
@@ -763,6 +871,10 @@ class SingleFitTab(QWidget):
         self._param_table.setColumnWidth(2, 40)  # Fix
         self._param_table.setColumnWidth(3, 80)  # Min
         self._param_table.setColumnWidth(4, 80)  # Max
+
+        _apply_param_table_style(self._param_table)
+        self._param_table.setItemDelegateForColumn(1, _ValueUncertaintyDelegate(self._param_table))
+
         self._param_table.itemChanged.connect(self._on_param_table_item_changed)
         param_layout.addWidget(self._param_table)
         layout.addWidget(param_group)
@@ -786,12 +898,12 @@ class SingleFitTab(QWidget):
         layout.addLayout(btn_layout)
 
         # Results
-        results_group = QGroupBox("Fit Results")
-        results_layout = QVBoxLayout(results_group)
+        self._results_group = QGroupBox("Fit Results")
+        results_layout = QVBoxLayout(self._results_group)
         self._result_label = QLabel("No fit performed yet")
         self._result_label.setWordWrap(True)
         results_layout.addWidget(self._result_label)
-        layout.addWidget(results_group)
+        layout.addWidget(self._results_group)
 
         layout.addStretch()
 
@@ -818,6 +930,25 @@ class SingleFitTab(QWidget):
         self._fit_btn.setToolTip(tooltip)
         self._preview_btn.setToolTip(tooltip)
         self._fit_wizard_btn.setToolTip(tooltip)
+
+    def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
+        """Update fit-range spinboxes from the plot without re-emitting."""
+        have_range = x_min is not None and x_max is not None
+        self._fit_range_min_spin.setEnabled(have_range)
+        self._fit_range_max_spin.setEnabled(have_range)
+        if not have_range:
+            return
+        with QSignalBlocker(self._fit_range_min_spin):
+            self._fit_range_min_spin.setValue(float(x_min))
+        with QSignalBlocker(self._fit_range_max_spin):
+            self._fit_range_max_spin.setValue(float(x_max))
+
+    def _on_fit_range_spinbox_committed(self) -> None:
+        """Emit fit_range_edit_committed when the user finishes editing a spinbox."""
+        self.fit_range_edit_committed.emit(
+            self._fit_range_min_spin.value(),
+            self._fit_range_max_spin.value(),
+        )
 
     def _wizard_context_signature(self) -> dict[str, object]:
         return {
@@ -890,10 +1021,8 @@ class SingleFitTab(QWidget):
 
         self._param_table.setRowCount(len(model.param_names))
         for i, pname in enumerate(model.param_names):
-            # Name column (read-only)
-            name_item = QTableWidgetItem(_format_param_label(pname))
-            name_item.setData(Qt.ItemDataRole.UserRole, pname)
-            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            # Name column (read-only, bold mono)
+            name_item = _make_param_name_item(_format_param_label(pname), pname)
             self._param_table.setItem(i, 0, name_item)
 
             # Value column — use dataset field for 'field' parameters if available
@@ -1040,6 +1169,8 @@ class SingleFitTab(QWidget):
             value_item = self._param_table.item(row, 1)
             if value_item is not None:
                 value_item.setText(f"{display_values.get(param_name, fitted.value):.6f}")
+                unc = result.uncertainties.get(param_name, None)
+                value_item.setData(_ValueUncertaintyDelegate._UNC_ROLE, unc)
 
             min_item = self._param_table.item(row, 3)
             if min_item is not None:
@@ -1056,25 +1187,14 @@ class SingleFitTab(QWidget):
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
 
-        lines = [
-            f"<b>Fit Wizard — {assessment.template.title}</b>",
-            f"<b>χ² = {result.chi_squared:.4f}</b>",
-            f"<b>χ²ᵣ = {result.reduced_chi_squared:.4f}</b>",
-            f"<b>{recommendation.metric.value} = {assessment.metric_value(recommendation.metric):.4f}</b>",
-        ]
+        wizard_note = f"Fit Wizard — {assessment.template.title}"
         if assessment.residual_gate_reasons:
-            lines.append("<br><b>Residual warnings:</b>")
-            for reason in assessment.residual_gate_reasons:
-                lines.append(f"  {reason}")
-        else:
-            lines.append("<b>Residual gate passed</b>")
-        lines.append("<br><b>Parameters:</b>")
-        for parameter in result.parameters:
-            unc = result.uncertainties.get(parameter.name, 0.0)
-            lines.append(
-                f"  {_format_param_label(parameter.name)} = {display_values.get(parameter.name, parameter.value):.6f} ± {unc:.6f}"
-            )
-        self._result_label.setText("<br>".join(lines))
+            wizard_note += " ⚠"
+        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._result_label.setText(
+            f'<span style="color:#2a7a3f;font-weight:600;">{wizard_note}</span>'
+            f"<br>{_fit_success_html(result).split('<br>', 1)[1]}"
+        )
 
         param_dict = {parameter.name: parameter.value for parameter in result.parameters}
         n_samples = _fit_curve_sample_count(
@@ -1233,6 +1353,7 @@ class SingleFitTab(QWidget):
             parameters.add(param)
 
         # Run the fit
+        self._results_group.setStyleSheet("")
         self._result_label.setText("Fitting...")
         try:
             result = self._fit_engine.fit(
@@ -1250,17 +1371,8 @@ class SingleFitTab(QWidget):
                 self._composite_model,
                 {parameter.name: parameter.value for parameter in result.parameters},
             )
-            lines = [
-                f"<b>χ² = {result.chi_squared:.4f}</b>",
-                f"<b>χ²ᵣ = {result.reduced_chi_squared:.4f}</b>",
-                "<br><b>Parameters:</b>",
-            ]
-            for param in result.parameters:
-                unc = result.uncertainties.get(param.name, 0.0)
-                lines.append(
-                    f"  {_format_param_label(param.name)} = {display_values.get(param.name, param.value):.6f} ± {unc:.6f}"
-                )
-            self._result_label.setText("<br>".join(lines))
+            self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+            self._result_label.setText(_fit_success_html(result))
 
             # Update table with fit results
             self._updating_fraction_values = True
@@ -1273,7 +1385,10 @@ class SingleFitTab(QWidget):
                     fitted_value = display_values.get(
                         param_name, result.parameters[param_name].value
                     )
-                    self._param_table.item(i, 1).setText(f"{fitted_value:.6f}")
+                    val_item = self._param_table.item(i, 1)
+                    val_item.setText(f"{fitted_value:.6f}")
+                    unc = result.uncertainties.get(param_name, None)
+                    val_item.setData(_ValueUncertaintyDelegate._UNC_ROLE, unc)
             self._updating_fraction_values = False
             self._synchronize_fraction_value_rows()
 
@@ -1300,6 +1415,7 @@ class SingleFitTab(QWidget):
             )
             self.fit_completed.emit(result, (t_fit, y_fit), component_curves)
         else:
+            self._results_group.setStyleSheet("")
             self._result_label.setText(f"<b>Fit failed:</b> {result.message}")
 
     # ── project state helpers ──────────────────────────────────────────
@@ -1464,6 +1580,7 @@ class GlobalFitTab(QWidget):
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
     grouped_preview_requested = Signal(object, object)  # (grouped_datasets, preview_curves)
     grouped_mode_changed = Signal(bool)
+    fit_range_edit_committed = Signal(float, float)  # (x_min, x_max) from spinbox commit
 
     def __init__(
         self,
@@ -1534,6 +1651,39 @@ class GlobalFitTab(QWidget):
         model_layout.addRow("", model_button_layout)
         layout.addWidget(model_group)
 
+        # Fit range section
+        _fr_group = QGroupBox("Fit range")
+        _fr_layout = QHBoxLayout(_fr_group)
+        _fr_layout.setContentsMargins(6, 4, 6, 4)
+        _fr_layout.setSpacing(4)
+
+        self._fit_range_min_spin = QDoubleSpinBox()
+        self._fit_range_min_spin.setDecimals(3)
+        self._fit_range_min_spin.setRange(-1000.0, 1000.0)
+        self._fit_range_min_spin.setSingleStep(0.1)
+        self._fit_range_min_spin.setMinimumWidth(90)
+        self._fit_range_min_spin.setFont(mono_font(11.0))
+
+        _t_label = QLabel("≤ <i>t</i> ≤")
+        _t_label.setTextFormat(Qt.TextFormat.RichText)
+
+        self._fit_range_max_spin = QDoubleSpinBox()
+        self._fit_range_max_spin.setDecimals(3)
+        self._fit_range_max_spin.setRange(-1000.0, 1000.0)
+        self._fit_range_max_spin.setSingleStep(0.1)
+        self._fit_range_max_spin.setMinimumWidth(90)
+        self._fit_range_max_spin.setFont(mono_font(11.0))
+
+        _fr_layout.addWidget(self._fit_range_min_spin)
+        _fr_layout.addWidget(_t_label)
+        _fr_layout.addWidget(self._fit_range_max_spin)
+        _fr_layout.addWidget(QLabel("μs"))
+        _fr_layout.addStretch()
+        layout.addWidget(_fr_group)
+
+        self._fit_range_min_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
+        self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
+
         # Parameter classification table
         self._param_group = QGroupBox("Parameter Classification")
         param_layout = QVBoxLayout(self._param_group)
@@ -1554,6 +1704,7 @@ class GlobalFitTab(QWidget):
         self._param_table.setColumnWidth(1, 80)  # Initial value
         self._param_table.setColumnWidth(2, 100)  # Type (dropdown)
         self._param_table.setColumnWidth(3, 150)  # Bounds
+        _apply_param_table_style(self._param_table)
         self._param_table.itemChanged.connect(self._on_param_table_item_changed)
         param_layout.addWidget(self._param_table)
         layout.addWidget(self._param_group)
@@ -1572,6 +1723,7 @@ class GlobalFitTab(QWidget):
         self._group_param_table.setColumnWidth(1, 90)
         self._group_param_table.setColumnWidth(2, 100)
         self._group_param_table.setColumnWidth(3, 150)
+        _apply_param_table_style(self._group_param_table)
         self._group_param_table.itemChanged.connect(self._on_group_param_item_changed)
         group_param_layout.addWidget(self._group_param_table)
         group_param_button_layout = QHBoxLayout()
@@ -1592,6 +1744,7 @@ class GlobalFitTab(QWidget):
         self._group_model_table.setColumnWidth(1, 90)
         self._group_model_table.setColumnWidth(2, 100)
         self._group_model_table.setColumnWidth(3, 150)
+        _apply_param_table_style(self._group_model_table)
         self._group_model_table.itemChanged.connect(self._on_group_model_table_item_changed)
         group_model_layout.addWidget(self._group_model_table)
         layout.addWidget(self._group_model_group)
@@ -1610,14 +1763,14 @@ class GlobalFitTab(QWidget):
         layout.addLayout(btn_layout)
 
         # Results display
-        results_group = QGroupBox("Global Fit Results")
-        results_layout = QVBoxLayout(results_group)
+        self._results_group = QGroupBox("Global Fit Results")
+        results_layout = QVBoxLayout(self._results_group)
         self._result_text = QTextEdit()
         self._result_text.setReadOnly(True)
         self._result_text.setMaximumHeight(200)
         self._result_text.setText("No fit performed yet")
         results_layout.addWidget(self._result_text)
-        layout.addWidget(results_group)
+        layout.addWidget(self._results_group)
 
         layout.addStretch()
 
@@ -1982,6 +2135,25 @@ class GlobalFitTab(QWidget):
         self._fit_block_reason = str(reason)
         self._update_mode_ui(preserve_result=True)
 
+    def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
+        """Update fit-range spinboxes from the plot without re-emitting."""
+        have_range = x_min is not None and x_max is not None
+        self._fit_range_min_spin.setEnabled(have_range)
+        self._fit_range_max_spin.setEnabled(have_range)
+        if not have_range:
+            return
+        with QSignalBlocker(self._fit_range_min_spin):
+            self._fit_range_min_spin.setValue(float(x_min))
+        with QSignalBlocker(self._fit_range_max_spin):
+            self._fit_range_max_spin.setValue(float(x_max))
+
+    def _on_fit_range_spinbox_committed(self) -> None:
+        """Emit fit_range_edit_committed when the user finishes editing a spinbox."""
+        self.fit_range_edit_committed.emit(
+            self._fit_range_min_spin.value(),
+            self._fit_range_max_spin.value(),
+        )
+
     def _refresh_inherited_single_fit_defaults(self) -> None:
         """Apply single-fit seeds when every selected dataset shares one model."""
         self._inherited_seed_by_run = {}
@@ -2119,9 +2291,7 @@ class GlobalFitTab(QWidget):
         for i, pname in enumerate(model.param_names):
             previous = preserved_state.get(pname, {})
             # Parameter name
-            name_item = QTableWidgetItem(_format_param_label(pname))
-            name_item.setData(Qt.ItemDataRole.UserRole, pname)
-            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            name_item = _make_param_name_item(_format_param_label(pname), pname)
             self._param_table.setItem(i, 0, name_item)
 
             # Initial value — use dataset field for 'field' parameters if available
@@ -2773,25 +2943,16 @@ class GlobalFitTab(QWidget):
         fitted_global: ParameterSet,
         global_param_names: list[str],
     ) -> None:
-        lines = ["<b>Global Fit Successful!</b><br>"]
-        lines.append("<b>Global Parameters:</b>")
-        for parameter in fitted_global:
-            if parameter.name not in global_param_names:
-                continue
-            first_result = next(iter(results_dict.values()))
-            unc = first_result.uncertainties.get(parameter.name, 0.0)
-            lines.append(
-                f"  {_format_param_label(parameter.name)} = {parameter.value:.6f} ± {unc:.6f}"
-            )
-
-        total_chi2 = sum(result.chi_squared for result in results_dict.values())
-        avg_red_chi2 = sum(result.reduced_chi_squared for result in results_dict.values()) / len(
-            results_dict
+        n_datasets = len(results_dict)
+        avg_red_chi2 = sum(r.reduced_chi_squared for r in results_dict.values()) / n_datasets
+        npar = len(global_param_names)
+        stats = f"avg χ²/ν = {avg_red_chi2:.4f} · {n_datasets} datasets · npar = {npar}"
+        html = (
+            '<span style="color:#2a7a3f;font-weight:600;">Global fit converged</span>'
+            f'<br><span style="color:#67676b;">{stats}</span>'
         )
-        lines.append(f"<br><b>Total χ² = {total_chi2:.2f}</b>")
-        lines.append(f"<b>Average χ²ᵣ = {avg_red_chi2:.3f}</b>")
-        lines.append(f"<br>Fitted {len(results_dict)} datasets")
-        self._result_text.setHtml("<br>".join(lines))
+        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._result_text.setHtml(html)
 
     def _results_with_curves(
         self,
@@ -2980,6 +3141,7 @@ class GlobalFitTab(QWidget):
             failed = [run for run, r in results_dict.items() if not r.success]
             run_label_by_number = {ds.run_number: ds.run_label for ds in self._datasets}
             failed_labels = [run_label_by_number.get(run, str(run)) for run in failed]
+            self._results_group.setStyleSheet("")
             self._result_text.setText(
                 f"<b>Global fit failed</b><br>Failed datasets: {failed_labels}"
             )
@@ -2987,6 +3149,7 @@ class GlobalFitTab(QWidget):
     def _on_fit_error(self, error_msg: str) -> None:
         """Handle fit error."""
         self._update_mode_ui(preserve_result=True)
+        self._results_group.setStyleSheet("")
         mode_label = "grouped fit" if self.is_grouped_time_domain_mode() else "global fit"
         self._result_text.setText(f"<b>Error during {mode_label}:</b><br>{error_msg}")
 
@@ -3071,14 +3234,6 @@ class GlobalFitTab(QWidget):
         finally:
             self._group_param_table.blockSignals(previous_group_signal_state)
 
-        lines = ["<b>Grouped Time-Domain Fit Successful!</b><br>", "<b>Shared Parameters:</b>"]
-        if len(grouped_result.shared_parameters) == 0:
-            lines.append("  None")
-        else:
-            for parameter in grouped_result.shared_parameters:
-                lines.append(f"  {_format_param_label(parameter.name)} = {parameter.value:.6f}")
-
-        lines.append("<br><b>Groups:</b>")
         for group_id, fit_result in grouped_result.group_results.items():
             dataset = datasets_by_group_id.get(group_id)
             if dataset is None:
@@ -3107,9 +3262,20 @@ class GlobalFitTab(QWidget):
             t_fit = np.linspace(fit_t_min, fit_t_max, n_samples)
             y_fit = grouped_model(t_fit, **param_dict)
             results_with_curves[int(dataset.run_number)] = (fit_result, (t_fit, y_fit), tuple())
-            lines.append(f"  {dataset.run_label}: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}")
 
-        self._result_text.setHtml("<br>".join(lines))
+        n_groups = len(grouped_result.group_results)
+        group_results = list(grouped_result.group_results.values())
+        avg_red_chi2 = (
+            sum(r.reduced_chi_squared for r in group_results) / n_groups if n_groups > 0 else 0.0
+        )
+        n_shared = len(grouped_result.shared_parameters)
+        stats = f"{n_groups} groups · avg χ²/ν = {avg_red_chi2:.4f} · shared = {n_shared}"
+        html = (
+            '<span style="color:#2a7a3f;font-weight:600;">Grouped fit converged</span>'
+            f'<br><span style="color:#67676b;">{stats}</span>'
+        )
+        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._result_text.setHtml(html)
         self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
 
     def _cleanup_thread(self) -> None:
@@ -3542,9 +3708,7 @@ class GlobalFitTab(QWidget):
             amplitude_defaults_by_group[str(group_id)] = amplitude_default
 
         for row, name in enumerate(GROUP_NUISANCE_PARAMS):
-            label_item = QTableWidgetItem(_format_param_label(name))
-            label_item.setData(Qt.ItemDataRole.UserRole, name)
-            label_item.setFlags(label_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            label_item = _make_param_name_item(_format_param_label(name), name)
             self._group_param_table.setItem(row, 0, label_item)
 
             previous = preserved_state.get(name, {}) if isinstance(preserved_state, dict) else {}
@@ -3642,13 +3806,11 @@ class GlobalFitTab(QWidget):
         self._group_model_table.setRowCount(len(visible_param_names))
         for row, pname in enumerate(visible_param_names):
             previous = preserved_state.get(pname, {})
-            name_item = QTableWidgetItem(_format_param_label(pname))
-            name_item.setData(Qt.ItemDataRole.UserRole, pname)
-            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            name_item = _make_param_name_item(_format_param_label(pname), pname)
             self._group_model_table.setItem(row, 0, name_item)
 
             default_val = grouped_model.param_defaults.get(pname, 0.0)
-            default_type = "Free"
+            default_type = "Shared"
             if is_background_parameter(pname):
                 default_val = 0.0
                 default_type = "Fixed"
@@ -3660,8 +3822,11 @@ class GlobalFitTab(QWidget):
                 QTableWidgetItem(str(previous.get("value") or default_val)),
             )
             type_combo = QComboBox()
-            type_combo.addItems(["Free", "Fixed"])
-            type_combo.setCurrentText(str(previous.get("type") or default_type))
+            type_combo.addItems(["Shared", "Fixed"])
+            previous_type = str(previous.get("type") or default_type)
+            if previous_type == "Free":
+                previous_type = "Shared"
+            type_combo.setCurrentText(previous_type)
             self._group_model_table.setCellWidget(row, 2, type_combo)
             default_min = get_param_info(pname).default_min
             min_text = str(default_min) if default_min is not None else "-inf"
@@ -3784,8 +3949,8 @@ class GlobalFitTab(QWidget):
                 )
 
             type_combo = self._group_model_table.cellWidget(row, 2)
-            type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Free"
-            if type_text == "Free":
+            type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Shared"
+            if type_text in ("Shared", "Free"):
                 global_params.append(pname)
             else:
                 fixed_params.append(pname)
@@ -3962,6 +4127,7 @@ class FitPanel(QWidget):
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
     grouped_time_domain_mode_changed = Signal(bool)
     share_function_with_group_requested = Signal(int)
+    fit_range_edit_committed = Signal(float, float)  # forwarded from SingleFitTab
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -3982,6 +4148,7 @@ class FitPanel(QWidget):
         self._single_tab.share_function_with_group_requested.connect(
             self.share_function_with_group_requested.emit
         )
+        self._single_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
         self._tabs.addTab(self._single_tab, "Single")
 
         # Global fit tab
@@ -3989,6 +4156,7 @@ class FitPanel(QWidget):
         self._global_tab.global_fit_completed.connect(self.global_fit_completed.emit)
         self._global_tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
         self._global_tab.grouped_mode_changed.connect(self.grouped_time_domain_mode_changed.emit)
+        self._global_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
         self._tabs.addTab(self._global_tab, "Global")
 
         layout.addWidget(self._tabs)
@@ -4051,6 +4219,11 @@ class FitPanel(QWidget):
         """Apply fit-action blocking to both single and global tabs."""
         self._single_tab.set_fit_blocked(blocked, reason)
         self._global_tab.set_fit_blocked(blocked, reason)
+
+    def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
+        """Forward fit-range display update to both single and global tabs."""
+        self._single_tab.set_fit_range_display(x_min, x_max)
+        self._global_tab.set_fit_range_display(x_min, x_max)
 
     def single_fit_formula_string(self) -> str | None:
         """Return the active single-fit formula string, if available."""
