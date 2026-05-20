@@ -82,6 +82,7 @@ from asymmetry.core.utils.constants import (
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.widgets import build_nav_button_qss, build_segmented_button_qss
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
 from asymmetry.gui.panels.fit_panel import FitPanel
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
@@ -401,11 +402,7 @@ class MainWindow(QMainWindow):
         self._domain_button_group = QButtonGroup(self)
         self._domain_button_group.setExclusive(True)
         self._domain_buttons: list[QPushButton] = []
-        _domain_btn_style = (
-            "QPushButton { padding: 2px 10px; font-weight: 600; }"
-            "QPushButton:checked { background-color: #e8eef7; color: #1f4d8a; "
-            "border-color: #1f4d8a; }"
-        )
+        _domain_qss = build_segmented_button_qss()
         for label, token in (
             ("F-B asymmetry", "fb_asymmetry"),
             ("Individual groups", "groups"),
@@ -413,7 +410,7 @@ class MainWindow(QMainWindow):
         ):
             btn = QPushButton(label)
             btn.setCheckable(True)
-            btn.setStyleSheet(_domain_btn_style)
+            btn.setStyleSheet(_domain_qss)
             btn.clicked.connect(lambda _checked=False, v=token: self._on_domain_button_clicked(v))
             self._domain_button_group.addButton(btn)
             self._domain_buttons.append(btn)
@@ -429,15 +426,11 @@ class MainWindow(QMainWindow):
         self._view_mode_button_group = QButtonGroup(self)
         self._view_mode_button_group.setExclusive(True)
         self._view_mode_buttons: list[QPushButton] = []
-        _view_btn_style = (
-            "QPushButton { min-width: 28px; padding: 2px 6px; }"
-            "QPushButton:checked { background-color: #e8eef7; color: #1f4d8a; "
-            "border-color: #1f4d8a; font-weight: 600; }"
-        )
+        _view_qss = build_segmented_button_qss(min_width=28, padding_h=6)
         for index in range(_VIEW_MODE_COUNT):
             button = QPushButton(str(index + 1))
             button.setCheckable(True)
-            button.setStyleSheet(_view_btn_style)
+            button.setStyleSheet(_view_qss)
             button.clicked.connect(
                 lambda _checked=False, idx=index: self._on_view_mode_button_clicked(idx)
             )
