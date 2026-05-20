@@ -63,6 +63,7 @@ from asymmetry.gui.export_paths import (
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
+from asymmetry.gui.styles.widgets import apply_param_table_style
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
@@ -251,7 +252,7 @@ class FitParametersPanel(QWidget):
         self._y_selector_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._y_selector_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._y_selector_table.horizontalHeader().setVisible(False)
-        self._y_selector_table.verticalHeader().setVisible(False)
+        apply_param_table_style(self._y_selector_table)
         self._y_selector_table.itemSelectionChanged.connect(self._on_y_selection_changed)
 
         y_header = self._y_selector_table.horizontalHeader()
@@ -320,6 +321,7 @@ class FitParametersPanel(QWidget):
 
         self._table = QTableWidget(0, 0)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        apply_param_table_style(self._table)
 
         self._plot_group = QGroupBox("Parameter Plot")
         plot_layout = QVBoxLayout(self._plot_group)

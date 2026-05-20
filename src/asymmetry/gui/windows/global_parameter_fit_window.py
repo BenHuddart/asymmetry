@@ -47,6 +47,7 @@ from asymmetry.gui.export_paths import (
     resolve_gle_export_paths,
 )
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
+from asymmetry.gui.styles.widgets import apply_param_table_style
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
@@ -153,6 +154,7 @@ class GlobalParameterFitWindow(QMainWindow):
 
         self._params_table = QTableWidget(0, 3)
         self._params_table.setHorizontalHeaderLabels(["Parameter", "Value", "Uncertainty"])
+        apply_param_table_style(self._params_table)
         right_layout.addWidget(self._params_table)
 
         self._local_y_selector_table = QTableWidget(0, 3)

@@ -46,6 +46,7 @@ from asymmetry.core.transform import (
 )
 from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.utils.constants import PeriodMode
+from asymmetry.gui.styles.widgets import apply_param_table_style
 
 
 class GroupingDialog(QDialog):
@@ -163,6 +164,7 @@ class GroupingDialog(QDialog):
         self._group_table.setHorizontalHeaderLabels(
             ["Group", "Include", "Name", "Detector Indices (1-based)"]
         )
+        apply_param_table_style(self._group_table)
         self._group_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._group_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._group_table.setMinimumHeight(0)

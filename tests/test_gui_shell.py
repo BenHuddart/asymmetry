@@ -160,6 +160,12 @@ class _StubPlotPanel(QWidget):
     def get_fit_dataset(self, dataset):
         return dataset
 
+    def get_fit_range(self):
+        return (None, None)
+
+    def set_fit_range(self, x_min, x_max):
+        return
+
     def clear(self):
         self.last_plotted_dataset = None
         return

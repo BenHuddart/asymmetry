@@ -33,6 +33,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.widgets import apply_param_table_style
 from asymmetry.gui.utils.latex_renderer import render_latex_to_html_image
 
 _PHASE_MODE_LABELS = (
@@ -239,9 +242,11 @@ class FourierPanel(QWidget):
         apodisation_form = QFormLayout(apodisation_group)
 
         self._filter_start_edit = QLineEdit("0.0")
+        self._filter_start_edit.setFont(mono_font(11.0))
         apodisation_form.addRow("Filter start time (μs):", self._filter_start_edit)
 
         self._filter_time_constant_edit = QLineEdit("1.5")
+        self._filter_time_constant_edit.setFont(mono_font(11.0))
         apodisation_form.addRow("Filter time constant (μs):", self._filter_time_constant_edit)
 
         self._filter_button_group = QButtonGroup(self)
@@ -269,7 +274,7 @@ class FourierPanel(QWidget):
         groups_layout = QVBoxLayout(groups_group)
         self._phase_table = QTableWidget(0, 3)
         self._phase_table.setHorizontalHeaderLabels(["Include", "Group", "Phase (deg)"])
-        self._phase_table.verticalHeader().setVisible(False)
+        apply_param_table_style(self._phase_table)
         self._phase_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self._phase_table.setEditTriggers(QTableWidget.EditTrigger.AllEditTriggers)
         self._phase_table.horizontalHeader().setSectionResizeMode(
@@ -279,6 +284,7 @@ class FourierPanel(QWidget):
         self._phase_table.horizontalHeader().setSectionResizeMode(
             2, QHeaderView.ResizeMode.ResizeToContents
         )
+        self._phase_table.setMinimumHeight(100)
         groups_layout.addWidget(self._phase_table)
         groups_form = QFormLayout()
         self._use_phase_table_check = QCheckBox("Use per-group phase table")
@@ -292,11 +298,13 @@ class FourierPanel(QWidget):
 
         self._phase_spin = QLineEdit("0")
         self._phase_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._phase_spin.setFont(mono_font(11.0))
         self._phase_spin.setValidator(QDoubleValidator(-3600.0, 3600.0, 6, self))
         phase_form.addRow("Phase (deg):", self._phase_spin)
 
         self._t0_offset_spin = QLineEdit("0")
         self._t0_offset_spin.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._t0_offset_spin.setFont(mono_font(11.0))
         self._t0_offset_spin.setValidator(QDoubleValidator(-1000.0, 1000.0, 6, self))
         phase_form.addRow("t0 Offset (\u03bcs):", self._t0_offset_spin)
 
@@ -360,6 +368,15 @@ class FourierPanel(QWidget):
         self._update_phase_table_enabled(self._use_phase_table_check.isChecked())
         self._update_filter_controls_enabled()
         self._update_phase_controls_enabled()
+
+    def set_fft_status(self, message: str, *, success: bool = False) -> None:
+        """Set the status label below the Compute FFT button."""
+        if success:
+            self._status_label.setText(
+                f'<span style="color: {tokens.OK};">{html.escape(str(message))}</span>'
+            )
+        else:
+            self._status_label.setText(str(message))
 
     def _show_phase_mode_info(self) -> None:
         self._mode_info_dialog = show_fourier_mode_info_dialog(self)
