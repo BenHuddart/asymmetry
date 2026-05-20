@@ -12,13 +12,13 @@ from asymmetry.gui.styles.fonts import mono_font
 
 # Tag → text colour mapping (from BENCH tokens)
 _TAG_COLOURS: dict[str, str] = {
-    "load":  tokens.ACCENT,
+    "load": tokens.ACCENT,
     "group": tokens.ACCENT,
-    "fit":   tokens.OK,
+    "fit": tokens.OK,
     "mgfit": tokens.OK,
-    "peak":  tokens.OK,
+    "peak": tokens.OK,
     "trend": tokens.WARN,
-    "warn":  tokens.WARN,
+    "warn": tokens.WARN,
 }
 
 

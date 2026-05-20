@@ -12,18 +12,19 @@ from asymmetry.gui.styles.fonts import mono_font
 
 # ── Letter-spacing (absolute, pixels) ────────────────────────────────────────
 
-LETTER_SPACING_HEADER = 0.3   # column headers, data-browser table
-LETTER_SPACING_LABEL  = 0.4   # 9.5pt uppercase section headers (QGroupBox titles)
+LETTER_SPACING_HEADER = 0.3  # column headers, data-browser table
+LETTER_SPACING_LABEL = 0.4  # 9.5pt uppercase section headers (QGroupBox titles)
 
 # ── Point sizes ───────────────────────────────────────────────────────────────
 
-SIZE_BODY    = 11.5   # form labels, body text
-SIZE_NUMERIC = 11.0   # monospaced numeric display
-SIZE_HEADER  =  9.5   # section/column headers (uppercase DemiBold)
-SIZE_STATUS  = 10.5   # status bar and log entries
-SIZE_FOOTER  = 10.0   # footer hints, tab badges
+SIZE_BODY = 11.5  # form labels, body text
+SIZE_NUMERIC = 11.0  # monospaced numeric display
+SIZE_HEADER = 9.5  # section/column headers (uppercase DemiBold)
+SIZE_STATUS = 10.5  # status bar and log entries
+SIZE_FOOTER = 10.0  # footer hints, tab badges
 
 # ── QFont builders ────────────────────────────────────────────────────────────
+
 
 def header_font() -> QFont:
     """9.5pt DemiBold sans with 0.3px letter-spacing — column and table headers."""

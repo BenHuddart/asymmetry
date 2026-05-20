@@ -40,6 +40,7 @@ def clear_results_group_style(group: QGroupBox) -> None:
 
 # ── Table style ───────────────────────────────────────────────────────────────
 
+
 def apply_param_table_style(table: QTableWidget) -> None:
     """Apply BENCH styling to any parameter or data table.
 
@@ -54,12 +55,11 @@ def apply_param_table_style(table: QTableWidget) -> None:
     table.verticalHeader().setVisible(False)
     table.setFont(mono_font(11.0))
     table.setAlternatingRowColors(True)
-    table.setStyleSheet(
-        f"QTableWidget {{ alternate-background-color: {tokens.SURFACE_ALT}; }}"
-    )
+    table.setStyleSheet(f"QTableWidget {{ alternate-background-color: {tokens.SURFACE_ALT}; }}")
 
 
 # ── Formula label ─────────────────────────────────────────────────────────────
+
 
 def configure_formula_label(label: QLabel) -> None:
     """Style a QLabel as a read-only mono code-box for formula display."""
@@ -78,6 +78,7 @@ def configure_formula_label(label: QLabel) -> None:
 
 # ── Table header font ─────────────────────────────────────────────────────────
 
+
 def apply_param_table_header_font(table: QTableWidget) -> None:
     """Apply the BENCH column-header font to a table's horizontal header.
 
@@ -88,6 +89,7 @@ def apply_param_table_header_font(table: QTableWidget) -> None:
 
 
 # ── Segmented toolbar / toggle-button QSS ────────────────────────────────────
+
 
 def build_segmented_button_qss(
     *,
@@ -137,6 +139,7 @@ def build_nav_button_qss() -> str:
 
 # ── HTML snippets ─────────────────────────────────────────────────────────────
 
+
 def success_html(label: str, *, detail: str | None = None) -> str:
     """Return rich-text HTML for a success status line (green header + muted detail).
 
@@ -167,6 +170,7 @@ def error_html(label: str) -> str:
 
 # ── Group-state buttons ───────────────────────────────────────────────────────
 
+
 def style_group_state_button(
     button: QPushButton,
     state: Literal["active", "selected", "unselected"],
@@ -186,28 +190,26 @@ def style_group_state_button(
     """
     if state == "active":
         button.setStyleSheet(
-            base
-            + f"QPushButton {{ border: 2px solid {tokens.ACCENT};"
+            base + f"QPushButton {{ border: 2px solid {tokens.ACCENT};"
             f" background: {tokens.ACCENT_SOFT}; color: {tokens.ACCENT};"
             f" font-weight: 700; }}"
         )
     elif state == "selected":
         button.setStyleSheet(
-            base
-            + f"QPushButton {{ border: 1px solid {tokens.ACCENT};"
+            base + f"QPushButton {{ border: 1px solid {tokens.ACCENT};"
             f" background: {tokens.ACCENT_SOFT2}; color: {tokens.TEXT};"
             f" font-weight: 500; }}"
         )
     else:
         button.setStyleSheet(
-            base
-            + f"QPushButton {{ border: 1px solid {tokens.BORDER};"
+            base + f"QPushButton {{ border: 1px solid {tokens.BORDER};"
             f" background: {tokens.SURFACE}; color: {tokens.TEXT_MUTED};"
             f" font-weight: 400; }}"
         )
 
 
 # ── Footer hint label ─────────────────────────────────────────────────────────
+
 
 def apply_footer_hint(label: QLabel) -> None:
     """Apply the BENCH footer-hint style to a QLabel (surfaceAlt bg, muted text)."""

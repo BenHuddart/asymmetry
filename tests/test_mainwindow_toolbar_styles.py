@@ -17,6 +17,7 @@ from asymmetry.gui.styles.widgets import build_nav_button_qss, build_segmented_b
 @pytest.fixture
 def qapp():
     from PySide6.QtWidgets import QApplication
+
     app = QApplication.instance()
     if app is None:
         app = QApplication([])
@@ -69,10 +70,10 @@ class TestBuildSegmentedButtonQss:
         """QSS should reference token values, not introduce new hex literals."""
         qss = build_segmented_button_qss()
         # The values in the QSS must come from tokens — spot-check a couple
-        assert tokens.ACCENT_SOFT in qss    # checked background
-        assert tokens.ACCENT in qss         # checked border/text
-        assert tokens.SURFACE in qss        # unchecked background
-        assert tokens.BORDER in qss         # unchecked border
+        assert tokens.ACCENT_SOFT in qss  # checked background
+        assert tokens.ACCENT in qss  # checked border/text
+        assert tokens.SURFACE in qss  # unchecked background
+        assert tokens.BORDER in qss  # unchecked border
 
     def test_no_default_font_weight_in_base_only_checked(self) -> None:
         """Guard against accidentally moving font-weight back to :checked only."""
@@ -121,8 +122,10 @@ class TestDomainButtonsOnMainWindow:
     @pytest.fixture
     def mainwindow(self, qapp):
         from PySide6.QtCore import QSettings
+
         from asymmetry.gui.mainwindow import MainWindow
         from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
+
         s = QSettings()
         s.setValue(UI_SCALE_SETTINGS_KEY, 1.0)
         return MainWindow()

@@ -2882,9 +2882,7 @@ class TestPlotWorkspaceDomainPhase7:
         mainwindow._refresh_time_view_selector()
         assert mainwindow._domain_buttons[1].isEnabled()
 
-    def test_no_signal_on_same_view_click(
-        self, mainwindow: MainWindow, qapp: QApplication
-    ) -> None:
+    def test_no_signal_on_same_view_click(self, mainwindow: MainWindow, qapp: QApplication) -> None:
         """Selecting the already-active view emits no active_view_changed signal."""
         emitted: list[str] = []
         mainwindow._plot_workspace.active_view_changed.connect(emitted.append)

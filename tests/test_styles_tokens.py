@@ -66,17 +66,39 @@ def test_tokens_module_exports_expected_constants() -> None:
     from asymmetry.gui.styles import tokens
 
     required = [
-        "BG", "SURFACE", "SURFACE_ALT", "SURFACE_HI",
-        "BORDER", "BORDER_STRONG",
-        "TEXT", "TEXT_MUTED", "TEXT_DIM",
-        "ACCENT", "ACCENT_SOFT", "ACCENT_SOFT2",
-        "GROUP_HEADER_BG", "GROUP_MEMBER_BG",
-        "WARN", "OK", "FIT", "ERROR",
-        "SUCCESS_BG", "SUCCESS_BORDER",
-        "PLOT_AXIS", "PLOT_TICK_LABEL", "PLOT_GRID", "PLOT_ZERO_LINE",
-        "PLOT_LEGEND_BG", "PLOT_DATA", "PLOT_FIT",
-        "PLOT_FIT_RANGE_FACE", "PLOT_FIT_RANGE_EDGE", "PLOT_LOW_COUNT",
-        "LOG_TAG_ACCENT", "LOG_TAG_OK", "LOG_TAG_WARN",
+        "BG",
+        "SURFACE",
+        "SURFACE_ALT",
+        "SURFACE_HI",
+        "BORDER",
+        "BORDER_STRONG",
+        "TEXT",
+        "TEXT_MUTED",
+        "TEXT_DIM",
+        "ACCENT",
+        "ACCENT_SOFT",
+        "ACCENT_SOFT2",
+        "GROUP_HEADER_BG",
+        "GROUP_MEMBER_BG",
+        "WARN",
+        "OK",
+        "FIT",
+        "ERROR",
+        "SUCCESS_BG",
+        "SUCCESS_BORDER",
+        "PLOT_AXIS",
+        "PLOT_TICK_LABEL",
+        "PLOT_GRID",
+        "PLOT_ZERO_LINE",
+        "PLOT_LEGEND_BG",
+        "PLOT_DATA",
+        "PLOT_FIT",
+        "PLOT_FIT_RANGE_FACE",
+        "PLOT_FIT_RANGE_EDGE",
+        "PLOT_LOW_COUNT",
+        "LOG_TAG_ACCENT",
+        "LOG_TAG_OK",
+        "LOG_TAG_WARN",
     ]
     missing = [name for name in required if not hasattr(tokens, name)]
     assert not missing, f"Missing token constants: {missing}"
@@ -85,19 +107,11 @@ def test_tokens_module_exports_expected_constants() -> None:
 def test_widgets_helpers_exist() -> None:
     """Verify that centralised helper functions are importable."""
     from asymmetry.gui.styles.widgets import (
-        apply_footer_hint,
-        apply_param_table_style,
-        apply_results_group_success,
-        build_nav_button_qss,
         build_segmented_button_qss,
-        clear_results_group_style,
-        configure_formula_label,
-        error_html,
-        info_html,
         style_group_state_button,
         success_html,
-        warning_html,
     )
+
     # All symbols imported — no further assertion needed.
     assert callable(build_segmented_button_qss)
     assert callable(success_html)
@@ -109,9 +123,8 @@ def test_plots_module_helpers_exist() -> None:
     from asymmetry.gui.styles.plots import (
         draw_fit_range_span,
         style_axes,
-        style_figure,
-        style_legend,
     )
+
     assert callable(style_axes)
     assert callable(draw_fit_range_span)
 
@@ -121,16 +134,12 @@ def test_typography_module_constants() -> None:
     from asymmetry.gui.styles.typography import (
         LETTER_SPACING_HEADER,
         LETTER_SPACING_LABEL,
-        SIZE_BODY,
-        SIZE_FOOTER,
         SIZE_HEADER,
         SIZE_NUMERIC,
-        SIZE_STATUS,
-        footer_font,
         header_font,
         section_label_font,
-        status_font,
     )
+
     assert SIZE_HEADER == 9.5
     assert SIZE_NUMERIC == 11.0
     assert LETTER_SPACING_HEADER == 0.3

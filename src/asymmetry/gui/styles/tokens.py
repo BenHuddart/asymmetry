@@ -37,14 +37,14 @@ SUCCESS_BORDER = "#cbe1cf"
 # Matplotlib plot chrome — used by styles/plots.py
 PLOT_AXIS = "#3a3c40"
 PLOT_TICK_LABEL = "#56585b"
-PLOT_GRID = (0, 0, 0, 0.06)          # (r, g, b, alpha) tuple for mpl
+PLOT_GRID = (0, 0, 0, 0.06)  # (r, g, b, alpha) tuple for mpl
 PLOT_ZERO_LINE = "#b0b3b7"
-PLOT_LEGEND_BG = (1, 1, 1, 0.95)    # (r, g, b, alpha) for legend frame fill
-PLOT_DATA = ACCENT                    # default single-run data colour
-PLOT_FIT = FIT                        # default single-run fit-line colour
-PLOT_FIT_RANGE_FACE = ACCENT          # axvspan fill colour (low alpha applied at draw time)
-PLOT_FIT_RANGE_EDGE = ACCENT          # axvline edge colour (medium alpha applied at draw time)
-PLOT_LOW_COUNT = "0.6"                # matplotlib grey shorthand for low-count data points
+PLOT_LEGEND_BG = (1, 1, 1, 0.95)  # (r, g, b, alpha) for legend frame fill
+PLOT_DATA = ACCENT  # default single-run data colour
+PLOT_FIT = FIT  # default single-run fit-line colour
+PLOT_FIT_RANGE_FACE = ACCENT  # axvspan fill colour (low alpha applied at draw time)
+PLOT_FIT_RANGE_EDGE = ACCENT  # axvline edge colour (medium alpha applied at draw time)
+PLOT_LOW_COUNT = "0.6"  # matplotlib grey shorthand for low-count data points
 
 # Log tag colours (by category) — used in log_panel.py
 LOG_TAG_ACCENT = ACCENT

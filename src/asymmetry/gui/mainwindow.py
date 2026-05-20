@@ -80,9 +80,6 @@ from asymmetry.core.utils.constants import (
     PeriodMode,
 )
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
-from asymmetry.gui.styles import tokens
-from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.widgets import build_nav_button_qss, build_segmented_button_qss
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
 from asymmetry.gui.panels.fit_panel import FitPanel
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
@@ -90,6 +87,9 @@ from asymmetry.gui.panels.fourier_panel import FourierPanel
 from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
+from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.widgets import build_segmented_button_qss
 from asymmetry.gui.ui_manager import (
     UI_SCALE_OPTIONS,
     UI_SCALE_SETTINGS_KEY,
@@ -843,9 +843,8 @@ class MainWindow(QMainWindow):
             self._plot_panel.cursor_coords_changed.connect(self._on_cursor_coords_changed)
         if hasattr(self._fit_panel, "fit_range_edit_committed"):
             self._fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
-        if (
-            self._multi_group_fit_window is not None
-            and hasattr(self._multi_group_fit_window, "fit_range_edit_committed")
+        if self._multi_group_fit_window is not None and hasattr(
+            self._multi_group_fit_window, "fit_range_edit_committed"
         ):
             self._multi_group_fit_window.fit_range_edit_committed.connect(
                 self._on_fit_range_edit_committed
@@ -3373,7 +3372,9 @@ class MainWindow(QMainWindow):
             return
         self._fourier_panel.set_group_phases(phases, auto_filled=True)
         self._fourier_panel._use_phase_table_check.setChecked(True)
-        self._set_fourier_status(f"Estimated phases for {len(phases)} detector groups.", success=True)
+        self._set_fourier_status(
+            f"Estimated phases for {len(phases)} detector groups.", success=True
+        )
 
     def _on_compute_fourier(self) -> None:
         """Compute one averaged grouped FFT spectrum for the active run."""
@@ -3553,7 +3554,9 @@ class MainWindow(QMainWindow):
             self._plot_workspace.set_active_domain("frequency")
             self._show_panel("fourier")
             suffix = "s" if len(spectra) != 1 else ""
-            self._set_fourier_status(f"Computed {len(spectra)} Fourier spectrum{suffix}.", success=True)
+            self._set_fourier_status(
+                f"Computed {len(spectra)} Fourier spectrum{suffix}.", success=True
+            )
             self._log_panel.log(
                 f"Computed averaged grouped Fourier spectrum using {display.lower()} display."
             )
@@ -3747,9 +3750,8 @@ class MainWindow(QMainWindow):
         """Refresh fit inputs when the selected fit x-range changes."""
         if hasattr(self._fit_panel, "set_fit_range_display"):
             self._fit_panel.set_fit_range_display(x_min, x_max)
-        if (
-            self._multi_group_fit_window is not None
-            and hasattr(self._multi_group_fit_window, "set_fit_range_display")
+        if self._multi_group_fit_window is not None and hasattr(
+            self._multi_group_fit_window, "set_fit_range_display"
         ):
             self._multi_group_fit_window.set_fit_range_display(x_min, x_max)
         if self._current_dataset is not None:
@@ -4181,16 +4183,20 @@ class MainWindow(QMainWindow):
         """Refresh the center status bar label with current selection + domain."""
         if not hasattr(self, "_status_sel_label"):
             return
-        all_ds = self._data_browser.get_all_datasets() if hasattr(self._data_browser, "get_all_datasets") else []
+        all_ds = (
+            self._data_browser.get_all_datasets()
+            if hasattr(self._data_browser, "get_all_datasets")
+            else []
+        )
         selected = list(self._data_browser.get_selected_datasets())
         n_sel = len(selected)
         n_total = len(all_ds)
-        _DOMAIN_LABELS = {
+        _domain_labels = {
             "fb_asymmetry": "F-B asymmetry",
             "groups": "individual groups",
             "frequency": "frequency",
         }
-        domain = _DOMAIN_LABELS.get(
+        domain = _domain_labels.get(
             self._plot_workspace.active_view() if hasattr(self, "_plot_workspace") else "",
             "",
         )
