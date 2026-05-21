@@ -2119,6 +2119,14 @@ class MainWindow(QMainWindow):
             "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
             "background_correction": bool(grouping.get("background_correction", False)),
         }
+        if "period_mode" in grouping:
+            payload["period_mode"] = str(grouping.get("period_mode", PeriodMode.RED))
+        if isinstance(grouping.get("period_good_frames"), list):
+            payload["period_good_frames"] = list(grouping.get("period_good_frames", []))
+        if isinstance(grouping.get("period_dead_time_us"), list):
+            payload["period_dead_time_us"] = copy.deepcopy(
+                grouping.get("period_dead_time_us", [])
+            )
 
         deadtime_mode = str(grouping.get("deadtime_mode", grouping.get("deadtime_method", "off")))
         if deadtime_mode == "load":
@@ -2360,7 +2368,12 @@ class MainWindow(QMainWindow):
             except (TypeError, ValueError):
                 alpha = 1.0
         bunch_factor = int(grouping_result.get("bunching_factor", 1))
-        period_mode = str(grouping_result.get("period_mode", PeriodMode.RED))
+        period_mode = str(
+            grouping_result.get(
+                "period_mode",
+                existing_grouping.get("period_mode", PeriodMode.RED),
+            )
+        )
         bunch_factor = max(1, bunch_factor)
         use_deadtime = bool(grouping_result.get("deadtime_correction", False))
         deadtime_mode = (
@@ -2572,100 +2585,164 @@ class MainWindow(QMainWindow):
             if key in grouping_result:
                 run.grouping[key] = grouping_result.get(key)
 
-        if deadtime_mode == "file":
-            use_deadtime = bool(
-                use_deadtime and has_file_deadtime(run.grouping, len(run.histograms))
-            )
-        else:
-            use_deadtime = bool(
-                use_deadtime and has_resolved_deadtime(run.grouping, len(run.histograms))
-            )
+        reduction_grouping = dict(run.grouping)
+        reduction_grouping.update(
+            {
+                "groups": groups,
+                "forward_group": forward_gid,
+                "backward_group": backward_gid,
+                "alpha": float(alpha if alpha > 0 else 1.0),
+                "t0_bin": t0_bin,
+                "t_good_offset": t_good_offset,
+                "first_good_bin": first_good,
+                "last_good_bin": last_good,
+                "bin_index_base": bin_index_base,
+                "bunching_factor": bunch_factor,
+                "deadtime_correction": use_deadtime,
+                "deadtime_mode": deadtime_mode,
+                "background_correction": use_background,
+                "period_mode": period_mode,
+            }
+        )
+        if axis_pairs:
+            reduction_grouping["alpha_x"] = float(vector_alphas.get("P_x", alpha))
+            reduction_grouping["alpha_y"] = float(vector_alphas.get("P_y", alpha))
+            reduction_grouping["alpha_z"] = float(vector_alphas.get("P_z", alpha))
+
         if not use_deadtime:
             run.grouping.pop("deadtime_method", None)
 
-        working_histograms, dt_applied = self._prepare_grouping_histograms(
-            run.histograms,
-            run.grouping,
-            use_deadtime,
+        run_alpha = alpha if alpha > 0 else 1.0
+        has_two_period_histograms = bool(
+            isinstance(reduction_grouping.get("period_histograms"), list)
+            and len(reduction_grouping.get("period_histograms", [])) == 2
         )
 
-        common_t0 = common_t0_for_groups(working_histograms, forward_idx, backward_idx)
-        forward = apply_grouping_aligned(
-            working_histograms,
-            forward_idx,
-            common_t0_bin=common_t0,
-        )
-        backward = apply_grouping_aligned(
-            working_histograms,
-            backward_idx,
-            common_t0_bin=common_t0,
-        )
-        n_grouped = min(len(forward), len(backward))
-        forward = forward[:n_grouped]
-        backward = backward[:n_grouped]
+        background_state: dict[str, object] | None = None
+        dt_applied = False
+        time_axis: np.ndarray
+        asymmetry: np.ndarray
+        error: np.ndarray
 
-        bkg_result = None
-        if use_background:
-            bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
-            facility = str(
-                run.metadata.get(
-                    "facility",
-                    dataset.metadata.get("facility", dataset.metadata.get("instrument", "")),
+        if has_two_period_histograms and period_mode in {
+            str(PeriodMode.GREEN_MINUS_RED),
+            str(PeriodMode.GREEN_PLUS_RED),
+        }:
+            red_histograms, red_grouping = self._period_histograms_for_mode(
+                run.histograms,
+                reduction_grouping,
+                period_index=0,
+            )
+            green_histograms, green_grouping = self._period_histograms_for_mode(
+                run.histograms,
+                reduction_grouping,
+                period_index=1,
+            )
+            red_time, red_asym, red_err, red_dt, red_background = (
+                self._reduce_grouped_histograms_to_asymmetry(
+                    histograms=red_histograms,
+                    grouping=red_grouping,
+                    dataset=dataset,
+                    run=run,
+                    forward_idx=forward_idx,
+                    backward_idx=backward_idx,
+                    alpha=run_alpha,
+                    use_deadtime=use_deadtime,
+                    deadtime_mode=deadtime_mode,
+                    use_background=use_background,
                 )
             )
-            bkg_result = apply_grouped_background_correction(
-                forward,
-                backward,
-                grouping=run.grouping,
-                t0_bin=common_t0,
-                bin_width_us=bin_width,
-                facility=facility,
+            green_time, green_asym, green_err, green_dt, green_background = (
+                self._reduce_grouped_histograms_to_asymmetry(
+                    histograms=green_histograms,
+                    grouping=green_grouping,
+                    dataset=dataset,
+                    run=run,
+                    forward_idx=forward_idx,
+                    backward_idx=backward_idx,
+                    alpha=run_alpha,
+                    use_deadtime=use_deadtime,
+                    deadtime_mode=deadtime_mode,
+                    use_background=use_background,
+                )
             )
-            forward = bkg_result.forward
-            backward = bkg_result.backward
-            if bkg_result.applied:
-                run.grouping["background_method"] = bkg_result.method
-                if bkg_result.values is not None:
-                    run.grouping["background_values"] = [
-                        float(bkg_result.values[0]),
-                        float(bkg_result.values[1]),
-                    ]
-                if bkg_result.ranges is not None:
-                    run.grouping["background_ranges"] = [
-                        [int(v) for v in bkg_result.ranges[0]],
-                        [int(v) for v in bkg_result.ranges[1]],
-                    ]
+            n_period = min(
+                len(red_time),
+                len(green_time),
+                len(red_asym),
+                len(green_asym),
+                len(red_err),
+                len(green_err),
+            )
+            if n_period <= 0:
+                return False, bool(red_dt or green_dt)
+            time_axis = np.asarray(red_time[:n_period], dtype=np.float64).copy()
+            if period_mode == str(PeriodMode.GREEN_MINUS_RED):
+                asymmetry = np.asarray(green_asym[:n_period] - red_asym[:n_period], dtype=np.float64)
             else:
-                run.grouping["background_method"] = bkg_result.method
+                asymmetry = np.asarray(green_asym[:n_period] + red_asym[:n_period], dtype=np.float64)
+            error = np.sqrt(np.square(green_err[:n_period]) + np.square(red_err[:n_period]))
+            dt_applied = bool(red_dt or green_dt)
+            if use_background:
+                if red_background == green_background:
+                    background_state = red_background
+                else:
+                    method = None
+                    for state in (green_background, red_background):
+                        if isinstance(state, dict) and isinstance(state.get("method"), str):
+                            method = str(state.get("method"))
+                            break
+                    if method:
+                        background_state = {"method": method}
+        else:
+            period_index = 1 if period_mode == str(PeriodMode.GREEN) else 0
+            selected_histograms, selected_grouping = self._period_histograms_for_mode(
+                run.histograms,
+                reduction_grouping,
+                period_index=period_index,
+            )
+            time_axis, asymmetry, error, dt_applied, background_state = (
+                self._reduce_grouped_histograms_to_asymmetry(
+                    histograms=selected_histograms,
+                    grouping=selected_grouping,
+                    dataset=dataset,
+                    run=run,
+                    forward_idx=forward_idx,
+                    backward_idx=backward_idx,
+                    alpha=run_alpha,
+                    use_deadtime=use_deadtime,
+                    deadtime_mode=deadtime_mode,
+                    use_background=use_background,
+                )
+            )
+            if has_two_period_histograms and period_mode in {
+                str(PeriodMode.RED),
+                str(PeriodMode.GREEN),
+            }:
+                if "good_frames" in selected_grouping:
+                    run.grouping["good_frames"] = selected_grouping.get("good_frames")
+                if isinstance(selected_grouping.get("dead_time_us"), list):
+                    run.grouping["dead_time_us"] = list(selected_grouping.get("dead_time_us", []))
+
+        if use_background:
+            if isinstance(background_state, dict) and isinstance(background_state.get("method"), str):
+                run.grouping["background_method"] = str(background_state.get("method"))
+            else:
+                run.grouping.pop("background_method", None)
+            values = background_state.get("values") if isinstance(background_state, dict) else None
+            if isinstance(values, list) and len(values) == 2:
+                run.grouping["background_values"] = [float(values[0]), float(values[1])]
+            else:
                 run.grouping.pop("background_values", None)
+            ranges = background_state.get("ranges") if isinstance(background_state, dict) else None
+            if isinstance(ranges, list) and len(ranges) == 2:
+                run.grouping["background_ranges"] = [
+                    [int(v) for v in ranges[0]],
+                    [int(v) for v in ranges[1]],
+                ]
         else:
             run.grouping.pop("background_method", None)
             run.grouping.pop("background_values", None)
-
-        run_alpha = alpha if alpha > 0 else 1.0
-
-        if (
-            bkg_result is not None
-            and bkg_result.applied
-            and bkg_result.forward_error is not None
-            and bkg_result.backward_error is not None
-        ):
-            asymmetry, error = compute_asymmetry_with_count_errors(
-                forward,
-                backward,
-                bkg_result.forward_error,
-                bkg_result.backward_error,
-                alpha=run_alpha,
-            )
-        else:
-            asymmetry, error = compute_asymmetry(forward, backward, alpha=run_alpha)
-        asymmetry = asymmetry * 100.0
-        error = error * 100.0
-        if run.histograms:
-            bin_width = float(run.histograms[0].bin_width)
-        else:
-            bin_width = 1.0
-        time_axis = (np.arange(len(asymmetry), dtype=np.float64) - float(common_t0)) * bin_width
 
         lo = max(0, first_good)
         hi = min(len(asymmetry) - 1, last_good)
@@ -2728,6 +2805,176 @@ class MainWindow(QMainWindow):
         else:
             run.grouping.pop("instrument", None)
         return True, dt_applied
+
+    @staticmethod
+    def _clone_histogram_list(histograms: list[Histogram]) -> list[Histogram]:
+        """Return copied histogram containers for regrouping calculations."""
+        out: list[Histogram] = []
+        for hist in histograms:
+            out.append(
+                Histogram(
+                    counts=np.asarray(hist.counts, dtype=np.float64).copy(),
+                    bin_width=float(hist.bin_width),
+                    t0_bin=int(hist.t0_bin),
+                    good_bin_start=int(hist.good_bin_start),
+                    good_bin_end=int(hist.good_bin_end),
+                )
+            )
+        return out
+
+    def _period_histograms_for_mode(
+        self,
+        histograms: list[Histogram],
+        grouping: dict,
+        *,
+        period_index: int,
+    ) -> tuple[list[Histogram], dict]:
+        """Return period-specific histograms plus effective grouping metadata."""
+        period_grouping = dict(grouping)
+
+        period_good_frames = grouping.get("period_good_frames")
+        if isinstance(period_good_frames, list) and period_index < len(period_good_frames):
+            try:
+                period_grouping["good_frames"] = float(period_good_frames[period_index])
+            except (TypeError, ValueError):
+                pass
+
+        period_dead_time_us = grouping.get("period_dead_time_us")
+        if isinstance(period_dead_time_us, list) and period_index < len(period_dead_time_us):
+            raw_deadtime = period_dead_time_us[period_index]
+            if isinstance(raw_deadtime, list):
+                cleaned_deadtime: list[float] = []
+                for value in raw_deadtime:
+                    try:
+                        cleaned_deadtime.append(float(value))
+                    except (TypeError, ValueError):
+                        continue
+                period_grouping["dead_time_us"] = cleaned_deadtime
+
+        period_histograms = grouping.get("period_histograms")
+        if not (isinstance(period_histograms, list) and period_index < len(period_histograms)):
+            return self._clone_histogram_list(histograms), period_grouping
+
+        selected_period = period_histograms[period_index]
+        if not isinstance(selected_period, list):
+            return self._clone_histogram_list(histograms), period_grouping
+
+        cloned_period: list[Histogram] = []
+        for hist in selected_period:
+            if not isinstance(hist, Histogram):
+                return self._clone_histogram_list(histograms), period_grouping
+            cloned_period.append(
+                Histogram(
+                    counts=np.asarray(hist.counts, dtype=np.float64).copy(),
+                    bin_width=float(hist.bin_width),
+                    t0_bin=int(hist.t0_bin),
+                    good_bin_start=int(hist.good_bin_start),
+                    good_bin_end=int(hist.good_bin_end),
+                )
+            )
+        return cloned_period or self._clone_histogram_list(histograms), period_grouping
+
+    def _reduce_grouped_histograms_to_asymmetry(
+        self,
+        *,
+        histograms: list[Histogram],
+        grouping: dict,
+        dataset,
+        run,
+        forward_idx: list[int],
+        backward_idx: list[int],
+        alpha: float,
+        use_deadtime: bool,
+        deadtime_mode: str,
+        use_background: bool,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool, dict[str, object] | None]:
+        """Return reduced grouped asymmetry arrays for one histogram source."""
+        effective_use_deadtime = bool(use_deadtime)
+        if effective_use_deadtime:
+            if deadtime_mode == "file":
+                effective_use_deadtime = has_file_deadtime(grouping, len(histograms))
+            else:
+                effective_use_deadtime = has_resolved_deadtime(grouping, len(histograms))
+
+        working_histograms, dt_applied = self._prepare_grouping_histograms(
+            histograms,
+            grouping,
+            effective_use_deadtime,
+        )
+
+        common_t0 = common_t0_for_groups(working_histograms, forward_idx, backward_idx)
+        forward = apply_grouping_aligned(
+            working_histograms,
+            forward_idx,
+            common_t0_bin=common_t0,
+        )
+        backward = apply_grouping_aligned(
+            working_histograms,
+            backward_idx,
+            common_t0_bin=common_t0,
+        )
+        n_grouped = min(len(forward), len(backward))
+        forward = forward[:n_grouped]
+        backward = backward[:n_grouped]
+
+        background_state: dict[str, object] | None = None
+        bkg_result = None
+        if use_background:
+            bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
+            facility = str(
+                run.metadata.get(
+                    "facility",
+                    dataset.metadata.get("facility", dataset.metadata.get("instrument", "")),
+                )
+            )
+            bkg_result = apply_grouped_background_correction(
+                forward,
+                backward,
+                grouping=grouping,
+                t0_bin=common_t0,
+                bin_width_us=bin_width,
+                facility=facility,
+            )
+            forward = bkg_result.forward
+            backward = bkg_result.backward
+            background_state = {"method": bkg_result.method}
+            if bkg_result.applied:
+                if bkg_result.values is not None:
+                    background_state["values"] = [
+                        float(bkg_result.values[0]),
+                        float(bkg_result.values[1]),
+                    ]
+                if bkg_result.ranges is not None:
+                    background_state["ranges"] = [
+                        [int(v) for v in bkg_result.ranges[0]],
+                        [int(v) for v in bkg_result.ranges[1]],
+                    ]
+
+        if (
+            bkg_result is not None
+            and bkg_result.applied
+            and bkg_result.forward_error is not None
+            and bkg_result.backward_error is not None
+        ):
+            asymmetry, error = compute_asymmetry_with_count_errors(
+                forward,
+                backward,
+                bkg_result.forward_error,
+                bkg_result.backward_error,
+                alpha=alpha,
+            )
+        else:
+            asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
+
+        bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
+        time_axis = (np.arange(len(asymmetry), dtype=np.float64) - float(common_t0)) * bin_width
+        return (
+            time_axis,
+            np.asarray(asymmetry * 100.0, dtype=np.float64),
+            np.asarray(error * 100.0, dtype=np.float64),
+            dt_applied,
+            background_state,
+        )
 
     def _prepare_grouping_histograms(self, histograms, grouping: dict, use_deadtime: bool):
         """Return histograms prepared for grouping, with optional deadtime correction.
