@@ -158,6 +158,7 @@ class TestLFKuboToyabe:
         # Allow for numerical noise in integration; just check overall trend
         assert np.sum(diffs > 0) < len(diffs) * 0.05  # No more than 5% increasing
 
+    @pytest.mark.slow
     @pytest.mark.xfail(
         reason="Difficulty recovering Delta parameter in fitting due to integration accuracy; "
         "synthetic noisy data amplifies integration errors",

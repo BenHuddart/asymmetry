@@ -5,6 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.io]
+
 h5py = pytest.importorskip("h5py")
 
 from asymmetry.core.io.nexus import NexusLoader

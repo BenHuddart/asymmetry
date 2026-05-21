@@ -9,8 +9,6 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-
-from asymmetry.gui.gle_settings import get_gle_executable
 from typing import Any
 
 import numpy as np
@@ -62,6 +60,7 @@ from asymmetry.gui.export_paths import (
     remember_export_path,
     resolve_gle_export_paths,
 )
+from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog

@@ -8,6 +8,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.io]
+
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.io import load
 from asymmetry.core.io.psi import _FE_HEADER, PsiLoader

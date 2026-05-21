@@ -9,8 +9,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from asymmetry.gui.gle_settings import get_gle_executable
-
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -48,6 +46,7 @@ from asymmetry.gui.export_paths import (
     remember_export_path,
     resolve_gle_export_paths,
 )
+from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles.widgets import apply_param_table_style
 

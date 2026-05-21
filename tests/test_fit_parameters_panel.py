@@ -9,6 +9,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.gui]
+
 pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # type: ignore
 from PySide6.QtWidgets import (  # type: ignore

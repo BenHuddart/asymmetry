@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = [pytest.mark.gui]
+
 pyside6 = pytest.importorskip("PySide6")
 
 

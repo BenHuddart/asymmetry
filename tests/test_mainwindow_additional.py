@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.gui]
+
 pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings  # type: ignore
 from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QWidget  # type: ignore

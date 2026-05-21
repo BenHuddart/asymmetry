@@ -18,8 +18,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from asymmetry.gui.gle_settings import get_gle_executable
-
 import numpy as np
 from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtGui import QDoubleValidator
@@ -63,6 +61,7 @@ from asymmetry.gui.export_paths import (
     remember_export_path,
     resolve_gle_export_paths,
 )
+from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.plots import draw_fit_range_span, style_axes, style_figure, style_legend

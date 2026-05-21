@@ -463,6 +463,7 @@ def test_fit_constant_recovers_value() -> None:
     np.testing.assert_allclose(fitted_c, 4.2, atol=0.1)
 
 
+@pytest.mark.slow
 def test_fit_parameter_model_transport_seed_recovers_diffusive_component() -> None:
     x = np.array([20.0, 50.0, 100.0, 200.0, 400.0, 1000.0, 3000.0, 5000.0, 10000.0])
     model = ParameterCompositeModel(["BallisticLF_2D", "DiffusionLF_2D"], operators=["+"])
@@ -495,6 +496,7 @@ def test_fit_parameter_model_transport_seed_recovers_diffusive_component() -> No
     assert 100.0 <= fitted["D_2D"] <= 400.0
 
 
+@pytest.mark.slow
 def test_fit_parameter_model_transport_seed_recovers_high_dhop_basin() -> None:
     x = np.array([20.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0])
     model = ParameterCompositeModel(["DiffusionLF_2D", "BallisticLF_2D"], operators=["+"])
@@ -529,6 +531,7 @@ def test_fit_parameter_model_transport_seed_recovers_high_dhop_basin() -> None:
     assert fitted["D_hop"] > 1.0e4
 
 
+@pytest.mark.slow
 def test_fit_parameter_model_error_floor_blocks_high_field_collapse() -> None:
     x = np.array(
         [25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0, 20000.0, 35000.0]

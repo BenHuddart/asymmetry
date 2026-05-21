@@ -8,6 +8,8 @@ import time
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.gui, pytest.mark.slow, pytest.mark.integration]
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
@@ -26,6 +28,7 @@ from asymmetry.core.fitting.fit_wizard import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
+from tests._qt_helpers import wait_for
 
 
 @pytest.fixture(scope="module")
@@ -172,16 +175,6 @@ def _fake_recommendation(dataset: MuonDataset) -> FitWizardRecommendation:
     )
 
 
-def _wait_for(predicate, qapp: QApplication, timeout_s: float = 2.0) -> None:
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        qapp.processEvents()
-        if predicate():
-            return
-        time.sleep(0.01)
-    raise AssertionError("Timed out waiting for fit wizard UI state")
-
-
 def _analysis_complete(window: FitWizardWindow) -> bool:
     return window._recommendation is not None and window._analysis_thread is None
 
@@ -205,7 +198,7 @@ def test_fit_wizard_window_populates_banners_and_tables(
     assert window._portfolio_table.rowCount() == 0
 
     window._start_analysis()
-    _wait_for(lambda: _analysis_complete(window), qapp)
+    wait_for(lambda: _analysis_complete(window), qapp)
 
     assert window._fingerprint_banner.text()
     assert window._portfolio_banner.text()
@@ -250,7 +243,7 @@ def test_fit_wizard_window_selection_updates_apply_page(
     window = FitWizardWindow()
     window.set_analysis_context(dataset)
     window._start_analysis()
-    _wait_for(lambda: _analysis_complete(window), qapp)
+    wait_for(lambda: _analysis_complete(window), qapp)
 
     window._compare_table.selectRow(1)
     qapp.processEvents()
@@ -274,7 +267,7 @@ def test_fit_wizard_window_apply_recommended_emits_assessment(
     window = FitWizardWindow()
     window.set_analysis_context(dataset)
     window._start_analysis()
-    _wait_for(lambda: _analysis_complete(window), qapp)
+    wait_for(lambda: _analysis_complete(window), qapp)
 
     emitted: dict[str, object] = {}
     window.apply_assessment_requested.connect(
@@ -310,7 +303,7 @@ def test_fit_wizard_window_shows_progress_while_analysis_runs(
 
     assert window._analysis_in_progress is True
     assert window._progress_bar.isHidden() is False
-    _wait_for(
+    wait_for(
         lambda: window._analysis_in_progress is False and window._analysis_thread is None, qapp
     )
     assert window._progress_bar.isHidden() is True
@@ -342,7 +335,7 @@ def test_fit_wizard_window_emits_cached_analysis_payload(
 
     window.set_analysis_context(dataset)
     window._start_analysis()
-    _wait_for(lambda: _analysis_complete(window), qapp)
+    wait_for(lambda: _analysis_complete(window), qapp)
 
     assert isinstance(payload.get("recommendation"), FitWizardRecommendation)
     assert payload.get("log_text") == ""
