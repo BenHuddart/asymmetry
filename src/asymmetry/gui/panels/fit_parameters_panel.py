@@ -9,6 +9,8 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from asymmetry.gui.gle_settings import get_gle_executable
 from typing import Any
 
 import numpy as np
@@ -3743,11 +3745,12 @@ class FitParametersPanel(QWidget):
                 return
             raise
 
-        if shutil.which("gle") is not None:
+        _gle = get_gle_executable()
+        if _gle is not None:
             output_path = gle_path.with_suffix(f".{output_format}")
             try:
                 subprocess.run(
-                    ["gle", "-d", output_format, str(gle_path)],
+                    [_gle, "-d", output_format, str(gle_path)],
                     capture_output=True,
                     text=True,
                     check=True,
@@ -3804,7 +3807,8 @@ class FitParametersPanel(QWidget):
             image_label = QLabel("Preview unavailable")
             layout.addWidget(image_label)
 
-            if shutil.which("gle") is not None:
+            _gle = get_gle_executable()
+            if _gle is not None:
                 with tempfile.TemporaryDirectory() as tmpdir:
                     tmpdir_path = Path(tmpdir)
                     gle_file = tmpdir_path / "preview.gle"
@@ -3818,7 +3822,7 @@ class FitParametersPanel(QWidget):
                             shutil.copy2(src, tmpdir_path / src.name)
                     fig.savefig(str(gle_file))
                     subprocess.run(
-                        ["gle", "-d", "png", str(gle_file)],
+                        [_gle, "-d", "png", str(gle_file)],
                         capture_output=True,
                         check=True,
                         cwd=str(tmpdir_path),

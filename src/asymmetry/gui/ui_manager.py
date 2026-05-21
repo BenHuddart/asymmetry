@@ -8,7 +8,6 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QSettings, QSize, Qt, Signal
 from PySide6.QtGui import QAction, QFont
-from asymmetry.gui.styles import tokens
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -17,6 +16,8 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QToolBar,
 )
+
+from asymmetry.gui.styles import tokens
 
 COMPACT_MODE_SETTINGS_KEY = "ui/compact_mode"
 UI_SCALE_SETTINGS_KEY = "ui/scale"

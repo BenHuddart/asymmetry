@@ -18,6 +18,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from asymmetry.gui.gle_settings import get_gle_executable
+
 import numpy as np
 from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtGui import QDoubleValidator
@@ -4459,7 +4461,8 @@ class PlotPanel(QWidget):
             return
         if not gle_path.exists():
             return
-        if shutil.which("gle") is None:
+        _gle = get_gle_executable()
+        if _gle is None:
             return
 
         try:
@@ -4487,7 +4490,7 @@ class PlotPanel(QWidget):
                         shutil.copy2(src, tmpdir_path / dep_name)
 
                 subprocess.run(
-                    ["gle", "-d", "png", str(tmp_gle)],
+                    [_gle, "-d", "png", str(tmp_gle)],
                     capture_output=True,
                     check=True,
                     cwd=str(tmpdir_path),
@@ -4671,11 +4674,12 @@ class PlotPanel(QWidget):
             self._write_data_file(dat_path, payload, label_text=label_text)
 
         # Compile using gleplot / GLE
-        if shutil.which("gle") is not None:
+        _gle = get_gle_executable()
+        if _gle is not None:
             output_path = gle_path.with_suffix(f".{output_format}")
             try:
                 subprocess.run(
-                    ["gle", "-d", output_format, str(gle_path)],
+                    [_gle, "-d", output_format, str(gle_path)],
                     capture_output=True,
                     text=True,
                     check=True,

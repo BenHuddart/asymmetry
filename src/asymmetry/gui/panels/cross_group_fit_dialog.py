@@ -12,7 +12,6 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QLabel, QMessageBox, QTableWidgetItem
 
-from asymmetry.gui.styles import tokens
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ParameterCompositeModel,
@@ -27,6 +26,7 @@ from asymmetry.gui.panels.model_fit_dialog import (
     _show_info,
     _show_warning,
 )
+from asymmetry.gui.styles import tokens
 
 
 @dataclass
