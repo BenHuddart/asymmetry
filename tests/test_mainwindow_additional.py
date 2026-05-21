@@ -113,6 +113,69 @@ def _make_fourier_ready_dataset(run_number: int, *, with_grouping: bool) -> Muon
     )
 
 
+def _make_two_period_vector_dataset(run_number: int) -> MuonDataset:
+    time = np.arange(4, dtype=float) * 0.01
+
+    def _hist(values: list[float]) -> Histogram:
+        return Histogram(counts=np.asarray(values, dtype=float), bin_width=0.01, t0_bin=0)
+
+    red_histograms = [
+        _hist([100.0, 100.0, 100.0, 100.0]),
+        _hist([50.0, 50.0, 50.0, 50.0]),
+        _hist([80.0, 80.0, 80.0, 80.0]),
+        _hist([20.0, 20.0, 20.0, 20.0]),
+        _hist([70.0, 70.0, 70.0, 70.0]),
+        _hist([30.0, 30.0, 30.0, 30.0]),
+    ]
+    green_histograms = [
+        _hist([60.0, 60.0, 60.0, 60.0]),
+        _hist([90.0, 90.0, 90.0, 90.0]),
+        _hist([40.0, 40.0, 40.0, 40.0]),
+        _hist([80.0, 80.0, 80.0, 80.0]),
+        _hist([20.0, 20.0, 20.0, 20.0]),
+        _hist([100.0, 100.0, 100.0, 100.0]),
+    ]
+
+    run = Run(
+        run_number=run_number,
+        histograms=mw_module.MainWindow._clone_histogram_list(red_histograms),
+        metadata={"run_number": run_number, "field": 100.0},
+        grouping={
+            "groups": {1: [1], 2: [2], 3: [3], 4: [4], 5: [5], 6: [6]},
+            "group_names": {
+                1: "Pz Forward",
+                2: "Pz Backward",
+                3: "Py Top",
+                4: "Py Bottom",
+                5: "Px Left",
+                6: "Px Right",
+            },
+            "forward_group": 1,
+            "backward_group": 2,
+            "vector_axis": "P_z",
+            "alpha": 1.0,
+            "alpha_x": 1.0,
+            "alpha_y": 1.0,
+            "alpha_z": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+            "period_histograms": [red_histograms, green_histograms],
+            "period_mode": str(mw_module.PeriodMode.RED),
+            "period_good_frames": [1.0, 1.0],
+            "period_dead_time_us": [[], []],
+        },
+    )
+    return MuonDataset(
+        time=time,
+        asymmetry=np.zeros_like(time),
+        error=np.ones_like(time),
+        metadata={"run_number": run_number, "field": 100.0},
+        run=run,
+    )
+
+
 class TestMainWindowFourier:
     def test_fill_fourier_phases_populates_group_phase_table(self, mainwindow: MainWindow) -> None:
         dataset = _make_fourier_ready_dataset(8801, with_grouping=True)
@@ -1562,6 +1625,19 @@ class TestMainWindowBasic:
         assert payload["alpha_y"] == pytest.approx(1.15)
         assert payload["alpha_z"] == pytest.approx(1.25)
 
+    def test_extract_grouping_overrides_includes_period_mode(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_two_period_vector_dataset(7452)
+        assert dataset.run is not None
+        dataset.run.grouping["period_mode"] = str(mw_module.PeriodMode.GREEN)
+
+        payload = mainwindow._extract_grouping_overrides(dataset)
+
+        assert payload is not None
+        assert payload["period_mode"] == str(mw_module.PeriodMode.GREEN)
+
     def test_extract_grouping_overrides_includes_t0_and_t_good_offset(
         self,
         mainwindow: MainWindow,
@@ -1578,6 +1654,78 @@ class TestMainWindowBasic:
         assert payload["t0_bin"] == 2
         assert payload["t_good_offset"] == 3
         assert payload["first_good_bin"] == 5
+
+    def test_apply_grouping_period_mode_uses_selected_period_histograms(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_two_period_vector_dataset(7454)
+        payload = mainwindow._extract_grouping_overrides(dataset)
+
+        assert payload is not None
+        payload["period_mode"] = str(mw_module.PeriodMode.GREEN)
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        np.testing.assert_allclose(dataset.asymmetry, np.full(4, -20.0))
+        assert dataset.run is not None
+        assert dataset.run.grouping["period_mode"] == str(mw_module.PeriodMode.GREEN)
+
+    def test_apply_grouping_green_minus_red_combines_asymmetry_space(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_two_period_vector_dataset(7455)
+        payload = mainwindow._extract_grouping_overrides(dataset)
+
+        assert payload is not None
+        payload["period_mode"] = str(mw_module.PeriodMode.GREEN_MINUS_RED)
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        red_asym, red_err = mw_module.compute_asymmetry(
+            np.full(4, 100.0),
+            np.full(4, 50.0),
+            alpha=1.0,
+        )
+        green_asym, green_err = mw_module.compute_asymmetry(
+            np.full(4, 60.0),
+            np.full(4, 90.0),
+            alpha=1.0,
+        )
+        np.testing.assert_allclose(dataset.asymmetry, (green_asym - red_asym) * 100.0)
+        np.testing.assert_allclose(
+            dataset.error,
+            np.sqrt(np.square(green_err * 100.0) + np.square(red_err * 100.0)),
+        )
+
+    def test_build_vector_axis_datasets_preserves_selected_period_mode(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_two_period_vector_dataset(7456)
+        assert dataset.run is not None
+        dataset.run.grouping["period_mode"] = str(mw_module.PeriodMode.GREEN)
+
+        axis_map = mainwindow._build_vector_axis_datasets([dataset])
+
+        assert {axis for axis, values in axis_map.items() if values} == {"P_x", "P_y", "P_z"}
+        np.testing.assert_allclose(axis_map["P_z"][0].asymmetry, np.full(4, -20.0))
+        np.testing.assert_allclose(
+            axis_map["P_y"][0].asymmetry,
+            np.full(4, ((40.0 - 80.0) / (40.0 + 80.0)) * 100.0),
+        )
+        np.testing.assert_allclose(
+            axis_map["P_x"][0].asymmetry,
+            np.full(4, ((20.0 - 100.0) / (20.0 + 100.0)) * 100.0),
+        )
+        for axis in ("P_x", "P_y", "P_z"):
+            clone = axis_map[axis][0]
+            assert clone.run is not None
+            assert clone.run.grouping["period_mode"] == str(mw_module.PeriodMode.GREEN)
+            assert clone.run.grouping["vector_axis"] == axis
 
     def test_extract_grouping_overrides_includes_group_include_flags(
         self,
