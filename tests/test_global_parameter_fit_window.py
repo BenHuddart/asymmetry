@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.gui]
+
 pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication, QMessageBox  # type: ignore
 

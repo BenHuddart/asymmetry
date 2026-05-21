@@ -443,9 +443,28 @@ def cmd_lint_all(_args: argparse.Namespace) -> int:
     return cmd_lint(_args)
 
 
+_TIER_MARKER: dict[str, str | None] = {
+    "fast": "unit and not slow and not gui and not io and not integration",
+    "standard": "not slow and not integration",
+    "full": None,
+}
+
+
 def cmd_test(args: argparse.Namespace) -> int:
     pytest_args = _strip_passthrough(list(args.pytest_args))
-    return _run_command([sys.executable, "-m", "pytest", *pytest_args])
+
+    tier = getattr(args, "tier", "standard")
+    parallel = not getattr(args, "no_parallel", False)
+
+    marker_expr = _TIER_MARKER[tier]
+    if marker_expr and not any(a.startswith("-m") or a == "-m" for a in pytest_args):
+        pytest_args = ["-m", marker_expr] + pytest_args
+
+    parallel_args: list[str] = []
+    if parallel and tier in ("standard", "full"):
+        parallel_args = ["-n", "auto", "--dist", "loadfile"]
+
+    return _run_command([sys.executable, "-m", "pytest", *parallel_args, *pytest_args])
 
 
 def cmd_docs(_args: argparse.Namespace) -> int:
@@ -465,6 +484,10 @@ def cmd_structural(_args: argparse.Namespace) -> int:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
+    if not hasattr(args, "tier"):
+        args.tier = "standard"
+    if not hasattr(args, "no_parallel"):
+        args.no_parallel = False
     steps = [
         ("structural", cmd_structural),
         ("lint", cmd_lint),
@@ -492,6 +515,18 @@ def build_parser() -> argparse.ArgumentParser:
     lint_all_parser.set_defaults(func=cmd_lint_all)
 
     test_parser = subparsers.add_parser("test", help="Run pytest, optionally with passthrough args")
+    test_parser.add_argument(
+        "--tier",
+        choices=["fast", "standard", "full"],
+        default="standard",
+        help="Test tier: fast (<30s unit-only), standard (default, excludes slow/integration), full (everything)",
+    )
+    test_parser.add_argument(
+        "--no-parallel",
+        action="store_true",
+        default=False,
+        help="Disable pytest-xdist parallelization",
+    )
     test_parser.add_argument("pytest_args", nargs=argparse.REMAINDER)
     test_parser.set_defaults(func=cmd_test)
 
@@ -509,7 +544,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate_parser = subparsers.add_parser(
         "validate",
-        help="Run structural checks, lint, and tests",
+        help="Run structural checks, lint, and tests (standard tier by default)",
+    )
+    validate_parser.add_argument(
+        "--tier",
+        choices=["fast", "standard", "full"],
+        default="standard",
+        help="Test tier passed through to the test step",
+    )
+    validate_parser.add_argument(
+        "--no-parallel",
+        action="store_true",
+        default=False,
+        help="Disable pytest-xdist parallelization",
     )
     validate_parser.add_argument("pytest_args", nargs=argparse.REMAINDER)
     validate_parser.set_defaults(func=cmd_validate)

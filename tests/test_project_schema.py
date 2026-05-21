@@ -9,6 +9,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.gui]
+
 # ── schema / migration unit tests ─────────────────────────────────────────────
 from asymmetry.core.project import (
     CURRENT_SCHEMA_VERSION,

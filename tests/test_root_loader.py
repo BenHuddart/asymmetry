@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.io]
+
 from asymmetry.core.io import RootLoader, load
 
 uproot = pytest.importorskip("uproot")

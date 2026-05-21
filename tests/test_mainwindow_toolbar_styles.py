@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = [pytest.mark.gui]
+
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import build_nav_button_qss, build_segmented_button_qss
 

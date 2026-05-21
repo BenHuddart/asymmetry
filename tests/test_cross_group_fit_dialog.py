@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
+pytestmark = [pytest.mark.gui, pytest.mark.slow, pytest.mark.integration]
+
 import threading
 import time
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import csv
 import json
+import sys
 import uuid
 from dataclasses import dataclass
 
@@ -368,7 +369,8 @@ class DataBrowserPanel(QWidget):
         self._table.currentItemChanged.connect(lambda *_: self._table.viewport().update())
         layout.addWidget(self._table)
 
-        self._footer_hint = QLabel("⌘-click adds · shift-click ranges")
+        _add_key = "⌘" if sys.platform == "darwin" else "Ctrl"
+        self._footer_hint = QLabel(f"{_add_key}-click adds · shift-click ranges")
         self._footer_hint.setWordWrap(True)
         apply_footer_hint(self._footer_hint)
         layout.addWidget(self._footer_hint)

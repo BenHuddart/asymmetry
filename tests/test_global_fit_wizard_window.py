@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import os
-import time
 from dataclasses import replace
 
 import numpy as np
 import pytest
+
+pytestmark = [pytest.mark.gui, pytest.mark.slow, pytest.mark.integration]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -36,6 +37,7 @@ from asymmetry.gui.windows.global_fit_wizard_window import (
     GlobalFitWizardParameterSetupDialog,
     GlobalFitWizardWindow,
 )
+from tests._qt_helpers import wait_for
 
 
 @pytest.fixture(scope="module")
@@ -384,16 +386,6 @@ def _analysis_complete(window: GlobalFitWizardWindow) -> bool:
     return window._recommendation is not None and window._analysis_thread is None
 
 
-def _wait_for(predicate, qapp: QApplication, timeout_s: float = 2.0) -> None:
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        qapp.processEvents()
-        if predicate():
-            return
-        time.sleep(0.01)
-    raise AssertionError("Timed out waiting for global fit wizard UI state")
-
-
 def test_global_fit_wizard_window_populates_tables(
     qapp: QApplication,
     datasets: list[MuonDataset],
@@ -408,7 +400,7 @@ def test_global_fit_wizard_window_populates_tables(
     window.set_analysis_context(datasets)
 
     window._start_analysis()
-    _wait_for(lambda: _analysis_complete(window), qapp)
+    wait_for(lambda: _analysis_complete(window), qapp)
 
     assert "Field" in window._overview_banner.text()
     assert window._tabs.count() == 6
@@ -464,7 +456,7 @@ def test_global_fit_wizard_window_shows_progress_log(
     window.set_analysis_context(datasets)
 
     window._start_analysis()
-    _wait_for(lambda: _analysis_complete(window), qapp)
+    wait_for(lambda: _analysis_complete(window), qapp)
 
     assert window._log_window is not None
     assert window._log_window.isVisible()
@@ -504,7 +496,7 @@ def test_global_fit_wizard_window_optimizes_selected_candidates(
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
     window._start_analysis()
-    _wait_for(lambda: _analysis_complete(window), qapp)
+    wait_for(lambda: _analysis_complete(window), qapp)
     assert window._log_window is not None
     window._log_window.hide()
     qapp.processEvents()
@@ -512,7 +504,7 @@ def test_global_fit_wizard_window_optimizes_selected_candidates(
     window._compare_table.selectRow(0)
     window._on_compare_selection_changed()
     window._start_selected_optimisation()
-    _wait_for(lambda: _analysis_complete(window) and window._optimized_table.rowCount() == 2, qapp)
+    wait_for(lambda: _analysis_complete(window) and window._optimized_table.rowCount() == 2, qapp)
 
     assert captured["datasets"] == datasets
     assert captured["selected_template_keys"] == ("exp_constant",)
@@ -574,7 +566,7 @@ def test_global_fit_wizard_window_emits_generated_single_fit_tables(
     window.set_analysis_context(datasets)
 
     window._start_analysis()
-    _wait_for(lambda: _analysis_complete(window), qapp)
+    wait_for(lambda: _analysis_complete(window), qapp)
 
     assert set(emitted) == {int(dataset.run_number) for dataset in datasets}
     assert emitted[generated_run] is not original_generated_recommendation
@@ -663,7 +655,7 @@ def test_global_fit_wizard_window_passes_dialog_adjusted_types_and_bounds(
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
     window._start_analysis()
-    _wait_for(lambda: _analysis_complete(window), qapp)
+    wait_for(lambda: _analysis_complete(window), qapp)
 
     assert captured["types"] is not None
     assert captured["bounds"] is not None

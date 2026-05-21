@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asymmetry"
-version = "0.3.5"
+version = "0.3.6"
 description = "A Python library for muon-spin spectroscopy (μSR) data analysis"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -40,6 +40,7 @@ root = ["uproot>=5.0,<6"]
 dev = [
     "pytest>=7.0,<10",
     "pytest-cov>=4.0,<8",
+    "pytest-xdist>=3,<4",
     "Pillow>=10.0,<13",
     "ruff>=0.1,<0.16",
     "sphinx>=7.0,<10",
@@ -71,7 +72,14 @@ asymmetry = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "unit: pure-python, no Qt, no file I/O",
+    "gui: requires PySide6 / Qt widgets",
+    "io: exercises a file-format loader",
+    "slow: individual runtime > ~1s (full tier only)",
+    "integration: multi-component end-to-end flow (full tier only)",
+]
 
 [tool.ruff]
 target-version = "py310"
@@ -96,12 +104,36 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "src/asymmetry/gui/panels/plot_panel.py" = ["N802"]  # Qt resizeEvent override
 "src/asymmetry/gui/widgets/detector_schematic.py" = ["N802"]  # Qt sizeHint override
 "src/asymmetry/gui/windows/fit_wizard_window.py" = ["N802"]  # Qt closeEvent override
-"tests/test_fit_panel_tabs.py" = ["N802"]  # Qt-style test doubles
+"tests/test_fit_panel_tabs.py" = ["N802", "E402"]  # Qt-style test doubles; importorskip guard
 "tests/test_fit_parameters_panel.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/test_fitting_engine.py" = ["N803"]  # Physics-style model parameter names
 "tests/test_grouped_time_domain_fitting.py" = ["N803"]  # Physics parameter names (Lambda)
-"tests/test_global_parameter_fit_window.py" = ["E402"]  # pytest.importorskip before optional Qt imports
-"tests/test_mainwindow_additional.py" = ["E402"]  # pytest.importorskip before optional Qt imports
-"tests/test_nexus_loader.py" = ["E402"]  # pytest.importorskip before optional h5py import
-"tests/test_plot_panel.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+# E402: pytest.importorskip / pytestmark before optional-dependency imports is intentional in all GUI and IO test files
+"tests/test_composite_parameter_dialog.py" = ["E402"]
+"tests/test_cross_group_fit_dialog.py" = ["E402"]
+"tests/test_data_browser_panel.py" = ["E402"]
+"tests/test_detector_layout_dialog.py" = ["E402"]
+"tests/test_detector_schematic.py" = ["E402"]
+"tests/test_fit_function_builder.py" = ["E402"]
+"tests/test_fit_panel_phase5_range.py" = ["E402"]
+"tests/test_fit_panel_worker.py" = ["E402"]
+"tests/test_fit_wizard_window.py" = ["E402"]
+"tests/test_fit_wizard.py" = ["E402"]
+"tests/test_global_fit_wizard_window.py" = ["E402"]
+"tests/test_global_fit_wizard.py" = ["E402"]
+"tests/test_global_parameter_fit_window.py" = ["E402"]
+"tests/test_grouping_dialog.py" = ["E402"]
+"tests/test_gui_panels_basic.py" = ["E402"]
+"tests/test_gui_shell.py" = ["E402"]
+"tests/test_latex_renderer.py" = ["E402"]
+"tests/test_mainwindow_additional.py" = ["E402"]
+"tests/test_mainwindow_phase4_inspector.py" = ["E402"]
+"tests/test_mainwindow_toolbar_styles.py" = ["E402"]
+"tests/test_model_fit_dialog.py" = ["E402"]
+"tests/test_nexus_loader.py" = ["E402"]
+"tests/test_plot_panel.py" = ["E402"]
+"tests/test_plot_panel_styling.py" = ["E402"]
 "tests/test_project_schema.py" = ["E402", "N802"]  # Split module-level GUI fixtures and Qt test doubles
+"tests/test_psi_loader.py" = ["E402"]
+"tests/test_root_loader.py" = ["E402"]
+"tests/test_run_info_dialog.py" = ["E402"]

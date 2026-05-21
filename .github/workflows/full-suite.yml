@@ -1,0 +1,49 @@
+name: Full test suite
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: "Test tier to run"
+        required: false
+        default: "full"
+        type: choice
+        options:
+          - full
+          - standard
+          - fast
+
+permissions:
+  contents: read
+
+jobs:
+  full-suite:
+    name: Full test suite (${{ github.event.inputs.tier || 'full' }} tier)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libegl1
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints.txt -e ".[gui,hdf5,root,dev]"
+
+      - name: Run full test suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python tools/harness.py test --tier=${{ github.event.inputs.tier || 'full' }}

@@ -26,7 +26,6 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QSettings, Qt
-from asymmetry.gui.gle_settings import GleSetupDialog
 from PySide6.QtGui import QActionGroup, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -81,6 +80,7 @@ from asymmetry.core.utils.constants import (
     PeriodMode,
 )
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
+from asymmetry.gui.gle_settings import GleSetupDialog
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
 from asymmetry.gui.panels.fit_panel import FitPanel
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
@@ -2124,9 +2124,7 @@ class MainWindow(QMainWindow):
         if isinstance(grouping.get("period_good_frames"), list):
             payload["period_good_frames"] = list(grouping.get("period_good_frames", []))
         if isinstance(grouping.get("period_dead_time_us"), list):
-            payload["period_dead_time_us"] = copy.deepcopy(
-                grouping.get("period_dead_time_us", [])
-            )
+            payload["period_dead_time_us"] = copy.deepcopy(grouping.get("period_dead_time_us", []))
 
         deadtime_mode = str(grouping.get("deadtime_mode", grouping.get("deadtime_method", "off")))
         if deadtime_mode == "load":
@@ -2678,9 +2676,13 @@ class MainWindow(QMainWindow):
                 return False, bool(red_dt or green_dt)
             time_axis = np.asarray(red_time[:n_period], dtype=np.float64).copy()
             if period_mode == str(PeriodMode.GREEN_MINUS_RED):
-                asymmetry = np.asarray(green_asym[:n_period] - red_asym[:n_period], dtype=np.float64)
+                asymmetry = np.asarray(
+                    green_asym[:n_period] - red_asym[:n_period], dtype=np.float64
+                )
             else:
-                asymmetry = np.asarray(green_asym[:n_period] + red_asym[:n_period], dtype=np.float64)
+                asymmetry = np.asarray(
+                    green_asym[:n_period] + red_asym[:n_period], dtype=np.float64
+                )
             error = np.sqrt(np.square(green_err[:n_period]) + np.square(red_err[:n_period]))
             dt_applied = bool(red_dt or green_dt)
             if use_background:
@@ -2725,7 +2727,9 @@ class MainWindow(QMainWindow):
                     run.grouping["dead_time_us"] = list(selected_grouping.get("dead_time_us", []))
 
         if use_background:
-            if isinstance(background_state, dict) and isinstance(background_state.get("method"), str):
+            if isinstance(background_state, dict) and isinstance(
+                background_state.get("method"), str
+            ):
                 run.grouping["background_method"] = str(background_state.get("method"))
             else:
                 run.grouping.pop("background_method", None)

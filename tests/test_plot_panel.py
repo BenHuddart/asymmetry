@@ -10,6 +10,8 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
+pytestmark = [pytest.mark.gui]
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 # Import PySide6 conditionally
