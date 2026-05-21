@@ -198,7 +198,7 @@ class TestPlotPanel:
 
         top_layout = panel.layout()
         assert top_layout is not None
-        nav_row = top_layout.itemAt(2).layout()
+        nav_row = top_layout.itemAt(1).layout()
         assert nav_row is not None
 
         label_combo_pos = nav_row.indexOf(panel._label_field_combo)
@@ -215,12 +215,12 @@ class TestPlotPanel:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        row2 = panel._limit_toolbar.itemAt(panel._limit_toolbar.count() - 1).layout()
-        assert row2 is not None
+        footer_row = panel._plot_footer.layout()
+        assert footer_row is not None
 
-        annotation_pos = row2.indexOf(panel._add_label_btn)
-        export_pos = row2.indexOf(panel._export_gle_btn)
-        format_pos = row2.indexOf(panel._gle_format_combo)
+        annotation_pos = footer_row.indexOf(panel._add_label_btn)
+        export_pos = footer_row.indexOf(panel._export_gle_btn)
+        format_pos = footer_row.indexOf(panel._gle_format_combo)
 
         assert annotation_pos >= 0
         assert export_pos > annotation_pos
@@ -239,7 +239,7 @@ class TestPlotPanel:
 
         top_layout = panel.layout()
         assert top_layout is not None
-        nav_row = top_layout.itemAt(2).layout()
+        nav_row = top_layout.itemAt(1).layout()
         assert nav_row is not None
         assert nav_row.indexOf(panel._pan_btn) >= 0
         assert nav_row.indexOf(panel._zoom_btn) > nav_row.indexOf(panel._pan_btn)
@@ -271,7 +271,7 @@ class TestPlotPanel:
             pytest.skip("matplotlib not available")
 
         assert "QPushButton:checked" in panel._pan_btn.styleSheet()
-        assert "#1f6feb" in panel._pan_btn.styleSheet()
+        assert "#1f4d8a" in panel._pan_btn.styleSheet()
         assert panel._pan_btn.styleSheet() == panel._zoom_btn.styleSheet()
 
     def test_limit_fields_follow_axis_limit_changes(
@@ -348,7 +348,7 @@ class TestPlotPanel:
             pytest.skip("matplotlib not available")
 
         assert "QPushButton:checked" in panel._auto_x_btn.styleSheet()
-        assert "#1f6feb" in panel._auto_x_btn.styleSheet()
+        assert "#1f4d8a" in panel._auto_x_btn.styleSheet()
         assert panel._auto_x_btn.styleSheet() == panel._auto_y_btn.styleSheet()
 
     def test_active_auto_limit_toggles_reapply_on_new_dataset(

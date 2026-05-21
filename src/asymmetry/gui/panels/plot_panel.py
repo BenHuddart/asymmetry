@@ -281,6 +281,12 @@ class PlotPanel(QWidget):
             self._subplot_axes_by_polarization: dict[str, object] = {}
             self._vector_subplot_datasets: dict[str, list[MuonDataset]] = {}
             self._grouped_time_subplot_datasets: list[MuonDataset] = []
+            # Tracks the intended stacked-subplot count independently of the
+            # _subplot_axes_by_polarization dict, which is briefly empty while
+            # plot_vector_subplots/plot_grouped_time_domain_subplots rebuild axes.
+            # resizeEvent reads this so it doesn't reset the scroll area during
+            # that window.
+            self._stacked_axis_count: int = 1
 
             # Legend label field preferences can be scoped per Data Group.
             self._active_label_group_id: str | None = None
@@ -553,6 +559,10 @@ class PlotPanel(QWidget):
         if not hasattr(self, "_canvas"):
             return
         count = max(1, int(axis_count))
+        # Set _stacked_axis_count before clearing _subplot_axes_by_polarization
+        # so that any resize events that fire while the dict is temporarily empty
+        # still see the correct intended count.
+        self._stacked_axis_count = count
         height = max(self._default_canvas_min_height, self._subplot_canvas_height_per_axis * count)
         self._canvas.setMinimumHeight(height)
         self._sync_canvas_scroll_geometry(axis_count=count, target_height=height)
@@ -3799,7 +3809,12 @@ class PlotPanel(QWidget):
         super().resizeEvent(event)
         if not getattr(self, "_has_mpl", False):
             return
-        axis_count = max(1, len(getattr(self, "_subplot_axes_by_polarization", {})))
+        # Use _stacked_axis_count rather than len(_subplot_axes_by_polarization):
+        # the dict is briefly empty while plot_vector_subplots/plot_grouped_time_domain_subplots
+        # rebuild axes, and a resize event in that window would otherwise reset the
+        # scroll area to single-axis mode, which is the root cause of the scrollbar
+        # disappearing on first render in the frozen macOS app.
+        axis_count = max(1, getattr(self, "_stacked_axis_count", 1))
         target_height = max(self._default_canvas_min_height, int(self._canvas.minimumHeight()))
         self._sync_canvas_scroll_geometry(axis_count=axis_count, target_height=target_height)
         self._canvas.draw_idle()

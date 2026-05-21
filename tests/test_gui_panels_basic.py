@@ -58,7 +58,7 @@ def test_fourier_panel_defaults(qapp: QApplication) -> None:
     assert panel._auto_phase_btn.text() == "Fill Phase Estimates"
     assert panel._estimate_average_error_check.text() == "Average errors"
     assert panel._estimate_average_error_check.toolTip() == "Estimate errors for averaged spectra."
-    assert "#0f62fe" in panel._phase_opt_real_radio.styleSheet()
+    assert "#1f4d8a" in panel._phase_opt_real_radio.styleSheet()
     assert (
         panel._phase_opt_real_radio.minimumHeight()
         >= panel._phase_opt_real_radio.sizeHint().height()
@@ -128,11 +128,11 @@ def test_fourier_panel_phase_mode_controls_follow_selected_mode(qapp: QApplicati
     assert panel._t0_offset_spin.isEnabled() is True
     assert panel._auto_method_combo.isEnabled() is True
     assert panel._auto_phase_btn.isEnabled() is True
-    assert "#0f62fe" in panel._phase_spin.styleSheet()
+    assert "#1f4d8a" in panel._phase_spin.styleSheet()
 
     panel._use_phase_table_check.setChecked(True)
-    assert "#6b7280" in panel._phase_spin.styleSheet()
-    assert panel._phase_table.item(0, 2).foreground().color().name() == "#0f62fe"
+    assert "#67676b" in panel._phase_spin.styleSheet()
+    assert panel._phase_table.item(0, 2).foreground().color().name() == "#1f4d8a"
 
 
 def test_fourier_panel_auto_filled_group_phases_turn_green(qapp: QApplication) -> None:
@@ -143,8 +143,8 @@ def test_fourier_panel_auto_filled_group_phases_turn_green(qapp: QApplication) -
 
     panel.set_group_phases({1: 5.0, 2: -3.0}, auto_filled=True)
 
-    assert panel._phase_table.item(0, 2).foreground().color().name() == "#15803d"
-    assert panel._phase_table.item(1, 2).foreground().color().name() == "#15803d"
+    assert panel._phase_table.item(0, 2).foreground().color().name() == "#2a7a3f"
+    assert panel._phase_table.item(1, 2).foreground().color().name() == "#2a7a3f"
 
 
 def test_plot_panel_frequency_dataset_skips_rebin_and_uses_metadata_labels(
