@@ -1188,13 +1188,13 @@ def test_group_button_styles_distinguish_single_active_from_multi_highlight(
 
     panel._set_selected_group_ids(["g_a"], emit=False)
     panel._apply_group_selection_to_view(sync_active=False)
-    assert "2px solid #1f6feb" in panel._group_button_map["g_a"].styleSheet()
+    assert "2px solid #1f4d8a" in panel._group_button_map["g_a"].styleSheet()
 
     panel._set_selected_group_ids(["g_a", "g_b"], emit=False)
     panel._apply_group_selection_to_view(sync_active=False)
-    assert "2px solid #1f6feb" in panel._group_button_map["g_a"].styleSheet()
-    assert "1px solid #d29922" not in panel._group_button_map["g_a"].styleSheet()
-    assert "1px solid #d29922" in panel._group_button_map["g_b"].styleSheet()
+    assert "2px solid #1f4d8a" in panel._group_button_map["g_a"].styleSheet()
+    assert "2px solid #1f4d8a" not in panel._group_button_map["g_b"].styleSheet()
+    assert "1px solid #1f4d8a" in panel._group_button_map["g_b"].styleSheet()
 
 
 def test_group_button_styles_refresh_after_scale_change(panel: FitParametersPanel) -> None:
@@ -1217,7 +1217,7 @@ def test_group_button_styles_refresh_after_scale_change(panel: FitParametersPane
     panel._on_ui_scale_changed(1.0, 1.1)
 
     style = panel._group_button_map["g_a"].styleSheet()
-    assert "2px solid #1f6feb" in style
+    assert "2px solid #1f4d8a" in style
     assert "border-radius: 13px;" in style
 
 
