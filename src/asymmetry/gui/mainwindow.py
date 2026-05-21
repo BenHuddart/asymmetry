@@ -26,6 +26,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QSettings, Qt
+from asymmetry.gui.gle_settings import GleSetupDialog
 from PySide6.QtGui import QActionGroup, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -371,6 +372,10 @@ class MainWindow(QMainWindow):
         self._plot_decimation_action.setCheckable(True)
         self._plot_decimation_action.setChecked(self._plot_decimation_is_enabled())
         self._plot_decimation_action.toggled.connect(self._on_plot_decimation_toggled)
+
+        # Setup
+        setup_menu = mb.addMenu("&Setup")
+        setup_menu.addAction("GLE Setup…", self._on_gle_setup)
 
         # Help
         help_menu = mb.addMenu("&Help")
@@ -3612,6 +3617,11 @@ class MainWindow(QMainWindow):
         self._global_parameter_fit_action.setEnabled(bool(has_result))
         if hasattr(self, "_global_parameter_fit_toolbar_action"):
             self._global_parameter_fit_toolbar_action.setEnabled(bool(has_result))
+
+    def _on_gle_setup(self) -> None:
+        """Open the GLE executable configuration dialog."""
+        dialog = GleSetupDialog(self)
+        dialog.exec()
 
     def _on_about(self) -> None:
         """Show the About dialog with version information."""
