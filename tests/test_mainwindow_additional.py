@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QWidget  # ty
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.gui.styles import tokens
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ParameterCompositeModel,
@@ -192,7 +193,7 @@ class TestMainWindowFourier:
         assert set(phases) == {1, 2}
         assert (
             mainwindow._fourier_panel._phase_table.item(0, 2).foreground().color().name()
-            == "#15803d"
+            == tokens.OK
         )
 
     def test_compute_fourier_plots_frequency_domain_dataset(self, mainwindow: MainWindow) -> None:
@@ -498,7 +499,7 @@ class TestMainWindowFourier:
         assert mainwindow._fourier_panel.group_phase_table() == pytest.approx({1: 11.0, 2: -7.0})
         assert (
             mainwindow._fourier_panel._phase_table.item(0, 2).foreground().color().name()
-            == "#15803d"
+            == tokens.OK
         )
 
         mainwindow._on_dataset_selected(8821)
@@ -629,7 +630,7 @@ class TestMainWindowFourier:
         )
         assert (
             restored_window._fourier_panel._phase_table.item(0, 2).foreground().color().name()
-            == "#15803d"
+            == tokens.OK
         )
 
 

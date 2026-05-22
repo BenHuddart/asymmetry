@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -153,7 +156,7 @@ jobs:
 
   build-windows:
     name: Build Windows installer (x64)
-    runs-on: windows-latest
+    runs-on: windows-2025
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -199,43 +202,34 @@ jobs:
           }
           & "dist\Asymmetry\Asymmetry.exe" --smoke-test --smoke-test-root
 
-      - name: Install NSIS
+      - name: Install WiX
         shell: pwsh
-        run: choco install nsis -y --no-progress
+        run: dotnet tool install --global wix
 
-      - name: Build NSIS installer
+      - name: Add WiX UI extension
+        shell: pwsh
+        run: wix extension add --global WixToolset.UI.wixext
+
+      - name: Build MSI installer
         shell: pwsh
         run: |
           $version = "${{ steps.meta.outputs.version }}"
           $distDir = "$env:GITHUB_WORKSPACE\dist\Asymmetry"
           $iconFile = "$env:GITHUB_WORKSPACE\build\icons\Asymmetry.ico"
-          $outputFile = "$env:GITHUB_WORKSPACE\dist\Asymmetry-$version-windows-x64-setup.exe"
-
-          $makensis = (Get-Command makensis -ErrorAction SilentlyContinue).Source
-          if (-not $makensis) {
-            $candidates = @(
-              "$env:ProgramFiles\NSIS\makensis.exe",
-              "${env:ProgramFiles(x86)}\NSIS\makensis.exe",
-              "C:\ProgramData\chocolatey\bin\makensis.exe"
-            )
-            foreach ($candidate in $candidates) {
-              if (Test-Path $candidate) {
-                $makensis = $candidate
-                break
-              }
-            }
-          }
-          if (-not $makensis) {
-            throw "Unable to locate makensis.exe after NSIS installation"
-          }
-
-          & $makensis /V2 /DVERSION=$version /DDIST_DIR=$distDir /DICON_FILE=$iconFile /DOUTPUT_FILE=$outputFile packaging\installer.nsi
+          $output = "dist\Asymmetry-$version-windows-x64-setup.msi"
+          wix build packaging\windows\installer.wxs `
+            -d Version=$version `
+            -d DistDir=$distDir `
+            -d IconFile=$iconFile `
+            -o $output `
+            -arch x64 `
+            -ext WixToolset.UI.wixext
 
       - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: asymmetry-windows-x64
-          path: dist/Asymmetry-${{ steps.meta.outputs.version }}-windows-x64-setup.exe
+          path: dist/Asymmetry-${{ steps.meta.outputs.version }}-windows-x64-setup.msi
           if-no-files-found: error
 
   release:
@@ -262,7 +256,7 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             release-assets/**/*.dmg
-            release-assets/**/*.exe
+            release-assets/**/*.msi
 
       - name: Delete workflow artifacts
         uses: actions/github-script@v7

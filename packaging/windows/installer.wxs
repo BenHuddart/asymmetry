@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Build variables (passed via -d on the wix build command line):
+    Version   — numeric M.N.P version (e.g. 0.3.5)
+    DistDir   — absolute path to the PyInstaller onedir output (dist\Asymmetry)
+    IconFile  — absolute path to the .ico file (build\icons\Asymmetry.ico)
+
+  UpgradeCode must never change between releases.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package Name="Asymmetry"
+           Manufacturer="Asymmetry Contributors"
+           Version="$(var.Version)"
+           UpgradeCode="{8C2E5A17-F3D9-4B06-E821-93C7A5D60F14}"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Asymmetry is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="Asymmetry.ico" SourceFile="$(var.IconFile)" />
+    <Property Id="ARPPRODUCTICON" Value="Asymmetry.ico" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <ui:WixUI Id="WixUI_InstallDir" />
+
+    <Feature Id="Main">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="Shortcuts" />
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Asymmetry" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder" />
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppStartMenuDir" Name="Asymmetry" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Source="$(var.DistDir)\**" />
+    </ComponentGroup>
+
+    <Component Id="Shortcuts" Directory="INSTALLFOLDER" Guid="{2B3C4D5E-6F70-8190-B2C3-D4E5F6071829}">
+      <Shortcut Id="DesktopShortcut"
+                Directory="DesktopFolder"
+                Name="Asymmetry"
+                Target="[INSTALLFOLDER]Asymmetry.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <Shortcut Id="StartMenuShortcut"
+                Directory="AppStartMenuDir"
+                Name="Asymmetry"
+                Target="[INSTALLFOLDER]Asymmetry.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveAppStartMenuDir" Directory="AppStartMenuDir" On="uninstall" />
+      <RegistryValue Root="HKLM"
+                     Key="Software\Asymmetry"
+                     Name="installed"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes" />
+    </Component>
+
+  </Package>
+</Wix>
