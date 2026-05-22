@@ -204,11 +204,11 @@ jobs:
 
       - name: Install WiX
         shell: pwsh
-        run: dotnet tool install --global wix
+        run: dotnet tool install --global wix --version 4.0.6
 
       - name: Add WiX UI extension
         shell: pwsh
-        run: wix extension add --global WixToolset.UI.wixext
+        run: wix extension add --global WixToolset.UI.wixext/4.0.6
 
       - name: Build MSI installer
         shell: pwsh
