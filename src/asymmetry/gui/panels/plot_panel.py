@@ -2458,18 +2458,15 @@ class PlotPanel(QWidget):
         variant_index: int = 0,
         fit_label: str | None = None,
     ) -> str:
-        """Return a fit-line color with improved visibility in period mode."""
-        if isinstance(fit_label, str) and (
-            "preview" in fit_label.lower() or "fit" in fit_label.lower()
-        ):
-            return "#d73a49"
-        if self._period_mode_color_for_dataset(dataset) is None:
-            return default_color
+        """Return the fit-line colour for a dataset.
 
-        # Neutral dark tones remain visible against strong period-mode colors,
-        # especially when red points are active.
-        fit_palette = ["#111111", "#3f3f3f", "#636363", "#2a2a2a"]
-        return fit_palette[int(variant_index) % len(fit_palette)]
+        Preview curves get a fixed accent colour; all other fits use the same
+        colour as the data markers so that in overlay mode each fit visually
+        belongs to its dataset.
+        """
+        if isinstance(fit_label, str) and "preview" in fit_label.lower():
+            return "#d73a49"
+        return default_color
 
     def set_fit_range(self, x_min: float, x_max: float) -> None:
         """Set fit range limits and refresh visual handles."""
@@ -3392,22 +3389,9 @@ class PlotPanel(QWidget):
         self._fit_x_min = lo
         self._fit_x_max = hi
 
-        limits_changed = False
-        current_x_min = float(self._x_min.value())
-        current_x_max = float(self._x_max.value())
-        if lo < current_x_min:
-            self._set_limit_field_value(self._x_min, lo)
-            limits_changed = True
-        if hi > current_x_max:
-            self._set_limit_field_value(self._x_max, hi)
-            limits_changed = True
-
         if redraw:
-            if limits_changed:
-                self._apply_limits()
-            else:
-                self._draw_fit_range_artists()
-                self._canvas.draw_idle()
+            self._draw_fit_range_artists()
+            self._canvas.draw_idle()
 
         if emit_signal:
             self.fit_range_changed.emit(self._fit_x_min, self._fit_x_max)

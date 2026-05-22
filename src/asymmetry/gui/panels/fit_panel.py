@@ -1436,6 +1436,12 @@ class SingleFitTab(QWidget):
             except ValueError:
                 value = 0.0
 
+            unc = (
+                value_item.data(_ValueUncertaintyDelegate._UNC_ROLE)
+                if value_item is not None
+                else None
+            )
+
             fix_widget = self._param_table.cellWidget(i, 2)
             fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
             fixed = fix_checkbox.isChecked() if fix_checkbox else False
@@ -1449,6 +1455,7 @@ class SingleFitTab(QWidget):
                     "fixed": fixed,
                     "min": min_item.text() if min_item else "-inf",
                     "max": max_item.text() if max_item else "inf",
+                    "uncertainty": unc,
                 }
             )
 
@@ -1519,6 +1526,8 @@ class SingleFitTab(QWidget):
                 value_item.setText(
                     str(normalized_state_values.get(param_name, p_data.get("value", 0.0)))
                 )
+                unc = p_data.get("uncertainty")
+                value_item.setData(_ValueUncertaintyDelegate._UNC_ROLE, unc)
 
             fix_widget = self._param_table.cellWidget(i, 2)
             fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None

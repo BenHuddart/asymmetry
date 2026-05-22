@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import os
+import sys
 
 import numpy as np
 import pytest
@@ -1302,7 +1303,8 @@ def test_footer_hint_exists(qapp: QApplication) -> None:
     """DataBrowserPanel has a footer hint label with the selection key hints."""
     panel = DataBrowserPanel()
     assert hasattr(panel, "_footer_hint")
-    assert "⌘" in panel._footer_hint.text()
+    expected_key = "⌘" if sys.platform == "darwin" else "Ctrl"
+    assert expected_key in panel._footer_hint.text()
     assert "shift" in panel._footer_hint.text()
 
 

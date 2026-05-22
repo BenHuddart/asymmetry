@@ -19,6 +19,9 @@ on:
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   full-suite:
     name: Full test suite (${{ github.event.inputs.tier || 'full' }} tier)
