@@ -1,7 +1,12 @@
 GUI Usage
 =========
 
-The Asymmetry GUI provides an interactive interface for data analysis.
+This chapter is the comprehensive reference for the Asymmetry GUI — menus,
+panels, dialogs, keyboard shortcuts. New users coming from a real
+experiment should normally read :doc:`workflows/index` first and dip into
+this chapter as a lookup when the case studies reference a specific
+dialog; the section headings below are organised for that kind of
+targeted navigation rather than for cover-to-cover reading.
 
 Launching the GUI
 -----------------
@@ -21,6 +26,16 @@ Or from Python:
 
 Main Window Layout
 ------------------
+
+.. image:: /_generated/screenshots/main_window.png
+   :alt: Asymmetry main window with an EuO temperature scan loaded
+   :width: 100%
+
+*Synthetic EuO ferromagnet temperature scan crossing the Curie point at*
+*Tc=69 K — six zero-field runs from 30 K up to 90 K (cf. Blundell et al.*
+*Muon Spectroscopy, OUP 2022, Fig 6.6). The selected run at 65 K is just*
+*inside the ordered phase where the spontaneous-field precession is at its*
+*slowest and the critical damping is largest.*
 
 The main window has four main areas:
 
@@ -69,6 +84,14 @@ The sorting is robust and works correctly even after filtering.
 
 **Excel-Style Column Filtering**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. image:: /_generated/screenshots/data_browser_filter.png
+   :alt: Data browser populated with an EuO scan plus the T(K) column filter dialog
+   :width: 100%
+
+*Right-click filter dialog applied to the T(K) column of the EuO ZF*
+*temperature scan, with the three runs at or below Tc=69 K selected to*
+*isolate the ordered ferromagnetic phase.*
 
 Right-click any column header to open an Excel-style filter dialog:
 
@@ -555,6 +578,15 @@ Compilation behavior:
 Fitting Panel
 -------------
 
+.. image:: /_generated/screenshots/fit_wizard_gkt.png
+   :alt: Single-dataset fit with a converged Gaussian Kubo–Toyabe model on Ag
+   :width: 100%
+
+*Converged static Gaussian Kubo–Toyabe fit on a synthetic ZF Ag polycrystal*
+*dataset (Δ ≈ 0.39 μs⁻¹). Ag is the canonical nuclear-dipolar reference*
+*sample at every μSR facility; the GKT function (Kubo & Toyabe, 1966) is*
+*derived in Blundell et al. Ch 5.2.*
+
 The fitting panel provides an interactive interface for fitting models to your data.
 It is located in the right dock area next to the plot panel.
 
@@ -704,6 +736,15 @@ limitations of this first implementation slice.
 
 Global Parameter Fit Window
 ---------------------------
+
+.. image:: /_generated/screenshots/global_fit_lfkt.png
+   :alt: Global fit setup for an Ag LF Kubo–Toyabe field-decoupling series
+   :width: 100%
+
+*Global-fit setup on a synthetic Ag LF-KT decoupling series, B_L = 0, 15,*
+*50, and 100 G with shared Δ ≈ 0.39 μs⁻¹. The longitudinal field decouples*
+*the nuclear dipolar broadening as γ_μB_L/Δ grows past unity (Hayano et al.*
+*PRB 20, 850, 1979 — textbook Fig 5.6).*
 
 The global-fit result window is split into two synchronized views:
 

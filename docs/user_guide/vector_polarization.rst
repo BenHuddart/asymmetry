@@ -1,22 +1,40 @@
 Vector Polarization Mode
 ========================
 
-Overview
---------
+.. image:: /_generated/screenshots/vector_polarization_emu.png
+   :alt: Three EMU vector-polarization projections P_x, P_y, P_z overlaid
+   :width: 100%
 
-Vector polarization mode provides three detector-pair projections of the muon
-polarization:
+*Synthetic EMU-style three-axis polarisation projections overlaid in the*
+*central plot. The* P_z *trace carries the dominant slow exponential decay,*
+*P_x *carries a weak transverse oscillation, and* P_y *is centred near*
+*zero with statistical noise — the standard signature of a sample whose*
+*local field is aligned along the* z *axis of the spectrometer (textbook*
+*Ch 6.3).*
 
-* ``P_x`` from left/right detector groups
-* ``P_y`` from top/bottom detector groups
-* ``P_z`` from forward/backward detector groups
+Vector polarization mode treats the muon-spin polarisation as a
+three-component vector, exposing the :math:`P_x`, :math:`P_y`, and
+:math:`P_z` projections separately rather than collapsing the detector
+counts onto a single forward/backward asymmetry. This is the right
+analysis path for anisotropic single crystals — where the precession
+axis is set by the crystallography rather than by the spectrometer
+geometry — and for any measurement where the local field at the muon
+site is canted away from :math:`\hat{z}`, since the off-axis precession
+is then carried by the :math:`P_x` and :math:`P_y` components and is
+lost in a one-dimensional asymmetry. Powder samples have an orientational
+average that already collapses onto a single non-trivial component along
+:math:`\hat{z}`, so the ordinary F-B asymmetry workflow is sufficient
+there. EMU's octant geometry is the canonical example; vector mode is
+activated automatically when grouping names contain the canonical vector
+pairs:
 
-In Asymmetry, vector mode is activated when grouping names contain canonical
-vector pairs:
+* ``Pz Forward`` / ``Pz Backward`` from forward/backward detector groups
+* ``Py Top`` / ``Py Bottom`` (or ``Py Up`` / ``Py Down``) from top/bottom
+  detector groups
+* ``Px Left`` / ``Px Right`` from left/right detector groups
 
-* ``Pz Forward`` and ``Pz Backward``
-* ``Py Top`` and ``Py Bottom`` (or ``Py Up`` and ``Py Down``)
-* ``Px Left`` and ``Px Right``
+so the same vector workflow can be applied to any instrument whose
+detector layout supports the same six-group naming convention.
 
 Setup
 -----

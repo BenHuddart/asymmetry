@@ -64,6 +64,247 @@
       "tests_path": null,
       "src_path": null,
       "updated": "2026-05-18"
+    },
+    {
+      "slug": "minos-error-analysis",
+      "feature_name": "MINOS asymmetric error analysis",
+      "status": "candidate",
+      "tier": "now",
+      "score": 20,
+      "path": "docs/porting/candidates/minos-error-analysis",
+      "references": ["musrfit", "Mantid"],
+      "docs": {
+        "readme": "docs/porting/candidates/minos-error-analysis/README.md",
+        "comparison": "docs/porting/candidates/minos-error-analysis/comparison.md",
+        "scoring": "docs/porting/candidates/minos-error-analysis/scoring.md"
+      },
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "dynamic-kubo-toyabe",
+      "feature_name": "Dynamic Kubo-Toyabe",
+      "status": "candidate",
+      "tier": "now",
+      "score": 20,
+      "path": "docs/porting/candidates/dynamic-kubo-toyabe",
+      "references": ["Mantid", "musrfit", "WiMDA"],
+      "docs": {
+        "readme": "docs/porting/candidates/dynamic-kubo-toyabe/README.md",
+        "comparison": "docs/porting/candidates/dynamic-kubo-toyabe/comparison.md",
+        "scoring": "docs/porting/candidates/dynamic-kubo-toyabe/scoring.md"
+      },
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "theory-library-expansion",
+      "feature_name": "Theory library expansion (Keren, Abragam, Bessel, SpinGlass, Meier, MuoniumDecouplingCurve, vortex lattice)",
+      "status": "candidate",
+      "tier": "now",
+      "score": 16,
+      "path": "docs/porting/candidates/theory-library-expansion",
+      "references": ["musrfit", "Mantid"],
+      "docs": {
+        "readme": "docs/porting/candidates/theory-library-expansion/README.md",
+        "comparison": "docs/porting/candidates/theory-library-expansion/comparison.md",
+        "scoring": "docs/porting/candidates/theory-library-expansion/scoring.md"
+      },
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "simulate-mode",
+      "feature_name": "Simulate mode (synthetic dataset generation)",
+      "status": "candidate",
+      "tier": "now",
+      "score": 16,
+      "path": "docs/porting/candidates/simulate-mode",
+      "references": ["WiMDA"],
+      "docs": {
+        "readme": "docs/porting/candidates/simulate-mode/README.md",
+        "comparison": "docs/porting/candidates/simulate-mode/comparison.md",
+        "scoring": "docs/porting/candidates/simulate-mode/scoring.md"
+      },
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "maxent-spectrum",
+      "feature_name": "MaxEnt frequency reconstruction",
+      "status": "candidate",
+      "tier": "next",
+      "score": 12,
+      "path": "docs/porting/candidates/maxent-spectrum",
+      "references": ["WiMDA", "Mantid"],
+      "docs": {
+        "readme": "docs/porting/candidates/maxent-spectrum/README.md",
+        "comparison": "docs/porting/candidates/maxent-spectrum/comparison.md",
+        "scoring": "docs/porting/candidates/maxent-spectrum/scoring.md"
+      },
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "rrf-transform",
+      "feature_name": "Rotating Reference Frame transform",
+      "status": "candidate",
+      "tier": "next",
+      "score": 12,
+      "path": "docs/porting/candidates/rrf-transform",
+      "references": ["Mantid", "musrfit"],
+      "docs": {
+        "readme": "docs/porting/candidates/rrf-transform/README.md",
+        "comparison": "docs/porting/candidates/rrf-transform/comparison.md",
+        "scoring": "docs/porting/candidates/rrf-transform/scoring.md"
+      },
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "python-user-functions",
+      "feature_name": "Python user-function plugins (decorator-based)",
+      "status": "candidate",
+      "tier": "next",
+      "score": 12,
+      "path": "docs/porting/candidates/python-user-functions",
+      "references": ["musrfit", "WiMDA", "Mantid"],
+      "docs": {
+        "readme": "docs/porting/candidates/python-user-functions/README.md",
+        "comparison": "docs/porting/candidates/python-user-functions/comparison.md",
+        "scoring": "docs/porting/candidates/python-user-functions/scoring.md"
+      },
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "moments-analysis",
+      "feature_name": "Spectral moments analysis",
+      "status": "candidate",
+      "tier": "later",
+      "score": 10,
+      "path": "docs/porting/candidates/moments-analysis",
+      "references": ["WiMDA"],
+      "docs": {
+        "readme": "docs/porting/candidates/moments-analysis/README.md",
+        "comparison": "docs/porting/candidates/moments-analysis/comparison.md",
+        "scoring": "docs/porting/candidates/moments-analysis/scoring.md"
+      },
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "phase-auto-calibration",
+      "feature_name": "Automatic per-detector phase calibration",
+      "status": "candidate",
+      "tier": "next",
+      "score": 9,
+      "path": "docs/porting/candidates/phase-auto-calibration",
+      "references": ["Mantid"],
+      "docs": {
+        "readme": "docs/porting/candidates/phase-auto-calibration/README.md",
+        "comparison": "docs/porting/candidates/phase-auto-calibration/comparison.md",
+        "scoring": "docs/porting/candidates/phase-auto-calibration/scoring.md"
+      },
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "period-arithmetic",
+      "feature_name": "Pulsed-source multi-period arithmetic",
+      "status": "candidate",
+      "tier": "next",
+      "score": 9,
+      "path": "docs/porting/candidates/period-arithmetic",
+      "references": ["Mantid", "WiMDA"],
+      "docs": {
+        "readme": "docs/porting/candidates/period-arithmetic/README.md",
+        "comparison": "docs/porting/candidates/period-arithmetic/comparison.md",
+        "scoring": "docs/porting/candidates/period-arithmetic/scoring.md"
+      },
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "msr-import",
+      "feature_name": "musrfit .msr file import",
+      "status": "candidate",
+      "tier": "next",
+      "score": 9,
+      "path": "docs/porting/candidates/msr-import",
+      "references": ["musrfit"],
+      "docs": {
+        "readme": "docs/porting/candidates/msr-import/README.md",
+        "comparison": "docs/porting/candidates/msr-import/comparison.md",
+        "scoring": "docs/porting/candidates/msr-import/scoring.md"
+      },
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "alc-avoided-level-crossing",
+      "feature_name": "Avoided Level Crossing analysis interface",
+      "status": "candidate",
+      "tier": "later",
+      "score": 6,
+      "path": "docs/porting/candidates/alc-avoided-level-crossing",
+      "references": ["Mantid"],
+      "docs": {
+        "readme": "docs/porting/candidates/alc-avoided-level-crossing/README.md",
+        "comparison": "docs/porting/candidates/alc-avoided-level-crossing/comparison.md",
+        "scoring": "docs/porting/candidates/alc-avoided-level-crossing/scoring.md"
+      },
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "muonium-radical-hyperfine",
+      "feature_name": "Muonium-radical hyperfine fit functions and workflow",
+      "status": "candidate",
+      "tier": "next",
+      "score": 9,
+      "path": "docs/porting/candidates/muonium-radical-hyperfine",
+      "references": ["Mantid"],
+      "docs": {
+        "readme": "docs/porting/candidates/muonium-radical-hyperfine/README.md",
+        "comparison": "docs/porting/candidates/muonium-radical-hyperfine/comparison.md",
+        "scoring": "docs/porting/candidates/muonium-radical-hyperfine/scoring.md"
+      },
+      "depends_on": ["theory-library-expansion"],
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "bpp-relaxation",
+      "feature_name": "BPP parametric model for muon-diffusion analysis",
+      "status": "candidate",
+      "tier": "later",
+      "score": 10,
+      "path": "docs/porting/candidates/bpp-relaxation",
+      "references": [],
+      "docs": {
+        "readme": "docs/porting/candidates/bpp-relaxation/README.md",
+        "comparison": "docs/porting/candidates/bpp-relaxation/comparison.md",
+        "scoring": "docs/porting/candidates/bpp-relaxation/scoring.md"
+      },
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "structural-transitions",
+      "feature_name": "Structural-transition kink-finder toolkit",
+      "status": "candidate",
+      "tier": "later",
+      "score": 6,
+      "path": "docs/porting/candidates/structural-transitions",
+      "references": [],
+      "docs": {
+        "readme": "docs/porting/candidates/structural-transitions/README.md",
+        "comparison": "docs/porting/candidates/structural-transitions/comparison.md",
+        "scoring": "docs/porting/candidates/structural-transitions/scoring.md"
+      },
+      "updated": "2026-05-23"
+    },
+    {
+      "slug": "lem-depth-profiling",
+      "feature_name": "LEM depth-profiling helpers (implant-energy → depth conversion)",
+      "status": "candidate",
+      "tier": "later",
+      "score": 6,
+      "path": "docs/porting/candidates/lem-depth-profiling",
+      "references": ["Mantid", "musrfit"],
+      "docs": {
+        "readme": "docs/porting/candidates/lem-depth-profiling/README.md",
+        "comparison": "docs/porting/candidates/lem-depth-profiling/comparison.md",
+        "scoring": "docs/porting/candidates/lem-depth-profiling/scoring.md"
+      },
+      "updated": "2026-05-23"
     }
   ]
 }

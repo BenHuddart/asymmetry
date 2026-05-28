@@ -1,41 +1,52 @@
 Fit Wizard
 ==========
 
+.. image:: /_generated/screenshots/fit_wizard_portfolio.png
+   :alt: Fit Wizard Candidate Portfolio page populated on the Ag ZF GKT dataset
+   :width: 100%
+
+*Candidate Portfolio page of the Fit Wizard run on the same synthetic Ag*
+*polycrystal ZF dataset used in* :doc:`fitting` *— the wizard ranks the*
+*curated candidate models by an information-theoretic metric (AICc by*
+*default) and correctly identifies* ``StaticGKT_ZF + Constant`` *as the*
+*best fit, in line with Ag being the textbook nuclear-dipolar reference*
+*sample (Blundell et al. Ch 5.2).*
+
 The fit wizard is a guided workflow for choosing a sensible single-spectrum
-time-domain fit function when you do not want to start from a blank function
-builder. It opens in a separate non-modal window from the single-fit tab and
-walks through fingerprinting the spectrum, comparing a curated set of candidate
-models, and applying the selected result back to the fit controls.
+time-domain fit function. It fingerprints the active spectrum, fits a
+curated portfolio of around a dozen candidate composite models, ranks them
+with an information criterion (AICc by default), and writes the chosen
+result back into the single-fit tab when you accept it. The most natural
+use is the first pass on an unfamiliar spectrum — temperature points in
+the middle of a transition, a sample whose magnetic structure is not yet
+known, a survey of multiple compounds in a synthesis batch — but the
+ranking is also a useful sanity check when you already suspect a model: if
+the wizard does not place your guess at the top, the residual plots on the
+compare page usually tell you why. For the very simplest cases (clean
+single-frequency TF precession, an obvious single-exponential decay)
+building the model by hand in the fit panel remains faster.
 
-The window opens immediately and does not start the expensive analysis until
-you press ``Start Analysis`` inside the wizard. The fingerprinting and model
-comparison step then runs in the background with a progress indicator so the
-main GUI stays responsive.
+The wizard opens in a non-modal window from the single-fit tab and does
+not start the expensive analysis until you press ``Start Analysis``.
+Fingerprinting and model comparison then run in the background with a
+progress indicator, so the main GUI stays responsive. The wizard uses the
+same dataset, bunching, and fit range that the single-fit tab is using at
+the time you open it, so candidates are compared on exactly the same
+points a manual fit would use. Completed wizard analyses are cached per
+dataset in the fit-panel state, reused when the wizard is reopened on the
+same run, persisted in project files, and consumed by the Global Fit
+Wizard as the screening table for ordered-series analysis.
 
-The wizard always uses the same analysis dataset that the single-fit tab is
-using at the time you open it. That means the current bunching state and fit
-range are preserved, so the wizard compares models on exactly the same points
-that a manual fit would use.
-
-Completed wizard analyses are cached per dataset in the normal fit-panel state.
-That cache is reused when you reopen the wizard for the same run and model
-context, persisted in project files, and can also be consumed by the Global Fit
-Wizard as the first-stage comparison table for ordered series analysis.
-
-Quick Start
------------
-
-1. Choose the dataset, fit range, and bunching you want in the single-fit tab.
-2. Open ``Fit Wizard...`` and click ``Start Analysis``.
-3. Review the fingerprint summary and the candidate portfolio.
-4. Use the compare page to inspect overlays, residual warnings, and alternative
-   rankings under ``AIC``, ``AICc``, or ``BIC``.
-5. Click ``Apply Recommended Fit`` for the default choice, or highlight a
-   different row and click ``Apply Selected Fit``.
-
-If you later change the fit range, bunching, or current baseline model, reopen
-the wizard or click ``Refresh Analysis`` so the recommendation is rebuilt from
-the current context.
+The typical session is: open the wizard with the single-fit tab already
+pointing at the right dataset and fit range; click ``Start Analysis``;
+review the fingerprint summary and the candidate portfolio; switch
+between ``AIC``, ``AICc``, and ``BIC`` on the compare page to see how the
+ranking depends on the complexity penalty; inspect overlays and residuals
+on the candidates that interest you; and click ``Apply Recommended Fit``,
+or highlight a different row and click ``Apply Selected Fit``. If you
+later change the fit range, bunching, or the baseline composite already
+selected in the tab, reopen the wizard or click ``Refresh Analysis`` so
+the recommendation is rebuilt from the current context.
 
 Workflow
 --------

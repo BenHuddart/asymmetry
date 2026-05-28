@@ -36,6 +36,7 @@ htmlcov/
 # Documentation
 docs/_build/
 docs/build/
+docs/_generated/
 
 # OS
 .DS_Store

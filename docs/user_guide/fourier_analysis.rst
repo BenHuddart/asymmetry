@@ -1,7 +1,42 @@
 Fourier Analysis
 ================
 
-Transform time-domain data to frequency domain to identify oscillation frequencies.
+.. image:: /_generated/screenshots/fourier_tf.png
+   :alt: Frequency-domain Fourier spectrum of a YBCO vortex-lattice TF μSR signal
+   :width: 100%
+
+*Central plot in the* **Frequency** *domain showing the grouped Fourier*
+*spectrum of a synthetic YBa₂Cu₃O₇₋δ vortex-state TF μSR run (TF = 200*
+*mT, T = 10 K), zoomed to the Larmor peak at γ_μ·B_app ≈ 27.1 MHz. The*
+*canonical asymmetric line shape — sharp low-field peak at the*
+*saddle-point van Hove singularity, long high-field tail toward the*
+*vortex cores — is the textbook signature of an isotropic triangular*
+*vortex lattice (Brandt PRB 37, 2349, 1988; Sonier RMP 72, 769, 2000;*
+*textbook Ch 8/9).*
+
+Fourier analysis answers questions that the time domain answers slowly or
+not at all: whether a signal contains three precession frequencies or two
+(multi-site magnets, F-μ-F entanglement, muonium hyperfine pairs), and
+what the internal-field distribution :math:`P(B)` looks like inside the
+vortex lattice of a type-II superconductor in the mixed state
+(:doc:`workflows/superconductor_penetration_depth`). The frequency-domain
+view is also the standard way to choose a sensible seed frequency before
+attempting an oscillatory time-domain fit (:doc:`oscillatory`).
+
+Apodisation is the key practical knob. A Lorentzian filter sharpens an
+exponentially damped line; a Gaussian filter is the natural choice for
+nuclear-dipolar broadening; ``None`` is appropriate only when the
+signal-to-noise is high enough that the line broadening from apodisation
+would dominate the intrinsic widths. The default is Gaussian. Phase
+correction follows the same logic: the entropy-optimised auto-phase mode
+is robust for single-frequency signals; for multi-frequency or vortex
+data, the manual per-group phase table or a future optimised phase fit
+gives better control. Maximum entropy reconstruction is currently a stub
+(see :doc:`/user_guide/comparison`); use FFT with apodisation for now.
+
+.. image:: /_generated/screenshots/apodisation_comparison.png
+   :alt: Apodisation comparison on a YBCO vortex-lattice TF FFT
+   :width: 100%
 
 Implementation Summary
 ----------------------

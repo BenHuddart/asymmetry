@@ -1,8 +1,27 @@
 Loading Data
 ============
 
-Asymmetry supports ISIS muon NeXus, PSI BIN/MDU, and MusrRoot/LEM ROOT files
-through a common API.
+Asymmetry reads the major muSR raw-data formats through a common
+:func:`~asymmetry.core.io.load` API and a uniform Grouping dialog: ISIS
+muon NeXus (legacy V1 and V2), PSI BIN/MDU, and MusrRoot/LEM ROOT. The
+practical consequence is that data from different facilities can be
+compared in one session without manual format-by-format pre-processing.
+Each loader is implemented against the same authoritative reference used
+by the facility's own software — musrfit's ``PRunDataHandler`` for PSI
+BIN/MDU and MusrRoot/LEM ROOT, with Mantid's ``LoadPSIMuonBin`` used as a
+PSI-BIN cross-check — so format-specific subtleties (bin-index
+conventions, per-detector :math:`t_0` offsets, multi-period ISIS files,
+PSI temperature sidecars) are handled consistently with what those
+packages do.
+
+If you are loading a new dataset for the first time, the subsections
+below document the metadata each loader extracts and the common failure
+modes. Multi-period ISIS data is currently limited to returning every
+period as a list; explicit period arithmetic in the analysis path is on
+the roadmap (:doc:`/user_guide/comparison`).
+
+For an end-to-end walk-through that starts with loading, see
+:doc:`workflows/temperature_scan_magnetism`.
 
 Supported Formats
 -----------------

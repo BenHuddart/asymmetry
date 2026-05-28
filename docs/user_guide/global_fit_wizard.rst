@@ -1,35 +1,51 @@
 Global Fit Wizard
 =================
 
-The global fit wizard is a guided workflow for choosing one common time-domain
-fit function across an ordered field or temperature series. It opens in a
-separate non-modal window from the global-fit tab and now runs as an explicit
-two-phase process:
+The global fit wizard is the analogue of :doc:`fit_wizard` for an ordered
+series of runs — a longitudinal-field decoupling series, a temperature
+scan, a fallback run-order sweep — where the experiment is set up so that
+one common composite model should describe every dataset, with parameters
+either shared globally or free per run. The textbook use is an LF
+decoupling series where :math:`\Delta` is shared across runs and
+:math:`B_L` is fixed per run (:doc:`workflows/lf_decoupling_dynamics`),
+but the same workflow applies whenever you expect a single model family
+(e.g. ``Oscillatory + Constant`` throughout an ordered magnetic phase) to
+fit every run. When the model qualitatively *changes* across the series
+— a paramagnetic component appearing through a transition, oscillations
+collapsing into a relaxation — fit each run individually rather than
+forcing a single global model.
 
-1. Build a ranked screening table from independent single-dataset fits across
-   the whole series.
-2. Select one or more promising candidates and run the expensive coupled global
-   optimization only for those candidates.
+The wizard runs as an explicit two-phase process. It first builds a
+ranked **screening table** from independent single-dataset fits across
+the whole series, which is fast and lets you see at a glance which
+candidate families look promising. You then select one or more rows and
+trigger the expensive **coupled global optimisation** only for those
+candidates. Keeping the two stages separate makes it obvious which rows
+are still only single-fit screening results and which have actually been
+optimised under shared-parameter constraints.
 
-This keeps the initial comparison fast and makes it clear which rows have
-actually been optimized for global fitting and which rows are still only
-single-fit screening results.
+The typical session: select the runs in the global-fit tab and verify
+the starting model, parameter values, and bounds; open
+``Global Fit Wizard...``; in the parameter-setup dialog, review the
+combined parameter list and adjust expected roles
+(``Global`` / ``Local`` / ``Fixed``) and bounds; click
+``Build Screening Table``; pick one or more promising rows and
+``Optimize Selected``; inspect the coupled-fit results in the
+``Global Optimized Fits`` tab; apply the recommended or selected result
+back into the global-fit tab. Completed wizard states are cached with the
+tab context and persisted in project files, so reopening the wizard does
+not force a rebuild of an unchanged screening table or a rerun of
+finished optimisations.
 
-Quick Start
------------
-
-1. Select the runs you want in the global-fit tab and verify the starting model,
-   parameter values, and bounds.
-2. Open ``Global Fit Wizard...``.
-3. In the parameter-setup dialog, review the combined parameter list, adjust
-   expected roles, and loosen or tighten bounds where needed.
-4. Click ``Build Screening Table`` to score the shared candidate portfolio
-   across all selected datasets.
-5. Review the screening table, select one or more rows, and click
-   ``Optimize Selected``.
-6. Inspect the coupled-fit results in the ``Global Optimized Fits`` tab, then
-   apply the recommended or selected optimized result back into the global-fit
-   tab.
+The coupled-fit step is where the global wizard pays for itself: the
+shared-parameter constraint usually tightens the uncertainties on the
+common parameters (typically the field-distribution widths and
+amplitudes) below what any single-run fit can achieve, and it cleans up
+the per-run trends in the local parameters by suppressing the noise that
+arises when each run independently re-optimises an otherwise common
+quantity. It is also a useful cross-check on a series you have already
+fit individually — the wizard's screening phase should recover the same
+model family you converged on by hand.
 
 Before Analysis Starts
 ----------------------
