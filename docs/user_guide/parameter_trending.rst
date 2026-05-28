@@ -1,8 +1,41 @@
 Parameter Trending
 ==================
 
-Use parameter models to fit extracted fit parameters as a function of field
-or temperature.
+.. image:: /_generated/screenshots/parameter_trending_mgb2.png
+   :alt: σ(T) plot of synthetic MgB₂ data with the two-gap SC fit overlaid
+   :width: 100%
+
+*Synthetic MgB₂ σ(T) data (Tc = 36 K) with the SC_TwoGap_SS parametric*
+*model fit overlaid (small and large gap ratios 1.1 and 2.3 with weight*
+*0.55, the canonical MgB₂ alpha-model decomposition; Niedermayer et al.*
+*Phys. Rev. B 65, 094512, 2002). The σ(T) → λ(T) inversion that follows*
+*from this fit is discussed in* :doc:`sc_penetration_depth`.
+
+Parameter trending is the second stage of any temperature or field scan
+analysis. Once a series of runs has been individually (or globally) fitted
+in the time domain, the extracted parameters themselves carry the
+physically interesting information: an order parameter as a function of
+temperature, a relaxation rate as a function of field, a precession
+frequency tracking magnetic ordering. The parameter-trending framework
+fits those *derived* curves with parametric models — power laws, Arrhenius
+expressions, Redfield denominators, superconducting gap models, transport
+forms — and reports the resulting physical quantities (critical
+temperature, activation energy, gap ratios, dimensionality of motion)
+with uncertainties.
+
+Typical use cases include locating :math:`T_c` and a critical exponent by
+fitting :math:`\nu(T)` from a ZF series with a ``CriticalDivergence`` form
+(:doc:`workflows/temperature_scan_magnetism`); inverting the TF
+second-moment :math:`\sigma(T)` into a London penetration depth using one
+of the ``SC_*`` gap models (:doc:`workflows/superconductor_penetration_depth`
+and :doc:`sc_penetration_depth`); fitting an Arrhenius form to
+:math:`\lambda(T)` across a temperature scan for motional narrowing;
+and field sweeps in either LF or TF geometry, where the trending panel
+handles parameter-vs-:math:`B` identically to parameter-vs-:math:`T`. The
+GUI panel is the right tool for interactive exploration and quick model
+selection; exporting to a Python script (the snippets below) is the right
+tool for reproducible, publication-grade analyses and for unusual
+parametric models that are not in the built-in registry.
 
 Available Basis Components
 --------------------------

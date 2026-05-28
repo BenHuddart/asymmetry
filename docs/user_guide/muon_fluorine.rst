@@ -1,21 +1,48 @@
 Muon-Fluorine Polarization Models
 =================================
 
-Asymmetry includes three polarization components for muon-fluorine entangled
-states:
+.. image:: /_generated/screenshots/muon_fluorine_pbf2.png
+   :alt: Main window with a PbF₂ F-μ-F dataset and FmuF_Linear+Constant model selected
+   :width: 100%
 
-* ``MuF``: analytical two-spin ``mu-F`` polarization
-* ``FmuF_Linear``: analytical collinear ``F-mu-F`` polarization
-* ``FmuF_General``: numerical powder-averaged ``F-mu-F`` polarization with
-  independent distances and bond angle
+*Synthetic PbF₂ ZF dataset with r_μF = 1.17 Å, captured over 20 μs so the*
+*F-μ-F beat envelope is fully resolved. PbF₂ is a particularly clean*
+*F-μ-F host: the heavy Pb nuclei carry no significant nuclear moment, so*
+*the analytical FmuF_Linear component captures the full polarisation*
+*(Brewer et al. PRB 33, 7813, 1986; Blundell et al. Ch 4.6).*
 
-These components appear under the **Muon-Fluorine** category in the fit-function
-builder.
+Muon-fluorine entangled states produce a distinctive set of slow beats
+in zero-field or weak-LF asymmetry whenever the implanted muon stops
+close to one or two :sup:`19`\ F nuclei (:math:`I = 1/2`, no quadrupolar
+splitting). These are the textbook signature of a well-defined muon
+stopping site in ionic fluorides and many fluorinated molecular
+materials, and the beat envelope encodes the geometry of the muon site
+directly through the muon–fluorine distance. Asymmetry exposes three
+polarisation components for this regime, which appear under the
+**Muon-Fluorine** category in the fit-function builder:
 
-The intended use case is zero-field or weak-field time-domain fitting where the
-oscillatory structure arises from entanglement of the muon spin with one or two
-nearby ``19F`` nuclei. The functions implemented here are polarization building
-blocks, not full experimental asymmetry models by themselves.
+* ``MuF`` — analytical two-spin :math:`\mu`-F polarisation for a muon
+  coupled to a single dominant fluorine.
+* ``FmuF_Linear`` — analytical collinear F-:math:`\mu`-F polarisation
+  for the classic three-spin hydrogen-bond-like centre of ionic
+  fluorides.
+* ``FmuF_General`` — numerical powder-averaged F-:math:`\mu`-F
+  polarisation for bent or asymmetric three-spin geometries with
+  independent distances and bond angle.
+
+These are intended as zero-field or weak-field time-domain components
+that capture the entangled-spin geometry; they are polarisation
+building blocks, not full experimental asymmetry models, and the
+expected workflow is to multiply them by a phenomenological relaxation
+envelope and add a constant background term. Distinguishing an
+F-:math:`\mu`-F beat from a simple two-frequency precession is usually
+fastest in the frequency domain: F-:math:`\mu`-F produces a
+three-line (collinear) or five-line (general) pattern with
+characteristic spacing, while genuine precession gives a single
+Lorentzian or Gaussian line per site. None of the present components
+are appropriate for nuclear hosts with :math:`I > 1/2` — quadrupolar
+effects shift the level structure and a dedicated multi-spin model is
+required.
 
 Physics Background
 ------------------

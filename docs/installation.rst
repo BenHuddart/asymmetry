@@ -41,6 +41,14 @@ For GLE export support:
   Recent Asymmetry releases use gleplot's foldered export support by default,
   so install a current git version rather than an older cached wheel.
 
+* The GLE compiler itself (``gle``) needs to be on ``PATH`` for ``.gle``
+  scripts to be compiled to PDF or EPS at export time. Without it, the
+  scripts and sidecar data files are still written and can be compiled
+  later. In a frozen macOS app the inherited ``PATH`` is minimal, so
+  Asymmetry also looks for ``gle`` in the standard Homebrew, MacPorts,
+  and QGLE locations. Override the search from **Setup → GLE Setup…**
+  in the main menu; the chosen path is persisted across sessions.
+
 Installation Methods
 --------------------
 

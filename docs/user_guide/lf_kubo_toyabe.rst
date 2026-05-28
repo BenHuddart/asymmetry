@@ -3,20 +3,43 @@
 Longitudinal-Field Kubo-Toyabe Depolarization
 ==============================================
 
+.. image:: /_generated/screenshots/lf_kt_series_plot.png
+   :alt: Overlay of five Ag LF Kubo–Toyabe runs spanning the decoupling regime
+   :width: 100%
+
+*Synthetic Ag polycrystal LF series with Δ ≈ 0.39 μs⁻¹ and B_L = 0, 5, 10,*
+*25, 50 G, spanning the textbook decoupling units γ_μB_L/Δ ∈ {0, 1, 2, 5,*
+*10} (cf. Fig 5.6 of Blundell et al.). The 0 G run shows the characteristic*
+*1/3 tail; as B_L grows the muon spins decouple from the nuclear dipolar*
+*field and the polarisation recovers toward unity (Hayano et al. PRB 20,*
+*850, 1979).*
+
 The **LongitudinalFieldKT** component implements the static Gaussian Kubo–Toyabe depolarization
 function in the presence of a longitudinal magnetic field, following Hayano et al. (1979).
+
+For an end-to-end walk-through, see
+:doc:`workflows/lf_decoupling_dynamics`.
 
 Overview
 --------
 
-The longitudinal-field Kubo–Toyabe (LF-KT) depolarization function describes the time-dependent
-polarization of muons precessing in a Gaussian-distributed static magnetic field with an applied
-longitudinal decoupling field. This is particularly useful for:
-
-- Studying static magnetic field distributions (e.g., in magnetically disordered systems)
-- Testing field-decoupling regimes and crossovers
-- Measuring the width of local field distributions (Δ parameter)
-- Analyzing relaxation in zero-field or weak longitudinal-field geometries
+The longitudinal-field Kubo–Toyabe (LF-KT) depolarisation function
+describes the time-dependent polarisation of muons precessing in a
+Gaussian-distributed static magnetic field with an applied longitudinal
+decoupling field. It is the workhorse model for any magnetically
+disordered host where the local field is static (or effectively static)
+on the muon time scale — magnetic glasses, frustrated magnets, frozen
+spin systems, dilute nuclear-dipole hosts — and the experiment is
+designed to extract the width :math:`\Delta` of the local-field
+distribution by sweeping :math:`B_L` through the decoupling crossover.
+The zero-field limit recovers the static Gaussian KT function (see
+:doc:`static_gkt_zf`) and is the right model for ZF spectra that exhibit
+the characteristic :math:`1/3` tail; the high-field limit recovers a
+slowly decaying envelope set by the Gaussian damping. In between, the
+recovery of the polarisation toward unity as :math:`\gamma_\mu B_L`
+exceeds :math:`\Delta` is the unambiguous diagnostic of a static field
+distribution and is the experimental signature that distinguishes a
+frozen system from one whose field is dynamic on the muon time scale.
 
 Formalism (Hayano et al. 1979)
 ------------------------------
@@ -80,22 +103,18 @@ The asymmetry at time *t* is given by:
 
    A(t) = A \cdot G_z(t) + \text{baseline}
 
-Using LongitudinalFieldKT in Build Fit
----------------------------------------
+Using LongitudinalFieldKT in the Fit Builder
+--------------------------------------------
 
-1. **Open Build Fit Dialog**: Click **Edit Function...** in the Fit panel.
-
-2. **Search or select LongitudinalFieldKT**: In the component browser, look under the
-   **General** category for **LongitudinalFieldKT** (or type the name in the expression builder).
-
-3. **Combine with other components**: You can combine LF-KT with other depolarization functions
-   using operators:
-
-   - ``LongitudinalFieldKT + Constant`` — LF-KT with additive background
-   - ``LongitudinalFieldKT + Exponential`` — LF-KT plus exponential relaxation
-   - ``(LongitudinalFieldKT * Exponential) + Constant`` — Multiplicative damping
-
-4. **Click Accept** to use the model in your fit.
+The ``LongitudinalFieldKT`` component appears under the **General**
+category in the **Edit Function...** dialog of the fit panel. The most
+common composites are ``LongitudinalFieldKT + Constant`` for a pure
+LF-KT decoupling fit on top of a detector-imbalance background,
+``LongitudinalFieldKT + Exponential + Constant`` when an additional
+relaxing channel is present, and ``(LongitudinalFieldKT * Exponential)
++ Constant`` when a slow dynamic relaxation modulates the static-field
+recovery. When a dataset's metadata carries a known applied field, the
+fit panel initialises ``B_L`` from that value automatically.
 
 Parameters
 ----------
@@ -232,27 +251,19 @@ Physics References
   *Journal of the Physical Society of Japan*, **65**, 765–776.
   (Overview of depolarization functions including LF-KT)
 
-Tips for Fitting
-----------------
+Practical Notes on Fitting
+--------------------------
 
-1. **Start with zero field** (B_L fixed = 0) if your experiment is designed for zero-field geometry.
-
-2. **Monitor fit quality**: If reduced χ² is poor, consider:
-   - Collecting more data at early times (where signal is strongest)
-   - Simplifying the model (e.g., remove high-order components)
-   - Checking for instrumental artifacts or phase shifts
-
-3. **Parameter uncertainty**: Use the fit engine's covariance matrix to assess uncertainties.
-   Large errors on Δ may indicate the field distribution width is poorly constrained
-   (common in noisy or short-duration datasets).
-
-4. **Combining with other physics**: You can build more complex models by composing LF-KT
-   with relaxation functions:
-
-   .. code-block:: python
-
-      # Gaussian-damped KT with weak exponential relaxation
-      model = "(LongitudinalFieldKT * Gaussian) + Constant"
-      
-      # This captures static-field depolarization masked by additional
-      # dynamic relaxation or sample inhomogeneity.
+For a zero-field-only experiment, fix ``B_L = 0`` and use the much
+cheaper :doc:`static_gkt_zf` form directly; the LF-KT integral is only
+needed when :math:`B_L` is genuinely a fitted or per-run-varied
+quantity. When :math:`\Delta` is poorly constrained — a common
+situation for noisy data or for fit windows that do not extend past the
+dip — either fix :math:`B_L` from the known applied field and let only
+:math:`\Delta` and the amplitude float, or fit a global LF series and
+share :math:`\Delta` across runs (:doc:`global_fit_wizard`), which uses
+the decoupling crossover itself to pin the width. Where a static-field
+recovery is masked by additional slow dynamics, the right compose is
+``(LongitudinalFieldKT * Exponential) + Constant`` rather than an
+ad-hoc enlargement of :math:`\Delta`, which trades a physical width for
+a phenomenological one and obscures the decoupling diagnostic.

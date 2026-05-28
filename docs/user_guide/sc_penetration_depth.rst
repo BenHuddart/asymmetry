@@ -1,6 +1,19 @@
 Superconducting Penetration Depth Models
 ========================================
 
+.. image:: /_generated/screenshots/parameter_trending_mgb2.png
+   :alt: σ(T) two-gap fit on synthetic MgB₂ data
+   :width: 100%
+
+*Synthetic MgB₂ σ(T) data (Tc = 36 K) fitted with the two-gap*
+*``SC_TwoGap_SS`` superconductor model. The σ(T) curve maps onto the*
+*London penetration depth via ρ_s(T) ∝ 1/λ²(T) and the relation*
+*σ ∝ 1/λ², making μSR one of the few bulk probes of the superfluid*
+*density in unconventional superconductors (Sonier RMP 72, 769, 2000).*
+
+For an end-to-end walk-through that exercises every model on this
+page, see :doc:`workflows/superconductor_penetration_depth`.
+
 This page documents the superconducting sigma(T) models used for TF-muSR
 vortex-state analysis and interleaves the core theory with the API for each
 model family.

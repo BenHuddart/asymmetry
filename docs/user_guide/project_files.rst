@@ -1,7 +1,27 @@
 Project Files
 =============
 
-Asymmetry project files (``.asymp``) persist analysis state across sessions.
+The ``.asymp`` project file persists the analysis state of a session:
+which datasets are loaded, how the Data Browser is sorted and filtered,
+the per-run grouping (groups, alpha, bunching, deadtime, background),
+the single- and global-fit model setups with their parameter tables and
+bounds, the most recent fit overlays, the Fourier panel state including
+per-run phase tables, and any cached Fit Wizard or Global Fit Wizard
+analyses. Raw detector arrays are *not* embedded — the file references
+source data by path and reloads from disk on open. This makes ``.asymp``
+files small enough to share alongside the raw data when sending an
+analysis to a collaborator, or to archive alongside paper supplementary
+material so that readers can reproduce every fit shown in the figures.
+
+Asymmetry's project file is JSON with an integer schema version, which
+is independent of the package version: opening a project written by an
+older release triggers automatic schema migration, and the loader
+refuses to silently accept a file written by a future schema it does
+not understand. The format is therefore directly diffable in version
+control, which is the main practical difference from musrfit's
+hand-editable ``.msr`` text format (the import of ``.msr`` into
+``.asymp`` is a roadmap candidate; see :doc:`/user_guide/comparison`)
+and from Mantid's binary HDF5 ``.mantid`` files.
 
 What Is Stored
 --------------

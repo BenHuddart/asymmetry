@@ -1,7 +1,25 @@
 Logbook Workflows
 =================
 
-The ``Logbook`` provides a searchable run table for multi-run analysis.
+.. image:: /_generated/screenshots/logbook_view.png
+   :alt: Data-browser logbook view of an EuO temperature scan sorted by T(K)
+   :width: 100%
+
+*Logbook view of the EuO temperature scan, sorted by sample temperature.*
+*The data browser doubles as the run logbook in the Asymmetry GUI: the*
+*Run, Title, T(K) and B(G) columns expose the run-level metadata directly,*
+*and additional columns can be surfaced through* **Options → Add column…**
+
+The Data Browser doubles as the run logbook in the Asymmetry GUI: a
+searchable, filterable, sortable run table that drives every downstream
+analysis. The :class:`~asymmetry.core.data.logbook.Logbook` Python class
+exposes the same machinery for scripted use — tagging runs with
+user-defined labels (``zf-cooled`` vs ``fc``, ``sample-A`` vs
+``reference``), grouping them into named collections, free-text
+searching across titles, comments and tags, and exporting to TSV for
+further processing or RTF to paste directly into a manuscript. Every
+case study under :doc:`workflows/index` begins with a logbook step to
+set up the run series.
 
 Basic Usage
 -----------

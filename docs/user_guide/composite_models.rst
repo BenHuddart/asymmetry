@@ -1,8 +1,43 @@
 Composite Models
 ================
 
-Composite models let you build time-domain fit functions from reusable
-components and arithmetic operators.
+.. image:: /_generated/screenshots/composite_models_builder.png
+   :alt: Fit Function Builder dialog with an Oscillatory + Exponential + Constant expression
+   :width: 100%
+
+*The Fit Function Builder dialog parses free-form expressions over the*
+*registered components. The keypad inserts operators and grouping symbols;*
+*the* **Fractions** *button binds two or more additive components into a*
+*shared-amplitude fraction group. The preview line at the bottom shows the*
+*compiled formula with mangled parameter names (A_1, A_2, …) for each*
+*component (Blundell et al.* Muon Spectroscopy *Ch 6.4).*
+
+A realistic μSR asymmetry almost never has the algebraic form of a single
+depolarisation function. It is typically the product of a relaxation
+envelope with an oscillatory signal, or the sum of contributions from
+distinct muon populations (e.g. magnetic and paramagnetic fractions near a
+transition, multiple stopping sites in a molecular magnet), with a small
+detector-imbalance constant added in. Composite models are how Asymmetry
+expresses these combinations: a free-form arithmetic expression over
+registered baseline-free components, parsed into a compiled callable that
+the fit engine drives like any other model. The two patterns the builder
+is designed for are *multiplicative* combinations, where one physical
+effect modulates another (a Gaussian envelope multiplying a TF precession
+signal in the vortex state; an exponential damping multiplying a Larmor
+oscillation), and *additive* combinations, where independent populations
+of muons contribute separately. Fraction groups, documented below, let
+several additive components share one overall amplitude budget — the
+natural representation for two muonium states in a semiconductor whose
+fractions must sum to one, or for the magnetic and paramagnetic
+fractions of a sample passing through a transition.
+
+For real examples that build composites step-by-step, see
+:doc:`workflows/temperature_scan_magnetism` and
+:doc:`workflows/superconductor_penetration_depth`.
+
+.. image:: /_generated/screenshots/composite_fractions_dialog.png
+   :alt: Fit Function Builder with a fraction-group expression
+   :width: 100%
 
 Building a Composite Function
 -----------------------------
@@ -179,7 +214,7 @@ name in ``CompositeModel``:
      - ``A``, ``r_muF`` (Å)
    * - ``FmuF_General``
      - Numerical powder-averaged F-mu-F polarization
-     - ``A``, ``r1`` (Å), ``r2`` (Å), ``theta`` (rad)
+     - ``A``, ``r1`` (Å), ``r2`` (Å), ``theta`` (°)
    * - ``Constant``
      - :math:`A_{\mathrm{bg}}`
      - ``A_bg``

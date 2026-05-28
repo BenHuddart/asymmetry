@@ -1,12 +1,21 @@
 Detector Grouping and Layout
 ============================
 
-Overview
---------
+Detector grouping defines how the raw per-detector count histograms are
+combined into the forward and backward sums that enter the asymmetry
+formula. The choice is dictated by the experiment: a coarse two-group
+arrangement is right for ordinary asymmetry analysis on a longitudinal
+spectrometer; keeping detectors as individual groups is what enables the
+per-detector amplitudes and phases needed for a paramagnetic Knight-shift
+measurement (:doc:`grouped_time_domain_fitting`); and a vector-polarisation
+experiment needs distinct pairs assigned to :math:`P_x`, :math:`P_y`, and
+:math:`P_z` (:doc:`vector_polarization`). For new data from any of the
+supported instruments — ISIS HiFi, MuSR, EMU and PSI FLAME — the matching
+preset in the Detector Layout editor seeds sensible defaults that can then
+be refined graphically before being applied.
 
-Asymmetry supports detector grouping for HiFi, MuSR, EMU, and PSI FLAME
-instruments. Grouping is configured from the Grouping dialog and can be edited
-graphically with the Detector Layout editor.
+Grouping is configured from the Grouping dialog and edited graphically
+with the Detector Layout editor.
 
 The grouping payload stores:
 

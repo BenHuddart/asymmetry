@@ -1,10 +1,36 @@
 Grouped Time-Domain Fitting
 ===========================
 
-Asymmetry now supports a first grouped time-domain fitting workflow in the
-GUI. This mode is designed for fitting several detector groups from one active
-run with one shared physical polarization function while keeping group-specific
-normalization terms explicit.
+.. image:: /_generated/screenshots/grouped_fit_ybco_knight.png
+   :alt: MultiGroupFitWindow on YBCO TF above Tc, Individual Groups domain, 4 detector groups
+   :width: 100%
+
+*Grouped time-domain Knight-shift workflow on a synthetic YBa₂Cu₃O₇₋δ*
+*run in the normal state (T = 100 K, B = 200 G). The central plot is in*
+*the* **Individual Groups** *domain so the lifetime-corrected counts*
+*N_d(t)·exp(t/τ_μ) for each of the four detectors are shown as separate*
+*subplots, and the fit dock has auto-engaged the* **Multi-Group Fit**
+*window. Per-group N₀ values fit as* **Local** *parameters; the local*
+*field magnitude and phase are* **Shared** *— the canonical workflow for*
+*extracting the muon Knight shift in the normal state of a*
+*superconductor (Sonier RMP 72, 769, 2000).*
+
+Grouped time-domain fitting is the right tool whenever the physically
+meaningful quantity you are extracting depends on detector geometry, and
+collapsing the raw counts onto a single forward/backward asymmetry would
+average that geometry away. The canonical use is a paramagnetic
+Knight-shift measurement, where a ppm-precision TF frequency shift is
+recovered by sharing the Larmor frequency across every detector group
+while letting per-group amplitudes and phases fit locally (Sonier,
+*Rev. Mod. Phys.* **72**, 769, 2000). Vortex-state second-moment analyses
+benefit from the same machinery — per-group :math:`\sigma` values
+expose calibration drifts in the vortex-lattice signal that a single
+asymmetry would hide — and any time a shared-physics fit returns
+inconsistent results across groups, the diagnosis is almost always a
+calibration problem (alpha mismatch, per-detector time-zero drift) rather
+than a model problem. For ordinary F-B asymmetry fits with no
+geometry-sensitive observable, the regular single-fit panel is faster and
+imposes no grouped overhead.
 
 What This Mode Fits
 -------------------
