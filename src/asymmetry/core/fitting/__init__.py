@@ -56,6 +56,14 @@ from asymmetry.core.fitting.parameter_models import (
     fit_parameter_model,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, ParamInfo, get_param_info
+from asymmetry.core.fitting.spectral import (
+    FREQUENCY_COMPONENT_NAMES,
+    append_frequency_field_derived_parameters,
+    default_frequency_model,
+    field_gauss_to_frequency_mhz,
+    frequency_mhz_to_field_gauss,
+    seed_peak_parameters_from_dataset,
+)
 
 __all__ = [
     "FitEngine",
@@ -110,4 +118,10 @@ __all__ = [
     "get_param_info",
     "Parameter",
     "ParameterSet",
+    "FREQUENCY_COMPONENT_NAMES",
+    "append_frequency_field_derived_parameters",
+    "default_frequency_model",
+    "field_gauss_to_frequency_mhz",
+    "frequency_mhz_to_field_gauss",
+    "seed_peak_parameters_from_dataset",
 ]

@@ -29,6 +29,7 @@ material.
    :caption: Time-domain analysis
 
    fourier_analysis
+   frequency_domain_fitting
    vector_polarization
    fitting
    composite_models

@@ -844,6 +844,8 @@ class MainWindow(QMainWindow):
             self._data_browser.group_selected.connect(self._on_group_selected)
         self._data_browser.selection_changed.connect(self._update_selected_datasets)
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
+        if hasattr(self._frequency_plot_panel, "fit_range_changed"):
+            self._frequency_plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         if hasattr(self._plot_panel, "cursor_coords_changed"):
             self._plot_panel.cursor_coords_changed.connect(self._on_cursor_coords_changed)
         if hasattr(self._fit_panel, "fit_range_edit_committed"):
@@ -901,9 +903,13 @@ class MainWindow(QMainWindow):
         """Refresh fit blocking when the active plot workspace tab changes."""
         if self._plot_workspace.active_domain() == "frequency":
             self._sync_frequency_plot_for_current_dataset()
-            self._fit_panel.set_dataset(None)
-            self._fit_panel.set_datasets([])
+            if hasattr(self._fit_panel, "set_domain"):
+                self._fit_panel.set_domain("frequency")
+            self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
+            self._set_frequency_fit_datasets_for_selection()
         else:
+            if hasattr(self._fit_panel, "set_domain"):
+                self._fit_panel.set_domain("time")
             if self._current_dataset is not None:
                 self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
                 if self._multi_group_fit_window is not None:
@@ -1379,10 +1385,12 @@ class MainWindow(QMainWindow):
     def _current_fit_block_state(self) -> tuple[bool, str]:
         """Return whether the current plot context should block fitting."""
         if hasattr(self, "_plot_workspace") and self._plot_workspace.active_domain() == "frequency":
-            return (
-                True,
-                "Frequency-domain plots are view-only. Switch to FB Asymmetry or Individual Groups before fitting.",
-            )
+            if self._active_frequency_fit_dataset() is None:
+                return (
+                    True,
+                    "Compute a Fourier spectrum for the active run before fitting in the frequency domain.",
+                )
+            return False, ""
 
         active_axis = None
         if hasattr(self._plot_panel, "get_current_polarization_axis"):
@@ -1397,6 +1405,12 @@ class MainWindow(QMainWindow):
     def _update_fit_block_state(self) -> None:
         """Disable ambiguous fitting workflows when the current view is not fit-safe."""
         self._sync_fit_dock_mode()
+        if (
+            hasattr(self, "_fit_panel")
+            and hasattr(self, "_plot_workspace")
+            and hasattr(self._fit_panel, "set_domain")
+        ):
+            self._fit_panel.set_domain(self._plot_workspace.active_domain())
         blocked, reason = self._current_fit_block_state()
         if hasattr(self._fit_panel, "set_fit_blocked"):
             self._fit_panel.set_fit_blocked(blocked, reason)
@@ -3540,6 +3554,15 @@ class MainWindow(QMainWindow):
                 y_min,
                 y_max,
             )
+        if (
+            hasattr(self, "_plot_workspace")
+            and self._plot_workspace.active_domain() == "frequency"
+            and hasattr(self, "_fit_panel")
+        ):
+            if hasattr(self._fit_panel, "set_domain"):
+                self._fit_panel.set_domain("frequency")
+            self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
+            self._set_frequency_fit_datasets_for_selection()
 
     def _sync_frequency_plot_for_current_dataset(self) -> None:
         """Render the cached frequency spectra for the current dataset selection."""
@@ -3914,8 +3937,17 @@ class MainWindow(QMainWindow):
                 self._sync_frequency_plot_for_current_dataset()
                 self._refresh_vector_axis_selector()
                 self._update_fit_block_state()
-                self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
-                _fit_range = self._plot_panel.get_fit_range()
+                if self._plot_workspace.active_domain() == "frequency":
+                    if hasattr(self._fit_panel, "set_domain"):
+                        self._fit_panel.set_domain("frequency")
+                    self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
+                    self._set_frequency_fit_datasets_for_selection()
+                    _fit_range = self._frequency_plot_panel.get_fit_range()
+                else:
+                    if hasattr(self._fit_panel, "set_domain"):
+                        self._fit_panel.set_domain("time")
+                    self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
+                    _fit_range = self._plot_panel.get_fit_range()
                 if hasattr(self._fit_panel, "set_fit_range_display"):
                     self._fit_panel.set_fit_range_display(*_fit_range)
                 if self._multi_group_fit_window is not None:
@@ -4016,7 +4048,15 @@ class MainWindow(QMainWindow):
         ):
             self._multi_group_fit_window.set_fit_range_display(x_min, x_max)
         if self._current_dataset is not None:
-            self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
+            if self._plot_workspace.active_domain() == "frequency":
+                if hasattr(self._fit_panel, "set_domain"):
+                    self._fit_panel.set_domain("frequency")
+                self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
+                self._set_frequency_fit_datasets_for_selection()
+            else:
+                if hasattr(self._fit_panel, "set_domain"):
+                    self._fit_panel.set_domain("time")
+                self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
             if self._multi_group_fit_window is not None:
                 self._multi_group_fit_window.set_dataset(
                     self._get_fit_dataset(self._current_dataset)
@@ -4025,7 +4065,12 @@ class MainWindow(QMainWindow):
 
     def _on_fit_range_edit_committed(self, x_min: float, x_max: float) -> None:
         """Push a spinbox-committed fit range from the Fit panel to the plot."""
-        self._plot_panel.set_fit_range(x_min, x_max)
+        panel = (
+            self._frequency_plot_panel
+            if self._plot_workspace.active_domain() == "frequency"
+            else self._plot_panel
+        )
+        panel.set_fit_range(x_min, x_max)
 
     def _on_fit_completed(self, fit_result, fitted_curve, component_curves) -> None:
         """Handle completed fit from fit panel."""
@@ -4033,7 +4078,12 @@ class MainWindow(QMainWindow):
         fit_function = None
         if hasattr(self._fit_panel, "single_fit_formula_string"):
             fit_function = self._fit_panel.single_fit_formula_string()
-        self._plot_panel.plot_fit(
+        panel = (
+            self._frequency_plot_panel
+            if self._plot_workspace.active_domain() == "frequency"
+            else self._plot_panel
+        )
+        panel.plot_fit(
             t_fit,
             y_fit,
             label="Fit",
@@ -4050,7 +4100,12 @@ class MainWindow(QMainWindow):
         fit_function = None
         if hasattr(self._fit_panel, "single_fit_formula_string"):
             fit_function = self._fit_panel.single_fit_formula_string()
-        self._plot_panel.plot_fit(
+        panel = (
+            self._frequency_plot_panel
+            if self._plot_workspace.active_domain() == "frequency"
+            else self._plot_panel
+        )
+        panel.plot_fit(
             t_fit,
             y_fit,
             label="Preview",
@@ -4149,6 +4204,9 @@ class MainWindow(QMainWindow):
             normalized_payloads[run_number] = (result, fitted_curve, component_curves)
 
         # Store fit curves for all datasets
+        is_frequency_fit = (
+            hasattr(self._fit_panel, "domain") and self._fit_panel.domain() == "frequency"
+        )
         global_fit_function = None
         if hasattr(self._fit_panel, "global_fit_formula_string"):
             global_fit_function = self._fit_panel.global_fit_formula_string()
@@ -4156,7 +4214,11 @@ class MainWindow(QMainWindow):
         for run_number, (result, fitted_curve, component_curves) in normalized_payloads.items():
             t_fit, y_fit = fitted_curve
             axis_key = None
-            dataset = self._data_browser.get_dataset(run_number)
+            dataset = (
+                self._frequency_spectra_by_run.get(run_number, [None])[0]
+                if is_frequency_fit
+                else self._data_browser.get_dataset(run_number)
+            )
             if dataset is not None:
                 run = getattr(dataset, "run", None)
                 grouping = getattr(run, "grouping", None)
@@ -4177,7 +4239,8 @@ class MainWindow(QMainWindow):
         self._fit_panel.register_global_fit_results(normalized_payloads)
 
         # Set all fit curves in plot panel
-        self._plot_panel.set_global_fits(fit_curves)
+        panel = self._frequency_plot_panel if is_frequency_fit else self._plot_panel
+        panel.set_global_fits(fit_curves)
 
         # Push fitted parameters into the trends panel.
         trends_results = {
@@ -4186,24 +4249,28 @@ class MainWindow(QMainWindow):
         }
         datasets_by_run = {}
         for run_number in normalized_payloads:
-            dataset = self._data_browser.get_dataset(run_number)
+            dataset = (
+                self._frequency_spectra_by_run.get(run_number, [None])[0]
+                if is_frequency_fit
+                else self._data_browser.get_dataset(run_number)
+            )
             if dataset is not None:
                 datasets_by_run[run_number] = dataset
-        group_id = None
-        group_name = None
+        group_id = "frequency_domain" if is_frequency_fit else None
+        group_name = "Frequency Domain" if is_frequency_fit else None
         selected_group_ids = (
             self._data_browser.get_selected_group_ids()
             if hasattr(self._data_browser, "get_selected_group_ids")
             else []
         )
-        if len(selected_group_ids) == 1:
+        if (not is_frequency_fit) and len(selected_group_ids) == 1:
             group_id = selected_group_ids[0]
             group_name = (
                 self._data_browser.get_group_name(group_id)
                 if hasattr(self._data_browser, "get_group_name")
                 else None
             )
-        elif self._active_group_context is not None:
+        elif (not is_frequency_fit) and self._active_group_context is not None:
             group_id, group_name = self._active_group_context
 
         self._fit_parameters_panel.set_fit_results(
@@ -4419,18 +4486,31 @@ class MainWindow(QMainWindow):
             self._update_fit_block_state()
         self._update_status_selection()
 
-        analysis_datasets = [
-            dataset
-            for dataset in (self._get_fit_dataset(ds) for ds in selected)
-            if dataset is not None
-        ]
+        is_frequency_domain = (
+            hasattr(self, "_plot_workspace") and self._plot_workspace.active_domain() == "frequency"
+        )
+        if hasattr(self, "_fit_panel") and hasattr(self._fit_panel, "set_domain"):
+            self._fit_panel.set_domain("frequency" if is_frequency_domain else "time")
+
+        if is_frequency_domain:
+            analysis_datasets = self._frequency_fit_datasets_for_selected_runs()
+        else:
+            analysis_datasets = [
+                dataset
+                for dataset in (self._get_fit_dataset(ds) for ds in selected)
+                if dataset is not None
+            ]
 
         # Refresh the single-fit tab with the currently active dataset so that
         # bunch-factor or fit-range changes are reflected immediately.
-        if self._current_dataset is not None:
+        if is_frequency_domain:
+            self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
+        elif self._current_dataset is not None:
             self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
 
         self._fit_panel.set_datasets(analysis_datasets)
+        if is_frequency_domain:
+            self._apply_frequency_missing_spectra_status(len(analysis_datasets))
 
     def _selection_status_message(self, selected: list) -> str:
         """Return a compact status message for multi-run selections."""
@@ -4492,6 +4572,89 @@ class MainWindow(QMainWindow):
         """Return analysis dataset restricted to the active fit range."""
         analysis_dataset = self._plot_panel.get_analysis_dataset(dataset)
         return self._plot_panel.get_fit_dataset(analysis_dataset)
+
+    def _active_frequency_fit_dataset(self) -> MuonDataset | None:
+        """Return the currently displayed Fourier spectrum clipped to its fit range."""
+        if not hasattr(self, "_frequency_plot_panel"):
+            return None
+        dataset = getattr(self._frequency_plot_panel, "_current_dataset", None)
+        if dataset is None:
+            return None
+        analysis_dataset = self._frequency_plot_panel.get_analysis_dataset(dataset)
+        fit_dataset = self._frequency_plot_panel.get_fit_dataset(analysis_dataset)
+        return self._frequency_dataset_with_fit_errors(fit_dataset)
+
+    def _frequency_dataset_with_fit_errors(self, dataset: MuonDataset | None) -> MuonDataset | None:
+        """Return a frequency dataset with finite positive errors for least squares."""
+        if dataset is None:
+            return None
+        error = np.asarray(dataset.error, dtype=float)
+        if error.shape == np.asarray(dataset.asymmetry).shape and np.any(
+            np.isfinite(error) & (error > 0.0)
+        ):
+            safe_error = np.where(np.isfinite(error) & (error > 0.0), error, np.nan)
+            fallback = float(np.nanmedian(safe_error))
+            if not np.isfinite(fallback) or fallback <= 0.0:
+                fallback = 1.0
+            safe_error = np.where(np.isfinite(safe_error), safe_error, fallback)
+        else:
+            y = np.asarray(dataset.asymmetry, dtype=float)
+            scale = float(np.nanstd(y)) if y.size else 1.0
+            if not np.isfinite(scale) or scale <= 0.0:
+                scale = 1.0
+            safe_error = np.full_like(y, scale * 0.05, dtype=float)
+        return MuonDataset(
+            time=np.asarray(dataset.time, dtype=float).copy(),
+            asymmetry=np.asarray(dataset.asymmetry, dtype=float).copy(),
+            error=np.asarray(safe_error, dtype=float),
+            metadata=dict(dataset.metadata),
+            run=dataset.run,
+        )
+
+    def _frequency_fit_datasets_for_selected_runs(self) -> list[MuonDataset]:
+        """Return cached Fourier spectra for selected browser runs."""
+        selected = self._data_browser.get_selected_datasets()
+        datasets: list[MuonDataset] = []
+        missing_run_numbers: list[int] = []
+        for source in selected:
+            try:
+                run_number = int(source.run_number)
+            except (TypeError, ValueError):
+                continue
+            spectra = list(self._frequency_spectra_by_run.get(run_number, []))
+            if not spectra:
+                missing_run_numbers.append(run_number)
+                continue
+            dataset = spectra[0]
+            analysis_dataset = self._frequency_plot_panel.get_analysis_dataset(dataset)
+            fit_dataset = self._frequency_plot_panel.get_fit_dataset(analysis_dataset)
+            if fit_dataset is not None:
+                safe_dataset = self._frequency_dataset_with_fit_errors(fit_dataset)
+                if safe_dataset is not None:
+                    datasets.append(safe_dataset)
+        self._last_frequency_fit_missing_run_numbers = missing_run_numbers
+        return datasets
+
+    def _set_frequency_fit_datasets_for_selection(self) -> list[MuonDataset]:
+        """Set frequency global-fit datasets and report selected uncached runs."""
+        datasets = self._frequency_fit_datasets_for_selected_runs()
+        self._fit_panel.set_datasets(datasets)
+        self._apply_frequency_missing_spectra_status(len(datasets))
+        return datasets
+
+    def _apply_frequency_missing_spectra_status(self, cached_count: int) -> None:
+        """Show an actionable V1 status for global frequency fits with uncached runs."""
+        missing_run_numbers = list(getattr(self, "_last_frequency_fit_missing_run_numbers", []))
+        if not missing_run_numbers:
+            return
+        if hasattr(self._fit_panel, "set_frequency_missing_spectra_status"):
+            self._fit_panel.set_frequency_missing_spectra_status(missing_run_numbers, cached_count)
+        preview = ", ".join(str(run_number) for run_number in missing_run_numbers[:5])
+        if len(missing_run_numbers) > 5:
+            preview += f", +{len(missing_run_numbers) - 5} more"
+        self.statusBar().showMessage(
+            f"Compute Fourier spectra for selected run(s) {preview} before global frequency fitting."
+        )
 
     def _grouped_time_domain_display_datasets(
         self,
@@ -4691,6 +4854,26 @@ class MainWindow(QMainWindow):
             pruned.pop("wizard_state_by_run_set", None)
             return pruned
 
+        time_fit_state = (
+            self._fit_panel.get_domain_state("time")
+            if hasattr(self._fit_panel, "get_domain_state")
+            else {
+                "single_fit_state": self._fit_panel.get_single_state(),
+                "global_fit_state": self._fit_panel.get_global_state(),
+                "fit_ui_state": self._fit_panel.get_ui_state(),
+            }
+        )
+        frequency_fit_state = (
+            self._fit_panel.get_domain_state("frequency")
+            if hasattr(self._fit_panel, "get_domain_state")
+            else {
+                "domain": "frequency",
+                "single_fit_state": {},
+                "global_fit_state": {},
+                "fit_ui_state": {},
+            }
+        )
+
         return {
             "schema_version": CURRENT_SCHEMA_VERSION,
             "created_with_app_version": __version__,
@@ -4699,15 +4882,25 @@ class MainWindow(QMainWindow):
             "browser_state": self._data_browser.get_state(),
             "plot_state": plot_state,
             "view_modes_state": self._collect_view_modes_state(),
-            "single_fit_state": _prune_single_fit_state(self._fit_panel.get_single_state()),
-            "global_fit_state": _prune_global_fit_state(self._fit_panel.get_global_state()),
+            "single_fit_state": _prune_single_fit_state(time_fit_state.get("single_fit_state")),
+            "global_fit_state": _prune_global_fit_state(time_fit_state.get("global_fit_state")),
             "multi_group_fit_state": _prune_global_fit_state(
                 self._multi_group_fit_window.get_state()
                 if self._multi_group_fit_window is not None
                 and hasattr(self._multi_group_fit_window, "get_state")
                 else None
             ),
-            "fit_ui_state": self._fit_panel.get_ui_state(),
+            "fit_ui_state": time_fit_state.get("fit_ui_state", {}),
+            "frequency_fit_state": {
+                "domain": "frequency",
+                "single_fit_state": _prune_single_fit_state(
+                    frequency_fit_state.get("single_fit_state")
+                ),
+                "global_fit_state": _prune_global_fit_state(
+                    frequency_fit_state.get("global_fit_state")
+                ),
+                "fit_ui_state": frequency_fit_state.get("fit_ui_state", {}),
+            },
             "fit_parameters_state": self._fit_parameters_panel.get_state(),
             "global_parameter_fit_window_state": (
                 self._global_parameter_fit_window.get_state()
@@ -4913,6 +5106,21 @@ class MainWindow(QMainWindow):
                     emit_signal=False,
                     redraw=True,
                 )
+                if hasattr(self._plot_panel, "get_view_limits") and hasattr(
+                    self._plot_panel, "set_view_limits"
+                ):
+                    x_min, x_max, y_min, y_max = self._plot_panel.get_view_limits()
+                    fit_min = float(min(fit_range[0], fit_range[1]))
+                    fit_max = float(max(fit_range[0], fit_range[1]))
+                    widened_x_min = min(float(x_min), fit_min)
+                    widened_x_max = max(float(x_max), fit_max)
+                    if widened_x_min != x_min or widened_x_max != x_max:
+                        self._plot_panel.set_view_limits(
+                            widened_x_min,
+                            widened_x_max,
+                            float(y_min),
+                            float(y_max),
+                        )
         if (
             self._plot_workspace.active_domain() == "frequency"
             and hasattr(self._frequency_plot_panel, "has_plot_content")
@@ -4953,6 +5161,17 @@ class MainWindow(QMainWindow):
         fit_ui_state = state.get("fit_ui_state")
         if fit_ui_state:
             self._fit_panel.restore_ui_state(fit_ui_state)
+
+        frequency_fit_state = state.get("frequency_fit_state")
+        if isinstance(frequency_fit_state, dict) and hasattr(
+            self._fit_panel, "restore_domain_state"
+        ):
+            self._fit_panel.restore_domain_state("frequency", frequency_fit_state)
+            if self._plot_workspace.active_domain() == "frequency":
+                if hasattr(self._fit_panel, "set_domain"):
+                    self._fit_panel.set_domain("frequency")
+                self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
+                self._set_frequency_fit_datasets_for_selection()
 
         fit_parameters_state = state.get("fit_parameters_state")
         if fit_parameters_state:
@@ -5046,8 +5265,11 @@ class MainWindow(QMainWindow):
             self._frequency_plot_panel._frequency_x_unit_combo.setCurrentIndex(0)
         if hasattr(self._frequency_plot_panel, "set_frequency_axis_relative_to_reference"):
             self._frequency_plot_panel.set_frequency_axis_relative_to_reference(False)
-        self._fit_panel.set_dataset(None)
-        self._fit_panel.set_datasets([])
+        if hasattr(self._fit_panel, "clear"):
+            self._fit_panel.clear()
+        else:
+            self._fit_panel.set_dataset(None)
+            self._fit_panel.set_datasets([])
         self._fit_parameters_panel.clear()
         if self._global_parameter_fit_window is not None:
             self._global_parameter_fit_window.close()

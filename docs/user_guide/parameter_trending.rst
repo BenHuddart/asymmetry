@@ -23,6 +23,11 @@ forms — and reports the resulting physical quantities (critical
 temperature, activation energy, gap ratios, dimensionality of motion)
 with uncertainties.
 
+Frequency-domain global fits use the same panel.  Peak centres and widths from
+Fourier spectra appear as ``nu0`` and ``fwhm`` in MHz, with derived field
+equivalents ``B0`` and ``Bwid`` for plotting or fitting spectral shifts and
+broadening directly against field, temperature, or run number.
+
 Typical use cases include locating :math:`T_c` and a critical exponent by
 fitting :math:`\nu(T)` from a ZF series with a ``CriticalDivergence`` form
 (:doc:`workflows/temperature_scan_magnetism`); inverting the TF
