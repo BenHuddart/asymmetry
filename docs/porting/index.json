@@ -66,6 +66,27 @@
       "updated": "2026-05-18"
     },
     {
+      "slug": "frequency-domain-fitting",
+      "feature_name": "Frequency-domain fitting",
+      "status": "study",
+      "path": "docs/porting/frequency-domain-fitting",
+      "references": [
+        "WiMDA",
+        "musrfit",
+        "Mantid"
+      ],
+      "docs": {
+        "readme": "docs/porting/frequency-domain-fitting/README.md",
+        "comparison": "docs/porting/frequency-domain-fitting/comparison.md",
+        "implementation_options": "docs/porting/frequency-domain-fitting/implementation-options.md",
+        "test_data": "docs/porting/frequency-domain-fitting/test-data.md",
+        "verification_plan": "docs/porting/frequency-domain-fitting/verification-plan.md"
+      },
+      "tests_path": null,
+      "src_path": null,
+      "updated": "2026-05-30"
+    },
+    {
       "slug": "minos-error-analysis",
       "feature_name": "MINOS asymmetric error analysis",
       "status": "candidate",

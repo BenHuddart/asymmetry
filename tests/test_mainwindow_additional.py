@@ -16,11 +16,13 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QWidget  # ty
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.fitting import CompositeModel
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ParameterCompositeModel,
     ParameterGroupData,
 )
+from asymmetry.core.project import load_project, save_project
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.styles import tokens
 
@@ -632,6 +634,110 @@ class TestMainWindowFourier:
             restored_window._fourier_panel._phase_table.item(0, 2).foreground().color().name()
             == tokens.OK
         )
+
+    def test_project_round_trip_restores_frequency_fit_state(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8817, with_grouping=True)
+        assert dataset.run is not None
+        source_file = tmp_path / "run_8817.mdu"
+        source_file.write_text("placeholder", encoding="utf-8")
+        dataset.run.source_file = str(source_file)
+        dataset.metadata["source_file"] = str(source_file)
+
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8817)
+        mainwindow._on_compute_fourier()
+
+        mainwindow._fit_panel.set_domain("frequency")
+        mainwindow._fit_panel.set_dataset(mainwindow._active_frequency_fit_dataset())
+        mainwindow._fit_panel.set_datasets(mainwindow._frequency_fit_datasets_for_selected_runs())
+
+        single_model = CompositeModel(["LorentzianPeak", "LinearBackground"], operators=["+"])
+        global_model = CompositeModel(["GaussianPeak", "LinearBackground"], operators=["+"])
+
+        def _find_row(table, param_name: str) -> int:
+            for row in range(table.rowCount()):
+                name_item = table.item(row, 0)
+                if name_item is None:
+                    continue
+                if name_item.data(mw_module.Qt.ItemDataRole.UserRole) == param_name:
+                    return row
+            raise AssertionError(f"Missing parameter row: {param_name}")
+
+        mainwindow._fit_panel._single_tab._set_composite_model(single_model)
+        single_table = mainwindow._fit_panel._single_tab._param_table
+        single_table.item(_find_row(single_table, "height"), 1).setText("4.2")
+        single_table.item(_find_row(single_table, "nu0"), 1).setText("2.75")
+        single_table.item(_find_row(single_table, "fwhm"), 1).setText("0.33")
+        single_table.item(_find_row(single_table, "bg"), 1).setText("0.18")
+        single_table.item(_find_row(single_table, "slope"), 1).setText("0.12")
+        mainwindow._fit_panel._single_tab._result_label.setText("Frequency single result marker")
+
+        mainwindow._fit_panel._global_tab._set_composite_model(global_model)
+        global_table = mainwindow._fit_panel._global_tab._param_table
+        global_table.item(_find_row(global_table, "height"), 1).setText("5.1")
+        global_table.item(_find_row(global_table, "nu0"), 1).setText("2.5")
+        global_table.item(_find_row(global_table, "fwhm"), 1).setText("0.28")
+        global_table.item(_find_row(global_table, "bg"), 1).setText("0.05")
+        global_table.item(_find_row(global_table, "slope"), 1).setText("0.01")
+        nu0_type_combo = global_table.cellWidget(_find_row(global_table, "nu0"), 2)
+        assert nu0_type_combo is not None
+        nu0_type_combo.setCurrentText("Local")
+        slope_type_combo = global_table.cellWidget(_find_row(global_table, "slope"), 2)
+        assert slope_type_combo is not None
+        slope_type_combo.setCurrentText("Global")
+        mainwindow._fit_panel._tabs.setCurrentIndex(1)
+
+        state = mainwindow.collect_project_state()
+        project_path = tmp_path / "frequency_fit_roundtrip.asymp"
+        save_project(state, project_path)
+        loaded_state = load_project(project_path)
+
+        restored_window = MainWindow()
+
+        def _fake_load_file(_path: str) -> MuonDataset:
+            loaded = _make_fourier_ready_dataset(8817, with_grouping=True)
+            assert loaded.run is not None
+            loaded.run.source_file = str(source_file)
+            loaded.metadata["source_file"] = str(source_file)
+            return loaded
+
+        monkeypatch.setattr(restored_window, "_load_file", _fake_load_file)
+
+        restored_window.restore_project_state(loaded_state, str(project_path))
+
+        restored_global_table = restored_window._fit_panel._global_tab._param_table
+        restored_single_table = restored_window._fit_panel._single_tab._param_table
+
+        assert restored_window._plot_workspace.active_domain() == "frequency"
+        assert restored_window._fit_panel.domain() == "frequency"
+        assert (
+            restored_window._fit_panel.single_fit_formula_string() == single_model.formula_string()
+        )
+        assert (
+            restored_window._fit_panel.global_fit_formula_string() == global_model.formula_string()
+        )
+        assert restored_window._fit_panel._tabs.currentIndex() == 1
+        assert (
+            restored_window._fit_panel._single_tab._result_label.text()
+            == "Frequency single result marker"
+        )
+        assert (
+            restored_single_table.item(_find_row(restored_single_table, "slope"), 1).text()
+            == "0.12"
+        )
+        assert (
+            restored_global_table.item(_find_row(restored_global_table, "nu0"), 1).text() == "2.5"
+        )
+        restored_nu0_type_combo = restored_global_table.cellWidget(
+            _find_row(restored_global_table, "nu0"), 2
+        )
+        assert restored_nu0_type_combo is not None
+        assert restored_nu0_type_combo.currentText() == "Local"
 
 
 class TestMainWindowBasic:
