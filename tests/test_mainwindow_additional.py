@@ -16,13 +16,13 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QWidget  # ty
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.gui.styles import tokens
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ParameterCompositeModel,
     ParameterGroupData,
 )
 from asymmetry.gui.mainwindow import MainWindow
+from asymmetry.gui.styles import tokens
 
 
 @pytest.fixture(scope="module")
