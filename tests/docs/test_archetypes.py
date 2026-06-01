@@ -36,6 +36,7 @@ def _hash_dataset(dataset: MuonDataset) -> str:
 # Shape and metadata assertions
 # ---------------------------------------------------------------------------
 
+
 def test_make_ag_zf_gkt_shape() -> None:
     ds = archetypes.make_ag_zf_gkt()
     assert isinstance(ds, MuonDataset)
@@ -144,6 +145,7 @@ def test_make_generic_tf_for_processing_low_statistics() -> None:
 # parameter values change. Failures here indicate that a screenshot will
 # render differently from the baseline — investigate before updating.
 
+
 @pytest.mark.parametrize(
     ("name", "expected_hash"),
     [
@@ -166,9 +168,7 @@ def test_single_dataset_hash_is_stable(name: str, expected_hash: str | None) -> 
     # considered stable. For now we just assert intra-run determinism.
 
 
-@pytest.mark.parametrize(
-    "name", ["make_ag_lf_decoupling", "make_euo_tf_tscan", "make_emu_vector"]
-)
+@pytest.mark.parametrize("name", ["make_ag_lf_decoupling", "make_euo_tf_tscan", "make_emu_vector"])
 def test_multi_dataset_hash_is_stable(name: str) -> None:
     factory = getattr(archetypes, name)
     first = factory()

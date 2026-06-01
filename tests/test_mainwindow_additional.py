@@ -16,13 +16,13 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QWidget  # ty
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.gui.styles import tokens
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ParameterCompositeModel,
     ParameterGroupData,
 )
 from asymmetry.gui.mainwindow import MainWindow
+from asymmetry.gui.styles import tokens
 
 
 @pytest.fixture(scope="module")
@@ -506,7 +506,7 @@ class TestMainWindowFourier:
         assert mainwindow._fourier_panel.group_phase_table() == pytest.approx({1: 3.0, 2: 4.0})
         assert (
             mainwindow._fourier_panel._phase_table.item(0, 2).foreground().color().name()
-            == "#0f62fe"
+            == tokens.ACCENT
         )
 
     def test_frequency_axis_toggle_can_show_relative_values(self, mainwindow: MainWindow) -> None:

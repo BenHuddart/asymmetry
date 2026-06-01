@@ -22,6 +22,7 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.panels.plot_panel import PlotPanel, _FloatLimitField
+from asymmetry.gui.styles import tokens
 
 
 class _FakeAxis:
@@ -1391,7 +1392,7 @@ class TestPlotPanel:
             panel._ax.plot = original_plot
 
         assert plot_calls
-        assert plot_calls[-1].get("color") == "#d73a49"
+        assert plot_calls[-1].get("color") == tokens.PLOT_FIT
 
     def test_plot_multiple_datasets(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test plotting multiple datasets."""

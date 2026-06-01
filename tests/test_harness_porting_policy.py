@@ -87,3 +87,98 @@ def test_porting_policy_requires_index_entry_for_study_dir(tmp_path: Path) -> No
 
     assert len(failures) == 1
     assert failures[0].path == study_dir
+
+
+def _write_candidate_dir(candidates_root: Path, slug: str) -> Path:
+    candidate_dir = candidates_root / slug
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    for filename in ("README.md", "comparison.md", "scoring.md"):
+        (candidate_dir / filename).write_text(f"# {filename}\n", encoding="utf-8")
+    return candidate_dir
+
+
+def _candidate_index_entry(slug: str) -> str:
+    return f"""{{
+      "slug": "{slug}",
+      "feature_name": "Feature {slug}",
+      "status": "candidate",
+      "tier": "now",
+      "score": 10,
+      "path": "docs/porting/candidates/{slug}",
+      "references": ["WiMDA"],
+      "docs": {{
+        "readme": "docs/porting/candidates/{slug}/README.md",
+        "comparison": "docs/porting/candidates/{slug}/comparison.md",
+        "scoring": "docs/porting/candidates/{slug}/scoring.md"
+      }},
+      "updated": "2026-01-01"
+    }}"""
+
+
+def test_porting_policy_accepts_valid_candidate(tmp_path: Path) -> None:
+    porting_root = _write_porting_root(tmp_path)
+    _write_candidate_dir(porting_root / "candidates", "my-feature")
+    (porting_root / "index.json").write_text(
+        '{"version": 1, "studies": [' + _candidate_index_entry("my-feature") + "]}\n",
+        encoding="utf-8",
+    )
+
+    failures = find_porting_policy_violations(tmp_path)
+
+    assert failures == []
+
+
+def test_porting_policy_flags_candidate_missing_scoring(tmp_path: Path) -> None:
+    porting_root = _write_porting_root(tmp_path)
+    candidate_dir = _write_candidate_dir(porting_root / "candidates", "my-feature")
+    (candidate_dir / "scoring.md").unlink()
+    (porting_root / "index.json").write_text(
+        '{"version": 1, "studies": [' + _candidate_index_entry("my-feature") + "]}\n",
+        encoding="utf-8",
+    )
+
+    failures = find_porting_policy_violations(tmp_path)
+
+    assert len(failures) == 1
+    assert failures[0].path == candidate_dir / "scoring.md"
+
+
+def test_porting_policy_flags_candidate_dir_not_in_index(tmp_path: Path) -> None:
+    porting_root = _write_porting_root(tmp_path)
+    _write_candidate_dir(porting_root / "candidates", "my-feature")
+    (porting_root / "index.json").write_text(
+        '{"version": 1, "studies": []}\n',
+        encoding="utf-8",
+    )
+
+    failures = find_porting_policy_violations(tmp_path)
+
+    assert len(failures) == 1
+    assert failures[0].path == porting_root / "candidates" / "my-feature"
+
+
+def test_porting_policy_flags_indexed_candidate_missing_directory(tmp_path: Path) -> None:
+    porting_root = _write_porting_root(tmp_path)
+    (porting_root / "index.json").write_text(
+        '{"version": 1, "studies": [' + _candidate_index_entry("my-feature") + "]}\n",
+        encoding="utf-8",
+    )
+
+    failures = find_porting_policy_violations(tmp_path)
+
+    assert len(failures) == 1
+    assert "my-feature" in failures[0].message
+
+
+def test_porting_policy_ignores_non_study_dirs(tmp_path: Path) -> None:
+    porting_root = _write_porting_root(tmp_path)
+    (porting_root / "practical-workflows").mkdir()
+    (porting_root / "reference").mkdir()
+    (porting_root / "index.json").write_text(
+        '{"version": 1, "studies": []}\n',
+        encoding="utf-8",
+    )
+
+    failures = find_porting_policy_violations(tmp_path)
+
+    assert failures == []
