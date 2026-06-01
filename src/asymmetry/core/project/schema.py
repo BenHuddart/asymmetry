@@ -11,7 +11,7 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 4)
+Current schema (version 5)
 --------------------------
 ::
 
@@ -87,6 +87,12 @@ Current schema (version 4)
             "estimate_average_error": false,
             "group_enabled_table": {},
             "group_phase_table": {}
+        },
+        "frequency_fit_state": {
+            "domain": "frequency",
+            "single_fit_state": {},
+            "global_fit_state": {},
+            "fit_ui_state": {}
         }
     }
 """
@@ -96,9 +102,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 4
+CURRENT_SCHEMA_VERSION: int = 5
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5})
 
 
 class UnsupportedSchemaVersion(ValueError):
@@ -142,6 +148,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 3
     if version == 3:
         migrated = _migrate_v3_to_v4(migrated)
+        version = 4
+    if version == 4:
+        migrated = _migrate_v4_to_v5(migrated)
     return migrated
 
 
@@ -200,6 +209,26 @@ def _migrate_v3_to_v4(data: dict) -> dict:
         updated_datasets.append(ds)
 
     migrated["datasets"] = updated_datasets
+    return migrated
+
+
+def _migrate_v4_to_v5(data: dict) -> dict:
+    """Migrate schema v4 project state to v5.
+
+    v5 adds a separate frequency-domain fit state namespace so spectral fits do
+    not overwrite time-domain single/global fit settings.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 5
+    migrated.setdefault(
+        "frequency_fit_state",
+        {
+            "domain": "frequency",
+            "single_fit_state": {},
+            "global_fit_state": {},
+            "fit_ui_state": {},
+        },
+    )
     return migrated
 
 

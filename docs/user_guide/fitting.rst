@@ -216,6 +216,11 @@ datasets, mark parameters as **Global** in the parameter table, and click
 they can be browsed, exported to CSV, or passed into the parameter-
 trending fit framework documented in :doc:`parameter_trending`.
 
+The same engine is also used in the Frequency workspace for displayed Fourier
+spectra.  In that mode the Fit dock switches labels from ``A(t)`` to
+``S(ν)``, uses MHz fit ranges, and offers peak/background components documented
+in :doc:`frequency_domain_fitting`.
+
 The :doc:`global_fit_wizard` automates model selection on ordered field or
 temperature series; use that wizard before constructing a hand-built
 global fit if you do not yet know which composite model the data prefer.

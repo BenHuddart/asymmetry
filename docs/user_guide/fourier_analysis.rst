@@ -254,6 +254,17 @@ WiMDA-first FFT workflow directly:
 * for averaged grouped spectra, optionally estimate WiMDA-style error bars from
   the spread across the selected group spectra
 
+Fitting The Displayed Spectrum
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Once a Fourier spectrum has been computed, the **Frequency** workspace can be
+fit through the same **Fit** dock used for time-domain analysis.  The fit target
+is the displayed real-valued spectrum.  V1 provides Gaussian and Lorentzian peak
+components with constant or linear backgrounds; successful global frequency
+fits send ``nu0`` and ``fwhm`` values, plus derived ``B0`` and ``Bwid`` field
+equivalents, to the **Parameters** dock for trend analysis.  See
+:doc:`frequency_domain_fitting` for the full workflow.
+
 Phase Estimation Workflow
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 

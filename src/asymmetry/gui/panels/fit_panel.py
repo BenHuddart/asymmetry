@@ -69,6 +69,11 @@ from asymmetry.core.fitting.parameters import (
     get_param_info,
     split_parameter_name,
 )
+from asymmetry.core.fitting.spectral import (
+    append_frequency_field_derived_parameters,
+    default_frequency_model,
+    seed_peak_parameters_from_dataset,
+)
 from asymmetry.core.fourier.fft import estimate_fft_phase, fft_complex_asymmetry
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
@@ -778,6 +783,7 @@ class SingleFitTab(QWidget):
         self._fit_blocked = False
         self._fit_block_reason = ""
         self._fit_engine = FitEngine()
+        self._domain = "time"
         self._composite_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
         self._fit_wizard_window: FitWizardWindow | None = None
         self._cached_wizard_recommendation: FitWizardRecommendation | None = None
@@ -812,7 +818,8 @@ class SingleFitTab(QWidget):
         model_button_layout.setColumnStretch(0, 1)
         model_button_layout.setColumnStretch(1, 1)
 
-        model_layout.addRow("A(t):", self._formula_label)
+        self._formula_row_label = QLabel("A(t):")
+        model_layout.addRow(self._formula_row_label, self._formula_label)
         model_layout.addRow("", model_button_layout)
         layout.addWidget(model_group)
 
@@ -829,8 +836,8 @@ class SingleFitTab(QWidget):
         self._fit_range_min_spin.setMinimumWidth(90)
         self._fit_range_min_spin.setFont(mono_font(11.0))
 
-        _t_label = QLabel("≤ <i>t</i> ≤")
-        _t_label.setTextFormat(Qt.TextFormat.RichText)
+        self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
+        self._fit_range_mid_label.setTextFormat(Qt.TextFormat.RichText)
 
         self._fit_range_max_spin = QDoubleSpinBox()
         self._fit_range_max_spin.setDecimals(3)
@@ -839,12 +846,12 @@ class SingleFitTab(QWidget):
         self._fit_range_max_spin.setMinimumWidth(90)
         self._fit_range_max_spin.setFont(mono_font(11.0))
 
-        _us_label = QLabel("μs")
+        self._fit_range_unit_label = QLabel("μs")
 
         fit_range_layout.addWidget(self._fit_range_min_spin)
-        fit_range_layout.addWidget(_t_label)
+        fit_range_layout.addWidget(self._fit_range_mid_label)
         fit_range_layout.addWidget(self._fit_range_max_spin)
-        fit_range_layout.addWidget(_us_label)
+        fit_range_layout.addWidget(self._fit_range_unit_label)
         fit_range_layout.addStretch()
         layout.addWidget(fit_range_group)
 
@@ -900,14 +907,50 @@ class SingleFitTab(QWidget):
 
         self._set_composite_model(self._composite_model)
 
+    def domain(self) -> str:
+        """Return the current fitting domain."""
+        return self._domain
+
+    def set_domain(self, domain: str) -> None:
+        """Switch labels and default model for time or frequency fitting."""
+        normalized = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        if normalized == self._domain:
+            return
+        self._domain = normalized
+        if self._domain == "frequency":
+            self._fit_wizard_btn.setEnabled(False)
+            self._fit_wizard_btn.setToolTip(
+                "Fit Wizard is currently available for time-domain fits."
+            )
+            self._share_group_btn.setEnabled(False)
+            self._formula_row_label.setText("S(ν):")
+            self._fit_range_mid_label.setText("≤ <i>ν</i> ≤")
+            self._fit_range_unit_label.setText("MHz")
+            self._fit_range_min_spin.setDecimals(4)
+            self._fit_range_max_spin.setDecimals(4)
+            self._fit_range_min_spin.setRange(-1_000_000.0, 1_000_000.0)
+            self._fit_range_max_spin.setRange(-1_000_000.0, 1_000_000.0)
+            self._set_composite_model(default_frequency_model())
+        else:
+            self._fit_wizard_btn.setToolTip("")
+            self._formula_row_label.setText("A(t):")
+            self._fit_range_mid_label.setText("≤ <i>t</i> ≤")
+            self._fit_range_unit_label.setText("μs")
+            self._fit_range_min_spin.setDecimals(3)
+            self._fit_range_max_spin.setDecimals(3)
+            self._fit_range_min_spin.setRange(-1000.0, 1000.0)
+            self._fit_range_max_spin.setRange(-1000.0, 1000.0)
+            self._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
+        self.set_dataset(self._current_dataset)
+
     def set_dataset(self, dataset: MuonDataset | None) -> None:
         """Set the current dataset to fit."""
         self._current_dataset = dataset
         enabled = dataset is not None and (not self._fit_blocked)
         self._fit_btn.setEnabled(enabled)
         self._preview_btn.setEnabled(enabled)
-        self._fit_wizard_btn.setEnabled(enabled)
-        self._share_group_btn.setEnabled(dataset is not None)
+        self._fit_wizard_btn.setEnabled(enabled and self._domain == "time")
+        self._share_group_btn.setEnabled(dataset is not None and self._domain == "time")
 
     def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
         """Enable/disable single-fit actions while preserving the active dataset."""
@@ -916,7 +959,7 @@ class SingleFitTab(QWidget):
         enabled = self._current_dataset is not None and (not self._fit_blocked)
         self._fit_btn.setEnabled(enabled)
         self._preview_btn.setEnabled(enabled)
-        self._fit_wizard_btn.setEnabled(enabled)
+        self._fit_wizard_btn.setEnabled(enabled and self._domain == "time")
         tooltip = self._fit_block_reason if self._fit_blocked else ""
         self._fit_btn.setToolTip(tooltip)
         self._preview_btn.setToolTip(tooltip)
@@ -1009,6 +1052,11 @@ class SingleFitTab(QWidget):
             else 0.0
         )
         field_overrides = _field_value_overrides(model, dataset_field)
+        frequency_overrides = (
+            seed_peak_parameters_from_dataset(self._current_dataset, model)
+            if self._domain == "frequency" and self._current_dataset is not None
+            else {}
+        )
 
         self._param_table.setRowCount(len(model.param_names))
         for i, pname in enumerate(model.param_names):
@@ -1017,7 +1065,9 @@ class SingleFitTab(QWidget):
             self._param_table.setItem(i, 0, name_item)
 
             # Value column — use dataset field for 'field' parameters if available
-            default_val = field_overrides.get(pname, model.param_defaults.get(pname, 0.0))
+            default_val = frequency_overrides.get(
+                pname, field_overrides.get(pname, model.param_defaults.get(pname, 0.0))
+            )
             value_item = QTableWidgetItem(str(default_val))
             value_item.setFont(mono_font(11.0))
             self._param_table.setItem(i, 1, value_item)
@@ -1086,6 +1136,13 @@ class SingleFitTab(QWidget):
         if self._current_dataset is None:
             QMessageBox.information(
                 self, "Fit Wizard", "Select a dataset before opening the fit wizard."
+            )
+            return
+        if self._domain == "frequency":
+            QMessageBox.information(
+                self,
+                "Fit Wizard",
+                "Fit Wizard is currently available for time-domain fits.",
             )
             return
         if self._fit_blocked:
@@ -1593,6 +1650,7 @@ class GlobalFitTab(QWidget):
         )
 
         self._fit_engine = FitEngine()
+        self._domain = "time"
         self._datasets = []  # Will be set by parent
         self._current_dataset: MuonDataset | None = None
         self._fit_blocked = False
@@ -1645,7 +1703,8 @@ class GlobalFitTab(QWidget):
         model_button_layout.setColumnStretch(1, 1)
         if len(self._allowed_modes) > 1:
             model_layout.addRow("Scope:", self._mode_combo)
-        model_layout.addRow("A(t):", self._formula_label)
+        self._formula_row_label = QLabel("A(t):")
+        model_layout.addRow(self._formula_row_label, self._formula_label)
         model_layout.addRow("", model_button_layout)
         layout.addWidget(model_group)
 
@@ -1662,8 +1721,8 @@ class GlobalFitTab(QWidget):
         self._fit_range_min_spin.setMinimumWidth(90)
         self._fit_range_min_spin.setFont(mono_font(11.0))
 
-        _t_label = QLabel("≤ <i>t</i> ≤")
-        _t_label.setTextFormat(Qt.TextFormat.RichText)
+        self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
+        self._fit_range_mid_label.setTextFormat(Qt.TextFormat.RichText)
 
         self._fit_range_max_spin = QDoubleSpinBox()
         self._fit_range_max_spin.setDecimals(3)
@@ -1673,9 +1732,10 @@ class GlobalFitTab(QWidget):
         self._fit_range_max_spin.setFont(mono_font(11.0))
 
         _fr_layout.addWidget(self._fit_range_min_spin)
-        _fr_layout.addWidget(_t_label)
+        _fr_layout.addWidget(self._fit_range_mid_label)
         _fr_layout.addWidget(self._fit_range_max_spin)
-        _fr_layout.addWidget(QLabel("μs"))
+        self._fit_range_unit_label = QLabel("μs")
+        _fr_layout.addWidget(self._fit_range_unit_label)
         _fr_layout.addStretch()
         layout.addWidget(_fr_group)
 
@@ -1782,9 +1842,45 @@ class GlobalFitTab(QWidget):
 
     def _default_composite_model(self) -> CompositeModel:
         """Return the initial composite model for the allowed fitting modes."""
+        if self._domain == "frequency":
+            return default_frequency_model()
         if self._allowed_modes == ("grouped",):
             return CompositeModel(["OscillatoryField"])
         return CompositeModel(["Exponential", "Constant"], operators=["+"])
+
+    def domain(self) -> str:
+        """Return the current fitting domain."""
+        return self._domain
+
+    def set_domain(self, domain: str) -> None:
+        """Switch labels and default model for time or frequency global fitting."""
+        normalized = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        if normalized == self._domain:
+            return
+        self._domain = normalized
+        if self._domain == "frequency":
+            self._formula_row_label.setText("S(ν):")
+            self._fit_range_mid_label.setText("≤ <i>ν</i> ≤")
+            self._fit_range_unit_label.setText("MHz")
+            self._fit_range_min_spin.setDecimals(4)
+            self._fit_range_max_spin.setDecimals(4)
+            self._fit_range_min_spin.setRange(-1_000_000.0, 1_000_000.0)
+            self._fit_range_max_spin.setRange(-1_000_000.0, 1_000_000.0)
+            self._fit_wizard_btn.setEnabled(False)
+            self._fit_wizard_btn.setToolTip(
+                "Global Fit Wizard is currently available for time-domain fits."
+            )
+        else:
+            self._formula_row_label.setText("A(t):")
+            self._fit_range_mid_label.setText("≤ <i>t</i> ≤")
+            self._fit_range_unit_label.setText("μs")
+            self._fit_range_min_spin.setDecimals(3)
+            self._fit_range_max_spin.setDecimals(3)
+            self._fit_range_min_spin.setRange(-1000.0, 1000.0)
+            self._fit_range_max_spin.setRange(-1000.0, 1000.0)
+            self._fit_wizard_btn.setToolTip("")
+        self._set_composite_model(self._default_composite_model())
+        self._update_mode_ui(preserve_result=False)
 
     def _show_parameter_classification_help(self) -> None:
         QMessageBox.information(
@@ -1846,6 +1942,24 @@ class GlobalFitTab(QWidget):
         self._invalidate_wizard_cache_if_stale()
         self._update_mode_ui(preserve_result=False)
         self._refresh_inherited_single_fit_defaults()
+
+    def set_frequency_missing_spectra_status(
+        self, missing_run_numbers: list[int], cached_count: int
+    ) -> None:
+        """Show an actionable status for selected runs without cached spectra."""
+        if self._domain != "frequency" or not missing_run_numbers:
+            return
+        preview = ", ".join(str(run_number) for run_number in missing_run_numbers[:8])
+        if len(missing_run_numbers) > 8:
+            preview += f", +{len(missing_run_numbers) - 8} more"
+        prefix = (
+            f"{cached_count} cached frequency spectra selected.\n"
+            if cached_count > 0
+            else "No cached frequency spectra selected.\n"
+        )
+        self._result_text.setText(
+            f"{prefix}Compute a Fourier spectrum for run(s) {preview} before global frequency fitting."
+        )
 
     def set_current_dataset(self, dataset: MuonDataset | None) -> None:
         """Set the active dataset used by grouped time-domain mode."""
@@ -2283,6 +2397,14 @@ class GlobalFitTab(QWidget):
         ]
         mean_field = float(np.mean(dataset_fields)) if dataset_fields else 0.0
         field_overrides = _field_value_overrides(model, mean_field)
+        frequency_seed_values: dict[str, list[float]] = {}
+        if self._domain == "frequency":
+            for dataset in self._datasets:
+                for key, value in seed_peak_parameters_from_dataset(dataset, model).items():
+                    frequency_seed_values.setdefault(key, []).append(float(value))
+        frequency_overrides = {
+            key: float(np.mean(values)) for key, values in frequency_seed_values.items() if values
+        }
         self._applied_field_default_gauss = mean_field
 
         self._param_table.setRowCount(len(model.param_names))
@@ -2293,7 +2415,9 @@ class GlobalFitTab(QWidget):
             self._param_table.setItem(i, 0, name_item)
 
             # Initial value — use dataset field for 'field' parameters if available
-            default_val = field_overrides.get(pname, model.param_defaults.get(pname, 0.0))
+            default_val = frequency_overrides.get(
+                pname, field_overrides.get(pname, model.param_defaults.get(pname, 0.0))
+            )
             value_item = QTableWidgetItem(previous.get("value") or str(default_val))
             self._param_table.setItem(i, 1, value_item)
 
@@ -2392,6 +2516,11 @@ class GlobalFitTab(QWidget):
             self._result_text.setText(
                 "Grouped time-domain mode uses its own parameter blocks. "
                 "The Global Fit Wizard is unavailable in this mode."
+            )
+            return
+        if self._domain == "frequency":
+            self._result_text.setText(
+                "Global Fit Wizard is currently available for time-domain fits."
             )
             return
         if self._fit_blocked:
@@ -2994,9 +3123,38 @@ class GlobalFitTab(QWidget):
             fitted_global=fitted_global,
             global_param_names=global_param_names,
         )
+        emitted_results = results_dict
+        emitted_global = fitted_global
+        if self._domain == "frequency":
+            emitted_results = {}
+            for run_number, result in results_dict.items():
+                params, uncertainties = append_frequency_field_derived_parameters(
+                    result.parameters,
+                    result.uncertainties,
+                )
+                emitted_results[run_number] = FitResult(
+                    success=result.success,
+                    chi_squared=result.chi_squared,
+                    reduced_chi_squared=result.reduced_chi_squared,
+                    parameters=params,
+                    uncertainties=uncertainties,
+                    covariance=result.covariance,
+                    covariance_parameters=list(result.covariance_parameters),
+                    residuals=result.residuals,
+                    message=result.message,
+                    function_calls=result.function_calls,
+                    gradient_calls=result.gradient_calls,
+                    hessian_calls=result.hessian_calls,
+                    edm=result.edm,
+                    covariance_accurate=result.covariance_accurate,
+                )
+            emitted_global, _global_unc = append_frequency_field_derived_parameters(
+                fitted_global,
+                {},
+            )
         self.global_fit_completed.emit(
-            self._results_with_curves(model, results_dict),
-            fitted_global,
+            self._results_with_curves(model, emitted_results),
+            emitted_global,
         )
 
     def _apply_fit_wizard_assessment(
@@ -3527,8 +3685,14 @@ class GlobalFitTab(QWidget):
         self._fit_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
         self._preview_btn.setEnabled(False)
         self._preview_btn.setToolTip("Preview is available only in grouped time-domain mode.")
-        self._fit_wizard_btn.setEnabled((n > 1) and (not self._fit_blocked))
-        self._fit_wizard_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
+        wizard_enabled = (n > 1) and (not self._fit_blocked) and self._domain == "time"
+        self._fit_wizard_btn.setEnabled(wizard_enabled)
+        if self._domain == "frequency":
+            self._fit_wizard_btn.setToolTip(
+                "Global Fit Wizard is currently available for time-domain fits."
+            )
+        else:
+            self._fit_wizard_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
         if preserve_result:
             return
         if n == 0:
@@ -3540,8 +3704,9 @@ class GlobalFitTab(QWidget):
                 "Global fitting requires at least 2 datasets.\nCurrently have 1 selected dataset."
             )
         else:
+            domain_label = "frequency spectra" if self._domain == "frequency" else "datasets"
             self._result_text.setText(
-                f"{n} datasets selected. Configure parameters and click Run Global Fit."
+                f"{n} {domain_label} selected. Configure parameters and click Run Global Fit."
             )
 
     def _grouped_mode_context(
@@ -4127,6 +4292,10 @@ class FitPanel(QWidget):
         self._single_state_by_run: dict[int, dict] = {}
         self._active_single_run_number: int | None = None
         self._all_datasets: list[MuonDataset] = []  # Track all datasets for group sharing
+        self._domain = "time"
+        self._single_state_by_domain: dict[str, dict] = {}
+        self._global_state_by_domain: dict[str, dict] = {}
+        self._ui_state_by_domain: dict[str, dict] = {}
 
         # Create tab widget
         self._tabs = QTabWidget()
@@ -4150,6 +4319,52 @@ class FitPanel(QWidget):
         self._tabs.addTab(self._global_tab, "Global")
 
         layout.addWidget(self._tabs)
+
+    def domain(self) -> str:
+        """Return the current fitting domain."""
+        return self._domain
+
+    def set_domain(self, domain: str) -> None:
+        """Switch the fit panel between time- and frequency-domain workflows."""
+        normalized = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        if normalized == self._domain:
+            self._single_tab.set_domain(normalized)
+            self._global_tab.set_domain(normalized)
+            return
+
+        old_domain = self._domain
+        self._single_state_by_domain[old_domain] = self.get_single_state()
+        self._global_state_by_domain[old_domain] = self.get_global_state()
+        self._ui_state_by_domain[old_domain] = self.get_ui_state()
+
+        self._domain = normalized
+        self._single_state_by_run = {}
+        self._active_single_run_number = None
+        self._single_tab.set_domain(normalized)
+        self._global_tab.set_domain(normalized)
+
+        if normalized in self._single_state_by_domain:
+            self.restore_single_state(self._single_state_by_domain[normalized])
+        if normalized in self._global_state_by_domain:
+            self.restore_global_state(self._global_state_by_domain[normalized])
+        if normalized in self._ui_state_by_domain:
+            self.restore_ui_state(self._ui_state_by_domain[normalized])
+
+    def clear(self) -> None:
+        """Reset all fit-panel domain state."""
+        self._single_state_by_domain = {}
+        self._global_state_by_domain = {}
+        self._ui_state_by_domain = {}
+        self._single_state_by_run = {}
+        self._active_single_run_number = None
+        self._all_datasets = []
+        self._domain = "time"
+        self._single_tab.set_domain("time")
+        self._global_tab.set_domain("time")
+        self._single_tab.set_dataset(None)
+        self._global_tab.set_datasets([])
+        self._global_tab.set_current_dataset(None)
+        self._tabs.setCurrentIndex(0)
 
     def _on_single_fit_completed(self, fit_result, fitted_curve, component_curves) -> None:
         """Forward single-fit completion and cache seeds for global fitting."""
@@ -4191,15 +4406,24 @@ class FitPanel(QWidget):
             self._single_tab.restore_state(self._single_state_by_run[run_number])
         else:
             # Unseen datasets should not inherit another run's fit UI/result state.
-            self._single_tab._set_composite_model(
-                CompositeModel(["Exponential", "Constant"], operators=["+"])
+            default_model = (
+                default_frequency_model()
+                if self._domain == "frequency"
+                else CompositeModel(["Exponential", "Constant"], operators=["+"])
             )
+            self._single_tab._set_composite_model(default_model)
             self._single_tab._result_label.setText("No fit performed yet")
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting tab and track for group sharing."""
         self._all_datasets = datasets
         self._global_tab.set_datasets(datasets)
+
+    def set_frequency_missing_spectra_status(
+        self, missing_run_numbers: list[int], cached_count: int
+    ) -> None:
+        """Show frequency-domain global fit status for selected uncached runs."""
+        self._global_tab.set_frequency_missing_spectra_status(missing_run_numbers, cached_count)
 
     def is_grouped_time_domain_mode(self) -> bool:
         """Return whether the global tab is in grouped time-domain mode."""
@@ -4540,6 +4764,36 @@ class FitPanel(QWidget):
         combined_state["states_by_run"] = states_by_run
         combined_state["active_run_number"] = self._active_single_run_number
         return combined_state
+
+    def get_domain_state(self, domain: str) -> dict:
+        """Return serialisable fit state for one fitting domain."""
+        normalized = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        if normalized == self._domain:
+            return {
+                "domain": normalized,
+                "single_fit_state": self.get_single_state(),
+                "global_fit_state": self.get_global_state(),
+                "fit_ui_state": self.get_ui_state(),
+            }
+        return {
+            "domain": normalized,
+            "single_fit_state": copy.deepcopy(self._single_state_by_domain.get(normalized, {})),
+            "global_fit_state": copy.deepcopy(self._global_state_by_domain.get(normalized, {})),
+            "fit_ui_state": copy.deepcopy(self._ui_state_by_domain.get(normalized, {})),
+        }
+
+    def restore_domain_state(self, domain: str, state: dict | None) -> None:
+        """Restore serialisable fit state for one fitting domain."""
+        normalized = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        if not isinstance(state, dict):
+            state = {}
+        self._single_state_by_domain[normalized] = copy.deepcopy(state.get("single_fit_state", {}))
+        self._global_state_by_domain[normalized] = copy.deepcopy(state.get("global_fit_state", {}))
+        self._ui_state_by_domain[normalized] = copy.deepcopy(state.get("fit_ui_state", {}))
+        if normalized == self._domain:
+            self.restore_single_state(self._single_state_by_domain[normalized])
+            self.restore_global_state(self._global_state_by_domain[normalized])
+            self.restore_ui_state(self._ui_state_by_domain[normalized])
 
     def restore_single_state(self, state: dict) -> None:
         """Restore single-fit tab state from a saved dict."""

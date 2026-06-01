@@ -69,7 +69,8 @@ docs/
 │   ├── composite_models.rst
 │   ├── parameter_trending.rst
 │   ├── project_files.rst
-│   └── fourier_analysis.rst
+│   ├── fourier_analysis.rst
+│   └── frequency_domain_fitting.rst
 ├── api/                  # API reference (auto-generated)
 │   ├── index.rst
 │   ├── core.rst

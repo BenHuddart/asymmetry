@@ -99,6 +99,38 @@ def _constant_component(t: NDArray, A_bg: float) -> NDArray[np.float64]:
     return np.full_like(np.asarray(t, dtype=float), fill_value=A_bg, dtype=float)
 
 
+def _gaussian_peak_component(
+    t: NDArray,
+    height: float,
+    nu0: float,
+    fwhm: float,
+) -> NDArray[np.float64]:
+    x = np.asarray(t, dtype=float)
+    width = max(abs(float(fwhm)), 1e-12)
+    exponent = -4.0 * np.log(2.0) * ((x - float(nu0)) / width) ** 2
+    return float(height) * np.exp(exponent)
+
+
+def _lorentzian_peak_component(
+    t: NDArray,
+    height: float,
+    nu0: float,
+    fwhm: float,
+) -> NDArray[np.float64]:
+    x = np.asarray(t, dtype=float)
+    width = max(abs(float(fwhm)), 1e-12)
+    return float(height) / (1.0 + 4.0 * ((x - float(nu0)) / width) ** 2)
+
+
+def _constant_background_component(t: NDArray, bg: float) -> NDArray[np.float64]:
+    return np.full_like(np.asarray(t, dtype=float), fill_value=float(bg), dtype=float)
+
+
+def _linear_background_component(t: NDArray, bg: float, slope: float) -> NDArray[np.float64]:
+    x = np.asarray(t, dtype=float)
+    return float(bg) + float(slope) * x
+
+
 def _muf_component(t: NDArray, A: float, r_muF: float) -> NDArray[np.float64]:
     return A * mu_f_polarization(t, r_muF)
 
@@ -263,6 +295,58 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_info={"A_bg": get_param_info("A_bg")},
         formula_template="{A_bg}",
         latex_equation=r"A(t) = A_{bg}",
+    ),
+    "GaussianPeak": ComponentDefinition(
+        name="GaussianPeak",
+        description="Frequency-domain Gaussian peak",
+        function=_gaussian_peak_component,
+        param_names=["height", "nu0", "fwhm"],
+        param_defaults={"height": 1.0, "nu0": 1.0, "fwhm": 0.1},
+        param_info={
+            "height": get_param_info("height"),
+            "nu0": get_param_info("nu0"),
+            "fwhm": get_param_info("fwhm"),
+        },
+        formula_template="{height}*exp(-4*ln(2)*((nu-{nu0})/{fwhm})^2)",
+        latex_equation=r"S(\nu)=h\exp\left[-4\ln2\left((\nu-\nu_0)/w\right)^2\right]",
+        category="Frequency Domain",
+    ),
+    "LorentzianPeak": ComponentDefinition(
+        name="LorentzianPeak",
+        description="Frequency-domain Lorentzian peak",
+        function=_lorentzian_peak_component,
+        param_names=["height", "nu0", "fwhm"],
+        param_defaults={"height": 1.0, "nu0": 1.0, "fwhm": 0.1},
+        param_info={
+            "height": get_param_info("height"),
+            "nu0": get_param_info("nu0"),
+            "fwhm": get_param_info("fwhm"),
+        },
+        formula_template="{height}/(1+4*((nu-{nu0})/{fwhm})^2)",
+        latex_equation=r"S(\nu)=h/[1+4((\nu-\nu_0)/w)^2]",
+        category="Frequency Domain",
+    ),
+    "ConstantBackground": ComponentDefinition(
+        name="ConstantBackground",
+        description="Frequency-domain constant background",
+        function=_constant_background_component,
+        param_names=["bg"],
+        param_defaults={"bg": 0.0},
+        param_info={"bg": get_param_info("bg")},
+        formula_template="{bg}",
+        latex_equation=r"S(\nu)=b_g",
+        category="Frequency Domain",
+    ),
+    "LinearBackground": ComponentDefinition(
+        name="LinearBackground",
+        description="Frequency-domain linear background",
+        function=_linear_background_component,
+        param_names=["bg", "slope"],
+        param_defaults={"bg": 0.0, "slope": 0.0},
+        param_info={"bg": get_param_info("bg"), "slope": get_param_info("slope")},
+        formula_template="{bg}+{slope}*nu",
+        latex_equation=r"S(\nu)=b_g+m\nu",
+        category="Frequency Domain",
     ),
 }
 

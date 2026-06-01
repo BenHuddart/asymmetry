@@ -24,6 +24,10 @@ and physical descriptions for every fit parameter are sourced from the
 is canonical: GUI labels, GLE export labels, and the autodoc parameter
 tables all derive from it.
 
+Frequency-domain peak fitting reuses the same engine and composite-model path.
+The spectral helper module supplies the default Fourier-spectrum peak model,
+MHz/G conversion, and derived field parameters for trend tables.
+
 Fit Engine
 ----------
 
@@ -127,6 +131,13 @@ Parameter Trend Models
 
    The available parameter-trend component registry is exposed as
    ``asymmetry.core.fitting.parameter_models.PARAMETER_MODEL_COMPONENTS``.
+
+Frequency-Domain Helpers
+------------------------
+
+.. automodule:: asymmetry.core.fitting.spectral
+   :members:
+   :undoc-members:
 
 Superconductivity Models
 ------------------------

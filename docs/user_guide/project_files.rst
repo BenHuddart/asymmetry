@@ -5,7 +5,8 @@ The ``.asymp`` project file persists the analysis state of a session:
 which datasets are loaded, how the Data Browser is sorted and filtered,
 the per-run grouping (groups, alpha, bunching, deadtime, background),
 the single- and global-fit model setups with their parameter tables and
-bounds, the most recent fit overlays, the Fourier panel state including
+bounds, separate frequency-domain fit state with spectral peak models,
+the most recent fit overlays, the Fourier panel state including
 per-run phase tables, and any cached Fit Wizard or Global Fit Wizard
 analyses. Raw detector arrays are *not* embedded — the file references
 source data by path and reloads from disk on open. This makes ``.asymp``
@@ -32,6 +33,7 @@ Project files store:
 * Browser state (sorting, filters, selected runs, dynamic columns)
 * Plot state (ranges, selected run, bunch factor)
 * Fit-panel and Fourier-panel state
+* Separate frequency-fit state for displayed Fourier spectra
 * Per-run Fourier group-phase tables, included groups, and auto-estimated
   phase markers
 * Cached single-fit and global-fit wizard analysis payloads when present
