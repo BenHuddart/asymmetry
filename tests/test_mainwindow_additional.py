@@ -506,7 +506,7 @@ class TestMainWindowFourier:
         assert mainwindow._fourier_panel.group_phase_table() == pytest.approx({1: 3.0, 2: 4.0})
         assert (
             mainwindow._fourier_panel._phase_table.item(0, 2).foreground().color().name()
-            == "#0f62fe"
+            == tokens.ACCENT
         )
 
     def test_frequency_axis_toggle_can_show_relative_values(self, mainwindow: MainWindow) -> None:
