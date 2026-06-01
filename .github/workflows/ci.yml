@@ -1,12 +1,13 @@
 name: CI
 
 on:
+  # Run on PRs (covers every feature/topic branch), and on pushes to main
+  # (post-merge validation). Avoids the duplicate run that occurred when both
+  # push:"**" and pull_request:"**" fired for the same PR branch.
   push:
     branches:
-      - "**"
+      - main
   pull_request:
-    branches:
-      - "**"
   workflow_dispatch:
 
 permissions:
