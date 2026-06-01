@@ -12,6 +12,8 @@ on:
 
 permissions:
   contents: read
+  # dorny/paths-filter lists changed files via the PR API on pull_request events.
+  pull-requests: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -101,17 +103,26 @@ jobs:
   ci-success:
     name: CI success
     if: always()
-    needs: [checks, test]
+    needs: [changes, checks, test]
     runs-on: ubuntu-latest
     steps:
       - name: Verify required jobs
         run: |
-          echo "checks: ${{ needs.checks.result }}"
-          echo "test:   ${{ needs.test.result }}"
+          echo "changes: ${{ needs.changes.result }}"
+          echo "checks:  ${{ needs.checks.result }}"
+          echo "test:    ${{ needs.test.result }}"
+          # changes must succeed, otherwise 'test' may have been skipped due to an
+          # infrastructure failure rather than a legitimate no-code-change PR.
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error::Change detection failed"
+            exit 1
+          fi
           if [ "${{ needs.checks.result }}" != "success" ]; then
             echo "::error::Lint & structural checks failed"
             exit 1
           fi
+          # 'skipped' is only legitimate here because change detection succeeded
+          # and reported no code changes.
           if [ "${{ needs.test.result }}" != "success" ] && [ "${{ needs.test.result }}" != "skipped" ]; then
             echo "::error::Test suite failed"
             exit 1
