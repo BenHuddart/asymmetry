@@ -3389,6 +3389,17 @@ class PlotPanel(QWidget):
         self._fit_x_min = lo
         self._fit_x_max = hi
 
+        # Widen the X-axis view to keep fit bounds that fall outside the plotted
+        # data extent visible. Only ever expand the view (never shrink it), so an
+        # in-data fit range leaves the user's current limits untouched.
+        view_min = min(float(self._x_min.value()), lo)
+        view_max = max(float(self._x_max.value()), hi)
+        if view_min != float(self._x_min.value()) or view_max != float(self._x_max.value()):
+            self._set_limit_field_value(self._x_min, view_min)
+            self._set_limit_field_value(self._x_max, view_max)
+            if redraw:
+                self._apply_limits()
+
         if redraw:
             self._draw_fit_range_artists()
             self._canvas.draw_idle()
