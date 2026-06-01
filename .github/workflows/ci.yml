@@ -12,6 +12,8 @@ on:
 
 permissions:
   contents: read
+  # dorny/paths-filter lists changed files via the PR API on pull_request events.
+  pull-requests: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -21,30 +23,108 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  harness:
-    name: Harness validation
+  # Detect whether anything that affects tests changed, so docs-only / metadata
+  # PRs can skip the (slow) test matrix while still satisfying the required
+  # "CI success" gate below.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'src/**'
+              - 'tests/**'
+              - 'tools/**'
+              - 'pyproject.toml'
+              - 'constraints.txt'
+              - '.test_durations'
+              - '.github/workflows/ci.yml'
+
+  # Fast lint + structural checks. Always run (cheap, and structural validates
+  # repo shape such as the porting policy index, which docs changes can touch).
+  checks:
+    name: Lint & structural
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints.txt -e ".[dev]"
+      - name: Structural checks
+        run: python tools/harness.py structural
+      - name: Lint
+        run: python tools/harness.py lint
 
+  # Test suite, sharded across parallel runners with pytest-split (balanced by
+  # the committed .test_durations timings). Each GitHub job gets its own 2-core
+  # runner, so N shards ~= N x the parallelism without going public.
+  test:
+    name: Tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
       - name: Install system dependencies
         run: |
           sudo apt-get update -q
           sudo apt-get install -y libegl1
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -c constraints.txt -e ".[gui,hdf5,root,dev]"
-
-      - name: Run harness validation
+      - name: Run test shard ${{ matrix.group }} of 4
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python tools/harness.py validate
+        run: python tools/harness.py test -- --splits 4 --group ${{ matrix.group }}
+
+  # Single required status check that aggregates the matrix + checks, so the
+  # branch ruleset doesn't need updating when shard count changes. Passes when
+  # checks succeeded and tests succeeded (or were skipped for a non-code change).
+  ci-success:
+    name: CI success
+    if: always()
+    needs: [changes, checks, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required jobs
+        run: |
+          echo "changes: ${{ needs.changes.result }}"
+          echo "checks:  ${{ needs.checks.result }}"
+          echo "test:    ${{ needs.test.result }}"
+          # changes must succeed, otherwise 'test' may have been skipped due to an
+          # infrastructure failure rather than a legitimate no-code-change PR.
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error::Change detection failed"
+            exit 1
+          fi
+          if [ "${{ needs.checks.result }}" != "success" ]; then
+            echo "::error::Lint & structural checks failed"
+            exit 1
+          fi
+          # 'skipped' is only legitimate here because change detection succeeded
+          # and reported no code changes.
+          if [ "${{ needs.test.result }}" != "success" ] && [ "${{ needs.test.result }}" != "skipped" ]; then
+            echo "::error::Test suite failed"
+            exit 1
+          fi
+          echo "All required CI jobs passed (tests skipped only for non-code changes)."
