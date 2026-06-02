@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python tools/harness.py:*)",
+      "Bash(.venv/bin/python tools/harness.py:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(.venv/bin/python -m pytest:*)",
+      "Bash(python -m ruff:*)",
+      "Bash(.venv/bin/python -m ruff:*)",
+      "Bash(python -m sphinx:*)",
+      "Bash(git status)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git show:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr checks:*)"
+    ]
+  }
+}
