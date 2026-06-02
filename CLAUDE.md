@@ -2,6 +2,13 @@
 
 Guidance for Claude Code when working in this repository.
 
+The shared, tool-agnostic agent map lives in `AGENTS.md` (repository shape,
+engineering invariants, study-first porting workflow). Claude Code does not read
+`AGENTS.md` natively, so it is imported here. Keep durable, cross-tool guidance in
+`AGENTS.md`; keep only Claude-specific notes below.
+
+@AGENTS.md
+
 ## Fixing a pull request — always work on the PR's branch
 
 When asked to fix, update, or address CI failures / feedback on an **existing pull
