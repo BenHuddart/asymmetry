@@ -995,6 +995,20 @@ def test_sort_keeps_groups_top_and_sorts_ungrouped(qapp: QApplication) -> None:
 
     assert visible_runs == [114, 113]
 
+    # Group members should also be sorted within the group (112=10K, 111=20K).
+    assert panel._groups[gid].member_run_numbers == [112, 111]
+    grouped_rows = [
+        item.data(Qt.ItemDataRole.UserRole)
+        for row in range(panel._table.rowCount())
+        if (item := panel._table.item(row, 0)) is not None
+        and item.data(Qt.ItemDataRole.UserRole) in {111, 112}
+    ]
+    assert grouped_rows == [112, 111]
+
+    # Reversing the sort should reverse the in-group order too.
+    panel._on_header_clicked(2)
+    assert panel._groups[gid].member_run_numbers == [111, 112]
+
 
 def test_add_runs_to_existing_group_moves_entry(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
