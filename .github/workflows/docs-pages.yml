@@ -1,12 +1,13 @@
 name: Docs Build and Deploy
 
 on:
+  # Build on PRs (covers every branch via its PR) and on pushes to main
+  # (which also performs the Pages deploy). Avoids the duplicate build that
+  # fired when both push:"**" and pull_request:"**" matched the same PR branch.
   push:
     branches:
-      - "**"
+      - main
   pull_request:
-    branches:
-      - "**"
   workflow_dispatch:
 
 permissions:
