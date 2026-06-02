@@ -80,6 +80,11 @@ jobs:
           name: asymmetry-macos-x86_64
           path: dist/Asymmetry-${{ steps.meta.outputs.version }}-macos-x86_64.dmg
           if-no-files-found: error
+          # Build artifacts are only needed long enough for the release job to
+          # download them; the "Delete workflow artifacts" step removes them on
+          # success, and this caps lingering ones (e.g. if a build succeeds but
+          # the release job never runs) instead of the 90-day default.
+          retention-days: 1
 
   build-macos-arm:
     name: Build macOS DMG (arm64)
@@ -148,6 +153,11 @@ jobs:
           name: asymmetry-macos-arm64
           path: dist/Asymmetry-${{ steps.meta.outputs.version }}-macos-arm64.dmg
           if-no-files-found: error
+          # Build artifacts are only needed long enough for the release job to
+          # download them; the "Delete workflow artifacts" step removes them on
+          # success, and this caps lingering ones (e.g. if a build succeeds but
+          # the release job never runs) instead of the 90-day default.
+          retention-days: 1
 
   build-windows:
     name: Build Windows installer (x64)
@@ -225,6 +235,11 @@ jobs:
           name: asymmetry-windows-x64
           path: dist/Asymmetry-${{ steps.meta.outputs.version }}-windows-x64-setup.msi
           if-no-files-found: error
+          # Build artifacts are only needed long enough for the release job to
+          # download them; the "Delete workflow artifacts" step removes them on
+          # success, and this caps lingering ones (e.g. if a build succeeds but
+          # the release job never runs) instead of the 90-day default.
+          retention-days: 1
 
   release:
     name: Create GitHub release
