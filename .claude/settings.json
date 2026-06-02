@@ -17,5 +17,18 @@
       "Bash(gh pr view:*)",
       "Bash(gh pr checks:*)"
     ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/structural_check.py\""
+          }
+        ]
+      }
+    ]
   }
 }
