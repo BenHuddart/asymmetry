@@ -1944,6 +1944,11 @@ class DataBrowserPanel(QWidget):
                 for entry in self._display_order
                 if isinstance(entry, str) and entry in self._groups
             ]
+            for gid in groups:
+                group = self._groups[gid]
+                group.member_run_numbers = sorted(
+                    group.member_run_numbers, key=_sort_key, reverse=reverse
+                )
             self._display_order = groups + sorted_runs
         else:
             self._display_order = sorted_runs
