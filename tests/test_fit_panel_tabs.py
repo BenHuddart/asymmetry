@@ -2537,3 +2537,24 @@ def test_global_tab_get_state_persists_active_window_recommendation_without_cach
     assert saved["wizard_state"]["signature"]["run_numbers"] == [int(dataset.run_number), 102]
     assert tab._cached_wizard_recommendation is not None
     assert tab._cached_wizard_signature is not None
+
+
+def test_bounded_phase_seed_padding_caps_large_signals() -> None:
+    """Phase-seed FFT padding is capped so huge histograms stay cheap."""
+    from asymmetry.gui.panels.fit_panel import (
+        _MAX_PHASE_SEED_FFT_POINTS,
+        _bounded_phase_seed_padding,
+    )
+
+    # Small signals keep the full desired padding.
+    assert _bounded_phase_seed_padding(1024, desired=8) == 8
+    # Very large signals are capped to padding 1 (zero-padding only
+    # interpolates, so this does not alias the phase seed).
+    huge = _MAX_PHASE_SEED_FFT_POINTS * 4
+    assert _bounded_phase_seed_padding(huge, desired=8) == 1
+    # For a signal within the bound, padding never pushes the padded length
+    # past the cap.
+    n = _MAX_PHASE_SEED_FFT_POINTS // 2
+    assert _bounded_phase_seed_padding(n, desired=8) * n <= _MAX_PHASE_SEED_FFT_POINTS
+    assert _bounded_phase_seed_padding(0) == 1
+

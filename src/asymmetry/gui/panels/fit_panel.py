@@ -230,6 +230,22 @@ def _group_phase_window_mhz(
     return 0.0, None
 
 
+#: Upper bound on the padded FFT length used for group-phase *seeding*.
+#: Zero-padding only interpolates the spectrum, so capping it for very large
+#: (high-resolution) histograms leaves the peak-phase seed essentially
+#: unchanged while keeping the per-selection cost bounded (avoids multi-second
+#: hangs when seeding is refreshed on every dataset/selection change).
+_MAX_PHASE_SEED_FFT_POINTS = 1 << 17  # 131072
+
+
+def _bounded_phase_seed_padding(n_points: int, *, desired: int = 8) -> int:
+    """Return a padding factor capped so the seed FFT stays bounded in size."""
+    if n_points <= 0:
+        return 1
+    max_factor = max(1, _MAX_PHASE_SEED_FFT_POINTS // int(n_points))
+    return max(1, min(int(desired), int(max_factor)))
+
+
 def _seed_group_phase_estimates(grouped_groups: list[object]) -> tuple[float, dict[str, float]]:
     """Return the first-group absolute phase and per-group relative phases in radians."""
     phase_degrees_by_group: dict[str, float] = {}
@@ -270,7 +286,7 @@ def _seed_group_phase_estimates(grouped_groups: list[object]) -> tuple[float, di
         freqs, spectrum = fft_complex_asymmetry(
             dataset,
             window="none",
-            padding_factor=8,
+            padding_factor=_bounded_phase_seed_padding(time.size),
             subtract_average_signal=True,
         )
         min_frequency, max_frequency = _group_phase_window_mhz(metadata, freqs)
@@ -1964,6 +1980,9 @@ class GlobalFitTab(QWidget):
     def set_current_dataset(self, dataset: MuonDataset | None) -> None:
         """Set the active dataset used by grouped time-domain mode."""
         self._current_dataset = dataset
+        # Invalidate the grouped-context memo whenever the active dataset
+        # changes (its grouped groups depend only on this dataset).
+        self._grouped_context_cache = None
         self._refresh_field_parameter_defaults_for_current_dataset()
         self._refresh_group_phase_defaults_for_current_dataset()
         self._update_group_parameter_defaults()
@@ -3710,6 +3729,25 @@ class GlobalFitTab(QWidget):
             )
 
     def _grouped_mode_context(
+        self,
+    ) -> tuple[list[object] | None, list[MuonDataset] | None, str]:
+        """Return the grouped time-domain context, memoised per active dataset.
+
+        Building the grouped groups/datasets is relatively expensive on
+        high-resolution histograms and is requested several times per
+        selection/UI refresh.  The result depends only on the active dataset and
+        the fit-blocked state, so it is cached and reused until the active
+        dataset changes (see :meth:`set_current_dataset`).
+        """
+        cache = getattr(self, "_grouped_context_cache", None)
+        key = (id(self._current_dataset), bool(self._fit_blocked))
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        result = self._compute_grouped_mode_context()
+        self._grouped_context_cache = (key, result)
+        return result
+
+    def _compute_grouped_mode_context(
         self,
     ) -> tuple[list[object] | None, list[MuonDataset] | None, str]:
         if self._fit_blocked:
