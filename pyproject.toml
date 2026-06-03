@@ -118,6 +118,7 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "tests/test_fit_function_builder.py" = ["E402"]
 "tests/test_fit_panel_phase5_range.py" = ["E402"]
 "tests/test_fit_panel_worker.py" = ["E402"]
+"tests/test_fit_slot_orchestration.py" = ["E402"]
 "tests/test_fit_wizard_window.py" = ["E402"]
 "tests/test_fit_wizard.py" = ["E402"]
 "tests/test_global_fit_wizard_window.py" = ["E402"]

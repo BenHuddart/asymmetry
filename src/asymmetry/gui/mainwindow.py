@@ -61,7 +61,7 @@ from asymmetry.core.project import (
     load_project,
     save_project,
 )
-from asymmetry.core.representation import RepresentationType
+from asymmetry.core.representation import Batch, FitSlot, RepresentationType
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
     apply_deadtime_correction,
@@ -232,6 +232,7 @@ class MainWindow(QMainWindow):
         # _frequency_spectra_by_run cache below remains the in-memory plot
         # source (the legacy array serialisation is a transitional fallback).
         self._project_model = ProjectModel()
+        self._next_batch_index = 1
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
         self._fourier_group_phase_state_by_run: dict[int, dict[str, object]] = {}
         self._global_parameter_fit_window: GlobalParameterFitWindow | None = None
@@ -4222,7 +4223,134 @@ class MainWindow(QMainWindow):
             fit_function=fit_function,
         )
         self._last_fit_chi2 = float(fit_result.reduced_chi_squared)
+        self._record_single_fit_slot(fit_result)
         self._log_panel.log(f"Fit completed: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}", tag="fit")
+
+    def _active_representation_type(self) -> RepresentationType | None:
+        """Map the active workspace view to its representation type."""
+        if not hasattr(self, "_plot_workspace"):
+            return None
+        return {
+            "fb_asymmetry": RepresentationType.TIME_FB_ASYMMETRY,
+            "groups": RepresentationType.TIME_GROUPS,
+            "frequency": RepresentationType.FREQ_FFT,
+            "maxent": RepresentationType.FREQ_MAXENT,
+        }.get(self._plot_workspace.active_view())
+
+    @staticmethod
+    def _fit_result_summary(fit_result) -> dict:
+        """Return a JSON-serialisable summary of a fit result.
+
+        Includes the fitted parameter values and uncertainties so a batch's
+        ``results_by_run`` can drive parameter trending.
+        """
+        parameters: dict[str, float] = {}
+        parameter_set = getattr(fit_result, "parameters", None)
+        if parameter_set is not None:
+            for name in getattr(parameter_set, "names", []):
+                try:
+                    parameters[str(name)] = float(parameter_set[name].value)
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    continue
+        uncertainties = {
+            str(k): float(v)
+            for k, v in (getattr(fit_result, "uncertainties", {}) or {}).items()
+        }
+        return {
+            "success": bool(getattr(fit_result, "success", False)),
+            "chi_squared": float(getattr(fit_result, "chi_squared", 0.0)),
+            "reduced_chi_squared": float(getattr(fit_result, "reduced_chi_squared", 0.0)),
+            "parameters": parameters,
+            "uncertainties": uncertainties,
+        }
+
+    def _record_single_fit_slot(self, fit_result) -> None:
+        """Write the active representation's single FitSlot into the project model."""
+        rep_type = self._active_representation_type()
+        if rep_type is None or self._current_dataset is None:
+            return
+        if not hasattr(self._fit_panel, "get_single_state"):
+            return
+        state = self._fit_panel.get_single_state()
+        if not isinstance(state, dict):
+            return
+        run_number = int(self._current_dataset.run_number)
+        representation = self._project_model.ensure_dataset(run_number).ensure(rep_type)
+        representation.fit = FitSlot(
+            model=state.get("composite_model"),
+            parameters=[dict(p) for p in state.get("parameters", []) if isinstance(p, dict)],
+            result={
+                **self._fit_result_summary(fit_result),
+                "result_html": state.get("result_html"),
+            },
+            provenance="single",
+        )
+
+    def _record_global_fit_batch(self, normalized_payloads: dict, global_params) -> None:
+        """Persist a completed batch/global fit as a Batch + member FitSlots.
+
+        A batch fit (all parameters local/fixed) and a global fit (>=1 parameter
+        classified ``global``) are the same operation; the parameter classifier
+        decides which.  Each member's representation gets a FitSlot pointing back
+        to the batch, and the batch carries the run-by-run results for trending.
+        """
+        rep_type = self._active_representation_type()
+        if rep_type is None or not normalized_payloads:
+            return
+        if not hasattr(self._fit_panel, "get_global_state"):
+            return
+        state = self._fit_panel.get_global_state()
+        if not isinstance(state, dict):
+            return
+
+        param_roles: dict[str, str] = {}
+        for entry in state.get("parameters", []):
+            if not isinstance(entry, dict) or "name" not in entry:
+                continue
+            role = str(entry.get("type", "local")).strip().lower()
+            if role not in ("global", "local", "fixed"):
+                role = "local"
+            param_roles[str(entry["name"])] = role
+        provenance = "global" if any(r == "global" for r in param_roles.values()) else "batch"
+
+        member_runs = sorted(int(r) for r in normalized_payloads)
+        canonical_model = state.get("composite_model")
+        results_by_run = {
+            int(run): self._fit_result_summary(payload[0])
+            for run, payload in normalized_payloads.items()
+        }
+        batch = Batch(
+            f"batch-{self._next_batch_index}",
+            rep_type,
+            member_run_numbers=member_runs,
+            order_key="field",
+            canonical_model=canonical_model,
+            param_roles=param_roles,
+            results_by_run=results_by_run,
+        )
+        self._next_batch_index += 1
+
+        runs_by_number: dict[int, object] = {}
+        if hasattr(self._data_browser, "get_dataset"):
+            for run in member_runs:
+                dataset = self._data_browser.get_dataset(run)
+                if dataset is not None and dataset.run is not None:
+                    runs_by_number[run] = dataset.run
+        batch.sort_members(runs_by_number)
+        self._project_model.add_batch(batch)
+
+        template_parameters = [
+            dict(p) for p in state.get("parameters", []) if isinstance(p, dict)
+        ]
+        for run, payload in normalized_payloads.items():
+            representation = self._project_model.ensure_dataset(int(run)).ensure(rep_type)
+            representation.fit = FitSlot(
+                model=canonical_model,
+                parameters=template_parameters,
+                result=self._fit_result_summary(payload[0]),
+                provenance=provenance,
+                batch_id=batch.batch_id,
+            )
 
     def _on_preview_requested(self, fit_result, fitted_curve, component_curves) -> None:
         """Handle preview request from fit panel."""
@@ -4367,6 +4495,7 @@ class MainWindow(QMainWindow):
             )
 
         self._fit_panel.register_global_fit_results(normalized_payloads)
+        self._record_global_fit_batch(normalized_payloads, global_params)
 
         # Set all fit curves in plot panel
         panel = self._frequency_plot_panel if is_frequency_fit else self._plot_panel
