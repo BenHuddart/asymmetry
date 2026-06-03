@@ -24,7 +24,7 @@ from asymmetry.core.project.schema import migrate_to_current, validate
 def _minimal_state() -> dict:
     """Return the smallest valid project state dict."""
     return {
-        "schema_version": 5,
+        "schema_version": 6,
         "created_with_app_version": "0.1.0",
         "datasets": [],
         "combined_datasets": [],
@@ -84,21 +84,21 @@ def _minimal_state() -> dict:
 
 class TestSchemaMigration:
     def test_current_version_passes_through(self):
-        state = {"schema_version": 5, "datasets": []}
+        state = {"schema_version": 6, "datasets": []}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 5
+        assert result["schema_version"] == 6
         assert result["datasets"] == []
 
     def test_v1_migrates_to_v2(self):
         state = {"schema_version": 1, "datasets": []}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 5
+        assert result["schema_version"] == 6
         assert "browser_state" in result
 
     def test_v2_migrates_to_v3_with_extra_columns(self):
         state = {"schema_version": 2, "datasets": [], "browser_state": {}}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 5
+        assert result["schema_version"] == 6
         assert result["browser_state"]["extra_columns"] == []
 
     def test_v3_vector_grouping_adds_per_axis_alpha_fields(self):
@@ -135,7 +135,7 @@ class TestSchemaMigration:
         }
 
         result = migrate_to_current(state)
-        assert result["schema_version"] == 5
+        assert result["schema_version"] == 6
         grouping = result["datasets"][0]["grouping_overrides"]
         assert grouping["alpha_x"] == pytest.approx(1.7)
         assert grouping["alpha_y"] == pytest.approx(1.7)
@@ -144,7 +144,7 @@ class TestSchemaMigration:
     def test_v4_migrates_to_v5_with_frequency_fit_state(self):
         state = {"schema_version": 4, "datasets": []}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 5
+        assert result["schema_version"] == 6
         assert result["frequency_fit_state"]["domain"] == "frequency"
 
     def test_unsupported_future_version_raises(self):
@@ -174,7 +174,125 @@ class TestSchemaMigration:
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 5
+        assert CURRENT_SCHEMA_VERSION == 6
+
+
+def _composite_model_dict(component: str = "Exponential") -> dict:
+    return {
+        "component_names": [component],
+        "operators": [],
+        "open_parentheses": [0],
+        "close_parentheses": [0],
+        "fraction_groups": [],
+    }
+
+
+class TestSchemaMigrationV5toV6:
+    """v5 → v6 introduces recipe-only representations and batches."""
+
+    def _v5_state(self) -> dict:
+        return {
+            "schema_version": 5,
+            "datasets": [
+                {"run_number": 100, "source_file": "/tmp/a.nxs"},
+                {"run_number": 200, "source_file": "/tmp/b.nxs"},
+                {"run_number": 300, "source_file": "/tmp/c.nxs"},
+            ],
+            "single_fit_state": {
+                "model_name": "Composite",
+                "composite_model": _composite_model_dict("Gaussian"),
+                "parameters": [{"name": "A", "value": 0.3}],
+                "result_html": "<b>chi2 = 1.0</b>",
+                "active_run_number": 200,
+                "states_by_run": {
+                    "100": {
+                        "model_name": "Composite",
+                        "composite_model": _composite_model_dict("Exponential"),
+                        "parameters": [{"name": "A", "value": 0.2}],
+                        "result_html": "<b>chi2 = 2.0</b>",
+                    },
+                },
+            },
+            "frequency_fit_state": {
+                "domain": "frequency",
+                "single_fit_state": {
+                    "states_by_run": {
+                        "100": {
+                            "model_name": "Composite",
+                            "composite_model": _composite_model_dict("GaussianPeak"),
+                            "parameters": [{"name": "height", "value": 1.0}],
+                            "result_html": "<b>freq fit</b>",
+                        },
+                    },
+                },
+            },
+            "fourier_state": {
+                "window": "gaussian",
+                "padding": 2,
+                "display": "Cos",
+                "auto_phase": True,
+            },
+        }
+
+    def test_sets_version_and_empty_batches(self):
+        result = migrate_to_current(self._v5_state())
+        assert result["schema_version"] == 6
+        assert result["batches"] == []
+
+    def test_per_run_single_fit_lands_on_right_dataset(self):
+        result = migrate_to_current(self._v5_state())
+        by_run = {ds["run_number"]: ds for ds in result["datasets"]}
+
+        fit_100 = by_run[100]["representations"]["time_fb_asymmetry"]["fit"]
+        assert fit_100["model"]["component_names"] == ["Exponential"]
+        assert fit_100["provenance"] == "single"
+        assert fit_100["result"] == {"result_html": "<b>chi2 = 2.0</b>"}
+
+    def test_bare_active_single_state_maps_to_active_run_only(self):
+        result = migrate_to_current(self._v5_state())
+        by_run = {ds["run_number"]: ds for ds in result["datasets"]}
+
+        # Run 200 is the active run -> inherits the bare composite model.
+        fit_200 = by_run[200]["representations"]["time_fb_asymmetry"]["fit"]
+        assert fit_200["model"]["component_names"] == ["Gaussian"]
+        # Run 300 had no single fit -> no time_fb_asymmetry representation.
+        assert "time_fb_asymmetry" not in by_run[300].get("representations", {})
+
+    def test_frequency_single_fit_and_fourier_recipe(self):
+        result = migrate_to_current(self._v5_state())
+        by_run = {ds["run_number"]: ds for ds in result["datasets"]}
+
+        freq_100 = by_run[100]["representations"]["freq_fft"]
+        assert freq_100["fit"]["model"]["component_names"] == ["GaussianPeak"]
+        config = freq_100["recipe"]["fourier_config"]
+        assert config["window"] == "gaussian"
+        assert config["padding"] == 2
+        assert config["display"] == "Cos"
+        # Non-recipe keys (e.g. auto_phase) are not carried into the recipe.
+        assert "auto_phase" not in config
+
+    def test_fourier_recipe_applied_even_without_freq_fit(self):
+        result = migrate_to_current(self._v5_state())
+        by_run = {ds["run_number"]: ds for ds in result["datasets"]}
+        # Run 300 has no frequency fit but still gets the FFT recipe + empty slot.
+        freq_300 = by_run[300]["representations"]["freq_fft"]
+        assert freq_300["recipe"]["fourier_config"]["window"] == "gaussian"
+        assert freq_300["fit"]["provenance"] == "none"
+
+    def test_old_blobs_preserved(self):
+        result = migrate_to_current(self._v5_state())
+        assert "single_fit_state" in result
+        assert "fourier_state" in result
+        assert result["single_fit_state"]["states_by_run"]["100"]["result_html"] == (
+            "<b>chi2 = 2.0</b>"
+        )
+
+    def test_migration_without_fits_adds_only_batches(self):
+        state = {"schema_version": 5, "datasets": [{"run_number": 1}]}
+        result = migrate_to_current(state)
+        assert result["schema_version"] == 6
+        assert result["batches"] == []
+        assert "representations" not in result["datasets"][0]
 
 
 class TestProjectIO:
@@ -184,7 +302,7 @@ class TestProjectIO:
         save_project(state, path)
 
         loaded = load_project(path)
-        assert loaded["schema_version"] == 5
+        assert loaded["schema_version"] == 6
         assert loaded["datasets"] == []
 
     def test_vector_alpha_xyz_persist_in_project_round_trip(self, tmp_path):
@@ -240,7 +358,7 @@ class TestProjectIO:
         path = tmp_path / "test.asymp"
         save_project(state, path)
         raw = json.loads(path.read_text(encoding="utf-8"))
-        assert raw["schema_version"] == 5
+        assert raw["schema_version"] == 6
 
     def test_optional_wizard_cache_state_round_trips(self, tmp_path):
         state = _minimal_state()

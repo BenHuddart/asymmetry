@@ -102,9 +102,23 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 5
+CURRENT_SCHEMA_VERSION: int = 6
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6})
+
+#: Fourier-state keys that describe the FFT generation recipe (recipe-only
+#: persistence carries these into each dataset's ``freq_fft`` representation).
+_FOURIER_RECIPE_KEYS: tuple[str, ...] = (
+    "window",
+    "padding",
+    "phase_degrees",
+    "t0_offset_us",
+    "display",
+    "filter_start_us",
+    "filter_time_constant_us",
+    "subtract_average_signal",
+    "group_enabled_table",
+)
 
 
 class UnsupportedSchemaVersion(ValueError):
@@ -151,6 +165,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 4
     if version == 4:
         migrated = _migrate_v4_to_v5(migrated)
+        version = 5
+    if version == 5:
+        migrated = _migrate_v5_to_v6(migrated)
     return migrated
 
 
@@ -230,6 +247,161 @@ def _migrate_v4_to_v5(data: dict) -> dict:
         },
     )
     return migrated
+
+
+def _migrate_v5_to_v6(data: dict) -> dict:
+    """Migrate schema v5 project state to v6.
+
+    v6 introduces first-class, recipe-only representations.  Each dataset gains
+    a ``representations`` map and the project gains a top-level ``batches`` list.
+
+    This migration is **additive and lossless**: the existing global
+    ``single_fit_state`` / ``global_fit_state`` / ``multi_group_fit_state`` /
+    ``frequency_fit_state`` / ``fourier_state`` blobs are preserved so projects
+    still open on the pre-redesign code paths during the transition.
+
+    Population is faithful to what v5 actually persisted:
+
+    * per-run time single fits  → ``time_fb_asymmetry.fit``
+    * per-run frequency single fits → ``freq_fft.fit``
+    * the (global) ``fourier_state`` → ``freq_fft.recipe.fourier_config``
+
+    Global/grouped fits are *not* reconstructed into batches: v5 never persisted
+    their member runs or per-run results, so there is nothing faithful to carry
+    over.  ``batches`` is therefore initialised empty.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 6
+
+    datasets = migrated.get("datasets")
+    if not isinstance(datasets, list):
+        migrated.setdefault("batches", [])
+        return migrated
+
+    single_state = migrated.get("single_fit_state")
+    frequency_state = migrated.get("frequency_fit_state")
+    frequency_single_state = (
+        frequency_state.get("single_fit_state") if isinstance(frequency_state, dict) else None
+    )
+    fourier_config = _fourier_recipe_from_state(migrated.get("fourier_state"))
+
+    updated: list[dict] = []
+    for entry in datasets:
+        if not isinstance(entry, dict):
+            updated.append(entry)
+            continue
+        ds = dict(entry)
+        run_number = _coerce_int(ds.get("run_number"))
+        representations: dict[str, dict] = {}
+
+        time_fit = _single_state_to_fit_slot(
+            _resolve_single_state_for_run(single_state, run_number)
+        )
+        if time_fit is not None:
+            representations["time_fb_asymmetry"] = {
+                "recipe": {},
+                "fit": time_fit,
+                "trend_state": {},
+            }
+
+        freq_fit = _single_state_to_fit_slot(
+            _resolve_single_state_for_run(frequency_single_state, run_number)
+        )
+        if freq_fit is not None or fourier_config:
+            representations["freq_fft"] = {
+                "recipe": {"fourier_config": dict(fourier_config)} if fourier_config else {},
+                "fit": freq_fit if freq_fit is not None else _empty_fit_slot(),
+                "trend_state": {},
+            }
+
+        if representations:
+            ds["representations"] = representations
+        updated.append(ds)
+
+    migrated["datasets"] = updated
+    migrated.setdefault("batches", [])
+    return migrated
+
+
+def _empty_fit_slot() -> dict:
+    """Return a serialised empty :class:`FitSlot`."""
+    return {
+        "model": None,
+        "parameters": [],
+        "result": None,
+        "provenance": "none",
+        "batch_id": None,
+        "diverged": False,
+        "include_in_trend": True,
+    }
+
+
+def _single_state_to_fit_slot(state: object) -> dict | None:
+    """Convert a v5 single-fit-tab state into a serialised :class:`FitSlot`.
+
+    Returns ``None`` when *state* carries no model (nothing to migrate).
+    """
+    if not isinstance(state, dict):
+        return None
+    model = state.get("composite_model")
+    if not isinstance(model, dict):
+        return None
+    raw_params = state.get("parameters")
+    parameters = (
+        [dict(p) for p in raw_params if isinstance(p, dict)]
+        if isinstance(raw_params, list)
+        else []
+    )
+    result_html = state.get("result_html")
+    result = (
+        {"result_html": result_html}
+        if isinstance(result_html, str) and result_html.strip()
+        else None
+    )
+    return {
+        "model": dict(model),
+        "parameters": parameters,
+        "result": result,
+        "provenance": "single",
+        "batch_id": None,
+        "diverged": False,
+        "include_in_trend": True,
+    }
+
+
+def _resolve_single_state_for_run(single_state: object, run_number: int) -> dict | None:
+    """Return the per-run single-fit state for *run_number* from a v5 blob."""
+    if not isinstance(single_state, dict):
+        return None
+    states_by_run = single_state.get("states_by_run")
+    if isinstance(states_by_run, dict):
+        per_run = states_by_run.get(str(run_number))
+        if isinstance(per_run, dict):
+            return per_run
+    # Fall back to the bare active state only for its own run.
+    active = single_state.get("active_run_number")
+    if (
+        active is not None
+        and _coerce_int(active) == run_number
+        and isinstance(single_state.get("composite_model"), dict)
+    ):
+        return single_state
+    return None
+
+
+def _fourier_recipe_from_state(fourier_state: object) -> dict:
+    """Extract the recipe-relevant subset of a v5 ``fourier_state`` blob."""
+    if not isinstance(fourier_state, dict):
+        return {}
+    return {key: fourier_state[key] for key in _FOURIER_RECIPE_KEYS if key in fourier_state}
+
+
+def _coerce_int(value: object, default: int = 0) -> int:
+    """Return *value* as int, or *default* if conversion fails."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
 
 
 def _migrate_grouping_alpha_fields(grouping: dict) -> dict:
