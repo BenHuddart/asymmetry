@@ -157,6 +157,14 @@ class Representation(ABC):
         """Drop the transient computed arrays (e.g. after a recipe change)."""
         self._datasets = None
 
+    def cache_datasets(self, datasets: list[MuonDataset]) -> None:
+        """Store externally-computed curves as the transient cache.
+
+        Used when a freshly generated result is already in hand (e.g. the GUI
+        just computed it) to avoid recomputing immediately.
+        """
+        self._datasets = list(datasets)
+
     def datasets(self) -> list[MuonDataset]:
         """Return the currently cached curves (empty if not yet computed)."""
         return list(self._datasets) if self._datasets is not None else []

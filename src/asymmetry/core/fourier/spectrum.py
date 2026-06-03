@@ -71,6 +71,27 @@ class GroupSpectrumConfig:
     #: phase-correcting display modes).  Missing groups default to 0.
     group_phase_degrees: dict[int, float] = field(default_factory=dict)
 
+    def to_dict(self) -> dict:
+        """Return a JSON-serialisable ``fourier_config`` recipe block."""
+        return {
+            "display": self.display,
+            "window": self.window,
+            "padding": self.padding,
+            "filter_start_us": self.filter_start_us,
+            "filter_time_constant_us": self.filter_time_constant_us,
+            "t0_offset_us": self.t0_offset_us,
+            "subtract_average_signal": self.subtract_average_signal,
+            "estimate_average_error": self.estimate_average_error,
+            "t_min_us": self.t_min_us,
+            "t_max_us": self.t_max_us,
+            "selected_group_ids": (
+                None if self.selected_group_ids is None else list(self.selected_group_ids)
+            ),
+            "group_phase_degrees": {
+                int(k): float(v) for k, v in self.group_phase_degrees.items()
+            },
+        }
+
     @classmethod
     def from_dict(cls, data: dict | None) -> GroupSpectrumConfig:
         """Build a config from a serialised ``fourier_config`` recipe block."""

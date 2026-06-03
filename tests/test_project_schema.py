@@ -232,6 +232,11 @@ class TestSchemaMigrationV5toV6:
                 "display": "Cos",
                 "auto_phase": True,
             },
+            # Only runs 100 and 300 had a generated spectrum.
+            "fourier_spectra_state": {
+                "100": [{"time": [0.0], "asymmetry": [1.0], "error": [0.0], "metadata": {}}],
+                "300": [{"time": [0.0], "asymmetry": [1.0], "error": [0.0], "metadata": {}}],
+            },
         }
 
     def test_sets_version_and_empty_batches(self):

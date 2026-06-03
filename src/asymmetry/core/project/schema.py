@@ -284,6 +284,9 @@ def _migrate_v5_to_v6(data: dict) -> dict:
         frequency_state.get("single_fit_state") if isinstance(frequency_state, dict) else None
     )
     fourier_config = _fourier_recipe_from_state(migrated.get("fourier_state"))
+    # Only runs that actually had a generated spectrum get an FFT recipe, so a
+    # migrated project does not start recomputing FFTs for every run.
+    spectra_runs = _runs_with_cached_spectra(migrated.get("fourier_spectra_state"))
 
     updated: list[dict] = []
     for entry in datasets:
@@ -307,9 +310,14 @@ def _migrate_v5_to_v6(data: dict) -> dict:
         freq_fit = _single_state_to_fit_slot(
             _resolve_single_state_for_run(frequency_single_state, run_number)
         )
-        if freq_fit is not None or fourier_config:
+        has_spectrum = run_number in spectra_runs
+        if freq_fit is not None or has_spectrum:
             representations["freq_fft"] = {
-                "recipe": {"fourier_config": dict(fourier_config)} if fourier_config else {},
+                "recipe": (
+                    {"fourier_config": dict(fourier_config)}
+                    if (fourier_config and has_spectrum)
+                    else {}
+                ),
                 "fit": freq_fit if freq_fit is not None else _empty_fit_slot(),
                 "trend_state": {},
             }
@@ -387,6 +395,18 @@ def _resolve_single_state_for_run(single_state: object, run_number: int) -> dict
     ):
         return single_state
     return None
+
+
+def _runs_with_cached_spectra(spectra_state: object) -> set[int]:
+    """Return the run numbers that had a generated FFT spectrum in v5."""
+    runs: set[int] = set()
+    if isinstance(spectra_state, dict):
+        for run_key in spectra_state:
+            try:
+                runs.add(int(run_key))
+            except (TypeError, ValueError):
+                continue
+    return runs
 
 
 def _fourier_recipe_from_state(fourier_state: object) -> dict:

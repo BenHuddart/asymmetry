@@ -61,6 +61,8 @@ from asymmetry.core.project import (
     load_project,
     save_project,
 )
+from asymmetry.core.representation import RepresentationType
+from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
     apply_deadtime_correction,
     apply_grouped_background_correction,
@@ -225,6 +227,11 @@ class MainWindow(QMainWindow):
         self._current_dataset = None  # Track currently selected dataset
         self._current_project_path: str | None = None  # Path of currently open project
         self._active_group_context: tuple[str, str] | None = None
+        # Recipe-only representation/batch state for the redesign.  Frequency
+        # spectra are recomputed from FrequencyFFT recipes on load; the
+        # _frequency_spectra_by_run cache below remains the in-memory plot
+        # source (the legacy array serialisation is a transitional fallback).
+        self._project_model = ProjectModel()
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
         self._fourier_group_phase_state_by_run: dict[int, dict[str, object]] = {}
         self._global_parameter_fit_window: GlobalParameterFitWindow | None = None
@@ -3500,6 +3507,44 @@ class MainWindow(QMainWindow):
         """Cache computed frequency spectra for one run-number context."""
         self._frequency_spectra_by_run[int(run_number)] = list(spectra)
 
+    def _record_frequency_fft_recipe(
+        self,
+        run_number: int,
+        config: GroupSpectrumConfig,
+        spectrum: MuonDataset,
+    ) -> None:
+        """Persist the generation recipe for a run's FFT representation.
+
+        The recipe lets the spectrum be recomputed on project load instead of
+        storing the spectrum arrays.  The freshly computed spectrum is cached on
+        the representation so it need not be recomputed immediately.
+        """
+        representation = self._project_model.ensure_dataset(int(run_number)).ensure(
+            RepresentationType.FREQ_FFT
+        )
+        representation.recipe = {"fourier_config": config.to_dict()}
+        representation.cache_datasets([spectrum])
+
+    def _restore_frequency_representations(self, state: dict) -> None:
+        """Rebuild FFT spectra from recipes (authoritative over stored arrays).
+
+        Reads the v6 ``representations``/``batches`` into the project model,
+        recomputes each FrequencyFFT spectrum from its recipe using the loaded
+        runs, and refreshes the in-memory plot cache.  Runs that cannot be
+        recomputed keep whatever the legacy array fallback restored.
+        """
+        self._project_model = ProjectModel.from_project_state(state)
+        runs_by_number: dict[int, object] = {}
+        if hasattr(self._data_browser, "get_all_datasets"):
+            for dataset in self._data_browser.get_all_datasets():
+                if dataset.run is not None:
+                    runs_by_number[int(dataset.run_number)] = dataset.run
+        self._project_model.recompute_all(runs_by_number)
+        for run_number, container in self._project_model.datasets.items():
+            representation = container.get(RepresentationType.FREQ_FFT)
+            if representation is not None and representation.primary is not None:
+                self._frequency_spectra_by_run[int(run_number)] = [representation.primary]
+
     def _serialize_frequency_spectra_state(self) -> dict[str, list[dict[str, object]]]:
         """Return a serializable snapshot of cached Fourier spectra."""
         serialized: dict[str, list[dict[str, object]]] = {}
@@ -3840,6 +3885,11 @@ class MainWindow(QMainWindow):
                     )
                 spectra.append(average_dataset)
                 spectra_by_run[int(self._current_dataset.run_number)] = list(spectra)
+                self._record_frequency_fft_recipe(
+                    int(self._current_dataset.run_number),
+                    fourier_config,
+                    average_dataset,
+                )
 
             if not spectra:
                 self._set_fourier_status(
@@ -4903,7 +4953,7 @@ class MainWindow(QMainWindow):
             }
         )
 
-        return {
+        project_state = {
             "schema_version": CURRENT_SCHEMA_VERSION,
             "created_with_app_version": __version__,
             "datasets": datasets,
@@ -4945,6 +4995,11 @@ class MainWindow(QMainWindow):
             },
             "fourier_spectra_state": self._serialize_frequency_spectra_state(),
         }
+        # Recipe-only representation/batch state (v6).  Frequency spectra are
+        # recomputed from these recipes on load; the array snapshot above is a
+        # transitional fallback removed in cleanup.
+        self._project_model.write_to_project_state(project_state)
+        return project_state
 
     def restore_project_state(self, state: dict, project_path: str) -> None:
         """Restore the full application state from a project file state dict.
@@ -5120,6 +5175,7 @@ class MainWindow(QMainWindow):
             self._snapshot_active_view_mode()
         self._plot_workspace.restore_state(plot_state.get("workspace_state"))
         self._restore_frequency_spectra_state(state.get("fourier_spectra_state"))
+        self._restore_frequency_representations(state)
         if self._plot_workspace.active_domain() == "frequency":
             self._sync_frequency_plot_for_current_dataset()
         if (

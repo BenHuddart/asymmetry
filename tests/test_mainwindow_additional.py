@@ -318,6 +318,30 @@ class TestMainWindowFourier:
         assert plotted.metadata["run_label"] == "8805 Average (Left)"
         assert plotted.metadata["group_ids"] == [1]
 
+    def test_fft_recipe_round_trip_recomputes_identical_spectrum(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """Recipe-only persistence: a saved FFT recomputes to the same spectrum."""
+        dataset = _make_fourier_ready_dataset(8820, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8820)
+        mainwindow._on_compute_fourier()
+        generated = mainwindow._frequency_spectra_by_run[8820][0]
+
+        state = mainwindow.collect_project_state()
+        entry = next(d for d in state["datasets"] if d["run_number"] == 8820)
+        assert "freq_fft" in entry["representations"]
+        assert "fourier_config" in entry["representations"]["freq_fft"]["recipe"]
+
+        # Simulate reload: drop the in-memory cache and recompute from recipe.
+        mainwindow._frequency_spectra_by_run = {}
+        mainwindow._restore_frequency_representations(state)
+        recomputed = mainwindow._frequency_spectra_by_run[8820][0]
+
+        np.testing.assert_allclose(recomputed.time, generated.time)
+        np.testing.assert_allclose(recomputed.asymmetry, generated.asymmetry)
+        np.testing.assert_allclose(recomputed.error, generated.error)
+
     def test_compute_group_fourier_can_average_selected_groups(
         self, mainwindow: MainWindow
     ) -> None:
