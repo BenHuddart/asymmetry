@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QDockWidget,
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -39,6 +40,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QStackedWidget,
     QToolBar,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -90,6 +92,7 @@ from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.typography import header_font
 from asymmetry.gui.styles.widgets import build_segmented_button_qss
 from asymmetry.gui.ui_manager import (
     UI_SCALE_OPTIONS,
@@ -402,25 +405,56 @@ class MainWindow(QMainWindow):
         self._global_parameter_fit_toolbar_action.setEnabled(False)
         self._main_toolbar.addSeparator()
 
-        # Domain segmented control
-        self._main_toolbar.addWidget(QLabel("Domain:"))
+        # Domain → representation segmented control, grouped 2 + 2 under
+        # "Time" and "Frequency" headers.  One exclusive group spans all four
+        # buttons so only a single representation is ever active.
         self._domain_button_group = QButtonGroup(self)
         self._domain_button_group.setExclusive(True)
         self._domain_buttons: list[QPushButton] = []
         _domain_qss = build_segmented_button_qss()
-        for label, token in (
-            ("F-B asymmetry", "fb_asymmetry"),
-            ("Individual groups", "groups"),
-            ("Frequency", "frequency"),
-        ):
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setStyleSheet(_domain_qss)
-            btn.clicked.connect(lambda _checked=False, v=token: self._on_domain_button_clicked(v))
-            self._domain_button_group.addButton(btn)
-            self._domain_buttons.append(btn)
-            self._main_toolbar.addWidget(btn)
+
+        def _domain_cluster(header: str, specs: list[tuple[str, str]]) -> QWidget:
+            container = QWidget()
+            column = QVBoxLayout(container)
+            column.setContentsMargins(0, 0, 0, 0)
+            column.setSpacing(1)
+            heading = QLabel(header)
+            heading.setFont(header_font())
+            heading.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+            column.addWidget(heading)
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(0)
+            for label, token in specs:
+                btn = QPushButton(label)
+                btn.setCheckable(True)
+                btn.setStyleSheet(_domain_qss)
+                btn.clicked.connect(
+                    lambda _checked=False, v=token: self._on_domain_button_clicked(v)
+                )
+                self._domain_button_group.addButton(btn)
+                self._domain_buttons.append(btn)
+                row.addWidget(btn)
+            column.addLayout(row)
+            return container
+
+        self._main_toolbar.addWidget(
+            _domain_cluster(
+                "Time domain",
+                [("F-B asymmetry", "fb_asymmetry"), ("Individual groups", "groups")],
+            )
+        )
+        self._main_toolbar.addSeparator()
+        self._main_toolbar.addWidget(
+            _domain_cluster(
+                "Frequency domain",
+                [("FFT", "frequency"), ("MaxEnt", "maxent")],
+            )
+        )
         self._domain_buttons[0].setChecked(True)
+        # MaxEnt spectra are not implemented yet; the button reserves its slot.
+        self._domain_buttons[3].setEnabled(False)
+        self._domain_buttons[3].setToolTip("Maximum-entropy spectra — not yet implemented")
 
         # Stretch spacer — pushes View / Bunch to the right edge
         _stretch = QWidget()
@@ -4025,7 +4059,7 @@ class MainWindow(QMainWindow):
 
     def _sync_domain_buttons(self, view: str) -> None:
         """Update toolbar Domain button checked state to match *view*."""
-        _tokens = ("fb_asymmetry", "groups", "frequency")
+        _tokens = ("fb_asymmetry", "groups", "frequency", "maxent")
         for idx, btn in enumerate(getattr(self, "_domain_buttons", [])):
             btn.setChecked(_tokens[idx] == view)
 

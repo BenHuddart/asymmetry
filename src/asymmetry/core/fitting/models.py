@@ -29,6 +29,7 @@ class ModelDefinition:
     param_names: list[str]
     param_defaults: dict[str, float]
     param_info: dict[str, ParamInfo]
+    domain: str = "time"
 
 
 # ---------------------------------------------------------------------------

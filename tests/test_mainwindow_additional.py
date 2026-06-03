@@ -876,9 +876,9 @@ class TestMainWindowBasic:
         self,
         mainwindow: MainWindow,
     ) -> None:
-        """The toolbar Domain buttons should expose all three view labels."""
+        """The toolbar Domain buttons should expose the 2+2 Time/Frequency views."""
         labels = [btn.text() for btn in mainwindow._domain_buttons]
-        assert labels == ["F-B asymmetry", "Individual groups", "Frequency"]
+        assert labels == ["F-B asymmetry", "Individual groups", "FFT", "MaxEnt"]
 
     def test_on_fit_shows_fit_dock(self, mainwindow: MainWindow) -> None:
         """Fit action should unhide the fit dock if it starts hidden."""
@@ -1339,16 +1339,19 @@ class TestMainWindowBasic:
         assert texts.index("Grouping") < texts.index("Fit")
 
     def test_toolbar_has_domain_segmented_control(self, mainwindow: MainWindow) -> None:
-        """Toolbar should expose three Domain buttons in the correct order."""
+        """Toolbar should expose four Domain buttons (Time 2 + Frequency 2)."""
         assert hasattr(mainwindow, "_domain_buttons")
         assert [btn.text() for btn in mainwindow._domain_buttons] == [
             "F-B asymmetry",
             "Individual groups",
-            "Frequency",
+            "FFT",
+            "MaxEnt",
         ]
         assert mainwindow._domain_buttons[0].isChecked()
         assert not mainwindow._domain_buttons[1].isChecked()
         assert not mainwindow._domain_buttons[2].isChecked()
+        # MaxEnt is reserved but not yet implemented.
+        assert not mainwindow._domain_buttons[3].isEnabled()
 
     def test_domain_button_click_changes_workspace_view(self, mainwindow: MainWindow) -> None:
         """Clicking the Frequency domain button should switch the workspace view."""
