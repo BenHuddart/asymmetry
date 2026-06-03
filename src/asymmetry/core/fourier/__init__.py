@@ -13,6 +13,12 @@ from asymmetry.core.fourier.fft import (
     optimize_phase_entropy,
 )
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
+from asymmetry.core.fourier.spectrum import (
+    GroupSpectrumConfig,
+    compute_average_group_spectrum,
+    fourier_display_ylabel,
+    precompute_group_fourier_inputs,
+)
 from asymmetry.core.fourier.window import apply_window
 
 __all__ = [
@@ -27,5 +33,9 @@ __all__ = [
     "fourier_mode_uses_phase_correction",
     "optimize_phase_entropy",
     "build_group_signal_dataset",
+    "GroupSpectrumConfig",
+    "compute_average_group_spectrum",
+    "fourier_display_ylabel",
+    "precompute_group_fourier_inputs",
     "apply_window",
 ]

@@ -8,8 +8,10 @@ import pytest
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.grouped_time_domain import build_grouped_time_domain_datasets
-from asymmetry.core.fourier.fft import fft_complex_asymmetry, fourier_display_values
-from asymmetry.core.fourier.grouped import build_group_signal_dataset
+from asymmetry.core.fourier.spectrum import (
+    GroupSpectrumConfig,
+    compute_average_group_spectrum,
+)
 from asymmetry.core.representation import (
     Batch,
     DatasetRepresentations,
@@ -135,21 +137,21 @@ def test_groups_matches_build_grouped_datasets():
 # ── FrequencyFFT ───────────────────────────────────────────────────────────
 
 
-def test_fft_matches_core_pipeline():
+def test_fft_matches_core_average_pipeline():
     run = _run()
     rep = FrequencyFFT()
     spectra = rep.compute(run)
-    # Both groups enabled by default.
-    assert len(spectra) == 2
+    # FFT yields a single averaged spectrum across enabled groups.
+    assert len(spectra) == 1
+    ds = spectra[0]
 
-    signal = build_group_signal_dataset(run, 1)
-    freqs, spectrum = fft_complex_asymmetry(signal)
-    values = fourier_display_values(spectrum, display="(Power)^1/2")
-
-    np.testing.assert_allclose(spectra[0].time, freqs)
-    np.testing.assert_allclose(spectra[0].asymmetry, values)
-    assert spectra[0].metadata["plot_domain"] == "frequency"
-    assert spectra[0].metadata["fourier_display"] == "(Power)^1/2"
+    expected = compute_average_group_spectrum(run, GroupSpectrumConfig())
+    assert expected is not None
+    np.testing.assert_allclose(ds.time, expected.time)
+    np.testing.assert_allclose(ds.asymmetry, expected.asymmetry)
+    assert ds.metadata["plot_domain"] == "frequency"
+    assert ds.metadata["fourier_display"] == "(Power)^1/2"
+    assert ds.metadata["fourier_group_output"] == "average"
 
 
 def test_fft_respects_group_enabled_table():
@@ -157,7 +159,8 @@ def test_fft_respects_group_enabled_table():
     rep = FrequencyFFT(recipe={"fourier_config": {"group_enabled_table": {2: False}}})
     spectra = rep.compute(run)
     assert len(spectra) == 1
-    assert spectra[0].metadata["group_id"] == 1
+    # Only group 1 averaged in.
+    assert spectra[0].metadata["group_ids"] == [1]
 
 
 # ── FrequencyMaxEnt ────────────────────────────────────────────────────────

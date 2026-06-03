@@ -1,128 +1,85 @@
 """Frequency-domain representations: FFT and (reserved) MaxEnt.
 
-``FrequencyFFT`` generates one spectrum per enabled detector group from the
-recipe's Fourier configuration, recomputing on demand so the spectra never need
-to be serialised.  ``FrequencyMaxEnt`` is a registered placeholder so its nav
-slot and fit pipeline exist; its ``compute`` raises until the method is
-implemented.
+``FrequencyFFT`` generates the averaged grouped-FFT spectrum from the recipe's
+Fourier configuration, delegating to the shared
+:func:`asymmetry.core.fourier.spectrum.compute_average_group_spectrum` so a
+generated spectrum and a recipe-recomputed spectrum are identical by
+construction.  ``FrequencyMaxEnt`` is a registered placeholder whose
+``compute`` raises until the method is implemented.
 
-The recipe's ``fourier_config`` mirrors the existing project ``fourier_state``
-block (window/display/padding/phase/t0/filter and per-group enable tables).
+The recipe's ``fourier_config`` carries the concrete generation settings
+(window/display/padding/phase/t0/filter, the selected groups, and resolved
+per-group phases).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
-
 from asymmetry.core.data.dataset import MuonDataset, Run
-from asymmetry.core.fourier.fft import (
-    canonical_fourier_display_mode,
-    fft_complex_asymmetry,
-    fourier_display_values,
+from asymmetry.core.fourier.spectrum import (
+    GroupSpectrumConfig,
+    compute_average_group_spectrum,
 )
-from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.representation.base import Representation, RepresentationType
 
-#: Default Fourier configuration used when the recipe omits a key.
-DEFAULT_FOURIER_CONFIG: dict[str, Any] = {
-    "window": "none",
-    "padding": 1,
-    "phase_degrees": 0.0,
-    "t0_offset_us": 0.0,
-    "display": "(Power)^1/2",
-    "filter_start_us": 0.0,
-    "filter_time_constant_us": 1.5,
-    "subtract_average_signal": True,
-    "group_enabled_table": {},
-}
 
+def _resolve_selected_group_ids(run: Run, config: dict) -> list[int] | None:
+    """Resolve the included group ids from a recipe ``fourier_config``.
 
-def _enabled_group_ids(run: Run, config: dict) -> list[int]:
-    """Return the sorted group ids enabled for Fourier analysis."""
-    grouping = run.grouping if isinstance(run.grouping, dict) else {}
-    groups = grouping.get("groups")
-    if not isinstance(groups, dict) or not groups:
-        return []
-    enabled_table = config.get("group_enabled_table")
-    enabled_table = enabled_table if isinstance(enabled_table, dict) else {}
+    An explicit ``selected_group_ids`` list wins; otherwise a
+    ``group_enabled_table`` (as carried by migrated v5 projects) is reduced
+    against the run's groups; otherwise ``None`` (meaning all groups).
+    """
+    selected = config.get("selected_group_ids")
+    if isinstance(selected, list):
+        return [int(g) for g in selected]
 
-    ids: list[int] = []
-    for raw_id in groups:
-        try:
-            gid = int(raw_id)
-        except (TypeError, ValueError):
-            continue
-        flag = enabled_table.get(gid, enabled_table.get(str(gid), True))
-        if bool(flag):
-            ids.append(gid)
-    return sorted(ids)
+    enabled = config.get("group_enabled_table")
+    if isinstance(enabled, dict):
+        grouping = run.grouping if isinstance(run.grouping, dict) else {}
+        groups = grouping.get("groups")
+        if not isinstance(groups, dict):
+            return None
+        ids: list[int] = []
+        for raw_id in groups:
+            try:
+                gid = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if bool(enabled.get(gid, enabled.get(str(gid), True))):
+                ids.append(gid)
+        return sorted(ids)
+
+    return None
 
 
 class FrequencyFFT(Representation):
-    """Fast-Fourier-transform spectra for a run's detector groups.
+    """Averaged grouped fast-Fourier-transform spectrum for a run.
 
-    Recipe keys::
+    Recipe::
 
-        {"fourier_config": {window, padding, phase_degrees, t0_offset_us,
-                            display, filter_start_us, filter_time_constant_us,
-                            subtract_average_signal, group_enabled_table}}
+        {"fourier_config": {display, window, padding, phase/t0/filter settings,
+                            selected_group_ids, group_phase_degrees}}
     """
 
     rep_type = RepresentationType.FREQ_FFT
 
     def fourier_config(self) -> dict[str, Any]:
-        """Return the effective Fourier configuration (defaults merged in)."""
-        config = dict(DEFAULT_FOURIER_CONFIG)
-        recipe_config = self.recipe.get("fourier_config")
-        if isinstance(recipe_config, dict):
-            config.update(recipe_config)
-        return config
+        """Return the raw ``fourier_config`` recipe block (possibly empty)."""
+        config = self.recipe.get("fourier_config")
+        return dict(config) if isinstance(config, dict) else {}
 
     def compute(self, run: Run, *, context: Any = None) -> list[MuonDataset]:
         if not run.histograms:
             raise ValueError("FFT representation requires detector histograms.")
-        config = self.fourier_config()
-        group_ids = _enabled_group_ids(run, config)
-        if not group_ids:
-            raise ValueError("FFT representation has no enabled detector groups.")
-
-        display = str(config.get("display", "(Power)^1/2"))
-        spectra: list[MuonDataset] = []
-        for group_id in group_ids:
-            signal = build_group_signal_dataset(run, group_id)
-            frequencies, spectrum = fft_complex_asymmetry(
-                signal,
-                window=str(config.get("window", "none")),
-                padding_factor=max(1, int(config.get("padding", 1))),
-                phase_degrees=float(config.get("phase_degrees", 0.0)),
-                t0_offset_us=float(config.get("t0_offset_us", 0.0)),
-                subtract_average_signal=bool(config.get("subtract_average_signal", True)),
-                filter_start_us=float(config.get("filter_start_us", 0.0)),
-                filter_time_constant_us=float(config.get("filter_time_constant_us", 1.5)),
-            )
-            values = fourier_display_values(spectrum, display=display)
-            metadata = dict(signal.metadata)
-            metadata.update(
-                {
-                    "plot_domain": "frequency",
-                    "x_label": "Frequency (MHz)",
-                    "y_label": f"FFT {display}",
-                    "fourier_display": display,
-                    "fourier_display_mode": canonical_fourier_display_mode(display),
-                }
-            )
-            spectra.append(
-                MuonDataset(
-                    time=np.asarray(frequencies, dtype=float),
-                    asymmetry=np.asarray(values, dtype=float),
-                    error=np.zeros_like(np.asarray(values, dtype=float)),
-                    metadata=metadata,
-                    run=run,
-                )
-            )
-        return spectra
+        config_dict = self.fourier_config()
+        config = GroupSpectrumConfig.from_dict(config_dict)
+        config.selected_group_ids = _resolve_selected_group_ids(run, config_dict)
+        spectrum = compute_average_group_spectrum(run, config)
+        if spectrum is None:
+            raise ValueError("FFT representation produced no spectrum (no enabled groups).")
+        return [spectrum]
 
 
 class FrequencyMaxEnt(Representation):
