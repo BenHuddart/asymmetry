@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, Run
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation import (
     Batch,
     FitSlot,
@@ -12,6 +13,8 @@ from asymmetry.core.representation import (
     make_representation,
 )
 from asymmetry.core.representation.project_model import ProjectModel
+
+_FB = RepresentationType.TIME_FB_ASYMMETRY
 
 
 def _run(run_number: int = 7) -> Run:
@@ -101,6 +104,48 @@ def test_recompute_all_populates_primary_and_survives_bad_recipe():
     model.recompute_all({7: _run(7)})
     assert fb.primary is not None
     assert maxent.primary is None  # bad recipe left uncomputed, no exception
+
+
+def _batched_model(pm: ProjectModel, model: dict) -> Batch:
+    for run_number in (10, 11):
+        rep = pm.ensure_dataset(run_number).ensure(_FB)
+        rep.fit = FitSlot(model=model, provenance="batch", batch_id="b1")
+    batch = Batch(
+        "b1", _FB, member_run_numbers=[10, 11], canonical_model=model, param_roles={"A": "local"}
+    )
+    pm.add_batch(batch)
+    return batch
+
+
+def test_refresh_divergence_flags_excludes_and_re_includes():
+    model_a = CompositeModel(["Exponential", "Constant"]).to_dict()
+    model_b = CompositeModel(["Gaussian", "Constant"]).to_dict()
+    pm = ProjectModel()
+    batch = _batched_model(pm, model_a)
+
+    pm.refresh_divergence()
+    assert pm.trend_runs_for_batch(batch) == [10, 11]
+    assert not batch.is_diverged(11)
+
+    # Edit member 11's model -> diverged, excluded from trend by default.
+    pm.representation(11, _FB).fit.model = model_b
+    pm.refresh_divergence()
+    assert batch.is_diverged(11)
+    assert pm.representation(11, _FB).fit.diverged
+    assert pm.trend_runs_for_batch(batch) == [10]
+
+    # Manual re-inclusion is honoured and preserved across refresh.
+    pm.set_member_trend_inclusion("b1", 11, True)
+    assert pm.trend_runs_for_batch(batch) == [10, 11]
+    pm.refresh_divergence()
+    assert pm.trend_runs_for_batch(batch) == [10, 11]
+    assert batch.is_diverged(11)  # still flagged, just re-included
+
+    # Revert the model -> re-converges, flag cleared.
+    pm.representation(11, _FB).fit.model = model_a
+    pm.refresh_divergence()
+    assert not batch.is_diverged(11)
+    assert pm.trend_runs_for_batch(batch) == [10, 11]
 
 
 def test_recompute_all_skips_missing_runs():

@@ -4285,6 +4285,8 @@ class MainWindow(QMainWindow):
             },
             provenance="single",
         )
+        # Editing a batch member's model via a single fit may diverge it.
+        self._project_model.refresh_divergence()
 
     def _record_global_fit_batch(self, normalized_payloads: dict, global_params) -> None:
         """Persist a completed batch/global fit as a Batch + member FitSlots.
@@ -4351,6 +4353,8 @@ class MainWindow(QMainWindow):
                 provenance=provenance,
                 batch_id=batch.batch_id,
             )
+        # Fresh batch members all share the canonical model (no divergence yet).
+        self._project_model.refresh_divergence()
 
     def _on_preview_requested(self, fit_result, fitted_curve, component_curves) -> None:
         """Handle preview request from fit panel."""

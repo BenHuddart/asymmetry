@@ -175,3 +175,35 @@ def test_global_classified_parameter_yields_global_provenance(mw, monkeypatch):
     rep = mw._project_model.representation(10, RepresentationType.TIME_FB_ASYMMETRY)
     assert rep.fit.provenance == "global"
     assert rep.fit.batch_id == batch.batch_id
+
+
+def test_editing_member_model_diverges_and_excludes_from_trend(mw, monkeypatch):
+    for run_number, field in [(10, 100.0), (11, 50.0)]:
+        mw._data_browser.add_dataset(_dataset(run_number, field))
+    mw._on_dataset_selected(10)
+    mw._plot_workspace.set_active_view("fb_asymmetry")
+    monkeypatch.setattr(
+        mw._fit_panel,
+        "get_global_state",
+        lambda: {
+            "composite_model": {"component_names": ["Exponential", "Constant"], "operators": ["+"]},
+            "parameters": [{"name": "A", "type": "Local"}],
+            "result_html": "",
+        },
+    )
+    mw._on_global_fit_completed({rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet())
+    batch = next(iter(mw._project_model.batches.values()))
+    assert set(mw._project_model.trend_runs_for_batch(batch)) == {10, 11}
+
+    # Single-fit member 11 with a different model -> diverges, excluded from trend.
+    mw._on_dataset_selected(11)
+    monkeypatch.setattr(
+        mw._fit_panel,
+        "get_single_state",
+        lambda: {"composite_model": {"component_names": ["Gaussian"], "operators": []},
+                 "parameters": [], "result_html": ""},
+    )
+    mw._on_fit_completed(_result(), _CURVE, [])
+
+    assert batch.is_diverged(11)
+    assert mw._project_model.trend_runs_for_batch(batch) == [10]

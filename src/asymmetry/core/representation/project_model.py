@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.representation.base import RepresentationType
-from asymmetry.core.representation.batch import Batch
+from asymmetry.core.representation.batch import Batch, canonical_model_matches
 from asymmetry.core.representation.container import DatasetRepresentations
 
 
@@ -53,6 +53,63 @@ class ProjectModel:
     def add_batch(self, batch: Batch) -> None:
         """Register *batch* by its id."""
         self.batches[batch.batch_id] = batch
+
+    # ── divergence & trending ──────────────────────────────────────────────────
+
+    def refresh_divergence(self) -> None:
+        """Re-evaluate divergence of every batch member against its canonical model.
+
+        A member whose stored fit model no longer matches the batch's canonical
+        model is flagged ``diverged`` and excluded from trending **by default**
+        (the first time it diverges).  A member whose model matches again is
+        un-flagged and re-included.  A manual trend re-inclusion of a still-
+        diverged member is preserved across refreshes.
+        """
+        for batch in self.batches.values():
+            for run_number in batch.member_run_numbers:
+                representation = self.representation(run_number, batch.rep_type)
+                if representation is None:
+                    continue
+                fit = representation.fit
+                matches = canonical_model_matches(fit.model, batch.canonical_model)
+                was_diverged = batch.is_diverged(run_number)
+                if matches:
+                    batch.clear_diverged(run_number)
+                    if was_diverged:
+                        # Model re-converged: drop the flag and re-include.
+                        fit.diverged = False
+                        fit.include_in_trend = True
+                    else:
+                        fit.diverged = False
+                else:
+                    batch.mark_diverged(run_number)
+                    fit.diverged = True
+                    if not was_diverged:
+                        # Newly diverged: exclude from trending by default.
+                        fit.include_in_trend = False
+
+    def trend_runs_for_batch(self, batch: Batch) -> list[int]:
+        """Return the ordered member runs currently included in trending.
+
+        Inclusion follows each member's ``fit.include_in_trend`` flag, so a
+        non-diverged member is included and a manually re-included diverged
+        member is too.
+        """
+        runs: list[int] = []
+        for run_number in batch.member_run_numbers:
+            representation = self.representation(run_number, batch.rep_type)
+            if representation is not None and representation.fit.include_in_trend:
+                runs.append(run_number)
+        return runs
+
+    def set_member_trend_inclusion(self, batch_id: str, run_number: int, include: bool) -> None:
+        """Manually include/exclude a batch member from trending."""
+        batch = self.batches.get(str(batch_id))
+        if batch is None:
+            return
+        representation = self.representation(int(run_number), batch.rep_type)
+        if representation is not None:
+            representation.fit.include_in_trend = bool(include)
 
     # ── recompute-on-load ──────────────────────────────────────────────────────
 
