@@ -47,15 +47,13 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import Histogram, MuonDataset
 from asymmetry.core.fitting import build_grouped_time_domain_datasets
 from asymmetry.core.fourier import (
-    average_fourier_display_values,
+    GroupSpectrumConfig,
     build_group_signal_dataset,
     canonical_fourier_display_mode,
+    compute_average_group_spectrum,
     estimate_fft_phase,
     fft_complex_asymmetry,
-    fourier_display_values,
-    fourier_mode_uses_entropy_optimizer,
     fourier_mode_uses_phase_correction,
-    optimize_phase_entropy,
 )
 from asymmetry.core.project import (
     CURRENT_SCHEMA_VERSION,
@@ -3404,6 +3402,47 @@ class MainWindow(QMainWindow):
             phases[group_id] = self._estimate_dataset_fourier_phase(group_dataset, state)
         return phases
 
+    def _resolve_group_phase_degrees(
+        self,
+        selected_group_ids: list[int],
+        state: dict,
+        *,
+        apply_phase_correction: bool,
+        auto_phase: bool,
+        use_phase_table: bool,
+        manual_phase: float,
+        group_phase_table: dict[int, float],
+        prepared_histograms: list[Histogram] | None,
+        reference_t0_bin: int | None,
+    ) -> dict[int, float]:
+        """Resolve concrete per-group phase corrections for the active run.
+
+        Mirrors the previous inline auto/table/manual selection so the shared
+        spectrum core (and recipe recompute) receives fully-resolved phases.
+        """
+        if (
+            not apply_phase_correction
+            or self._current_dataset is None
+            or self._current_dataset.run is None
+        ):
+            return {}
+        resolved: dict[int, float] = {}
+        for group_id in selected_group_ids:
+            if auto_phase and not use_phase_table:
+                group_dataset = build_group_signal_dataset(
+                    self._current_dataset.run,
+                    group_id,
+                    center_signal=False,
+                    reference_t0_bin=reference_t0_bin,
+                    prepared_histograms=prepared_histograms,
+                )
+                resolved[group_id] = self._estimate_dataset_fourier_phase(group_dataset, state)
+            elif use_phase_table:
+                resolved[group_id] = group_phase_table.get(group_id, manual_phase)
+            else:
+                resolved[group_id] = manual_phase
+        return resolved
+
     def _fourier_display_ylabel(self, display: str) -> str:
         """Return a display-specific y-axis label for FFT plots."""
         return {
@@ -3698,7 +3737,6 @@ class MainWindow(QMainWindow):
         selected_group_ids: list[int] = []
         spectra: list[MuonDataset] = []
         apply_phase_correction = fourier_mode_uses_phase_correction(display)
-        is_entropy_mode = fourier_mode_uses_entropy_optimizer(display)
         window = str(state.get("window", "none"))
         filter_start_us = float(state.get("filter_start_us", 0.0))
         filter_time_constant_us = float(state.get("filter_time_constant_us", 1.5))
@@ -3746,96 +3784,53 @@ class MainWindow(QMainWindow):
                 self._current_dataset
             )
 
-            averaged_values: list[np.ndarray] = []
-            averaged_complex_spectra: list[np.ndarray] = []
-            average_freqs: np.ndarray | None = None
-            first_group_dataset: MuonDataset | None = None
-            selected_group_names: list[str] = []
+            # Resolve the auto/table/manual phase choice into concrete per-group
+            # values, then delegate the spectrum maths to the shared core so a
+            # generated spectrum and a recipe-recomputed one are identical.
+            group_phase_degrees = self._resolve_group_phase_degrees(
+                selected_group_ids,
+                state,
+                apply_phase_correction=apply_phase_correction,
+                auto_phase=auto_phase,
+                use_phase_table=use_phase_table,
+                manual_phase=manual_phase,
+                group_phase_table=group_phase_table,
+                prepared_histograms=prepared_histograms,
+                reference_t0_bin=reference_t0_bin,
+            )
 
-            for group_id in selected_group_ids:
-                group_name = group_names.get(group_id, f"Group {group_id}")
-                group_dataset = build_group_signal_dataset(
-                    self._current_dataset.run,
-                    group_id,
-                    center_signal=False,
-                    reference_t0_bin=reference_t0_bin,
-                    prepared_histograms=prepared_histograms,
-                )
-                if first_group_dataset is None:
-                    first_group_dataset = group_dataset
-                selected_group_names.append(str(group_name))
-                phase_degrees = 0.0
-                group_t0_offset_us = 0.0
-                if apply_phase_correction:
-                    phase_degrees = manual_phase
-                    group_t0_offset_us = t0_offset_us
-                    if auto_phase and not use_phase_table:
-                        phase_degrees = self._estimate_dataset_fourier_phase(group_dataset, state)
-                    elif use_phase_table:
-                        phase_degrees = group_phase_table.get(group_id, manual_phase)
+            fourier_config = GroupSpectrumConfig(
+                display=display,
+                window=window,
+                padding=padding,
+                filter_start_us=filter_start_us,
+                filter_time_constant_us=filter_time_constant_us,
+                t0_offset_us=t0_offset_us,
+                subtract_average_signal=subtract_average_signal,
+                estimate_average_error=estimate_average_error,
+                t_min_us=fourier_t_min_us,
+                t_max_us=fourier_t_max_us,
+                selected_group_ids=list(selected_group_ids),
+                group_phase_degrees=group_phase_degrees,
+            )
+            average_dataset = compute_average_group_spectrum(
+                self._current_dataset.run,
+                fourier_config,
+                prepared_histograms=prepared_histograms,
+                reference_t0_bin=reference_t0_bin,
+            )
 
-                freqs, spectrum = fft_complex_asymmetry(
-                    group_dataset,
-                    window=window,
-                    padding_factor=padding,
-                    t_min=fourier_t_min_us,
-                    t_max=fourier_t_max_us,
-                    phase_degrees=phase_degrees,
-                    t0_offset_us=group_t0_offset_us,
-                    subtract_average_signal=subtract_average_signal,
-                    filter_start_us=filter_start_us,
-                    filter_time_constant_us=filter_time_constant_us,
-                )
-                if average_freqs is None:
-                    average_freqs = freqs
-                if is_entropy_mode:
-                    averaged_complex_spectra.append(spectrum)
-                else:
-                    averaged_values.append(fourier_display_values(spectrum, display=display))
-
-            if is_entropy_mode and averaged_complex_spectra and average_freqs is not None:
-                avg_complex = np.mean(
-                    np.vstack([s[np.newaxis, :] for s in averaged_complex_spectra]), axis=0
-                )
-                averaged_display, _c0, _c1 = optimize_phase_entropy(avg_complex)
-                averaged_error = np.zeros_like(averaged_display)
-
-            elif averaged_values and average_freqs is not None:
-                averaged_display, averaged_error = average_fourier_display_values(
-                    averaged_values,
-                    estimate_error=estimate_average_error,
-                )
-            else:
-                averaged_display = None
-                averaged_error = None
-
-            if averaged_display is not None and average_freqs is not None:
-                average_dataset = self._build_fourier_value_dataset(
-                    first_group_dataset
-                    if first_group_dataset is not None
-                    else self._current_dataset,
-                    average_freqs,
-                    averaged_display,
-                    display=display,
-                    run_label=(
-                        f"{self._current_dataset.run_number} Average"
-                        if len(selected_group_names) == len(group_names)
-                        else f"{self._current_dataset.run_number} Average ({', '.join(selected_group_names)})"
-                    ),
-                    error=averaged_error,
-                )
-                average_dataset.metadata["fourier_group_output"] = "average"
-                average_dataset.metadata["group_ids"] = list(selected_group_ids)
+            if average_dataset is not None:
+                averaged_display = average_dataset.asymmetry
+                averaged_error = average_dataset.error
                 if averaged_error.size > 0 and np.any(averaged_error > 0.0):
-                    peak_signal_to_noise = 0.0
-                    if np.any(averaged_error > 0.0):
-                        sn = np.divide(
-                            np.abs(averaged_display),
-                            averaged_error,
-                            out=np.zeros_like(averaged_display),
-                            where=averaged_error > 0.0,
-                        )
-                        peak_signal_to_noise = float(np.nanmax(sn)) if sn.size else 0.0
+                    sn = np.divide(
+                        np.abs(averaged_display),
+                        averaged_error,
+                        out=np.zeros_like(averaged_display),
+                        where=averaged_error > 0.0,
+                    )
+                    peak_signal_to_noise = float(np.nanmax(sn)) if sn.size else 0.0
                     self._fourier_panel.set_average_summary(
                         mean_error=float(np.nanmean(averaged_error))
                         if averaged_error.size

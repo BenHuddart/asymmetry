@@ -14,6 +14,7 @@ pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings  # type: ignore
 from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QWidget  # type: ignore
 
+import asymmetry.core.fourier.spectrum as spectrum_module
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting import CompositeModel
@@ -358,7 +359,9 @@ class TestMainWindowFourier:
             calls.append((kwargs.get("t_min"), kwargs.get("t_max")))
             return np.array([0.0, 1.0]), np.array([0.0 + 0.0j, 1.0 + 0.0j])
 
-        monkeypatch.setattr(mw_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
+        # The averaged-FFT maths now lives in the shared spectrum core; patch
+        # the symbol where it is actually called.
+        monkeypatch.setattr(spectrum_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
 
         mainwindow._on_compute_fourier()
 
@@ -399,9 +402,9 @@ class TestMainWindowFourier:
             return np.array([0.0, 1.0]), np.array([1.0 + 0.0j, 0.5 + 0.0j])
 
         monkeypatch.setattr(
-            mw_module, "build_group_signal_dataset", _fake_build_group_signal_dataset
+            spectrum_module, "build_group_signal_dataset", _fake_build_group_signal_dataset
         )
-        monkeypatch.setattr(mw_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
+        monkeypatch.setattr(spectrum_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
 
         mainwindow._on_compute_fourier()
 
