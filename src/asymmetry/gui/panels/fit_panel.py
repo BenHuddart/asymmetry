@@ -1693,9 +1693,12 @@ class GlobalFitTab(QWidget):
         model_group = QGroupBox("Model")
         model_layout = QFormLayout(model_group)
         self._mode_combo = QComboBox()
+        # "datasets" is the batch/global scope (fit across the selected runs;
+        # a shared parameter makes it global). "grouped" is the joint
+        # multi-group fit of the active run's Individual-groups representation.
         mode_labels = {
-            "datasets": "Selected datasets",
-            "grouped": "Groups in active dataset",
+            "datasets": "Batch · selected runs",
+            "grouped": "Groups · joint fit",
         }
         for mode in self._allowed_modes:
             self._mode_combo.addItem(mode_labels.get(mode, mode.title()), userData=mode)
