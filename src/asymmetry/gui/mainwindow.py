@@ -932,6 +932,10 @@ class MainWindow(QMainWindow):
 
         if hasattr(self._fourier_panel, "_fft_btn"):
             self._fourier_panel._fft_btn.clicked.connect(self._on_compute_fourier)
+        if hasattr(self._fourier_panel, "_apply_to_selection_btn"):
+            self._fourier_panel._apply_to_selection_btn.clicked.connect(
+                self._on_apply_fourier_to_selection
+            )
         if hasattr(self._fourier_panel, "_auto_phase_btn"):
             self._fourier_panel._auto_phase_btn.clicked.connect(self._on_fill_fourier_phases)
 
@@ -3930,6 +3934,53 @@ class MainWindow(QMainWindow):
                 display=display,
                 spectra=len(spectra),
             )
+
+    def _on_apply_fourier_to_selection(self) -> None:
+        """Copy the active run's FFT recipe to the other selected runs.
+
+        Implements the "apply to series / all" affordance: the current run's
+        generated Fourier configuration is copied onto each other selected run's
+        FrequencyFFT representation, and their spectra are (re)generated.  This
+        keeps a series consistently configured for comparison without retuning
+        each run by hand.
+        """
+        if self._current_dataset is None or self._current_dataset.run is None:
+            self._set_fourier_status("Select a run before applying Fourier settings.")
+            return
+        source_run = int(self._current_dataset.run_number)
+        source_rep = self._project_model.representation(source_run, RepresentationType.FREQ_FFT)
+        if source_rep is None or not source_rep.recipe.get("fourier_config"):
+            self._set_fourier_status("Compute an FFT first, then apply it to the selection.")
+            return
+
+        config_dict = dict(source_rep.recipe["fourier_config"])
+        applied = 0
+        for dataset in self._data_browser.get_selected_datasets():
+            if dataset.run is None:
+                continue
+            run_number = int(dataset.run_number)
+            if run_number == source_run:
+                continue
+            representation = self._project_model.ensure_dataset(run_number).ensure(
+                RepresentationType.FREQ_FFT
+            )
+            representation.recipe = {"fourier_config": dict(config_dict)}
+            representation.invalidate()
+            try:
+                spectra = representation.ensure_computed(dataset.run)
+            except (ValueError, RuntimeError):
+                continue
+            if spectra:
+                self._frequency_spectra_by_run[run_number] = [spectra[0]]
+                applied += 1
+
+        if applied == 0:
+            self._set_fourier_status("Select additional runs to apply the Fourier settings to.")
+            return
+        self._set_fourier_status(
+            f"Applied Fourier settings to {applied} run(s).", success=True
+        )
+        self._log_panel.log(f"Applied Fourier settings to {applied} run(s).")
 
     def _on_fit_parameters(self) -> None:
         """Show and raise the Fitted Parameters dock panel."""

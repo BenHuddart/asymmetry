@@ -24,6 +24,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterGroupData,
 )
 from asymmetry.core.project import load_project, save_project
+from asymmetry.core.representation import RepresentationType
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.styles import tokens
 
@@ -341,6 +342,39 @@ class TestMainWindowFourier:
         np.testing.assert_allclose(recomputed.time, generated.time)
         np.testing.assert_allclose(recomputed.asymmetry, generated.asymmetry)
         np.testing.assert_allclose(recomputed.error, generated.error)
+
+    def test_apply_fourier_settings_to_selected_runs(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """'Apply to selection' copies the FFT recipe to other selected runs."""
+        ds1 = _make_fourier_ready_dataset(8830, with_grouping=True)
+        ds2 = _make_fourier_ready_dataset(8831, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds1)
+        mainwindow._data_browser.add_dataset(ds2)
+        mainwindow._on_dataset_selected(8830)
+        mainwindow._on_compute_fourier()
+
+        monkeypatch.setattr(
+            mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2]
+        )
+        mainwindow._on_apply_fourier_to_selection()
+
+        # The second run now has a generated spectrum and the same recipe.
+        assert 8831 in mainwindow._frequency_spectra_by_run
+        source_rep = mainwindow._project_model.representation(8830, RepresentationType.FREQ_FFT)
+        target_rep = mainwindow._project_model.representation(8831, RepresentationType.FREQ_FFT)
+        assert target_rep is not None
+        assert target_rep.recipe["fourier_config"] == source_rep.recipe["fourier_config"]
+
+    def test_apply_fourier_to_selection_requires_prior_compute(
+        self, mainwindow: MainWindow
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8832, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8832)
+        # No FFT computed yet -> nothing to apply.
+        mainwindow._on_apply_fourier_to_selection()
+        assert 8832 not in mainwindow._frequency_spectra_by_run
 
     def test_compute_group_fourier_can_average_selected_groups(
         self, mainwindow: MainWindow
