@@ -49,15 +49,31 @@ asymmetry/
 │   │   ├── engine.py         # Fit driver: single-run & global
 │   │   ├── composite.py      # Composite A(t) builder primitives
 │   │   ├── fit_wizard.py     # Single-spectrum fit fingerprinting and model comparison
+│   │   ├── grouped_time_domain.py  # Grouped-series fit engine
+│   │   ├── result_summary.py # Shared JSON-serialisable fit-result summary
 │   │   ├── models.py         # Built-in μSR fit functions
 │   │   ├── parameters.py     # Parameter objects with bounds & linking
 │   │   ├── minimizers.py     # Minimizer backends (scipy, lmfit, iminuit)
 │   │   └── results.py        # Fit-result container & statistics
 │   ├── fourier/        # Frequency-domain analysis
 │   │   ├── __init__.py
+│   │   ├── spectrum.py       # GroupSpectrumConfig, compute_average_group_spectrum
 │   │   ├── fft.py            # Standard FFT
 │   │   ├── maxent.py         # Maximum-entropy transform
 │   │   └── window.py         # Apodization / window functions
+│   ├── representation/ # Domain representation model (recipe + fit + trend)
+│   │   ├── __init__.py       # Public re-exports (FitSeries, FitSlot, RepresentationType, …)
+│   │   ├── base.py           # Representation ABC, RepresentationType enum, FitSlot
+│   │   ├── container.py      # DatasetRepresentations — per-run representation map
+│   │   ├── factory.py        # from_rep_type() — constructs concrete Representation subclasses
+│   │   ├── time.py           # TimeFBAsymmetry, TimeGroups representations
+│   │   ├── frequency.py      # FrequencyFFT, FrequencyMaxEnt representations
+│   │   ├── series.py         # FitSeries — ordered member series + divergence tracking
+│   │   ├── trend_state.py    # TrendState dataclass for Fit Parameters panel state
+│   │   └── project_model.py  # ProjectModel — in-memory owner of representations + batches
+│   ├── project/        # Project persistence
+│   │   ├── __init__.py
+│   │   └── schema.py         # load_project, save_project, migrate_to_current (v1–v7)
 │   └── utils/          # Shared utilities
 │       ├── __init__.py
 │       ├── constants.py      # Physical constants (μ⁺ gyromagnetic ratio, etc.)
@@ -70,9 +86,11 @@ asymmetry/
 │   ├── panels/               # Dockable panels / views
 │   │   ├── data_browser.py   # Run browser / logbook view
 │   │   ├── plot_panel.py     # Interactive plotting canvas
-│   │   ├── fit_panel.py      # Fit setup and results
+│   │   ├── fit_panel.py      # Fit setup and results (SingleFitTab, GlobalFitTab, FitPanel)
+│   │   ├── fit_parameters_panel.py  # Parameter trending panel (pull-based, representation-aware)
 │   │   ├── fit_function_builder.py  # Composite fit-function dialog
 │   │   ├── fourier_panel.py  # Fourier analysis controls
+│   │   ├── initial_values_dialog.py # Per-member initial-values editor for batch fits
 │   │   └── log_panel.py      # Message / command log
 │   ├── dialogs/              # Modal dialogs
 │   │   ├── load_data.py      # File-open with format detection
@@ -82,7 +100,8 @@ asymmetry/
 │   │   ├── __init__.py
 │   │   └── mpl_canvas.py     # Matplotlib canvas integration
 │   ├── windows/              # Top-level analysis windows
-│   │   ├── fit_wizard_window.py      # Guided single-spectrum fit wizard
+│   │   ├── fit_wizard_window.py       # Guided single-spectrum fit wizard
+│   │   ├── multi_group_fit_window.py  # Grouped fit surface (Single + Batch tabs)
 │   │   └── ...
 │   └── resources/            # Icons, stylesheets, etc.
 │
@@ -143,6 +162,73 @@ This keeps the recommendation engine scriptable and testable while avoiding a
 second, UI-only implementation of the global-fit logic.
 
 **Implemented toolkit:** PySide6 (Qt 6), chosen for its maturity, licensing flexibility (LGPL), and proven track record in large scientific applications (Mantid, SasView). The GUI layout draws inspiration from **WiMDA** — a data browser / logbook on the left, a central plot canvas, fit and Fourier analysis panels docked on the right, and a log/message panel at the bottom.
+
+### 3.5 Domain Representation Model
+
+The **representation model** (`asymmetry.core.representation`) is the spine of
+the analysis session. It decouples *what was computed and fitted* from *how the
+GUI currently looks*.
+
+#### Representations
+
+A `Representation` is a recipe-driven view of a `Run`. There are four kinds,
+one per analysis domain:
+
+| RepresentationType | Domain | Computes |
+|---|---|---|
+| `TIME_FB_ASYMMETRY` | Time | F-B asymmetry A(t) |
+| `TIME_GROUPS` | Time | Lifetime-corrected detector-group traces |
+| `FREQ_FFT` | Frequency | Averaged grouped FFT spectrum |
+| `FREQ_MAXENT` | Frequency | MaxEnt spectrum (reserved) |
+
+Each `Representation` stores:
+
+- **recipe** — generation parameters (e.g. FFT window, padding, phase). Transient
+  arrays are *not* persisted; they are recomputed from the recipe on project load.
+- **fit** (`FitSlot`) — the most recent fit for this `(dataset, representation)`
+  pair: model dict, fitted-parameter list, result summary, provenance
+  (`"none"` / `"single"` / `"batch"` / `"global"`), and flags used by the
+  trending panel (`diverged`, `include_in_trend`, `batch_id`).
+- **trend_state** — opaque dict persisting the user's axis/parameter selections
+  in the Fit Parameters panel.
+
+#### FitSeries
+
+A `FitSeries` (`asymmetry.core.representation.series`) collects multiple
+member fits — either across runs (`member_kind="runs"`) or across a run's
+detector groups (`member_kind="groups"`) — into one trendable unit. Members
+are keyed by integer: real run numbers for run series, synthetic negative keys
+`-(source_run * 1000 + group_index)` for group series.
+
+Key attributes: `canonical_model`, `param_roles` (Global / Local / Fixed per
+physics parameter), `nuisance_params` (group-only, always local),
+`results_by_run` (per-member summary dicts that drive the trending panel),
+`diverged_runs` (members whose stored model no longer matches the canonical).
+
+#### ProjectModel
+
+`ProjectModel` (`asymmetry.core.representation.project_model`) is the
+in-memory owner of all representations and series for the active project. It
+provides:
+
+- `refresh_divergence()` — re-evaluates every batch member's model against its
+  series canonical model; group series are evaluated at the source-run level.
+- `trend_runs_for_batch(batch)` — returns ordered member keys where the
+  source-run `FitSlot.include_in_trend` is True (group-aware).
+- `set_member_trend_inclusion(batch_id, run_number, include)` — manually
+  toggles a member's inclusion, routing synthetic keys to their source run.
+
+#### Fit Parameters panel (pull model)
+
+The `FitParametersPanel` operates on a **pull** model: whenever a fit
+completes or the active representation changes, `MainWindow._refresh_trend_panel`
+reads the relevant `FitSeries` from `ProjectModel`, builds per-member row dicts
+(using `_frequency_spectra_by_run` for FFT series), and calls
+`FitParametersPanel.load_representation_series`. The panel shows a **"Showing:"**
+label indicating the active representation and a **Series** button row —
+one button per `FitSeries` for the active representation. Selecting a series
+button emits `series_selection_changed`, which the main window forwards to
+`DataBrowserPanel.set_highlighted_runs`, tinting the member runs amber.
 
 ---
 
@@ -244,27 +330,38 @@ reimplemented.
 | FT-8 | Report fit statistics: $\chi^2$, $\chi^2_\text{red}$, parameter uncertainties, covariance matrix. |
 | FT-9 | Visualize fit residuals. |
 | FT-10 | Guide single-spectrum time-domain fitting with a wizard that fingerprints the active dataset, compares a curated portfolio of supported composite models, and applies the chosen result back into the fit panel. |
-| FT-11 | Support grouped time-domain fitting for one active dataset, with one shared polarization model plus explicit per-group ``N0``, background, amplitude, and relative-phase controls. |
+| FT-11 | Support grouped time-domain fitting: a **Single** tab fits one dataset's detector groups jointly; a **Batch** tab fits a multi-run series with the same grouped model, recording results as a ``FitSeries`` for parameter trending. Physics parameters are classified as ``Global`` (shared across runs), ``Local`` (per-run), or ``Fixed``; nuisance parameters (N₀, background, amplitude, relative_phase) are always per-(run, group). |
 
 ### 4.3.1 Grouped Time-Domain Boundary
 
-The first grouped time-domain slice follows the same core/GUI split used by the
-other fit workflows.
+The grouped time-domain feature follows the same core/GUI split as all other
+fit workflows, with the additional concept of a **FitSeries** as the central
+persisted object.
 
 - `asymmetry.core.fitting.grouped_time_domain` owns grouped-domain preparation
-  and grouped fitting. It builds lifetime-corrected grouped count traces from
-  the active run's grouping payload, applies deadtime-aware histogram
-  preparation when requested by grouping state, and adapts those grouped traces
-  onto the existing simultaneous-fit engine.
+  and grouped fitting. `fit_grouped_series` orchestrates individual, batch, and
+  global grouped fits by calling `fit_grouped_time_domain` (the per-run
+  building block) for each member and collecting results keyed by synthetic
+  member keys of the form `-(source_run * 1000 + group_index)`.
+- `asymmetry.core.representation.series.FitSeries` is the central persisted
+  object. Each grouped fit (single-run or multi-run batch) records its results
+  into a `FitSeries(member_kind="groups")` so parameter trending is available
+  for grouped fits on the same footing as asymmetry fits.
+- `asymmetry.core.representation.project_model.ProjectModel` owns the
+  in-memory representation + series state and handles group-aware divergence
+  detection.
 - `asymmetry.gui.windows.multi_group_fit_window.MultiGroupFitWindow` owns the
-  grouped-fit surface. It reuses the grouped branch of
-  `asymmetry.gui.panels.fit_panel.GlobalFitTab` to present the per-group
-  parameter block, the fit-function parameter block, and grouped-fit result
-  presentation inside the main fit dock when the time-domain plot is switched
-  to grouped view.
-- `asymmetry.gui.mainwindow.MainWindow` remains the integration point that ties
-  grouped mode to the active dataset, the current time-domain plot, and the
-  grouping definitions already owned by the grouping dialog and run metadata.
+  grouped-fit surface. It presents two `GlobalFitTab(member_kind="groups")`
+  instances — a **Single** tab for fitting one run's detector groups and a
+  **Batch** tab for multi-run grouped series — inside the main fit dock when
+  the time-domain view is in grouped mode. Scope (member kind, member set) is
+  derived from the active representation and data-browser selection rather than
+  an explicit selector.
+- `asymmetry.gui.mainwindow.MainWindow` is the integration point that ties
+  grouped mode to the active dataset, the current time-domain plot, the
+  grouping definitions, and the `ProjectModel`. It calls
+  `_record_grouped_fit_series` (which persists a `FitSeries`) and
+  `_refresh_trend_panel` (which pulls the series into the Fit Parameters panel).
 - `asymmetry.gui.panels.plot_panel.PlotPanel` owns the stacked grouped trace
   display in the time-domain workspace.
 

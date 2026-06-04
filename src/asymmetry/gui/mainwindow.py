@@ -31,6 +31,8 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QDockWidget,
     QFileDialog,
+    QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -39,21 +41,20 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QStackedWidget,
     QToolBar,
+    QVBoxLayout,
     QWidget,
 )
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset
-from asymmetry.core.fitting import build_grouped_time_domain_datasets
+from asymmetry.core.fitting import build_grouped_time_domain_datasets, fit_result_summary
 from asymmetry.core.fourier import (
-    average_fourier_display_values,
+    GroupSpectrumConfig,
     build_group_signal_dataset,
     canonical_fourier_display_mode,
+    compute_average_group_spectrum,
     estimate_fft_phase,
     fft_complex_asymmetry,
-    fourier_display_values,
-    fourier_mode_uses_entropy_optimizer,
     fourier_mode_uses_phase_correction,
-    optimize_phase_entropy,
 )
 from asymmetry.core.project import (
     CURRENT_SCHEMA_VERSION,
@@ -61,6 +62,13 @@ from asymmetry.core.project import (
     load_project,
     save_project,
 )
+from asymmetry.core.representation import (
+    FitSeries,
+    FitSlot,
+    RepresentationType,
+    canonical_model_matches,
+)
+from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
     apply_deadtime_correction,
     apply_grouped_background_correction,
@@ -90,6 +98,7 @@ from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.typography import header_font
 from asymmetry.gui.styles.widgets import build_segmented_button_qss
 from asymmetry.gui.ui_manager import (
     UI_SCALE_OPTIONS,
@@ -224,6 +233,12 @@ class MainWindow(QMainWindow):
         self._current_dataset = None  # Track currently selected dataset
         self._current_project_path: str | None = None  # Path of currently open project
         self._active_group_context: tuple[str, str] | None = None
+        # Recipe-only representation/batch state for the redesign.  Frequency
+        # spectra are recomputed from FrequencyFFT recipes on load; the
+        # _frequency_spectra_by_run cache below remains the in-memory plot
+        # source (the legacy array serialisation is a transitional fallback).
+        self._project_model = ProjectModel()
+        self._next_batch_index = 1
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
         self._fourier_group_phase_state_by_run: dict[int, dict[str, object]] = {}
         self._global_parameter_fit_window: GlobalParameterFitWindow | None = None
@@ -402,25 +417,56 @@ class MainWindow(QMainWindow):
         self._global_parameter_fit_toolbar_action.setEnabled(False)
         self._main_toolbar.addSeparator()
 
-        # Domain segmented control
-        self._main_toolbar.addWidget(QLabel("Domain:"))
+        # Domain → representation segmented control, grouped 2 + 2 under
+        # "Time" and "Frequency" headers.  One exclusive group spans all four
+        # buttons so only a single representation is ever active.
         self._domain_button_group = QButtonGroup(self)
         self._domain_button_group.setExclusive(True)
         self._domain_buttons: list[QPushButton] = []
         _domain_qss = build_segmented_button_qss()
-        for label, token in (
-            ("F-B asymmetry", "fb_asymmetry"),
-            ("Individual groups", "groups"),
-            ("Frequency", "frequency"),
-        ):
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setStyleSheet(_domain_qss)
-            btn.clicked.connect(lambda _checked=False, v=token: self._on_domain_button_clicked(v))
-            self._domain_button_group.addButton(btn)
-            self._domain_buttons.append(btn)
-            self._main_toolbar.addWidget(btn)
+
+        def _domain_cluster(header: str, specs: list[tuple[str, str]]) -> QWidget:
+            container = QWidget()
+            column = QVBoxLayout(container)
+            column.setContentsMargins(0, 0, 0, 0)
+            column.setSpacing(1)
+            heading = QLabel(header)
+            heading.setFont(header_font())
+            heading.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+            column.addWidget(heading)
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(0)
+            for label, token in specs:
+                btn = QPushButton(label)
+                btn.setCheckable(True)
+                btn.setStyleSheet(_domain_qss)
+                btn.clicked.connect(
+                    lambda _checked=False, v=token: self._on_domain_button_clicked(v)
+                )
+                self._domain_button_group.addButton(btn)
+                self._domain_buttons.append(btn)
+                row.addWidget(btn)
+            column.addLayout(row)
+            return container
+
+        self._main_toolbar.addWidget(
+            _domain_cluster(
+                "Time domain",
+                [("F-B asymmetry", "fb_asymmetry"), ("Individual groups", "groups")],
+            )
+        )
+        self._main_toolbar.addSeparator()
+        self._main_toolbar.addWidget(
+            _domain_cluster(
+                "Frequency domain",
+                [("FFT", "frequency"), ("MaxEnt", "maxent")],
+            )
+        )
         self._domain_buttons[0].setChecked(True)
+        # MaxEnt spectra are not implemented yet; the button reserves its slot.
+        self._domain_buttons[3].setEnabled(False)
+        self._domain_buttons[3].setToolTip("Maximum-entropy spectra — not yet implemented")
 
         # Stretch spacer — pushes View / Bunch to the right edge
         _stretch = QWidget()
@@ -872,15 +918,15 @@ class MainWindow(QMainWindow):
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
         if hasattr(self._fit_panel, "grouped_fit_completed"):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
-        if hasattr(self._fit_panel, "grouped_time_domain_mode_changed"):
-            self._fit_panel.grouped_time_domain_mode_changed.connect(
-                self._on_grouped_time_domain_mode_changed
-            )
         if hasattr(self._fit_panel, "preview_requested"):
             self._fit_panel.preview_requested.connect(self._on_preview_requested)
         if hasattr(self._fit_panel, "share_function_with_group_requested"):
             self._fit_panel.share_function_with_group_requested.connect(
                 self._on_share_single_function_with_group
+            )
+        if hasattr(self._fit_panel, "add_single_fit_to_series_requested"):
+            self._fit_panel.add_single_fit_to_series_requested.connect(
+                self._on_add_single_fit_to_series_requested
             )
         if hasattr(self._fit_parameters_panel, "cross_group_fit_completed"):
             self._fit_parameters_panel.cross_group_fit_completed.connect(
@@ -890,9 +936,17 @@ class MainWindow(QMainWindow):
             self._fit_parameters_panel.delete_group_fits_requested.connect(
                 self._on_fit_parameters_group_fits_deleted
             )
+        if hasattr(self._fit_parameters_panel, "series_selection_changed"):
+            self._fit_parameters_panel.series_selection_changed.connect(
+                self._on_trend_series_selected
+            )
 
         if hasattr(self._fourier_panel, "_fft_btn"):
             self._fourier_panel._fft_btn.clicked.connect(self._on_compute_fourier)
+        if hasattr(self._fourier_panel, "_apply_to_selection_btn"):
+            self._fourier_panel._apply_to_selection_btn.clicked.connect(
+                self._on_apply_fourier_to_selection
+            )
         if hasattr(self._fourier_panel, "_auto_phase_btn"):
             self._fourier_panel._auto_phase_btn.clicked.connect(self._on_fill_fourier_phases)
 
@@ -3370,6 +3424,47 @@ class MainWindow(QMainWindow):
             phases[group_id] = self._estimate_dataset_fourier_phase(group_dataset, state)
         return phases
 
+    def _resolve_group_phase_degrees(
+        self,
+        selected_group_ids: list[int],
+        state: dict,
+        *,
+        apply_phase_correction: bool,
+        auto_phase: bool,
+        use_phase_table: bool,
+        manual_phase: float,
+        group_phase_table: dict[int, float],
+        prepared_histograms: list[Histogram] | None,
+        reference_t0_bin: int | None,
+    ) -> dict[int, float]:
+        """Resolve concrete per-group phase corrections for the active run.
+
+        Mirrors the previous inline auto/table/manual selection so the shared
+        spectrum core (and recipe recompute) receives fully-resolved phases.
+        """
+        if (
+            not apply_phase_correction
+            or self._current_dataset is None
+            or self._current_dataset.run is None
+        ):
+            return {}
+        resolved: dict[int, float] = {}
+        for group_id in selected_group_ids:
+            if auto_phase and not use_phase_table:
+                group_dataset = build_group_signal_dataset(
+                    self._current_dataset.run,
+                    group_id,
+                    center_signal=False,
+                    reference_t0_bin=reference_t0_bin,
+                    prepared_histograms=prepared_histograms,
+                )
+                resolved[group_id] = self._estimate_dataset_fourier_phase(group_dataset, state)
+            elif use_phase_table:
+                resolved[group_id] = group_phase_table.get(group_id, manual_phase)
+            else:
+                resolved[group_id] = manual_phase
+        return resolved
+
     def _fourier_display_ylabel(self, display: str) -> str:
         """Return a display-specific y-axis label for FFT plots."""
         return {
@@ -3426,6 +3521,44 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Cache computed frequency spectra for one run-number context."""
         self._frequency_spectra_by_run[int(run_number)] = list(spectra)
+
+    def _record_frequency_fft_recipe(
+        self,
+        run_number: int,
+        config: GroupSpectrumConfig,
+        spectrum: MuonDataset,
+    ) -> None:
+        """Persist the generation recipe for a run's FFT representation.
+
+        The recipe lets the spectrum be recomputed on project load instead of
+        storing the spectrum arrays.  The freshly computed spectrum is cached on
+        the representation so it need not be recomputed immediately.
+        """
+        representation = self._project_model.ensure_dataset(int(run_number)).ensure(
+            RepresentationType.FREQ_FFT
+        )
+        representation.recipe = {"fourier_config": config.to_dict()}
+        representation.cache_datasets([spectrum])
+
+    def _restore_frequency_representations(self, state: dict) -> None:
+        """Rebuild FFT spectra from recipes (authoritative over stored arrays).
+
+        Reads the v6 ``representations``/``batches`` into the project model,
+        recomputes each FrequencyFFT spectrum from its recipe using the loaded
+        runs, and refreshes the in-memory plot cache.  Runs that cannot be
+        recomputed keep whatever the legacy array fallback restored.
+        """
+        self._project_model = ProjectModel.from_project_state(state)
+        runs_by_number: dict[int, object] = {}
+        if hasattr(self._data_browser, "get_all_datasets"):
+            for dataset in self._data_browser.get_all_datasets():
+                if dataset.run is not None:
+                    runs_by_number[int(dataset.run_number)] = dataset.run
+        self._project_model.recompute_all(runs_by_number)
+        for run_number, container in self._project_model.datasets.items():
+            representation = container.get(RepresentationType.FREQ_FFT)
+            if representation is not None and representation.primary is not None:
+                self._frequency_spectra_by_run[int(run_number)] = [representation.primary]
 
     def _serialize_frequency_spectra_state(self) -> dict[str, list[dict[str, object]]]:
         """Return a serializable snapshot of cached Fourier spectra."""
@@ -3664,7 +3797,6 @@ class MainWindow(QMainWindow):
         selected_group_ids: list[int] = []
         spectra: list[MuonDataset] = []
         apply_phase_correction = fourier_mode_uses_phase_correction(display)
-        is_entropy_mode = fourier_mode_uses_entropy_optimizer(display)
         window = str(state.get("window", "none"))
         filter_start_us = float(state.get("filter_start_us", 0.0))
         filter_time_constant_us = float(state.get("filter_time_constant_us", 1.5))
@@ -3712,96 +3844,53 @@ class MainWindow(QMainWindow):
                 self._current_dataset
             )
 
-            averaged_values: list[np.ndarray] = []
-            averaged_complex_spectra: list[np.ndarray] = []
-            average_freqs: np.ndarray | None = None
-            first_group_dataset: MuonDataset | None = None
-            selected_group_names: list[str] = []
+            # Resolve the auto/table/manual phase choice into concrete per-group
+            # values, then delegate the spectrum maths to the shared core so a
+            # generated spectrum and a recipe-recomputed one are identical.
+            group_phase_degrees = self._resolve_group_phase_degrees(
+                selected_group_ids,
+                state,
+                apply_phase_correction=apply_phase_correction,
+                auto_phase=auto_phase,
+                use_phase_table=use_phase_table,
+                manual_phase=manual_phase,
+                group_phase_table=group_phase_table,
+                prepared_histograms=prepared_histograms,
+                reference_t0_bin=reference_t0_bin,
+            )
 
-            for group_id in selected_group_ids:
-                group_name = group_names.get(group_id, f"Group {group_id}")
-                group_dataset = build_group_signal_dataset(
-                    self._current_dataset.run,
-                    group_id,
-                    center_signal=False,
-                    reference_t0_bin=reference_t0_bin,
-                    prepared_histograms=prepared_histograms,
-                )
-                if first_group_dataset is None:
-                    first_group_dataset = group_dataset
-                selected_group_names.append(str(group_name))
-                phase_degrees = 0.0
-                group_t0_offset_us = 0.0
-                if apply_phase_correction:
-                    phase_degrees = manual_phase
-                    group_t0_offset_us = t0_offset_us
-                    if auto_phase and not use_phase_table:
-                        phase_degrees = self._estimate_dataset_fourier_phase(group_dataset, state)
-                    elif use_phase_table:
-                        phase_degrees = group_phase_table.get(group_id, manual_phase)
+            fourier_config = GroupSpectrumConfig(
+                display=display,
+                window=window,
+                padding=padding,
+                filter_start_us=filter_start_us,
+                filter_time_constant_us=filter_time_constant_us,
+                t0_offset_us=t0_offset_us,
+                subtract_average_signal=subtract_average_signal,
+                estimate_average_error=estimate_average_error,
+                t_min_us=fourier_t_min_us,
+                t_max_us=fourier_t_max_us,
+                selected_group_ids=list(selected_group_ids),
+                group_phase_degrees=group_phase_degrees,
+            )
+            average_dataset = compute_average_group_spectrum(
+                self._current_dataset.run,
+                fourier_config,
+                prepared_histograms=prepared_histograms,
+                reference_t0_bin=reference_t0_bin,
+            )
 
-                freqs, spectrum = fft_complex_asymmetry(
-                    group_dataset,
-                    window=window,
-                    padding_factor=padding,
-                    t_min=fourier_t_min_us,
-                    t_max=fourier_t_max_us,
-                    phase_degrees=phase_degrees,
-                    t0_offset_us=group_t0_offset_us,
-                    subtract_average_signal=subtract_average_signal,
-                    filter_start_us=filter_start_us,
-                    filter_time_constant_us=filter_time_constant_us,
-                )
-                if average_freqs is None:
-                    average_freqs = freqs
-                if is_entropy_mode:
-                    averaged_complex_spectra.append(spectrum)
-                else:
-                    averaged_values.append(fourier_display_values(spectrum, display=display))
-
-            if is_entropy_mode and averaged_complex_spectra and average_freqs is not None:
-                avg_complex = np.mean(
-                    np.vstack([s[np.newaxis, :] for s in averaged_complex_spectra]), axis=0
-                )
-                averaged_display, _c0, _c1 = optimize_phase_entropy(avg_complex)
-                averaged_error = np.zeros_like(averaged_display)
-
-            elif averaged_values and average_freqs is not None:
-                averaged_display, averaged_error = average_fourier_display_values(
-                    averaged_values,
-                    estimate_error=estimate_average_error,
-                )
-            else:
-                averaged_display = None
-                averaged_error = None
-
-            if averaged_display is not None and average_freqs is not None:
-                average_dataset = self._build_fourier_value_dataset(
-                    first_group_dataset
-                    if first_group_dataset is not None
-                    else self._current_dataset,
-                    average_freqs,
-                    averaged_display,
-                    display=display,
-                    run_label=(
-                        f"{self._current_dataset.run_number} Average"
-                        if len(selected_group_names) == len(group_names)
-                        else f"{self._current_dataset.run_number} Average ({', '.join(selected_group_names)})"
-                    ),
-                    error=averaged_error,
-                )
-                average_dataset.metadata["fourier_group_output"] = "average"
-                average_dataset.metadata["group_ids"] = list(selected_group_ids)
+            if average_dataset is not None:
+                averaged_display = average_dataset.asymmetry
+                averaged_error = average_dataset.error
                 if averaged_error.size > 0 and np.any(averaged_error > 0.0):
-                    peak_signal_to_noise = 0.0
-                    if np.any(averaged_error > 0.0):
-                        sn = np.divide(
-                            np.abs(averaged_display),
-                            averaged_error,
-                            out=np.zeros_like(averaged_display),
-                            where=averaged_error > 0.0,
-                        )
-                        peak_signal_to_noise = float(np.nanmax(sn)) if sn.size else 0.0
+                    sn = np.divide(
+                        np.abs(averaged_display),
+                        averaged_error,
+                        out=np.zeros_like(averaged_display),
+                        where=averaged_error > 0.0,
+                    )
+                    peak_signal_to_noise = float(np.nanmax(sn)) if sn.size else 0.0
                     self._fourier_panel.set_average_summary(
                         mean_error=float(np.nanmean(averaged_error))
                         if averaged_error.size
@@ -3811,6 +3900,11 @@ class MainWindow(QMainWindow):
                     )
                 spectra.append(average_dataset)
                 spectra_by_run[int(self._current_dataset.run_number)] = list(spectra)
+                self._record_frequency_fft_recipe(
+                    int(self._current_dataset.run_number),
+                    fourier_config,
+                    average_dataset,
+                )
 
             if not spectra:
                 self._set_fourier_status(
@@ -3851,6 +3945,51 @@ class MainWindow(QMainWindow):
                 display=display,
                 spectra=len(spectra),
             )
+
+    def _on_apply_fourier_to_selection(self) -> None:
+        """Copy the active run's FFT recipe to the other selected runs.
+
+        Implements the "apply to series / all" affordance: the current run's
+        generated Fourier configuration is copied onto each other selected run's
+        FrequencyFFT representation, and their spectra are (re)generated.  This
+        keeps a series consistently configured for comparison without retuning
+        each run by hand.
+        """
+        if self._current_dataset is None or self._current_dataset.run is None:
+            self._set_fourier_status("Select a run before applying Fourier settings.")
+            return
+        source_run = int(self._current_dataset.run_number)
+        source_rep = self._project_model.representation(source_run, RepresentationType.FREQ_FFT)
+        if source_rep is None or not source_rep.recipe.get("fourier_config"):
+            self._set_fourier_status("Compute an FFT first, then apply it to the selection.")
+            return
+
+        config_dict = dict(source_rep.recipe["fourier_config"])
+        applied = 0
+        for dataset in self._data_browser.get_selected_datasets():
+            if dataset.run is None:
+                continue
+            run_number = int(dataset.run_number)
+            if run_number == source_run:
+                continue
+            representation = self._project_model.ensure_dataset(run_number).ensure(
+                RepresentationType.FREQ_FFT
+            )
+            representation.recipe = {"fourier_config": dict(config_dict)}
+            representation.invalidate()
+            try:
+                spectra = representation.ensure_computed(dataset.run)
+            except (ValueError, RuntimeError):
+                continue
+            if spectra:
+                self._frequency_spectra_by_run[run_number] = [spectra[0]]
+                applied += 1
+
+        if applied == 0:
+            self._set_fourier_status("Select additional runs to apply the Fourier settings to.")
+            return
+        self._set_fourier_status(f"Applied Fourier settings to {applied} run(s).", success=True)
+        self._log_panel.log(f"Applied Fourier settings to {applied} run(s).")
 
     def _on_fit_parameters(self) -> None:
         """Show and raise the Fitted Parameters dock panel."""
@@ -3985,19 +4124,6 @@ class MainWindow(QMainWindow):
         mode = "enabled" if enabled else "disabled"
         self._log_panel.log(f"Plot overlay {mode}.")
 
-    def _on_grouped_time_domain_mode_changed(self, _enabled: bool) -> None:
-        """Refresh plot and fit context when grouped mode changes."""
-        self._refresh_time_view_selector()
-        if (
-            _enabled
-            and hasattr(self._plot_panel, "set_current_time_view_mode")
-            and self._grouped_time_domain_display_datasets()
-        ):
-            self._plot_panel.set_current_time_view_mode("groups", emit_signal=False)
-        self._update_selected_datasets()
-        self._render_current_selection_plot()
-        self._update_fit_block_state()
-
     def _on_plot_time_view_changed(self, _mode: str) -> None:
         """Re-render the main time-domain plot after an explicit view switch."""
         if (
@@ -4025,7 +4151,7 @@ class MainWindow(QMainWindow):
 
     def _sync_domain_buttons(self, view: str) -> None:
         """Update toolbar Domain button checked state to match *view*."""
-        _tokens = ("fb_asymmetry", "groups", "frequency")
+        _tokens = ("fb_asymmetry", "groups", "frequency", "maxent")
         for idx, btn in enumerate(getattr(self, "_domain_buttons", [])):
             btn.setChecked(_tokens[idx] == view)
 
@@ -4038,6 +4164,8 @@ class MainWindow(QMainWindow):
         self._sync_domain_buttons(view)
         self._apply_inspector_for_domain(view)
         self._update_status_selection()
+        # Refresh the trend panel for the newly-active representation.
+        self._refresh_trend_panel()
 
     def _on_fit_range_changed(self, x_min: float, x_max: float) -> None:
         """Refresh fit inputs when the selected fit x-range changes."""
@@ -4092,7 +4220,438 @@ class MainWindow(QMainWindow):
             fit_function=fit_function,
         )
         self._last_fit_chi2 = float(fit_result.reduced_chi_squared)
+        self._record_single_fit_slot(fit_result)
         self._log_panel.log(f"Fit completed: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}", tag="fit")
+
+    def _active_representation_type(self) -> RepresentationType | None:
+        """Map the active workspace view to its representation type."""
+        if not hasattr(self, "_plot_workspace"):
+            return None
+        return {
+            "fb_asymmetry": RepresentationType.TIME_FB_ASYMMETRY,
+            "groups": RepresentationType.TIME_GROUPS,
+            "frequency": RepresentationType.FREQ_FFT,
+            "maxent": RepresentationType.FREQ_MAXENT,
+        }.get(self._plot_workspace.active_view())
+
+    @staticmethod
+    def _fit_result_summary(fit_result) -> dict:
+        """Return a JSON-serialisable summary of a fit result.
+
+        Delegates to the shared core helper so the run-batch and grouped-series
+        recording paths produce identically shaped ``results_by_run`` entries.
+        """
+        return fit_result_summary(fit_result)
+
+    # ── Representation-aware trend panel (Phase 4) ────────────────────────────
+
+    #: Maps each active representation type to a human-readable display name.
+    _REP_TYPE_LABEL: dict = {}  # populated lazily — avoids circular import issues
+
+    @staticmethod
+    def _rep_label_for(rep_type: RepresentationType) -> str:
+        """Return a short display name for *rep_type*."""
+        return {
+            RepresentationType.TIME_FB_ASYMMETRY: "F-B Asymmetry",
+            RepresentationType.TIME_GROUPS: "Detector Groups",
+            RepresentationType.FREQ_FFT: "FFT",
+            RepresentationType.FREQ_MAXENT: "MaxEnt",
+        }.get(rep_type, "")
+
+    def _build_series_rows(self, series: FitSeries) -> list[dict]:
+        """Build the row-dict list for one ``FitSeries`` to pass to the trend panel.
+
+        Each entry is a plain dict with keys ``run_number``, ``run_label``,
+        ``field``, ``temperature``, ``values``, ``errors``.  Only successful
+        members are included.
+
+        For frequency-domain series, dataset metadata is read from the cached
+        frequency spectra (``_frequency_spectra_by_run``) rather than the data
+        browser, mirroring the old ``set_fit_results`` path's ``is_frequency_fit``
+        branch.  The time-domain data browser is used as a fallback when the
+        spectrum is not cached in memory.
+        """
+        rows: list[dict] = []
+        is_frequency = series.rep_type in (
+            RepresentationType.FREQ_FFT,
+            RepresentationType.FREQ_MAXENT,
+        )
+        for member_key in series.member_run_numbers:
+            summary = series.results_by_run.get(member_key)
+            if not summary or not summary.get("success"):
+                continue
+
+            if series.member_kind == "groups":
+                source_run = series.source_run_for(member_key)
+                dataset = (
+                    self._data_browser.get_dataset(source_run)
+                    if hasattr(self._data_browser, "get_dataset")
+                    else None
+                )
+                group_idx = abs(member_key) % 1000
+                run_label = f"R{source_run}/G{group_idx}"
+            else:
+                # Frequency-domain spectra may carry richer / more-accurate
+                # metadata than the time-domain entry in the data browser.
+                dataset = None
+                if is_frequency:
+                    spectra = self._frequency_spectra_by_run.get(member_key, [])
+                    dataset = spectra[0] if spectra else None
+                if dataset is None and hasattr(self._data_browser, "get_dataset"):
+                    dataset = self._data_browser.get_dataset(member_key)
+                run_label = None
+
+            meta = getattr(dataset, "metadata", {}) or {}
+            if run_label is None:
+                run_label = str(meta.get("run_label") or member_key)
+
+            rows.append(
+                {
+                    "run_number": member_key,
+                    "run_label": run_label,
+                    "field": float(meta.get("field", 0.0)),
+                    "temperature": float(meta.get("temperature", 0.0)),
+                    "values": dict(summary.get("parameters", {})),
+                    "errors": dict(summary.get("uncertainties", {})),
+                }
+            )
+        return rows
+
+    def _refresh_trend_panel(self) -> None:
+        """Reload the trend panel from the project model for the active representation.
+
+        This is the *pull*-based entry point called after every fit that records
+        a ``FitSeries`` and whenever the active representation changes.  It
+        replaces the old per-fit UUID push.
+        """
+        if not hasattr(self, "_fit_parameters_panel"):
+            return
+        rep_type = self._active_representation_type()
+        if rep_type is None:
+            return
+
+        # Gather all series for the active representation, in creation order
+        # (batch-N sorts before batch-(N+1) because IDs are "batch-<index>").
+        series_for_rep = sorted(
+            (s for s in self._project_model.batches.values() if s.rep_type == rep_type),
+            key=lambda s: s.batch_id,
+        )
+
+        rep_label = self._rep_label_for(rep_type)
+        entries: list[tuple[str, str, list[dict]]] = []
+        highlight_map: dict[str, list[int]] = {}
+        for idx, series in enumerate(series_for_rep, start=1):
+            row_dicts = self._build_series_rows(series)
+            if not row_dicts:
+                continue
+            batch_id = series.batch_id
+            name = f"Series {idx}"
+            entries.append((batch_id, name, row_dicts))
+            # Runs to highlight: source runs for group series, member keys for run series.
+            if series.member_kind == "groups":
+                highlight_map[batch_id] = sorted(set(series.member_source_run.values()))
+            else:
+                highlight_map[batch_id] = list(series.member_run_numbers)
+
+        if hasattr(self._fit_parameters_panel, "load_representation_series"):
+            self._fit_parameters_panel.load_representation_series(
+                rep_label,
+                entries,
+                highlight_runs_by_id=highlight_map,
+            )
+
+        if entries and hasattr(self, "_dock_fit_parameters"):
+            self._dock_fit_parameters.show()
+            self._dock_fit_parameters.raise_()
+
+    def _on_trend_series_selected(self, batch_id: str) -> None:
+        """Highlight the member runs of the active fit series in the data browser."""
+        series = self._project_model.batch(batch_id)
+        if series is None:
+            if hasattr(self._data_browser, "set_highlighted_runs"):
+                self._data_browser.set_highlighted_runs(set())
+            return
+        if series.member_kind == "groups":
+            runs = set(series.member_source_run.values())
+        else:
+            runs = set(series.member_run_numbers)
+        if hasattr(self._data_browser, "set_highlighted_runs"):
+            self._data_browser.set_highlighted_runs(runs)
+
+    def _record_single_fit_slot(self, fit_result) -> None:
+        """Write the active representation's single FitSlot into the project model."""
+        rep_type = self._active_representation_type()
+        if rep_type is None or self._current_dataset is None:
+            return
+        if not hasattr(self._fit_panel, "get_single_state"):
+            return
+        state = self._fit_panel.get_single_state()
+        if not isinstance(state, dict):
+            return
+        run_number = int(self._current_dataset.run_number)
+        representation = self._project_model.ensure_dataset(run_number).ensure(rep_type)
+        representation.fit = FitSlot(
+            model=state.get("composite_model"),
+            parameters=[dict(p) for p in state.get("parameters", []) if isinstance(p, dict)],
+            result={
+                **self._fit_result_summary(fit_result),
+                "result_html": state.get("result_html"),
+            },
+            provenance="single",
+        )
+        # Editing a batch member's model via a single fit may diverge it.
+        self._project_model.refresh_divergence()
+
+    def _record_global_fit_batch(self, normalized_payloads: dict, global_params) -> None:
+        """Persist a completed batch/global fit as a FitSeries + member FitSlots.
+
+        A batch fit (all parameters local/fixed) and a global fit (>=1 parameter
+        classified ``global``) are the same operation; the parameter classifier
+        decides which.  Each member's representation gets a FitSlot pointing back
+        to the batch, and the batch carries the run-by-run results for trending.
+        """
+        rep_type = self._active_representation_type()
+        if rep_type is None or not normalized_payloads:
+            return
+        if not hasattr(self._fit_panel, "get_global_state"):
+            return
+        state = self._fit_panel.get_global_state()
+        if not isinstance(state, dict):
+            return
+
+        param_roles: dict[str, str] = {}
+        for entry in state.get("parameters", []):
+            if not isinstance(entry, dict) or "name" not in entry:
+                continue
+            role = str(entry.get("type", "local")).strip().lower()
+            if role not in ("global", "local", "fixed"):
+                role = "local"
+            param_roles[str(entry["name"])] = role
+        provenance = "global" if any(r == "global" for r in param_roles.values()) else "batch"
+
+        member_runs = sorted(int(r) for r in normalized_payloads)
+        canonical_model = state.get("composite_model")
+        results_by_run = {
+            int(run): self._fit_result_summary(payload[0])
+            for run, payload in normalized_payloads.items()
+        }
+        batch = FitSeries(
+            f"batch-{self._next_batch_index}",
+            rep_type,
+            member_run_numbers=member_runs,
+            order_key="field",
+            canonical_model=canonical_model,
+            param_roles=param_roles,
+            results_by_run=results_by_run,
+        )
+        self._next_batch_index += 1
+
+        runs_by_number: dict[int, object] = {}
+        if hasattr(self._data_browser, "get_dataset"):
+            for run in member_runs:
+                dataset = self._data_browser.get_dataset(run)
+                if dataset is not None and dataset.run is not None:
+                    runs_by_number[run] = dataset.run
+        batch.sort_members(runs_by_number)
+        self._project_model.add_batch(batch)
+
+        template_parameters = [dict(p) for p in state.get("parameters", []) if isinstance(p, dict)]
+        for run, payload in normalized_payloads.items():
+            representation = self._project_model.ensure_dataset(int(run)).ensure(rep_type)
+            representation.fit = FitSlot(
+                model=canonical_model,
+                parameters=template_parameters,
+                result=self._fit_result_summary(payload[0]),
+                provenance=provenance,
+                batch_id=batch.batch_id,
+            )
+        # Fresh batch members all share the canonical model (no divergence yet).
+        self._project_model.refresh_divergence()
+
+    def _active_grouped_state(self) -> dict:
+        """Return the grouped-fit classification from the active grouped surface.
+
+        Prefers the multi-group fit window (the real grouped-fit surface when the
+        Individual-groups representation is active); falls back to the fit panel.
+        """
+        if (
+            self._active_representation_type() == RepresentationType.TIME_GROUPS
+            and self._multi_group_fit_window is not None
+            and hasattr(self._multi_group_fit_window, "get_grouped_state")
+        ):
+            state = self._multi_group_fit_window.get_grouped_state()
+            if isinstance(state, dict) and state:
+                return state
+        if hasattr(self._fit_panel, "get_grouped_state"):
+            return self._fit_panel.get_grouped_state()
+        return {}
+
+    def _record_grouped_fit_series(self, grouped_datasets, results_dict) -> None:
+        """Persist a completed grouped fit as a ``FitSeries(member_kind="groups")``.
+
+        Each ``(run, group)`` member is keyed by its synthetic group key so the
+        series' ``results_by_run`` drives parameter trending exactly like a run
+        series.  The two-tier classification is recorded as physics ``param_roles``
+        plus the always-per-group ``nuisance_params`` block.  Each source run's
+        grouped representation gets one pointer ``FitSlot`` into the series.
+        """
+        if not isinstance(grouped_datasets, list) or not isinstance(results_dict, dict):
+            return
+        if not results_dict:
+            return
+        state = self._active_grouped_state()
+        if not isinstance(state, dict) or not state:
+            return
+
+        rep_type = RepresentationType.TIME_GROUPS
+        source_by_key: dict[int, int] = {}
+        for dataset in grouped_datasets:
+            metadata = getattr(dataset, "metadata", {}) or {}
+            try:
+                key = int(metadata.get("run_number"))
+            except (TypeError, ValueError):
+                continue
+            source_by_key[key] = int(metadata.get("source_run_number", abs(key) // 1000))
+
+        member_keys: list[int] = []
+        member_source_run: dict[int, int] = {}
+        results_by_run: dict[int, dict] = {}
+        for raw_key, payload in results_dict.items():
+            try:
+                key = int(raw_key)
+            except (TypeError, ValueError):
+                continue
+            fit_result = payload[0] if isinstance(payload, tuple) and payload else payload
+            member_keys.append(key)
+            member_source_run[key] = source_by_key.get(key, abs(key) // 1000)
+            results_by_run[key] = self._fit_result_summary(fit_result)
+        if not member_keys:
+            return
+
+        physics_roles = {
+            str(name): str(role)
+            for name, role in (state.get("param_roles") or {}).items()
+            if role in ("global", "local", "fixed")
+        }
+        nuisance_params = [str(name) for name in (state.get("nuisance_params") or [])]
+        canonical_model = state.get("composite_model")
+        provenance = "global" if any(r == "global" for r in physics_roles.values()) else "batch"
+
+        series = FitSeries(
+            f"batch-{self._next_batch_index}",
+            rep_type,
+            member_kind="groups",
+            member_run_numbers=member_keys,
+            member_source_run=member_source_run,
+            order_key="run",
+            canonical_model=canonical_model,
+            param_roles=physics_roles,
+            nuisance_params=nuisance_params,
+            results_by_run=results_by_run,
+        )
+        self._next_batch_index += 1
+
+        runs_by_number: dict[int, object] = {}
+        if hasattr(self._data_browser, "get_dataset"):
+            for run in set(member_source_run.values()):
+                dataset = self._data_browser.get_dataset(run)
+                if dataset is not None and dataset.run is not None:
+                    runs_by_number[run] = dataset.run
+        series.sort_members(runs_by_number)
+        self._project_model.add_batch(series)
+
+        for run in sorted(set(member_source_run.values())):
+            representation = self._project_model.ensure_dataset(int(run)).ensure(rep_type)
+            representation.fit = FitSlot(
+                model=canonical_model,
+                result={"series_id": series.batch_id},
+                provenance=provenance,
+                batch_id=series.batch_id,
+            )
+        # Fresh group-series members all share the canonical model; clear stale
+        # divergence state from any earlier series on the same representations.
+        self._project_model.refresh_divergence()
+
+    def _add_single_fit_to_series(self, run_number: int, series_id: str) -> bool:
+        """Add a compatible single fit (one run) as a member of an existing series.
+
+        Compatibility = the run's stored single-fit model matches the series'
+        canonical model (reuses ``canonical_model_matches``). Run-membered series
+        only; group series grow by re-running the batch. Returns ``True`` when the
+        member was added.
+        """
+        series = self._project_model.batch(str(series_id))
+        if series is None or series.member_kind != "runs":
+            return False
+        representation = self._project_model.representation(int(run_number), series.rep_type)
+        if representation is None or representation.fit.is_empty():
+            return False
+        if not canonical_model_matches(representation.fit.model, series.canonical_model):
+            return False
+
+        run_number = int(run_number)
+        series.add_member(run_number)
+        representation.fit.batch_id = series.batch_id
+        representation.fit.provenance = "global" if series.is_global() else "batch"
+        if isinstance(representation.fit.result, dict):
+            series.results_by_run[run_number] = dict(representation.fit.result)
+
+        runs_by_number: dict[int, object] = {}
+        if hasattr(self._data_browser, "get_dataset"):
+            for member in series.member_run_numbers:
+                dataset = self._data_browser.get_dataset(member)
+                if dataset is not None and dataset.run is not None:
+                    runs_by_number[member] = dataset.run
+        series.sort_members(runs_by_number)
+        self._project_model.refresh_divergence()
+        return True
+
+    def _on_add_single_fit_to_series_requested(self) -> None:
+        """Handle the Single tab's 'Add to Series…' action.
+
+        Finds run-membered series whose canonical model matches the active run's
+        single fit and adds the run to one (prompting if several match). The
+        trend panel is refreshed after a successful addition.
+        """
+        if self._current_dataset is None:
+            self.statusBar().showMessage("Select a run with a single fit to add to a series.")
+            return
+        run = int(self._current_dataset.run_number)
+        rep_type = self._active_representation_type()
+        if rep_type is None:
+            return
+        representation = self._project_model.representation(run, rep_type)
+        if representation is None or representation.fit.is_empty():
+            self.statusBar().showMessage(f"Run {run} has no single fit to add — fit it first.")
+            return
+
+        compatible = [
+            series
+            for series in self._project_model.batches.values()
+            if series.member_kind == "runs"
+            and series.rep_type == rep_type
+            and run not in series.member_run_numbers
+            and canonical_model_matches(representation.fit.model, series.canonical_model)
+        ]
+        if not compatible:
+            self.statusBar().showMessage(f"No compatible batch series for run {run}'s fit.")
+            return
+
+        if len(compatible) == 1:
+            series = compatible[0]
+        else:
+            labels = [f"{s.batch_id} ({len(s.member_run_numbers)} runs)" for s in compatible]
+            choice, ok = QInputDialog.getItem(
+                self, "Add to Series", "Compatible series:", labels, 0, False
+            )
+            if not ok:
+                return
+            series = compatible[labels.index(choice)]
+
+        if self._add_single_fit_to_series(run, series.batch_id):
+            self._log_panel.log(f"Added run {run} to batch series {series.batch_id}.", tag="fit")
+            self.statusBar().showMessage(f"Added run {run} to series {series.batch_id}.")
+            self._refresh_trend_panel()
 
     def _on_preview_requested(self, fit_result, fitted_curve, component_curves) -> None:
         """Handle preview request from fit panel."""
@@ -4229,7 +4788,7 @@ class MainWindow(QMainWindow):
             fit_curves[run_number] = (
                 t_fit,
                 y_fit,
-                "Global Fit",
+                "Batch Fit",
                 component_curves,
                 result,
                 global_fit_function,
@@ -4237,51 +4796,17 @@ class MainWindow(QMainWindow):
             )
 
         self._fit_panel.register_global_fit_results(normalized_payloads)
+        self._record_global_fit_batch(normalized_payloads, global_params)
 
         # Set all fit curves in plot panel
         panel = self._frequency_plot_panel if is_frequency_fit else self._plot_panel
         panel.set_global_fits(fit_curves)
 
-        # Push fitted parameters into the trends panel.
-        trends_results = {
-            run_number: (result, fitted_curve)
-            for run_number, (result, fitted_curve, _component_curves) in normalized_payloads.items()
-        }
-        datasets_by_run = {}
-        for run_number in normalized_payloads:
-            dataset = (
-                self._frequency_spectra_by_run.get(run_number, [None])[0]
-                if is_frequency_fit
-                else self._data_browser.get_dataset(run_number)
-            )
-            if dataset is not None:
-                datasets_by_run[run_number] = dataset
-        group_id = "frequency_domain" if is_frequency_fit else None
-        group_name = "Frequency Domain" if is_frequency_fit else None
-        selected_group_ids = (
-            self._data_browser.get_selected_group_ids()
-            if hasattr(self._data_browser, "get_selected_group_ids")
-            else []
-        )
-        if (not is_frequency_fit) and len(selected_group_ids) == 1:
-            group_id = selected_group_ids[0]
-            group_name = (
-                self._data_browser.get_group_name(group_id)
-                if hasattr(self._data_browser, "get_group_name")
-                else None
-            )
-        elif (not is_frequency_fit) and self._active_group_context is not None:
-            group_id, group_name = self._active_group_context
-
-        self._fit_parameters_panel.set_fit_results(
-            trends_results,
-            datasets_by_run,
-            global_params,
-            group_id=group_id,
-            group_name=group_name,
-        )
-        self._dock_fit_parameters.show()
-        self._dock_fit_parameters.raise_()
+        # Reload the trend panel from the project model (pull-based, Phase 4).
+        # _record_global_fit_batch has already stored the new FitSeries, so
+        # _refresh_trend_panel picks it up keyed by series batch_id rather than
+        # the old ad-hoc UUID group_id.
+        self._refresh_trend_panel()
 
         # Log summary
         successful_results = [
@@ -4290,9 +4815,9 @@ class MainWindow(QMainWindow):
         n_datasets = len(successful_results)
         if n_datasets == 0:
             self._log_panel.log(
-                "Global fit completed but no successful dataset results were available"
+                "Batch fit completed but no successful dataset results were available"
             )
-            self.statusBar().showMessage("Global fit completed with no successful results")
+            self.statusBar().showMessage("Batch fit completed with no successful results")
             return
 
         avg_chi2r = (
@@ -4300,10 +4825,10 @@ class MainWindow(QMainWindow):
         )
         self._last_fit_chi2 = float(avg_chi2r)
         self._log_panel.log(
-            f"Global fit completed: {n_datasets} datasets, average χ²ᵣ = {avg_chi2r:.3f}",
+            f"Batch fit completed: {n_datasets} datasets, average χ²ᵣ = {avg_chi2r:.3f}",
             tag="fit",
         )
-        self.statusBar().showMessage(f"Global fit completed for {n_datasets} datasets")
+        self.statusBar().showMessage(f"Batch fit completed for {n_datasets} datasets")
 
     def _on_grouped_fit_completed(
         self,
@@ -4314,6 +4839,10 @@ class MainWindow(QMainWindow):
         """Handle completed grouped time-domain fit."""
         if not isinstance(grouped_datasets, list) or not isinstance(results_dict, dict):
             return
+
+        self._record_grouped_fit_series(grouped_datasets, results_dict)
+        # Pull-based refresh: show the newly recorded series in the trend panel.
+        self._refresh_trend_panel()
 
         fit_curves = {}
         if fit_function is None and hasattr(self._fit_panel, "global_fit_formula_string"):
@@ -4509,6 +5038,13 @@ class MainWindow(QMainWindow):
             self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
 
         self._fit_panel.set_datasets(analysis_datasets)
+        # The grouped surface fits a *series* across the selected runs.
+        if (
+            self._multi_group_fit_window is not None
+            and not is_frequency_domain
+            and hasattr(self._multi_group_fit_window, "set_member_datasets")
+        ):
+            self._multi_group_fit_window.set_member_datasets(analysis_datasets)
         if is_frequency_domain:
             self._apply_frequency_missing_spectra_status(len(analysis_datasets))
 
@@ -4874,7 +5410,7 @@ class MainWindow(QMainWindow):
             }
         )
 
-        return {
+        project_state = {
             "schema_version": CURRENT_SCHEMA_VERSION,
             "created_with_app_version": __version__,
             "datasets": datasets,
@@ -4916,6 +5452,11 @@ class MainWindow(QMainWindow):
             },
             "fourier_spectra_state": self._serialize_frequency_spectra_state(),
         }
+        # Recipe-only representation/batch state (v6).  Frequency spectra are
+        # recomputed from these recipes on load; the array snapshot above is a
+        # transitional fallback removed in cleanup.
+        self._project_model.write_to_project_state(project_state)
+        return project_state
 
     def restore_project_state(self, state: dict, project_path: str) -> None:
         """Restore the full application state from a project file state dict.
@@ -5091,6 +5632,7 @@ class MainWindow(QMainWindow):
             self._snapshot_active_view_mode()
         self._plot_workspace.restore_state(plot_state.get("workspace_state"))
         self._restore_frequency_spectra_state(state.get("fourier_spectra_state"))
+        self._restore_frequency_representations(state)
         if self._plot_workspace.active_domain() == "frequency":
             self._sync_frequency_plot_for_current_dataset()
         if (

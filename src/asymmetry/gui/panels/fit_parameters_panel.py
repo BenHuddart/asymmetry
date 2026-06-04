@@ -175,6 +175,8 @@ class FitParametersPanel(QWidget):
 
     cross_group_fit_completed = Signal(object, object, object)
     delete_group_fits_requested = Signal(str, object)
+    #: Emitted when the user activates a different fit series (batch_id).
+    series_selection_changed = Signal(str)
 
     @property
     def last_cross_group_fit(self) -> dict[str, object] | None:
@@ -205,6 +207,9 @@ class FitParametersPanel(QWidget):
         self._cross_group_fit_configs: dict[str, dict[str, object]] = {}
         self._group_button_style_scale = 1.0
         self._ui_scale_sync_connected = False
+        #: Run numbers to highlight in the browser for the active series (used by
+        #: :meth:`load_representation_series` + ``series_selection_changed``).
+        self._series_run_numbers: dict[str, list[int]] = {}
 
         layout = QVBoxLayout(self)
 
@@ -213,12 +218,16 @@ class FitParametersPanel(QWidget):
         controls_form = QFormLayout()
         controls_layout.addLayout(controls_form)
 
+        self._rep_label = QLabel("")
+        self._rep_label.setVisible(False)
+        controls_form.addRow("Showing:", self._rep_label)
+
         self._group_tabs_widget = QWidget()
         self._group_tabs_layout = QHBoxLayout(self._group_tabs_widget)
         self._group_tabs_layout.setContentsMargins(0, 0, 0, 0)
         self._group_tabs_layout.setSpacing(6)
         self._group_tabs_widget.setVisible(False)
-        controls_form.addRow("Groups:", self._group_tabs_widget)
+        controls_form.addRow("Series:", self._group_tabs_widget)
 
         self._show_table_btn = QPushButton("Show fitted parameter table")
         self._show_table_btn.setEnabled(False)
@@ -418,6 +427,9 @@ class FitParametersPanel(QWidget):
         self._last_cross_group_fit = None
         self._cross_group_fit_configs = {}
         self._selected_y_param_names = []
+        self._series_run_numbers = {}
+        self._rep_label.setText("")
+        self._rep_label.setVisible(False)
         self._rebuild_group_buttons()
         self._show_table_btn.setEnabled(False)
         self._create_composite_btn.setEnabled(False)
@@ -720,6 +732,114 @@ class FitParametersPanel(QWidget):
         self._set_selected_group_ids([gid], emit=False)
         self._apply_group_selection_to_view(sync_active=False)
 
+    def load_representation_series(
+        self,
+        representation_label: str,
+        series_entries: list[tuple[str, str, list[dict]]],
+        *,
+        highlight_runs_by_id: dict[str, list[int]] | None = None,
+    ) -> None:
+        """Reload the panel to show all series for one representation.
+
+        This is the *pull* entry point: the caller (usually ``MainWindow``)
+        fetches data from ``ProjectModel`` and passes it here whenever the
+        active representation changes or a new fit is recorded.
+
+        Parameters
+        ----------
+        representation_label:
+            Human-readable name shown in the "Showing:" row (e.g.
+            ``"F-B Asymmetry"`` or ``"Detector Groups"``).
+        series_entries:
+            List of ``(batch_id, series_name, row_dicts)`` tuples.
+            Each ``row_dict`` must have keys: ``run_number``, ``run_label``,
+            ``field``, ``temperature``, ``values`` (dict), ``errors`` (dict).
+            An optional ``combined_from`` list may also be present.
+        highlight_runs_by_id:
+            Optional mapping of ``batch_id → [run_numbers]`` used by the main
+            window to drive data-browser highlighting via
+            :signal:`series_selection_changed`.  Pass ``None`` to leave the
+            stored map unchanged.
+        """
+        self._sync_active_group_state()
+
+        # Preserve any model-fit / composite-param / annotation state for
+        # series that survive this reload.
+        preserved: dict[str, dict] = {}
+        for gid, gdata in self._group_fit_results.items():
+            preserved[gid] = {
+                "model_fits": dict(gdata.model_fits),
+                "composite_parameters": list(gdata.composite_parameters),
+                "plot_annotations": list(gdata.plot_annotations),
+                "global_param_uncertainties": dict(gdata.global_param_uncertainties),
+            }
+
+        self._group_fit_results = {}
+
+        for batch_id, series_name, row_dicts in series_entries:
+            rows: list[_FitRow] = []
+            for rd in row_dicts:
+                try:
+                    rows.append(
+                        _FitRow(
+                            run_number=int(rd["run_number"]),
+                            run_label=str(rd.get("run_label") or rd["run_number"]),
+                            field=float(rd.get("field", 0.0)),
+                            temperature=float(rd.get("temperature", 0.0)),
+                            values=dict(rd.get("values") or {}),
+                            errors=dict(rd.get("errors") or {}),
+                            combined_from=rd.get("combined_from"),
+                        )
+                    )
+                except Exception:
+                    continue
+            if not rows:
+                continue
+
+            prev = preserved.get(batch_id, {})
+            composite_params = list(prev.get("composite_parameters", []))
+            global_uncert = dict(prev.get("global_param_uncertainties", {}))
+            varying = self._detect_varying_parameters(rows)
+            inferred_x = self._infer_x_key(rows)
+            self._apply_composite_parameters_to_rows(rows, composite_params, global_uncert)
+
+            self._group_fit_results[batch_id] = _GroupFitData(
+                group_id=batch_id,
+                group_name=series_name,
+                rows=rows,
+                global_params=None,
+                varying_params=varying,
+                inferred_x_key=inferred_x,
+                model_fits=dict(prev.get("model_fits", {})),
+                plot_annotations=list(prev.get("plot_annotations", [])),
+                global_param_uncertainties=global_uncert,
+                composite_parameters=composite_params,
+            )
+
+        # Update per-series run-number map for browser highlighting.
+        if highlight_runs_by_id is not None:
+            self._series_run_numbers = dict(highlight_runs_by_id)
+
+        # Update the "Showing:" label.
+        self._rep_label.setText(representation_label)
+        self._rep_label.setVisible(bool(representation_label))
+
+        # Activate the most-recently-added series (last entry) if possible;
+        # otherwise keep the existing active group if it survived the reload.
+        if series_entries and self._active_group_id not in self._group_fit_results:
+            self._active_group_id = series_entries[-1][0]
+        elif not self._group_fit_results:
+            self._active_group_id = None
+
+        self._rebuild_group_buttons()
+        if self._active_group_id:
+            self._set_selected_group_ids([self._active_group_id], emit=False)
+        self._apply_group_selection_to_view(sync_active=False)
+        # Notify listeners of the initial active series so data-browser highlights
+        # fire immediately rather than waiting for the user to click a button.
+        if self._active_group_id is not None:
+            self.series_selection_changed.emit(self._active_group_id)
+
     def _sync_active_group_state(self) -> None:
         """Persist current view state into the active group snapshot."""
         gid = self._active_group_id
@@ -908,6 +1028,9 @@ class FitParametersPanel(QWidget):
         # refer to the newly clicked group while self._rows still contains the
         # previous group's data.
         self._apply_group_selection_to_view(sync_active=False)
+        # Notify listeners (e.g. main window → data-browser highlight).
+        if self._active_group_id is not None:
+            self.series_selection_changed.emit(self._active_group_id)
 
     def _apply_group_selection_to_view(self, *, sync_active: bool = True) -> None:
         if sync_active:

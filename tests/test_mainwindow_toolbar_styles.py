@@ -161,3 +161,18 @@ class TestDomainButtonsOnMainWindow:
             ss = btn.styleSheet()
             assert tokens.ACCENT in ss
             assert tokens.ACCENT_SOFT in ss
+
+    def test_checkbox_indicators_are_explicitly_styled(self, mainwindow) -> None:
+        """Checkbox/item-view indicators must be explicitly styled.
+
+        A global QSS suppresses the native indicator on Windows, leaving an
+        unstyled box. Both QCheckBox widgets and item-view check states must be
+        covered, with an accent fill + checkmark image when checked.
+        """
+        qss = mainwindow._ui_manager.build_stylesheet(1.0)
+        assert "QCheckBox::indicator" in qss
+        assert "QAbstractItemView::indicator" in qss
+        # The checked indicator rule body uses the accent fill + checkmark image.
+        checked_body = qss.split("indicator:checked {")[1].split("}")[0]
+        assert tokens.ACCENT in checked_body
+        assert "checkmark.svg" in checked_body

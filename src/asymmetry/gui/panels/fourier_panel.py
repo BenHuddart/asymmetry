@@ -342,9 +342,16 @@ class FourierPanel(QWidget):
         fft_settings_layout.addLayout(fft_settings_form)
         content_layout.addWidget(fft_settings_group)
 
-        # Action button
+        # Action buttons
         self._fft_btn = QPushButton("Compute FFT")
         content_layout.addWidget(self._fft_btn)
+
+        self._apply_to_selection_btn = QPushButton("Apply settings to selected runs")
+        self._apply_to_selection_btn.setToolTip(
+            "Copy this run's Fourier settings to the other selected runs and "
+            "generate their spectra."
+        )
+        content_layout.addWidget(self._apply_to_selection_btn)
 
         self._status_label = QLabel("")
         content_layout.addWidget(self._status_label)

@@ -7,8 +7,11 @@ import pytest
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting import (
+    GROUP_NUISANCE_PARAMS,
+    GroupedTimeDomainFitResult,
     GroupedTimeDomainGroup,
     build_grouped_time_domain_datasets,
+    fit_grouped_series,
     fit_grouped_time_domain,
 )
 from asymmetry.core.fitting.engine import FitResult
@@ -423,6 +426,180 @@ def test_fit_grouped_time_domain_rejects_non_group_local_parameters() -> None:
             global_params=["N0"],
             local_params=["frequency"],
             initial_params=initial,
+        )
+
+
+# ── grouped-series (multi-run) relationships ─────────────────────────────────
+
+
+def _two_groups(run: int) -> list[GroupedTimeDomainGroup]:
+    return [
+        GroupedTimeDomainGroup(
+            group_id="forward",
+            group_name="Forward",
+            time=np.array([0.0, 0.1]),
+            counts=np.array([100.0, 99.0]),
+            error=np.array([1.0, 1.0]),
+            source_run_number=run,
+        ),
+        GroupedTimeDomainGroup(
+            group_id="backward",
+            group_name="Backward",
+            time=np.array([0.0, 0.1]),
+            counts=np.array([95.0, 94.0]),
+            error=np.array([1.0, 1.0]),
+            source_run_number=run,
+        ),
+    ]
+
+
+def _series_initial() -> dict:
+    return {"forward": _initial_group_params(), "backward": _initial_group_params()}
+
+
+def test_fit_grouped_series_individual_runs_one_fit_per_member(monkeypatch) -> None:
+    members = {10: _two_groups(10), 11: _two_groups(11)}
+    initial = {10: _series_initial(), 11: _series_initial()}
+
+    fitted_runs: list[int] = []
+
+    def _fake_fit_grouped_time_domain(groups, _model_fn, **kwargs):
+        run = groups[0].source_run_number
+        fitted_runs.append(int(run))
+        # Physics shared across this run's groups; nuisance local.
+        assert kwargs["global_params"] == ["frequency"]
+        assert set(kwargs["local_params"]) == set(GROUP_NUISANCE_PARAMS)
+        initial_params = kwargs["initial_params"]
+        group_results = {
+            group.group_id: FitResult(
+                success=True,
+                chi_squared=1.0,
+                reduced_chi_squared=0.1,
+                parameters=initial_params[group.group_id],
+                message=str(group.group_id),
+            )
+            for group in groups
+        }
+        return GroupedTimeDomainFitResult(
+            success=True,
+            group_results=group_results,
+            shared_parameters=ParameterSet(),
+            message="ok",
+        )
+
+    monkeypatch.setattr(
+        "asymmetry.core.fitting.grouped_time_domain.fit_grouped_time_domain",
+        _fake_fit_grouped_time_domain,
+    )
+
+    result = fit_grouped_series(
+        "individual",
+        members,
+        _cosine_polarization,
+        global_params=["frequency"],
+        local_params=list(GROUP_NUISANCE_PARAMS),
+        initial_params=initial,
+    )
+
+    assert result.success is True
+    assert result.relationship == "individual"
+    assert sorted(fitted_runs) == [10, 11]  # one independent grouped fit per run
+    assert set(result.member_results) == {-10001, -10002, -11001, -11002}
+    assert result.member_source_run == {-10001: 10, -10002: 10, -11001: 11, -11002: 11}
+    assert result.member_group_id[-10001] == "forward"
+    assert result.member_group_id[-10002] == "backward"
+    assert len(result.shared_parameters) == 0  # no cross-run sharing
+
+
+def test_fit_grouped_series_global_shares_physics_across_runs(monkeypatch) -> None:
+    members = {10: _two_groups(10), 11: _two_groups(11)}
+    initial = {10: _series_initial(), 11: _series_initial()}
+
+    captured: dict = {}
+
+    def _fake_global_fit(
+        _self,
+        datasets,
+        _model_fn,
+        global_params,
+        local_params,
+        initial_params,
+        **_kwargs,
+    ):
+        captured["run_numbers"] = [int(d.run_number) for d in datasets]
+        captured["global"] = list(global_params)
+        captured["local"] = list(local_params)
+        captured["source_runs"] = [d.metadata["source_run_number"] for d in datasets]
+        results = {
+            int(d.run_number): FitResult(
+                success=True,
+                chi_squared=1.0,
+                reduced_chi_squared=0.1,
+                parameters=initial_params[int(d.run_number)],
+            )
+            for d in datasets
+        }
+        return results, ParameterSet([Parameter("frequency", 1.0)])
+
+    monkeypatch.setattr(
+        "asymmetry.core.fitting.grouped_time_domain.FitEngine.global_fit",
+        _fake_global_fit,
+    )
+
+    result = fit_grouped_series(
+        "global",
+        members,
+        _cosine_polarization,
+        global_params=["frequency"],
+        local_params=list(GROUP_NUISANCE_PARAMS),
+        initial_params=initial,
+    )
+
+    assert result.success is True
+    assert result.relationship == "global"
+    # One simultaneous fit over every (run, group) pair.
+    assert sorted(captured["run_numbers"]) == [-11002, -11001, -10002, -10001]
+    assert captured["global"] == ["frequency"]  # physics shared across all runs
+    assert set(captured["local"]) == set(GROUP_NUISANCE_PARAMS)  # nuisance per (run, group)
+    assert captured["source_runs"].count(10) == 2
+    assert captured["source_runs"].count(11) == 2
+    assert set(result.member_results) == {-10001, -10002, -11001, -11002}
+    assert result.shared_parameters["frequency"].value == pytest.approx(1.0)
+
+
+def test_fit_grouped_series_rejects_unknown_relationship() -> None:
+    with pytest.raises(ValueError, match="relationship"):
+        fit_grouped_series(
+            "bogus",
+            {10: _two_groups(10)},
+            _cosine_polarization,
+            global_params=[],
+            local_params=[],
+            initial_params={10: _series_initial()},
+        )
+
+
+def test_fit_grouped_series_requires_members() -> None:
+    with pytest.raises(ValueError, match="at least one member"):
+        fit_grouped_series(
+            "batch",
+            {},
+            _cosine_polarization,
+            global_params=[],
+            local_params=[],
+            initial_params={},
+        )
+
+
+def test_fit_grouped_series_rejects_non_nuisance_local() -> None:
+    with pytest.raises(ValueError, match="group block"):
+        fit_grouped_series(
+            "global",
+            {10: _two_groups(10)},
+            _cosine_polarization,
+            global_params=["N0"],
+            local_params=["frequency"],
+            initial_params={10: _series_initial()},
         )
 
 
