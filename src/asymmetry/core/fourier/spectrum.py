@@ -141,9 +141,7 @@ def precompute_group_fourier_inputs(
         return None, None
 
     apply_deadtime = bool(grouping.get("deadtime_correction", False))
-    prepared_histograms, _ = prepare_histograms_with_deadtime(
-        histograms, grouping, apply_deadtime
-    )
+    prepared_histograms, _ = prepare_histograms_with_deadtime(histograms, grouping, apply_deadtime)
 
     all_group_indices: list[list[int]] = []
     for values in groups.values():
