@@ -28,6 +28,7 @@ _DEFAULT_TOOLBAR_ICON_SIZE = QSize(16, 16)
 _RESOURCE_DIR = Path(__file__).resolve().parents[1] / "resources"
 _SPIN_UP_ARROW_ICON = (_RESOURCE_DIR / "spin_up_arrow.svg").as_posix()
 _SPIN_DOWN_ARROW_ICON = (_RESOURCE_DIR / "spin_down_arrow.svg").as_posix()
+_CHECKMARK_ICON = (_RESOURCE_DIR / "checkmark.svg").as_posix()
 
 
 class UIManager(QObject):
@@ -170,6 +171,8 @@ class UIManager(QObject):
         table_padding_h = max(2, round(4 * scale))
         spin_button_width = max(16, round(18 * scale))
         spin_arrow_size = max(8, round(10 * scale))
+        indicator_size = max(14, round(15 * scale))
+        indicator_radius = max(2, round(3 * scale))
         t = tokens
         return f"""
 QPushButton, QToolButton {{
@@ -222,6 +225,38 @@ QAbstractSpinBox::down-arrow {{
 }}
 QTableWidget::item {{
     padding: {table_padding_v}px {table_padding_h}px;
+}}
+QCheckBox::indicator,
+QGroupBox::indicator,
+QAbstractItemView::indicator {{
+    width: {indicator_size}px;
+    height: {indicator_size}px;
+    border: 1px solid {t.BORDER_STRONG};
+    border-radius: {indicator_radius}px;
+    background-color: {t.SURFACE};
+}}
+QCheckBox::indicator:hover,
+QGroupBox::indicator:hover,
+QAbstractItemView::indicator:hover {{
+    border-color: {t.ACCENT};
+}}
+QCheckBox::indicator:checked,
+QGroupBox::indicator:checked,
+QAbstractItemView::indicator:checked {{
+    background-color: {t.ACCENT};
+    border-color: {t.ACCENT};
+    image: url({_CHECKMARK_ICON});
+}}
+QCheckBox::indicator:indeterminate,
+QAbstractItemView::indicator:indeterminate {{
+    background-color: {t.ACCENT_SOFT};
+    border-color: {t.ACCENT};
+}}
+QCheckBox::indicator:disabled,
+QGroupBox::indicator:disabled,
+QAbstractItemView::indicator:disabled {{
+    border-color: {t.BORDER};
+    background-color: {t.SURFACE_ALT};
 }}
 """.strip()
 

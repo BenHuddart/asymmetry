@@ -55,6 +55,9 @@ _LOG_TEMPERATURE_FOREGROUND = QColor(176, 36, 36)
 _GROUP_FIELD_REL_TOL = 1e-4
 _GROUP_HEADER_BACKGROUND = QColor(200, 210, 225)
 _GROUP_MEMBER_BACKGROUND = QColor(235, 239, 247)
+# Subtle amber tint used to mark runs that belong to the active fit series
+# in the trend panel.  Chosen to be distinct from the blue group palette.
+_SERIES_HIGHLIGHT_BACKGROUND = QColor(255, 243, 210)
 
 
 def _is_effectively_constant(values: list[float], *, abs_tol: float, rel_tol: float) -> bool:
@@ -322,6 +325,8 @@ class DataBrowserPanel(QWidget):
         self._current_sort_order: Qt.SortOrder = Qt.SortOrder.AscendingOrder
         self._selection_anchor_row: int | None = None
         self._updating_table = False
+        #: Run numbers to tint as "series members" (set by the trend panel).
+        self._highlighted_runs: set[int] = set()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -693,11 +698,18 @@ class DataBrowserPanel(QWidget):
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self._table.setItem(row, i, item)
 
-        if self._run_to_group.get(rn) is not None:
+        # Apply background: series-highlight takes priority over group-member tint.
+        if rn in self._highlighted_runs:
+            bg = _SERIES_HIGHLIGHT_BACKGROUND
+        elif self._run_to_group.get(rn) is not None:
+            bg = _GROUP_MEMBER_BACKGROUND
+        else:
+            bg = None
+        if bg is not None:
             for col in range(self._table.columnCount()):
                 item = self._table.item(row, col)
                 if item is not None:
-                    item.setBackground(_GROUP_MEMBER_BACKGROUND)
+                    item.setBackground(bg)
 
     def _selected_keys(self) -> list[int | str]:
         selected: list[int | str] = []
@@ -1179,6 +1191,42 @@ class DataBrowserPanel(QWidget):
 
     def get_dataset(self, run_number: int) -> MuonDataset | None:
         return self._datasets.get(run_number)
+
+    def set_highlighted_runs(self, run_numbers: set[int] | None) -> None:
+        """Tint *run_numbers* with a series-member indicator.
+
+        Pass an empty set or ``None`` to clear all highlights.  The tint
+        is a subtle amber distinct from the blue data-group palette so it
+        does not conflict with existing group colouring.
+        """
+        new_set = set(run_numbers) if run_numbers else set()
+        if new_set == self._highlighted_runs:
+            return
+        self._highlighted_runs = new_set
+        # Update backgrounds in-place without a full table rebuild.
+        self._apply_series_highlights()
+
+    def _apply_series_highlights(self) -> None:
+        """Walk the table and apply/remove the series-highlight tint."""
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, 0)
+            if item is None:
+                continue
+            key = item.data(self._GROUP_ROLE)
+            if not isinstance(key, int):
+                continue  # Skip group header rows.
+            rn = key
+            in_group = self._run_to_group.get(rn) is not None
+            if rn in self._highlighted_runs:
+                bg = _SERIES_HIGHLIGHT_BACKGROUND
+            elif in_group:
+                bg = _GROUP_MEMBER_BACKGROUND
+            else:
+                bg = QColor(0, 0, 0, 0)  # transparent / default
+            for col in range(self._table.columnCount()):
+                cell = self._table.item(row, col)
+                if cell is not None:
+                    cell.setBackground(bg)
 
     def get_selected_datasets(self) -> list[MuonDataset]:
         selected: list[MuonDataset] = []
@@ -2245,6 +2293,9 @@ class DataBrowserPanel(QWidget):
         self._temperature_from_log_overrides.clear()
         self._current_sort_column = -1
         self._current_sort_order = Qt.SortOrder.AscendingOrder
+        # Clear series-highlight state so stale run numbers from the previous
+        # project cannot tint rows in the next project.
+        self._highlighted_runs = set()
         self._refresh_column_headers()
         self._table.setRowCount(0)
 

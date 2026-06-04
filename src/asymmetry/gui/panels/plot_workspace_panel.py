@@ -17,7 +17,9 @@ class PlotWorkspacePanel(QWidget):
     active_domain_changed = Signal(str)
     active_view_changed = Signal(str)
 
-    _VIEW_TOKENS = ("fb_asymmetry", "groups", "frequency")
+    _VIEW_TOKENS = ("fb_asymmetry", "groups", "frequency", "maxent")
+    #: View tokens that resolve to the frequency-domain plot panel.
+    _FREQUENCY_VIEWS = frozenset({"frequency", "maxent"})
 
     def __init__(
         self,
@@ -61,7 +63,7 @@ class PlotWorkspacePanel(QWidget):
 
     def active_domain(self) -> str:
         """Return the currently selected plot domain."""
-        return "frequency" if self._active_view == "frequency" else "time"
+        return "frequency" if self._active_view in self._FREQUENCY_VIEWS else "time"
 
     def is_view_enabled(self, view: str) -> bool:
         """Return whether *view* is currently available for selection."""
@@ -73,7 +75,11 @@ class PlotWorkspacePanel(QWidget):
 
     def current_panel(self) -> QWidget:
         """Return the currently visible plot panel."""
-        return self._frequency_panel if self._active_view == "frequency" else self._time_panel
+        return (
+            self._frequency_panel
+            if self._active_view in self._FREQUENCY_VIEWS
+            else self._time_panel
+        )
 
     # ── mutators ─────────────────────────────────────────────────────────────
 
@@ -117,16 +123,16 @@ class PlotWorkspacePanel(QWidget):
         if token == self._active_view:
             # Ensure the stack is in sync even if no signal is needed.
             self._panel_stack.setCurrentWidget(
-                self._frequency_panel if token == "frequency" else self._time_panel
+                self._frequency_panel if token in self._FREQUENCY_VIEWS else self._time_panel
             )
             return
 
         prev_domain = self.active_domain()
         self._active_view = token
-        if token != "frequency":
+        if token not in self._FREQUENCY_VIEWS:
             self._last_time_view = token
         self._panel_stack.setCurrentWidget(
-            self._frequency_panel if token == "frequency" else self._time_panel
+            self._frequency_panel if token in self._FREQUENCY_VIEWS else self._time_panel
         )
         self.active_view_changed.emit(token)
         if self.active_domain() != prev_domain:

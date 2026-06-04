@@ -210,11 +210,14 @@ all runs) or local (independent per run):
    for run_number, run_result in results_dict.items():
        print(f"run {run_number}: χ²ᵣ = {run_result.reduced_chi_squared:.3f}")
 
-The GUI **Global** tab automates the same workflow: select multiple
-datasets, mark parameters as **Global** in the parameter table, and click
-**Run Global Fit**. Results land in the **Fitted Parameters** panel where
-they can be browsed, exported to CSV, or passed into the parameter-
-trending fit framework documented in :doc:`parameter_trending`.
+The GUI **Batch** tab automates the same workflow: select multiple
+datasets, mark parameters as **Global** (shared across runs) or **Local**
+(per-run) in the parameter table, and click **Run Batch Fit**. A fit where
+at least one parameter is **Global** is a global fit; otherwise each run is
+fitted independently but the results are collected into one trendable series.
+Results land in the **Fitted Parameters** panel where they can be browsed,
+exported to CSV, or passed into the parameter-trending fit framework documented
+in :doc:`parameter_trending`.
 
 The same engine is also used in the Frequency workspace for displayed Fourier
 spectra.  In that mode the Fit dock switches labels from ``A(t)`` to

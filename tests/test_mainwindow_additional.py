@@ -14,6 +14,7 @@ pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings  # type: ignore
 from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QWidget  # type: ignore
 
+import asymmetry.core.fourier.spectrum as spectrum_module
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting import CompositeModel
@@ -23,6 +24,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterGroupData,
 )
 from asymmetry.core.project import load_project, save_project
+from asymmetry.core.representation import RepresentationType
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.styles import tokens
 
@@ -317,6 +319,61 @@ class TestMainWindowFourier:
         assert plotted.metadata["run_label"] == "8805 Average (Left)"
         assert plotted.metadata["group_ids"] == [1]
 
+    def test_fft_recipe_round_trip_recomputes_identical_spectrum(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """Recipe-only persistence: a saved FFT recomputes to the same spectrum."""
+        dataset = _make_fourier_ready_dataset(8820, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8820)
+        mainwindow._on_compute_fourier()
+        generated = mainwindow._frequency_spectra_by_run[8820][0]
+
+        state = mainwindow.collect_project_state()
+        entry = next(d for d in state["datasets"] if d["run_number"] == 8820)
+        assert "freq_fft" in entry["representations"]
+        assert "fourier_config" in entry["representations"]["freq_fft"]["recipe"]
+
+        # Simulate reload: drop the in-memory cache and recompute from recipe.
+        mainwindow._frequency_spectra_by_run = {}
+        mainwindow._restore_frequency_representations(state)
+        recomputed = mainwindow._frequency_spectra_by_run[8820][0]
+
+        np.testing.assert_allclose(recomputed.time, generated.time)
+        np.testing.assert_allclose(recomputed.asymmetry, generated.asymmetry)
+        np.testing.assert_allclose(recomputed.error, generated.error)
+
+    def test_apply_fourier_settings_to_selected_runs(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """'Apply to selection' copies the FFT recipe to other selected runs."""
+        ds1 = _make_fourier_ready_dataset(8830, with_grouping=True)
+        ds2 = _make_fourier_ready_dataset(8831, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds1)
+        mainwindow._data_browser.add_dataset(ds2)
+        mainwindow._on_dataset_selected(8830)
+        mainwindow._on_compute_fourier()
+
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
+        mainwindow._on_apply_fourier_to_selection()
+
+        # The second run now has a generated spectrum and the same recipe.
+        assert 8831 in mainwindow._frequency_spectra_by_run
+        source_rep = mainwindow._project_model.representation(8830, RepresentationType.FREQ_FFT)
+        target_rep = mainwindow._project_model.representation(8831, RepresentationType.FREQ_FFT)
+        assert target_rep is not None
+        assert target_rep.recipe["fourier_config"] == source_rep.recipe["fourier_config"]
+
+    def test_apply_fourier_to_selection_requires_prior_compute(
+        self, mainwindow: MainWindow
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8832, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8832)
+        # No FFT computed yet -> nothing to apply.
+        mainwindow._on_apply_fourier_to_selection()
+        assert 8832 not in mainwindow._frequency_spectra_by_run
+
     def test_compute_group_fourier_can_average_selected_groups(
         self, mainwindow: MainWindow
     ) -> None:
@@ -358,7 +415,9 @@ class TestMainWindowFourier:
             calls.append((kwargs.get("t_min"), kwargs.get("t_max")))
             return np.array([0.0, 1.0]), np.array([0.0 + 0.0j, 1.0 + 0.0j])
 
-        monkeypatch.setattr(mw_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
+        # The averaged-FFT maths now lives in the shared spectrum core; patch
+        # the symbol where it is actually called.
+        monkeypatch.setattr(spectrum_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
 
         mainwindow._on_compute_fourier()
 
@@ -399,9 +458,9 @@ class TestMainWindowFourier:
             return np.array([0.0, 1.0]), np.array([1.0 + 0.0j, 0.5 + 0.0j])
 
         monkeypatch.setattr(
-            mw_module, "build_group_signal_dataset", _fake_build_group_signal_dataset
+            spectrum_module, "build_group_signal_dataset", _fake_build_group_signal_dataset
         )
-        monkeypatch.setattr(mw_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
+        monkeypatch.setattr(spectrum_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
 
         mainwindow._on_compute_fourier()
 
@@ -876,9 +935,9 @@ class TestMainWindowBasic:
         self,
         mainwindow: MainWindow,
     ) -> None:
-        """The toolbar Domain buttons should expose all three view labels."""
+        """The toolbar Domain buttons should expose the 2+2 Time/Frequency views."""
         labels = [btn.text() for btn in mainwindow._domain_buttons]
-        assert labels == ["F-B asymmetry", "Individual groups", "Frequency"]
+        assert labels == ["F-B asymmetry", "Individual groups", "FFT", "MaxEnt"]
 
     def test_on_fit_shows_fit_dock(self, mainwindow: MainWindow) -> None:
         """Fit action should unhide the fit dock if it starts hidden."""
@@ -1339,16 +1398,19 @@ class TestMainWindowBasic:
         assert texts.index("Grouping") < texts.index("Fit")
 
     def test_toolbar_has_domain_segmented_control(self, mainwindow: MainWindow) -> None:
-        """Toolbar should expose three Domain buttons in the correct order."""
+        """Toolbar should expose four Domain buttons (Time 2 + Frequency 2)."""
         assert hasattr(mainwindow, "_domain_buttons")
         assert [btn.text() for btn in mainwindow._domain_buttons] == [
             "F-B asymmetry",
             "Individual groups",
-            "Frequency",
+            "FFT",
+            "MaxEnt",
         ]
         assert mainwindow._domain_buttons[0].isChecked()
         assert not mainwindow._domain_buttons[1].isChecked()
         assert not mainwindow._domain_buttons[2].isChecked()
+        # MaxEnt is reserved but not yet implemented.
+        assert not mainwindow._domain_buttons[3].isEnabled()
 
     def test_domain_button_click_changes_workspace_view(self, mainwindow: MainWindow) -> None:
         """Clicking the Frequency domain button should switch the workspace view."""

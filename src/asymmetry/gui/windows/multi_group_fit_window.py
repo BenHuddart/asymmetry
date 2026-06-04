@@ -1,9 +1,16 @@
-"""Dock-ready grouped time-domain fitting widget for one active dataset."""
+"""Dock-ready grouped time-domain fitting widget.
+
+Mirrors the F-B asymmetry fit panel's structure: a **Single** tab that fits the
+active run's detector groups jointly (one dataset) and a **Batch** tab that fits
+a series across the selected runs. Both surfaces are grouped
+:class:`~asymmetry.gui.panels.fit_panel.GlobalFitTab` instances; they differ only
+in their member set (Single → the active run; Batch → the selection).
+"""
 
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.panels.fit_panel import GlobalFitTab
@@ -20,28 +27,53 @@ class MultiGroupFitWindow(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self._fit_tab = GlobalFitTab(self, allowed_modes=("grouped",))
-        self._fit_tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
-        self._fit_tab.grouped_preview_requested.connect(self.grouped_preview_requested.emit)
-        self._fit_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
-        layout.addWidget(self._fit_tab)
+
+        self._tabs = QTabWidget()
+        # Single = the active run's multi-group fit; Batch = the multi-run series.
+        self._single_fit_tab = GlobalFitTab(self, member_kind="groups")
+        self._batch_fit_tab = GlobalFitTab(self, member_kind="groups")
+        for tab in (self._single_fit_tab, self._batch_fit_tab):
+            tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
+            tab.grouped_preview_requested.connect(self.grouped_preview_requested.emit)
+            tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
+        self._tabs.addTab(self._single_fit_tab, "Single")
+        self._tabs.addTab(self._batch_fit_tab, "Batch")
+        layout.addWidget(self._tabs)
         self._run_label = ""
 
+    def _grouped_tabs(self) -> tuple[GlobalFitTab, GlobalFitTab]:
+        return (self._single_fit_tab, self._batch_fit_tab)
+
+    def _active_tab(self) -> GlobalFitTab:
+        current = self._tabs.currentWidget()
+        return current if isinstance(current, GlobalFitTab) else self._single_fit_tab
+
     def set_dataset(self, dataset: MuonDataset | None) -> None:
-        """Update the active grouped-fit dataset shown by the widget."""
-        self._fit_tab.set_current_dataset(dataset)
+        """Update the active grouped-fit dataset shown by both surfaces."""
+        for tab in self._grouped_tabs():
+            tab.set_current_dataset(dataset)
         if dataset is None:
             self._run_label = ""
             return
         self._run_label = str(getattr(dataset, "run_label", dataset.run_number))
 
+    def set_member_datasets(self, datasets: list[MuonDataset]) -> None:
+        """Set the member runs for the Batch grouped surface (the series)."""
+        self._batch_fit_tab.set_member_datasets(datasets)
+
+    def get_grouped_state(self) -> dict:
+        """Return the grouped-fit classification from the active surface."""
+        return self._active_tab().get_grouped_state()
+
     def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
-        """Update fit-range spinboxes to reflect the plot's current range."""
-        self._fit_tab.set_fit_range_display(x_min, x_max)
+        """Update fit-range spinboxes on both surfaces to match the plot range."""
+        for tab in self._grouped_tabs():
+            tab.set_fit_range_display(x_min, x_max)
 
     def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
-        """Apply fit blocking rules from the main window context."""
-        self._fit_tab.set_fit_blocked(blocked, reason)
+        """Apply fit blocking rules from the main window context to both surfaces."""
+        for tab in self._grouped_tabs():
+            tab.set_fit_blocked(blocked, reason)
 
     def dock_title(self) -> str:
         """Return the preferred fit-dock title for the current grouped dataset."""
@@ -51,7 +83,7 @@ class MultiGroupFitWindow(QWidget):
 
     def grouped_fit_formula_string(self) -> str | None:
         """Return the active grouped-fit formula string, if available."""
-        model = getattr(self._fit_tab, "_composite_model", None)
+        model = getattr(self._active_tab(), "_composite_model", None)
         if model is None:
             return None
         try:
@@ -60,11 +92,25 @@ class MultiGroupFitWindow(QWidget):
             return None
 
     def get_state(self) -> dict:
-        """Return serialisable grouped-fit state for project persistence."""
-        return self._fit_tab.get_state()
+        """Return serialisable grouped-fit state (both surfaces) for persistence."""
+        return {
+            "single": self._single_fit_tab.get_state(),
+            "batch": self._batch_fit_tab.get_state(),
+        }
 
     def restore_state(self, state: dict) -> None:
-        """Restore grouped-fit state from project persistence."""
+        """Restore grouped-fit state from project persistence.
+
+        Accepts the new ``{single, batch}`` shape; a legacy single-surface state
+        dict is applied to both surfaces for backward compatibility.
+        """
         if not isinstance(state, dict):
             return
-        self._fit_tab.restore_state(state)
+        if "single" in state or "batch" in state:
+            if isinstance(state.get("single"), dict):
+                self._single_fit_tab.restore_state(state["single"])
+            if isinstance(state.get("batch"), dict):
+                self._batch_fit_tab.restore_state(state["batch"])
+        else:
+            self._single_fit_tab.restore_state(state)
+            self._batch_fit_tab.restore_state(state)

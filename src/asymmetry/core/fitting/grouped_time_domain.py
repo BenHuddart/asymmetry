@@ -481,3 +481,283 @@ def build_grouped_count_model(polarization_model_fn):
         )
 
     return grouped_count_model
+
+
+#: The three member relationships a grouped-series fit can use.
+GROUPED_SERIES_RELATIONSHIPS: tuple[str, ...] = ("individual", "batch", "global")
+
+
+@dataclass
+class GroupedSeriesFitResult:
+    """Result bundle for a multi-member grouped time-domain *series* fit.
+
+    ``member_results`` is keyed by the synthetic group-member key
+    (:func:`_group_dataset_run_number`) so it maps directly onto a group
+    :class:`~asymmetry.core.representation.series.FitSeries`'s
+    ``results_by_run``.  ``member_source_run`` / ``member_group_id`` resolve each
+    key back to its physical run and detector group.  ``shared_parameters`` holds
+    the cross-run global parameters for a ``"global"`` relationship and is empty
+    for ``"individual"`` / ``"batch"``.
+    """
+
+    success: bool
+    relationship: str
+    member_results: dict[int, FitResult]
+    member_source_run: dict[int, int]
+    member_group_id: dict[int, Hashable]
+    shared_parameters: ParameterSet
+    message: str = ""
+
+
+def fit_grouped_series(
+    relationship: str,
+    members: dict[int, list[GroupedTimeDomainGroup]],
+    polarization_model_fn,
+    global_params: list[str],
+    local_params: list[str],
+    initial_params: dict[int, dict[Hashable, ParameterSet]],
+    *,
+    fit_engine: FitEngine | None = None,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    method: str = "migrad",
+    max_calls: int = 10000,
+) -> GroupedSeriesFitResult:
+    """Fit a series of grouped runs with one of three member relationships.
+
+    The *physics* (fit-function) parameters in ``global_params`` are always
+    shared across the detector groups within a run.  The ``relationship``
+    governs how they relate *across* runs (members):
+
+    * ``"individual"`` / ``"batch"`` – each run is fit independently (its physics
+      values are not shared with other runs).  Both run the same engine path;
+      they differ only in how the caller records the resulting series.
+    * ``"global"`` – the physics parameters are shared across *all* runs and
+      groups via a single simultaneous fit.
+
+    The per-group nuisance block (``local_params`` ⊆ :data:`GROUP_NUISANCE_PARAMS`)
+    is always estimated separately for each ``(run, group)``.
+
+    Parameters
+    ----------
+    members
+        Mapping of run number → that run's included
+        :class:`GroupedTimeDomainGroup` list (group order is the trend order).
+    initial_params
+        Nested mapping ``run -> {group_id -> ParameterSet}``.  Every set must
+        include the nuisance block plus the model parameters referenced by
+        ``global_params`` / ``local_params``.
+
+    Note
+    ----
+    A *mixed* global fit (some physics shared across runs, others joined only
+    within a run) is not yet supported: the simultaneous engine shares a global
+    parameter across every dataset in the call, so per-run scoping would need an
+    engine-level change.  Use ``"global"`` to share all free physics across runs,
+    or ``"batch"`` to keep them per-run.
+    """
+    if relationship not in GROUPED_SERIES_RELATIONSHIPS:
+        raise ValueError(
+            f"Unknown grouped-series relationship {relationship!r}; "
+            f"expected one of {GROUPED_SERIES_RELATIONSHIPS}"
+        )
+    if not members:
+        raise ValueError("Grouped-series fitting requires at least one member run")
+
+    local_only = set(local_params) - set(GROUP_NUISANCE_PARAMS)
+    if local_only:
+        raise ValueError(
+            "Local grouped time-domain parameters must come from the group block: "
+            f"{sorted(local_only)}"
+        )
+    overlapping = set(global_params) & set(local_params)
+    if overlapping:
+        raise ValueError(f"Global and local grouped parameters overlap: {sorted(overlapping)}")
+
+    engine = fit_engine or FitEngine()
+    if relationship in ("individual", "batch"):
+        return _fit_grouped_series_independent(
+            relationship,
+            members,
+            polarization_model_fn,
+            global_params,
+            local_params,
+            initial_params,
+            engine=engine,
+            t_min=t_min,
+            t_max=t_max,
+            method=method,
+            max_calls=max_calls,
+        )
+    return _fit_grouped_series_global(
+        members,
+        polarization_model_fn,
+        global_params,
+        local_params,
+        initial_params,
+        engine=engine,
+        t_min=t_min,
+        t_max=t_max,
+        method=method,
+        max_calls=max_calls,
+    )
+
+
+def _fit_grouped_series_independent(
+    relationship: str,
+    members: dict[int, list[GroupedTimeDomainGroup]],
+    polarization_model_fn,
+    global_params: list[str],
+    local_params: list[str],
+    initial_params: dict[int, dict[Hashable, ParameterSet]],
+    *,
+    engine: FitEngine,
+    t_min: float | None,
+    t_max: float | None,
+    method: str,
+    max_calls: int,
+) -> GroupedSeriesFitResult:
+    """Run one independent grouped joint fit per member run (no cross-run sharing)."""
+    member_results: dict[int, FitResult] = {}
+    member_source_run: dict[int, int] = {}
+    member_group_id: dict[int, Hashable] = {}
+    messages: list[str] = []
+    for raw_run, groups in members.items():
+        run = int(raw_run)
+        run_initial = initial_params.get(run, {})
+        result = fit_grouped_time_domain(
+            groups,
+            polarization_model_fn,
+            global_params=global_params,
+            local_params=local_params,
+            initial_params=run_initial,
+            fit_engine=engine,
+            t_min=t_min,
+            t_max=t_max,
+            method=method,
+            max_calls=max_calls,
+        )
+        messages.append(f"run {run}: {result.message}")
+        for index, group in enumerate(groups, start=1):
+            key = _group_dataset_run_number(run, index)
+            group_result = result.group_results.get(group.group_id)
+            if group_result is None:
+                continue
+            member_results[key] = group_result
+            member_source_run[key] = run
+            member_group_id[key] = group.group_id
+    success = bool(member_results) and all(r.success for r in member_results.values())
+    return GroupedSeriesFitResult(
+        success=success,
+        relationship=relationship,
+        member_results=member_results,
+        member_source_run=member_source_run,
+        member_group_id=member_group_id,
+        shared_parameters=ParameterSet(),
+        message="; ".join(messages),
+    )
+
+
+def _fit_grouped_series_global(
+    members: dict[int, list[GroupedTimeDomainGroup]],
+    polarization_model_fn,
+    global_params: list[str],
+    local_params: list[str],
+    initial_params: dict[int, dict[Hashable, ParameterSet]],
+    *,
+    engine: FitEngine,
+    t_min: float | None,
+    t_max: float | None,
+    method: str,
+    max_calls: int,
+) -> GroupedSeriesFitResult:
+    """Fit every ``(run, group)`` simultaneously, sharing physics across all runs."""
+    temporary_datasets: list[MuonDataset] = []
+    temporary_initial: dict[int, ParameterSet] = {}
+    member_source_run: dict[int, int] = {}
+    member_group_id: dict[int, Hashable] = {}
+    required_names = set(GROUP_NUISANCE_PARAMS) | set(global_params) | set(local_params)
+
+    for raw_run, groups in members.items():
+        run = int(raw_run)
+        run_initial = initial_params.get(run, {})
+        for index, group in enumerate(groups, start=1):
+            key = _group_dataset_run_number(run, index)
+            if group.group_id not in run_initial:
+                raise ValueError(
+                    f"Missing grouped-series initial parameters for run {run} "
+                    f"group {group.group_id!r}"
+                )
+            param_set = run_initial[group.group_id]
+            missing_names = sorted(required_names - set(param_set.names))
+            if missing_names:
+                raise ValueError(
+                    f"Grouped-series parameters for run {run} group {group.group_id!r} "
+                    f"are missing: {missing_names}"
+                )
+            time = np.asarray(group.time, dtype=float)
+            counts = np.asarray(group.counts, dtype=float)
+            error = np.asarray(group.error, dtype=float)
+            if time.shape != counts.shape or time.shape != error.shape:
+                raise ValueError(
+                    f"Grouped-series arrays for run {run} group {group.group_id!r} "
+                    "must share one shape"
+                )
+            metadata = dict(group.metadata)
+            metadata.update(
+                {
+                    "run_number": key,
+                    "group_id": group.group_id,
+                    "group_name": group.group_name,
+                    "source_run_number": run,
+                }
+            )
+            temporary_datasets.append(
+                MuonDataset(
+                    time=time.copy(),
+                    asymmetry=counts.copy(),
+                    error=error.copy(),
+                    metadata=metadata,
+                    run=None,
+                )
+            )
+            temporary_initial[key] = param_set
+            member_source_run[key] = run
+            member_group_id[key] = group.group_id
+
+    if len(temporary_datasets) < 2:
+        raise ValueError("Global grouped-series fitting requires at least two (run, group) members")
+
+    model_fn = build_grouped_count_model(polarization_model_fn)
+    internal_results, shared_parameters = engine.global_fit(
+        temporary_datasets,
+        model_fn,
+        global_params=global_params,
+        local_params=local_params,
+        initial_params=temporary_initial,
+        t_min=t_min,
+        t_max=t_max,
+        method=method,
+        max_calls=max_calls,
+    )
+
+    member_results = {
+        key: internal_results[key] for key in member_source_run if key in internal_results
+    }
+    success = bool(member_results) and all(r.success for r in member_results.values())
+    if success:
+        message = "Grouped-series global fit successful"
+    elif member_results:
+        failed = [str(member_group_id[key]) for key, r in member_results.items() if not r.success]
+        message = f"Grouped-series global fit failed for groups: {', '.join(failed)}"
+    else:
+        message = "Grouped-series global fit produced no results"
+    return GroupedSeriesFitResult(
+        success=success,
+        relationship="global",
+        member_results=member_results,
+        member_source_run=member_source_run,
+        member_group_id=member_group_id,
+        shared_parameters=shared_parameters,
+        message=message,
+    )

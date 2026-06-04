@@ -62,20 +62,39 @@ where:
 Current GUI Workflow
 --------------------
 
+Single-run grouped fit
+~~~~~~~~~~~~~~~~~~~~~~
+
 1. Open a raw dataset in **FB Asymmetry**.
 2. Configure detector groups in **Grouping**.
 3. Select the dataset you want to fit.
 4. In the central workspace, switch to **Individual Groups**.
-5. Launch **Fit**.
-6. In the **Multi-Group Fit** window, adjust the fit function with **Edit Function...** if needed.
-7. Configure the two parameter blocks described below.
-8. Click **Run Grouped Fit**.
+5. Launch **Fit** — the fit dock switches to the **Multi-Group Fit** window.
+6. Ensure the **Single** tab is selected.
+7. Adjust the fit function with **Edit Function...** if needed.
+8. Configure the two parameter blocks described below.
+9. Click **Run Grouped Fit**.
 
 The grouped plot view shows stacked lifetime-corrected grouped traces for the
-active dataset. Launching **Fit** from that grouped view swaps the standard fit
-dock over to the grouped-fit controls for the current dataset. Switching back
-to the **FB Asymmetry** tab restores the regular fit dock content. After the fit
-completes, each subplot receives its fitted grouped count curve.
+active dataset. Switching back to the **FB Asymmetry** tab restores the regular
+fit dock content. After the fit completes, each subplot receives its fitted
+grouped count curve, and the result is saved as a ``FitSeries`` entry for
+parameter trending.
+
+Multi-run grouped batch fit
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+1. Select two or more runs in the Data Browser.
+2. Switch to **Individual Groups** in the central workspace.
+3. Launch **Fit** — the **Batch** tab in the Multi-Group Fit window accepts a
+   multi-run member list fed from the current selection.
+4. Adjust the fit function and classify physics parameters (see below).
+5. Click **Run Grouped Fit**.
+
+The Batch tab fits each run's detector groups with the same polarization model
+and records the results as a single ``FitSeries``, making parameter
+trending available across the run series. Individual runs' results can be
+piped back to the **Single** tab for inspection.
 
 The **Grouping** dialog now includes an **Include** checkbox per group. Only
 checked groups appear in the **Individual Groups** viewer and in grouped
@@ -87,34 +106,41 @@ Parameter Blocks
 
 The grouped GUI mode separates parameters into two blocks.
 
-Per-Group Parameters
-~~~~~~~~~~~~~~~~~~~~
+Per-Group (Nuisance) Parameters
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-These are the nuisance parameters attached to each detector group:
+These nuisance parameters are attached to each detector group and are
+always estimated **independently per (run, group)**:
 
 * ``N0``
 * ``background``
 * ``amplitude``
 * ``relative_phase``
 
-Each of these can be marked as:
+They do not appear in the physics-role table and are not trended.
 
-* **Global**: one shared value across all included groups
-* **Local**: one fitted value per group
-* **Fixed**: held constant at the table value for all groups
-
-Fit-Function Parameters
-~~~~~~~~~~~~~~~~~~~~~~~
+Physics (Fit-Function) Parameters
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 These are the parameters of the selected composite polarization function.
+Each can be classified as:
 
-Each fit-function parameter can currently be:
-
-* **Free**: one shared fitted value across all included groups
+* **Global**: one shared value across all runs in the batch (cross-run shared)
+* **Local**: one fitted value per run, shared across that run's detector groups
 * **Fixed**: held constant at the table value
 
-This keeps the first implementation slice aligned with the intended Asymmetry
-style: explicit per-group nuisance controls plus one shared physical model.
+A fit is called a **global grouped fit** when at least one physics parameter
+carries the **Global** role; otherwise it is a **batch grouped fit** (N
+independent per-run fits recorded together). The relationship is derived
+automatically from the parameter-role table — there is no separate scope
+selector.
+
+.. note::
+
+   The engine limit for grouped fits is that physics roles must be
+   *homogeneous*: all physics parameters must be either all **Global** or all
+   **Local/Fixed** for a given fit. Mixed cross-run-global + per-run-local
+   physics is not yet supported and is rejected with a clear error message.
 
 Interaction With Existing Plot Controls
 ---------------------------------------
@@ -134,16 +160,13 @@ active fit-range restricted dataset.
 Current Limitations
 -------------------
 
-This is the first GUI slice, not the final multi-group feature set.
-
-Current limitations are:
-
-* grouped mode works on one active dataset at a time, not across multiple runs
-* the **Global Fit Wizard** is not used in grouped mode
-* grouped fit-function parameters are only **Free** or **Fixed** in the GUI
-* the grouped plot shows group traces, not detector-by-detector traces
-* detector phase tables and detector quadrature workflows are still out of scope
-* the count-domain lifetime term is fixed to the physical muon lifetime in this slice
+* The **Global Fit Wizard** is not available in grouped mode.
+* Physics parameter roles must be homogeneous: all **Global** or all
+  **Local/Fixed**. Mixed-role fits (some physics shared cross-run, others
+  per-run) are not yet expressible in the engine.
+* The grouped plot shows group traces, not detector-by-detector traces.
+* Detector phase tables and detector quadrature workflows are out of scope.
+* The count-domain lifetime term is fixed to the physical muon lifetime.
 
 Practical Notes
 ---------------

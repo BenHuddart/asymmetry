@@ -7,12 +7,18 @@ the per-run grouping (groups, alpha, bunching, deadtime, background),
 the single- and global-fit model setups with their parameter tables and
 bounds, separate frequency-domain fit state with spectral peak models,
 the most recent fit overlays, the Fourier panel state including
-per-run phase tables, and any cached Fit Wizard or Global Fit Wizard
-analyses. Raw detector arrays are *not* embedded — the file references
-source data by path and reloads from disk on open. This makes ``.asymp``
-files small enough to share alongside the raw data when sending an
-analysis to a collaborator, or to archive alongside paper supplementary
-material so that readers can reproduce every fit shown in the figures.
+per-run phase tables, any cached Fit Wizard or Global Fit Wizard
+analyses, per-run *representation* fit slots (single and series fits
+recorded into the domain representation model), and the *batches* (fit
+series) that drive the Fit Parameters trending panel. Raw detector
+arrays are *not* embedded — the file references source data by path and
+reloads from disk on open. Fourier spectra are regenerated from their
+stored recipe (window, padding, phase, group selection) rather than
+embedded, so the file remains compact even after frequency-domain work.
+This makes ``.asymp`` files small enough to share alongside the raw
+data when sending an analysis to a collaborator, or to archive alongside
+paper supplementary material so that readers can reproduce every fit
+shown in the figures.
 
 Asymmetry's project file is JSON with an integer schema version, which
 is independent of the package version: opening a project written by an
@@ -37,12 +43,23 @@ Project files store:
 * Per-run Fourier group-phase tables, included groups, and auto-estimated
   phase markers
 * Cached single-fit and global-fit wizard analysis payloads when present
+* **Per-dataset representations** — for each analysis domain (F-B asymmetry,
+  detector groups, FFT, MaxEnt) that the user has exercised, the stored
+  representation records a *recipe* (for FFT: the generation config) and a
+  *FitSlot* (the most recent fit's model, parameters, result summary,
+  provenance, and trending flags). Fourier spectra are re-generated from the
+  recipe on load; time-domain asymmetry is re-computed from the raw data.
+* **Fit series (batches)** — each batch or global fit over multiple runs (or
+  multiple runs' detector groups) is recorded as a ``FitSeries`` that carries
+  the member list, parameter roles, per-member result summaries, and divergence
+  state. The Fit Parameters trending panel reads directly from these series,
+  organised by the active representation.
 
 For two-period NeXus runs, grouping metadata persisted with each dataset also
 includes red/green period configuration such as ``period_mode`` and per-period
 histogram metadata used by RG recomputation.
 
-Project files do not embed raw detector arrays.
+Project files do not embed raw detector arrays or computed Fourier spectra.
 
 Wizard Cache State
 ------------------
@@ -161,7 +178,7 @@ Save and Load
    from asymmetry.core.project.schema import load_project, save_project
 
    state = {
-       "schema_version": 3,
+       "schema_version": 7,
        "created_with_app_version": "0.1.0",
        "datasets": [{"run_number": 3077, "source_file": "run3077.nxs", "metadata_overrides": {}}],
        "browser_state": {

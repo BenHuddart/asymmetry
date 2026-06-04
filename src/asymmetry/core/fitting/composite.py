@@ -45,6 +45,7 @@ class ComponentDefinition:
     formula_template: str
     latex_equation: str = ""
     category: str = "General"
+    domain: str = "time"
 
 
 def _exp_component(t: NDArray, A: float, Lambda: float) -> NDArray[np.float64]:
@@ -310,6 +311,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{height}*exp(-4*ln(2)*((nu-{nu0})/{fwhm})^2)",
         latex_equation=r"S(\nu)=h\exp\left[-4\ln2\left((\nu-\nu_0)/w\right)^2\right]",
         category="Frequency Domain",
+        domain="frequency",
     ),
     "LorentzianPeak": ComponentDefinition(
         name="LorentzianPeak",
@@ -325,6 +327,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{height}/(1+4*((nu-{nu0})/{fwhm})^2)",
         latex_equation=r"S(\nu)=h/[1+4((\nu-\nu_0)/w)^2]",
         category="Frequency Domain",
+        domain="frequency",
     ),
     "ConstantBackground": ComponentDefinition(
         name="ConstantBackground",
@@ -336,6 +339,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{bg}",
         latex_equation=r"S(\nu)=b_g",
         category="Frequency Domain",
+        domain="frequency",
     ),
     "LinearBackground": ComponentDefinition(
         name="LinearBackground",
@@ -347,6 +351,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{bg}+{slope}*nu",
         latex_equation=r"S(\nu)=b_g+m\nu",
         category="Frequency Domain",
+        domain="frequency",
     ),
 }
 

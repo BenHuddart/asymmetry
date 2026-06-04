@@ -26,7 +26,7 @@ Public API
 .. autodata:: CURRENT_SCHEMA_VERSION
 
    The integer schema version written into every new project file.  Currently
-    ``3``.
+   ``7``.
 
 .. autoexception:: UnsupportedSchemaVersion
 
@@ -47,17 +47,54 @@ A project file is a UTF-8 JSON document with the following top-level
 structure::
 
     {
-        "schema_version": 3,
+        "schema_version": 7,
         "created_with_app_version": "0.1.0",
         "datasets": [
             {
                 "source_file": "/absolute/path/to/file.nxs",
                 "run_number": 1234,
-                "metadata_overrides": { "field": 50.0 }
+                "metadata_overrides": { "field": 50.0 },
+                "representations": {
+                    "time_fb_asymmetry": {
+                        "recipe": {},
+                        "fit": {
+                            "model": { "component_names": ["Exponential"], "operators": [] },
+                            "parameters": [...],
+                            "result": { "success": true, "reduced_chi_squared": 0.97, ... },
+                            "provenance": "single",
+                            "batch_id": null,
+                            "diverged": false,
+                            "include_in_trend": true
+                        },
+                        "trend_state": {}
+                    },
+                    "freq_fft": {
+                        "recipe": { "fourier_config": { "window": "gaussian", ... } },
+                        "fit": { "model": null, "provenance": "none", ... },
+                        "trend_state": {}
+                    }
+                }
             }
         ],
         "combined_datasets": [
             { "source_run_numbers": [1234, 1235] }
+        ],
+        "batches": [
+            {
+                "batch_id": "batch-1",
+                "rep_type": "time_fb_asymmetry",
+                "member_kind": "runs",
+                "member_run_numbers": [1234, 1235, 1236],
+                "member_source_run": {},
+                "order_key": "field",
+                "canonical_model": { "component_names": ["Exponential"], "operators": [] },
+                "param_roles": { "A": "local", "Lambda": "global" },
+                "nuisance_params": [],
+                "results_by_run": {
+                    "1234": { "success": true, "parameters": { "Lambda": 0.31 }, ... }
+                },
+                "diverged_runs": []
+            }
         ],
         "browser_state": {
             "sort_column": 0,
@@ -90,5 +127,74 @@ structure::
         }
     }
 
+**Schema versioning history:**
+
+* v1–v4 — initial releases
+* v5 — grouping overrides, wizard cache
+* v6 — per-dataset ``representations`` map (recipe-only FFT, per-run ``FitSlot``,
+  trend state); top-level ``batches`` list
+* v7 — ``FitSeries`` gains ``member_kind``, ``nuisance_params``,
+  ``member_source_run``; ``trend_state`` normalized to structured shape;
+  group series recorded in ``batches``
+
 Unknown top-level keys are silently preserved during migration, ensuring
 forward compatibility when a newer version of the application adds new state.
+
+Representation
+--------------
+
+Each dataset entry's ``representations`` map holds one entry per analysis
+view the user has exercised.  Keys are ``RepresentationType`` values:
+``"time_fb_asymmetry"``, ``"time_groups"``, ``"freq_fft"``, ``"freq_maxent"``.
+
+Each representation stores:
+
+``recipe``
+    Generation parameters (for FFT spectra: the ``GroupSpectrumConfig``
+    serialisation; for time-domain views: empty).  On project load the
+    transient arrays are recomputed from the recipe rather than stored.
+
+``fit``
+    A single :class:`~asymmetry.core.representation.base.FitSlot` — the most
+    recent fit for this (dataset, representation) pair.  Includes the model
+    dict, fitted-parameter list, result summary, provenance marker
+    (``"none"``, ``"single"``, ``"batch"``, ``"global"``), the ``batch_id`` of
+    the owning :class:`~asymmetry.core.representation.series.FitSeries` when
+    the fit was part of a series, and divergence flags used by the trending
+    panel.
+
+``trend_state``
+    Opaque dict persisting the user's x-axis and y-parameter selections in the
+    Fit Parameters panel for this representation.
+
+FitSeries (``batches``)
+-----------------------
+
+The top-level ``batches`` list stores
+:class:`~asymmetry.core.representation.series.FitSeries` objects that
+accumulate results across multiple members.
+
+Key fields:
+
+``member_kind``
+    ``"runs"`` for F-B asymmetry / FFT batch fits; ``"groups"`` for
+    multi-run grouped time-domain fits.
+
+``member_run_numbers``
+    Ordered list of member keys.  For ``"runs"`` series these are real run
+    numbers; for ``"groups"`` series they are synthetic negative keys of the
+    form ``-(source_run * 1000 + group_index)``.
+
+``member_source_run``
+    Map from synthetic group key → source run number (``"groups"`` series only).
+
+``param_roles``
+    Per-parameter classification: ``"global"``, ``"local"``, or ``"fixed"``.
+
+``nuisance_params``
+    List of per-(run, group) nuisance parameter names excluded from trending
+    (``"groups"`` series only).
+
+``results_by_run``
+    Per-member fit result summaries (parameter values, uncertainties, χ²)
+    used to drive the Fit Parameters trending panel.

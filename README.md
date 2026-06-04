@@ -21,12 +21,18 @@ for later reuse.
 - **Time-domain fitting**: fit single datasets or simultaneous multi-dataset series using built-in
   μSR models and calculator-style composite expressions assembled with arithmetic operators and
   parentheses.
+- **Grouped time-domain fitting**: fit multiple detector groups jointly for Knight-shift, vortex-state,
+  and geometry-sensitive observables. A **Single** tab fits one run's groups; a **Batch** tab fits a
+  multi-run series with the same model, collecting results for parameter trending.
 - **Longitudinal-field KT support**: includes `LongitudinalFieldKT` / `LFKuboToyabe` models with
   field-aware defaults (`B_L` can be initialized from run metadata where available).
-- **Global-fit parameter typing**: per-parameter role selection for `Global`, `Local`, `Fixed`,
-  and `File` (file-backed, per-dataset value) workflows.
+- **Batch and global fit parameter typing**: per-parameter role selection — `Global` (shared across
+  runs), `Local` (per-run), `Fixed` — with the relationship (batch vs. global) derived automatically
+  from the role table. Results are recorded as a trendable `FitSeries`.
 - **Parameter-model fitting**: fit field-, temperature-, or run-dependent parameter trends,
-  including superconducting penetration-depth workflows.
+  including superconducting penetration-depth workflows. The Fit Parameters panel is
+  representation-aware: switching between F-B Asymmetry, Detector Groups, and FFT views
+  automatically shows the series for the active representation.
 - **Derived composite parameters**: define expression-based parameters in the Fit Parameters panel
   with safe parsing and first-order uncertainty propagation (including covariance support when
   available).

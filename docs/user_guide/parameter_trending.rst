@@ -28,6 +28,26 @@ Fourier spectra appear as ``nu0`` and ``fwhm`` in MHz, with derived field
 equivalents ``B0`` and ``Bwid`` for plotting or fitting spectral shifts and
 broadening directly against field, temperature, or run number.
 
+Representation-Aware Trending
+------------------------------
+
+The Fit Parameters panel automatically tracks which *representation* is active
+in the central workspace.  The **Showing:** row at the top of the panel
+indicates the current representation — ``F-B Asymmetry``, ``Detector Groups``,
+``FFT``, or ``MaxEnt`` — and the panel's series buttons below show only the fit
+series that belong to that representation.
+
+Switching the central workspace view (e.g. from **F-B asymmetry** to
+**Individual Groups**) refreshes the panel instantly to show the grouped-fit
+series instead of the asymmetry ones.  Switching back restores the asymmetry
+series.  Each representation maintains its own independent set of series, x-axis
+selection, and derived composite parameters, so there is no risk of cross-
+contamination between a time-domain and a frequency-domain analysis.
+
+When a series button is selected, the **Data Browser** highlights (in amber) the
+runs that belong to that series, making it easy to trace which runs contributed
+to the current trend.
+
 Typical use cases include locating :math:`T_c` and a critical exponent by
 fitting :math:`\nu(T)` from a ZF series with a ``CriticalDivergence`` form
 (:doc:`workflows/temperature_scan_magnetism`); inverting the TF

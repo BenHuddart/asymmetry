@@ -579,7 +579,7 @@ def test_global_fit_finished_success_emits(qapp: QApplication, dataset: MuonData
 
     tab._on_fit_finished({101: result, 102: result}, fitted_global)
 
-    assert "Global fit converged" in tab._result_text.toHtml()
+    assert "Batch fit converged" in tab._result_text.toHtml()
     assert set(emitted["res"]) == {101, 102}
 
 
@@ -592,7 +592,7 @@ def test_global_fit_finished_failure_lists_failed_runs(
     fail = FitResult(success=False, message="x")
 
     tab._on_fit_finished({101: fail}, ParameterSet())
-    assert "Global fit failed" in tab._result_text.toPlainText()
+    assert "Batch fit failed" in tab._result_text.toPlainText()
 
 
 def test_global_fit_error_sets_message(qapp: QApplication, dataset: MuonDataset) -> None:
@@ -615,7 +615,7 @@ def test_grouped_fit_error_formats_keyerror_message(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     grouped_groups = [
         SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
         SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
@@ -688,7 +688,7 @@ def test_grouped_fit_finished_updates_grouped_tables(
         ),
     ]
 
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     monkeypatch.setattr(
         tab, "_grouped_mode_context", lambda: (grouped_groups, grouped_datasets, "ready")
     )
@@ -848,7 +848,7 @@ def test_grouped_tab_shows_one_value_column_per_group(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     grouped_groups = [
         SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
         SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
@@ -907,7 +907,7 @@ def test_grouped_tab_defaults_to_oscillatory_field_model(
         metadata={"run_number": 101},
         run=Run(run_number=101, metadata={"field": 150.0}),
     )
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     grouped_groups = [
         SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
         SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
@@ -931,7 +931,7 @@ def test_grouped_tab_clearing_current_dataset_does_not_crash(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     grouped_groups = [
         SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
         SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
@@ -949,7 +949,7 @@ def test_grouped_tab_fractionizes_additive_fit_function(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     grouped_groups = [
         SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
         SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
@@ -973,7 +973,7 @@ def test_grouped_tab_synchronizes_fraction_rows(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     grouped_groups = [
         SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
         SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
@@ -1001,7 +1001,7 @@ def test_grouped_fit_uses_per_group_seed_values_from_group_columns(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     grouped_groups = [
         SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
         SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
@@ -1166,7 +1166,7 @@ def test_grouped_model_phase_seed_uses_first_group_estimate(
         ),
     ]
 
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
     tab.set_current_dataset(dataset)
 
@@ -1187,7 +1187,7 @@ def test_grouped_tab_reset_button_restores_estimated_values(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     grouped_groups = [
         SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
         SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
@@ -1259,7 +1259,7 @@ def test_grouped_tab_state_roundtrip_preserves_per_group_parameter_columns(
         SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
     ]
 
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
     tab.set_current_dataset(dataset)
     row_by_name = {
@@ -1271,7 +1271,7 @@ def test_grouped_tab_state_roundtrip_preserves_per_group_parameter_columns(
 
     saved = tab.get_state()
 
-    restored = GlobalFitTab(allowed_modes=("grouped",))
+    restored = GlobalFitTab(member_kind="groups")
     monkeypatch.setattr(restored, "_grouped_mode_context", lambda: (grouped_groups, [], "ready"))
     restored.set_current_dataset(dataset)
     restored.restore_state(saved)
@@ -1320,7 +1320,7 @@ def test_grouped_tab_preview_emits_curves_for_each_group(
         ),
     ]
 
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     monkeypatch.setattr(
         tab,
         "_grouped_mode_context",
@@ -1389,7 +1389,7 @@ def test_grouped_mode_context_uses_current_fit_window(
     monkeypatch.setattr(fit_panel_module, "build_grouped_time_domain_groups", _fake_groups)
     monkeypatch.setattr(fit_panel_module, "build_grouped_time_domain_datasets", _fake_datasets)
 
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     tab.set_current_dataset(dataset)
 
     grouped_groups, grouped_datasets, _message = tab._grouped_mode_context()
@@ -1398,6 +1398,244 @@ def test_grouped_mode_context_uses_current_fit_window(
     assert grouped_datasets is not None
     assert captured["groups"] == pytest.approx((1.0, 3.0))
     assert captured["datasets"] == (None, None)
+
+
+def test_grouped_context_builds_members_for_multiple_runs(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _ds(run: int) -> MuonDataset:
+        return MuonDataset(
+            time=np.array([1.0, 2.0, 3.0]),
+            asymmetry=np.array([0.0, 0.0, 0.0]),
+            error=np.array([1.0, 1.0, 1.0]),
+            metadata={"run_number": run},
+            run=Run(run_number=run),
+        )
+
+    def _fake_groups(_dataset, *, t_min=None, t_max=None):
+        return [
+            SimpleNamespace(group_id=1, group_name="Forward"),
+            SimpleNamespace(group_id=2, group_name="Backward"),
+        ]
+
+    def _fake_datasets(dataset, *, t_min=None, t_max=None):
+        run = int(dataset.run_number)
+        return [
+            MuonDataset(
+                time=np.array([1.0, 2.0]),
+                asymmetry=np.array([1.0, 1.0]),
+                error=np.array([1.0, 1.0]),
+                metadata={"run_number": -(run * 1000 + i), "group_id": i, "source_run_number": run},
+            )
+            for i in (1, 2)
+        ]
+
+    monkeypatch.setattr(fit_panel_module, "build_grouped_time_domain_groups", _fake_groups)
+    monkeypatch.setattr(fit_panel_module, "build_grouped_time_domain_datasets", _fake_datasets)
+
+    tab = GlobalFitTab(member_kind="groups")
+    tab.set_member_datasets([_ds(50), _ds(51)])
+
+    groups, datasets, _message = tab._grouped_mode_context()
+
+    assert groups is not None
+    assert set(tab._grouped_members) == {50, 51}
+    assert len(tab._grouped_members[50]) == 2
+    assert len(datasets) == 4  # 2 runs × 2 groups
+
+
+def test_grouped_series_fit_dispatches_for_multiple_members(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tab = GlobalFitTab(member_kind="groups")
+    # Pretend the context found two member runs (the series-branch trigger).
+    tab._grouped_members = {
+        50: [SimpleNamespace(group_id=1)],
+        51: [SimpleNamespace(group_id=1)],
+    }
+    monkeypatch.setattr(
+        tab,
+        "_grouped_mode_context",
+        lambda: ([SimpleNamespace(group_id=1)], [SimpleNamespace()], "ready"),
+    )
+    monkeypatch.setattr(
+        tab,
+        "_parse_grouped_parameter_configuration",
+        lambda: {
+            "global": [],
+            "local": [],
+            "fixed": [],
+            "model_values": {},
+            "group_values": {},
+            "bounds": {},
+        },
+    )
+    monkeypatch.setattr(fit_panel_module, "validate_grouped_model_contract", lambda *a, **k: None)
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        tab,
+        "_run_grouped_series_fit",
+        lambda *args, **kwargs: captured.setdefault("called", True),
+    )
+
+    tab._run_grouped_time_domain_fit()
+
+    assert captured.get("called") is True
+
+
+def test_derive_grouped_relationship_maps_roles_and_rejects_mixing() -> None:
+    derive = GlobalFitTab._derive_grouped_relationship
+    # One member is always "individual" regardless of roles.
+    assert derive({"lambda": "global"}, 1) == ("individual", None)
+    # Multi-member: any Global physics → global; otherwise batch.
+    assert derive({"lambda": "global"}, 3) == ("global", None)
+    assert derive({"lambda": "local"}, 3) == ("batch", None)
+    assert derive({}, 3) == ("batch", None)
+    # Mixing Global + Local physics is rejected (A1 engine limit).
+    relationship, error = derive({"a": "global", "b": "local"}, 3)
+    assert relationship is None
+    assert error is not None and "mix" in error.lower()
+
+
+def test_send_single_model_to_batch_copies_model(qapp: QApplication) -> None:
+    panel = FitPanel()
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+
+    assert panel.send_single_model_to_batch() is True
+    assert (
+        panel._global_tab._composite_model.component_names
+        == panel._single_tab._composite_model.component_names
+    )
+
+
+def test_send_to_batch_button_copies_model_and_switches_tab(qapp: QApplication) -> None:
+    panel = FitPanel()
+    panel._single_tab._set_composite_model(
+        CompositeModel(["StretchedExponential", "Constant"], operators=["+"])
+    )
+    panel._tabs.setCurrentWidget(panel._single_tab)
+
+    panel._single_tab._send_to_batch_btn.click()
+
+    assert (
+        panel._global_tab._composite_model.component_names
+        == panel._single_tab._composite_model.component_names
+    )
+    assert panel._tabs.currentWidget() is panel._global_tab
+
+
+def test_initial_values_dialog_edits_local_and_protects_shared(qapp: QApplication) -> None:
+    from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
+
+    members = [(10, "10"), (11, "11")]
+    params = [("A", "A", "local"), ("L", "L", "global"), ("bg", "bg", "fixed")]
+    values = {10: {"A": 0.2, "L": 0.5, "bg": 0.0}, 11: {"A": 0.3, "L": 0.5, "bg": 0.0}}
+    dlg = InitialValuesDialog(members, params, values)
+
+    assert dlg._table.item(0, 0).flags() & Qt.ItemFlag.ItemIsEditable  # Local editable
+    assert not (dlg._table.item(0, 1).flags() & Qt.ItemFlag.ItemIsEditable)  # Global read-only
+    assert not (dlg._table.item(0, 2).flags() & Qt.ItemFlag.ItemIsEditable)  # Fixed read-only
+
+    dlg._table.item(1, 0).setText("0.99")
+    edited = dlg.edited_values()
+    assert edited[11]["A"] == pytest.approx(0.99)
+    # Only Local parameters are returned.
+    assert "L" not in edited.get(10, {})
+    assert "bg" not in edited.get(10, {})
+
+
+def test_batch_initial_values_user_override_takes_precedence(qapp: QApplication) -> None:
+    def _ds(run: int) -> MuonDataset:
+        return MuonDataset(
+            time=np.array([0.0, 0.1, 0.2]),
+            asymmetry=np.array([0.1, 0.1, 0.1]),
+            error=np.array([0.01, 0.01, 0.01]),
+            metadata={"run_number": run},
+            run=Run(run_number=run),
+        )
+
+    tab = GlobalFitTab(member_kind="runs")
+    tab.set_datasets([_ds(10), _ds(11)])
+    tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
+    pname = tab._composite_model.param_names[0]
+
+    # _set_composite_model clears overrides, so set them afterwards.
+    tab._user_initial_values_by_run = {10: {pname: 7.0}}
+    parsed = tab._parse_parameter_configuration()
+    effective = tab._effective_initial_values_by_run(parsed)
+
+    assert effective[10][pname] == pytest.approx(7.0)  # user override wins
+    assert 11 in effective  # other runs still present
+
+
+def test_grouped_initial_values_user_override_per_run_group(qapp: QApplication) -> None:
+    nuisance = ["N0", "background", "amplitude", "relative_phase"]
+    tab = GlobalFitTab(member_kind="groups")
+    groups = [
+        SimpleNamespace(group_id=1, group_name="Forward"),
+        SimpleNamespace(group_id=2, group_name="Backward"),
+    ]
+    tab._grouped_members = {42: groups}
+
+    specs = tab._grouped_member_specs()
+    assert [key for key, _label, _run, _gid in specs] == [-42001, -42002]
+
+    # Override N0 for run 42's second group (synthetic key -42002).
+    tab._user_grouped_initial_values = {-42002: {"N0": 123.0}}
+    config = {
+        "group_values": {name: {1: 1.0, 2: 2.0} for name in nuisance},
+        "model_values": {},
+        "bounds": {name: (-float("inf"), float("inf")) for name in nuisance},
+        "fixed": set(),
+    }
+
+    initial = tab._build_grouped_initial_params(groups, config, run_number=42)
+
+    assert initial[2]["N0"].value == pytest.approx(123.0)  # override applied
+    assert initial[1]["N0"].value == pytest.approx(1.0)  # other group from the table
+
+
+def test_single_tab_annotates_and_round_trips_batch_roles(qapp: QApplication) -> None:
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    names = list(model.param_names)
+    tab = SingleFitTab()
+    roles = {names[0]: "global"}
+    if len(names) >= 2:
+        roles[names[1]] = "local"
+    state = {
+        "composite_model": model.to_dict(),
+        "parameters": [
+            {
+                "name": n,
+                "value": 0.1,
+                "fixed": False,
+                "min": "-inf",
+                "max": "inf",
+                "role": roles.get(n),
+            }
+            for n in names
+        ],
+        "result_html": "",
+    }
+    tab.restore_state(state)
+
+    row0 = next(
+        i
+        for i in range(tab._param_table.rowCount())
+        if tab._param_table.item(i, 0).data(Qt.ItemDataRole.UserRole) == names[0]
+    )
+    role_item = tab._param_table.item(row0, fit_panel_module._SINGLE_PARAM_BATCH_COLUMN)
+    assert role_item.data(fit_panel_module._PARAM_BATCH_ROLE_DATA) == "global"
+    assert role_item.text() == "Global"
+
+    # The role round-trips through get_state (survives selection switches/save).
+    round_tripped = {p["name"]: p.get("role") for p in tab.get_state()["parameters"]}
+    assert round_tripped.get(names[0]) == "global"
 
 
 def test_grouped_tab_preview_rejects_conflicting_fit_function_amplitude(
@@ -1426,7 +1664,7 @@ def test_grouped_tab_preview_rejects_conflicting_fit_function_amplitude(
         ),
     ]
 
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     monkeypatch.setattr(
         tab,
         "_grouped_mode_context",
@@ -1456,7 +1694,7 @@ def test_grouped_mode_ui_refresh_rebuilds_group_value_columns_when_groups_appear
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tab = GlobalFitTab(allowed_modes=("grouped",))
+    tab = GlobalFitTab(member_kind="groups")
     grouped_groups = [
         SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
         SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
@@ -1857,11 +2095,11 @@ def test_fit_panel_global_fit_results_seed_single_state_per_run(
     }
     panel.register_global_fit_results(results)
 
-    assert "Global fit" in panel._single_tab._result_label.text()
+    assert "Batch fit" in panel._single_tab._result_label.text()
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.11)
 
     panel.set_dataset(d2)
-    assert "Global fit" in panel._single_tab._result_label.text()
+    assert "Batch fit" in panel._single_tab._result_label.text()
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.44)
 
     saved = panel.get_single_state()
@@ -2537,3 +2775,23 @@ def test_global_tab_get_state_persists_active_window_recommendation_without_cach
     assert saved["wizard_state"]["signature"]["run_numbers"] == [int(dataset.run_number), 102]
     assert tab._cached_wizard_recommendation is not None
     assert tab._cached_wizard_signature is not None
+
+
+def test_bounded_phase_seed_padding_caps_large_signals() -> None:
+    """Phase-seed FFT padding is capped so huge histograms stay cheap."""
+    from asymmetry.gui.panels.fit_panel import (
+        _MAX_PHASE_SEED_FFT_POINTS,
+        _bounded_phase_seed_padding,
+    )
+
+    # Small signals keep the full desired padding.
+    assert _bounded_phase_seed_padding(1024, desired=8) == 8
+    # Very large signals are capped to padding 1 (zero-padding only
+    # interpolates, so this does not alias the phase seed).
+    huge = _MAX_PHASE_SEED_FFT_POINTS * 4
+    assert _bounded_phase_seed_padding(huge, desired=8) == 1
+    # For a signal within the bound, padding never pushes the padded length
+    # past the cap.
+    n = _MAX_PHASE_SEED_FFT_POINTS // 2
+    assert _bounded_phase_seed_padding(n, desired=8) * n <= _MAX_PHASE_SEED_FFT_POINTS
+    assert _bounded_phase_seed_padding(0) == 1
