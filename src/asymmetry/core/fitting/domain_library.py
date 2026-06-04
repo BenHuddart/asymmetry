@@ -69,11 +69,7 @@ def components_for_domain(domain: str) -> dict[str, ComponentDefinition]:
 def models_for_domain(domain: str) -> dict[str, ModelDefinition]:
     """Return the registered built-in models for *domain*."""
     token = _normalise_domain(domain)
-    return {
-        name: definition
-        for name, definition in MODELS.items()
-        if definition.domain == token
-    }
+    return {name: definition for name, definition in MODELS.items() if definition.domain == token}
 
 
 def default_model_for_domain(domain: str) -> CompositeModel:

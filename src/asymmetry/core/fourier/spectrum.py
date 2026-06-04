@@ -87,9 +87,7 @@ class GroupSpectrumConfig:
             "selected_group_ids": (
                 None if self.selected_group_ids is None else list(self.selected_group_ids)
             ),
-            "group_phase_degrees": {
-                int(k): float(v) for k, v in self.group_phase_degrees.items()
-            },
+            "group_phase_degrees": {int(k): float(v) for k, v in self.group_phase_degrees.items()},
         }
 
     @classmethod
@@ -114,9 +112,7 @@ class GroupSpectrumConfig:
             estimate_average_error=bool(data.get("estimate_average_error", False)),
             t_min_us=_optional_float(data.get("t_min_us")),
             t_max_us=_optional_float(data.get("t_max_us")),
-            selected_group_ids=(
-                [int(g) for g in selected] if isinstance(selected, list) else None
-            ),
+            selected_group_ids=([int(g) for g in selected] if isinstance(selected, list) else None),
             group_phase_degrees=group_phase_degrees,
         )
 

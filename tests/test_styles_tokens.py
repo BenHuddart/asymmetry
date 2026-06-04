@@ -51,9 +51,7 @@ def test_no_raw_hex_literals(rel_path: str) -> None:
         pytest.skip(f"{rel_path} not found")
 
     violations: list[str] = []
-    for lineno, line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), 1
-    ):
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if _HEX_IN_STRING.search(line):
             violations.append(f"  line {lineno}: {line.strip()}")
 

@@ -354,9 +354,7 @@ class TestMainWindowFourier:
         mainwindow._on_dataset_selected(8830)
         mainwindow._on_compute_fourier()
 
-        monkeypatch.setattr(
-            mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2]
-        )
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
         mainwindow._on_apply_fourier_to_selection()
 
         # The second run now has a generated spectrum and the same recipe.
