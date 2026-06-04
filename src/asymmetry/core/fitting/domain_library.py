@@ -60,9 +60,7 @@ def components_for_domain(domain: str) -> dict[str, ComponentDefinition]:
     """
     token = _normalise_domain(domain)
     return {
-        name: definition
-        for name, definition in COMPONENTS.items()
-        if definition.domain == token
+        name: definition for name, definition in COMPONENTS.items() if definition.domain == token
     }
 
 
