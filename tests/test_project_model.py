@@ -7,7 +7,7 @@ import numpy as np
 from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation import (
-    Batch,
+    FitSeries,
     FitSlot,
     RepresentationType,
     make_representation,
@@ -47,7 +47,7 @@ def test_ensure_dataset_and_representation_access():
 
 def test_add_and_get_batch():
     model = ProjectModel()
-    batch = Batch("b1", RepresentationType.TIME_FB_ASYMMETRY, member_run_numbers=[1, 2])
+    batch = FitSeries("b1", RepresentationType.TIME_FB_ASYMMETRY, member_run_numbers=[1, 2])
     model.add_batch(batch)
     assert model.batch("b1") is batch
     assert model.batch("missing") is None
@@ -59,7 +59,7 @@ def test_standalone_round_trip():
     rep = container.ensure(RepresentationType.FREQ_FFT)
     rep.recipe = {"fourier_config": {"display": "Cos"}}
     rep.fit = FitSlot(provenance="single", result={"result_html": "ok"})
-    model.add_batch(Batch("b1", RepresentationType.FREQ_FFT, member_run_numbers=[7]))
+    model.add_batch(FitSeries("b1", RepresentationType.FREQ_FFT, member_run_numbers=[7]))
 
     restored = ProjectModel.from_dict(model.to_dict())
     restored_rep = restored.representation(7, RepresentationType.FREQ_FFT)
@@ -78,7 +78,9 @@ def test_project_state_integration_round_trip():
     }
     model = ProjectModel()
     model.ensure_dataset(7).ensure(RepresentationType.TIME_FB_ASYMMETRY)
-    model.add_batch(Batch("b1", RepresentationType.TIME_FB_ASYMMETRY, member_run_numbers=[7, 8]))
+    model.add_batch(
+        FitSeries("b1", RepresentationType.TIME_FB_ASYMMETRY, member_run_numbers=[7, 8])
+    )
     model.write_to_project_state(project)
 
     # Dataset 7 has a representation; dataset 8 gets an empty map.
@@ -106,11 +108,11 @@ def test_recompute_all_populates_primary_and_survives_bad_recipe():
     assert maxent.primary is None  # bad recipe left uncomputed, no exception
 
 
-def _batched_model(pm: ProjectModel, model: dict) -> Batch:
+def _batched_model(pm: ProjectModel, model: dict) -> FitSeries:
     for run_number in (10, 11):
         rep = pm.ensure_dataset(run_number).ensure(_FB)
         rep.fit = FitSlot(model=model, provenance="batch", batch_id="b1")
-    batch = Batch(
+    batch = FitSeries(
         "b1", _FB, member_run_numbers=[10, 11], canonical_model=model, param_roles={"A": "local"}
     )
     pm.add_batch(batch)

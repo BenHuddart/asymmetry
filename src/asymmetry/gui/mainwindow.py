@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -45,7 +46,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset
-from asymmetry.core.fitting import build_grouped_time_domain_datasets
+from asymmetry.core.fitting import build_grouped_time_domain_datasets, fit_result_summary
 from asymmetry.core.fourier import (
     GroupSpectrumConfig,
     build_group_signal_dataset,
@@ -61,7 +62,12 @@ from asymmetry.core.project import (
     load_project,
     save_project,
 )
-from asymmetry.core.representation import Batch, FitSlot, RepresentationType
+from asymmetry.core.representation import (
+    FitSeries,
+    FitSlot,
+    RepresentationType,
+    canonical_model_matches,
+)
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
     apply_deadtime_correction,
@@ -912,15 +918,15 @@ class MainWindow(QMainWindow):
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
         if hasattr(self._fit_panel, "grouped_fit_completed"):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
-        if hasattr(self._fit_panel, "grouped_time_domain_mode_changed"):
-            self._fit_panel.grouped_time_domain_mode_changed.connect(
-                self._on_grouped_time_domain_mode_changed
-            )
         if hasattr(self._fit_panel, "preview_requested"):
             self._fit_panel.preview_requested.connect(self._on_preview_requested)
         if hasattr(self._fit_panel, "share_function_with_group_requested"):
             self._fit_panel.share_function_with_group_requested.connect(
                 self._on_share_single_function_with_group
+            )
+        if hasattr(self._fit_panel, "add_single_fit_to_series_requested"):
+            self._fit_panel.add_single_fit_to_series_requested.connect(
+                self._on_add_single_fit_to_series_requested
             )
         if hasattr(self._fit_parameters_panel, "cross_group_fit_completed"):
             self._fit_parameters_panel.cross_group_fit_completed.connect(
@@ -929,6 +935,10 @@ class MainWindow(QMainWindow):
         if hasattr(self._fit_parameters_panel, "delete_group_fits_requested"):
             self._fit_parameters_panel.delete_group_fits_requested.connect(
                 self._on_fit_parameters_group_fits_deleted
+            )
+        if hasattr(self._fit_parameters_panel, "series_selection_changed"):
+            self._fit_parameters_panel.series_selection_changed.connect(
+                self._on_trend_series_selected
             )
 
         if hasattr(self._fourier_panel, "_fft_btn"):
@@ -3978,9 +3988,7 @@ class MainWindow(QMainWindow):
         if applied == 0:
             self._set_fourier_status("Select additional runs to apply the Fourier settings to.")
             return
-        self._set_fourier_status(
-            f"Applied Fourier settings to {applied} run(s).", success=True
-        )
+        self._set_fourier_status(f"Applied Fourier settings to {applied} run(s).", success=True)
         self._log_panel.log(f"Applied Fourier settings to {applied} run(s).")
 
     def _on_fit_parameters(self) -> None:
@@ -4116,19 +4124,6 @@ class MainWindow(QMainWindow):
         mode = "enabled" if enabled else "disabled"
         self._log_panel.log(f"Plot overlay {mode}.")
 
-    def _on_grouped_time_domain_mode_changed(self, _enabled: bool) -> None:
-        """Refresh plot and fit context when grouped mode changes."""
-        self._refresh_time_view_selector()
-        if (
-            _enabled
-            and hasattr(self._plot_panel, "set_current_time_view_mode")
-            and self._grouped_time_domain_display_datasets()
-        ):
-            self._plot_panel.set_current_time_view_mode("groups", emit_signal=False)
-        self._update_selected_datasets()
-        self._render_current_selection_plot()
-        self._update_fit_block_state()
-
     def _on_plot_time_view_changed(self, _mode: str) -> None:
         """Re-render the main time-domain plot after an explicit view switch."""
         if (
@@ -4169,6 +4164,8 @@ class MainWindow(QMainWindow):
         self._sync_domain_buttons(view)
         self._apply_inspector_for_domain(view)
         self._update_status_selection()
+        # Refresh the trend panel for the newly-active representation.
+        self._refresh_trend_panel()
 
     def _on_fit_range_changed(self, x_min: float, x_max: float) -> None:
         """Refresh fit inputs when the selected fit x-range changes."""
@@ -4241,28 +4238,145 @@ class MainWindow(QMainWindow):
     def _fit_result_summary(fit_result) -> dict:
         """Return a JSON-serialisable summary of a fit result.
 
-        Includes the fitted parameter values and uncertainties so a batch's
-        ``results_by_run`` can drive parameter trending.
+        Delegates to the shared core helper so the run-batch and grouped-series
+        recording paths produce identically shaped ``results_by_run`` entries.
         """
-        parameters: dict[str, float] = {}
-        parameter_set = getattr(fit_result, "parameters", None)
-        if parameter_set is not None:
-            for name in getattr(parameter_set, "names", []):
-                try:
-                    parameters[str(name)] = float(parameter_set[name].value)
-                except (KeyError, TypeError, ValueError, AttributeError):
-                    continue
-        uncertainties = {
-            str(k): float(v)
-            for k, v in (getattr(fit_result, "uncertainties", {}) or {}).items()
-        }
+        return fit_result_summary(fit_result)
+
+    # ── Representation-aware trend panel (Phase 4) ────────────────────────────
+
+    #: Maps each active representation type to a human-readable display name.
+    _REP_TYPE_LABEL: dict = {}  # populated lazily — avoids circular import issues
+
+    @staticmethod
+    def _rep_label_for(rep_type: RepresentationType) -> str:
+        """Return a short display name for *rep_type*."""
         return {
-            "success": bool(getattr(fit_result, "success", False)),
-            "chi_squared": float(getattr(fit_result, "chi_squared", 0.0)),
-            "reduced_chi_squared": float(getattr(fit_result, "reduced_chi_squared", 0.0)),
-            "parameters": parameters,
-            "uncertainties": uncertainties,
-        }
+            RepresentationType.TIME_FB_ASYMMETRY: "F-B Asymmetry",
+            RepresentationType.TIME_GROUPS: "Detector Groups",
+            RepresentationType.FREQ_FFT: "FFT",
+            RepresentationType.FREQ_MAXENT: "MaxEnt",
+        }.get(rep_type, "")
+
+    def _build_series_rows(self, series: FitSeries) -> list[dict]:
+        """Build the row-dict list for one ``FitSeries`` to pass to the trend panel.
+
+        Each entry is a plain dict with keys ``run_number``, ``run_label``,
+        ``field``, ``temperature``, ``values``, ``errors``.  Only successful
+        members are included.
+
+        For frequency-domain series, dataset metadata is read from the cached
+        frequency spectra (``_frequency_spectra_by_run``) rather than the data
+        browser, mirroring the old ``set_fit_results`` path's ``is_frequency_fit``
+        branch.  The time-domain data browser is used as a fallback when the
+        spectrum is not cached in memory.
+        """
+        rows: list[dict] = []
+        is_frequency = series.rep_type in (
+            RepresentationType.FREQ_FFT,
+            RepresentationType.FREQ_MAXENT,
+        )
+        for member_key in series.member_run_numbers:
+            summary = series.results_by_run.get(member_key)
+            if not summary or not summary.get("success"):
+                continue
+
+            if series.member_kind == "groups":
+                source_run = series.source_run_for(member_key)
+                dataset = (
+                    self._data_browser.get_dataset(source_run)
+                    if hasattr(self._data_browser, "get_dataset")
+                    else None
+                )
+                group_idx = abs(member_key) % 1000
+                run_label = f"R{source_run}/G{group_idx}"
+            else:
+                # Frequency-domain spectra may carry richer / more-accurate
+                # metadata than the time-domain entry in the data browser.
+                dataset = None
+                if is_frequency:
+                    spectra = self._frequency_spectra_by_run.get(member_key, [])
+                    dataset = spectra[0] if spectra else None
+                if dataset is None and hasattr(self._data_browser, "get_dataset"):
+                    dataset = self._data_browser.get_dataset(member_key)
+                run_label = None
+
+            meta = getattr(dataset, "metadata", {}) or {}
+            if run_label is None:
+                run_label = str(meta.get("run_label") or member_key)
+
+            rows.append(
+                {
+                    "run_number": member_key,
+                    "run_label": run_label,
+                    "field": float(meta.get("field", 0.0)),
+                    "temperature": float(meta.get("temperature", 0.0)),
+                    "values": dict(summary.get("parameters", {})),
+                    "errors": dict(summary.get("uncertainties", {})),
+                }
+            )
+        return rows
+
+    def _refresh_trend_panel(self) -> None:
+        """Reload the trend panel from the project model for the active representation.
+
+        This is the *pull*-based entry point called after every fit that records
+        a ``FitSeries`` and whenever the active representation changes.  It
+        replaces the old per-fit UUID push.
+        """
+        if not hasattr(self, "_fit_parameters_panel"):
+            return
+        rep_type = self._active_representation_type()
+        if rep_type is None:
+            return
+
+        # Gather all series for the active representation, in creation order
+        # (batch-N sorts before batch-(N+1) because IDs are "batch-<index>").
+        series_for_rep = sorted(
+            (s for s in self._project_model.batches.values() if s.rep_type == rep_type),
+            key=lambda s: s.batch_id,
+        )
+
+        rep_label = self._rep_label_for(rep_type)
+        entries: list[tuple[str, str, list[dict]]] = []
+        highlight_map: dict[str, list[int]] = {}
+        for idx, series in enumerate(series_for_rep, start=1):
+            row_dicts = self._build_series_rows(series)
+            if not row_dicts:
+                continue
+            batch_id = series.batch_id
+            name = f"Series {idx}"
+            entries.append((batch_id, name, row_dicts))
+            # Runs to highlight: source runs for group series, member keys for run series.
+            if series.member_kind == "groups":
+                highlight_map[batch_id] = sorted(set(series.member_source_run.values()))
+            else:
+                highlight_map[batch_id] = list(series.member_run_numbers)
+
+        if hasattr(self._fit_parameters_panel, "load_representation_series"):
+            self._fit_parameters_panel.load_representation_series(
+                rep_label,
+                entries,
+                highlight_runs_by_id=highlight_map,
+            )
+
+        if entries and hasattr(self, "_dock_fit_parameters"):
+            self._dock_fit_parameters.show()
+            self._dock_fit_parameters.raise_()
+
+    def _on_trend_series_selected(self, batch_id: str) -> None:
+        """Highlight the member runs of the active fit series in the data browser."""
+        series = self._project_model.batch(batch_id)
+        if series is None:
+            if hasattr(self._data_browser, "set_highlighted_runs"):
+                self._data_browser.set_highlighted_runs(set())
+            return
+        if series.member_kind == "groups":
+            runs = set(series.member_source_run.values())
+        else:
+            runs = set(series.member_run_numbers)
+        if hasattr(self._data_browser, "set_highlighted_runs"):
+            self._data_browser.set_highlighted_runs(runs)
 
     def _record_single_fit_slot(self, fit_result) -> None:
         """Write the active representation's single FitSlot into the project model."""
@@ -4289,7 +4403,7 @@ class MainWindow(QMainWindow):
         self._project_model.refresh_divergence()
 
     def _record_global_fit_batch(self, normalized_payloads: dict, global_params) -> None:
-        """Persist a completed batch/global fit as a Batch + member FitSlots.
+        """Persist a completed batch/global fit as a FitSeries + member FitSlots.
 
         A batch fit (all parameters local/fixed) and a global fit (>=1 parameter
         classified ``global``) are the same operation; the parameter classifier
@@ -4321,7 +4435,7 @@ class MainWindow(QMainWindow):
             int(run): self._fit_result_summary(payload[0])
             for run, payload in normalized_payloads.items()
         }
-        batch = Batch(
+        batch = FitSeries(
             f"batch-{self._next_batch_index}",
             rep_type,
             member_run_numbers=member_runs,
@@ -4341,9 +4455,7 @@ class MainWindow(QMainWindow):
         batch.sort_members(runs_by_number)
         self._project_model.add_batch(batch)
 
-        template_parameters = [
-            dict(p) for p in state.get("parameters", []) if isinstance(p, dict)
-        ]
+        template_parameters = [dict(p) for p in state.get("parameters", []) if isinstance(p, dict)]
         for run, payload in normalized_payloads.items():
             representation = self._project_model.ensure_dataset(int(run)).ensure(rep_type)
             representation.fit = FitSlot(
@@ -4355,6 +4467,191 @@ class MainWindow(QMainWindow):
             )
         # Fresh batch members all share the canonical model (no divergence yet).
         self._project_model.refresh_divergence()
+
+    def _active_grouped_state(self) -> dict:
+        """Return the grouped-fit classification from the active grouped surface.
+
+        Prefers the multi-group fit window (the real grouped-fit surface when the
+        Individual-groups representation is active); falls back to the fit panel.
+        """
+        if (
+            self._active_representation_type() == RepresentationType.TIME_GROUPS
+            and self._multi_group_fit_window is not None
+            and hasattr(self._multi_group_fit_window, "get_grouped_state")
+        ):
+            state = self._multi_group_fit_window.get_grouped_state()
+            if isinstance(state, dict) and state:
+                return state
+        if hasattr(self._fit_panel, "get_grouped_state"):
+            return self._fit_panel.get_grouped_state()
+        return {}
+
+    def _record_grouped_fit_series(self, grouped_datasets, results_dict) -> None:
+        """Persist a completed grouped fit as a ``FitSeries(member_kind="groups")``.
+
+        Each ``(run, group)`` member is keyed by its synthetic group key so the
+        series' ``results_by_run`` drives parameter trending exactly like a run
+        series.  The two-tier classification is recorded as physics ``param_roles``
+        plus the always-per-group ``nuisance_params`` block.  Each source run's
+        grouped representation gets one pointer ``FitSlot`` into the series.
+        """
+        if not isinstance(grouped_datasets, list) or not isinstance(results_dict, dict):
+            return
+        if not results_dict:
+            return
+        state = self._active_grouped_state()
+        if not isinstance(state, dict) or not state:
+            return
+
+        rep_type = RepresentationType.TIME_GROUPS
+        source_by_key: dict[int, int] = {}
+        for dataset in grouped_datasets:
+            metadata = getattr(dataset, "metadata", {}) or {}
+            try:
+                key = int(metadata.get("run_number"))
+            except (TypeError, ValueError):
+                continue
+            source_by_key[key] = int(metadata.get("source_run_number", abs(key) // 1000))
+
+        member_keys: list[int] = []
+        member_source_run: dict[int, int] = {}
+        results_by_run: dict[int, dict] = {}
+        for raw_key, payload in results_dict.items():
+            try:
+                key = int(raw_key)
+            except (TypeError, ValueError):
+                continue
+            fit_result = payload[0] if isinstance(payload, tuple) and payload else payload
+            member_keys.append(key)
+            member_source_run[key] = source_by_key.get(key, abs(key) // 1000)
+            results_by_run[key] = self._fit_result_summary(fit_result)
+        if not member_keys:
+            return
+
+        physics_roles = {
+            str(name): str(role)
+            for name, role in (state.get("param_roles") or {}).items()
+            if role in ("global", "local", "fixed")
+        }
+        nuisance_params = [str(name) for name in (state.get("nuisance_params") or [])]
+        canonical_model = state.get("composite_model")
+        provenance = "global" if any(r == "global" for r in physics_roles.values()) else "batch"
+
+        series = FitSeries(
+            f"batch-{self._next_batch_index}",
+            rep_type,
+            member_kind="groups",
+            member_run_numbers=member_keys,
+            member_source_run=member_source_run,
+            order_key="run",
+            canonical_model=canonical_model,
+            param_roles=physics_roles,
+            nuisance_params=nuisance_params,
+            results_by_run=results_by_run,
+        )
+        self._next_batch_index += 1
+
+        runs_by_number: dict[int, object] = {}
+        if hasattr(self._data_browser, "get_dataset"):
+            for run in set(member_source_run.values()):
+                dataset = self._data_browser.get_dataset(run)
+                if dataset is not None and dataset.run is not None:
+                    runs_by_number[run] = dataset.run
+        series.sort_members(runs_by_number)
+        self._project_model.add_batch(series)
+
+        for run in sorted(set(member_source_run.values())):
+            representation = self._project_model.ensure_dataset(int(run)).ensure(rep_type)
+            representation.fit = FitSlot(
+                model=canonical_model,
+                result={"series_id": series.batch_id},
+                provenance=provenance,
+                batch_id=series.batch_id,
+            )
+        # Fresh group-series members all share the canonical model; clear stale
+        # divergence state from any earlier series on the same representations.
+        self._project_model.refresh_divergence()
+
+    def _add_single_fit_to_series(self, run_number: int, series_id: str) -> bool:
+        """Add a compatible single fit (one run) as a member of an existing series.
+
+        Compatibility = the run's stored single-fit model matches the series'
+        canonical model (reuses ``canonical_model_matches``). Run-membered series
+        only; group series grow by re-running the batch. Returns ``True`` when the
+        member was added.
+        """
+        series = self._project_model.batch(str(series_id))
+        if series is None or series.member_kind != "runs":
+            return False
+        representation = self._project_model.representation(int(run_number), series.rep_type)
+        if representation is None or representation.fit.is_empty():
+            return False
+        if not canonical_model_matches(representation.fit.model, series.canonical_model):
+            return False
+
+        run_number = int(run_number)
+        series.add_member(run_number)
+        representation.fit.batch_id = series.batch_id
+        representation.fit.provenance = "global" if series.is_global() else "batch"
+        if isinstance(representation.fit.result, dict):
+            series.results_by_run[run_number] = dict(representation.fit.result)
+
+        runs_by_number: dict[int, object] = {}
+        if hasattr(self._data_browser, "get_dataset"):
+            for member in series.member_run_numbers:
+                dataset = self._data_browser.get_dataset(member)
+                if dataset is not None and dataset.run is not None:
+                    runs_by_number[member] = dataset.run
+        series.sort_members(runs_by_number)
+        self._project_model.refresh_divergence()
+        return True
+
+    def _on_add_single_fit_to_series_requested(self) -> None:
+        """Handle the Single tab's 'Add to Series…' action.
+
+        Finds run-membered series whose canonical model matches the active run's
+        single fit and adds the run to one (prompting if several match). The
+        trend panel is refreshed after a successful addition.
+        """
+        if self._current_dataset is None:
+            self.statusBar().showMessage("Select a run with a single fit to add to a series.")
+            return
+        run = int(self._current_dataset.run_number)
+        rep_type = self._active_representation_type()
+        if rep_type is None:
+            return
+        representation = self._project_model.representation(run, rep_type)
+        if representation is None or representation.fit.is_empty():
+            self.statusBar().showMessage(f"Run {run} has no single fit to add — fit it first.")
+            return
+
+        compatible = [
+            series
+            for series in self._project_model.batches.values()
+            if series.member_kind == "runs"
+            and series.rep_type == rep_type
+            and run not in series.member_run_numbers
+            and canonical_model_matches(representation.fit.model, series.canonical_model)
+        ]
+        if not compatible:
+            self.statusBar().showMessage(f"No compatible batch series for run {run}'s fit.")
+            return
+
+        if len(compatible) == 1:
+            series = compatible[0]
+        else:
+            labels = [f"{s.batch_id} ({len(s.member_run_numbers)} runs)" for s in compatible]
+            choice, ok = QInputDialog.getItem(
+                self, "Add to Series", "Compatible series:", labels, 0, False
+            )
+            if not ok:
+                return
+            series = compatible[labels.index(choice)]
+
+        if self._add_single_fit_to_series(run, series.batch_id):
+            self._log_panel.log(f"Added run {run} to batch series {series.batch_id}.", tag="fit")
+            self.statusBar().showMessage(f"Added run {run} to series {series.batch_id}.")
+            self._refresh_trend_panel()
 
     def _on_preview_requested(self, fit_result, fitted_curve, component_curves) -> None:
         """Handle preview request from fit panel."""
@@ -4491,7 +4788,7 @@ class MainWindow(QMainWindow):
             fit_curves[run_number] = (
                 t_fit,
                 y_fit,
-                "Global Fit",
+                "Batch Fit",
                 component_curves,
                 result,
                 global_fit_function,
@@ -4505,46 +4802,11 @@ class MainWindow(QMainWindow):
         panel = self._frequency_plot_panel if is_frequency_fit else self._plot_panel
         panel.set_global_fits(fit_curves)
 
-        # Push fitted parameters into the trends panel.
-        trends_results = {
-            run_number: (result, fitted_curve)
-            for run_number, (result, fitted_curve, _component_curves) in normalized_payloads.items()
-        }
-        datasets_by_run = {}
-        for run_number in normalized_payloads:
-            dataset = (
-                self._frequency_spectra_by_run.get(run_number, [None])[0]
-                if is_frequency_fit
-                else self._data_browser.get_dataset(run_number)
-            )
-            if dataset is not None:
-                datasets_by_run[run_number] = dataset
-        group_id = "frequency_domain" if is_frequency_fit else None
-        group_name = "Frequency Domain" if is_frequency_fit else None
-        selected_group_ids = (
-            self._data_browser.get_selected_group_ids()
-            if hasattr(self._data_browser, "get_selected_group_ids")
-            else []
-        )
-        if (not is_frequency_fit) and len(selected_group_ids) == 1:
-            group_id = selected_group_ids[0]
-            group_name = (
-                self._data_browser.get_group_name(group_id)
-                if hasattr(self._data_browser, "get_group_name")
-                else None
-            )
-        elif (not is_frequency_fit) and self._active_group_context is not None:
-            group_id, group_name = self._active_group_context
-
-        self._fit_parameters_panel.set_fit_results(
-            trends_results,
-            datasets_by_run,
-            global_params,
-            group_id=group_id,
-            group_name=group_name,
-        )
-        self._dock_fit_parameters.show()
-        self._dock_fit_parameters.raise_()
+        # Reload the trend panel from the project model (pull-based, Phase 4).
+        # _record_global_fit_batch has already stored the new FitSeries, so
+        # _refresh_trend_panel picks it up keyed by series batch_id rather than
+        # the old ad-hoc UUID group_id.
+        self._refresh_trend_panel()
 
         # Log summary
         successful_results = [
@@ -4553,9 +4815,9 @@ class MainWindow(QMainWindow):
         n_datasets = len(successful_results)
         if n_datasets == 0:
             self._log_panel.log(
-                "Global fit completed but no successful dataset results were available"
+                "Batch fit completed but no successful dataset results were available"
             )
-            self.statusBar().showMessage("Global fit completed with no successful results")
+            self.statusBar().showMessage("Batch fit completed with no successful results")
             return
 
         avg_chi2r = (
@@ -4563,10 +4825,10 @@ class MainWindow(QMainWindow):
         )
         self._last_fit_chi2 = float(avg_chi2r)
         self._log_panel.log(
-            f"Global fit completed: {n_datasets} datasets, average χ²ᵣ = {avg_chi2r:.3f}",
+            f"Batch fit completed: {n_datasets} datasets, average χ²ᵣ = {avg_chi2r:.3f}",
             tag="fit",
         )
-        self.statusBar().showMessage(f"Global fit completed for {n_datasets} datasets")
+        self.statusBar().showMessage(f"Batch fit completed for {n_datasets} datasets")
 
     def _on_grouped_fit_completed(
         self,
@@ -4577,6 +4839,10 @@ class MainWindow(QMainWindow):
         """Handle completed grouped time-domain fit."""
         if not isinstance(grouped_datasets, list) or not isinstance(results_dict, dict):
             return
+
+        self._record_grouped_fit_series(grouped_datasets, results_dict)
+        # Pull-based refresh: show the newly recorded series in the trend panel.
+        self._refresh_trend_panel()
 
         fit_curves = {}
         if fit_function is None and hasattr(self._fit_panel, "global_fit_formula_string"):
@@ -4772,6 +5038,13 @@ class MainWindow(QMainWindow):
             self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
 
         self._fit_panel.set_datasets(analysis_datasets)
+        # The grouped surface fits a *series* across the selected runs.
+        if (
+            self._multi_group_fit_window is not None
+            and not is_frequency_domain
+            and hasattr(self._multi_group_fit_window, "set_member_datasets")
+        ):
+            self._multi_group_fit_window.set_member_datasets(analysis_datasets)
         if is_frequency_domain:
             self._apply_frequency_missing_spectra_status(len(analysis_datasets))
 

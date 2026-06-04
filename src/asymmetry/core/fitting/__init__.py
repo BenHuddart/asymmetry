@@ -36,11 +36,14 @@ from asymmetry.core.fitting.global_fit_wizard import (
 )
 from asymmetry.core.fitting.grouped_time_domain import (
     GROUP_NUISANCE_PARAMS,
+    GROUPED_SERIES_RELATIONSHIPS,
+    GroupedSeriesFitResult,
     GroupedTimeDomainFitResult,
     GroupedTimeDomainGroup,
     build_grouped_count_model,
     build_grouped_time_domain_datasets,
     build_grouped_time_domain_groups,
+    fit_grouped_series,
     fit_grouped_time_domain,
 )
 from asymmetry.core.fitting.models import MODELS
@@ -56,6 +59,7 @@ from asymmetry.core.fitting.parameter_models import (
     fit_parameter_model,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, ParamInfo, get_param_info
+from asymmetry.core.fitting.result_summary import fit_result_summary
 from asymmetry.core.fitting.spectral import (
     FREQUENCY_COMPONENT_NAMES,
     append_frequency_field_derived_parameters,
@@ -77,11 +81,14 @@ __all__ = [
     "GlobalFitWizardCandidatePortfolio",
     "GlobalFitWizardRecommendation",
     "GROUP_NUISANCE_PARAMS",
+    "GROUPED_SERIES_RELATIONSHIPS",
     "build_grouped_count_model",
     "build_grouped_time_domain_datasets",
     "build_grouped_time_domain_groups",
+    "GroupedSeriesFitResult",
     "GroupedTimeDomainFitResult",
     "GroupedTimeDomainGroup",
+    "fit_grouped_series",
     "compute_information_criteria",
     "fingerprint_spectrum",
     "build_candidate_templates",
@@ -93,6 +100,7 @@ __all__ = [
     "merge_global_fit_wizard_recommendations",
     "rerank_global_fit_wizard_recommendation",
     "fit_grouped_time_domain",
+    "fit_result_summary",
     "sc",
     "muon_fluorine",
     "MODELS",

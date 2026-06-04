@@ -102,9 +102,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 6
+CURRENT_SCHEMA_VERSION: int = 7
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7})
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
 #: persistence carries these into each dataset's ``freq_fft`` representation).
@@ -168,6 +168,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 5
     if version == 5:
         migrated = _migrate_v5_to_v6(migrated)
+        version = 6
+    if version == 6:
+        migrated = _migrate_v6_to_v7(migrated)
     return migrated
 
 
@@ -331,6 +334,69 @@ def _migrate_v5_to_v6(data: dict) -> dict:
     return migrated
 
 
+def _migrate_v6_to_v7(data: dict) -> dict:
+    """Migrate schema v6 project state to v7.
+
+    v7 generalises the v6 ``Batch`` into a ``FitSeries`` whose members may be
+    runs *or* detector groups, and formalises each representation's
+    ``trend_state``.  The migration is **additive and lossless**:
+
+    * every top-level series (``batches``) gains ``member_kind`` (defaulting to
+      ``"runs"``), an empty ``nuisance_params`` list, and an empty
+      ``member_source_run`` map;
+    * every representation's ``trend_state`` is normalised through
+      :class:`~asymmetry.core.representation.trend_state.TrendState`, which wraps
+      any unrecognised keys under ``legacy`` rather than dropping them.
+
+    Existing v6 projects carry an empty ``batches`` list and empty trend states,
+    so for them this is effectively just the version bump.
+    """
+    from asymmetry.core.representation.trend_state import TrendState
+
+    migrated = dict(data)
+    migrated["schema_version"] = 7
+
+    series_list = migrated.get("batches")
+    if isinstance(series_list, list):
+        updated_series: list[dict] = []
+        for series in series_list:
+            if not isinstance(series, dict):
+                updated_series.append(series)
+                continue
+            entry = dict(series)
+            entry.setdefault("member_kind", "runs")
+            entry.setdefault("nuisance_params", [])
+            entry.setdefault("member_source_run", {})
+            updated_series.append(entry)
+        migrated["batches"] = updated_series
+
+    datasets = migrated.get("datasets")
+    if isinstance(datasets, list):
+        updated_datasets: list[dict] = []
+        for entry in datasets:
+            if not isinstance(entry, dict):
+                updated_datasets.append(entry)
+                continue
+            ds = dict(entry)
+            reps = ds.get("representations")
+            if isinstance(reps, dict):
+                normalised: dict[str, dict] = {}
+                for rep_key, rep in reps.items():
+                    if not isinstance(rep, dict):
+                        normalised[rep_key] = rep
+                        continue
+                    rep_copy = dict(rep)
+                    rep_copy["trend_state"] = TrendState.from_dict(
+                        rep_copy.get("trend_state")
+                    ).to_dict()
+                    normalised[rep_key] = rep_copy
+                ds["representations"] = normalised
+            updated_datasets.append(ds)
+        migrated["datasets"] = updated_datasets
+
+    return migrated
+
+
 def _empty_fit_slot() -> dict:
     """Return a serialised empty :class:`FitSlot`."""
     return {
@@ -356,9 +422,7 @@ def _single_state_to_fit_slot(state: object) -> dict | None:
         return None
     raw_params = state.get("parameters")
     parameters = (
-        [dict(p) for p in raw_params if isinstance(p, dict)]
-        if isinstance(raw_params, list)
-        else []
+        [dict(p) for p in raw_params if isinstance(p, dict)] if isinstance(raw_params, list) else []
     )
     result_html = state.get("result_html")
     result = (

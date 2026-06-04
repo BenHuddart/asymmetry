@@ -55,8 +55,9 @@ class FitSlot:
 
     ``model`` is a :meth:`CompositeModel.to_dict` payload (or ``None`` for an
     empty slot); ``result`` is a JSON-serialisable fit-result summary.  A fit
-    produced as a member of a :class:`~asymmetry.core.representation.batch.Batch`
-    records the batch id so trending and divergence can find its series.
+    produced as a member of a
+    :class:`~asymmetry.core.representation.series.FitSeries` records the series
+    id (``batch_id``) so trending and divergence can find its series.
     """
 
     model: dict | None = None
@@ -92,9 +93,11 @@ class FitSlot:
         if provenance not in FIT_PROVENANCE:
             provenance = "none"
         raw_params = data.get("parameters")
-        parameters = [dict(p) for p in raw_params if isinstance(p, dict)] if (
-            isinstance(raw_params, list)
-        ) else []
+        parameters = (
+            [dict(p) for p in raw_params if isinstance(p, dict)]
+            if (isinstance(raw_params, list))
+            else []
+        )
         model = data.get("model")
         result = data.get("result")
         return cls(

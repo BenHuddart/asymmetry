@@ -24,7 +24,7 @@ from asymmetry.core.project.schema import migrate_to_current, validate
 def _minimal_state() -> dict:
     """Return the smallest valid project state dict."""
     return {
-        "schema_version": 6,
+        "schema_version": 7,
         "created_with_app_version": "0.1.0",
         "datasets": [],
         "combined_datasets": [],
@@ -84,21 +84,21 @@ def _minimal_state() -> dict:
 
 class TestSchemaMigration:
     def test_current_version_passes_through(self):
-        state = {"schema_version": 6, "datasets": []}
+        state = {"schema_version": 7, "datasets": []}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 6
+        assert result["schema_version"] == 7
         assert result["datasets"] == []
 
     def test_v1_migrates_to_v2(self):
         state = {"schema_version": 1, "datasets": []}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 6
+        assert result["schema_version"] == 7
         assert "browser_state" in result
 
     def test_v2_migrates_to_v3_with_extra_columns(self):
         state = {"schema_version": 2, "datasets": [], "browser_state": {}}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 6
+        assert result["schema_version"] == 7
         assert result["browser_state"]["extra_columns"] == []
 
     def test_v3_vector_grouping_adds_per_axis_alpha_fields(self):
@@ -135,7 +135,7 @@ class TestSchemaMigration:
         }
 
         result = migrate_to_current(state)
-        assert result["schema_version"] == 6
+        assert result["schema_version"] == 7
         grouping = result["datasets"][0]["grouping_overrides"]
         assert grouping["alpha_x"] == pytest.approx(1.7)
         assert grouping["alpha_y"] == pytest.approx(1.7)
@@ -144,7 +144,7 @@ class TestSchemaMigration:
     def test_v4_migrates_to_v5_with_frequency_fit_state(self):
         state = {"schema_version": 4, "datasets": []}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 6
+        assert result["schema_version"] == 7
         assert result["frequency_fit_state"]["domain"] == "frequency"
 
     def test_unsupported_future_version_raises(self):
@@ -174,7 +174,7 @@ class TestSchemaMigration:
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 6
+        assert CURRENT_SCHEMA_VERSION == 7
 
 
 def _composite_model_dict(component: str = "Exponential") -> dict:
@@ -241,7 +241,7 @@ class TestSchemaMigrationV5toV6:
 
     def test_sets_version_and_empty_batches(self):
         result = migrate_to_current(self._v5_state())
-        assert result["schema_version"] == 6
+        assert result["schema_version"] == 7
         assert result["batches"] == []
 
     def test_per_run_single_fit_lands_on_right_dataset(self):
@@ -295,9 +295,72 @@ class TestSchemaMigrationV5toV6:
     def test_migration_without_fits_adds_only_batches(self):
         state = {"schema_version": 5, "datasets": [{"run_number": 1}]}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 6
+        assert result["schema_version"] == 7
         assert result["batches"] == []
         assert "representations" not in result["datasets"][0]
+
+
+class TestSchemaMigrationV6toV7:
+    """v6 → v7 generalises batches into fit series and structures trend state."""
+
+    def test_sets_version(self):
+        result = migrate_to_current({"schema_version": 6, "datasets": []})
+        assert result["schema_version"] == 7
+
+    def test_series_gain_member_kind_and_defaults(self):
+        state = {
+            "schema_version": 6,
+            "datasets": [],
+            "batches": [
+                {
+                    "batch_id": "b1",
+                    "rep_type": "time_fb_asymmetry",
+                    "member_run_numbers": [10, 11],
+                }
+            ],
+        }
+        result = migrate_to_current(state)
+        series = result["batches"][0]
+        assert series["member_kind"] == "runs"
+        assert series["nuisance_params"] == []
+        assert series["member_source_run"] == {}
+        # Pre-existing fields are preserved (additive migration).
+        assert series["member_run_numbers"] == [10, 11]
+
+    def test_trend_state_unknown_keys_preserved_under_legacy(self):
+        state = {
+            "schema_version": 6,
+            "datasets": [
+                {
+                    "run_number": 7,
+                    "representations": {
+                        "time_fb_asymmetry": {
+                            "recipe": {},
+                            "fit": {"provenance": "none"},
+                            "trend_state": {"x_key": "field", "mystery": 1},
+                        }
+                    },
+                }
+            ],
+        }
+        result = migrate_to_current(state)
+        ts = result["datasets"][0]["representations"]["time_fb_asymmetry"]["trend_state"]
+        assert ts["x_key"] == "field"
+        assert ts["legacy"] == {"mystery": 1}
+
+    def test_empty_trend_state_stays_empty(self):
+        state = {
+            "schema_version": 6,
+            "datasets": [
+                {
+                    "run_number": 7,
+                    "representations": {"freq_fft": {"recipe": {}, "fit": {}, "trend_state": {}}},
+                }
+            ],
+        }
+        result = migrate_to_current(state)
+        ts = result["datasets"][0]["representations"]["freq_fft"]["trend_state"]
+        assert ts == {}
 
 
 class TestProjectIO:
@@ -307,7 +370,7 @@ class TestProjectIO:
         save_project(state, path)
 
         loaded = load_project(path)
-        assert loaded["schema_version"] == 6
+        assert loaded["schema_version"] == 7
         assert loaded["datasets"] == []
 
     def test_vector_alpha_xyz_persist_in_project_round_trip(self, tmp_path):
@@ -363,7 +426,7 @@ class TestProjectIO:
         path = tmp_path / "test.asymp"
         save_project(state, path)
         raw = json.loads(path.read_text(encoding="utf-8"))
-        assert raw["schema_version"] == 6
+        assert raw["schema_version"] == 7
 
     def test_optional_wizard_cache_state_round_trips(self, tmp_path):
         state = _minimal_state()
@@ -813,8 +876,8 @@ class TestFitPanelState:
         panel2 = FitPanel()
         panel2.restore_global_state(state)
 
+        # The legacy "mode" key is ignored; member kind is fixed by construction.
         assert panel2._global_tab.is_grouped_time_domain_mode() is False
-        assert panel2._global_tab._mode_combo.currentData() == "datasets"
 
     def test_fit_panel_round_trips_result_text_and_ui_tab(self, qapp):
         from asymmetry.gui.panels.fit_panel import FitPanel

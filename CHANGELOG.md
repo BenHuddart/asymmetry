@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Domain representation model** (`asymmetry.core.representation`): each
+  dataset now carries up to four named representations (`time_fb_asymmetry`,
+  `time_groups`, `freq_fft`, `freq_maxent`), each holding a recipe (for
+  recompute-on-load), a `FitSlot` (most recent fit), and a trend-state dict.
+  `FitSlot` tracks provenance (`"none"`, `"single"`, `"batch"`, `"global"`),
+  the owning `FitSeries` id, and divergence / include-in-trend flags.
+- **FitSeries** (`asymmetry.core.representation.series`): renamed from
+  `Batch`; adds `member_kind` (`"runs"` / `"groups"`), `nuisance_params`
+  (group-only, always per-(run,group)), and `member_source_run` (maps
+  synthetic group keys to physical run numbers). Group member keys follow the
+  convention `-(source_run * 1000 + group_index)`.
+- **ProjectModel** (`asymmetry.core.representation.project_model`):
+  in-memory owner of all representations and series; provides
+  `refresh_divergence()` (group-aware), `trend_runs_for_batch()`, and
+  `set_member_trend_inclusion()`.
+- **TrendState** dataclass (`asymmetry.core.representation.trend_state`):
+  formalises the opaque trend-state dict as a typed dataclass with
+  `to_dict()`/`from_dict()` and a legacy passthrough for unknown keys.
+- **Schema v6 → v7**: additive migration adds `member_kind`, `nuisance_params`,
+  `member_source_run` to existing series; normalises `trend_state` to the
+  structured shape; group series are now persisted in `batches`.
+- **Grouped series fitting** (`fit_grouped_series`): new engine entry point
+  that runs individual, batch, or global grouped fits over N runs, recording
+  results as a `FitSeries(member_kind="groups")`.
+- **Shared result summary** (`asymmetry.core.fitting.result_summary`):
+  `fit_result_summary()` produces an identical compact JSON-serialisable shape
+  for both run-batch and grouped-series recording.
+- **Fit-series-centric UI** (Phase 3): scope is derived from context rather
+  than selected. Member kind follows the active representation; member set
+  follows the data-browser selection; relationship (single / batch / global)
+  follows the parameter-role table.
+  - **Multi-Group Fit window** now has separate **Single** and **Batch** tabs
+    (both `GlobalFitTab(member_kind="groups")`).
+  - **Parameter role table** unified to `Global` / `Local` / `Fixed` for
+    physics parameters in grouped fits; nuisance parameters are always Local
+    for multi-member fits.
+  - **Pipe-back**: after a batch fit, each member's result and role annotation
+    are piped back to the **Single** tab. A dedicated **Batch** column in the
+    single-fit parameter table shows each parameter's batch role.
+  - **Send Model to Batch** action seeds the Batch tab's composite model from
+    the Single tab's current state.
+  - **Add to Series** action adds a compatible single fit to an existing
+    run-membered `FitSeries`.
+  - **Initial Values…** dialog: a members × parameters grid for per-member
+    seed values (both F-B Asymmetry Batch and grouped Single/Batch tabs).
+  - Removed dead scope-selector machinery (`_mode_combo`, `allowed_modes`
+    ctor param, `grouped_mode_changed` signal).
+  - Relabelled **Global** fit tab to **Batch** throughout (global is now a
+    derived relationship, not a separate surface).
+- **Representation-aware Fit Parameters panel** (Phase 4):
+  - Panel operates on a **pull model**: `_refresh_trend_panel()` reads the
+    active representation's `FitSeries` from `ProjectModel` and calls
+    `FitParametersPanel.load_representation_series()` after each fit and on
+    every representation switch.
+  - **"Showing:" label** in the panel header indicates the active
+    representation (`F-B Asymmetry`, `Detector Groups`, `FFT`, `MaxEnt`).
+  - **Series buttons** (one per `FitSeries` for the active representation)
+    replace the old UUID-keyed group buttons.
+  - Selecting a series button emits `series_selection_changed`, which
+    highlights the member runs in the Data Browser with an amber tint.
+  - Grouped fits now appear in the trending panel (previously they did not).
+  - FFT batch-fit series resolve field/temperature metadata from
+    `_frequency_spectra_by_run` rather than the data browser.
+- **Apply Fourier to selection**: copies the active run's FFT recipe to all
+  other selected runs and regenerates their spectra, enabling a consistent
+  series configuration without manual per-run retuning.
+- **Domain navigation redesign**: the toolbar's domain buttons are now grouped
+  under **Time domain** and **Frequency domain** cluster headers with a
+  reserved **MaxEnt** button. The `active_view_changed` signal now fires on
+  every representation switch, driving both fit-dock mode and trend-panel
+  refresh.
+
+### Changed
+
+- `GlobalFitTab` constructor parameter `allowed_modes: tuple` replaced by
+  `member_kind: str` (`"runs"` or `"groups"`); the member kind is fixed per
+  instance and follows the active representation, not a UI selector.
+- `CURRENT_SCHEMA_VERSION` bumped from 5 to 7 with additive v5→v6 and
+  v6→v7 migrations.
+- `Batch` class in `asymmetry.core.representation` renamed to `FitSeries`
+  (module renamed from `batch.py` to `series.py`).
+- Fit Parameters panel `_group_fit_results` is now keyed by `batch_id`
+  (series-keyed) rather than ad-hoc UUID group IDs.
+- `DataBrowserPanel.clear()` now also resets `_highlighted_runs` so series
+  highlights from a previous project do not bleed into the next project.
+
 ## [0.3.4] - 2026-05-20
 
 ### Changed

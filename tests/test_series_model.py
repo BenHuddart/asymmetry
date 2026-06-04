@@ -1,14 +1,14 @@
-"""Unit tests for the Batch series object (Phase 1)."""
+"""Unit tests for the FitSeries object (Phase 1)."""
 
 from __future__ import annotations
 
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation import RepresentationType
-from asymmetry.core.representation.batch import Batch, canonical_model_matches
+from asymmetry.core.representation.series import FitSeries, canonical_model_matches
 
 
-def _batch(**kwargs) -> Batch:
+def _batch(**kwargs) -> FitSeries:
     defaults = dict(
         batch_id="b1",
         rep_type=RepresentationType.TIME_FB_ASYMMETRY,
@@ -18,7 +18,7 @@ def _batch(**kwargs) -> Batch:
         param_roles={"A": "global", "Lambda": "local", "A_bg": "fixed"},
     )
     defaults.update(kwargs)
-    return Batch(**defaults)
+    return FitSeries(**defaults)
 
 
 # ── classifier-derived scope ────────────────────────────────────────────────
@@ -70,7 +70,7 @@ def test_sort_members_run_fallback_when_no_runs():
 
 
 def test_unknown_order_key_defaults_to_run():
-    assert Batch("b", RepresentationType.FREQ_FFT, order_key="weird").order_key == "run"
+    assert FitSeries("b", RepresentationType.FREQ_FFT, order_key="weird").order_key == "run"
 
 
 # ── membership ──────────────────────────────────────────────────────────────
@@ -125,7 +125,7 @@ def test_canonical_model_matches_handles_none():
 
 def test_batch_round_trip():
     batch = _batch(results_by_run={10: {"chi": 1.0}, 11: {"chi": 2.0}}, diverged_runs={11})
-    restored = Batch.from_dict(batch.to_dict())
+    restored = FitSeries.from_dict(batch.to_dict())
     assert restored.batch_id == batch.batch_id
     assert restored.rep_type == batch.rep_type
     assert restored.member_run_numbers == batch.member_run_numbers
@@ -134,3 +134,68 @@ def test_batch_round_trip():
     assert restored.results_by_run == batch.results_by_run
     assert restored.diverged_runs == batch.diverged_runs
     assert restored.is_global() == batch.is_global()
+
+
+# ── member kind & group series ───────────────────────────────────────────────
+
+
+def test_member_kind_defaults_to_runs_and_validates():
+    assert _batch().member_kind == "runs"
+    assert _batch(member_kind="groups").member_kind == "groups"
+    assert _batch(member_kind="bogus").member_kind == "runs"  # invalid falls back
+
+
+def test_source_run_for_runs_is_identity():
+    batch = _batch()
+    assert batch.source_run_for(11) == 11
+
+
+def test_source_run_for_groups_uses_map_then_decodes_key():
+    # Synthetic group keys: -((source*1000)+group_index).
+    batch = _batch(
+        member_kind="groups",
+        member_run_numbers=[-10001, -10002, -11001],
+        member_source_run={-10001: 10, -10002: 10},
+    )
+    assert batch.source_run_for(-10001) == 10  # from map
+    assert batch.source_run_for(-11001) == 11  # decoded from key (|key| // 1000)
+
+
+def test_group_members_sort_by_source_run_then_key():
+    runs = {
+        10: Run(run_number=10, metadata={"field": 300.0}),
+        11: Run(run_number=11, metadata={"field": 100.0}),
+    }
+    batch = _batch(
+        member_kind="groups",
+        member_run_numbers=[-10002, -11001, -10001, -11002],
+        member_source_run={-10001: 10, -10002: 10, -11001: 11, -11002: 11},
+        order_key="field",
+    )
+    batch.sort_members(runs)
+    # Run 11 (field 100) before run 10 (field 300); within a run, groups in
+    # ascending group-index order (|key| = run*1000+index).
+    assert batch.member_run_numbers == [-11001, -11002, -10001, -10002]
+
+
+def test_add_member_records_source_run_for_groups():
+    batch = _batch(member_kind="groups", member_run_numbers=[])
+    batch.add_member(-12003, source_run=12)
+    assert batch.member_run_numbers == [-12003]
+    assert batch.source_run_for(-12003) == 12
+    batch.remove_member(-12003)
+    assert -12003 not in batch.member_source_run
+
+
+def test_round_trip_preserves_group_fields():
+    batch = _batch(
+        member_kind="groups",
+        member_run_numbers=[-10001, -10002],
+        member_source_run={-10001: 10, -10002: 10},
+        nuisance_params=["N0", "background", "amplitude", "relative_phase"],
+    )
+    restored = FitSeries.from_dict(batch.to_dict())
+    assert restored.member_kind == "groups"
+    assert restored.member_run_numbers == [-10001, -10002]
+    assert restored.member_source_run == {-10001: 10, -10002: 10}
+    assert restored.nuisance_params == ["N0", "background", "amplitude", "relative_phase"]

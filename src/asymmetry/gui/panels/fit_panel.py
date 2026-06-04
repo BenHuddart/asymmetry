@@ -57,9 +57,11 @@ from asymmetry.core.fitting.global_search.heuristics import (
 )
 from asymmetry.core.fitting.grouped_time_domain import (
     GROUP_NUISANCE_PARAMS,
+    _group_dataset_run_number,
     build_grouped_count_model,
     build_grouped_time_domain_datasets,
     build_grouped_time_domain_groups,
+    fit_grouped_series,
     fit_grouped_time_domain,
     validate_grouped_model_contract,
 )
@@ -81,6 +83,7 @@ from asymmetry.core.utils.constants import (
     MUON_LIFETIME_US,
 )
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
+from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.widgets import (
@@ -551,6 +554,17 @@ def _fit_success_html(result) -> str:
 _apply_param_table_style = apply_param_table_style
 
 
+#: Data role storing a parameter's batch role (global/local/fixed) on its
+#: read-only "Batch" cell, so a piped-back single fit shows how each parameter
+#: was classified in the batch fit and keeps that across selection switches / save.
+_PARAM_BATCH_ROLE_DATA = Qt.ItemDataRole.UserRole + 1
+
+#: Column of the single-fit parameter table holding the batch-role read-out.
+_SINGLE_PARAM_BATCH_COLUMN = 5
+
+_PARAM_ROLE_LABELS = {"global": "Global", "local": "Local", "fixed": "Fixed", "file": "File"}
+
+
 def _make_param_name_item(label: str, raw_name: str) -> QTableWidgetItem:
     """Return a read-only, bold-mono name item for a parameter table."""
     item = QTableWidgetItem(label)
@@ -560,6 +574,28 @@ def _make_param_name_item(label: str, raw_name: str) -> QTableWidgetItem:
     nf.setBold(True)
     item.setFont(nf)
     return item
+
+
+def _set_param_batch_role_cell(table: QTableWidget, row: int, role: str | None) -> None:
+    """Set the read-only 'Batch' role cell for a single-fit parameter row.
+
+    A ``None``/unknown role blanks the cell. The raw role is stored on the cell so
+    :meth:`SingleFitTab.get_state` can round-trip it.
+    """
+    item = table.item(row, _SINGLE_PARAM_BATCH_COLUMN)
+    if item is None:
+        item = QTableWidgetItem()
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        table.setItem(row, _SINGLE_PARAM_BATCH_COLUMN, item)
+    if isinstance(role, str) and role in _PARAM_ROLE_LABELS:
+        item.setText(_PARAM_ROLE_LABELS[role])
+        item.setToolTip(f"Batch fit role: {role}")
+        item.setData(_PARAM_BATCH_ROLE_DATA, role)
+    else:
+        item.setText("")
+        item.setToolTip("")
+        item.setData(_PARAM_BATCH_ROLE_DATA, None)
 
 
 _configure_formula_label = configure_formula_label
@@ -727,6 +763,52 @@ class GroupedTimeDomainFitWorker(QObject):
             self.error.emit(_format_fit_worker_exception(e))
 
 
+class GroupedSeriesFitWorker(QObject):
+    """Worker for a multi-run grouped-*series* fit in a background thread.
+
+    Mirrors :class:`GroupedTimeDomainFitWorker` but calls
+    :func:`fit_grouped_series` over a ``members`` mapping (run -> groups), so a
+    grouped fit can span several runs (batch / global) instead of one.
+    """
+
+    finished = Signal(object, object)  # grouped_datasets, GroupedSeriesFitResult
+    error = Signal(str)
+
+    def __init__(
+        self,
+        relationship,
+        members,
+        grouped_datasets,
+        model_fn,
+        global_params,
+        local_params,
+        initial_params,
+    ):
+        super().__init__()
+        self.relationship = relationship
+        self.members = members
+        self.grouped_datasets = grouped_datasets
+        self.model_fn = model_fn
+        self.global_params = global_params
+        self.local_params = local_params
+        self.initial_params = initial_params
+
+    def run(self):
+        """Execute the grouped-series fit."""
+        try:
+            result = fit_grouped_series(
+                self.relationship,
+                self.members,
+                self.model_fn,
+                self.global_params,
+                self.local_params,
+                self.initial_params,
+            )
+            self.finished.emit(self.grouped_datasets, result)
+        except Exception as e:
+            self.error.emit(_format_fit_worker_exception(e))
+
+
 class _ValueUncertaintyDelegate(QStyledItemDelegate):
     """Paints 'value  ±σ' in a table cell; editing shows only the bare value.
 
@@ -789,6 +871,8 @@ class SingleFitTab(QWidget):
         object, object, object
     )  # (FitResult, fitted_curve, component_curves)
     share_function_with_group_requested = Signal(int)
+    send_model_to_batch_requested = Signal()
+    add_to_series_requested = Signal()
     fit_range_edit_committed = Signal(float, float)  # (x_min, x_max) from spinbox commit
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -820,6 +904,16 @@ class SingleFitTab(QWidget):
         self._share_group_btn = QPushButton("Share Function With Data Group")
         self._share_group_btn.clicked.connect(self._on_share_function_with_group)
         self._share_group_btn.setEnabled(False)
+        self._send_to_batch_btn = QPushButton("Send Model to Batch")
+        self._send_to_batch_btn.setToolTip(
+            "Copy this fit function into the Batch tab to seed a batch fit over the selected runs."
+        )
+        self._send_to_batch_btn.clicked.connect(self.send_model_to_batch_requested.emit)
+        self._add_to_series_btn = QPushButton("Add to Series...")
+        self._add_to_series_btn.setToolTip(
+            "Add this run's single fit to an existing batch series with a matching model."
+        )
+        self._add_to_series_btn.clicked.connect(self.add_to_series_requested.emit)
 
         model_button_layout = QGridLayout()
         model_button_layout.setContentsMargins(0, 0, 0, 0)
@@ -828,9 +922,17 @@ class SingleFitTab(QWidget):
         self._edit_model_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._fit_wizard_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._share_group_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._send_to_batch_btn.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self._add_to_series_btn.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         model_button_layout.addWidget(self._edit_model_btn, 0, 0)
         model_button_layout.addWidget(self._fit_wizard_btn, 0, 1)
         model_button_layout.addWidget(self._share_group_btn, 1, 0, 1, 2)
+        model_button_layout.addWidget(self._send_to_batch_btn, 2, 0)
+        model_button_layout.addWidget(self._add_to_series_btn, 2, 1)
         model_button_layout.setColumnStretch(0, 1)
         model_button_layout.setColumnStretch(1, 1)
 
@@ -877,14 +979,15 @@ class SingleFitTab(QWidget):
         # Parameter table
         param_group = QGroupBox("Parameters")
         param_layout = QVBoxLayout(param_group)
-        self._param_table = QTableWidget(0, 5)
-        self._param_table.setHorizontalHeaderLabels(["Name", "Value", "Fix", "Min", "Max"])
+        self._param_table = QTableWidget(0, 6)
+        self._param_table.setHorizontalHeaderLabels(["Name", "Value", "Fix", "Min", "Max", "Batch"])
         self._param_table.horizontalHeader().setStretchLastSection(False)
         self._param_table.setColumnWidth(0, 80)  # Name
         self._param_table.setColumnWidth(1, 100)  # Value
         self._param_table.setColumnWidth(2, 40)  # Fix
         self._param_table.setColumnWidth(3, 80)  # Min
         self._param_table.setColumnWidth(4, 80)  # Max
+        self._param_table.setColumnWidth(5, 70)  # Batch role (read-only)
 
         _apply_param_table_style(self._param_table)
         self._param_table.setItemDelegateForColumn(1, _ValueUncertaintyDelegate(self._param_table))
@@ -1110,6 +1213,9 @@ class SingleFitTab(QWidget):
             max_item = QTableWidgetItem("inf")
             max_item.setFont(mono_font(11.0))
             self._param_table.setItem(i, 4, max_item)
+
+            # Batch role column — read-only; filled when a batch result is piped back.
+            _set_param_batch_role_cell(self._param_table, i, None)
 
         _configure_fraction_rows_in_table(
             self._param_table,
@@ -1451,6 +1557,8 @@ class SingleFitTab(QWidget):
                     val_item.setText(f"{fitted_value:.6f}")
                     unc = result.uncertainties.get(param_name, None)
                     val_item.setData(_ValueUncertaintyDelegate._UNC_ROLE, unc)
+                    # A fresh single fit supersedes any piped-back batch role.
+                    _set_param_batch_role_cell(self._param_table, i, None)
             self._updating_fraction_values = False
             self._synchronize_fraction_value_rows()
 
@@ -1521,6 +1629,8 @@ class SingleFitTab(QWidget):
 
             min_item = self._param_table.item(i, 3)
             max_item = self._param_table.item(i, 4)
+            role_item = self._param_table.item(i, _SINGLE_PARAM_BATCH_COLUMN)
+            role = role_item.data(_PARAM_BATCH_ROLE_DATA) if role_item is not None else None
             params.append(
                 {
                     "name": param_name,
@@ -1529,6 +1639,7 @@ class SingleFitTab(QWidget):
                     "min": min_item.text() if min_item else "-inf",
                     "max": max_item.text() if max_item else "inf",
                     "uncertainty": unc,
+                    "role": role if isinstance(role, str) else None,
                 }
             )
 
@@ -1614,6 +1725,8 @@ class SingleFitTab(QWidget):
             max_item = self._param_table.item(i, 4)
             if max_item:
                 max_item.setText(str(p_data.get("max", "inf")))
+
+            _set_param_batch_role_cell(self._param_table, i, p_data.get("role"))
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
 
@@ -1650,25 +1763,30 @@ class GlobalFitTab(QWidget):
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
     grouped_preview_requested = Signal(object, object)  # (grouped_datasets, preview_curves)
-    grouped_mode_changed = Signal(bool)
     fit_range_edit_committed = Signal(float, float)  # (x_min, x_max) from spinbox commit
 
     def __init__(
         self,
         parent: QWidget | None = None,
         *,
-        allowed_modes: tuple[str, ...] = ("datasets", "grouped"),
+        member_kind: str = "runs",
     ) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        self._allowed_modes = tuple(str(mode) for mode in allowed_modes if str(mode).strip()) or (
-            "datasets",
-        )
+        # Member kind is fixed per instance and follows the active representation:
+        # the groups surface (Individual-groups representation) is group-membered,
+        # every other surface is run-membered. (Phase 3: scope is derived, not selected.)
+        self._member_kind = member_kind if member_kind in ("runs", "groups") else "runs"
 
         self._fit_engine = FitEngine()
         self._domain = "time"
         self._datasets = []  # Will be set by parent
         self._current_dataset: MuonDataset | None = None
+        # Member runs for a grouped *series* fit (empty → fall back to the active
+        # dataset, i.e. the single-run grouped "single fit").
+        self._member_datasets: list[MuonDataset] = []
+        # Populated by the grouped-context builder: run_number -> list[groups].
+        self._grouped_members: dict[int, list[object]] = {}
         self._fit_blocked = False
         self._fit_block_reason = ""
         self._composite_model = self._default_composite_model()
@@ -1679,6 +1797,12 @@ class GlobalFitTab(QWidget):
         # Inherited seed cache for current dataset selection.
         self._inherited_seed_by_run: dict[int, dict[str, float]] = {}
         self._inherited_model_dict: dict[str, object] | None = None
+        # Per-run initial values set explicitly via the Initial-values dialog
+        # (highest precedence over inherited single-fit seeds).
+        self._user_initial_values_by_run: dict[int, dict[str, float]] = {}
+        # Per-(run, group) nuisance initial values for grouped fits, keyed by the
+        # synthetic group-member key.
+        self._user_grouped_initial_values: dict[int, dict[str, float]] = {}
         self._fit_wizard_window: GlobalFitWizardWindow | None = None
         self._wizard_cache_by_run_set: dict[tuple[int, ...], dict[str, object]] = {}
         self._cached_wizard_recommendation: GlobalFitWizardRecommendation | None = None
@@ -1692,17 +1816,6 @@ class GlobalFitTab(QWidget):
         # Model selection
         model_group = QGroupBox("Model")
         model_layout = QFormLayout(model_group)
-        self._mode_combo = QComboBox()
-        # "datasets" is the batch/global scope (fit across the selected runs;
-        # a shared parameter makes it global). "grouped" is the joint
-        # multi-group fit of the active run's Individual-groups representation.
-        mode_labels = {
-            "datasets": "Batch · selected runs",
-            "grouped": "Groups · joint fit",
-        }
-        for mode in self._allowed_modes:
-            self._mode_combo.addItem(mode_labels.get(mode, mode.title()), userData=mode)
-        self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self._formula_label = QLabel()
         _configure_formula_label(self._formula_label)
         self._edit_model_btn = QPushButton("Edit Function...")
@@ -1720,8 +1833,6 @@ class GlobalFitTab(QWidget):
         model_button_layout.addWidget(self._fit_wizard_btn, 0, 1)
         model_button_layout.setColumnStretch(0, 1)
         model_button_layout.setColumnStretch(1, 1)
-        if len(self._allowed_modes) > 1:
-            model_layout.addRow("Scope:", self._mode_combo)
         self._formula_row_label = QLabel("A(t):")
         model_layout.addRow(self._formula_row_label, self._formula_label)
         model_layout.addRow("", model_button_layout)
@@ -1828,7 +1939,7 @@ class GlobalFitTab(QWidget):
 
         # Fit button
         btn_layout = QHBoxLayout()
-        self._fit_btn = QPushButton("Run Global Fit")
+        self._fit_btn = QPushButton("Run Batch Fit")
         self._fit_btn.clicked.connect(self._run_global_fit)
         self._fit_btn.setEnabled(False)
         btn_layout.addWidget(self._fit_btn)
@@ -1836,11 +1947,17 @@ class GlobalFitTab(QWidget):
         self._preview_btn.clicked.connect(self._on_preview_requested)
         self._preview_btn.setEnabled(False)
         btn_layout.addWidget(self._preview_btn)
+        self._initial_values_btn = QPushButton("Initial Values...")
+        self._initial_values_btn.setToolTip(
+            "Edit per-member initial parameter values (per run, or per run/group for grouped fits)."
+        )
+        self._initial_values_btn.clicked.connect(self._open_initial_values_dialog)
+        btn_layout.addWidget(self._initial_values_btn)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
         # Results display
-        self._results_group = QGroupBox("Global Fit Results")
+        self._results_group = QGroupBox("Batch Fit Results")
         results_layout = QVBoxLayout(self._results_group)
         self._result_text = QTextEdit()
         self._result_text.setReadOnly(True)
@@ -1863,7 +1980,7 @@ class GlobalFitTab(QWidget):
         """Return the initial composite model for the allowed fitting modes."""
         if self._domain == "frequency":
             return default_frequency_model()
-        if self._allowed_modes == ("grouped",):
+        if self._member_kind == "groups":
             return CompositeModel(["OscillatoryField"])
         return CompositeModel(["Exponential", "Constant"], operators=["+"])
 
@@ -1961,6 +2078,22 @@ class GlobalFitTab(QWidget):
         self._invalidate_wizard_cache_if_stale()
         self._update_mode_ui(preserve_result=False)
         self._refresh_inherited_single_fit_defaults()
+
+    def set_member_datasets(self, datasets: list[MuonDataset]) -> None:
+        """Set the member runs for a grouped *series* fit.
+
+        Each member contributes its detector groups; an empty/one-element set
+        reduces to the single-run grouped fit (the groups "single fit").
+        """
+        self._member_datasets = [ds for ds in (datasets or []) if ds is not None]
+        self._grouped_context_cache = None
+        self._update_mode_ui(preserve_result=False)
+
+    def _grouped_member_datasets(self) -> list[MuonDataset]:
+        """Resolve the member runs for grouped fitting (active dataset fallback)."""
+        if self._member_datasets:
+            return list(self._member_datasets)
+        return [self._current_dataset] if self._current_dataset is not None else []
 
     def set_frequency_missing_spectra_status(
         self, missing_run_numbers: list[int], cached_count: int
@@ -2408,6 +2541,9 @@ class GlobalFitTab(QWidget):
         """Set the active composite model and rebuild classification rows."""
         preserved_state = self._current_parameter_row_state()
         grouped_model_state = self._current_grouped_model_row_state()
+        # A new model invalidates any per-run initial values keyed by old names.
+        self._user_initial_values_by_run = {}
+        self._user_grouped_initial_values = {}
         self._updating_fraction_values = True
         self._composite_model = model
         _set_formula_label_text(self._formula_label, model.formula_string())
@@ -2482,6 +2618,58 @@ class GlobalFitTab(QWidget):
     def _grouped_fit_model(self) -> CompositeModel:
         """Return the grouped-mode model with default fraction semantics applied."""
         return self._composite_model.with_default_fraction_groups()
+
+    def get_grouped_state(self) -> dict:
+        """Return the grouped-fit classification for persisting a group FitSeries.
+
+        Splits the two-tier parameter block into the *physics* roles
+        (``param_roles``: the fit-function parameters on the global/local/fixed
+        ladder) and the always-per-group ``nuisance_params`` block.  Returns an
+        empty dict when the grouped tables cannot currently be parsed.
+        """
+        try:
+            config = self._parse_grouped_parameter_configuration()
+        except ValueError:
+            return {}
+        # Physics (fit-function) roles are tracked directly by the parser, where
+        # "global" = shared across runs and "local" = per run (but still shared
+        # across that run's groups).
+        physics_roles = {
+            str(name): str(role) for name, role in config.get("physics_roles", {}).items()
+        }
+        # Nuisance block = group-nuisance params that appear anywhere in the
+        # classification (always estimated per (run, group)).
+        seen: set[str] = set()
+        nuisance_params: list[str] = []
+        for name in (*config.get("global", []), *config.get("local", []), *config.get("fixed", [])):
+            if name in GROUP_NUISANCE_PARAMS and name not in seen:
+                seen.add(name)
+                nuisance_params.append(name)
+        return {
+            "composite_model": self._grouped_fit_model().to_dict(),
+            "param_roles": physics_roles,
+            "nuisance_params": nuisance_params,
+        }
+
+    def param_role_map(self) -> dict[str, str]:
+        """Return the run-batch parameter roles (``{name: global/local/fixed/file}``).
+
+        Read from the classification table so a completed batch can annotate each
+        member's piped-back single fit with how the parameter was treated.
+        """
+        roles: dict[str, str] = {}
+        for row in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(row, 0)
+            if name_item is None:
+                continue
+            name = name_item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(name, str):
+                continue
+            combo = self._param_table.cellWidget(row, 2)
+            role = combo.currentText().strip().lower() if isinstance(combo, QComboBox) else ""
+            if role in ("global", "local", "fixed", "file"):
+                roles[name] = role
+        return roles
 
     def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
         self._updating_fraction_values = True
@@ -2779,6 +2967,129 @@ class GlobalFitTab(QWidget):
                 return False
         return True
 
+    def _effective_initial_values_by_run(self, parsed: dict) -> dict[int, dict[str, float]]:
+        """Per-run initial values used by the batch fit.
+
+        Precedence: parameter-table value < inherited single-fit seed (per run for
+        Local, average for Global/Fixed) < explicit Initial-values dialog entry.
+        """
+        model = self._composite_model
+        if model is None:
+            return {}
+        param_values = dict(parsed.get("values", {}))
+        local_params = set(parsed.get("local", []))
+        global_params = set(parsed.get("global", []))
+        fixed_params = set(parsed.get("fixed", {}))
+
+        inherited_seed_by_run: dict[int, dict[str, float]] = {}
+        inherited_averages: dict[str, float] = {}
+        if self._inherited_model_dict == model.to_dict() and self._inherited_seed_by_run:
+            selected_runs = {int(ds.run_number) for ds in self._datasets}
+            if selected_runs.issubset(self._inherited_seed_by_run):
+                inherited_seed_by_run = {
+                    run_number: self._inherited_seed_by_run[run_number]
+                    for run_number in selected_runs
+                }
+                inherited_averages = self._inherited_param_averages(
+                    inherited_seed_by_run, model.param_names
+                )
+
+        result: dict[int, dict[str, float]] = {}
+        for ds in self._datasets:
+            run_number = int(ds.run_number)
+            local_seed_values = inherited_seed_by_run.get(run_number, {})
+            user_values = self._user_initial_values_by_run.get(run_number, {})
+            run_values: dict[str, float] = {}
+            for pname in model.param_names:
+                value = float(param_values.get(pname, 0.0))
+                if inherited_seed_by_run:
+                    if pname in local_params and pname in local_seed_values:
+                        value = float(local_seed_values[pname])
+                    elif pname in inherited_averages and (
+                        pname in global_params or pname in fixed_params
+                    ):
+                        value = float(inherited_averages[pname])
+                if pname in user_values:
+                    value = float(user_values[pname])
+                run_values[pname] = value
+            result[run_number] = run_values
+        return result
+
+    def _grouped_member_specs(self) -> list[tuple[int, str, int, object]]:
+        """Return ``(synthetic_key, label, run, group_id)`` for every grouped member."""
+        specs: list[tuple[int, str, int, object]] = []
+        for run, groups in self._grouped_members.items():
+            for index, group in enumerate(groups, start=1):
+                key = _group_dataset_run_number(int(run), index)
+                group_name = str(getattr(group, "group_name", getattr(group, "group_id", index)))
+                specs.append((key, f"{run} · {group_name}", int(run), group.group_id))
+        return specs
+
+    def _open_grouped_initial_values_dialog(self) -> None:
+        """Open the per-(run, group) nuisance initial-value editor for grouped fits."""
+        # Ensure the grouped context (and ``_grouped_members``) is current.
+        self._grouped_mode_context()
+        if not self._grouped_members:
+            return
+        try:
+            config = self._parse_grouped_parameter_configuration()
+        except ValueError as exc:
+            self._result_text.setText(str(exc))
+            return
+        group_values = dict(config.get("group_values", {}))  # param -> {group_id: value}
+
+        params = [(name, _format_param_label(name), "local") for name in GROUP_NUISANCE_PARAMS]
+        members: list[tuple[int, str]] = []
+        values: dict[int, dict[str, float]] = {}
+        for key, label, _run, group_id in self._grouped_member_specs():
+            members.append((key, label))
+            user = self._user_grouped_initial_values.get(key, {})
+            values[key] = {
+                name: float(user.get(name, group_values.get(name, {}).get(group_id, 0.0)))
+                for name in GROUP_NUISANCE_PARAMS
+            }
+        if not members:
+            return
+        dialog = InitialValuesDialog(
+            members, params, values, parent=self, title="Grouped nuisance initial values"
+        )
+        if dialog.exec():
+            self._user_grouped_initial_values = dialog.edited_values()
+
+    def _open_initial_values_dialog(self) -> None:
+        """Open the members × parameters initial-value editor for the batch fit."""
+        if self._member_kind == "groups":
+            self._open_grouped_initial_values_dialog()
+            return
+        if not self._datasets or self._composite_model is None:
+            return
+        try:
+            parsed = self._parse_parameter_configuration()
+        except ValueError as exc:
+            self._result_text.setText(str(exc))
+            return
+        types = dict(parsed.get("types", {}))
+        params: list[tuple[str, str, str]] = []
+        for pname in self._composite_model.param_names:
+            raw_type = str(types.get(pname, "Local")).lower()
+            if raw_type == "local":
+                role = "local"
+            elif raw_type == "global":
+                role = "global"
+            else:  # Fixed / File
+                role = "fixed"
+            params.append((pname, _format_param_label(pname), role))
+        members = [
+            (int(ds.run_number), str(getattr(ds, "run_label", ds.run_number)))
+            for ds in self._datasets
+        ]
+        values = self._effective_initial_values_by_run(parsed)
+        dialog = InitialValuesDialog(
+            members, params, values, parent=self, title="Batch initial values"
+        )
+        if dialog.exec():
+            self._user_initial_values_by_run = dialog.edited_values()
+
     def _run_global_fit(self) -> None:
         """Execute global fit on all datasets."""
         if self.is_grouped_time_domain_mode():
@@ -2806,19 +3117,6 @@ class GlobalFitTab(QWidget):
             self._result_text.setText(str(exc))
             return
 
-        inherited_seed_by_run: dict[int, dict[str, float]] = {}
-        inherited_averages: dict[str, float] = {}
-        if self._inherited_model_dict == model.to_dict() and self._inherited_seed_by_run:
-            selected_runs = {int(ds.run_number) for ds in self._datasets}
-            if selected_runs.issubset(self._inherited_seed_by_run):
-                inherited_seed_by_run = {
-                    run_number: self._inherited_seed_by_run[run_number]
-                    for run_number in selected_runs
-                }
-                inherited_averages = self._inherited_param_averages(
-                    inherited_seed_by_run,
-                    model.param_names,
-                )
         global_params = list(parsed["global"])
         local_params = list(parsed["local"])
         fixed_params = dict(parsed["fixed"])
@@ -2826,31 +3124,27 @@ class GlobalFitTab(QWidget):
         param_bounds = dict(parsed["bounds"])
         file_params = list(parsed.get("file", []))
 
+        # Per-run initial values: parameter table → inherited single-fit seeds →
+        # explicit Initial-values dialog entries (highest precedence).
+        effective_values = self._effective_initial_values_by_run(parsed)
+
         # Build initial parameter sets for each dataset
         initial_params = {}
         for ds in self._datasets:
             run_number = int(ds.run_number)
-            local_seed_values = inherited_seed_by_run.get(run_number, {})
+            run_effective = effective_values.get(run_number, {})
             params = ParameterSet()
             for pname in model.param_names:
                 min_val, max_val = param_bounds[pname]
-                value = param_values[pname]
+                value = run_effective.get(pname, param_values[pname])
 
-                # Check if this parameter is File type
+                # File-type parameters are pinned to the dataset's file value.
                 if pname in file_params:
                     base_name, _index = split_parameter_name(pname)
                     file_value = _get_file_value_for_parameter(ds, base_name)
                     if file_value is not None:
                         value = file_value
 
-                if inherited_seed_by_run:
-                    if pname in local_params and pname in local_seed_values:
-                        value = local_seed_values[pname]
-                    elif pname in inherited_averages and (
-                        pname in global_params or pname in fixed_params
-                    ):
-                        value = inherited_averages[pname]
-                # Parameters marked as "File" type are fixed at their file values
                 fixed = pname in fixed_params or pname in file_params
                 params.add(
                     Parameter(
@@ -2931,7 +3225,18 @@ class GlobalFitTab(QWidget):
 
         global_params = list(grouped_config["global"])
         local_params = list(grouped_config["local"])
-        initial_params = self._build_grouped_initial_params(grouped_groups, grouped_config)
+
+        # Multiple member runs → grouped *series* fit (batch across runs).
+        if len(self._grouped_members) > 1:
+            self._run_grouped_series_fit(
+                grouped_datasets, grouped_model, global_params, local_params, grouped_config
+            )
+            return
+
+        single_run = int(self._current_dataset.run_number) if self._current_dataset else None
+        initial_params = self._build_grouped_initial_params(
+            grouped_groups, grouped_config, run_number=single_run
+        )
 
         self._result_text.setText("Fitting grouped time-domain data...")
         self._fit_btn.setEnabled(False)
@@ -2960,6 +3265,136 @@ class GlobalFitTab(QWidget):
         self._fit_worker.error.connect(self._fit_thread.quit)
         self._fit_thread.finished.connect(self._cleanup_thread)
         self._fit_thread.start()
+
+    @staticmethod
+    def _derive_grouped_relationship(
+        physics_roles: dict[str, str],
+        n_members: int,
+    ) -> tuple[str | None, str | None]:
+        """Derive the grouped-series relationship from the physics roles.
+
+        Returns ``(relationship, error)``. ``relationship`` is ``individual`` (one
+        member), ``global`` (≥1 physics param shared across runs), or ``batch``
+        (physics independent per run). ``error`` is non-``None`` when the physics
+        classification mixes Global and Local — the simultaneous engine can't
+        express that (A1), so the caller must reject the fit.
+        """
+        physics_global = [name for name, role in physics_roles.items() if role == "global"]
+        physics_local = [name for name, role in physics_roles.items() if role == "local"]
+        if physics_global and physics_local:
+            return None, (
+                "Grouped series fits can't mix Global and Local fit-function parameters. "
+                "Set them all Global (shared across runs) or all Local (independent per run). "
+                f"Global: {', '.join(physics_global)} · Local: {', '.join(physics_local)}."
+            )
+        if n_members <= 1:
+            return "individual", None
+        return ("global" if physics_global else "batch"), None
+
+    def _run_grouped_series_fit(
+        self,
+        grouped_datasets: list[MuonDataset],
+        grouped_model: CompositeModel,
+        global_params: list[str],
+        local_params: list[str],
+        grouped_config: dict[str, object],
+    ) -> None:
+        """Launch a multi-run grouped *series* fit via :func:`fit_grouped_series`.
+
+        Relationship is derived: one member → ``individual``; several members →
+        ``batch`` (physics independent per run; cross-run ``global`` arrives with
+        the unified physics-role table in S3). Per-group seeds are replicated to
+        every run (per-member seeds come from the seed dialog in S6).
+        """
+        members = dict(self._grouped_members)
+        physics_roles = dict(grouped_config.get("physics_roles", {}))
+        relationship, mixing_error = self._derive_grouped_relationship(physics_roles, len(members))
+        if mixing_error:
+            self._result_text.setText(mixing_error)
+            self._fit_btn.setEnabled(True)
+            return
+        initial_params = {
+            run: self._build_grouped_initial_params(groups, grouped_config, run_number=run)
+            for run, groups in members.items()
+        }
+
+        self._result_text.setText("Fitting grouped time-domain series...")
+        self._fit_btn.setEnabled(False)
+
+        if self._fit_thread is not None:
+            self._fit_thread.quit()
+            self._fit_thread.wait()
+
+        self._fit_thread = QThread()
+        self._fit_worker = GroupedSeriesFitWorker(
+            relationship,
+            members,
+            grouped_datasets,
+            grouped_model.function,
+            global_params,
+            local_params,
+            initial_params,
+        )
+        self._fit_worker.moveToThread(self._fit_thread)
+        self._current_model = grouped_model
+        self._current_global_params = global_params
+
+        self._fit_thread.started.connect(self._fit_worker.run)
+        self._fit_worker.finished.connect(self._on_grouped_series_fit_finished)
+        self._fit_worker.error.connect(self._on_fit_error)
+        self._fit_worker.finished.connect(self._fit_thread.quit)
+        self._fit_worker.error.connect(self._fit_thread.quit)
+        self._fit_thread.finished.connect(self._cleanup_thread)
+        self._fit_thread.start()
+
+    def _on_grouped_series_fit_finished(self, grouped_datasets, series_result) -> None:
+        """Handle a completed multi-run grouped-series fit (persist + plot).
+
+        Builds per-(run,group) fit curves keyed by the synthetic member key and
+        emits ``grouped_fit_completed`` → ``MainWindow._record_grouped_fit_series``
+        persists the ``FitSeries(member_kind="groups")``. (Reflecting fitted values
+        back into the per-group tables is deferred; the seeds remain shown.)
+        """
+        self._update_mode_ui(preserve_result=True)
+        member_results = dict(getattr(series_result, "member_results", {}))
+        source_run = dict(getattr(series_result, "member_source_run", {}))
+        grouped_model = build_grouped_count_model(self._current_model.function)
+
+        results_with_curves: dict[int, tuple] = {}
+        for dataset in grouped_datasets:
+            try:
+                key = int(dataset.metadata.get("run_number"))
+            except (TypeError, ValueError):
+                continue
+            fit_result = member_results.get(key)
+            if fit_result is None:
+                continue
+            param_dict = {parameter.name: parameter.value for parameter in fit_result.parameters}
+            for pname in self._grouped_fit_model().param_names:
+                if is_amplitude_parameter(pname):
+                    param_dict.setdefault(pname, 1.0)
+            time_values = np.asarray(dataset.time, dtype=float)
+            finite_mask = np.isfinite(time_values)
+            if np.any(finite_mask):
+                fit_t_min = float(np.min(time_values[finite_mask]))
+                fit_t_max = float(np.max(time_values[finite_mask]))
+            else:
+                fit_t_min, fit_t_max = float(dataset.time.min()), float(dataset.time.max())
+            n_samples = _fit_curve_sample_count(
+                self._current_model, param_dict, fit_t_min, fit_t_max
+            )
+            t_fit = np.linspace(fit_t_min, fit_t_max, n_samples)
+            y_fit = grouped_model(t_fit, **param_dict)
+            results_with_curves[key] = (fit_result, (t_fit, y_fit), tuple())
+
+        n_members = len(member_results)
+        n_runs = len(set(source_run.values())) if source_run else 0
+        reduced = [r.reduced_chi_squared for r in member_results.values() if r.reduced_chi_squared]
+        avg_red_chi2 = sum(reduced) / len(reduced) if reduced else 0.0
+        stats = f"{n_runs} runs · {n_members} group fits · avg χ²/ν = {avg_red_chi2:.4f}"
+        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._result_text.setHtml(success_html("Grouped series fit converged", detail=stats))
+        self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
 
     def _on_preview_requested(self) -> None:
         """Preview grouped time-domain curves using the current parameter values."""
@@ -3011,19 +3446,30 @@ class GlobalFitTab(QWidget):
         self,
         grouped_groups: list[object],
         grouped_config: dict[str, object],
+        run_number: int | None = None,
     ) -> dict[object, ParameterSet]:
-        """Build grouped parameter seeds from the current UI state."""
+        """Build grouped parameter seeds from the current UI state.
+
+        When *run_number* is given, per-(run, group) nuisance overrides from the
+        grouped Initial-values dialog take precedence over the per-group table.
+        """
         initial_params: dict[object, ParameterSet] = {}
         nuisance_group_values = dict(grouped_config["group_values"])
         model_values = dict(grouped_config["model_values"])
         bounds = dict(grouped_config["bounds"])
         fixed = set(grouped_config["fixed"])
 
-        for group in grouped_groups:
+        for index, group in enumerate(grouped_groups, start=1):
+            user_values: dict[str, float] = {}
+            if run_number is not None:
+                member_key = _group_dataset_run_number(int(run_number), index)
+                user_values = self._user_grouped_initial_values.get(member_key, {})
             params = ParameterSet()
             for name in GROUP_NUISANCE_PARAMS:
                 per_group_values = nuisance_group_values.get(name, {})
                 value = float(per_group_values.get(group.group_id, 0.0))
+                if name in user_values:
+                    value = float(user_values[name])
                 min_val, max_val = bounds[name]
                 params.add(
                     Parameter(
@@ -3097,7 +3543,7 @@ class GlobalFitTab(QWidget):
         npar = len(global_param_names)
         stats = f"avg χ²/ν = {avg_red_chi2:.4f} · {n_datasets} datasets · npar = {npar}"
         self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
-        self._result_text.setHtml(success_html("Global fit converged", detail=stats))
+        self._result_text.setHtml(success_html("Batch fit converged", detail=stats))
 
     def _results_with_curves(
         self,
@@ -3317,7 +3763,7 @@ class GlobalFitTab(QWidget):
             failed_labels = [run_label_by_number.get(run, str(run)) for run in failed]
             self._results_group.setStyleSheet("")
             self._result_text.setText(
-                f"<b>Global fit failed</b><br>Failed datasets: {failed_labels}"
+                f"<b>Batch fit failed</b><br>Failed datasets: {failed_labels}"
             )
 
     def _on_fit_error(self, error_msg: str) -> None:
@@ -3512,7 +3958,6 @@ class GlobalFitTab(QWidget):
 
         state = {
             "model_name": "Composite",
-            "mode": self._mode_token(),
             "composite_model": self._composite_model.to_dict(),
             "parameters": [
                 {**entry, "value": normalized_values.get(str(entry["name"]), entry["value"])}
@@ -3551,12 +3996,6 @@ class GlobalFitTab(QWidget):
         """Restore global-fit tab state from a saved dict."""
         self._wizard_cache_by_run_set = {}
         self._set_active_wizard_cache(None, signature=None, log_text="")
-
-        mode = state.get("mode")
-        if isinstance(mode, str):
-            idx = self._mode_combo.findData(mode)
-            if idx >= 0:
-                self._mode_combo.setCurrentIndex(idx)
 
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):
@@ -3646,19 +4085,12 @@ class GlobalFitTab(QWidget):
         self._update_mode_ui(preserve_result=True)
 
     def is_grouped_time_domain_mode(self) -> bool:
-        """Return whether grouped time-domain mode is active."""
-        return self._mode_token() == "grouped"
+        """Return whether this is the group-membered (Individual-groups) surface.
 
-    def _mode_token(self) -> str:
-        token = self._mode_combo.currentData()
-        mode = str(token or "datasets")
-        if mode not in self._allowed_modes:
-            return self._allowed_modes[0]
-        return mode
-
-    def _on_mode_changed(self, _index: int) -> None:
-        self._update_mode_ui(preserve_result=False)
-        self.grouped_mode_changed.emit(self.is_grouped_time_domain_mode())
+        Member kind is fixed per instance (derived from the active representation),
+        so this is a constant rather than a user-selected mode.
+        """
+        return self._member_kind == "groups"
 
     def _update_mode_ui(self, *, preserve_result: bool) -> None:
         grouped = self.is_grouped_time_domain_mode()
@@ -3666,7 +4098,7 @@ class GlobalFitTab(QWidget):
         self._grouped_context_label.setVisible(grouped)
         self._group_param_group.setVisible(grouped)
         self._group_model_group.setVisible(grouped)
-        self._fit_btn.setText("Run Grouped Fit" if grouped else "Run Global Fit")
+        self._fit_btn.setText("Run Grouped Fit" if grouped else "Run Batch Fit")
         self._preview_btn.setVisible(grouped)
         _set_formula_label_text(
             self._formula_label,
@@ -3723,12 +4155,12 @@ class GlobalFitTab(QWidget):
             )
         elif n == 1:
             self._result_text.setText(
-                "Global fitting requires at least 2 datasets.\nCurrently have 1 selected dataset."
+                "Batch fitting requires at least 2 datasets.\nCurrently have 1 selected dataset."
             )
         else:
             domain_label = "frequency spectra" if self._domain == "frequency" else "datasets"
             self._result_text.setText(
-                f"{n} {domain_label} selected. Configure parameters and click Run Global Fit."
+                f"{n} {domain_label} selected. Configure parameters and click Run Batch Fit."
             )
 
     def _grouped_mode_context(
@@ -3743,7 +4175,8 @@ class GlobalFitTab(QWidget):
         dataset changes (see :meth:`set_current_dataset`).
         """
         cache = getattr(self, "_grouped_context_cache", None)
-        key = (id(self._current_dataset), bool(self._fit_blocked))
+        member_ids = tuple(id(ds) for ds in self._grouped_member_datasets())
+        key = (member_ids, bool(self._fit_blocked))
         if cache is not None and cache[0] == key:
             return cache[1]
         result = self._compute_grouped_mode_context()
@@ -3753,41 +4186,75 @@ class GlobalFitTab(QWidget):
     def _compute_grouped_mode_context(
         self,
     ) -> tuple[list[object] | None, list[MuonDataset] | None, str]:
+        """Build grouped groups/datasets for every member run.
+
+        Populates :attr:`_grouped_members` (``run -> groups``) for the series fit
+        and returns ``(representative_groups, flat_datasets, message)`` for the UI
+        — ``representative_groups`` is the first member's group structure (the
+        per-group tables assume a consistent grouping across runs) and
+        ``flat_datasets`` concatenates every member's grouped traces. A single
+        member reduces to the previous single-run behaviour.
+        """
         if self._fit_blocked:
+            self._grouped_members = {}
             return None, None, self._fit_block_reason or "Grouped fitting is unavailable."
-        if self._current_dataset is None:
+
+        member_datasets = self._grouped_member_datasets()
+        if not member_datasets:
+            self._grouped_members = {}
             return (
                 None,
                 None,
-                "Grouped time-domain mode requires an active dataset in the FB Asymmetry or Individual Groups workspace.",
+                "Grouped time-domain mode requires an active dataset in the "
+                "FB Asymmetry or Individual Groups workspace.",
             )
-        if np.asarray(self._current_dataset.time).size == 0:
-            return None, None, "Grouped time-domain mode requires a non-empty active dataset."
-        fit_t_min: float | None = None
-        fit_t_max: float | None = None
-        time_values = np.asarray(self._current_dataset.time, dtype=float)
-        finite_mask = np.isfinite(time_values)
-        if np.any(finite_mask):
-            fit_t_min = float(np.min(time_values[finite_mask]))
-            fit_t_max = float(np.max(time_values[finite_mask]))
-        try:
-            grouped_groups = build_grouped_time_domain_groups(
-                self._current_dataset,
-                t_min=fit_t_min,
-                t_max=fit_t_max,
-            )
-            grouped_datasets = build_grouped_time_domain_datasets(self._current_dataset)
-        except ValueError as exc:
-            return None, None, str(exc)
 
-        run_label = getattr(
-            self._current_dataset, "run_label", str(self._current_dataset.run_number)
-        )
-        return (
-            grouped_groups,
-            grouped_datasets,
-            f"{len(grouped_datasets)} grouped traces from {run_label} are ready for fitting.",
-        )
+        members: dict[int, list[object]] = {}
+        grouped_datasets: list[MuonDataset] = []
+        representative_groups: list[object] | None = None
+        first_label = ""
+        skipped: list[str] = []
+        for dataset in member_datasets:
+            if dataset is None or np.asarray(dataset.time).size == 0:
+                continue
+            time_values = np.asarray(dataset.time, dtype=float)
+            finite_mask = np.isfinite(time_values)
+            fit_t_min = float(np.min(time_values[finite_mask])) if np.any(finite_mask) else None
+            fit_t_max = float(np.max(time_values[finite_mask])) if np.any(finite_mask) else None
+            run_label = getattr(dataset, "run_label", str(dataset.run_number))
+            try:
+                groups = build_grouped_time_domain_groups(dataset, t_min=fit_t_min, t_max=fit_t_max)
+                datasets = build_grouped_time_domain_datasets(dataset)
+            except ValueError as exc:
+                skipped.append(f"{run_label}: {exc}")
+                continue
+            members[int(dataset.run_number)] = groups
+            grouped_datasets.extend(datasets)
+            if representative_groups is None:
+                representative_groups = groups
+                first_label = run_label
+
+        self._grouped_members = members
+        if representative_groups is None or not grouped_datasets:
+            reason = (
+                "; ".join(skipped)
+                if skipped
+                else "Grouped time-domain mode requires a non-empty active dataset."
+            )
+            return None, None, reason
+
+        n_runs = len(members)
+        if n_runs == 1:
+            message = (
+                f"{len(grouped_datasets)} grouped traces from {first_label} are ready for fitting."
+            )
+        else:
+            message = (
+                f"{len(grouped_datasets)} grouped traces from {n_runs} runs are ready for fitting."
+            )
+        if skipped:
+            message += f" (skipped {len(skipped)}: {'; '.join(skipped)})"
+        return representative_groups, grouped_datasets, message
 
     def _setup_group_nuisance_table(self) -> None:
         self._rebuild_group_nuisance_table(preserved_state=None)
@@ -4006,7 +4473,7 @@ class GlobalFitTab(QWidget):
             self._group_model_table.setItem(row, 0, name_item)
 
             default_val = grouped_model.param_defaults.get(pname, 0.0)
-            default_type = "Shared"
+            default_type = "Global"
             if is_background_parameter(pname):
                 default_val = 0.0
                 default_type = "Fixed"
@@ -4018,10 +4485,13 @@ class GlobalFitTab(QWidget):
                 QTableWidgetItem(str(previous.get("value") or default_val)),
             )
             type_combo = QComboBox()
-            type_combo.addItems(["Shared", "Fixed"])
+            # Physics roles unified with the run-batch side: Global = shared across
+            # runs (members), Local = per run (still shared across that run's groups),
+            # Fixed = held. Legacy "Shared"/"Free" map to Global.
+            type_combo.addItems(["Global", "Local", "Fixed"])
             previous_type = str(previous.get("type") or default_type)
-            if previous_type == "Free":
-                previous_type = "Shared"
+            if previous_type in ("Shared", "Free"):
+                previous_type = "Global"
             type_combo.setCurrentText(previous_type)
             self._group_model_table.setCellWidget(row, 2, type_combo)
             default_min = get_param_info(pname).default_min
@@ -4044,6 +4514,9 @@ class GlobalFitTab(QWidget):
         model_values: dict[str, float] = {}
         group_values: dict[str, dict[object, float]] = {}
         bounds: dict[str, tuple[float, float]] = {}
+        # Cross-run roles of the fit-function (physics) parameters; drives the
+        # derived relationship (global/batch) for a multi-run grouped series.
+        physics_roles: dict[str, str] = {}
 
         group_value_entries = self._group_param_value_column_entries()
         group_type_column = self._group_param_type_column()
@@ -4145,11 +4618,17 @@ class GlobalFitTab(QWidget):
                 )
 
             type_combo = self._group_model_table.cellWidget(row, 2)
-            type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Shared"
-            if type_text in ("Shared", "Free"):
-                global_params.append(pname)
-            else:
+            type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Global"
+            if type_text == "Fixed":
                 fixed_params.append(pname)
+                physics_roles[pname] = "fixed"
+            elif type_text == "Local":
+                # Free, shared across a run's groups, independent across runs.
+                global_params.append(pname)
+                physics_roles[pname] = "local"
+            else:  # "Global" (and legacy "Shared"/"Free")
+                global_params.append(pname)
+                physics_roles[pname] = "global"
 
             model_values[pname] = value
             bounds[pname] = (min_val, max_val)
@@ -4171,6 +4650,7 @@ class GlobalFitTab(QWidget):
             "group_values": group_values,
             "model_values": model_values,
             "bounds": bounds,
+            "physics_roles": physics_roles,
         }
 
     def _table_state_map(self, table: QTableWidget) -> dict[str, dict[str, str]]:
@@ -4321,8 +4801,8 @@ class FitPanel(QWidget):
     # Keep payload generic to preserve Python dict key/value types end-to-end.
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
-    grouped_time_domain_mode_changed = Signal(bool)
     share_function_with_group_requested = Signal(int)
+    add_single_fit_to_series_requested = Signal()
     fit_range_edit_committed = Signal(float, float)  # forwarded from SingleFitTab
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -4348,16 +4828,19 @@ class FitPanel(QWidget):
         self._single_tab.share_function_with_group_requested.connect(
             self.share_function_with_group_requested.emit
         )
+        self._single_tab.send_model_to_batch_requested.connect(self._on_send_model_to_batch)
+        self._single_tab.add_to_series_requested.connect(
+            self.add_single_fit_to_series_requested.emit
+        )
         self._single_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
         self._tabs.addTab(self._single_tab, "Single")
 
-        # Global fit tab
-        self._global_tab = GlobalFitTab(allowed_modes=("datasets",))
+        # Batch fit tab (a global fit is the special case with shared parameters)
+        self._global_tab = GlobalFitTab(member_kind="runs")
         self._global_tab.global_fit_completed.connect(self.global_fit_completed.emit)
         self._global_tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
-        self._global_tab.grouped_mode_changed.connect(self.grouped_time_domain_mode_changed.emit)
         self._global_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
-        self._tabs.addTab(self._global_tab, "Global")
+        self._tabs.addTab(self._global_tab, "Batch")
 
         layout.addWidget(self._tabs)
 
@@ -4714,8 +5197,15 @@ class FitPanel(QWidget):
         model: CompositeModel,
         fit_result: object,
         source: str,
+        roles: dict[str, str] | None = None,
     ) -> dict:
-        """Return single-tab state populated from a fitted model result."""
+        """Return single-tab state populated from a fitted model result.
+
+        ``roles`` maps parameter names to their batch role (global/local/fixed);
+        each is recorded on the param entry so the single tab can annotate how the
+        parameter was classified in the batch fit.
+        """
+        roles = roles or {}
         values_by_name: dict[str, object] = {}
         for param in getattr(fit_result, "parameters", []):
             name = getattr(param, "name", None)
@@ -4758,6 +5248,7 @@ class FitPanel(QWidget):
                     "fixed": fixed,
                     "min": min_text,
                     "max": max_text,
+                    "role": roles.get(pname),
                 }
             )
 
@@ -4774,6 +5265,7 @@ class FitPanel(QWidget):
         """Persist per-run single-tab state using the latest successful global fit."""
         model = self._global_tab._composite_model
         active_run = self._active_single_run_number
+        roles = self._global_tab.param_role_map()
 
         for run_number, payload in results_by_run.items():
             if not isinstance(payload, tuple) or not payload:
@@ -4782,7 +5274,9 @@ class FitPanel(QWidget):
             if getattr(fit_result, "success", False) is not True:
                 continue
             self._global_tab.register_single_fit_seed(run_number, model, fit_result)
-            run_state = self._single_state_from_fit_result(model, fit_result, source="Global fit")
+            run_state = self._single_state_from_fit_result(
+                model, fit_result, source="Batch fit", roles=roles
+            )
             self._single_state_by_run[int(run_number)] = run_state
 
             if active_run is not None and int(run_number) == int(active_run):
@@ -4866,6 +5360,27 @@ class FitPanel(QWidget):
     def get_global_state(self) -> dict:
         """Return serialisable state of the global-fit tab."""
         return self._global_tab.get_state()
+
+    def get_grouped_state(self) -> dict:
+        """Return the grouped-fit classification (physics roles + nuisance block)."""
+        return self._global_tab.get_grouped_state()
+
+    def send_single_model_to_batch(self) -> bool:
+        """Copy the single-fit tab's model/fit function into the Batch tab.
+
+        Returns ``True`` when a model was sent. The Single ⇄ Batch flow: build a
+        model in Single, send it to seed a batch over the selected runs.
+        """
+        model = getattr(self._single_tab, "_composite_model", None)
+        if model is None:
+            return False
+        self._global_tab._set_composite_model(model)
+        return True
+
+    def _on_send_model_to_batch(self) -> None:
+        """Handle the Single tab's 'Send Model to Batch' action."""
+        if self.send_single_model_to_batch():
+            self._tabs.setCurrentWidget(self._global_tab)
 
     def restore_global_state(self, state: dict) -> None:
         """Restore global-fit tab state from a saved dict."""

@@ -304,7 +304,7 @@ def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplicat
         )
     }
     window._on_global_fit_completed(results_dict, SimpleNamespace())
-    assert "Global fit completed" in window.statusBar().currentMessage()
+    assert "Batch fit completed" in window.statusBar().currentMessage()
 
 
 def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:

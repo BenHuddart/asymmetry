@@ -13,8 +13,8 @@ from asymmetry.core.fourier.spectrum import (
     compute_average_group_spectrum,
 )
 from asymmetry.core.representation import (
-    Batch,
     DatasetRepresentations,
+    FitSeries,
     FitSlot,
     FrequencyFFT,
     FrequencyMaxEnt,
@@ -236,6 +236,6 @@ def test_make_representation_accepts_string_type():
     assert isinstance(rep, FrequencyFFT)
 
 
-def test_batch_importable_from_package():
-    # Smoke check that the package surface includes Batch.
-    assert Batch("b1", RepresentationType.FREQ_FFT).batch_id == "b1"
+def test_fit_series_importable_from_package():
+    # Smoke check that the package surface includes FitSeries.
+    assert FitSeries("b1", RepresentationType.FREQ_FFT).batch_id == "b1"
