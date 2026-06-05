@@ -853,6 +853,10 @@ class MainWindow(QMainWindow):
         self._dock_fit.hide()
         self._dock_fourier.hide()
         self._dock_fit_parameters.hide()
+        # Gate the FitSeries browser highlight on Parameters dock visibility.
+        self._dock_fit_parameters.visibilityChanged.connect(
+            self._on_parameters_dock_visibility_changed
+        )
 
         # Bottom dock — log panel
         self._log_panel = LogPanel()
@@ -939,6 +943,18 @@ class MainWindow(QMainWindow):
         if hasattr(self._fit_parameters_panel, "series_selection_changed"):
             self._fit_parameters_panel.series_selection_changed.connect(
                 self._on_trend_series_selected
+            )
+        if hasattr(self._fit_parameters_panel, "series_rename_requested"):
+            self._fit_parameters_panel.series_rename_requested.connect(
+                self._on_series_rename_requested
+            )
+        if hasattr(self._fit_parameters_panel, "series_select_members_requested"):
+            self._fit_parameters_panel.series_select_members_requested.connect(
+                self._on_series_select_members_requested
+            )
+        if hasattr(self._fit_parameters_panel, "series_delete_requested"):
+            self._fit_parameters_panel.series_delete_requested.connect(
+                self._on_series_delete_requested
             )
 
         if hasattr(self._fourier_panel, "_fft_btn"):
@@ -4245,19 +4261,6 @@ class MainWindow(QMainWindow):
 
     # ── Representation-aware trend panel (Phase 4) ────────────────────────────
 
-    #: Maps each active representation type to a human-readable display name.
-    _REP_TYPE_LABEL: dict = {}  # populated lazily — avoids circular import issues
-
-    @staticmethod
-    def _rep_label_for(rep_type: RepresentationType) -> str:
-        """Return a short display name for *rep_type*."""
-        return {
-            RepresentationType.TIME_FB_ASYMMETRY: "F-B Asymmetry",
-            RepresentationType.TIME_GROUPS: "Detector Groups",
-            RepresentationType.FREQ_FFT: "FFT",
-            RepresentationType.FREQ_MAXENT: "MaxEnt",
-        }.get(rep_type, "")
-
     def _build_series_rows(self, series: FitSeries) -> list[dict]:
         """Build the row-dict list for one ``FitSeries`` to pass to the trend panel.
 
@@ -4337,7 +4340,6 @@ class MainWindow(QMainWindow):
             key=lambda s: s.batch_id,
         )
 
-        rep_label = self._rep_label_for(rep_type)
         entries: list[tuple[str, str, list[dict]]] = []
         highlight_map: dict[str, list[int]] = {}
         for idx, series in enumerate(series_for_rep, start=1):
@@ -4345,7 +4347,7 @@ class MainWindow(QMainWindow):
             if not row_dicts:
                 continue
             batch_id = series.batch_id
-            name = f"Series {idx}"
+            name = series.display_name(f"Series {idx}")
             entries.append((batch_id, name, row_dicts))
             # Runs to highlight: source runs for group series, member keys for run series.
             if series.member_kind == "groups":
@@ -4355,7 +4357,6 @@ class MainWindow(QMainWindow):
 
         if hasattr(self._fit_parameters_panel, "load_representation_series"):
             self._fit_parameters_panel.load_representation_series(
-                rep_label,
                 entries,
                 highlight_runs_by_id=highlight_map,
             )
@@ -4363,6 +4364,9 @@ class MainWindow(QMainWindow):
         if entries and hasattr(self, "_dock_fit_parameters"):
             self._dock_fit_parameters.show()
             self._dock_fit_parameters.raise_()
+        elif not entries and hasattr(self._data_browser, "set_highlighted_runs"):
+            # No series remain — ensure the browser highlight is cleared.
+            self._data_browser.set_highlighted_runs(set())
 
     def _on_trend_series_selected(self, batch_id: str) -> None:
         """Highlight the member runs of the active fit series in the data browser."""
@@ -4377,6 +4381,67 @@ class MainWindow(QMainWindow):
             runs = set(series.member_run_numbers)
         if hasattr(self._data_browser, "set_highlighted_runs"):
             self._data_browser.set_highlighted_runs(runs)
+
+    def _on_parameters_dock_visibility_changed(self, visible: bool) -> None:
+        """Gate the FitSeries browser highlight on Parameters dock visibility.
+
+        When the dock is hidden (e.g. user switches to the Fit tab), the red
+        tint is cleared so it doesn't persist as a confusing indicator.  When
+        the dock is re-shown, the highlight is restored directly (not through
+        the signal chain) so the guard works correctly in both real and headless
+        environments.
+        """
+        if not hasattr(self, "_data_browser"):
+            return
+        if not hasattr(self._data_browser, "set_highlighted_runs"):
+            return
+        if visible:
+            active_id = getattr(self._fit_parameters_panel, "_active_group_id", None)
+            if active_id:
+                series = self._project_model.batch(active_id)
+                if series is not None:
+                    if series.member_kind == "groups":
+                        runs = set(series.member_source_run.values())
+                    else:
+                        runs = set(series.member_run_numbers)
+                    self._data_browser.set_highlighted_runs(runs)
+        else:
+            self._data_browser.set_highlighted_runs(set())
+
+    def _on_series_rename_requested(self, batch_id: str, new_label: str) -> None:
+        """Persist a user rename of a FitSeries and refresh the trend panel."""
+        label = new_label.strip() or None
+        if self._project_model.rename_batch(batch_id, label):
+            display = new_label.strip() if new_label.strip() else batch_id
+            self._log_panel.log(f'Renamed series {batch_id} to "{display}".', tag="fit")
+            self.statusBar().showMessage(f'Series renamed to "{display}".')
+            self._refresh_trend_panel()
+
+    def _on_series_select_members_requested(self, batch_id: str) -> None:
+        """Perform a true browser selection of a FitSeries' member datasets."""
+        series = self._project_model.batch(batch_id)
+        if series is None:
+            return
+        if series.member_kind == "groups":
+            runs = set(series.member_source_run.values())
+        else:
+            runs = set(series.member_run_numbers)
+        if hasattr(self._data_browser, "select_runs"):
+            self._data_browser.select_runs(runs)
+
+    def _on_series_delete_requested(self, batch_id: str) -> None:
+        """Remove a FitSeries from the project and clear its dataset fits."""
+        series = self._project_model.batch(batch_id)
+        if series is None:
+            return
+        if series.member_kind == "groups":
+            runs = list(series.member_source_run.values())
+        else:
+            runs = list(series.member_run_numbers)
+        self._project_model.remove_batch(batch_id)
+        # Clear fit panel and plot panel state for the affected runs.
+        self._on_fit_parameters_group_fits_deleted(batch_id, runs)
+        self._refresh_trend_panel()
 
     def _record_single_fit_slot(self, fit_result) -> None:
         """Write the active representation's single FitSlot into the project model."""
@@ -4606,6 +4671,18 @@ class MainWindow(QMainWindow):
         self._project_model.refresh_divergence()
         return True
 
+    def _series_fallback_name(self, series) -> str:
+        """Return the positional "Series N" fallback label consistent with the trend panel."""
+        rep_type = series.rep_type
+        series_for_rep = sorted(
+            (s for s in self._project_model.batches.values() if s.rep_type == rep_type),
+            key=lambda s: s.batch_id,
+        )
+        for idx, s in enumerate(series_for_rep, start=1):
+            if s.batch_id == series.batch_id:
+                return f"Series {idx}"
+        return series.batch_id
+
     def _on_add_single_fit_to_series_requested(self) -> None:
         """Handle the Single tab's 'Add to Series…' action.
 
@@ -4640,7 +4717,10 @@ class MainWindow(QMainWindow):
         if len(compatible) == 1:
             series = compatible[0]
         else:
-            labels = [f"{s.batch_id} ({len(s.member_run_numbers)} runs)" for s in compatible]
+            labels = [
+                f"{s.display_name(self._series_fallback_name(s))} ({len(s.member_run_numbers)} runs)"
+                for s in compatible
+            ]
             choice, ok = QInputDialog.getItem(
                 self, "Add to Series", "Compatible series:", labels, 0, False
             )
@@ -4648,9 +4728,10 @@ class MainWindow(QMainWindow):
                 return
             series = compatible[labels.index(choice)]
 
+        series_label = series.display_name(self._series_fallback_name(series))
         if self._add_single_fit_to_series(run, series.batch_id):
-            self._log_panel.log(f"Added run {run} to batch series {series.batch_id}.", tag="fit")
-            self.statusBar().showMessage(f"Added run {run} to series {series.batch_id}.")
+            self._log_panel.log(f"Added run {run} to {series_label}.", tag="fit")
+            self.statusBar().showMessage(f"Added run {run} to {series_label}.")
             self._refresh_trend_panel()
 
     def _on_preview_requested(self, fit_result, fitted_curve, component_curves) -> None:

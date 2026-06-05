@@ -15,10 +15,15 @@ TEXT = "#1c1d20"
 TEXT_MUTED = "#67676b"
 TEXT_DIM = "#9a9a9e"
 
-# Accent
+# Accent — blue (primary UI chrome)
 ACCENT = "#1f4d8a"
 ACCENT_SOFT = "#e8eef7"
 ACCENT_SOFT2 = "#dfe8f4"
+
+# Accent — red (FitSeries identity: browser highlight tint, series buttons)
+ACCENT_RED = "#a8332a"
+ACCENT_RED_SOFT = "#f5dcd8"
+ACCENT_RED_SOFT2 = "#efcfca"
 
 # Data browser groups — match _GROUP_HEADER_BACKGROUND / _GROUP_MEMBER_BACKGROUND
 GROUP_HEADER_BG = "#c8d2e1"

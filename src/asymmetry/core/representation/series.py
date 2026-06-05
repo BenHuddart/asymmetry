@@ -69,6 +69,7 @@ class FitSeries:
         batch_id: str,
         rep_type: RepresentationType | str,
         *,
+        label: str | None = None,
         member_kind: str = "runs",
         member_run_numbers: list[int] | None = None,
         member_source_run: dict[int, int] | None = None,
@@ -80,6 +81,7 @@ class FitSeries:
         diverged_runs: set[int] | list[int] | None = None,
     ) -> None:
         self.batch_id = str(batch_id)
+        self.label: str | None = str(label).strip() or None if label else None
         self.rep_type = (
             rep_type
             if isinstance(rep_type, RepresentationType)
@@ -104,6 +106,12 @@ class FitSeries:
             int(run): dict(result) for run, result in (results_by_run or {}).items()
         }
         self.diverged_runs: set[int] = {int(r) for r in (diverged_runs or set())}
+
+    # ── label ──────────────────────────────────────────────────────────────
+
+    def display_name(self, fallback: str) -> str:
+        """Return the user-assigned label, or *fallback* when none is set."""
+        return self.label or fallback
 
     # ── classifier-derived scope ───────────────────────────────────────────
 
@@ -201,6 +209,7 @@ class FitSeries:
     def to_dict(self) -> dict[str, Any]:
         return {
             "batch_id": self.batch_id,
+            "label": self.label,
             "rep_type": self.rep_type.value,
             "member_kind": self.member_kind,
             "member_run_numbers": list(self.member_run_numbers),
@@ -231,6 +240,7 @@ class FitSeries:
         )
         return cls(
             batch_id=str(data["batch_id"]),
+            label=data.get("label"),
             rep_type=data["rep_type"],
             member_kind=str(data.get("member_kind", "runs")),
             member_run_numbers=data.get("member_run_numbers"),

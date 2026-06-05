@@ -55,9 +55,9 @@ _LOG_TEMPERATURE_FOREGROUND = QColor(176, 36, 36)
 _GROUP_FIELD_REL_TOL = 1e-4
 _GROUP_HEADER_BACKGROUND = QColor(200, 210, 225)
 _GROUP_MEMBER_BACKGROUND = QColor(235, 239, 247)
-# Subtle amber tint used to mark runs that belong to the active fit series
-# in the trend panel.  Chosen to be distinct from the blue group palette.
-_SERIES_HIGHLIGHT_BACKGROUND = QColor(255, 243, 210)
+# Soft red tint used to mark runs that belong to the active fit series in
+# the trend panel.  Red is the FitSeries brand colour (ACCENT_RED_SOFT).
+_SERIES_HIGHLIGHT_BACKGROUND = QColor(tokens.ACCENT_RED_SOFT)
 
 
 def _is_effectively_constant(values: list[float], *, abs_tol: float, rel_tol: float) -> bool:
@@ -1193,11 +1193,10 @@ class DataBrowserPanel(QWidget):
         return self._datasets.get(run_number)
 
     def set_highlighted_runs(self, run_numbers: set[int] | None) -> None:
-        """Tint *run_numbers* with a series-member indicator.
+        """Tint *run_numbers* with the FitSeries membership indicator (red tint).
 
-        Pass an empty set or ``None`` to clear all highlights.  The tint
-        is a subtle amber distinct from the blue data-group palette so it
-        does not conflict with existing group colouring.
+        Pass an empty set or ``None`` to clear all highlights.  The tint is
+        purely decorative — it never alters the table's selection state.
         """
         new_set = set(run_numbers) if run_numbers else set()
         if new_set == self._highlighted_runs:
@@ -1227,6 +1226,27 @@ class DataBrowserPanel(QWidget):
                 cell = self._table.item(row, col)
                 if cell is not None:
                     cell.setBackground(bg)
+
+    def select_runs(self, run_numbers: set[int] | list[int]) -> None:
+        """Perform a true selection of *run_numbers* in the browser table.
+
+        This is a real selection (drives ``selection_changed``, updates the fit
+        panel, etc.), distinct from the decorative red tint applied by
+        :meth:`set_highlighted_runs`.  Existing selection is replaced.  Runs
+        not currently visible in the table are silently skipped.
+        """
+        keys = [int(r) for r in run_numbers]
+        if not keys:
+            self._table.clearSelection()
+            return
+        self._restore_selection_by_keys(keys)
+        # Scroll to the first matched row so the user can see the selection.
+        wanted = set(keys)
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, 0)
+            if item is not None and item.data(self._GROUP_ROLE) in wanted:
+                self._table.scrollToItem(item)
+                break
 
     def get_selected_datasets(self) -> list[MuonDataset]:
         selected: list[MuonDataset] = []

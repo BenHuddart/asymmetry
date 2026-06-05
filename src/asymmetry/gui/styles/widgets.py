@@ -176,28 +176,39 @@ def style_group_state_button(
     state: Literal["active", "selected", "unselected"],
     *,
     base: str = "",
+    palette: Literal["blue", "red"] = "blue",
 ) -> None:
     """Apply BENCH styling to a group-state toggle button in fit_parameters_panel.
 
     Args:
-        base: Optional QSS prefix (e.g. scale-dependent radius/padding rules)
-              prepended before the state rules.
+        base:    Optional QSS prefix (e.g. scale-dependent radius/padding rules)
+                 prepended before the state rules.
+        palette: ``"blue"`` (default) uses the standard blue accent;
+                 ``"red"`` uses the red FitSeries accent for series buttons.
 
     States:
         active:     Currently focused/active group — ACCENT_SOFT fill, ACCENT border.
         selected:   Included in multi-group fit — ACCENT_SOFT2 fill, ACCENT border, dim text.
         unselected: Not participating — SURFACE fill, BORDER border, muted text.
     """
+    if palette == "red":
+        accent = tokens.ACCENT_RED
+        soft = tokens.ACCENT_RED_SOFT
+        soft2 = tokens.ACCENT_RED_SOFT2
+    else:
+        accent = tokens.ACCENT
+        soft = tokens.ACCENT_SOFT
+        soft2 = tokens.ACCENT_SOFT2
     if state == "active":
         button.setStyleSheet(
-            base + f"QPushButton {{ border: 2px solid {tokens.ACCENT};"
-            f" background: {tokens.ACCENT_SOFT}; color: {tokens.ACCENT};"
+            base + f"QPushButton {{ border: 2px solid {accent};"
+            f" background: {soft}; color: {accent};"
             f" font-weight: 700; }}"
         )
     elif state == "selected":
         button.setStyleSheet(
-            base + f"QPushButton {{ border: 1px solid {tokens.ACCENT};"
-            f" background: {tokens.ACCENT_SOFT2}; color: {tokens.TEXT};"
+            base + f"QPushButton {{ border: 1px solid {accent};"
+            f" background: {soft2}; color: {tokens.TEXT};"
             f" font-weight: 500; }}"
         )
     else:

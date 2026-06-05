@@ -118,6 +118,21 @@ The core has **zero** GUI dependencies. It depends only on the scientific Python
 
 The GUI is a separate, optional install target. It wraps the core API and provides interactive visualization, fitting dialogs, and logbook management.
 
+#### BENCH design tokens
+
+Color, spacing, and widget style constants live in `asymmetry.gui.styles.tokens`
+and `asymmetry.gui.styles.widgets`. All raw color literals belong in `tokens.py`;
+no other file may hardcode hex strings. Current accent families:
+
+| Token family | Usage |
+|---|---|
+| `ACCENT` / `ACCENT_SOFT` / `ACCENT_SOFT2` | Blue — primary interactive elements (most buttons, selection highlights) |
+| `ACCENT_RED` / `ACCENT_RED_SOFT` / `ACCENT_RED_SOFT2` | Red — FitSeries identity: series buttons, data-browser membership tint |
+
+`style_group_state_button(button, state, *, palette="blue")` in `widgets.py`
+accepts `palette="red"` to apply the red family instead of blue — used for
+the series buttons in the Fit Parameters panel.
+
 ### 3.3 Fit Wizard Boundary
 
 The single-spectrum Fit Wizard is intentionally split across the core and GUI
@@ -203,7 +218,13 @@ are keyed by integer: real run numbers for run series, synthetic negative keys
 Key attributes: `canonical_model`, `param_roles` (Global / Local / Fixed per
 physics parameter), `nuisance_params` (group-only, always local),
 `results_by_run` (per-member summary dicts that drive the trending panel),
-`diverged_runs` (members whose stored model no longer matches the canonical).
+`diverged_runs` (members whose stored model no longer matches the canonical),
+`label` (optional user-given name, `None` when unset — the GUI renders a
+positional `"Series {idx}"` fallback).
+
+`display_name(fallback: str) -> str` returns `self.label` when set, otherwise
+the caller-supplied fallback — used in series buttons, chooser dialogs, and log
+messages so that user-assigned labels appear everywhere consistently.
 
 #### ProjectModel
 
@@ -217,6 +238,11 @@ provides:
   source-run `FitSlot.include_in_trend` is True (group-aware).
 - `set_member_trend_inclusion(batch_id, run_number, include)` — manually
   toggles a member's inclusion, routing synthetic keys to their source run.
+- `rename_batch(batch_id, label)` — sets `FitSeries.label` (empty/whitespace →
+  `None`, reverting to the positional fallback); returns `True` on success.
+- `remove_batch(batch_id)` — pops and returns the `FitSeries`; clears each
+  member's `FitSlot.batch_id`, resets provenance to `"single"`, and calls
+  `refresh_divergence()`. Unknown `batch_id` returns `None`.
 
 #### Fit Parameters panel (pull model)
 
@@ -225,10 +251,43 @@ completes or the active representation changes, `MainWindow._refresh_trend_panel
 reads the relevant `FitSeries` from `ProjectModel`, builds per-member row dicts
 (using `_frequency_spectra_by_run` for FFT series), and calls
 `FitParametersPanel.load_representation_series`. The panel shows a **"Showing:"**
-label indicating the active representation and a **Series** button row —
-one button per `FitSeries` for the active representation. Selecting a series
-button emits `series_selection_changed`, which the main window forwards to
-`DataBrowserPanel.set_highlighted_runs`, tinting the member runs amber.
+label indicating the active representation and a **Series** button row — one
+button per `FitSeries` for the active representation, styled with the red accent
+(`ACCENT_RED`) so that FitSeries identity reads red consistently across the UI.
+
+Selecting a series button emits `series_selection_changed(batch_id)`. While the
+Parameters dock is **visible**, the main window forwards this to
+`DataBrowserPanel.set_highlighted_runs`, tinting member dataset rows with a red
+tint (`ACCENT_RED_SOFT`). This is a **decorative** highlight: it never alters
+the real Qt selection. The tint clears automatically when the dock is hidden
+(e.g. when the user switches to the Fit tab in the tabified dock group) and
+restores when the dock becomes visible again, driven by
+`QDockWidget.visibilityChanged`.
+
+**Context menu on series buttons** (right-click):
+
+- **Rename…** — opens an input dialog prefilled with the current label; on
+  accept emits `series_rename_requested(batch_id, new_label)`. The main window
+  calls `rename_batch` and re-renders the panel.
+- **Select members in browser** — emits `series_select_members_requested(batch_id)`.
+  The main window resolves the member run numbers and calls
+  `DataBrowserPanel.select_runs`, performing a true Qt selection that drives
+  the normal `selection_changed` pathway. The decorative tint is unaffected.
+- **Delete series…** — confirms with a `QMessageBox`, then emits
+  `series_delete_requested(batch_id)`. The main window calls `remove_batch`,
+  clears dataset fit state, and refreshes the panel; a surviving series retains
+  its highlight, and the empty case clears the tint.
+
+#### DataBrowserPanel — decorative highlight vs true selection
+
+`set_highlighted_runs(run_numbers)` paints rows with `ACCENT_RED_SOFT` without
+touching the Qt selection model. It is the sole mechanism used by the
+visibility-gated FitSeries highlight.
+
+`select_runs(run_numbers)` performs a real Qt multi-row selection (using the
+existing `_restore_selection_by_keys` helper), scrolling to the first matched
+row, and fires `selection_changed` through the normal pathway. It is used by
+the "Select members in browser" context-menu action and never alters the tint.
 
 ---
 

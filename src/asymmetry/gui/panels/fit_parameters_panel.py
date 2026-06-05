@@ -177,6 +177,12 @@ class FitParametersPanel(QWidget):
     delete_group_fits_requested = Signal(str, object)
     #: Emitted when the user activates a different fit series (batch_id).
     series_selection_changed = Signal(str)
+    #: Emitted when the user renames a series via the context menu (batch_id, new_label).
+    series_rename_requested = Signal(str, str)
+    #: Emitted when the user chooses "Select members in browser" (batch_id).
+    series_select_members_requested = Signal(str)
+    #: Emitted when the user confirms "Delete series…" (batch_id).
+    series_delete_requested = Signal(str)
 
     @property
     def last_cross_group_fit(self) -> dict[str, object] | None:
@@ -218,16 +224,12 @@ class FitParametersPanel(QWidget):
         controls_form = QFormLayout()
         controls_layout.addLayout(controls_form)
 
-        self._rep_label = QLabel("")
-        self._rep_label.setVisible(False)
-        controls_form.addRow("Showing:", self._rep_label)
-
         self._group_tabs_widget = QWidget()
         self._group_tabs_layout = QHBoxLayout(self._group_tabs_widget)
         self._group_tabs_layout.setContentsMargins(0, 0, 0, 0)
         self._group_tabs_layout.setSpacing(6)
         self._group_tabs_widget.setVisible(False)
-        controls_form.addRow("Series:", self._group_tabs_widget)
+        controls_form.addRow(self._group_tabs_widget)
 
         self._show_table_btn = QPushButton("Show fitted parameter table")
         self._show_table_btn.setEnabled(False)
@@ -428,8 +430,6 @@ class FitParametersPanel(QWidget):
         self._cross_group_fit_configs = {}
         self._selected_y_param_names = []
         self._series_run_numbers = {}
-        self._rep_label.setText("")
-        self._rep_label.setVisible(False)
         self._rebuild_group_buttons()
         self._show_table_btn.setEnabled(False)
         self._create_composite_btn.setEnabled(False)
@@ -734,7 +734,6 @@ class FitParametersPanel(QWidget):
 
     def load_representation_series(
         self,
-        representation_label: str,
         series_entries: list[tuple[str, str, list[dict]]],
         *,
         highlight_runs_by_id: dict[str, list[int]] | None = None,
@@ -747,9 +746,6 @@ class FitParametersPanel(QWidget):
 
         Parameters
         ----------
-        representation_label:
-            Human-readable name shown in the "Showing:" row (e.g.
-            ``"F-B Asymmetry"`` or ``"Detector Groups"``).
         series_entries:
             List of ``(batch_id, series_name, row_dicts)`` tuples.
             Each ``row_dict`` must have keys: ``run_number``, ``run_label``,
@@ -819,10 +815,6 @@ class FitParametersPanel(QWidget):
         # Update per-series run-number map for browser highlighting.
         if highlight_runs_by_id is not None:
             self._series_run_numbers = dict(highlight_runs_by_id)
-
-        # Update the "Showing:" label.
-        self._rep_label.setText(representation_label)
-        self._rep_label.setVisible(bool(representation_label))
 
         # Activate the most-recently-added series (last entry) if possible;
         # otherwise keep the existing active group if it survived the reload.
@@ -901,14 +893,33 @@ class FitParametersPanel(QWidget):
         self._group_tabs_widget.setVisible(bool(groups))
         self._refresh_group_button_styles()
 
+    def _exec_menu(self, menu: QMenu, pos) -> object:
+        return menu.exec(pos)
+
     def _show_group_button_context_menu(self, group_id: str, button: QPushButton, pos) -> None:
         if group_id not in self._group_fit_results:
             return
 
+        group = self._group_fit_results[group_id]
         menu = QMenu(self)
-        delete_action = menu.addAction("Delete fit(s)")
-        selected_action = menu.exec(button.mapToGlobal(pos))
-        if selected_action is delete_action:
+        rename_action = menu.addAction("Rename…")
+        select_action = menu.addAction("Select members in browser")
+        menu.addSeparator()
+        delete_action = menu.addAction("Delete series…")
+        selected_action = self._exec_menu(menu, button.mapToGlobal(pos))
+
+        if selected_action is rename_action:
+            new_name, ok = QInputDialog.getText(
+                self,
+                "Rename series",
+                "Series name:",
+                text=group.group_name,
+            )
+            if ok:
+                self.series_rename_requested.emit(group_id, new_name.strip())
+        elif selected_action is select_action:
+            self.series_select_members_requested.emit(group_id)
+        elif selected_action is delete_action:
             self._delete_group_fits(group_id)
 
     def _group_run_numbers(self, group: _GroupFitData) -> list[int]:
@@ -927,10 +938,10 @@ class FitParametersPanel(QWidget):
 
         reply = QMessageBox.question(
             self,
-            "Delete fit(s)",
+            "Delete series",
             (
-                f'Delete fit(s) for group "{group.group_name}"?\n'
-                "This removes the group from Fit Parameters and clears its dataset fits."
+                f'Delete series "{group.group_name}"?\n'
+                "This removes it from the project and clears its dataset fits."
             ),
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
@@ -957,6 +968,7 @@ class FitParametersPanel(QWidget):
         self._set_selected_group_ids(selected_ids, emit=False)
         self._apply_group_selection_to_view(sync_active=False)
         self.delete_group_fits_requested.emit(group_id, run_numbers)
+        self.series_delete_requested.emit(group_id)
 
     def _refresh_group_button_styles(self) -> None:
         selected_ids = set(self._selected_group_ids_from_buttons())
@@ -989,7 +1001,7 @@ class FitParametersPanel(QWidget):
                 state = "selected"
             else:
                 state = "unselected"
-            style_group_state_button(button, state, base=base)
+            style_group_state_button(button, state, base=base, palette="red")
 
     def _on_group_button_clicked(self) -> None:
         self._sync_active_group_state()
@@ -1030,6 +1042,19 @@ class FitParametersPanel(QWidget):
         self._apply_group_selection_to_view(sync_active=False)
         # Notify listeners (e.g. main window → data-browser highlight).
         if self._active_group_id is not None:
+            self.series_selection_changed.emit(self._active_group_id)
+
+    def set_highlight_active(self, active: bool) -> None:
+        """Ask the browser to restore (or leave) the series-member highlight.
+
+        Called by the main window when the Parameters dock becomes visible or
+        hidden.  When *active* is ``True`` and there is a current series, the
+        ``series_selection_changed`` signal is re-emitted so the browser tint
+        is restored via the existing funnel.  When *active* is ``False`` this
+        method is a no-op — the main window clears the browser highlight
+        directly.
+        """
+        if active and self._active_group_id is not None:
             self.series_selection_changed.emit(self._active_group_id)
 
     def _apply_group_selection_to_view(self, *, sync_active: bool = True) -> None:
