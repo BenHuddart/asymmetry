@@ -54,6 +54,48 @@ class ProjectModel:
         """Register *batch* by its id."""
         self.batches[batch.batch_id] = batch
 
+    def remove_batch(self, batch_id: str) -> FitSeries | None:
+        """Remove and return the batch with *batch_id*, clearing member FitSlot pointers.
+
+        For each member the corresponding FitSlot's ``batch_id`` is cleared and
+        ``provenance`` is reset to ``"single"`` (the fit result is preserved;
+        only the series association is dropped).  Divergence state for the
+        removed batch is no longer relevant; ``refresh_divergence`` is called so
+        other batches remain consistent.
+        """
+        series = self.batches.pop(str(batch_id), None)
+        if series is None:
+            return None
+        if series.member_kind == "groups":
+            source_runs = sorted(set(series.member_source_run.values()))
+        else:
+            source_runs = list(series.member_run_numbers)
+        for run_number in source_runs:
+            representation = self.representation(run_number, series.rep_type)
+            if representation is None:
+                continue
+            slot = representation.fit
+            if slot.batch_id == batch_id:
+                slot.batch_id = None
+                slot.provenance = "single"
+                slot.diverged = False
+                slot.include_in_trend = True
+        self.refresh_divergence()
+        return series
+
+    def rename_batch(self, batch_id: str, label: str | None) -> bool:
+        """Set the display label of the batch with *batch_id*.
+
+        Pass ``None`` or ``""`` to clear the label (reverts to the positional
+        fallback rendered by the GUI).  Returns ``True`` on success, ``False``
+        when *batch_id* is not found.
+        """
+        series = self.batches.get(str(batch_id))
+        if series is None:
+            return False
+        series.label = str(label).strip() or None if label else None
+        return True
+
     # ── divergence & trending ──────────────────────────────────────────────────
 
     def refresh_divergence(self) -> None:

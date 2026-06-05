@@ -78,6 +78,9 @@ def test_tokens_module_exports_expected_constants() -> None:
         "ACCENT",
         "ACCENT_SOFT",
         "ACCENT_SOFT2",
+        "ACCENT_RED",
+        "ACCENT_RED_SOFT",
+        "ACCENT_RED_SOFT2",
         "GROUP_HEADER_BG",
         "GROUP_MEMBER_BG",
         "WARN",
@@ -146,3 +149,28 @@ def test_typography_module_constants() -> None:
     assert LETTER_SPACING_LABEL == 0.4
     assert callable(header_font)
     assert callable(section_label_font)
+
+
+def test_red_accent_tokens_are_hex_strings() -> None:
+    """Red accent tokens must be hex strings (not tuples or ints)."""
+    from asymmetry.gui.styles import tokens
+
+    for name in ("ACCENT_RED", "ACCENT_RED_SOFT", "ACCENT_RED_SOFT2"):
+        value = getattr(tokens, name)
+        assert isinstance(value, str) and value.startswith("#"), (
+            f"tokens.{name} should be a '#rrggbb' string, got {value!r}"
+        )
+
+
+def test_data_browser_series_highlight_uses_red_token() -> None:
+    """The data browser series-highlight background must derive from ACCENT_RED_SOFT."""
+    from PySide6.QtGui import QColor
+
+    from asymmetry.gui.panels import data_browser
+    from asymmetry.gui.styles import tokens
+
+    expected = QColor(tokens.ACCENT_RED_SOFT)
+    actual = data_browser._SERIES_HIGHLIGHT_BACKGROUND
+    assert actual.red() == expected.red()
+    assert actual.green() == expected.green()
+    assert actual.blue() == expected.blue()

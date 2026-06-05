@@ -32,7 +32,10 @@ for later reuse.
 - **Parameter-model fitting**: fit field-, temperature-, or run-dependent parameter trends,
   including superconducting penetration-depth workflows. The Fit Parameters panel is
   representation-aware: switching between F-B Asymmetry, Detector Groups, and FFT views
-  automatically shows the series for the active representation.
+  automatically shows the series for the active representation. Series buttons use red
+  accents for visual identity; member datasets are highlighted red in the browser while
+  the panel is visible. Right-click a series button to **rename** it, **select its
+  members** in the browser (true selection), or **delete** the series from the project.
 - **Derived composite parameters**: define expression-based parameters in the Fit Parameters panel
   with safe parsing and first-order uncertainty propagation (including covariance support when
   available).

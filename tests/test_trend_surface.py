@@ -209,26 +209,6 @@ class TestGroupAwareDivergence:
 class TestLoadRepresentationSeries:
     """The pull-based reload entry point produces the correct panel state."""
 
-    def test_panel_shows_representation_label(self, app):
-        from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
-
-        panel = FitParametersPanel()
-        rows = [
-            {
-                "run_number": 10,
-                "run_label": "10",
-                "field": 100.0,
-                "temperature": 20.0,
-                "values": {"A": 0.2, "Lambda": 0.5},
-                "errors": {"A": 0.01, "Lambda": 0.02},
-            }
-        ]
-        panel.load_representation_series("F-B Asymmetry", [("batch-0", "Series 1", rows)])
-
-        # _rep_label text is set and it is not explicitly hidden.
-        assert panel._rep_label.text() == "F-B Asymmetry"
-        assert not panel._rep_label.isHidden()
-
     def test_panel_groups_keyed_by_batch_id(self, app):
         from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 
@@ -254,7 +234,6 @@ class TestLoadRepresentationSeries:
             },
         ]
         panel.load_representation_series(
-            "F-B Asymmetry",
             [("batch-0", "Series 1", rows_a), ("batch-1", "Series 2", rows_b)],
         )
 
@@ -280,7 +259,6 @@ class TestLoadRepresentationSeries:
 
         panel = FitParametersPanel()
         panel.load_representation_series(
-            "FFT",
             [("batch-0", "Series 1", _row(10)), ("batch-1", "Series 2", _row(20))],
         )
 
@@ -303,7 +281,6 @@ class TestLoadRepresentationSeries:
 
         panel = FitParametersPanel()
         panel.load_representation_series(
-            "F-B Asymmetry",
             [("batch-0", "Series 1", _row(10)), ("batch-1", "Series 2", _row(20))],
         )
         # Manually activate Series 1 to simulate user clicking it.
@@ -311,14 +288,13 @@ class TestLoadRepresentationSeries:
 
         # Reload with same entries.
         panel.load_representation_series(
-            "F-B Asymmetry",
             [("batch-0", "Series 1", _row(10)), ("batch-1", "Series 2", _row(20))],
         )
 
         # Active series should stay at batch-0.
         assert panel._active_group_id == "batch-0"
 
-    def test_clear_resets_rep_label(self, app):
+    def test_clear_resets_series_buttons(self, app):
         from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 
         panel = FitParametersPanel()
@@ -332,15 +308,12 @@ class TestLoadRepresentationSeries:
                 "errors": {"A": 0.01},
             }
         ]
-        panel.load_representation_series("F-B Asymmetry", [("batch-0", "Series 1", row)])
-        # After loading, label should be set.
-        assert panel._rep_label.text() == "F-B Asymmetry"
-        assert not panel._rep_label.isHidden()
+        panel.load_representation_series([("batch-0", "Series 1", row)])
+        assert "batch-0" in panel._group_fit_results
 
         panel.clear()
-        # After clear, label should be hidden (explicitly) and empty.
-        assert panel._rep_label.isHidden()
-        assert panel._rep_label.text() == ""
+        assert panel._group_fit_results == {}
+        assert panel._active_group_id is None
 
 
 # ---------------------------------------------------------------------------
@@ -375,23 +348,6 @@ class TestRefreshTrendPanel:
         gdata = next(iter(panel._group_fit_results.values()))
         run_numbers = {r.run_number for r in gdata.rows}
         assert run_numbers == {10, 11}
-
-    def test_representation_label_shown_after_fit(self, mw, monkeypatch):
-        mw._data_browser.add_dataset(_dataset(10))
-        mw._on_dataset_selected(10)
-        mw._plot_workspace.set_active_view("fb_asymmetry")
-        monkeypatch.setattr(
-            mw._fit_panel,
-            "get_global_state",
-            lambda: {
-                "composite_model": {"component_names": ["Exponential"], "operators": []},
-                "parameters": [{"name": "A", "type": "Local"}],
-                "result_html": "",
-            },
-        )
-        mw._on_global_fit_completed({10: (_result(), _CURVE, [])}, ParameterSet())
-
-        assert mw._fit_parameters_panel._rep_label.text() == "F-B Asymmetry"
 
     def test_representation_switch_swaps_trend_content(self, mw, monkeypatch):
         """Switching from fb_asymmetry → groups → fb_asymmetry swaps series."""
@@ -440,7 +396,6 @@ class TestRefreshTrendPanel:
 
         # Now the panel should show the groups series.
         panel = mw._fit_parameters_panel
-        assert panel._rep_label.text() == "Detector Groups"
         group_ids = set(panel._group_fit_results.keys())
         # All should be groups-rep series.
         for gid in group_ids:
@@ -450,8 +405,6 @@ class TestRefreshTrendPanel:
 
         # Step 3: switch back to FB Asymmetry → see its series.
         mw._plot_workspace.set_active_view("fb_asymmetry")
-
-        assert panel._rep_label.text() == "F-B Asymmetry"
         for gid in panel._group_fit_results:
             batch = mw._project_model.batch(gid)
             assert batch is not None
@@ -743,3 +696,165 @@ class TestReviewFindings:
         # Must have picked the frequency spectrum (field=250) not the time-domain
         # dataset (field=100).
         assert rows[0]["field"] == pytest.approx(250.0)
+
+
+# ---------------------------------------------------------------------------
+# Visibility-gated highlight, rename, select, delete
+# ---------------------------------------------------------------------------
+
+
+def _setup_one_series(mw, monkeypatch):
+    """Add two datasets, run a global fit, and return the resulting FitSeries."""
+    for rn in (10, 11):
+        mw._data_browser.add_dataset(_dataset(rn))
+    mw._plot_workspace.set_active_view("fb_asymmetry")
+    monkeypatch.setattr(
+        mw._fit_panel,
+        "get_global_state",
+        lambda: {
+            "composite_model": {"component_names": ["Exponential"], "operators": []},
+            "parameters": [{"name": "A", "type": "Local"}],
+            "result_html": "",
+        },
+    )
+    mw._on_global_fit_completed({rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet())
+    return next(iter(mw._project_model.batches.values()))
+
+
+class TestVisibilityGatedHighlight:
+    """Parameters dock visibility gates the FitSeries browser highlight."""
+
+    def test_hiding_dock_clears_highlight(self, mw, monkeypatch):
+        _setup_one_series(mw, monkeypatch)
+        # Simulate the dock becoming visible — restores the highlight directly.
+        mw._on_parameters_dock_visibility_changed(True)
+        assert mw._data_browser._highlighted_runs != set()
+        # Simulate hiding the dock.
+        mw._on_parameters_dock_visibility_changed(False)
+        assert mw._data_browser._highlighted_runs == set()
+
+    def test_showing_dock_restores_highlight(self, mw, monkeypatch):
+        _setup_one_series(mw, monkeypatch)
+        mw._on_parameters_dock_visibility_changed(False)
+        assert mw._data_browser._highlighted_runs == set()
+        mw._on_parameters_dock_visibility_changed(True)
+        assert mw._data_browser._highlighted_runs == {10, 11}
+
+    def test_visibilitychanged_false_clears_regardless_of_series_selection(self, mw, monkeypatch):
+        """The visibilityChanged(False) handler always clears, even if series_selection_changed fires."""
+        _setup_one_series(mw, monkeypatch)
+        mw._on_parameters_dock_visibility_changed(True)
+        assert mw._data_browser._highlighted_runs != set()
+        # Fire visibilityChanged(False) — must clear.
+        mw._on_parameters_dock_visibility_changed(False)
+        assert mw._data_browser._highlighted_runs == set()
+        # Even a direct _on_trend_series_selected call after a hide doesn't change
+        # the intent — the gate is driven by the visibilityChanged cycle.
+
+
+class TestSeriesRenameAndLabel:
+    """_on_series_rename_requested updates label and refreshes panel."""
+
+    def test_rename_sets_label_and_refreshes(self, mw, monkeypatch):
+        series = _setup_one_series(mw, monkeypatch)
+        mw._on_series_rename_requested(series.batch_id, "Field sweep")
+        assert mw._project_model.batch(series.batch_id).label == "Field sweep"
+        # Panel button should now show the new label.
+        panel = mw._fit_parameters_panel
+        button = panel._group_button_map.get(series.batch_id)
+        assert button is not None
+        assert button.text() == "Field sweep"
+
+    def test_rename_empty_string_reverts_to_fallback(self, mw, monkeypatch):
+        series = _setup_one_series(mw, monkeypatch)
+        mw._on_series_rename_requested(series.batch_id, "Field sweep")
+        mw._on_series_rename_requested(series.batch_id, "")
+        assert mw._project_model.batch(series.batch_id).label is None
+        # The panel button should show the positional fallback "Series 1".
+        button = mw._fit_parameters_panel._group_button_map.get(series.batch_id)
+        assert button is not None and button.text() == "Series 1"
+
+    def test_add_to_series_chooser_shows_user_label(self, mw, monkeypatch):
+        from PySide6.QtWidgets import QInputDialog
+
+        series = _setup_one_series(mw, monkeypatch)
+        mw._on_series_rename_requested(series.batch_id, "My named series")
+        # Load a third dataset with a single fit, compatible model.
+        from asymmetry.core.representation import FitSlot, RepresentationType
+
+        mw._data_browser.add_dataset(_dataset(99))
+        rep = mw._project_model.ensure_dataset(99).ensure(RepresentationType.TIME_FB_ASYMMETRY)
+        rep.fit = FitSlot(
+            model={"component_names": ["Exponential"], "operators": []},
+            provenance="single",
+        )
+        # Create a second compatible series so the chooser dialog is triggered.
+        from asymmetry.core.representation.series import FitSeries
+
+        s2 = FitSeries(
+            "batch-99",
+            RepresentationType.TIME_FB_ASYMMETRY,
+            member_kind="runs",
+            member_run_numbers=[10],
+            canonical_model={"component_names": ["Exponential"], "operators": []},
+        )
+        mw._project_model.add_batch(s2)
+
+        captured_items: list = []
+        monkeypatch.setattr(
+            QInputDialog,
+            "getItem",
+            lambda _self, _title, _label, items, *_a, **_kw: (
+                captured_items.extend(items) or (items[0], False)
+            ),
+        )
+        mw._current_dataset = mw._data_browser.get_dataset(99)
+        monkeypatch.setattr(
+            mw, "_active_representation_type", lambda: RepresentationType.TIME_FB_ASYMMETRY
+        )
+        mw._on_add_single_fit_to_series_requested()
+
+        assert any("My named series" in item for item in captured_items)
+
+
+class TestSeriesSelectMembers:
+    """_on_series_select_members_requested performs a true browser selection."""
+
+    def test_select_members_selects_run_series(self, mw, monkeypatch):
+        series = _setup_one_series(mw, monkeypatch)
+        mw._on_series_select_members_requested(series.batch_id)
+        selected = set(mw._data_browser._get_selected_run_numbers())
+        assert selected == {10, 11}
+
+    def test_select_members_does_not_change_highlight(self, mw, monkeypatch):
+        series = _setup_one_series(mw, monkeypatch)
+        mw._on_parameters_dock_visibility_changed(True)
+        highlight_before = set(mw._data_browser._highlighted_runs)
+        mw._on_series_select_members_requested(series.batch_id)
+        assert mw._data_browser._highlighted_runs == highlight_before
+
+
+class TestSeriesDelete:
+    """_on_series_delete_requested removes series and clears highlight."""
+
+    def test_delete_removes_batch_from_project(self, mw, monkeypatch):
+        series = _setup_one_series(mw, monkeypatch)
+        bid = series.batch_id
+        mw._on_series_delete_requested(bid)
+        assert mw._project_model.batch(bid) is None
+
+    def test_delete_clears_browser_highlight(self, mw, monkeypatch):
+        series = _setup_one_series(mw, monkeypatch)
+        mw._on_parameters_dock_visibility_changed(True)
+        mw._on_series_delete_requested(series.batch_id)
+        assert mw._data_browser._highlighted_runs == set()
+
+    def test_delete_removes_panel_button(self, mw, monkeypatch):
+        series = _setup_one_series(mw, monkeypatch)
+        bid = series.batch_id
+        mw._on_series_delete_requested(bid)
+        assert bid not in mw._fit_parameters_panel._group_button_map
+
+    def test_delete_unknown_batch_is_noop(self, mw):
+        # Should not raise.
+        mw._on_series_delete_requested("no-such-batch")

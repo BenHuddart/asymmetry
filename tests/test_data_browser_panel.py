@@ -1401,3 +1401,50 @@ def test_non_chevron_single_click_does_not_toggle(qapp: QApplication) -> None:
     )
 
     assert not group.collapsed
+
+
+# ── select_runs ──────────────────────────────────────────────────────────────
+
+
+class TestSelectRuns:
+    """DataBrowserPanel.select_runs performs a true selection."""
+
+    def test_select_runs_selects_matching_rows(self, qapp):
+        browser = DataBrowserPanel()
+        browser.add_dataset(_dataset(10))
+        browser.add_dataset(_dataset(11))
+        browser.add_dataset(_dataset(12))
+        browser.select_runs({10, 12})
+        selected = set(browser._get_selected_run_numbers())
+        assert selected == {10, 12}
+
+    def test_select_runs_does_not_alter_highlighted_runs(self, qapp):
+        browser = DataBrowserPanel()
+        browser.add_dataset(_dataset(20))
+        browser.add_dataset(_dataset(21))
+        browser.set_highlighted_runs({20})
+        browser.select_runs({21})
+        # The decorative tint must be independent of true selection.
+        assert browser._highlighted_runs == {20}
+
+    def test_select_runs_replaces_previous_selection(self, qapp):
+        browser = DataBrowserPanel()
+        for rn in (30, 31, 32):
+            browser.add_dataset(_dataset(rn))
+        browser.select_runs({30, 31})
+        browser.select_runs({32})
+        selected = set(browser._get_selected_run_numbers())
+        assert selected == {32}
+
+    def test_select_runs_unknown_run_no_crash(self, qapp):
+        browser = DataBrowserPanel()
+        browser.add_dataset(_dataset(40))
+        browser.select_runs({999})  # 999 not in table
+        assert set(browser._get_selected_run_numbers()) == set()
+
+    def test_select_runs_empty_set_clears_selection(self, qapp):
+        browser = DataBrowserPanel()
+        browser.add_dataset(_dataset(50))
+        browser.select_runs({50})
+        browser.select_runs(set())
+        assert set(browser._get_selected_run_numbers()) == set()

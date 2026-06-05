@@ -12,7 +12,7 @@ import pytest
 pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
-from PySide6.QtCore import Qt  # type: ignore
+from PySide6.QtCore import QPoint, Qt  # type: ignore
 from PySide6.QtWidgets import (  # type: ignore
     QApplication,
     QDialog,
@@ -1190,13 +1190,14 @@ def test_group_button_styles_distinguish_single_active_from_multi_highlight(
 
     panel._set_selected_group_ids(["g_a"], emit=False)
     panel._apply_group_selection_to_view(sync_active=False)
-    assert "2px solid #1f4d8a" in panel._group_button_map["g_a"].styleSheet()
+    # Series buttons now use the red accent palette (ACCENT_RED = #a8332a).
+    assert "2px solid #a8332a" in panel._group_button_map["g_a"].styleSheet()
 
     panel._set_selected_group_ids(["g_a", "g_b"], emit=False)
     panel._apply_group_selection_to_view(sync_active=False)
-    assert "2px solid #1f4d8a" in panel._group_button_map["g_a"].styleSheet()
-    assert "2px solid #1f4d8a" not in panel._group_button_map["g_b"].styleSheet()
-    assert "1px solid #1f4d8a" in panel._group_button_map["g_b"].styleSheet()
+    assert "2px solid #a8332a" in panel._group_button_map["g_a"].styleSheet()
+    assert "2px solid #a8332a" not in panel._group_button_map["g_b"].styleSheet()
+    assert "1px solid #a8332a" in panel._group_button_map["g_b"].styleSheet()
 
 
 def test_group_button_styles_refresh_after_scale_change(panel: FitParametersPanel) -> None:
@@ -1219,7 +1220,8 @@ def test_group_button_styles_refresh_after_scale_change(panel: FitParametersPane
     panel._on_ui_scale_changed(1.0, 1.1)
 
     style = panel._group_button_map["g_a"].styleSheet()
-    assert "2px solid #1f4d8a" in style
+    # Series buttons use the red accent palette (ACCENT_RED = #a8332a).
+    assert "2px solid #a8332a" in style
     assert "border-radius: 13px;" in style
 
 
@@ -1852,3 +1854,161 @@ def test_apply_cross_group_fit_keeps_existing_composite_definitions(
 
     updated = panel._group_fit_results["g1"]
     assert any(defn.name == "sum_param" for defn in updated.composite_parameters)
+
+
+# ── Series context menu and new signals ─────────────────────────────────────
+
+
+def _panel_with_two_groups(qapp: QApplication) -> FitParametersPanel:
+    rows = [
+        _FitRow(
+            run_number=101,
+            run_label="101",
+            field=100.0,
+            temperature=5.0,
+            values={"A": 0.2},
+            errors={"A": 0.01},
+        )
+    ]
+    panel = FitParametersPanel()
+    panel._group_fit_results = {
+        "g1": _GroupFitData(
+            group_id="g1",
+            group_name="Series 1",
+            rows=rows,
+            global_params=None,
+            varying_params=["A"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+        "g2": _GroupFitData(
+            group_id="g2",
+            group_name="Series 2",
+            rows=list(rows),
+            global_params=None,
+            varying_params=["A"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        ),
+    }
+    panel._active_group_id = "g1"
+    panel._rebuild_group_buttons()
+    panel._set_selected_group_ids(["g1"], emit=False)
+    # Refresh styles AFTER setting the checked state.
+    panel._refresh_group_button_styles()
+    return panel
+
+
+def test_series_buttons_use_red_palette(qapp: QApplication) -> None:
+    """Active series button stylesheet must include the ACCENT_RED token."""
+    from asymmetry.gui.styles import tokens
+
+    panel = _panel_with_two_groups(qapp)
+    active_btn = panel._group_button_map["g1"]
+    assert tokens.ACCENT_RED in active_btn.styleSheet()
+
+
+def test_context_menu_rename_emits_signal(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QInputDialog
+
+    panel = _panel_with_two_groups(qapp)
+    emitted: list[tuple[str, str]] = []
+    panel.series_rename_requested.connect(lambda gid, lbl: emitted.append((gid, lbl)))
+
+    # Patch _exec_menu at instance level (class-level QMenu.exec patch bypassed by PySide6).
+    panel._exec_menu = lambda menu, pos: menu.actions()[0]  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        QInputDialog,
+        "getText",
+        lambda *_a, **_kw: ("My label", True),
+    )
+    panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
+
+    assert emitted == [("g1", "My label")]
+
+
+def test_context_menu_rename_cancel_emits_nothing(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QInputDialog
+
+    panel = _panel_with_two_groups(qapp)
+    emitted: list = []
+    panel.series_rename_requested.connect(lambda *a: emitted.append(a))
+
+    panel._exec_menu = lambda menu, pos: menu.actions()[0]  # type: ignore[method-assign]
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_a, **_kw: ("", False))
+
+    panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
+    assert emitted == []
+
+
+def test_context_menu_select_members_emits_signal(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    panel = _panel_with_two_groups(qapp)
+    emitted: list[str] = []
+    panel.series_select_members_requested.connect(lambda gid: emitted.append(gid))
+
+    panel._exec_menu = lambda menu, pos: menu.actions()[1]  # type: ignore[method-assign]
+    panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
+    assert emitted == ["g1"]
+
+
+def test_context_menu_delete_confirm_emits_signal(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    panel = _panel_with_two_groups(qapp)
+    emitted: list[str] = []
+    panel.series_delete_requested.connect(lambda gid: emitted.append(gid))
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Ok)
+    panel._exec_menu = lambda menu, pos: menu.actions()[3]  # type: ignore[method-assign]
+    panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
+    assert emitted == ["g1"]
+
+
+def test_context_menu_delete_cancel_emits_nothing(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    panel = _panel_with_two_groups(qapp)
+    emitted: list = []
+    panel.series_delete_requested.connect(lambda *a: emitted.append(a))
+
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Cancel
+    )
+    panel._exec_menu = lambda menu, pos: menu.actions()[3]  # type: ignore[method-assign]
+    panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
+    assert emitted == []
+
+
+def test_set_highlight_active_reemits_series_selection_changed(qapp: QApplication) -> None:
+    panel = _panel_with_two_groups(qapp)
+    emitted: list[str] = []
+    panel.series_selection_changed.connect(lambda gid: emitted.append(gid))
+
+    panel.set_highlight_active(True)
+    assert emitted == ["g1"]
+
+
+def test_set_highlight_active_false_emits_nothing(qapp: QApplication) -> None:
+    panel = _panel_with_two_groups(qapp)
+    emitted: list = []
+    panel.series_selection_changed.connect(lambda *a: emitted.append(a))
+
+    panel.set_highlight_active(False)
+    assert emitted == []
+
+
+def test_set_highlight_active_no_active_group_emits_nothing(qapp: QApplication) -> None:
+    panel = FitParametersPanel()
+    emitted: list = []
+    panel.series_selection_changed.connect(lambda *a: emitted.append(a))
+
+    panel.set_highlight_active(True)
+    assert emitted == []

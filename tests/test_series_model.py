@@ -5,6 +5,8 @@ from __future__ import annotations
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation import RepresentationType
+from asymmetry.core.representation.base import FitSlot
+from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.representation.series import FitSeries, canonical_model_matches
 
 
@@ -199,3 +201,128 @@ def test_round_trip_preserves_group_fields():
     assert restored.member_run_numbers == [-10001, -10002]
     assert restored.member_source_run == {-10001: 10, -10002: 10}
     assert restored.nuisance_params == ["N0", "background", "amplitude", "relative_phase"]
+
+
+# ── label / display_name ─────────────────────────────────────────────────────
+
+
+def test_label_defaults_to_none():
+    assert _batch().label is None
+
+
+def test_label_stored_and_trimmed():
+    assert _batch(label="  My Series  ").label == "My Series"
+
+
+def test_empty_label_normalised_to_none():
+    assert _batch(label="   ").label is None
+    assert _batch(label="").label is None
+
+
+def test_display_name_returns_label_when_set():
+    assert _batch(label="Field sweep").display_name("Series 1") == "Field sweep"
+
+
+def test_display_name_uses_fallback_when_no_label():
+    assert _batch().display_name("Series 3") == "Series 3"
+
+
+def test_label_round_trips_via_dict():
+    batch = _batch(label="My label")
+    restored = FitSeries.from_dict(batch.to_dict())
+    assert restored.label == "My label"
+
+
+def test_none_label_round_trips():
+    batch = _batch()
+    d = batch.to_dict()
+    assert d["label"] is None
+    restored = FitSeries.from_dict(d)
+    assert restored.label is None
+
+
+def test_from_dict_missing_label_is_none():
+    d = _batch().to_dict()
+    del d["label"]
+    restored = FitSeries.from_dict(d)
+    assert restored.label is None
+
+
+# ── ProjectModel.remove_batch / rename_batch ─────────────────────────────────
+
+
+def test_remove_batch_returns_series_and_unpops():
+    pm = ProjectModel()
+    s = _batch(batch_id="b1")
+    pm.add_batch(s)
+    removed = pm.remove_batch("b1")
+    assert removed is s
+    assert pm.batch("b1") is None
+
+
+def test_remove_batch_unknown_id_returns_none():
+    pm = ProjectModel()
+    assert pm.remove_batch("no-such-id") is None
+
+
+def test_remove_batch_sibling_survives():
+    pm = ProjectModel()
+    pm.add_batch(_batch(batch_id="b1"))
+    pm.add_batch(_batch(batch_id="b2"))
+    pm.remove_batch("b1")
+    assert pm.batch("b2") is not None
+
+
+def test_remove_batch_clears_fit_slot_batch_id():
+    pm = ProjectModel()
+    s = _batch(batch_id="b1", member_run_numbers=[10])
+    pm.add_batch(s)
+    rep = pm.ensure_dataset(10).ensure(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.fit = FitSlot(model={}, provenance="batch", batch_id="b1")
+    pm.remove_batch("b1")
+    assert rep.fit.batch_id is None
+    assert rep.fit.provenance == "single"
+
+
+def test_remove_batch_clears_group_series_source_run_slots():
+    pm = ProjectModel()
+    s = FitSeries(
+        "b1",
+        RepresentationType.TIME_GROUPS,
+        member_kind="groups",
+        member_run_numbers=[-10001],
+        member_source_run={-10001: 10},
+        canonical_model={},
+    )
+    pm.add_batch(s)
+    rep = pm.ensure_dataset(10).ensure(RepresentationType.TIME_GROUPS)
+    rep.fit = FitSlot(model={}, provenance="batch", batch_id="b1")
+    pm.remove_batch("b1")
+    assert rep.fit.batch_id is None
+    assert rep.fit.provenance == "single"
+
+
+def test_rename_batch_sets_label():
+    pm = ProjectModel()
+    pm.add_batch(_batch(batch_id="b1"))
+    assert pm.rename_batch("b1", "New label")
+    assert pm.batch("b1").label == "New label"
+
+
+def test_rename_batch_clears_label_with_none():
+    pm = ProjectModel()
+    pm.add_batch(_batch(batch_id="b1", label="Old"))
+    assert pm.rename_batch("b1", None)
+    assert pm.batch("b1").label is None
+
+
+def test_rename_batch_clears_label_with_empty_string():
+    pm = ProjectModel()
+    pm.add_batch(_batch(batch_id="b1", label="Old"))
+    assert pm.rename_batch("b1", "")
+    assert pm.batch("b1").label is None
+
+
+def test_rename_batch_unknown_id_returns_false():
+    pm = ProjectModel()
+    assert not pm.rename_batch("no-such-id", "X")
