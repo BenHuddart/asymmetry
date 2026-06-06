@@ -59,6 +59,45 @@ def _optional_float(value: object) -> float | None:
     return number if np.isfinite(number) else None
 
 
+def _float_or_default(value: object, default: float) -> float:
+    parsed = _optional_float(value)
+    return float(default) if parsed is None else parsed
+
+
+def _parse_group_ids(value: object) -> list[int] | None:
+    """Parse a serialised group-id list, skipping malformed entries."""
+    if not isinstance(value, list):
+        return None
+    parsed: list[int] = []
+    for entry in value:
+        try:
+            parsed.append(int(entry))
+        except (TypeError, ValueError):
+            continue
+    return parsed
+
+
+def _parse_phase_table(value: object) -> dict[int, float]:
+    """Parse a serialised {group_id: phase} table, skipping malformed entries.
+
+    Recipes cross the project-file boundary, so a corrupted or hand-edited
+    entry must degrade to "no seed for that group" rather than raising out of
+    whichever GUI slot happens to touch the recipe.
+    """
+    if not isinstance(value, dict):
+        return {}
+    parsed: dict[int, float] = {}
+    for key, raw in value.items():
+        phase = _optional_float(raw)
+        if phase is None:
+            continue
+        try:
+            parsed[int(key)] = phase
+        except (TypeError, ValueError):
+            continue
+    return parsed
+
+
 def _field_to_frequency_mhz(field_gauss: float) -> float:
     return float(field_gauss) * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
 
@@ -126,23 +165,25 @@ class MaxEntConfig:
             parsed_points = None
         return cls(
             n_spectrum_points=parsed_points,
-            default_level=max(_MIN_POSITIVE, float(data.get("default_level", 0.01))),
+            default_level=max(_MIN_POSITIVE, _float_or_default(data.get("default_level"), 0.01)),
             f_min_mhz=_optional_float(data.get("f_min_mhz")),
             f_max_mhz=_optional_float(data.get("f_max_mhz")),
             auto_window=bool(data.get("auto_window", True)),
-            window_half_width_gauss=max(0.0, float(data.get("window_half_width_gauss", 300.0))),
-            outer_cycles=max(1, int(data.get("outer_cycles", 10))),
-            inner_iterations=max(1, int(data.get("inner_iterations", 12))),
-            chi2_target_over_n=max(_MIN_POSITIVE, float(data.get("chi2_target_over_n", 1.0))),
+            window_half_width_gauss=max(
+                0.0, _float_or_default(data.get("window_half_width_gauss"), 300.0)
+            ),
+            outer_cycles=_parse_positive_int(data.get("outer_cycles", 10), 10),
+            inner_iterations=_parse_positive_int(data.get("inner_iterations", 12), 12),
+            chi2_target_over_n=max(
+                _MIN_POSITIVE, _float_or_default(data.get("chi2_target_over_n"), 1.0)
+            ),
             fit_phases=bool(data.get("fit_phases", True)),
             fit_amplitudes=bool(data.get("fit_amplitudes", True)),
             fit_backgrounds=bool(data.get("fit_backgrounds", True)),
             fit_constant_background=bool(data.get("fit_constant_background", True)),
             use_deadtime_correction=bool(data.get("use_deadtime_correction", True)),
-            selected_group_ids=[int(g) for g in selected] if isinstance(selected, list) else None,
-            group_phase_degrees=(
-                {int(k): float(v) for k, v in phases.items()} if isinstance(phases, dict) else {}
-            ),
+            selected_group_ids=_parse_group_ids(selected),
+            group_phase_degrees=_parse_phase_table(phases),
             t_min_us=_optional_float(data.get("t_min_us")),
             t_max_us=_optional_float(data.get("t_max_us")),
             time_binning_factor=_parse_positive_int(data.get("time_binning_factor", 1)),
@@ -464,17 +505,20 @@ def build_maxent_input(
         raise ValueError("MaxEnt requires raw detector histograms.")
 
     if prepared_histograms is None:
-        # ``use_deadtime_correction`` overrides the run's grouping metadata,
-        # mirroring ``build_group_signal_dataset``'s explicit ``use_deadtime``
-        # contract; passing prepared histograms there would otherwise make the
-        # config flag inert.  ``reference_t0_bin`` (when not supplied) is
-        # derived from these prepared histograms inside
-        # ``build_group_signal_dataset``.
+        # ``use_deadtime_correction`` means "honour the run's existing deadtime
+        # setting": correction applies only when the config flag AND the run's
+        # grouping flag agree.  This keeps MaxEnt input consistent with the FFT
+        # path (which follows the grouping flag alone) in the default state
+        # where loaders populate ``dead_time_us`` but leave the grouping flag
+        # off, while still letting the panel checkbox force correction off.
+        # ``reference_t0_bin`` (when not supplied) is derived from these
+        # prepared histograms inside ``build_group_signal_dataset``.
         grouping = run.grouping if isinstance(run.grouping, dict) else {}
         prepared_histograms, _applied = prepare_histograms_with_deadtime(
             list(run.histograms),
             grouping,
-            bool(resolved_config.use_deadtime_correction),
+            bool(resolved_config.use_deadtime_correction)
+            and bool(grouping.get("deadtime_correction", False)),
         )
 
     all_ids = sorted(group_names)
@@ -700,6 +744,12 @@ def _state_signature(maxent_input: MaxEntInput, config: MaxEntConfig) -> tuple[A
         None if config.t_min_us is None else round(float(config.t_min_us), 12),
         None if config.t_max_us is None else round(float(config.t_max_us), 12),
         int(config.time_binning_factor),
+        # Effective phase seeds: ``state.phases`` is seeded from these at
+        # initialisation and a resumed state never re-reads the config, so an
+        # edited seed must force a restart or it would be silently ignored
+        # (with ``fit_phases`` off, permanently; with it on, the ±4°/cycle
+        # refinement cannot follow a large seed change either).
+        tuple(round(float(group.phase_degrees), 9) for group in maxent_input.groups),
     )
 
 
@@ -775,12 +825,16 @@ def _residual_payload(
 def _residual_gradient_payload(
     state: MaxEntState,
     maxent_input: MaxEntInput,
+    *,
+    cancel_callback: MaxEntCancelCallback | None = None,
 ) -> tuple[NDArray[np.float64], float, int]:
     """Return the χ² gradient (TROPUS of the weighted residuals) plus χ².
 
     Fuses the forward projection and the adjoint into one chunked pass per
     group, so each cosine kernel chunk is built once per inner iteration
-    instead of twice (OPUS then TROPUS over identical chunks).
+    instead of twice (OPUS then TROPUS over identical chunks).  Cancellation
+    is checked per chunk: a full pass over a large workload can take tens of
+    seconds, and window-close waits on cooperative cancel with a timeout.
     """
     frequencies = maxent_input.frequencies_mhz
     f = np.asarray(state.spectrum, dtype=np.float64)
@@ -797,6 +851,7 @@ def _residual_gradient_payload(
         sigma = np.maximum(np.asarray(group.sigma, dtype=np.float64), _MIN_POSITIVE)
         chunk = _chunk_rows(time.size, frequencies.size)
         for start in range(0, time.size, chunk):
+            _check_cancel(cancel_callback)
             stop = min(start + chunk, time.size)
             rows = mask[start:stop]
             if not np.any(rows):
@@ -968,7 +1023,9 @@ def run_cycles(
             )
         for _inner in range(resolved_config.inner_iterations):
             _check_cancel(cancel_callback)
-            grad, chi2, n_obs = _residual_gradient_payload(active_state, maxent_input)
+            grad, chi2, n_obs = _residual_gradient_payload(
+                active_state, maxent_input, cancel_callback=cancel_callback
+            )
             entropy_grad = -np.log(
                 np.maximum(active_state.spectrum, _MIN_POSITIVE)
                 / max(float(resolved_config.default_level), _MIN_POSITIVE)

@@ -322,6 +322,13 @@ class MainWindow(QMainWindow):
         self._maxent_active_config: MaxEntConfig | None = None
         self._maxent_active_cycles: int = 0
         self._maxent_started_at: float | None = None
+        # Frequency representation the fit-panel datasets were last collected
+        # from, and its snapshot at global-fit launch.  The async completion
+        # handler resolves run datasets against the LAUNCH snapshot: the
+        # collection pin is refreshed by view/selection changes and would
+        # otherwise drift mid-fit.
+        self._last_frequency_fit_rep_type: RepresentationType | None = None
+        self._active_global_fit_rep_type: RepresentationType | None = None
         self._fourier_group_phase_state_by_run: dict[int, dict[str, object]] = {}
         self._global_parameter_fit_window: GlobalParameterFitWindow | None = None
         self._multi_group_fit_window: MultiGroupFitWindow | None = None
@@ -1004,6 +1011,8 @@ class MainWindow(QMainWindow):
                 self._on_plot_polarization_axis_changed
             )
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
+        if hasattr(self._fit_panel, "global_fit_started"):
+            self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
         if hasattr(self._fit_panel, "grouped_fit_completed"):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
@@ -3520,32 +3529,60 @@ class MainWindow(QMainWindow):
             return
         self._maxent_panel_state_by_run[run_number] = self._maxent_panel.get_state()
 
+    @staticmethod
+    def _derive_group_enabled_table(state: dict, group_names: dict[int, str]) -> dict[int, bool]:
+        """Derive per-group inclusion from a stored ``selected_group_ids`` list.
+
+        Groups the stored selection never knew about — absent from both the
+        selection and the phase table, e.g. after re-grouping the run or when
+        a recipe was copied from a run with different groups — default to
+        enabled, preserving the panel's unknown-groups-default-enabled
+        convention.  Groups that were known but unselected stay disabled.
+        """
+        selected = state.get("selected_group_ids")
+        if not isinstance(selected, list):
+            return {int(group_id): True for group_id in group_names}
+        selected_ids: set[int] = set()
+        for group_id in selected:
+            try:
+                selected_ids.add(int(group_id))
+            except (TypeError, ValueError):
+                continue
+        known = set(selected_ids)
+        phases = state.get("group_phase_degrees")
+        if isinstance(phases, dict):
+            for key in phases:
+                try:
+                    known.add(int(key))
+                except (TypeError, ValueError):
+                    continue
+        return {
+            int(group_id): (int(group_id) in selected_ids if int(group_id) in known else True)
+            for group_id in group_names
+        }
+
     def _maxent_state_from_config(self, config: dict, group_names: dict[int, str]) -> dict | None:
-        """Return a panel-state dict from a MaxEnt recipe block."""
+        """Return a panel-state dict from a MaxEnt recipe block.
+
+        The block is normalised through the typed ``MaxEntConfig`` boundary so
+        malformed entries in a loaded project degrade gracefully instead of
+        raising out of dataset selection.
+        """
         if not isinstance(config, dict):
             return None
-        state = dict(config)
-        phases = config.get("group_phase_degrees")
-        if isinstance(phases, dict):
-            state["group_phase_degrees"] = {int(k): float(v) for k, v in phases.items()}
-        selected = config.get("selected_group_ids")
-        if isinstance(selected, list):
-            selected_ids = {int(group_id) for group_id in selected}
-            state["group_enabled_table"] = {
-                int(group_id): int(group_id) in selected_ids for group_id in group_names
-            }
+        state = MaxEntConfig.from_dict(config).to_dict()
+        state["group_enabled_table"] = self._derive_group_enabled_table(state, group_names)
         return state
 
     def _normalise_maxent_panel_state(self, state: dict, group_names: dict[int, str]) -> dict:
         """Return a MaxEnt panel state compatible with the current run groups."""
         normalised = dict(state)
-        if "group_enabled_table" not in normalised:
-            selected = normalised.get("selected_group_ids")
-            if isinstance(selected, list):
-                selected_ids = {int(group_id) for group_id in selected}
-                normalised["group_enabled_table"] = {
-                    int(group_id): int(group_id) in selected_ids for group_id in group_names
-                }
+        if "group_enabled_table" not in normalised and isinstance(
+            normalised.get("selected_group_ids"), list
+        ):
+            normalised["group_enabled_table"] = self._derive_group_enabled_table(
+                normalised, group_names
+            )
         return normalised
 
     def _maxent_state_from_representation(
@@ -3557,7 +3594,9 @@ class MainWindow(QMainWindow):
         )
         if representation is None:
             return None
-        config = representation.recipe.get("maxent_config")
+        config = representation.maxent_config()
+        if not config:
+            return None
         return self._maxent_state_from_config(config, group_names)
 
     def _inherited_maxent_panel_state(self) -> dict:
@@ -4309,7 +4348,10 @@ class MainWindow(QMainWindow):
             "diagnostics": dict(diagnostics),
         }
         representation.cache_datasets([spectrum])
-        self._maxent_panel_state_by_run[int(run_number)] = dict(config_dict)
+        # No panel-state store write here: the recipe just recorded is served
+        # on demand by _sync_maxent_panel_for_dataset's fallback chain, and an
+        # unconditional write would clobber edits the user made (and stored
+        # via a dataset switch) while the worker was running.
 
     def _on_restart_maxent(self) -> None:
         """Drop resumable MaxEnt state for the active run."""
@@ -4445,20 +4487,18 @@ class MainWindow(QMainWindow):
             enabled = set(self._plot_workspace.enabled_views())
             enabled.add("maxent")
             self._plot_workspace.set_available_views(sorted(enabled))
-        already_maxent = self._plot_workspace.active_view() == "maxent"
-        self._plot_workspace.set_active_view("maxent")
-        if already_maxent:
-            # Plot the computed run only while it is still the browser
-            # selection; if the user moved on mid-compute, keep the plot in
-            # agreement with the selection instead of yanking it back.
-            current_run = (
-                None if self._current_dataset is None else int(self._current_dataset.run_number)
-            )
-            if current_run == int(run_number):
+        # Jump to the result only while the computed run is still the browser
+        # selection; if the user navigated elsewhere mid-compute, leave both
+        # their view and plot alone (the result stays cached for later).
+        current_run = (
+            None if self._current_dataset is None else int(self._current_dataset.run_number)
+        )
+        if current_run == int(run_number):
+            already_maxent = self._plot_workspace.active_view() == "maxent"
+            self._plot_workspace.set_active_view("maxent")
+            if already_maxent:
                 self._sync_frequency_plot_for_run(int(run_number), preserve_x_limits=True)
-            else:
-                self._sync_frequency_plot_for_current_dataset()
-        self._show_panel("fourier")
+            self._show_panel("fourier")
         message = (
             f"Computed MaxEnt spectrum for run {run_number} through cycle {result.state.cycle}."
         )
@@ -4552,10 +4592,10 @@ class MainWindow(QMainWindow):
             return
         source_run = int(self._current_dataset.run_number)
         source_rep = self._project_model.representation(source_run, RepresentationType.FREQ_MAXENT)
-        if source_rep is None or not source_rep.recipe.get("maxent_config"):
+        config_dict = source_rep.maxent_config() if source_rep is not None else {}
+        if not config_dict:
             self._set_fourier_status("Compute a MaxEnt spectrum first, then apply it.")
             return
-        config_dict = dict(source_rep.recipe["maxent_config"])
         applied = 0
         for dataset in self._data_browser.get_selected_datasets():
             if dataset.run is None or not self._dataset_supports_maxent(dataset):
@@ -4568,11 +4608,14 @@ class MainWindow(QMainWindow):
             )
             representation.recipe = {"maxent_config": dict(config_dict)}
             representation.invalidate()
+            # This discards any previous result outright, so the persisted
+            # diagnostics must go with it (invalidate deliberately keeps them).
+            representation.result_metadata = {}
             self._frequency_cache(RepresentationType.FREQ_MAXENT).pop(run_number, None)
-            group_names = self._fourier_group_names_for_dataset(dataset)
-            copied_state = self._maxent_state_from_config(config_dict, group_names)
-            if copied_state is not None:
-                self._maxent_panel_state_by_run[run_number] = copied_state
+            # Drop any stored panel draft so the new recipe (served by the
+            # sync fallback chain, with group inclusion re-derived for the
+            # target's own grouping) becomes the panel state on next visit.
+            self._maxent_panel_state_by_run.pop(run_number, None)
             applied += 1
         if applied == 0:
             self._set_fourier_status("Select additional grouped runs to apply MaxEnt settings to.")
@@ -5393,6 +5436,10 @@ class MainWindow(QMainWindow):
             f"Shared fit function to {updated} run(s) in group {group_name}"
         )
 
+    def _on_global_fit_started(self) -> None:
+        """Snapshot launch-time fit context before any UI refresh changes it."""
+        self._active_global_fit_rep_type = self._last_frequency_fit_rep_type
+
     def _on_global_fit_completed(self, results_dict, global_params) -> None:
         """Handle completed global fit.
 
@@ -5439,11 +5486,11 @@ class MainWindow(QMainWindow):
             t_fit, y_fit = fitted_curve
             axis_key = None
             dataset = (
-                # Resolve against the representation the fit was launched
-                # from, not the active view at result-arrival time.
-                self._frequency_cache(getattr(self, "_last_frequency_fit_rep_type", None)).get(
-                    run_number, [None]
-                )[0]
+                # Resolve against the representation snapshotted at fit
+                # launch, not the active view at result-arrival time (and not
+                # the collection pin, which view/selection refreshes rewrite
+                # mid-fit).
+                self._frequency_cache(self._active_global_fit_rep_type).get(run_number, [None])[0]
                 if is_frequency_fit
                 else self._data_browser.get_dataset(run_number)
             )
@@ -6572,7 +6619,13 @@ class MainWindow(QMainWindow):
         thread = getattr(self, "_maxent_thread", None)
         if thread is not None:
             thread.quit()
-            thread.wait(10_000)
+            if not thread.wait(10_000):
+                # The engine checks cancellation per kernel chunk, so this is
+                # unlikely — but if the worker is still inside numpy, unparent
+                # the thread so a timed-out wait degrades to a leaked thread
+                # instead of a qFatal abort when the window is destroyed.
+                thread.setParent(None)
+                thread.finished.connect(thread.deleteLater)
         if hasattr(self, "_plot_panel") and hasattr(self._plot_panel, "get_view_limits"):
             x_min, x_max, y_min, y_max = self._plot_panel.get_view_limits()
             self._settings.setValue("plot/time_x_min", float(x_min))

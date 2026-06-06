@@ -230,6 +230,17 @@ class MaxEntPanel(QWidget):
         except (TypeError, ValueError):
             return default
 
+    @staticmethod
+    def _coerce_int_keyed(table: dict | None, value_type) -> dict:
+        """Return {int: value_type} from *table*, skipping malformed entries."""
+        coerced: dict = {}
+        for key, value in (table or {}).items():
+            try:
+                coerced[int(key)] = value_type(value)
+            except (TypeError, ValueError):
+                continue
+        return coerced
+
     def _update_window_controls(self) -> None:
         auto = self._auto_window_check.isChecked()
         self._half_width_edit.setEnabled(auto)
@@ -242,9 +253,13 @@ class MaxEntPanel(QWidget):
         phase_table: dict[int, float] | None = None,
         enabled_table: dict[int, bool] | None = None,
     ) -> None:
-        """Populate the editable group table."""
-        phase_table = {int(k): float(v) for k, v in (phase_table or {}).items()}
-        enabled_table = {int(k): bool(v) for k, v in (enabled_table or {}).items()}
+        """Populate the editable group table.
+
+        Tables can originate from project files, so malformed entries are
+        skipped rather than raised.
+        """
+        phase_table = self._coerce_int_keyed(phase_table, float)
+        enabled_table = self._coerce_int_keyed(enabled_table, bool)
         group_ids = sorted(int(group_id) for group_id in group_names)
         self._table_group_ids = group_ids
         self._group_table.setRowCount(len(group_ids))
@@ -323,11 +338,15 @@ class MaxEntPanel(QWidget):
         """Restore panel controls from a saved dict."""
         if not isinstance(state, dict):
             return
-        points = state.get("n_spectrum_points", 4096)
-        try:
-            self._points_spin.setValue(max(8, int(points)))
-        except (TypeError, ValueError):
-            self._points_spin.setValue(4096)
+        # ``None``/absent means "auto" (engine derives the grid from the data);
+        # the spin box cannot represent that, so leave it unchanged rather
+        # than silently pinning a hard-coded value into the next recipe.
+        points = state.get("n_spectrum_points")
+        if points is not None:
+            try:
+                self._points_spin.setValue(max(8, int(points)))
+            except (TypeError, ValueError):
+                pass
         self._default_level_edit.setText(
             self._format_float(state.get("default_level", 0.01), "0.01")
         )

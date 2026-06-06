@@ -267,14 +267,30 @@ def test_maxent_use_deadtime_correction_flag_controls_preparation() -> None:
     on_input = build_maxent_input(run_with_deadtime, config_on)
     plain_input = build_maxent_input(run, config_off)
 
-    # Off must ignore the run's metadata flag and match the uncorrected run.
+    # Off must override the run's metadata flag and match the uncorrected run.
     for off_group, plain_group in zip(off_input.groups, plain_input.groups, strict=True):
         np.testing.assert_allclose(off_group.signal, plain_group.signal)
-    # On must change the prepared signals.
+    # On + grouping flag on must change the prepared signals.
     assert any(
         not np.allclose(on_group.signal, off_group.signal)
         for on_group, off_group in zip(on_input.groups, off_input.groups, strict=True)
     )
+
+    # "Use existing deadtime correction" honours the run-level setting: with
+    # deadtime data present but the grouping flag OFF (the loader default),
+    # config-on must NOT correct — keeping MaxEnt consistent with the FFT
+    # path, which follows the grouping flag.
+    grouping_flag_off = dict(grouping)
+    grouping_flag_off["deadtime_correction"] = False
+    run_flag_off = Run(
+        run_number=run.run_number,
+        histograms=run.histograms,
+        metadata=run.metadata,
+        grouping=grouping_flag_off,
+    )
+    flag_off_input = build_maxent_input(run_flag_off, config_on)
+    for flag_off_group, plain_group in zip(flag_off_input.groups, plain_input.groups, strict=True):
+        np.testing.assert_allclose(flag_off_group.signal, plain_group.signal)
 
 
 def test_maxent_state_rejects_time_range_and_binning_changes() -> None:
@@ -305,3 +321,99 @@ def test_maxent_state_rejects_time_range_and_binning_changes() -> None:
         changed_input = build_maxent_input(run, changed)
         with pytest.raises(ValueError, match="restart"):
             run_cycles(changed_input, changed, state=state, cycles=1)
+
+
+def test_maxent_state_rejects_phase_seed_changes() -> None:
+    """Edited phase seeds must force a restart: a resumed state keeps its own
+    phases and would otherwise silently ignore the new seeds."""
+    run = _synthetic_run()
+    config = MaxEntConfig(
+        n_spectrum_points=64,
+        f_min_mhz=0.2,
+        f_max_mhz=3.0,
+        auto_window=False,
+        fit_phases=False,
+    )
+    prepared = build_maxent_input(run, config)
+    state = initialize_state(prepared, config)
+
+    changed = MaxEntConfig(
+        n_spectrum_points=64,
+        f_min_mhz=0.2,
+        f_max_mhz=3.0,
+        auto_window=False,
+        fit_phases=False,
+        group_phase_degrees={1: 90.0},
+    )
+    changed_input = build_maxent_input(run, changed)
+    with pytest.raises(ValueError, match="restart"):
+        run_cycles(changed_input, changed, state=state, cycles=1)
+
+
+def test_fused_gradient_matches_opus_tropus_reference() -> None:
+    """The fused production gradient must satisfy the same adjoint identity the
+    opus/tropus pair does — protecting the path run_cycles actually executes."""
+    from asymmetry.core.maxent.engine import _MIN_POSITIVE, _residual_gradient_payload
+
+    run = _synthetic_run()
+    config = MaxEntConfig(n_spectrum_points=64, f_min_mhz=0.2, f_max_mhz=3.0, auto_window=False)
+    prepared = build_maxent_input(run, config)
+    state = initialize_state(prepared, config)
+    state.phases = {group.group_id: 3.0 * i for i, group in enumerate(prepared.groups)}
+    state.amplitudes = {group.group_id: 0.8 + 0.1 * i for i, group in enumerate(prepared.groups)}
+    state.backgrounds = {group.group_id: 0.01 * i for i, group in enumerate(prepared.groups)}
+
+    predictions = opus(
+        state.spectrum,
+        prepared,
+        phases=state.phases,
+        amplitudes=state.amplitudes,
+        backgrounds=state.backgrounds,
+    )
+    weighted: dict[int, np.ndarray] = {}
+    chi2_ref = 0.0
+    n_ref = 0
+    for group in prepared.groups:
+        mask = group.mask
+        assert mask is not None
+        sigma = np.maximum(np.asarray(group.sigma, dtype=float), _MIN_POSITIVE)
+        residual = np.zeros_like(np.asarray(group.signal, dtype=float))
+        residual[mask] = (
+            np.asarray(group.signal, dtype=float)[mask] - predictions[group.group_id][mask]
+        ) / sigma[mask]
+        chi2_ref += float(np.sum(residual[mask] ** 2))
+        n_ref += int(np.count_nonzero(mask))
+        weighted[group.group_id] = np.where(mask, residual / sigma, 0.0)
+    grad_ref = tropus(weighted, prepared, phases=state.phases, amplitudes=state.amplitudes)
+
+    grad, chi2, n_obs = _residual_gradient_payload(state, prepared)
+
+    np.testing.assert_allclose(grad, grad_ref, rtol=1e-10, atol=1e-12)
+    assert chi2 == pytest.approx(chi2_ref, rel=1e-12)
+    assert n_obs == n_ref
+
+
+def test_maxent_config_from_dict_tolerates_malformed_recipe_entries() -> None:
+    """Recipes cross the project-file boundary: malformed entries must degrade
+    instead of raising out of whichever GUI slot touches the recipe."""
+    config = MaxEntConfig.from_dict(
+        {
+            "n_spectrum_points": "not-a-number",
+            "default_level": "bad",
+            "window_half_width_gauss": None,
+            "outer_cycles": "bad",
+            "inner_iterations": None,
+            "chi2_target_over_n": "bad",
+            "selected_group_ids": [1, "abc", None, "2"],
+            "group_phase_degrees": {"1": 10.0, "abc": 5.0, 2: "bad", "3": "inf"},
+            "time_binning_factor": "bad",
+        }
+    )
+
+    assert config.n_spectrum_points is None
+    assert config.default_level == pytest.approx(0.01)
+    assert config.outer_cycles == 10
+    assert config.inner_iterations == 12
+    assert config.selected_group_ids == [1, 2]
+    assert config.group_phase_degrees == {1: 10.0}
+    assert config.time_binning_factor == 1

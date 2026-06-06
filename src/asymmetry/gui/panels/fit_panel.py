@@ -1760,6 +1760,7 @@ class GlobalFitTab(QWidget):
     """
 
     # Use object/object to avoid Qt container coercion (which can alter key types).
+    global_fit_started = Signal()  # emitted just before the worker launches
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
     grouped_preview_requested = Signal(object, object)  # (grouped_datasets, preview_curves)
@@ -3190,7 +3191,10 @@ class GlobalFitTab(QWidget):
         self._fit_worker.error.connect(self._fit_thread.quit)
         self._fit_thread.finished.connect(self._cleanup_thread)
 
-        # Start the thread
+        # Start the thread. The started signal lets listeners snapshot
+        # launch-time context (e.g. which frequency representation the
+        # datasets came from) before any UI refresh can change it.
+        self.global_fit_started.emit()
         self._fit_thread.start()
 
     def _run_grouped_time_domain_fit(self) -> None:
@@ -4799,6 +4803,7 @@ class FitPanel(QWidget):
         object, object, object
     )  # (preview_result, fitted_curve, component_curves)
     # Keep payload generic to preserve Python dict key/value types end-to-end.
+    global_fit_started = Signal()  # forwarded from GlobalFitTab at worker launch
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
     share_function_with_group_requested = Signal(int)
@@ -4837,6 +4842,7 @@ class FitPanel(QWidget):
 
         # Batch fit tab (a global fit is the special case with shared parameters)
         self._global_tab = GlobalFitTab(member_kind="runs")
+        self._global_tab.global_fit_started.connect(self.global_fit_started.emit)
         self._global_tab.global_fit_completed.connect(self.global_fit_completed.emit)
         self._global_tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
         self._global_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
