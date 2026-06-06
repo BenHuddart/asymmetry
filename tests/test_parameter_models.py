@@ -20,6 +20,7 @@ from asymmetry.core.fitting.parameter_models import (
     _lcr_gaussian,
     _linear,
     _lorentzian,
+    _order_parameter,
     _power_law,
     _redfield,
     component_names_for_x,
@@ -45,6 +46,8 @@ def test_component_names_filtered_by_x_key() -> None:
 
     assert "Arrhenius" in temp_names
     assert "CriticalDivergence" in temp_names
+    assert "OrderParameter" in temp_names
+    assert "OrderParameter" not in field_names
     assert "Redfield" not in temp_names
 
     assert "Constant" in run_names
@@ -63,6 +66,7 @@ def test_component_names_common_excludes_scoped() -> None:
     assert "Arrhenius" not in names
     assert "Redfield" not in names
     assert "CriticalDivergence" not in names
+    assert "OrderParameter" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +163,65 @@ def test_critical_divergence_peaks_near_tc() -> None:
 def test_critical_divergence_far_from_tc() -> None:
     result = _critical_divergence(np.array([0.0]), a=1.0, Tc=10.0, nu=1.0, c=0.0)
     np.testing.assert_allclose(result, [1.0 / 10.0], rtol=1e-6)
+
+
+def test_order_parameter_saturates_to_y0_at_zero_temperature() -> None:
+    result = _order_parameter(np.array([0.0]), y0=29.9, Tc=69.0, beta=0.36, alpha=1.0)
+    np.testing.assert_allclose(result, [29.9], rtol=1e-12)
+
+
+def test_order_parameter_is_zero_at_and_above_tc() -> None:
+    result = _order_parameter(np.array([69.0, 80.0, 150.0]), y0=29.9, Tc=69.0, beta=0.36, alpha=1.0)
+    np.testing.assert_allclose(result, [0.0, 0.0, 0.0], atol=1e-12)
+
+
+def test_order_parameter_alpha_one_is_simple_power_law() -> None:
+    # With alpha=1, y(T) = y0 * (1 - T/Tc)^beta.
+    temperature = np.array([10.0, 30.0, 50.0])
+    tc, y0, beta = 100.0, 2.0, 0.5
+    result = _order_parameter(temperature, y0=y0, Tc=tc, beta=beta, alpha=1.0)
+    expected = y0 * np.power(1.0 - temperature / tc, beta)
+    np.testing.assert_allclose(result, expected, rtol=1e-12)
+
+
+def test_order_parameter_is_monotonically_decreasing_below_tc() -> None:
+    temperature = np.linspace(0.0, 68.0, 50)
+    result = _order_parameter(temperature, y0=29.9, Tc=69.0, beta=0.36, alpha=1.5)
+    assert np.all(np.diff(result) <= 1e-12)
+
+
+def test_order_parameter_safe_with_zero_tc() -> None:
+    result = _order_parameter(np.array([0.0, 1.0, 10.0]), y0=1.0, Tc=0.0, beta=0.36, alpha=1.0)
+    assert np.all(np.isfinite(result))
+
+
+def test_order_parameter_clamps_negative_temperature() -> None:
+    # T < 0 is unphysical but must stay finite and not exceed y0.
+    result = _order_parameter(np.array([-5.0]), y0=3.0, Tc=10.0, beta=0.36, alpha=1.0)
+    assert np.all(np.isfinite(result))
+    np.testing.assert_allclose(result, [3.0], rtol=1e-12)
+
+
+def test_order_parameter_clips_negative_exponents_not_mirrors() -> None:
+    # Exponents are clipped to 0, not mirrored via abs(): a negative beta must
+    # collapse onto beta=0 (a flat y0 below Tc), NOT reproduce the +|beta| curve.
+    temperature = np.linspace(0.0, 60.0, 20)
+    neg_beta = _order_parameter(temperature, y0=29.9, Tc=69.0, beta=-0.36, alpha=1.0)
+    zero_beta = _order_parameter(temperature, y0=29.9, Tc=69.0, beta=0.0, alpha=1.0)
+    pos_beta = _order_parameter(temperature, y0=29.9, Tc=69.0, beta=0.36, alpha=1.0)
+    np.testing.assert_allclose(neg_beta, zero_beta, rtol=1e-12)
+    assert not np.allclose(neg_beta, pos_beta)
+
+    # Same for the shape exponent alpha.
+    neg_alpha = _order_parameter(temperature, y0=29.9, Tc=69.0, beta=0.36, alpha=-1.0)
+    zero_alpha = _order_parameter(temperature, y0=29.9, Tc=69.0, beta=0.36, alpha=0.0)
+    np.testing.assert_allclose(neg_alpha, zero_alpha, rtol=1e-12)
+
+
+def test_order_parameter_negative_tc_is_zero_below_t0() -> None:
+    # A negative Tc (unphysical) must not mirror to a positive ordering curve.
+    result = _order_parameter(np.array([5.0, 20.0, 50.0]), y0=10.0, Tc=-69.0, beta=0.36, alpha=1.0)
+    np.testing.assert_allclose(result, [0.0, 0.0, 0.0], atol=1e-12)
 
 
 def test_redfield_peak_at_zero() -> None:
@@ -888,3 +951,65 @@ def test_evaluate_num_points_respected() -> None:
     for n in [10, 100, 300]:
         curves = evaluate_parameter_model_fit(fit, num_points=n)
         assert curves[0].x.size == n
+
+
+# ---------------------------------------------------------------------------
+# OrderParameter integration: composite model, fitting, documentation
+# ---------------------------------------------------------------------------
+
+
+def test_order_parameter_composite_formula_and_params() -> None:
+    model = ParameterCompositeModel(["OrderParameter"], operators=[])
+    assert model.param_names == ["y0", "Tc", "beta", "alpha"]
+    assert model.formula_string() == "y0*(1 - (T/Tc)^alpha)^beta"
+
+
+def test_order_parameter_params_render_proper_symbols() -> None:
+    # y0 and alpha must resolve to rich symbols via the global registry so the
+    # global/cross-group fit windows (which label via get_param_info) match the
+    # single-series Info dialog instead of showing the raw "y0"/"alpha" strings.
+    from asymmetry.core.fitting.parameters import get_param_info
+
+    assert get_param_info("alpha").unicode == "α"
+    assert get_param_info("alpha").latex == r"$\alpha$"
+    assert get_param_info("y0").unicode == "y₀"
+    assert get_param_info("y0").latex == r"$y_0$"
+
+    model = ParameterCompositeModel(["OrderParameter"], operators=[])
+    assert model.param_info["alpha"].unicode == "α"
+    assert model.param_info["y0"].unicode == "y₀"
+
+
+def test_order_parameter_fit_recovers_known_parameters() -> None:
+    # Synthesize a clean nu(T) order-parameter curve and recover y0, Tc, beta.
+    true_y0, true_tc, true_beta, true_alpha = 29.9, 69.0, 0.36, 1.0
+    temperature = np.linspace(1.5, 66.0, 25)
+    values = _order_parameter(temperature, y0=true_y0, Tc=true_tc, beta=true_beta, alpha=true_alpha)
+    errors = np.full_like(values, 0.05)
+
+    model = ParameterCompositeModel(["OrderParameter"], operators=[])
+    params = ParameterSet(
+        [
+            Parameter("y0", value=25.0, min=0.0),
+            Parameter("Tc", value=72.0, min=0.0),
+            Parameter("beta", value=0.5, min=0.0),
+            # Fix the shape exponent to the near-Tc power law for identifiability.
+            Parameter("alpha", value=1.0, min=0.0, fixed=True),
+        ]
+    )
+
+    result = fit_parameter_model(temperature, values, errors, model, params)
+    assert result.success
+    recovered = {p.name: p.value for p in result.parameters}
+    np.testing.assert_allclose(recovered["y0"], true_y0, rtol=1e-2)
+    np.testing.assert_allclose(recovered["Tc"], true_tc, rtol=1e-2)
+    np.testing.assert_allclose(recovered["beta"], true_beta, rtol=5e-2)
+
+
+def test_order_parameter_applicability_text_describes_use() -> None:
+    from asymmetry.core.fitting.component_docs import get_component_applicability
+
+    text = get_component_applicability("OrderParameter")
+    assert "order parameter" in text.lower()
+    assert "Tc" in text
+    assert "beta" in text.lower()

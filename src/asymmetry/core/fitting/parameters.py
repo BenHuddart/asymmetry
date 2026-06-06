@@ -96,6 +96,16 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "sigma": ParamInfo("sigma", "sigma", "σ", r"$\sigma$", r"\sigma", "μs⁻¹", default_min=0.0),
     "Delta": ParamInfo("Delta", "Delta", "Δ", r"$\Delta$", r"\Delta", "μs⁻¹", default_min=0.0),
     "beta": ParamInfo("beta", "beta", "β", r"$\beta$", r"\beta", default_min=0.0),
+    "alpha": ParamInfo("alpha", "alpha", "α", r"$\alpha$", r"\alpha", default_min=0.0),
+    "y0": ParamInfo(
+        "y0",
+        "y0",
+        "y₀",
+        r"$y_0$",
+        r"{\it y}_{0}",
+        default_min=0.0,
+        description="Saturated (T=0) value of an order-parameter trend.",
+    ),
     "phase": ParamInfo("phase", "phase", "φ", r"$\phi$", r"\phi", "rad"),
     "frequency": ParamInfo(
         "frequency", "frequency", "f", r"$f$", r"{\it f}", "MHz", default_min=0.0
