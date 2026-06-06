@@ -87,6 +87,33 @@ def _critical_divergence(
     return a * np.power(dist, -nu) + c
 
 
+def _order_parameter(
+    x: NDArray, y0: float, Tc: float, beta: float, alpha: float = 1.0
+) -> NDArray[np.float64]:
+    """Magnetic order-parameter temperature dependence.
+
+    ``y(T) = y0 * [1 - (T/Tc)^alpha]^beta`` for ``0 <= T < Tc``, and ``0`` for
+    ``T >= Tc``. The order parameter rises continuously from zero at ``Tc`` to
+    ``y0`` at ``T = 0``.
+
+    The amplitude ``y0`` carries the unit of whatever observable is being
+    trended (e.g. MHz for a precession frequency, G or T for an internal field,
+    % for an asymmetry). ``beta`` is the critical exponent governing the
+    near-``Tc`` behaviour; ``alpha`` is a shape exponent describing how the
+    curve departs from the pure power law away from ``Tc``. Fixing ``alpha = 1``
+    recovers the simple form ``y0 (1 - T/Tc)^beta``.
+    """
+    tt = np.asarray(x, dtype=float)
+    Tc_safe = max(abs(float(Tc)), 1e-12)
+    reduced = np.clip(tt / Tc_safe, 0.0, None)
+    base = np.clip(1.0 - np.power(reduced, abs(float(alpha))), 0.0, None)
+    return np.where(
+        base > 0.0,
+        float(y0) * np.power(base, abs(float(beta))),
+        0.0,
+    ).astype(float)
+
+
 def _redfield(
     x: NDArray,
     D: float,
@@ -276,6 +303,22 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         },
         formula_template="{a}*|x-{Tc}|^(-{nu}) + {c}",
         latex_equation=r"y(T) = a \lvert T - T_c \rvert^{-\nu} + c",
+        scopes=("temperature",),
+    ),
+    "OrderParameter": ParameterModelComponentDefinition(
+        name="OrderParameter",
+        description="y0*(1 - (T/Tc)^alpha)^beta (0 above Tc)",
+        function=_order_parameter,
+        param_names=["y0", "Tc", "beta", "alpha"],
+        param_defaults={"y0": 1.0, "Tc": 10.0, "beta": 0.36, "alpha": 1.0},
+        param_info={
+            "y0": ParamInfo("y0", "y0", "y₀", r"$y_0$", r"{\it y}_{0}", default_min=0.0),
+            "Tc": get_param_info("Tc"),
+            "beta": get_param_info("beta"),
+            "alpha": ParamInfo("alpha", "alpha", "α", r"$\alpha$", r"\alpha", default_min=0.0),
+        },
+        formula_template="{y0}*(1 - (T/{Tc})^{alpha})^{beta}",
+        latex_equation=r"y(T) = y_0 \left[1 - (T/T_c)^{\alpha}\right]^{\beta}",
         scopes=("temperature",),
     ),
     "Redfield": ParameterModelComponentDefinition(

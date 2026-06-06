@@ -48,9 +48,13 @@ When a series button is selected, the **Data Browser** highlights (in amber) the
 runs that belong to that series, making it easy to trace which runs contributed
 to the current trend.
 
-Typical use cases include locating :math:`T_c` and a critical exponent by
-fitting :math:`\nu(T)` from a ZF series with a ``CriticalDivergence`` form
-(:doc:`workflows/temperature_scan_magnetism`); inverting the TF
+Typical use cases include extracting the ordering temperature :math:`T_c` and
+the critical exponent :math:`\beta` of a magnetic order parameter by fitting a
+spontaneous precession frequency :math:`\nu(T)` (or internal field) from a ZF
+series with an ``OrderParameter`` form (see `Magnetic Order Parameter`_ below
+and :doc:`workflows/temperature_scan_magnetism`); locating a critical
+temperature where a relaxation rate *diverges* with a ``CriticalDivergence``
+form; inverting the TF
 second-moment :math:`\sigma(T)` into a London penetration depth using one
 of the ``SC_*`` gap models (:doc:`workflows/superconductor_penetration_depth`
 and :doc:`sc_penetration_depth`); fitting an Arrhenius form to
@@ -163,6 +167,61 @@ For jointly fitting multiple groups with shared and local parameters, use
        fixed_params={"D_perp": 0.0},
    )
    print(result.success)
+
+Magnetic Order Parameter
+------------------------
+
+For a second-order magnetic transition, the spontaneous muon precession
+frequency, the internal field, or an ordered-moment-like asymmetry follows an
+order-parameter temperature dependence that rises continuously from zero at the
+ordering temperature :math:`T_c` to a saturated value :math:`y_0` at
+:math:`T = 0`. The ``OrderParameter`` basis model captures this with a
+generalized two-exponent form:
+
+.. math::
+
+   y(T) = y_0 \left[1 - \left(\frac{T}{T_c}\right)^{\alpha}\right]^{\beta}
+   \quad (0 \le T < T_c), \qquad y(T) = 0 \quad (T \ge T_c).
+
+Here :math:`y_0` carries the unit of the trended observable (MHz for
+:math:`\nu(T)`, G or T for an internal field, % for an asymmetry), :math:`\beta`
+is the critical exponent that dominates the near-:math:`T_c` shape (typically
+0.33–0.37 for 3D Heisenberg/Ising magnets, 0.5 for mean field), and the shape
+exponent :math:`\alpha` controls the departure from a pure power law away from
+:math:`T_c`. Fixing :math:`\alpha = 1` recovers the simple near-:math:`T_c`
+power law :math:`y_0 (1 - T/T_c)^{\beta}`. The model is exactly zero above
+:math:`T_c`, so include the ordered-phase points and let :math:`T_c` fall inside
+the fitted range. Use ``CriticalDivergence`` instead for quantities that
+*diverge* at :math:`T_c` (such as a relaxation rate), not for an order
+parameter that vanishes there.
+
+.. code-block:: python
+
+   import numpy as np
+   from asymmetry.core.fitting import (
+       Parameter,
+       ParameterSet,
+       ParameterCompositeModel,
+       fit_parameter_model,
+   )
+
+   # Spontaneous precession frequency nu(T) through Tc.
+   temperature = np.array([1.5, 20.0, 40.0, 55.0, 62.0, 66.0, 68.0])
+   nu = np.array([29.9, 29.1, 26.0, 20.6, 15.4, 9.6, 5.7])
+   errors = np.full_like(nu, 0.3)
+
+   model = ParameterCompositeModel(["OrderParameter"], operators=[])
+   params = ParameterSet([
+       Parameter("y0", value=30.0, min=0.0),
+       Parameter("Tc", value=69.0, min=0.0),
+       Parameter("beta", value=0.36, min=0.0),
+       Parameter("alpha", value=1.0, min=0.0),  # fix to fit the near-Tc power law
+   ])
+
+   result = fit_parameter_model(temperature, nu, errors, model, params)
+   print(result.success, result.reduced_chi_squared)
+   for p in result.parameters:
+       print(p.name, p.value, result.uncertainties.get(p.name))
 
 Composite Parameters in the Fit Parameters Panel
 ------------------------------------------------
