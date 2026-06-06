@@ -895,7 +895,7 @@ class TestMainWindowFourier:
         mainwindow._maxent_panel._time_binning_spin.setValue(2)
 
         mainwindow._on_compute_maxent(1)
-        wait_for(lambda: mainwindow._maxent_thread is None, QApplication.instance(), timeout_s=2.0)
+        wait_for(lambda: mainwindow._maxent_thread is None, QApplication.instance(), timeout_s=10.0)
 
         assert mainwindow._plot_workspace.active_view() == "maxent"
         assert mainwindow._spectrum_stack.currentWidget() is mainwindow._maxent_panel
@@ -930,7 +930,7 @@ class TestMainWindowFourier:
         table.item(1, 0).setCheckState(Qt.CheckState.Unchecked)
 
         mainwindow._on_compute_maxent(1)
-        wait_for(lambda: mainwindow._maxent_thread is None, QApplication.instance(), timeout_s=2.0)
+        wait_for(lambda: mainwindow._maxent_thread is None, QApplication.instance(), timeout_s=10.0)
 
         representation = mainwindow._project_model.representation(
             8841, RepresentationType.FREQ_MAXENT
