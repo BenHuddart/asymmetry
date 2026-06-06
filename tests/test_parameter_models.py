@@ -202,6 +202,28 @@ def test_order_parameter_clamps_negative_temperature() -> None:
     np.testing.assert_allclose(result, [3.0], rtol=1e-12)
 
 
+def test_order_parameter_clips_negative_exponents_not_mirrors() -> None:
+    # Exponents are clipped to 0, not mirrored via abs(): a negative beta must
+    # collapse onto beta=0 (a flat y0 below Tc), NOT reproduce the +|beta| curve.
+    temperature = np.linspace(0.0, 60.0, 20)
+    neg_beta = _order_parameter(temperature, y0=29.9, Tc=69.0, beta=-0.36, alpha=1.0)
+    zero_beta = _order_parameter(temperature, y0=29.9, Tc=69.0, beta=0.0, alpha=1.0)
+    pos_beta = _order_parameter(temperature, y0=29.9, Tc=69.0, beta=0.36, alpha=1.0)
+    np.testing.assert_allclose(neg_beta, zero_beta, rtol=1e-12)
+    assert not np.allclose(neg_beta, pos_beta)
+
+    # Same for the shape exponent alpha.
+    neg_alpha = _order_parameter(temperature, y0=29.9, Tc=69.0, beta=0.36, alpha=-1.0)
+    zero_alpha = _order_parameter(temperature, y0=29.9, Tc=69.0, beta=0.36, alpha=0.0)
+    np.testing.assert_allclose(neg_alpha, zero_alpha, rtol=1e-12)
+
+
+def test_order_parameter_negative_tc_is_zero_below_t0() -> None:
+    # A negative Tc (unphysical) must not mirror to a positive ordering curve.
+    result = _order_parameter(np.array([5.0, 20.0, 50.0]), y0=10.0, Tc=-69.0, beta=0.36, alpha=1.0)
+    np.testing.assert_allclose(result, [0.0, 0.0, 0.0], atol=1e-12)
+
+
 def test_redfield_peak_at_zero() -> None:
     x = np.array([0.0, 50.0, 100.0, 200.0])
     result = _redfield(x, D=20.0, nu=10.0, m=2.0)
@@ -940,6 +962,22 @@ def test_order_parameter_composite_formula_and_params() -> None:
     model = ParameterCompositeModel(["OrderParameter"], operators=[])
     assert model.param_names == ["y0", "Tc", "beta", "alpha"]
     assert model.formula_string() == "y0*(1 - (T/Tc)^alpha)^beta"
+
+
+def test_order_parameter_params_render_proper_symbols() -> None:
+    # y0 and alpha must resolve to rich symbols via the global registry so the
+    # global/cross-group fit windows (which label via get_param_info) match the
+    # single-series Info dialog instead of showing the raw "y0"/"alpha" strings.
+    from asymmetry.core.fitting.parameters import get_param_info
+
+    assert get_param_info("alpha").unicode == "α"
+    assert get_param_info("alpha").latex == r"$\alpha$"
+    assert get_param_info("y0").unicode == "y₀"
+    assert get_param_info("y0").latex == r"$y_0$"
+
+    model = ParameterCompositeModel(["OrderParameter"], operators=[])
+    assert model.param_info["alpha"].unicode == "α"
+    assert model.param_info["y0"].unicode == "y₀"
 
 
 def test_order_parameter_fit_recovers_known_parameters() -> None:

@@ -104,14 +104,21 @@ def _order_parameter(
     recovers the simple form ``y0 (1 - T/Tc)^beta``.
     """
     tt = np.asarray(x, dtype=float)
-    Tc_safe = max(abs(float(Tc)), 1e-12)
+    # Clip the exponents and Tc to their physical (non-negative) domain rather
+    # than mirroring with abs(): the model is otherwise even in alpha/beta/Tc,
+    # so an unbounded fit could converge to a negative value that is numerically
+    # degenerate with its positive counterpart. Clipping collapses any negative
+    # excursion onto the boundary instead of reporting a meaningless sign.
+    alpha_safe = max(float(alpha), 0.0)
+    beta_safe = max(float(beta), 0.0)
+    Tc_safe = max(float(Tc), 1e-12)
     reduced = np.clip(tt / Tc_safe, 0.0, None)
-    base = np.clip(1.0 - np.power(reduced, abs(float(alpha))), 0.0, None)
+    base = np.clip(1.0 - np.power(reduced, alpha_safe), 0.0, None)
     return np.where(
         base > 0.0,
-        float(y0) * np.power(base, abs(float(beta))),
+        float(y0) * np.power(base, beta_safe),
         0.0,
-    ).astype(float)
+    )
 
 
 def _redfield(
@@ -312,10 +319,10 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_names=["y0", "Tc", "beta", "alpha"],
         param_defaults={"y0": 1.0, "Tc": 10.0, "beta": 0.36, "alpha": 1.0},
         param_info={
-            "y0": ParamInfo("y0", "y0", "y₀", r"$y_0$", r"{\it y}_{0}", default_min=0.0),
+            "y0": get_param_info("y0"),
             "Tc": get_param_info("Tc"),
             "beta": get_param_info("beta"),
-            "alpha": ParamInfo("alpha", "alpha", "α", r"$\alpha$", r"\alpha", default_min=0.0),
+            "alpha": get_param_info("alpha"),
         },
         formula_template="{y0}*(1 - (T/{Tc})^{alpha})^{beta}",
         latex_equation=r"y(T) = y_0 \left[1 - (T/T_c)^{\alpha}\right]^{\beta}",
