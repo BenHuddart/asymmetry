@@ -98,14 +98,37 @@ def test_recompute_all_populates_primary_and_survives_bad_recipe():
     container = model.ensure_dataset(7)
     fb = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
     container.by_type[RepresentationType.TIME_FB_ASYMMETRY] = fb
-    # MaxEnt raises in compute() — recompute_all must not abort.
-    maxent = make_representation(RepresentationType.FREQ_MAXENT)
+    # MaxEnt opts out of load-time recomputation: it is an expensive iterative
+    # reconstruction that must not run synchronously during project load.
+    maxent = make_representation(
+        RepresentationType.FREQ_MAXENT,
+        recipe={"maxent_config": {"selected_group_ids": [999]}},
+    )
     container.by_type[RepresentationType.FREQ_MAXENT] = maxent
 
     assert fb.primary is None
+    assert maxent.recompute_on_load is False
     model.recompute_all({7: _run(7)})
     assert fb.primary is not None
-    assert maxent.primary is None  # bad recipe left uncomputed, no exception
+    assert maxent.primary is None  # deferred: recomputed on demand, not at load
+
+
+def test_recompute_all_preserves_persisted_result_metadata():
+    """Neither a skipped nor a failed recompute may destroy loaded metadata."""
+    model = ProjectModel()
+    container = model.ensure_dataset(7)
+    maxent = make_representation(
+        RepresentationType.FREQ_MAXENT,
+        recipe={"maxent_config": {"n_spectrum_points": 64}},
+        result_metadata={"cycles": 25, "diagnostics": {"chi2": [1.0]}},
+    )
+    container.by_type[RepresentationType.FREQ_MAXENT] = maxent
+
+    model.recompute_all({7: _run(7)})
+    assert maxent.result_metadata["cycles"] == 25
+
+    maxent.invalidate()  # recipe-change invalidation keeps persisted metadata
+    assert maxent.result_metadata["cycles"] == 25
 
 
 def _batched_model(pm: ProjectModel, model: dict) -> FitSeries:

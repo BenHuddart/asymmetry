@@ -94,9 +94,14 @@ unified 10-category taxonomy.
   modes.  
   Flagship: `src/classes/PMusrCanvas.cpp`.
 
-- **MaxEnt** — Limited; musrfit ships a Cython-style entropy
-  computation in some utility paths but does not expose a full-feature
-  MaxEnt UI comparable to WiMDA or Mantid.
+- **MaxEnt** — **Absent.** musrfit has no maximum-entropy spectral
+  estimation of any kind; its own roadmap lists "add an interface to
+  maxent" (an external program) as a missing feature
+  (`doc/musrfit.dox:68`). The only entropy code in the tree is
+  `PFTPhaseCorrection` (`src/include/PFourier.h:84`, C++/Minuit2) — an
+  automatic *phase correction* of an already-computed FFT spectrum
+  (`phase_opt_real`), not a MaxEnt spectral estimator. See
+  `docs/porting/maxent/comparison.md` for the verification pass.
 
 ## 6. Parameter trending
 
@@ -184,4 +189,4 @@ unified 10-category taxonomy.
   `musredit`, `musrfit` itself, `musrWiz`, `musrStep`, `mupp`. Less
   cohesive than the Asymmetry single-window experience.
 - **Logbook**: no integrated multi-run manager.
-- **MaxEnt**: limited compared to WiMDA / Mantid.
+- **MaxEnt**: absent (roadmap aspiration only; see section 5).

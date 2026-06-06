@@ -120,15 +120,22 @@ class Representation(ABC):
     #: Set by each concrete subclass.
     rep_type: ClassVar[RepresentationType]
 
+    #: Whether :meth:`ProjectModel.recompute_all` should rebuild this
+    #: representation when a project loads.  Expensive iterative
+    #: representations (MaxEnt) opt out and are recomputed on demand instead.
+    recompute_on_load: ClassVar[bool] = True
+
     def __init__(
         self,
         recipe: dict | None = None,
         fit: FitSlot | None = None,
         trend_state: dict | None = None,
+        result_metadata: dict | None = None,
     ) -> None:
         self.recipe: dict[str, Any] = dict(recipe or {})
         self.fit: FitSlot = fit if isinstance(fit, FitSlot) else FitSlot()
         self.trend_state: dict[str, Any] = dict(trend_state or {})
+        self.result_metadata: dict[str, Any] = dict(result_metadata or {})
         self._datasets: list[MuonDataset] | None = None
 
     # ── identity ───────────────────────────────────────────────────────────
@@ -157,7 +164,13 @@ class Representation(ABC):
         return self._datasets
 
     def invalidate(self) -> None:
-        """Drop the transient computed arrays (e.g. after a recipe change)."""
+        """Drop the transient computed arrays (e.g. after a recipe change).
+
+        ``result_metadata`` is deliberately left intact: it is persisted state
+        (saved diagnostics survive a failed recompute) and every successful
+        :meth:`compute` path overwrites it.  Callers that discard a result
+        outright (e.g. MaxEnt restart) clear it explicitly.
+        """
         self._datasets = None
 
     def cache_datasets(self, datasets: list[MuonDataset]) -> None:
@@ -186,6 +199,7 @@ class Representation(ABC):
             "recipe": dict(self.recipe),
             "fit": self.fit.to_dict(),
             "trend_state": dict(self.trend_state),
+            "result_metadata": dict(self.result_metadata),
         }
 
     def __repr__(self) -> str:

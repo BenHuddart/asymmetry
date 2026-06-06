@@ -11,7 +11,7 @@ import pytest
 pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
-from PySide6.QtCore import QSettings  # type: ignore
+from PySide6.QtCore import QSettings, Qt  # type: ignore
 from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QWidget  # type: ignore
 
 import asymmetry.core.fourier.spectrum as spectrum_module
@@ -27,6 +27,7 @@ from asymmetry.core.project import load_project, save_project
 from asymmetry.core.representation import RepresentationType
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.styles import tokens
+from tests._qt_helpers import wait_for
 
 
 @pytest.fixture(scope="module")
@@ -570,6 +571,244 @@ class TestMainWindowFourier:
             == tokens.ACCENT
         )
 
+    def test_maxent_panel_settings_persist_per_dataset_while_browsing(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset_a = _make_fourier_ready_dataset(8850, with_grouping=True)
+        dataset_b = _make_fourier_ready_dataset(8851, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset_a)
+        mainwindow._data_browser.add_dataset(dataset_b)
+
+        mainwindow._on_dataset_selected(8850)
+        mainwindow._maxent_panel._points_spin.setValue(128)
+        mainwindow._maxent_panel._t_min_edit.setText("0.25")
+        mainwindow._maxent_panel._t_max_edit.setText("4.5")
+        mainwindow._maxent_panel._time_binning_spin.setValue(4)
+        table_a = mainwindow._maxent_panel._group_table
+        table_a.item(0, 2).setText("21.0")
+        table_a.item(1, 0).setCheckState(Qt.CheckState.Unchecked)
+
+        mainwindow._on_dataset_selected(8851)
+        assert mainwindow._maxent_panel._points_spin.value() == 128
+        assert mainwindow._maxent_panel._time_binning_spin.value() == 4
+        assert mainwindow._maxent_panel._t_min_edit.text() == "0.25"
+        assert mainwindow._maxent_panel.selected_group_ids() == [1, 2]
+        mainwindow._maxent_panel._points_spin.setValue(64)
+        mainwindow._maxent_panel._time_binning_spin.setValue(2)
+
+        mainwindow._on_dataset_selected(8850)
+
+        assert mainwindow._maxent_panel._points_spin.value() == 128
+        assert mainwindow._maxent_panel._time_binning_spin.value() == 4
+        assert mainwindow._maxent_panel.group_phase_table()[1] == pytest.approx(21.0)
+        assert mainwindow._maxent_panel.selected_group_ids() == [1]
+
+        mainwindow._on_dataset_selected(8851)
+        assert mainwindow._maxent_panel._points_spin.value() == 64
+        assert mainwindow._maxent_panel._time_binning_spin.value() == 2
+
+    def test_maxent_panel_loads_persisted_recipe_when_selecting_dataset(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8852, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        representation = mainwindow._project_model.ensure_dataset(8852).ensure(
+            RepresentationType.FREQ_MAXENT
+        )
+        representation.recipe = {
+            "maxent_config": {
+                "n_spectrum_points": 128,
+                "f_min_mhz": 0.5,
+                "f_max_mhz": 3.5,
+                "auto_window": False,
+                "t_min_us": 0.4,
+                "t_max_us": 5.2,
+                "time_binning_factor": 8,
+                # Panel-authored recipes carry a phase entry for every group
+                # present at compute time; group 1 being known-but-unselected
+                # is what keeps it excluded on restore.
+                "selected_group_ids": [2],
+                "group_phase_degrees": {1: 0.0, 2: 44.0},
+            }
+        }
+
+        mainwindow._on_dataset_selected(8852)
+
+        assert mainwindow._maxent_panel._points_spin.value() == 128
+        assert mainwindow._maxent_panel._auto_window_check.isChecked() is False
+        assert mainwindow._maxent_panel._f_min_edit.text() == "0.5"
+        assert mainwindow._maxent_panel._t_max_edit.text() == "5.2"
+        assert mainwindow._maxent_panel._time_binning_spin.value() == 8
+        assert mainwindow._maxent_panel.selected_group_ids() == [2]
+        assert mainwindow._maxent_panel.group_phase_table()[2] == pytest.approx(44.0)
+
+    def test_maxent_group_enabled_derivation_defaults_unknown_groups_on(self) -> None:
+        """Groups a stored selection never knew about (re-grouped run, recipe
+        copied across different groupings) default to enabled; groups that were
+        known but unselected stay disabled; no selection info means all on."""
+        derive = MainWindow._derive_group_enabled_table
+        names = {1: "G1", 2: "G2", 3: "G3", 4: "G4"}
+
+        # Panel-authored recipe: every group known, only 1 selected.
+        state = {"selected_group_ids": [1], "group_phase_degrees": {1: 0.0, 2: 0.0}}
+        assert derive(state, names) == {1: True, 2: False, 3: True, 4: True}
+        # Disjoint recipe (copied from a run with other groups): all enabled.
+        state = {"selected_group_ids": [7, 8], "group_phase_degrees": {7: 0.0, 8: 0.0}}
+        assert derive(state, names) == {1: True, 2: True, 3: True, 4: True}
+        # No selection constraint at all: all enabled.
+        assert derive({}, names) == {1: True, 2: True, 3: True, 4: True}
+
+    def test_apply_maxent_to_selection_resets_target_state(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Applying settings discards the target's old result outright: stale
+        diagnostics and stored panel drafts must go with it."""
+        source = _make_fourier_ready_dataset(8860, with_grouping=True)
+        target = _make_fourier_ready_dataset(8861, with_grouping=True)
+        mainwindow._data_browser.add_dataset(source)
+        mainwindow._data_browser.add_dataset(target)
+        source_rep = mainwindow._project_model.ensure_dataset(8860).ensure(
+            RepresentationType.FREQ_MAXENT
+        )
+        source_rep.recipe = {"maxent_config": {"n_spectrum_points": 64, "auto_window": False}}
+        target_rep = mainwindow._project_model.ensure_dataset(8861).ensure(
+            RepresentationType.FREQ_MAXENT
+        )
+        target_rep.result_metadata = {"cycles": 25, "diagnostics": {"chi2": [1.0]}}
+        mainwindow._maxent_panel_state_by_run[8861] = {"n_spectrum_points": 9999}
+
+        mainwindow._on_dataset_selected(8860)
+        mainwindow._data_browser.get_selected_datasets = lambda: [source, target]
+        mainwindow._on_apply_maxent_to_selection()
+
+        assert target_rep.recipe["maxent_config"]["n_spectrum_points"] == 64
+        assert target_rep.result_metadata == {}
+        assert 8861 not in mainwindow._maxent_panel_state_by_run
+
+    def test_record_maxent_recipe_does_not_clobber_panel_state_store(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Regression: the worker-finish recipe write must not overwrite panel
+        drafts the user stored (via a dataset switch) while the compute ran."""
+        from asymmetry.core.maxent import MaxEntConfig
+
+        draft = {"n_spectrum_points": 1234, "marker": True}
+        mainwindow._maxent_panel_state_by_run[8862] = dict(draft)
+        spectrum = MuonDataset(
+            time=np.linspace(0.0, 5.0, 16),
+            asymmetry=np.zeros(16),
+            error=np.zeros(16),
+            metadata={"run_number": 8862},
+            run=None,
+        )
+
+        mainwindow._record_frequency_maxent_recipe(
+            8862, MaxEntConfig(), spectrum, {"cycles": [3]}, total_cycles=3
+        )
+
+        assert mainwindow._maxent_panel_state_by_run[8862] == draft
+
+    def test_maxent_worker_finish_leaves_view_when_user_moved_on(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Finishing a compute must not yank the workspace to the maxent view
+        when the user selected a different run / view mid-compute."""
+        computed = _make_fourier_ready_dataset(8863, with_grouping=True)
+        other = _make_fourier_ready_dataset(8864, with_grouping=True)
+        mainwindow._data_browser.add_dataset(computed)
+        mainwindow._data_browser.add_dataset(other)
+        mainwindow._on_dataset_selected(8863)
+        mainwindow._maxent_panel._points_spin.setValue(64)
+        mainwindow._maxent_panel._inner_spin.setValue(1)
+        mainwindow._maxent_panel._auto_window_check.setChecked(False)
+        mainwindow._maxent_panel._f_min_edit.setText("0.1")
+        mainwindow._maxent_panel._f_max_edit.setText("4.0")
+
+        mainwindow._on_compute_maxent(1)
+        # The worker's finished signal is queued, so these run first even if
+        # the computation is already done.
+        mainwindow._on_dataset_selected(8864)
+        mainwindow._plot_workspace.set_active_view("fb_asymmetry")
+        wait_for(lambda: mainwindow._maxent_thread is None, QApplication.instance(), timeout_s=5.0)
+
+        assert mainwindow._plot_workspace.active_view() == "fb_asymmetry"
+        assert 8863 in mainwindow._frequency_cache(RepresentationType.FREQ_MAXENT)
+
+    def test_corrupted_maxent_recipe_does_not_break_dataset_selection(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Malformed recipe entries from a project file must degrade, not raise
+        out of the dataset-selection slot."""
+        dataset = _make_fourier_ready_dataset(8865, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        representation = mainwindow._project_model.ensure_dataset(8865).ensure(
+            RepresentationType.FREQ_MAXENT
+        )
+        representation.recipe = {
+            "maxent_config": {
+                "n_spectrum_points": 128,
+                "selected_group_ids": [1, "abc"],
+                "group_phase_degrees": {"bogus-key": 1.0, "2": "not-a-number", "1": 15.0},
+                "outer_cycles": "bad",
+            }
+        }
+
+        mainwindow._on_dataset_selected(8865)
+
+        assert mainwindow._maxent_panel._points_spin.value() == 128
+        assert mainwindow._maxent_panel.group_phase_table()[1] == pytest.approx(15.0)
+
+    def test_maxent_draft_settings_round_trip_with_project(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8853, with_grouping=True)
+        assert dataset.run is not None
+        source_file = tmp_path / "run_8853.mdu"
+        source_file.write_text("placeholder", encoding="utf-8")
+        dataset.run.source_file = str(source_file)
+        dataset.metadata["source_file"] = str(source_file)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8853)
+        mainwindow._maxent_panel._points_spin.setValue(256)
+        mainwindow._maxent_panel._time_binning_spin.setValue(16)
+        mainwindow._maxent_panel._t_min_edit.setText("0.75")
+        mainwindow._maxent_panel._t_max_edit.setText("6.25")
+        table = mainwindow._maxent_panel._group_table
+        table.item(0, 2).setText("13.5")
+        table.item(1, 0).setCheckState(Qt.CheckState.Unchecked)
+
+        state = mainwindow.collect_project_state()
+        assert state["maxent_state_by_run"]["8853"]["time_binning_factor"] == 16
+        project_path = tmp_path / "maxent_draft.asymp"
+        save_project(state, project_path)
+        loaded_state = load_project(project_path)
+        restored_window = MainWindow()
+
+        def _fake_load_file(_path: str) -> MuonDataset:
+            loaded = _make_fourier_ready_dataset(8853, with_grouping=True)
+            assert loaded.run is not None
+            loaded.run.source_file = str(source_file)
+            loaded.metadata["source_file"] = str(source_file)
+            return loaded
+
+        monkeypatch.setattr(restored_window, "_load_file", _fake_load_file)
+        restored_window.restore_project_state(loaded_state, str(project_path))
+
+        assert restored_window._maxent_panel._points_spin.value() == 256
+        assert restored_window._maxent_panel._time_binning_spin.value() == 16
+        assert restored_window._maxent_panel._t_min_edit.text() == "0.75"
+        assert restored_window._maxent_panel.group_phase_table()[1] == pytest.approx(13.5)
+        assert restored_window._maxent_panel.selected_group_ids() == [1]
+
     def test_frequency_axis_toggle_can_show_relative_values(self, mainwindow: MainWindow) -> None:
         dataset = _make_fourier_ready_dataset(8811, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
@@ -640,6 +879,69 @@ class TestMainWindowFourier:
         assert mainwindow._frequency_plot_panel._ax.get_xlim()[1] == pytest.approx(
             center + 0.25, abs=1e-3
         )
+
+    def test_compute_maxent_uses_maxent_view_and_separate_cache(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8840, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8840)
+        mainwindow._maxent_panel._points_spin.setValue(64)
+        mainwindow._maxent_panel._inner_spin.setValue(1)
+        mainwindow._maxent_panel._auto_window_check.setChecked(False)
+        mainwindow._maxent_panel._f_min_edit.setText("0.1")
+        mainwindow._maxent_panel._f_max_edit.setText("4.0")
+        mainwindow._maxent_panel._time_binning_spin.setValue(2)
+
+        mainwindow._on_compute_maxent(1)
+        wait_for(lambda: mainwindow._maxent_thread is None, QApplication.instance(), timeout_s=10.0)
+
+        assert mainwindow._plot_workspace.active_view() == "maxent"
+        assert mainwindow._spectrum_stack.currentWidget() is mainwindow._maxent_panel
+        assert 8840 not in mainwindow._frequency_spectra_by_run
+        maxent_cache = mainwindow._frequency_cache(RepresentationType.FREQ_MAXENT)
+        assert 8840 in maxent_cache
+        assert maxent_cache[8840][0].metadata["frequency_representation"] == "maxent"
+        representation = mainwindow._project_model.representation(
+            8840, RepresentationType.FREQ_MAXENT
+        )
+        assert representation is not None
+        assert representation.result_metadata["cycles"] == 1
+        assert representation.recipe["maxent_config"]["time_binning_factor"] == 2
+
+    def test_compute_maxent_preserves_unsaved_group_table_edits(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Regression: the pre-compute panel sync wiped in-table edits made
+        after run selection (phases reset to 0, all groups re-included)."""
+        dataset = _make_fourier_ready_dataset(8841, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8841)
+        mainwindow._maxent_panel._points_spin.setValue(64)
+        mainwindow._maxent_panel._inner_spin.setValue(1)
+        mainwindow._maxent_panel._auto_window_check.setChecked(False)
+        mainwindow._maxent_panel._f_min_edit.setText("0.1")
+        mainwindow._maxent_panel._f_max_edit.setText("4.0")
+        # Edit the group table in place without re-selecting the dataset.
+        table = mainwindow._maxent_panel._group_table
+        table.item(0, 2).setText("33.0")
+        table.item(1, 0).setCheckState(Qt.CheckState.Unchecked)
+
+        mainwindow._on_compute_maxent(1)
+        wait_for(lambda: mainwindow._maxent_thread is None, QApplication.instance(), timeout_s=10.0)
+
+        representation = mainwindow._project_model.representation(
+            8841, RepresentationType.FREQ_MAXENT
+        )
+        assert representation is not None
+        config = representation.recipe["maxent_config"]
+        assert config["group_phase_degrees"][1] == pytest.approx(33.0)
+        assert config["selected_group_ids"] == [1]
+        # The visible table still shows the edits after the compute.
+        assert table.item(0, 2).text() == "33.000"
+        assert table.item(1, 0).checkState() == Qt.CheckState.Unchecked
 
     def test_project_restore_persists_cached_fourier_spectra(
         self,

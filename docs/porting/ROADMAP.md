@@ -99,9 +99,12 @@ These candidates stay in `docs/porting/candidates/<slug>/` until
 roadmap refresh. They are flagged for public visibility in the
 comparison chapter but are not yet scheduled.
 
-- **MaxEnt spectrum (12)** — Burg-first implementation, then
-  iterative entropy as a second engine. Heaviest algorithm in this
-  roadmap; ~200-600 lines numpy.
+- **MaxEnt spectrum (12)** — now studied in full at
+  `docs/porting/maxent/` (slug `maxent`). The study reverses the
+  earlier Burg-first plan: implement the MULTIMAX-lineage joint
+  MaxEnt once (WiMDA `Wimdamax.pas` contract, Mantid `MaxentTools`
+  as oracle); Burg MEM is a different method and is excluded.
+  Heaviest algorithm in this roadmap.
 - **RRF transform (12)** — rotating reference-frame demodulation
   algorithm. Useful for vortex-lattice and high-TF studies; ~30
   lines numpy plus a low-pass.

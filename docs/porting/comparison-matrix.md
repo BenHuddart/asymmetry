@@ -90,7 +90,7 @@ analogue in the reference programs) are deferred to the closing
 | Zero-padding | ✅ | ✅ | ✅ | ✅ |
 | Phase optimisation | ◐ manual + phase table | ★ Minuit2-driven (`PFTPhaseCorrection`) | ✅ via MaxEnt phases | ◐ manual + auto entropy mode |
 | Group-resolved spectra | ◐ via plot | ◐ via canvas | ✅ as workspace groups | ✅ `core/fourier/grouped.py` |
-| MaxEnt | ★ Burg pole-scan (`MaxEnt.pas`) | ◐ limited | ★ `MuonMaxent` (iterative + phases) | ◐ stub in `core/fourier/maxent.py` |
+| MaxEnt | ★ MULTIMAX joint MaxEnt (`Wimdamax.pas`); also a separate Burg MEM (`MaxEnt.pas`) | ❌ none (roadmap item only) | ★ `MuonMaxent` (same MULTIMAX lineage) + generic `MaxEnt-v1` | ◐ stub in `core/fourier/maxent.py`; study at `docs/porting/maxent/` |
 | Eigenvalue spectral estimator | ✅ `Eigen.pas` | ❌ | ❌ | ❌ |
 
 ### 6. Parameter trending
@@ -187,8 +187,11 @@ Where the reference programs are materially richer:
   and four `Muonium*` variants.
 - **Dynamic Kubo–Toyabe** — present in WiMDA, musrfit, and
   (especially) Mantid; absent in Asymmetry.
-- **MaxEnt** — production implementations in WiMDA (Burg) and
-  Mantid (`MuonMaxent`); Asymmetry has a placeholder stub.
+- **MaxEnt** — production implementations in WiMDA (`Wimdamax.pas`,
+  Pratt/MULTIMAX) and Mantid (`MuonMaxent`, same lineage); musrfit has
+  none; Asymmetry has a placeholder stub. WiMDA's `MaxEnt.pas` is a
+  separate Burg all-poles MEM, not the same method. Full study:
+  `docs/porting/maxent/`.
 - **ALC interface** — Mantid only.
 - **Rotating Reference Frame** — Mantid algorithm; musrfit has a
   partial implementation inside the asymmetry classes.

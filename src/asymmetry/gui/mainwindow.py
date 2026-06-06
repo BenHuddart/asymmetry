@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QObject, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QActionGroup, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QStackedWidget,
+    QTabBar,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -55,6 +56,13 @@ from asymmetry.core.fourier import (
     estimate_fft_phase,
     fft_complex_asymmetry,
     fourier_mode_uses_phase_correction,
+)
+from asymmetry.core.maxent import (
+    MaxEntCancelledError,
+    MaxEntConfig,
+    MaxEntState,
+    estimate_maxent_workload,
+    maxent,
 )
 from asymmetry.core.project import (
     CURRENT_SCHEMA_VERSION,
@@ -94,6 +102,7 @@ from asymmetry.gui.panels.fit_panel import FitPanel
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 from asymmetry.gui.panels.fourier_panel import FourierPanel
 from asymmetry.gui.panels.log_panel import LogPanel
+from asymmetry.gui.panels.maxent_panel import MaxEntPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
 from asymmetry.gui.styles import tokens
@@ -119,11 +128,70 @@ _VIEW_MODE_COUNT = 3
 _PERF_LOGGING_SETTINGS_KEY = "debug/perf_logging"
 _PERF_LOGGING_ENV_VAR = "ASYMMETRY_PERF_LOGGING"
 _PLOT_DECIMATION_SETTINGS_KEY = "plot/enable_decimation"
+_MAXENT_WARN_PEAK_MATRIX_BYTES = 1 * 1024**3
+_MAXENT_WARN_TOTAL_MATRIX_BYTES = 8 * 1024**3
+_MAXENT_WARN_TOTAL_OBSERVATIONS = 500_000
 
 
 def _normalise_source_path(path: str) -> str:
     """Return a canonical string for source-file path comparisons."""
     return os.path.normcase(os.path.abspath(os.path.realpath(path)))
+
+
+def _format_bytes(num_bytes: int) -> str:
+    """Return a compact human-readable byte count."""
+    value = float(max(0, int(num_bytes)))
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024.0 or unit == "TiB":
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024.0
+    return f"{value:.1f} TiB"
+
+
+class MaxEntWorker(QObject):
+    """Background worker for MaxEnt calculation."""
+
+    progress = Signal(int, int, str)
+    finished = Signal(object)
+    error = Signal(str)
+    cancelled = Signal()
+
+    def __init__(
+        self,
+        run,
+        config: MaxEntConfig,
+        *,
+        cycles: int,
+        state: MaxEntState | None,
+    ) -> None:
+        super().__init__()
+        self._run = run
+        self._config = config
+        self._cycles = int(cycles)
+        self._state = state
+        self._cancel_requested = False
+
+    def cancel(self) -> None:
+        """Request cooperative cancellation."""
+        self._cancel_requested = True
+
+    def run(self) -> None:
+        """Run the MaxEnt calculation and emit one terminal signal."""
+        try:
+            result = maxent(
+                self._run,
+                self._config,
+                cycles=self._cycles,
+                state=self._state,
+                progress_callback=self.progress.emit,
+                cancel_callback=lambda: bool(self._cancel_requested),
+            )
+        except MaxEntCancelledError:
+            self.cancelled.emit()
+        except Exception as exc:  # pragma: no cover - exercised through GUI smoke tests
+            self.error.emit(str(exc))
+        else:
+            self.finished.emit(result)
 
 
 def _load_window_icon() -> QIcon | None:
@@ -235,11 +303,32 @@ class MainWindow(QMainWindow):
         self._active_group_context: tuple[str, str] | None = None
         # Recipe-only representation/batch state for the redesign.  Frequency
         # spectra are recomputed from FrequencyFFT recipes on load; the
-        # _frequency_spectra_by_run cache below remains the in-memory plot
-        # source (the legacy array serialisation is a transitional fallback).
+        # Frequency spectra are cached by representation.  _frequency_spectra_by_run
+        # remains the FFT cache alias for existing tests and transitional project
+        # fallbacks.
         self._project_model = ProjectModel()
         self._next_batch_index = 1
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
+        self._frequency_spectra_by_rep: dict[RepresentationType, dict[int, list[MuonDataset]]] = {
+            RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
+            RepresentationType.FREQ_MAXENT: {},
+        }
+        self._maxent_state_by_run: dict[int, MaxEntState] = {}
+        self._maxent_panel_state_by_run: dict[int, dict] = {}
+        self._maxent_thread: QThread | None = None
+        self._maxent_worker: MaxEntWorker | None = None
+        self._maxent_active_run_number: int | None = None
+        self._maxent_active_run = None
+        self._maxent_active_config: MaxEntConfig | None = None
+        self._maxent_active_cycles: int = 0
+        self._maxent_started_at: float | None = None
+        # Frequency representation the fit-panel datasets were last collected
+        # from, and its snapshot at global-fit launch.  The async completion
+        # handler resolves run datasets against the LAUNCH snapshot: the
+        # collection pin is refreshed by view/selection changes and would
+        # otherwise drift mid-fit.
+        self._last_frequency_fit_rep_type: RepresentationType | None = None
+        self._active_global_fit_rep_type: RepresentationType | None = None
         self._fourier_group_phase_state_by_run: dict[int, dict[str, object]] = {}
         self._global_parameter_fit_window: GlobalParameterFitWindow | None = None
         self._multi_group_fit_window: MultiGroupFitWindow | None = None
@@ -464,9 +553,8 @@ class MainWindow(QMainWindow):
             )
         )
         self._domain_buttons[0].setChecked(True)
-        # MaxEnt spectra are not implemented yet; the button reserves its slot.
         self._domain_buttons[3].setEnabled(False)
-        self._domain_buttons[3].setToolTip("Maximum-entropy spectra — not yet implemented")
+        self._domain_buttons[3].setToolTip("Maximum-entropy spectra from grouped counts")
 
         # Stretch spacer — pushes View / Bunch to the right edge
         _stretch = QWidget()
@@ -833,10 +921,14 @@ class MainWindow(QMainWindow):
         self._dock_fit.setMinimumWidth(320)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit)
 
-        # Right dock — Fourier controls (tabbed with fit)
+        # Right dock — spectrum controls (FFT / MaxEnt, tabbed with fit)
         self._fourier_panel = FourierPanel()
-        self._dock_fourier = QDockWidget("Fourier", self)
-        self._dock_fourier.setWidget(self._fourier_panel)
+        self._maxent_panel = MaxEntPanel()
+        self._spectrum_stack = QStackedWidget(self)
+        self._spectrum_stack.addWidget(self._fourier_panel)
+        self._spectrum_stack.addWidget(self._maxent_panel)
+        self._dock_fourier = QDockWidget("Spectrum", self)
+        self._dock_fourier.setWidget(self._spectrum_stack)
         self._dock_fourier.setMinimumWidth(280)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fourier)
         self.tabifyDockWidget(self._dock_fit, self._dock_fourier)
@@ -919,6 +1011,8 @@ class MainWindow(QMainWindow):
                 self._on_plot_polarization_axis_changed
             )
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
+        if hasattr(self._fit_panel, "global_fit_started"):
+            self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
         if hasattr(self._fit_panel, "grouped_fit_completed"):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
@@ -965,6 +1059,24 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self._fourier_panel, "_auto_phase_btn"):
             self._fourier_panel._auto_phase_btn.clicked.connect(self._on_fill_fourier_phases)
+        if hasattr(self._maxent_panel, "_cycle_one_btn"):
+            self._maxent_panel._cycle_one_btn.clicked.connect(lambda: self._on_compute_maxent(1))
+        if hasattr(self._maxent_panel, "_cycle_five_btn"):
+            self._maxent_panel._cycle_five_btn.clicked.connect(lambda: self._on_compute_maxent(5))
+        if hasattr(self._maxent_panel, "_cycle_twentyfive_btn"):
+            self._maxent_panel._cycle_twentyfive_btn.clicked.connect(
+                lambda: self._on_compute_maxent(25)
+            )
+        if hasattr(self._maxent_panel, "_converge_btn"):
+            self._maxent_panel._converge_btn.clicked.connect(lambda: self._on_compute_maxent(50))
+        if hasattr(self._maxent_panel, "_restart_btn"):
+            self._maxent_panel._restart_btn.clicked.connect(self._on_restart_maxent)
+        if hasattr(self._maxent_panel, "_cancel_btn"):
+            self._maxent_panel._cancel_btn.clicked.connect(self._on_cancel_maxent)
+        if hasattr(self._maxent_panel, "_apply_to_selection_btn"):
+            self._maxent_panel._apply_to_selection_btn.clicked.connect(
+                self._on_apply_maxent_to_selection
+            )
 
         # Update selected datasets for global fitting whenever selection changes
         self._update_selected_datasets()
@@ -1208,13 +1320,17 @@ class MainWindow(QMainWindow):
                 if self._plot_workspace.active_domain() == "time":
                     self._plot_workspace.set_active_view("fb_asymmetry")
             self._domain_buttons[1].setEnabled(False)
+            self._domain_buttons[3].setEnabled(False)
             return
 
         target = self._current_dataset or (selected[0] if len(selected) == 1 else None)
         if target is not None and self._grouped_time_domain_display_datasets(target):
             modes.append("groups")
+        if self._dataset_supports_maxent(target):
+            modes.append("maxent")
 
         self._domain_buttons[1].setEnabled("groups" in modes)
+        self._domain_buttons[3].setEnabled("maxent" in modes)
 
         current_mode = None
         if hasattr(self._plot_panel, "current_time_view_mode"):
@@ -1458,7 +1574,7 @@ class MainWindow(QMainWindow):
             if self._active_frequency_fit_dataset() is None:
                 return (
                     True,
-                    "Compute a Fourier spectrum for the active run before fitting in the frequency domain.",
+                    f"Compute a {self._frequency_status_name()} spectrum for the active run before fitting in the frequency domain.",
                 )
             return False, ""
 
@@ -3241,6 +3357,7 @@ class MainWindow(QMainWindow):
         "fb_asymmetry": (["fit", "fourier", "fit_parameters"], "fit"),
         "groups": (["fit", "fit_parameters"], "fit"),
         "frequency": (["fourier", "fit", "fit_parameters"], "fourier"),
+        "maxent": (["fourier", "fit", "fit_parameters"], "fourier"),
     }
 
     def _apply_inspector_for_domain(self, view: str) -> None:
@@ -3277,16 +3394,87 @@ class MainWindow(QMainWindow):
         # all other domains revert to single-fit so the dock title reads "Fit".
         self._sync_fit_dock_mode()
 
+        # Qt sometimes skips the dock tab-bar relayout after programmatic
+        # show/hide of tabified docks, leaving the bottom tabs missing until
+        # the window is manually resized. Defer a relayout nudge so the tab
+        # bar is rebuilt once the visibility changes settle.
+        QTimer.singleShot(0, self, self._refresh_inspector_tab_bar)
+
+    def _refresh_inspector_tab_bar(self) -> None:
+        """Force the right dock area to relayout so its tab bar reappears.
+
+        Works around a Qt quirk where the tab bar of a tabified dock group is
+        not re-shown after programmatic show/hide cycles. ``resizeDocks``
+        walks the same relayout path as a manual window resize, which is the
+        user-visible recovery for the missing tabs.
+        """
+        docks = [
+            dock
+            for dock in (self._dock_fit, self._dock_fourier, self._dock_fit_parameters)
+            if dock.isVisible() and not dock.isFloating()
+        ]
+        if len(docks) < 2:
+            return
+        self.resizeDocks(docks, [dock.width() for dock in docks], Qt.Orientation.Horizontal)
+        # Belt-and-braces: if the relayout still left the group's tab bar
+        # hidden, re-show it directly. Dock tab bars are direct QTabBar
+        # children of the QMainWindow; ours is the one listing a dock title.
+        dock_titles = {dock.windowTitle() for dock in docks}
+        direct_only = Qt.FindChildOption.FindDirectChildrenOnly
+        for tab_bar in self.findChildren(QTabBar, options=direct_only):
+            tab_texts = {tab_bar.tabText(i) for i in range(tab_bar.count())}
+            if tab_texts & dock_titles and not tab_bar.isVisible():
+                tab_bar.show()
+
     def _on_fourier(self) -> None:
         """Show and raise the Fourier dock panel."""
+        self._sync_spectrum_panel_for_view("frequency")
         self._show_panel("fourier")
         if self._current_dataset is not None:
             self._sync_fourier_panel_for_dataset(self._current_dataset)
         self._log_panel.log("Opened Fourier panel")
 
+    def _sync_spectrum_panel_for_view(self, view: str | None = None) -> None:
+        """Switch the spectrum controls between FFT and MaxEnt."""
+        token = view
+        if token is None and hasattr(self, "_plot_workspace"):
+            token = self._plot_workspace.active_view()
+        is_maxent = str(token).strip().lower() == "maxent"
+        if hasattr(self, "_spectrum_stack"):
+            self._spectrum_stack.setCurrentWidget(
+                self._maxent_panel if is_maxent else self._fourier_panel
+            )
+        if hasattr(self, "_dock_fourier"):
+            self._dock_fourier.setWindowTitle("MaxEnt" if is_maxent else "Fourier")
+
+    def _active_frequency_rep_type(self) -> RepresentationType:
+        """Return the active frequency representation type."""
+        if hasattr(self, "_plot_workspace") and self._plot_workspace.active_view() == "maxent":
+            return RepresentationType.FREQ_MAXENT
+        return RepresentationType.FREQ_FFT
+
+    def _frequency_cache(
+        self,
+        rep_type: RepresentationType | None = None,
+    ) -> dict[int, list[MuonDataset]]:
+        """Return the in-memory spectrum cache for a frequency representation."""
+        resolved = rep_type or self._active_frequency_rep_type()
+        if resolved == RepresentationType.FREQ_FFT:
+            self._frequency_spectra_by_rep[RepresentationType.FREQ_FFT] = (
+                self._frequency_spectra_by_run
+            )
+        return self._frequency_spectra_by_rep.setdefault(resolved, {})
+
+    def _frequency_status_name(self, rep_type: RepresentationType | None = None) -> str:
+        resolved = rep_type or self._active_frequency_rep_type()
+        return "MaxEnt" if resolved == RepresentationType.FREQ_MAXENT else "FFT"
+
     def _set_fourier_status(self, message: str, *, success: bool = False) -> None:
         """Update the Fourier panel status text and main-window status bar."""
-        self._fourier_panel.set_fft_status(message, success=success)
+        if self._active_frequency_rep_type() == RepresentationType.FREQ_MAXENT:
+            self._maxent_panel.set_status(message, success=success)
+        else:
+            self._fourier_panel.set_fft_status(message, success=success)
         self.statusBar().showMessage(str(message))
 
     def _fourier_group_names_for_dataset(self, dataset: MuonDataset | None) -> dict[int, str]:
@@ -3311,6 +3499,15 @@ class MainWindow(QMainWindow):
             resolved[group_id] = str(group_names.get(group_id, f"Group {group_id}"))
         return resolved
 
+    def _dataset_supports_maxent(self, dataset: MuonDataset | None) -> bool:
+        """Return whether *dataset* has the raw grouped counts MaxEnt needs."""
+        return bool(
+            dataset is not None
+            and dataset.run is not None
+            and dataset.run.histograms
+            and self._fourier_group_names_for_dataset(dataset)
+        )
+
     def _sync_fourier_panel_for_dataset(self, dataset: MuonDataset | None) -> None:
         """Refresh the Fourier group-phase table for the active run."""
         group_names = self._fourier_group_names_for_dataset(dataset)
@@ -3319,6 +3516,112 @@ class MainWindow(QMainWindow):
             None if run_number is None else self._fourier_group_phase_state_by_run.get(run_number)
         )
         self._fourier_panel.restore_group_phase_state(state, group_names)
+        if hasattr(self, "_maxent_panel"):
+            self._sync_maxent_panel_for_dataset(dataset)
+
+    def _store_maxent_panel_state_for_dataset(self, dataset: MuonDataset | None) -> None:
+        """Persist the current MaxEnt panel state for one dataset/run."""
+        if dataset is None:
+            return
+        try:
+            run_number = int(dataset.run_number)
+        except (TypeError, ValueError):
+            return
+        self._maxent_panel_state_by_run[run_number] = self._maxent_panel.get_state()
+
+    @staticmethod
+    def _derive_group_enabled_table(state: dict, group_names: dict[int, str]) -> dict[int, bool]:
+        """Derive per-group inclusion from a stored ``selected_group_ids`` list.
+
+        Groups the stored selection never knew about — absent from both the
+        selection and the phase table, e.g. after re-grouping the run or when
+        a recipe was copied from a run with different groups — default to
+        enabled, preserving the panel's unknown-groups-default-enabled
+        convention.  Groups that were known but unselected stay disabled.
+        """
+        selected = state.get("selected_group_ids")
+        if not isinstance(selected, list):
+            return {int(group_id): True for group_id in group_names}
+        selected_ids: set[int] = set()
+        for group_id in selected:
+            try:
+                selected_ids.add(int(group_id))
+            except (TypeError, ValueError):
+                continue
+        known = set(selected_ids)
+        phases = state.get("group_phase_degrees")
+        if isinstance(phases, dict):
+            for key in phases:
+                try:
+                    known.add(int(key))
+                except (TypeError, ValueError):
+                    continue
+        return {
+            int(group_id): (int(group_id) in selected_ids if int(group_id) in known else True)
+            for group_id in group_names
+        }
+
+    def _maxent_state_from_config(self, config: dict, group_names: dict[int, str]) -> dict | None:
+        """Return a panel-state dict from a MaxEnt recipe block.
+
+        The block is normalised through the typed ``MaxEntConfig`` boundary so
+        malformed entries in a loaded project degrade gracefully instead of
+        raising out of dataset selection.
+        """
+        if not isinstance(config, dict):
+            return None
+        state = MaxEntConfig.from_dict(config).to_dict()
+        state["group_enabled_table"] = self._derive_group_enabled_table(state, group_names)
+        return state
+
+    def _normalise_maxent_panel_state(self, state: dict, group_names: dict[int, str]) -> dict:
+        """Return a MaxEnt panel state compatible with the current run groups."""
+        normalised = dict(state)
+        if "group_enabled_table" not in normalised and isinstance(
+            normalised.get("selected_group_ids"), list
+        ):
+            normalised["group_enabled_table"] = self._derive_group_enabled_table(
+                normalised, group_names
+            )
+        return normalised
+
+    def _maxent_state_from_representation(
+        self, run_number: int, group_names: dict[int, str]
+    ) -> dict | None:
+        """Return a panel-state dict from a persisted MaxEnt recipe, if available."""
+        representation = self._project_model.representation(
+            run_number, RepresentationType.FREQ_MAXENT
+        )
+        if representation is None:
+            return None
+        config = representation.maxent_config()
+        if not config:
+            return None
+        return self._maxent_state_from_config(config, group_names)
+
+    def _inherited_maxent_panel_state(self) -> dict:
+        """Return current non-group MaxEnt settings for a new run."""
+        state = self._maxent_panel.get_state()
+        state.pop("selected_group_ids", None)
+        state.pop("group_enabled_table", None)
+        state.pop("group_phase_degrees", None)
+        return state
+
+    def _sync_maxent_panel_for_dataset(self, dataset: MuonDataset | None) -> None:
+        """Refresh the MaxEnt group table for the active run."""
+        group_names = self._fourier_group_names_for_dataset(dataset)
+        run_number = None if dataset is None else int(dataset.run_number)
+        if run_number is None:
+            self._maxent_panel.set_group_definitions({})
+            return
+        state = self._maxent_panel_state_by_run.get(run_number)
+        if state is None:
+            state = self._maxent_state_from_representation(run_number, group_names)
+        if state is None:
+            state = self._inherited_maxent_panel_state()
+        state = self._normalise_maxent_panel_state(state, group_names)
+        self._maxent_panel.set_group_definitions(group_names)
+        self._maxent_panel.restore_state(state)
 
     def _store_fourier_group_phase_state_for_dataset(self, dataset: MuonDataset | None) -> None:
         """Persist the current Fourier group-phase UI state for one dataset/run."""
@@ -3534,9 +3837,12 @@ class MainWindow(QMainWindow):
         self,
         run_number: int,
         spectra: list[MuonDataset],
+        *,
+        rep_type: RepresentationType | None = None,
     ) -> None:
         """Cache computed frequency spectra for one run-number context."""
-        self._frequency_spectra_by_run[int(run_number)] = list(spectra)
+        cache = self._frequency_cache(rep_type)
+        cache[int(run_number)] = list(spectra)
 
     def _record_frequency_fft_recipe(
         self,
@@ -3572,9 +3878,10 @@ class MainWindow(QMainWindow):
                     runs_by_number[int(dataset.run_number)] = dataset.run
         self._project_model.recompute_all(runs_by_number)
         for run_number, container in self._project_model.datasets.items():
-            representation = container.get(RepresentationType.FREQ_FFT)
-            if representation is not None and representation.primary is not None:
-                self._frequency_spectra_by_run[int(run_number)] = [representation.primary]
+            for rep_type in (RepresentationType.FREQ_FFT, RepresentationType.FREQ_MAXENT):
+                representation = container.get(rep_type)
+                if representation is not None and representation.primary is not None:
+                    self._frequency_cache(rep_type)[int(run_number)] = [representation.primary]
 
     def _serialize_frequency_spectra_state(self) -> dict[str, list[dict[str, object]]]:
         """Return a serializable snapshot of cached Fourier spectra."""
@@ -3596,6 +3903,10 @@ class MainWindow(QMainWindow):
     def _restore_frequency_spectra_state(self, state: object) -> None:
         """Restore cached Fourier spectra from serialized project state."""
         self._frequency_spectra_by_run = {}
+        self._frequency_spectra_by_rep = {
+            RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
+            RepresentationType.FREQ_MAXENT: {},
+        }
         if not isinstance(state, dict):
             return
 
@@ -3637,7 +3948,7 @@ class MainWindow(QMainWindow):
                 )
 
             if restored:
-                self._frequency_spectra_by_run[run_number] = restored
+                self._frequency_cache(RepresentationType.FREQ_FFT)[run_number] = restored
 
     def _sync_frequency_plot_for_run(
         self,
@@ -3673,7 +3984,8 @@ class MainWindow(QMainWindow):
                 )
             return
 
-        spectra = list(self._frequency_spectra_by_run.get(int(run_number), []))
+        rep_type = self._active_frequency_rep_type()
+        spectra = list(self._frequency_cache(rep_type).get(int(run_number), []))
         if not spectra:
             self._frequency_plot_panel.clear()
             if preserved_x_limits is not None and preserved_y_limits is not None:
@@ -3684,7 +3996,7 @@ class MainWindow(QMainWindow):
                     preserved_y_limits[1],
                 )
             self._set_fourier_status(
-                f"No FFT computed for run {run_number} — use the Fourier panel to compute."
+                f"No {self._frequency_status_name(rep_type)} computed for run {run_number}."
             )
             return
 
@@ -3929,7 +4241,11 @@ class MainWindow(QMainWindow):
                 return
 
             for run_number, run_spectra in spectra_by_run.items():
-                self._store_frequency_spectra_for_run(run_number, run_spectra)
+                self._store_frequency_spectra_for_run(
+                    run_number,
+                    run_spectra,
+                    rep_type=RepresentationType.FREQ_FFT,
+                )
 
             active_run_number = None
             if self._current_dataset is not None:
@@ -3940,7 +4256,7 @@ class MainWindow(QMainWindow):
                 active_run_number = next(iter(spectra_by_run))
 
             self._sync_frequency_plot_for_run(active_run_number, preserve_x_limits=True)
-            self._plot_workspace.set_active_domain("frequency")
+            self._plot_workspace.set_active_view("frequency")
             self._show_panel("fourier")
             suffix = "s" if len(spectra) != 1 else ""
             self._set_fourier_status(
@@ -4007,6 +4323,309 @@ class MainWindow(QMainWindow):
         self._set_fourier_status(f"Applied Fourier settings to {applied} run(s).", success=True)
         self._log_panel.log(f"Applied Fourier settings to {applied} run(s).")
 
+    def _record_frequency_maxent_recipe(
+        self,
+        run_number: int,
+        config: MaxEntConfig,
+        spectrum: MuonDataset,
+        diagnostics: dict,
+        *,
+        total_cycles: int | None = None,
+    ) -> None:
+        """Persist the generation recipe and compact diagnostics for MaxEnt."""
+        representation = self._project_model.ensure_dataset(int(run_number)).ensure(
+            RepresentationType.FREQ_MAXENT
+        )
+        config_dict = config.to_dict()
+        if total_cycles is not None:
+            # The button's config carries only the last increment ("+1" -> 1);
+            # the recipe must describe the cumulative resumed computation so a
+            # from-scratch recompute reproduces the displayed spectrum.
+            config_dict["outer_cycles"] = max(1, int(total_cycles))
+        representation.recipe = {"maxent_config": config_dict}
+        representation.result_metadata = {
+            "cycles": int(diagnostics.get("cycles", [0])[-1]) if diagnostics.get("cycles") else 0,
+            "diagnostics": dict(diagnostics),
+        }
+        representation.cache_datasets([spectrum])
+        # No panel-state store write here: the recipe just recorded is served
+        # on demand by _sync_maxent_panel_for_dataset's fallback chain, and an
+        # unconditional write would clobber edits the user made (and stored
+        # via a dataset switch) while the worker was running.
+
+    def _on_restart_maxent(self) -> None:
+        """Drop resumable MaxEnt state for the active run."""
+        if self._maxent_thread is not None:
+            self._set_fourier_status("Cancel the running MaxEnt calculation before restarting.")
+            return
+        if self._current_dataset is None:
+            self._set_fourier_status("Select a run before restarting MaxEnt.")
+            return
+        run_number = int(self._current_dataset.run_number)
+        self._maxent_state_by_run.pop(run_number, None)
+        representation = self._project_model.representation(
+            run_number, RepresentationType.FREQ_MAXENT
+        )
+        if representation is not None:
+            representation.invalidate()
+            representation.result_metadata = {}
+        self._maxent_panel.set_diagnostics(None)
+        self._set_fourier_status(f"Restarted MaxEnt state for run {run_number}.", success=True)
+
+    def _maxent_workload_is_unsafe(self, estimate) -> bool:
+        """Return whether a MaxEnt workload should ask for confirmation."""
+        return bool(
+            estimate.peak_dense_matrix_bytes >= _MAXENT_WARN_PEAK_MATRIX_BYTES
+            or estimate.total_dense_matrix_bytes >= _MAXENT_WARN_TOTAL_MATRIX_BYTES
+            or estimate.total_observations >= _MAXENT_WARN_TOTAL_OBSERVATIONS
+        )
+
+    def _confirm_maxent_workload(self, estimate, config: MaxEntConfig) -> bool:
+        """Ask the user whether to continue with a risky MaxEnt workload."""
+        if not self._maxent_workload_is_unsafe(estimate):
+            return True
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Large MaxEnt calculation")
+        msg.setText("The selected MaxEnt settings may be slow or memory intensive.")
+        msg.setInformativeText(
+            "\n".join(
+                [
+                    f"Run: {estimate.run_number}",
+                    f"Selected groups: {estimate.selected_group_count}",
+                    f"Time points per group: up to {estimate.max_time_points:,}",
+                    f"Spectrum points: {estimate.n_spectrum_points:,}",
+                    f"Dense-equivalent peak matrix: {_format_bytes(estimate.peak_dense_matrix_bytes)}",
+                    f"Dense-equivalent matrices per pass: {_format_bytes(estimate.total_dense_matrix_bytes)}",
+                    f"MaxEnt binning factor: {int(config.time_binning_factor)}",
+                    "",
+                    "Asymmetry evaluates the projection in chunks where possible, but this "
+                    "setting still represents a large numerical workload.",
+                    "Reducing the time range, increasing MaxEnt binning, or using fewer spectrum "
+                    "points will usually make the calculation safer.",
+                ]
+            )
+        )
+        cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        proceed_btn = msg.addButton("Proceed anyway", QMessageBox.ButtonRole.AcceptRole)
+        msg.setDefaultButton(cancel_btn)
+        msg.exec()
+        return msg.clickedButton() == proceed_btn
+
+    def _launch_maxent_worker(
+        self,
+        *,
+        run,
+        config: MaxEntConfig,
+        cycles: int,
+        state: MaxEntState | None,
+        run_number: int,
+    ) -> None:
+        """Start a background MaxEnt worker."""
+        self._maxent_thread = QThread(self)
+        self._maxent_worker = MaxEntWorker(run, config, cycles=int(cycles), state=state)
+        self._maxent_active_run_number = int(run_number)
+        self._maxent_active_run = run
+        self._maxent_active_config = config
+        self._maxent_active_cycles = int(cycles)
+        self._maxent_started_at = time.perf_counter()
+        self._maxent_worker.moveToThread(self._maxent_thread)
+        self._maxent_thread.started.connect(self._maxent_worker.run)
+        self._maxent_worker.progress.connect(self._on_maxent_progress)
+        self._maxent_worker.finished.connect(self._on_maxent_worker_finished)
+        self._maxent_worker.error.connect(self._on_maxent_worker_error)
+        self._maxent_worker.cancelled.connect(self._on_maxent_worker_cancelled)
+        self._maxent_worker.finished.connect(self._maxent_thread.quit)
+        self._maxent_worker.error.connect(self._maxent_thread.quit)
+        self._maxent_worker.cancelled.connect(self._maxent_thread.quit)
+        self._maxent_worker.finished.connect(self._maxent_worker.deleteLater)
+        self._maxent_worker.error.connect(self._maxent_worker.deleteLater)
+        self._maxent_worker.cancelled.connect(self._maxent_worker.deleteLater)
+        self._maxent_thread.finished.connect(self._cleanup_maxent_thread)
+        self._maxent_thread.finished.connect(self._maxent_thread.deleteLater)
+        self._maxent_panel.set_busy(True)
+        self._set_fourier_status(f"Computing MaxEnt spectrum for run {run_number}...")
+        self._maxent_thread.start()
+
+    def _on_cancel_maxent(self) -> None:
+        """Request cancellation of the active MaxEnt worker."""
+        if self._maxent_worker is None:
+            self._set_fourier_status("No MaxEnt calculation is running.")
+            return
+        self._maxent_worker.cancel()
+        self._set_fourier_status("Cancelling MaxEnt calculation...")
+
+    def _on_maxent_progress(self, current: int, total: int, message: str) -> None:
+        """Update MaxEnt progress from the worker."""
+        self._maxent_panel.set_progress(current, total, message)
+        self.statusBar().showMessage(str(message))
+
+    def _on_maxent_worker_finished(self, result) -> None:
+        """Store and display a completed MaxEnt result."""
+        run_number = self._maxent_active_run_number
+        if run_number is None:
+            run_number = int(result.metadata.get("run_number", 0))
+        self._maxent_state_by_run[int(run_number)] = result.state
+        spectrum = result.as_dataset(self._maxent_active_run)
+        diagnostics = result.diagnostics.to_dict()
+        config = self._maxent_active_config or MaxEntConfig()
+        self._record_frequency_maxent_recipe(
+            int(run_number),
+            config,
+            spectrum,
+            diagnostics,
+            total_cycles=int(result.state.cycle),
+        )
+        self._store_frequency_spectra_for_run(
+            int(run_number),
+            [spectrum],
+            rep_type=RepresentationType.FREQ_MAXENT,
+        )
+        self._maxent_panel.set_diagnostics(diagnostics)
+        if hasattr(self._plot_workspace, "set_available_views"):
+            enabled = set(self._plot_workspace.enabled_views())
+            enabled.add("maxent")
+            self._plot_workspace.set_available_views(sorted(enabled))
+        # Jump to the result only while the computed run is still the browser
+        # selection; if the user navigated elsewhere mid-compute, leave both
+        # their view and plot alone (the result stays cached for later).
+        current_run = (
+            None if self._current_dataset is None else int(self._current_dataset.run_number)
+        )
+        if current_run == int(run_number):
+            already_maxent = self._plot_workspace.active_view() == "maxent"
+            self._plot_workspace.set_active_view("maxent")
+            if already_maxent:
+                self._sync_frequency_plot_for_run(int(run_number), preserve_x_limits=True)
+            self._show_panel("fourier")
+        message = (
+            f"Computed MaxEnt spectrum for run {run_number} through cycle {result.state.cycle}."
+        )
+        self._set_fourier_status(message, success=True)
+        self._log_panel.log(message)
+        self._log_maxent_perf()
+
+    def _on_maxent_worker_error(self, message: str) -> None:
+        """Handle a failed MaxEnt worker."""
+        run_number = self._maxent_active_run_number
+        if run_number is not None and "incompatible" in str(message).lower():
+            self._maxent_state_by_run.pop(int(run_number), None)
+            message = f"{message} Restart MaxEnt, then run cycles again."
+        self._set_fourier_status(f"MaxEnt failed: {message}")
+        self._log_panel.log(f"MaxEnt failed: {message}")
+        self._log_maxent_perf()
+
+    def _on_maxent_worker_cancelled(self) -> None:
+        """Handle worker cancellation."""
+        self._set_fourier_status("MaxEnt calculation cancelled.")
+        self._log_panel.log("MaxEnt calculation cancelled.")
+        self._log_maxent_perf()
+
+    def _cleanup_maxent_thread(self) -> None:
+        """Clear MaxEnt worker state after the thread exits."""
+        self._maxent_panel.set_busy(False)
+        self._maxent_thread = None
+        self._maxent_worker = None
+        self._maxent_active_run_number = None
+        self._maxent_active_run = None
+        self._maxent_active_config = None
+        self._maxent_active_cycles = 0
+        self._maxent_started_at = None
+
+    def _log_maxent_perf(self) -> None:
+        """Record MaxEnt timing if performance logging is enabled."""
+        started_at = self._maxent_started_at
+        if started_at is None:
+            return
+        self._log_perf_event(
+            "compute_maxent",
+            started_at,
+            run=self._maxent_active_run_number,
+            cycles=self._maxent_active_cycles,
+        )
+
+    def _on_compute_maxent(self, cycles: int) -> None:
+        """Compute or resume a MaxEnt spectrum for the active run."""
+        if self._maxent_thread is not None:
+            self._set_fourier_status("A MaxEnt calculation is already running.")
+            return
+        if self._current_dataset is None or self._current_dataset.run is None:
+            self._set_fourier_status("Select a grouped run before computing MaxEnt.")
+            return
+        if not self._dataset_supports_maxent(self._current_dataset):
+            self._set_fourier_status("The active run does not define grouped raw counts.")
+            return
+
+        # Store the in-table edits before syncing, mirroring the dataset-switch
+        # flow: the sync rebuilds the group table from the per-run store, so an
+        # unsaved phase/include edit would otherwise be wiped right before the
+        # config is read.
+        self._store_maxent_panel_state_for_dataset(self._current_dataset)
+        self._sync_maxent_panel_for_dataset(self._current_dataset)
+        run_number = int(self._current_dataset.run_number)
+        config = self._maxent_panel.maxent_config(cycles=int(cycles))
+        if (
+            config.t_min_us is not None
+            and config.t_max_us is not None
+            and config.t_max_us <= config.t_min_us
+        ):
+            self._set_fourier_status("MaxEnt end time must be greater than the start time.")
+            return
+        state = self._maxent_state_by_run.get(run_number)
+        estimate = estimate_maxent_workload(self._current_dataset.run, config)
+        if not self._confirm_maxent_workload(estimate, config):
+            self._set_fourier_status("MaxEnt calculation cancelled before launch.")
+            return
+        self._launch_maxent_worker(
+            run=self._current_dataset.run,
+            config=config,
+            cycles=int(cycles),
+            state=state,
+            run_number=run_number,
+        )
+
+    def _on_apply_maxent_to_selection(self) -> None:
+        """Copy the active run's MaxEnt recipe to other selected runs."""
+        if self._current_dataset is None or self._current_dataset.run is None:
+            self._set_fourier_status("Select a run before applying MaxEnt settings.")
+            return
+        source_run = int(self._current_dataset.run_number)
+        source_rep = self._project_model.representation(source_run, RepresentationType.FREQ_MAXENT)
+        config_dict = source_rep.maxent_config() if source_rep is not None else {}
+        if not config_dict:
+            self._set_fourier_status("Compute a MaxEnt spectrum first, then apply it.")
+            return
+        applied = 0
+        for dataset in self._data_browser.get_selected_datasets():
+            if dataset.run is None or not self._dataset_supports_maxent(dataset):
+                continue
+            run_number = int(dataset.run_number)
+            if run_number == source_run:
+                continue
+            representation = self._project_model.ensure_dataset(run_number).ensure(
+                RepresentationType.FREQ_MAXENT
+            )
+            representation.recipe = {"maxent_config": dict(config_dict)}
+            representation.invalidate()
+            # This discards any previous result outright, so the persisted
+            # diagnostics must go with it (invalidate deliberately keeps them).
+            representation.result_metadata = {}
+            self._frequency_cache(RepresentationType.FREQ_MAXENT).pop(run_number, None)
+            # Drop any stored panel draft so the new recipe (served by the
+            # sync fallback chain, with group inclusion re-derived for the
+            # target's own grouping) becomes the panel state on next visit.
+            self._maxent_panel_state_by_run.pop(run_number, None)
+            applied += 1
+        if applied == 0:
+            self._set_fourier_status("Select additional grouped runs to apply MaxEnt settings to.")
+            return
+        message = (
+            f"Applied MaxEnt settings to {applied} run(s); compute each run to update spectra."
+        )
+        self._set_fourier_status(message, success=True)
+        self._log_panel.log(message)
+
     def _on_fit_parameters(self) -> None:
         """Show and raise the Fitted Parameters dock panel."""
         self._show_panel("fit_parameters")
@@ -4071,6 +4690,7 @@ class MainWindow(QMainWindow):
         started_at = time.perf_counter()
         dataset = None
         self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
+        self._store_maxent_panel_state_for_dataset(self._current_dataset)
         self._active_group_context = None
         if hasattr(self._plot_panel, "set_active_label_group"):
             self._plot_panel.set_active_label_group(None)
@@ -4117,7 +4737,7 @@ class MainWindow(QMainWindow):
                 started_at,
                 run=run_number,
                 domain=self._plot_workspace.active_domain(),
-                cached_frequency=int(run_number in self._frequency_spectra_by_run),
+                cached_frequency=int(run_number in self._frequency_cache()),
                 **self._perf_dataset_metrics(dataset),
             )
 
@@ -4173,10 +4793,17 @@ class MainWindow(QMainWindow):
 
     def _on_plot_workspace_view_changed(self, view: str) -> None:
         """Map top-level workspace tab changes onto the shared time plot panel state."""
-        if view != "frequency":
+        # Keep the spectrum dock's stacked panel in lockstep with the view for
+        # every transition: leaving "maxent" for a time view must restore the
+        # FFT controls (and the "Fourier" title), or FFT status messages land
+        # on the hidden page while stale MaxEnt controls stay visible.
+        self._sync_spectrum_panel_for_view(view)
+        if view not in {"frequency", "maxent"}:
             if hasattr(self._plot_panel, "set_current_time_view_mode"):
                 self._plot_panel.set_current_time_view_mode(view, emit_signal=False)
             self._on_plot_time_view_changed(view)
+        else:
+            self._sync_frequency_plot_for_current_dataset()
         self._sync_domain_buttons(view)
         self._apply_inspector_for_domain(view)
         self._update_status_selection()
@@ -4298,7 +4925,7 @@ class MainWindow(QMainWindow):
                 # metadata than the time-domain entry in the data browser.
                 dataset = None
                 if is_frequency:
-                    spectra = self._frequency_spectra_by_run.get(member_key, [])
+                    spectra = self._frequency_cache(series.rep_type).get(member_key, [])
                     dataset = spectra[0] if spectra else None
                 if dataset is None and hasattr(self._data_browser, "get_dataset"):
                     dataset = self._data_browser.get_dataset(member_key)
@@ -4809,6 +5436,10 @@ class MainWindow(QMainWindow):
             f"Shared fit function to {updated} run(s) in group {group_name}"
         )
 
+    def _on_global_fit_started(self) -> None:
+        """Snapshot launch-time fit context before any UI refresh changes it."""
+        self._active_global_fit_rep_type = self._last_frequency_fit_rep_type
+
     def _on_global_fit_completed(self, results_dict, global_params) -> None:
         """Handle completed global fit.
 
@@ -4855,7 +5486,11 @@ class MainWindow(QMainWindow):
             t_fit, y_fit = fitted_curve
             axis_key = None
             dataset = (
-                self._frequency_spectra_by_run.get(run_number, [None])[0]
+                # Resolve against the representation snapshotted at fit
+                # launch, not the active view at result-arrival time (and not
+                # the collection pin, which view/selection refreshes rewrite
+                # mid-fit).
+                self._frequency_cache(self._active_global_fit_rep_type).get(run_number, [None])[0]
                 if is_frequency_fit
                 else self._data_browser.get_dataset(run_number)
             )
@@ -5229,16 +5864,22 @@ class MainWindow(QMainWindow):
         )
 
     def _frequency_fit_datasets_for_selected_runs(self) -> list[MuonDataset]:
-        """Return cached Fourier spectra for selected browser runs."""
+        """Return cached spectra for selected browser runs in the active frequency view."""
         selected = self._data_browser.get_selected_datasets()
         datasets: list[MuonDataset] = []
         missing_run_numbers: list[int] = []
+        # Pin the representation the fit datasets are collected from: the
+        # async fit-completion handler must resolve run datasets against this
+        # same cache, not whichever view happens to be active when the result
+        # arrives (the user may switch FFT <-> MaxEnt mid-fit).
+        rep_type = self._active_frequency_rep_type()
+        self._last_frequency_fit_rep_type = rep_type
         for source in selected:
             try:
                 run_number = int(source.run_number)
             except (TypeError, ValueError):
                 continue
-            spectra = list(self._frequency_spectra_by_run.get(run_number, []))
+            spectra = list(self._frequency_cache(rep_type).get(run_number, []))
             if not spectra:
                 missing_run_numbers.append(run_number)
                 continue
@@ -5270,7 +5911,7 @@ class MainWindow(QMainWindow):
         if len(missing_run_numbers) > 5:
             preview += f", +{len(missing_run_numbers) - 5} more"
         self.statusBar().showMessage(
-            f"Compute Fourier spectra for selected run(s) {preview} before global frequency fitting."
+            f"Compute {self._frequency_status_name()} spectra for selected run(s) {preview} before global frequency fitting."
         )
 
     def _grouped_time_domain_display_datasets(
@@ -5444,6 +6085,7 @@ class MainWindow(QMainWindow):
         plot_state["workspace_state"] = self._plot_workspace.get_state()
         plot_state["frequency_plot_state"] = self._frequency_plot_panel.get_state()
         self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
+        self._store_maxent_panel_state_for_dataset(self._current_dataset)
 
         def _prune_single_fit_state(state: dict | None) -> dict | None:
             if not isinstance(state, dict):
@@ -5530,6 +6172,11 @@ class MainWindow(QMainWindow):
                     str(run_number): dict(run_state)
                     for run_number, run_state in self._fourier_group_phase_state_by_run.items()
                 },
+            },
+            "maxent_state": self._maxent_panel.get_state(),
+            "maxent_state_by_run": {
+                str(run_number): dict(run_state)
+                for run_number, run_state in self._maxent_panel_state_by_run.items()
             },
             "fourier_spectra_state": self._serialize_frequency_spectra_state(),
         }
@@ -5865,6 +6512,22 @@ class MainWindow(QMainWindow):
                     }
                 self._sync_fourier_panel_for_dataset(current_dataset)
 
+        maxent_state = state.get("maxent_state")
+        if isinstance(maxent_state, dict):
+            self._maxent_panel.restore_state(maxent_state)
+        raw_maxent_states = state.get("maxent_state_by_run")
+        self._maxent_panel_state_by_run = {}
+        if isinstance(raw_maxent_states, dict):
+            for run_number, run_state in raw_maxent_states.items():
+                try:
+                    parsed_run = int(run_number)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(run_state, dict):
+                    self._maxent_panel_state_by_run[parsed_run] = dict(run_state)
+        if current_dataset is not None:
+            self._sync_maxent_panel_for_dataset(current_dataset)
+
         # Open fit-related docks automatically when project contains saved
         # results/state for those panes.
         if _has_saved_fit_results(single_fit_state, global_fit_state):
@@ -5881,6 +6544,12 @@ class MainWindow(QMainWindow):
         """Reset every panel to its empty initial state."""
         self._current_dataset = None
         self._frequency_spectra_by_run = {}
+        self._frequency_spectra_by_rep = {
+            RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
+            RepresentationType.FREQ_MAXENT: {},
+        }
+        self._maxent_state_by_run = {}
+        self._maxent_panel_state_by_run = {}
         self._fourier_group_phase_state_by_run = {}
         self._data_browser.clear()
         self._plot_workspace.clear()
@@ -5941,7 +6610,22 @@ class MainWindow(QMainWindow):
             self.setWindowTitle("Asymmetry \u2014 \u03bcSR Data Analysis")
 
     def closeEvent(self, event) -> None:
-        """Save plot axis ranges to QSettings before closing."""
+        """Stop background work and save plot axis ranges before closing."""
+        # The MaxEnt thread is parented to this window: letting the window be
+        # destroyed while it runs aborts the process (QThread::~QThread calls
+        # qFatal). Request cooperative cancellation and wait for the worker.
+        if getattr(self, "_maxent_worker", None) is not None:
+            self._maxent_worker.cancel()
+        thread = getattr(self, "_maxent_thread", None)
+        if thread is not None:
+            thread.quit()
+            if not thread.wait(10_000):
+                # The engine checks cancellation per kernel chunk, so this is
+                # unlikely — but if the worker is still inside numpy, unparent
+                # the thread so a timed-out wait degrades to a leaked thread
+                # instead of a qFatal abort when the window is destroyed.
+                thread.setParent(None)
+                thread.finished.connect(thread.deleteLater)
         if hasattr(self, "_plot_panel") and hasattr(self._plot_panel, "get_view_limits"):
             x_min, x_max, y_min, y_max = self._plot_panel.get_view_limits()
             self._settings.setValue("plot/time_x_min", float(x_min))
