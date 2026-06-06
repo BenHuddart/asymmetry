@@ -21,6 +21,7 @@ from asymmetry.core.fourier.spectrum import (
     GroupSpectrumConfig,
     compute_average_group_spectrum,
 )
+from asymmetry.core.maxent import MaxEntConfig, maxent
 from asymmetry.core.representation.base import Representation, RepresentationType
 
 
@@ -83,14 +84,33 @@ class FrequencyFFT(Representation):
 
 
 class FrequencyMaxEnt(Representation):
-    """Maximum-entropy spectra — reserved, not yet implemented.
+    """Grouped maximum-entropy spectrum for a run.
 
-    The type is registered so its navigation button and fit pipeline exist.
-    Implementing MaxEnt requires only a working :meth:`compute` plus a
-    frequency-domain fit-library entry — no schema or orchestration change.
+    Recipe::
+
+        {"maxent_config": {n_spectrum_points, window, phase/background settings,
+                           selected_group_ids, group_phase_degrees}}
     """
 
     rep_type = RepresentationType.FREQ_MAXENT
 
+    def maxent_config(self) -> dict[str, Any]:
+        """Return the raw ``maxent_config`` recipe block (possibly empty)."""
+        config = self.recipe.get("maxent_config")
+        return dict(config) if isinstance(config, dict) else {}
+
     def compute(self, run: Run, *, context: Any = None) -> list[MuonDataset]:
-        raise NotImplementedError("Maximum-entropy spectra are not yet implemented.")
+        if not run.histograms:
+            raise ValueError("MaxEnt representation requires detector histograms.")
+        config_dict = self.maxent_config()
+        config = MaxEntConfig.from_dict(config_dict)
+        if config.selected_group_ids is None:
+            config.selected_group_ids = _resolve_selected_group_ids(run, config_dict)
+        result = maxent(run, config)
+        self.result_metadata = {
+            "cycles": int(result.state.cycle),
+            "diagnostics": result.diagnostics.to_dict(),
+            "f_min_mhz": float(result.frequencies_mhz[0]) if result.frequencies_mhz.size else None,
+            "f_max_mhz": float(result.frequencies_mhz[-1]) if result.frequencies_mhz.size else None,
+        }
+        return [result.as_dataset(run)]

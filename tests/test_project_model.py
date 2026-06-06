@@ -98,8 +98,11 @@ def test_recompute_all_populates_primary_and_survives_bad_recipe():
     container = model.ensure_dataset(7)
     fb = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
     container.by_type[RepresentationType.TIME_FB_ASYMMETRY] = fb
-    # MaxEnt raises in compute() — recompute_all must not abort.
-    maxent = make_representation(RepresentationType.FREQ_MAXENT)
+    # Bad MaxEnt recipe/input — recompute_all must not abort.
+    maxent = make_representation(
+        RepresentationType.FREQ_MAXENT,
+        recipe={"maxent_config": {"selected_group_ids": [999]}},
+    )
     container.by_type[RepresentationType.FREQ_MAXENT] = maxent
 
     assert fb.primary is None

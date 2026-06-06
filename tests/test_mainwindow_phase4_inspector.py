@@ -11,8 +11,8 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtWidgets import QApplication, QTabBar
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.gui.mainwindow import MainWindow
@@ -148,3 +148,66 @@ def test_unknown_domain_token_is_noop(win: MainWindow) -> None:
     fit_visible = win._dock_fit.isVisible()
     _switch_domain(win, "unknown_domain")
     assert win._dock_fit.isVisible() == fit_visible
+
+
+# ── MaxEnt domain ────────────────────────────────────────────────────────────
+
+
+def test_maxent_domain_makes_all_three_visible(win: MainWindow) -> None:
+    """groups → maxent must re-show the Spectrum dock (regression: missing config)."""
+    _switch_domain(win, "groups")
+    assert not win._dock_fourier.isVisible()
+    _switch_domain(win, "maxent")
+    assert win._dock_fit.isVisible()
+    assert win._dock_fourier.isVisible()
+    assert win._dock_fit_parameters.isVisible()
+
+
+# ── Dock tab bar recovery after domain switches ──────────────────────────────
+
+
+def _inspector_tab_bar(win: MainWindow) -> QTabBar | None:
+    """Return the QTabBar QMainWindow created for the right inspector dock group."""
+    titles = {
+        win._dock_fit.windowTitle(),
+        win._dock_fourier.windowTitle(),
+        win._dock_fit_parameters.windowTitle(),
+    }
+    for tab_bar in win.findChildren(QTabBar, options=Qt.FindChildOption.FindDirectChildrenOnly):
+        tab_texts = {tab_bar.tabText(i) for i in range(tab_bar.count())}
+        if tab_texts & titles:
+            return tab_bar
+    return None
+
+
+def test_tab_bar_visible_after_domain_cycle(qapp: QApplication, win: MainWindow) -> None:
+    """The deferred relayout nudge keeps the dock tab bar visible across switches."""
+    for view in ("fb_asymmetry", "groups", "frequency", "maxent", "groups"):
+        _switch_domain(win, view)
+        qapp.processEvents()
+    tab_bar = _inspector_tab_bar(win)
+    assert tab_bar is not None
+    assert tab_bar.isVisible()
+    assert tab_bar.count() == 2  # groups domain: Fit + Parameters
+
+
+def test_refresh_inspector_tab_bar_reshows_hidden_tab_bar(
+    qapp: QApplication, win: MainWindow
+) -> None:
+    """If Qt leaves the tab bar hidden (the missing-tabs bug), the nudge re-shows it."""
+    _switch_domain(win, "fb_asymmetry")
+    qapp.processEvents()
+    tab_bar = _inspector_tab_bar(win)
+    assert tab_bar is not None
+    tab_bar.hide()  # simulate the Qt relayout failure
+    win._refresh_inspector_tab_bar()
+    assert tab_bar.isVisible()
+
+
+def test_refresh_inspector_tab_bar_noop_with_single_visible_dock(win: MainWindow) -> None:
+    """With fewer than two visible docks there is no tab bar to restore."""
+    win._dock_fit.hide()
+    win._dock_fourier.hide()
+    win._dock_fit_parameters.hide()
+    win._dock_fit.show()
+    win._refresh_inspector_tab_bar()  # must not raise or force a tab bar

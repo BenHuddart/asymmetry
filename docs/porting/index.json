@@ -87,6 +87,28 @@
       "updated": "2026-05-30"
     },
     {
+      "slug": "maxent",
+      "feature_name": "Maximum entropy spectral estimation",
+      "status": "study",
+      "path": "docs/porting/maxent",
+      "references": [
+        "WiMDA",
+        "musrfit",
+        "Mantid"
+      ],
+      "docs": {
+        "readme": "docs/porting/maxent/README.md",
+        "comparison": "docs/porting/maxent/comparison.md",
+        "implementation_options": "docs/porting/maxent/implementation-options.md",
+        "test_data": "docs/porting/maxent/test-data.md",
+        "verification_plan": "docs/porting/maxent/verification-plan.md"
+      },
+      "tests_path": null,
+      "src_path": null,
+      "updated": "2026-06-05",
+      "notes": "Promotes candidate slug maxent-spectrum. Study pass done 2026-06-05. Four implementations found across references, three distinct methods: (1) MULTIMAX lineage = WiMDA Wimdamax.pas AND Mantid MuonMaxent/MaxentTools (same FORTRAN ancestor, near-identical — implement ONCE, never offer as separate user choices); (2) Mantid generic MaxEnt-v1 (Skilling-Bryan, PosNeg entropy, complex images — genuinely different but Mantid's muon GUI dropped it in v3.12; do not expose as second engine, keep core seam engine-shaped); (3) WiMDA src/MaxEnt.pas is Burg all-poles MEM, NOT MaxEnt — excluded, naming hazard. musrfit has NO MaxEnt (roadmap item only; its PFTPhaseCorrection entropy code is FFT phase correction). WARNING: WiMDA's own FEATURE_MAP/SYMBOL_MAP 'maxent-spectrum' entries point at the Burg code and miss Wimdamax.pas entirely — do not navigate by them. Mantid MaxentTools is GPL-3: usable as verification oracle, must not be copied into MIT Asymmetry. Decision: port MULTIMAX with WiMDA as behavioral contract, Mantid numpy port as oracle."
+    },
+    {
       "slug": "minos-error-analysis",
       "feature_name": "MINOS asymmetric error analysis",
       "status": "candidate",
@@ -159,7 +181,8 @@
         "comparison": "docs/porting/candidates/maxent-spectrum/comparison.md",
         "scoring": "docs/porting/candidates/maxent-spectrum/scoring.md"
       },
-      "updated": "2026-05-23"
+      "updated": "2026-06-05",
+      "notes": "Promoted to full study: see slug 'maxent' (docs/porting/maxent). Candidate docs retained for scoring history; the study supersedes their technical content."
     },
     {
       "slug": "rrf-transform",

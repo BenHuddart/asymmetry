@@ -83,15 +83,24 @@ this comparison.
   lives in `Plot.pas`, not in `Fourier.pas` itself.  
   Flagship: `src/Fourier.pas`.
 
-- **`maxent-spectrum`** — Maximum-entropy reconstruction via Burg's
-  method (`memcof`). Iterates pole count using the final-prediction-
-  error (FPE) criterion; reconstructs the time-domain signal. Reads
-  FFT parameters straight from UI controls (`FFTParams`); buffers
-  allocated in finalisation.  
-  Flagship: `src/MaxEnt.pas`, `src/Fourier.pas` (`CosFT`, `Four1`).
-  **Notable:** WiMDA is one of only two reference programs that ships
-  a working MaxEnt (the other is Mantid). musrfit's MaxEnt support is
-  limited; Asymmetry's is a stub.
+- **`maxent-spectrum`** — **Caution: WiMDA contains TWO different
+  "maximum entropy" features, and WiMDA's own `FEATURE_MAP.json` /
+  `SYMBOL_MAP.json` entries for `maxent-spectrum` describe only the
+  lesser one.**
+  1. The real μSR MaxEnt: Pratt/MULTIMAX joint multi-group
+     maximum-entropy reconstruction from raw counts, with outer-loop
+     phase/amplitude/background/deadtime refinement. Flagship:
+     `src/Wimdamax.pas` (algorithm), `src/MaxControl.pas`/`.dfm`
+     (driver dialog), `src/MaxOutput.pas`, `src/Moments.pas`. This is
+     the porting-relevant feature and is **missing from WiMDA's maps
+     entirely** — do not navigate by `maxent-spectrum` for it.
+  2. A Burg all-poles MEM (Numerical Recipes `memcof`/`evlmem` with an
+     FPE pole scan) exposed as an alternative FFT "Transform Mode".
+     Flagship: `src/MaxEnt.pas`, `src/Fourier.pas` (`CosFT`, `Four1`).
+     A different statistical method that merely shares the name.
+  **Notable:** WiMDA and Mantid both ship the MULTIMAX-lineage MaxEnt
+  (Mantid as `MuonMaxent`); musrfit has none. Asymmetry's is a stub.
+  Full study: `docs/porting/maxent/`.
 
 - **`spectrum background subtraction`** — Interactive tool for local
   background removal in frequency-domain plots.  
@@ -174,8 +183,12 @@ this comparison.
 These features are richer in WiMDA than in the other reference
 programs:
 
-- **MaxEnt with Burg pole-scan and FPE criterion** — `src/MaxEnt.pas`.
-  Mantid's MaxEnt is a different formulation; musrfit's is limited.
+- **MULTIMAX-lineage MaxEnt with interactive convergence, constant-BG
+  fitting, auto window, moments analysis** — `src/Wimdamax.pas`,
+  `src/MaxControl.pas`, `src/Moments.pas`. Mantid's `MuonMaxent` is the
+  same algorithm with fewer options; musrfit has none. (WiMDA also has
+  a separate Burg pole-scan MEM in `src/MaxEnt.pas` — a different
+  method.)
 - **Simulate mode** — `src/Simulate.pas`. Mantid has no equivalent
   built-in tool; musrfit relies on user-written msr files.
 - **Moments analysis** — `src/Moments.pas`. None of the other tools

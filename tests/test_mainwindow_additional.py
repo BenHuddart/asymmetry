@@ -27,6 +27,7 @@ from asymmetry.core.project import load_project, save_project
 from asymmetry.core.representation import RepresentationType
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.styles import tokens
+from tests._qt_helpers import wait_for
 
 
 @pytest.fixture(scope="module")
@@ -640,6 +641,36 @@ class TestMainWindowFourier:
         assert mainwindow._frequency_plot_panel._ax.get_xlim()[1] == pytest.approx(
             center + 0.25, abs=1e-3
         )
+
+    def test_compute_maxent_uses_maxent_view_and_separate_cache(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8840, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8840)
+        mainwindow._maxent_panel._points_spin.setValue(64)
+        mainwindow._maxent_panel._inner_spin.setValue(1)
+        mainwindow._maxent_panel._auto_window_check.setChecked(False)
+        mainwindow._maxent_panel._f_min_edit.setText("0.1")
+        mainwindow._maxent_panel._f_max_edit.setText("4.0")
+        mainwindow._maxent_panel._time_binning_spin.setValue(2)
+
+        mainwindow._on_compute_maxent(1)
+        wait_for(lambda: mainwindow._maxent_thread is None, QApplication.instance(), timeout_s=2.0)
+
+        assert mainwindow._plot_workspace.active_view() == "maxent"
+        assert mainwindow._spectrum_stack.currentWidget() is mainwindow._maxent_panel
+        assert 8840 not in mainwindow._frequency_spectra_by_run
+        maxent_cache = mainwindow._frequency_cache(RepresentationType.FREQ_MAXENT)
+        assert 8840 in maxent_cache
+        assert maxent_cache[8840][0].metadata["frequency_representation"] == "maxent"
+        representation = mainwindow._project_model.representation(
+            8840, RepresentationType.FREQ_MAXENT
+        )
+        assert representation is not None
+        assert representation.result_metadata["cycles"] == 1
+        assert representation.recipe["maxent_config"]["time_binning_factor"] == 2
 
     def test_project_restore_persists_cached_fourier_spectra(
         self,

@@ -125,10 +125,12 @@ class Representation(ABC):
         recipe: dict | None = None,
         fit: FitSlot | None = None,
         trend_state: dict | None = None,
+        result_metadata: dict | None = None,
     ) -> None:
         self.recipe: dict[str, Any] = dict(recipe or {})
         self.fit: FitSlot = fit if isinstance(fit, FitSlot) else FitSlot()
         self.trend_state: dict[str, Any] = dict(trend_state or {})
+        self.result_metadata: dict[str, Any] = dict(result_metadata or {})
         self._datasets: list[MuonDataset] | None = None
 
     # ── identity ───────────────────────────────────────────────────────────
@@ -159,6 +161,7 @@ class Representation(ABC):
     def invalidate(self) -> None:
         """Drop the transient computed arrays (e.g. after a recipe change)."""
         self._datasets = None
+        self.result_metadata = {}
 
     def cache_datasets(self, datasets: list[MuonDataset]) -> None:
         """Store externally-computed curves as the transient cache.
@@ -186,6 +189,7 @@ class Representation(ABC):
             "recipe": dict(self.recipe),
             "fit": self.fit.to_dict(),
             "trend_state": dict(self.trend_state),
+            "result_metadata": dict(self.result_metadata),
         }
 
     def __repr__(self) -> str:
