@@ -166,9 +166,24 @@ def test_fft_respects_group_enabled_table():
 # ── FrequencyMaxEnt ────────────────────────────────────────────────────────
 
 
-def test_maxent_compute_raises():
-    with pytest.raises(NotImplementedError):
-        FrequencyMaxEnt().compute(_run())
+def test_maxent_compute_returns_frequency_spectrum():
+    rep = FrequencyMaxEnt(
+        recipe={
+            "maxent_config": {
+                "n_spectrum_points": 16,
+                "f_min_mhz": 0.1,
+                "f_max_mhz": 2.0,
+                "outer_cycles": 1,
+                "inner_iterations": 1,
+            }
+        }
+    )
+    spectra = rep.compute(_run())
+
+    assert len(spectra) == 1
+    assert spectra[0].metadata["plot_domain"] == "frequency"
+    assert spectra[0].metadata["frequency_representation"] == "maxent"
+    assert rep.result_metadata["cycles"] == 1
 
 
 # ── caching / invalidation ─────────────────────────────────────────────────
@@ -200,7 +215,7 @@ def test_representation_to_dict_excludes_arrays_and_round_trips():
     rep.ensure_computed(run)  # populate transient arrays
 
     data = rep.to_dict()
-    assert set(data) == {"rep_type", "recipe", "fit", "trend_state"}
+    assert set(data) == {"rep_type", "recipe", "fit", "trend_state", "result_metadata"}
     assert "datasets" not in data and "_datasets" not in data
 
     restored = representation_from_dict(data)

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QApplication, QGroupBox, QHeaderView
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.panels.fourier_panel import FourierPanel
 from asymmetry.gui.panels.log_panel import LogPanel
+from asymmetry.gui.panels.maxent_panel import MaxEntPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
 
 
@@ -70,6 +71,32 @@ def test_fourier_panel_defaults(qapp: QApplication) -> None:
         panel._phase_table.horizontalHeader().sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
     )
     assert panel._fft_btn.text() == "Compute FFT"
+
+
+def test_maxent_panel_defaults_and_group_state(qapp: QApplication) -> None:
+    panel = MaxEntPanel()
+    panel.set_group_definitions({2: "Right", 1: "Left"}, {1: 12.0}, {2: False})
+
+    state = panel.get_state()
+
+    assert panel._points_spin.value() == 4096
+    assert state["default_level"] == pytest.approx(0.01)
+    assert state["auto_window"] is True
+    assert state["window_half_width_gauss"] == pytest.approx(300.0)
+    assert state["t_min_us"] is None
+    assert state["t_max_us"] is None
+    assert state["time_binning_factor"] == 1
+    assert panel.selected_group_ids() == [1]
+    assert panel.group_phase_table()[1] == pytest.approx(12.0)
+    assert panel.group_enabled_table() == {1: True, 2: False}
+    assert panel._cycle_one_btn.text() == "+1"
+    assert panel._converge_btn.text() == "Converge"
+
+    config = panel.maxent_config(cycles=5)
+
+    assert config.outer_cycles == 5
+    assert config.selected_group_ids == [1]
+    assert config.time_binning_factor == 1
 
 
 def test_fourier_panel_group_order_matches_workflow(qapp: QApplication) -> None:

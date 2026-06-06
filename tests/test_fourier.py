@@ -392,8 +392,10 @@ def test_build_group_signal_dataset_applies_group_background_correction() -> Non
     assert backward.metadata["fourier_background_value"] == pytest.approx(21.0)
 
 
-def test_maxent_stub_raises_not_implemented() -> None:
-    with pytest.raises(NotImplementedError):
+def test_maxent_wrapper_requires_run_with_histograms() -> None:
+    # The Fourier-module wrapper delegates to asymmetry.core.maxent, which is
+    # a grouped raw-count algorithm: datasets without a Run are rejected.
+    with pytest.raises(ValueError, match="raw detector histograms"):
         maxent(_dataset(32))
 
 

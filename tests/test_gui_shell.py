@@ -70,6 +70,7 @@ class _StubFitPanel(QWidget):
     def __init__(self):
         super().__init__()
         self.fit_completed = _DummySignal()
+        self.global_fit_started = _DummySignal()
         self.global_fit_completed = _DummySignal()
         self.grouped_fit_completed = _DummySignal()
         self.grouped_time_domain_mode_changed = _DummySignal()

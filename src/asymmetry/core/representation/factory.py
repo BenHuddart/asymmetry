@@ -27,11 +27,17 @@ def make_representation(
     *,
     fit: FitSlot | None = None,
     trend_state: dict | None = None,
+    result_metadata: dict | None = None,
 ) -> Representation:
     """Construct a representation of *rep_type* with the given recipe/state."""
     resolved = _coerce_type(rep_type)
     cls = REPRESENTATION_REGISTRY[resolved]
-    return cls(recipe=recipe, fit=fit, trend_state=trend_state)
+    return cls(
+        recipe=recipe,
+        fit=fit,
+        trend_state=trend_state,
+        result_metadata=result_metadata,
+    )
 
 
 def representation_from_dict(data: dict) -> Representation:
@@ -44,6 +50,7 @@ def representation_from_dict(data: dict) -> Representation:
         recipe=data.get("recipe"),
         fit=FitSlot.from_dict(data.get("fit")),
         trend_state=data.get("trend_state"),
+        result_metadata=data.get("result_metadata"),
     )
 
 
