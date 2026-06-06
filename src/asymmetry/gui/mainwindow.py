@@ -314,7 +314,7 @@ class MainWindow(QMainWindow):
             RepresentationType.FREQ_MAXENT: {},
         }
         self._maxent_state_by_run: dict[int, MaxEntState] = {}
-        self._maxent_group_phase_state_by_run: dict[int, dict] = {}
+        self._maxent_panel_state_by_run: dict[int, dict] = {}
         self._maxent_thread: QThread | None = None
         self._maxent_worker: MaxEntWorker | None = None
         self._maxent_active_run_number: int | None = None
@@ -3510,33 +3510,79 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_maxent_panel"):
             self._sync_maxent_panel_for_dataset(dataset)
 
-    def _store_maxent_group_phase_state_for_dataset(self, dataset: MuonDataset | None) -> None:
-        """Persist the current MaxEnt group-phase UI state for one dataset/run."""
+    def _store_maxent_panel_state_for_dataset(self, dataset: MuonDataset | None) -> None:
+        """Persist the current MaxEnt panel state for one dataset/run."""
         if dataset is None:
             return
         try:
             run_number = int(dataset.run_number)
         except (TypeError, ValueError):
             return
-        self._maxent_group_phase_state_by_run[run_number] = {
-            "group_phase_degrees": self._maxent_panel.group_phase_table(),
-            "group_enabled_table": self._maxent_panel.group_enabled_table(),
-        }
+        self._maxent_panel_state_by_run[run_number] = self._maxent_panel.get_state()
+
+    def _maxent_state_from_config(self, config: dict, group_names: dict[int, str]) -> dict | None:
+        """Return a panel-state dict from a MaxEnt recipe block."""
+        if not isinstance(config, dict):
+            return None
+        state = dict(config)
+        phases = config.get("group_phase_degrees")
+        if isinstance(phases, dict):
+            state["group_phase_degrees"] = {int(k): float(v) for k, v in phases.items()}
+        selected = config.get("selected_group_ids")
+        if isinstance(selected, list):
+            selected_ids = {int(group_id) for group_id in selected}
+            state["group_enabled_table"] = {
+                int(group_id): int(group_id) in selected_ids for group_id in group_names
+            }
+        return state
+
+    def _normalise_maxent_panel_state(self, state: dict, group_names: dict[int, str]) -> dict:
+        """Return a MaxEnt panel state compatible with the current run groups."""
+        normalised = dict(state)
+        if "group_enabled_table" not in normalised:
+            selected = normalised.get("selected_group_ids")
+            if isinstance(selected, list):
+                selected_ids = {int(group_id) for group_id in selected}
+                normalised["group_enabled_table"] = {
+                    int(group_id): int(group_id) in selected_ids for group_id in group_names
+                }
+        return normalised
+
+    def _maxent_state_from_representation(
+        self, run_number: int, group_names: dict[int, str]
+    ) -> dict | None:
+        """Return a panel-state dict from a persisted MaxEnt recipe, if available."""
+        representation = self._project_model.representation(
+            run_number, RepresentationType.FREQ_MAXENT
+        )
+        if representation is None:
+            return None
+        config = representation.recipe.get("maxent_config")
+        return self._maxent_state_from_config(config, group_names)
+
+    def _inherited_maxent_panel_state(self) -> dict:
+        """Return current non-group MaxEnt settings for a new run."""
+        state = self._maxent_panel.get_state()
+        state.pop("selected_group_ids", None)
+        state.pop("group_enabled_table", None)
+        state.pop("group_phase_degrees", None)
+        return state
 
     def _sync_maxent_panel_for_dataset(self, dataset: MuonDataset | None) -> None:
         """Refresh the MaxEnt group table for the active run."""
         group_names = self._fourier_group_names_for_dataset(dataset)
         run_number = None if dataset is None else int(dataset.run_number)
-        stored = (
-            None if run_number is None else self._maxent_group_phase_state_by_run.get(run_number)
-        )
-        phases = stored.get("group_phase_degrees") if isinstance(stored, dict) else None
-        enabled = stored.get("group_enabled_table") if isinstance(stored, dict) else None
-        self._maxent_panel.set_group_definitions(
-            group_names,
-            phases if isinstance(phases, dict) else None,
-            enabled if isinstance(enabled, dict) else None,
-        )
+        if run_number is None:
+            self._maxent_panel.set_group_definitions({})
+            return
+        state = self._maxent_panel_state_by_run.get(run_number)
+        if state is None:
+            state = self._maxent_state_from_representation(run_number, group_names)
+        if state is None:
+            state = self._inherited_maxent_panel_state()
+        state = self._normalise_maxent_panel_state(state, group_names)
+        self._maxent_panel.set_group_definitions(group_names)
+        self._maxent_panel.restore_state(state)
 
     def _store_fourier_group_phase_state_for_dataset(self, dataset: MuonDataset | None) -> None:
         """Persist the current Fourier group-phase UI state for one dataset/run."""
@@ -4263,6 +4309,7 @@ class MainWindow(QMainWindow):
             "diagnostics": dict(diagnostics),
         }
         representation.cache_datasets([spectrum])
+        self._maxent_panel_state_by_run[int(run_number)] = dict(config_dict)
 
     def _on_restart_maxent(self) -> None:
         """Drop resumable MaxEnt state for the active run."""
@@ -4474,7 +4521,7 @@ class MainWindow(QMainWindow):
         # flow: the sync rebuilds the group table from the per-run store, so an
         # unsaved phase/include edit would otherwise be wiped right before the
         # config is read.
-        self._store_maxent_group_phase_state_for_dataset(self._current_dataset)
+        self._store_maxent_panel_state_for_dataset(self._current_dataset)
         self._sync_maxent_panel_for_dataset(self._current_dataset)
         run_number = int(self._current_dataset.run_number)
         config = self._maxent_panel.maxent_config(cycles=int(cycles))
@@ -4522,6 +4569,10 @@ class MainWindow(QMainWindow):
             representation.recipe = {"maxent_config": dict(config_dict)}
             representation.invalidate()
             self._frequency_cache(RepresentationType.FREQ_MAXENT).pop(run_number, None)
+            group_names = self._fourier_group_names_for_dataset(dataset)
+            copied_state = self._maxent_state_from_config(config_dict, group_names)
+            if copied_state is not None:
+                self._maxent_panel_state_by_run[run_number] = copied_state
             applied += 1
         if applied == 0:
             self._set_fourier_status("Select additional grouped runs to apply MaxEnt settings to.")
@@ -4596,7 +4647,7 @@ class MainWindow(QMainWindow):
         started_at = time.perf_counter()
         dataset = None
         self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
-        self._store_maxent_group_phase_state_for_dataset(self._current_dataset)
+        self._store_maxent_panel_state_for_dataset(self._current_dataset)
         self._active_group_context = None
         if hasattr(self._plot_panel, "set_active_label_group"):
             self._plot_panel.set_active_label_group(None)
@@ -5987,7 +6038,7 @@ class MainWindow(QMainWindow):
         plot_state["workspace_state"] = self._plot_workspace.get_state()
         plot_state["frequency_plot_state"] = self._frequency_plot_panel.get_state()
         self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
-        self._store_maxent_group_phase_state_for_dataset(self._current_dataset)
+        self._store_maxent_panel_state_for_dataset(self._current_dataset)
 
         def _prune_single_fit_state(state: dict | None) -> dict | None:
             if not isinstance(state, dict):
@@ -6076,6 +6127,10 @@ class MainWindow(QMainWindow):
                 },
             },
             "maxent_state": self._maxent_panel.get_state(),
+            "maxent_state_by_run": {
+                str(run_number): dict(run_state)
+                for run_number, run_state in self._maxent_panel_state_by_run.items()
+            },
             "fourier_spectra_state": self._serialize_frequency_spectra_state(),
         }
         # Recipe-only representation/batch state (v6).  Frequency spectra are
@@ -6413,8 +6468,18 @@ class MainWindow(QMainWindow):
         maxent_state = state.get("maxent_state")
         if isinstance(maxent_state, dict):
             self._maxent_panel.restore_state(maxent_state)
-            if current_dataset is not None:
-                self._sync_maxent_panel_for_dataset(current_dataset)
+        raw_maxent_states = state.get("maxent_state_by_run")
+        self._maxent_panel_state_by_run = {}
+        if isinstance(raw_maxent_states, dict):
+            for run_number, run_state in raw_maxent_states.items():
+                try:
+                    parsed_run = int(run_number)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(run_state, dict):
+                    self._maxent_panel_state_by_run[parsed_run] = dict(run_state)
+        if current_dataset is not None:
+            self._sync_maxent_panel_for_dataset(current_dataset)
 
         # Open fit-related docks automatically when project contains saved
         # results/state for those panes.
@@ -6437,7 +6502,7 @@ class MainWindow(QMainWindow):
             RepresentationType.FREQ_MAXENT: {},
         }
         self._maxent_state_by_run = {}
-        self._maxent_group_phase_state_by_run = {}
+        self._maxent_panel_state_by_run = {}
         self._fourier_group_phase_state_by_run = {}
         self._data_browser.clear()
         self._plot_workspace.clear()

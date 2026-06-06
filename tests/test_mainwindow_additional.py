@@ -571,6 +571,121 @@ class TestMainWindowFourier:
             == tokens.ACCENT
         )
 
+    def test_maxent_panel_settings_persist_per_dataset_while_browsing(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset_a = _make_fourier_ready_dataset(8850, with_grouping=True)
+        dataset_b = _make_fourier_ready_dataset(8851, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset_a)
+        mainwindow._data_browser.add_dataset(dataset_b)
+
+        mainwindow._on_dataset_selected(8850)
+        mainwindow._maxent_panel._points_spin.setValue(128)
+        mainwindow._maxent_panel._t_min_edit.setText("0.25")
+        mainwindow._maxent_panel._t_max_edit.setText("4.5")
+        mainwindow._maxent_panel._time_binning_spin.setValue(4)
+        table_a = mainwindow._maxent_panel._group_table
+        table_a.item(0, 2).setText("21.0")
+        table_a.item(1, 0).setCheckState(Qt.CheckState.Unchecked)
+
+        mainwindow._on_dataset_selected(8851)
+        assert mainwindow._maxent_panel._points_spin.value() == 128
+        assert mainwindow._maxent_panel._time_binning_spin.value() == 4
+        assert mainwindow._maxent_panel._t_min_edit.text() == "0.25"
+        assert mainwindow._maxent_panel.selected_group_ids() == [1, 2]
+        mainwindow._maxent_panel._points_spin.setValue(64)
+        mainwindow._maxent_panel._time_binning_spin.setValue(2)
+
+        mainwindow._on_dataset_selected(8850)
+
+        assert mainwindow._maxent_panel._points_spin.value() == 128
+        assert mainwindow._maxent_panel._time_binning_spin.value() == 4
+        assert mainwindow._maxent_panel.group_phase_table()[1] == pytest.approx(21.0)
+        assert mainwindow._maxent_panel.selected_group_ids() == [1]
+
+        mainwindow._on_dataset_selected(8851)
+        assert mainwindow._maxent_panel._points_spin.value() == 64
+        assert mainwindow._maxent_panel._time_binning_spin.value() == 2
+
+    def test_maxent_panel_loads_persisted_recipe_when_selecting_dataset(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8852, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        representation = mainwindow._project_model.ensure_dataset(8852).ensure(
+            RepresentationType.FREQ_MAXENT
+        )
+        representation.recipe = {
+            "maxent_config": {
+                "n_spectrum_points": 128,
+                "f_min_mhz": 0.5,
+                "f_max_mhz": 3.5,
+                "auto_window": False,
+                "t_min_us": 0.4,
+                "t_max_us": 5.2,
+                "time_binning_factor": 8,
+                "selected_group_ids": [2],
+                "group_phase_degrees": {2: 44.0},
+            }
+        }
+
+        mainwindow._on_dataset_selected(8852)
+
+        assert mainwindow._maxent_panel._points_spin.value() == 128
+        assert mainwindow._maxent_panel._auto_window_check.isChecked() is False
+        assert mainwindow._maxent_panel._f_min_edit.text() == "0.5"
+        assert mainwindow._maxent_panel._t_max_edit.text() == "5.2"
+        assert mainwindow._maxent_panel._time_binning_spin.value() == 8
+        assert mainwindow._maxent_panel.selected_group_ids() == [2]
+        assert mainwindow._maxent_panel.group_phase_table()[2] == pytest.approx(44.0)
+
+    def test_maxent_draft_settings_round_trip_with_project(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        dataset = _make_fourier_ready_dataset(8853, with_grouping=True)
+        assert dataset.run is not None
+        source_file = tmp_path / "run_8853.mdu"
+        source_file.write_text("placeholder", encoding="utf-8")
+        dataset.run.source_file = str(source_file)
+        dataset.metadata["source_file"] = str(source_file)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8853)
+        mainwindow._maxent_panel._points_spin.setValue(256)
+        mainwindow._maxent_panel._time_binning_spin.setValue(16)
+        mainwindow._maxent_panel._t_min_edit.setText("0.75")
+        mainwindow._maxent_panel._t_max_edit.setText("6.25")
+        table = mainwindow._maxent_panel._group_table
+        table.item(0, 2).setText("13.5")
+        table.item(1, 0).setCheckState(Qt.CheckState.Unchecked)
+
+        state = mainwindow.collect_project_state()
+        assert state["maxent_state_by_run"]["8853"]["time_binning_factor"] == 16
+        project_path = tmp_path / "maxent_draft.asymp"
+        save_project(state, project_path)
+        loaded_state = load_project(project_path)
+        restored_window = MainWindow()
+
+        def _fake_load_file(_path: str) -> MuonDataset:
+            loaded = _make_fourier_ready_dataset(8853, with_grouping=True)
+            assert loaded.run is not None
+            loaded.run.source_file = str(source_file)
+            loaded.metadata["source_file"] = str(source_file)
+            return loaded
+
+        monkeypatch.setattr(restored_window, "_load_file", _fake_load_file)
+        restored_window.restore_project_state(loaded_state, str(project_path))
+
+        assert restored_window._maxent_panel._points_spin.value() == 256
+        assert restored_window._maxent_panel._time_binning_spin.value() == 16
+        assert restored_window._maxent_panel._t_min_edit.text() == "0.75"
+        assert restored_window._maxent_panel.group_phase_table()[1] == pytest.approx(13.5)
+        assert restored_window._maxent_panel.selected_group_ids() == [1]
+
     def test_frequency_axis_toggle_can_show_relative_values(self, mainwindow: MainWindow) -> None:
         dataset = _make_fourier_ready_dataset(8811, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
