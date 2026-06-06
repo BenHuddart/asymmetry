@@ -27,6 +27,16 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
         "Use close to a critical temperature where a quantity grows strongly as |T-Tc| decreases. "
         "The exponent nu captures the divergence rate and should be interpreted within the model range only."
     ),
+    "OrderParameter": (
+        "Use for a magnetic order parameter that grows continuously below an ordering temperature Tc and "
+        "vanishes above it, such as a spontaneous precession frequency, internal field, or ordered-moment-like "
+        "asymmetry tracked across a second-order transition. The amplitude y0 is the saturated T=0 value (in the "
+        "unit of the trended observable), beta is the critical exponent (about 0.33-0.37 for 3D Heisenberg/Ising "
+        "magnets and 0.5 for mean field), and the shape exponent alpha controls the departure from a pure power "
+        "law away from Tc; fix alpha=1 to fit the near-Tc power law y0*(1-T/Tc)^beta. The model is exactly zero "
+        "for T>=Tc, so include the ordered-phase points and let Tc fall within the fitted range. It is not "
+        "appropriate for diverging quantities (use CriticalDivergence instead) or for first-order transitions."
+    ),
     "Redfield": (
         "Use for longitudinal-field relaxation in the motional-narrowing picture of dynamic local fields. "
         "It is appropriate when a single dominant fluctuation rate and coupling scale are physically meaningful."
