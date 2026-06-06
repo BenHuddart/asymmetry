@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from functools import cached_property
 from typing import Any
 
 import numpy as np
@@ -21,7 +22,6 @@ from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
-from asymmetry.core.fourier.spectrum import precompute_group_fourier_inputs
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
@@ -176,8 +176,10 @@ class MaxEntInput:
     default_level: float
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    @property
+    @cached_property
     def frequencies_mhz(self) -> NDArray[np.float64]:
+        # Cached: this grid is requested in every projection of the iteration
+        # hot loop and never changes after construction.
         return np.linspace(
             float(self.f_min_mhz), float(self.f_max_mhz), int(self.n_spectrum_points)
         )
@@ -423,11 +425,6 @@ def estimate_maxent_workload(
 
 
 def _resolve_frequency_window(run: Run, config: MaxEntConfig) -> tuple[float, float]:
-    explicit_min = config.f_min_mhz
-    explicit_max = config.f_max_mhz
-    if explicit_min is not None and explicit_max is not None and explicit_max > explicit_min:
-        return float(explicit_min), float(explicit_max)
-
     field_value = run.metadata.get("field") if isinstance(run.metadata, dict) else None
     try:
         center = _field_to_frequency_mhz(float(field_value))
@@ -435,9 +432,16 @@ def _resolve_frequency_window(run: Run, config: MaxEntConfig) -> tuple[float, fl
         center = 0.0
     half_width = _field_to_frequency_mhz(float(config.window_half_width_gauss))
 
+    # ``auto_window`` is an explicit request to derive the window from the run
+    # field, so it must win over (possibly stale) explicit bounds.  Explicit
+    # bounds are honoured when auto mode is off or the field is unusable.
     if config.auto_window and center > 0.0 and half_width > 0.0:
         return max(0.0, center - half_width), center + half_width
 
+    explicit_min = config.f_min_mhz
+    explicit_max = config.f_max_mhz
+    if explicit_min is not None and explicit_max is not None and explicit_max > explicit_min:
+        return float(explicit_min), float(explicit_max)
     if explicit_max is not None and explicit_max > 0.0:
         return max(0.0, float(explicit_min or 0.0)), float(explicit_max)
     return 0.0, max(10.0, center + half_width)
@@ -459,17 +463,19 @@ def build_maxent_input(
     if not run.histograms:
         raise ValueError("MaxEnt requires raw detector histograms.")
 
-    if prepared_histograms is None or reference_t0_bin is None:
-        if resolved_config.use_deadtime_correction:
-            grouping = run.grouping if isinstance(run.grouping, dict) else {}
-            prepared_histograms, _applied = prepare_histograms_with_deadtime(
-                list(run.histograms),
-                grouping,
-                bool(grouping.get("deadtime_correction", False)),
-            )
-            _unused, reference_t0_bin = precompute_group_fourier_inputs(run)
-        else:
-            prepared_histograms, reference_t0_bin = precompute_group_fourier_inputs(run)
+    if prepared_histograms is None:
+        # ``use_deadtime_correction`` overrides the run's grouping metadata,
+        # mirroring ``build_group_signal_dataset``'s explicit ``use_deadtime``
+        # contract; passing prepared histograms there would otherwise make the
+        # config flag inert.  ``reference_t0_bin`` (when not supplied) is
+        # derived from these prepared histograms inside
+        # ``build_group_signal_dataset``.
+        grouping = run.grouping if isinstance(run.grouping, dict) else {}
+        prepared_histograms, _applied = prepare_histograms_with_deadtime(
+            list(run.histograms),
+            grouping,
+            bool(resolved_config.use_deadtime_correction),
+        )
 
     all_ids = sorted(group_names)
     if resolved_config.selected_group_ids is None:
@@ -544,17 +550,6 @@ def build_maxent_input(
     )
 
 
-def _design_matrix(
-    group: MaxEntGroupInput,
-    frequencies_mhz: NDArray[np.float64],
-    *,
-    phase_degrees: float,
-) -> NDArray[np.float64]:
-    phase = np.deg2rad(float(phase_degrees))
-    time = np.asarray(group.time_us, dtype=np.float64)
-    return np.cos(2.0 * np.pi * time[:, np.newaxis] * frequencies_mhz[np.newaxis, :] + phase)
-
-
 def _chunk_rows(n_time: int, n_frequency: int) -> int:
     """Return a row chunk that bounds temporary OPUS/TROPUS matrices."""
     if n_time <= 0:
@@ -583,6 +578,31 @@ def _project_forward(
         )
         output[start:stop] = matrix @ f
     return output
+
+
+def _project_forward_components(
+    time_us: NDArray[np.float64],
+    frequencies_mhz: NDArray[np.float64],
+    spectrum: NDArray[np.float64],
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Return ``(C @ f, S @ f)`` for the zero-phase cosine/sine kernels.
+
+    ``cos(2πft + φ) = cosφ·C − sinφ·S``, so one component pair prices any
+    number of phase candidates at vector cost instead of a kernel rebuild per
+    candidate.
+    """
+    time = np.asarray(time_us, dtype=np.float64)
+    frequencies = np.asarray(frequencies_mhz, dtype=np.float64)
+    f = np.asarray(spectrum, dtype=np.float64)
+    cos_output = np.empty(time.size, dtype=np.float64)
+    sin_output = np.empty(time.size, dtype=np.float64)
+    chunk = _chunk_rows(time.size, frequencies.size)
+    for start in range(0, time.size, chunk):
+        stop = min(start + chunk, time.size)
+        angle = 2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :]
+        cos_output[start:stop] = np.cos(angle) @ f
+        sin_output[start:stop] = np.sin(angle) @ f
+    return cos_output, sin_output
 
 
 def _project_adjoint(
@@ -673,6 +693,13 @@ def _state_signature(maxent_input: MaxEntInput, config: MaxEntConfig) -> tuple[A
         bool(config.fit_amplitudes),
         bool(config.fit_backgrounds),
         bool(config.fit_constant_background),
+        # Data-preparation settings: changing any of these reshapes or rescales
+        # the observed signals, so a resumed state would silently iterate a
+        # stale spectrum against incompatible data.
+        bool(config.use_deadtime_correction),
+        None if config.t_min_us is None else round(float(config.t_min_us), 12),
+        None if config.t_max_us is None else round(float(config.t_max_us), 12),
+        int(config.time_binning_factor),
     )
 
 
@@ -722,6 +749,7 @@ def _residual_payload(
     state: MaxEntState,
     maxent_input: MaxEntInput,
 ) -> tuple[dict[int, NDArray[np.float64]], float, int]:
+    """Return the full forward predictions plus χ² for the current state."""
     predictions = opus(
         state.spectrum,
         maxent_input,
@@ -729,24 +757,60 @@ def _residual_payload(
         amplitudes=state.amplitudes,
         backgrounds=state.backgrounds,
     )
-    residuals: dict[int, NDArray[np.float64]] = {}
     chi2 = 0.0
     n_obs = 0
     for group in maxent_input.groups:
         mask = group.mask if group.mask is not None else np.ones(group.time_us.size, dtype=bool)
         sigma = np.asarray(group.sigma, dtype=np.float64)
         pred = predictions[group.group_id]
-        residual = np.zeros_like(pred, dtype=np.float64)
-        residual[mask] = (
-            np.asarray(group.signal, dtype=np.float64)[mask] - pred[mask]
-        ) / np.maximum(
+        residual = (np.asarray(group.signal, dtype=np.float64)[mask] - pred[mask]) / np.maximum(
             sigma[mask],
             _MIN_POSITIVE,
         )
-        residuals[group.group_id] = residual
-        chi2 += float(np.sum(residual[mask] ** 2))
+        chi2 += float(np.sum(residual**2))
         n_obs += int(np.count_nonzero(mask))
-    return residuals, chi2, n_obs
+    return predictions, chi2, n_obs
+
+
+def _residual_gradient_payload(
+    state: MaxEntState,
+    maxent_input: MaxEntInput,
+) -> tuple[NDArray[np.float64], float, int]:
+    """Return the χ² gradient (TROPUS of the weighted residuals) plus χ².
+
+    Fuses the forward projection and the adjoint into one chunked pass per
+    group, so each cosine kernel chunk is built once per inner iteration
+    instead of twice (OPUS then TROPUS over identical chunks).
+    """
+    frequencies = maxent_input.frequencies_mhz
+    f = np.asarray(state.spectrum, dtype=np.float64)
+    grad = np.zeros(frequencies.size, dtype=np.float64)
+    chi2 = 0.0
+    n_obs = 0
+    for group in maxent_input.groups:
+        mask = group.mask if group.mask is not None else np.ones(group.time_us.size, dtype=bool)
+        phase = np.deg2rad(float(state.phases.get(group.group_id, group.phase_degrees)))
+        amplitude = float(state.amplitudes.get(group.group_id, group.amplitude))
+        background = float(state.backgrounds.get(group.group_id, group.background))
+        time = np.asarray(group.time_us, dtype=np.float64)
+        signal = np.asarray(group.signal, dtype=np.float64)
+        sigma = np.maximum(np.asarray(group.sigma, dtype=np.float64), _MIN_POSITIVE)
+        chunk = _chunk_rows(time.size, frequencies.size)
+        for start in range(0, time.size, chunk):
+            stop = min(start + chunk, time.size)
+            rows = mask[start:stop]
+            if not np.any(rows):
+                continue
+            matrix = np.cos(
+                2.0 * np.pi * time[start:stop][rows, np.newaxis] * frequencies[np.newaxis, :]
+                + phase
+            )
+            pred = amplitude * (matrix @ f) + background
+            residual = (signal[start:stop][rows] - pred) / sigma[start:stop][rows]
+            chi2 += float(np.dot(residual, residual))
+            n_obs += int(np.count_nonzero(rows))
+            grad += amplitude * (matrix.T @ (residual / sigma[start:stop][rows]))
+    return grad, chi2, n_obs
 
 
 def _check_cancel(cancel_callback: MaxEntCancelCallback | None) -> None:
@@ -760,14 +824,19 @@ def _fit_group_nuisance(
     config: MaxEntConfig,
     *,
     cancel_callback: MaxEntCancelCallback | None = None,
+    predictions: dict[int, NDArray[np.float64]] | None = None,
 ) -> None:
-    predictions = opus(
-        state.spectrum,
-        maxent_input,
-        phases=state.phases,
-        amplitudes=state.amplitudes,
-        backgrounds=state.backgrounds,
-    )
+    # Callers that just evaluated the forward model on this exact state (the
+    # end-of-cycle diagnostics) pass their predictions in to avoid a
+    # back-to-back duplicate projection.
+    if predictions is None:
+        predictions = opus(
+            state.spectrum,
+            maxent_input,
+            phases=state.phases,
+            amplitudes=state.amplitudes,
+            backgrounds=state.backgrounds,
+        )
     for group in maxent_input.groups:
         _check_cancel(cancel_callback)
         mask = group.mask if group.mask is not None else np.ones(group.time_us.size, dtype=bool)
@@ -776,39 +845,59 @@ def _fit_group_nuisance(
         y = np.asarray(group.signal, dtype=float)[mask]
         p = np.asarray(predictions[group.group_id], dtype=float)[mask]
         if config.fit_amplitudes or config.fit_backgrounds or config.fit_constant_background:
+            # ``p`` already includes the current amplitude and background, so
+            # recover the bare projection before regressing absolute values;
+            # regressing against ``p`` itself would make the fitted amplitude
+            # oscillate (amp_{n+1} ~ a / amp_n) instead of converging.
+            amplitude = float(state.amplitudes.get(group.group_id, group.amplitude))
+            background = float(state.backgrounds.get(group.group_id, group.background))
+            safe_amplitude = amplitude if abs(amplitude) > _MIN_POSITIVE else 1.0
+            base = (p - background) / safe_amplitude
+            target = y
             columns: list[np.ndarray] = []
             if config.fit_amplitudes:
-                columns.append(p)
+                columns.append(base)
+            else:
+                target = target - amplitude * base
             if config.fit_backgrounds or config.fit_constant_background:
-                columns.append(np.ones_like(p))
+                columns.append(np.ones_like(base))
+            else:
+                target = target - background
             if columns:
                 x = np.vstack(columns).T
                 try:
-                    coeffs, *_ = np.linalg.lstsq(x, y, rcond=None)
+                    coeffs, *_ = np.linalg.lstsq(x, target, rcond=None)
                 except np.linalg.LinAlgError:
-                    coeffs = np.zeros(len(columns), dtype=float)
-                idx = 0
-                if config.fit_amplitudes:
-                    amp = float(np.clip(coeffs[idx], 0.01, 100.0))
-                    state.amplitudes[group.group_id] = amp
-                    idx += 1
-                if config.fit_backgrounds or config.fit_constant_background:
-                    state.backgrounds[group.group_id] = float(coeffs[idx])
+                    coeffs = None
+                if coeffs is not None:
+                    idx = 0
+                    if config.fit_amplitudes:
+                        state.amplitudes[group.group_id] = float(np.clip(coeffs[idx], 0.01, 100.0))
+                        idx += 1
+                    if config.fit_backgrounds or config.fit_constant_background:
+                        state.backgrounds[group.group_id] = float(coeffs[idx])
 
         if config.fit_phases:
             current = float(state.phases.get(group.group_id, group.phase_degrees))
             candidates = current + np.linspace(-4.0, 4.0, 9)
+            _check_cancel(cancel_callback)
+            # One (C@f, S@f) pair prices every candidate: the kernel does not
+            # depend on the scalar phase, so the scan is pure vector algebra.
+            cos_proj, sin_proj = _project_forward_components(
+                np.asarray(group.time_us, dtype=float)[mask],
+                maxent_input.frequencies_mhz,
+                state.spectrum,
+            )
+            amplitude = float(state.amplitudes[group.group_id])
+            background = float(state.backgrounds[group.group_id])
             best_phase = current
             best_score = np.inf
             for candidate in candidates:
-                _check_cancel(cancel_callback)
-                pred = state.amplitudes[group.group_id] * _project_forward(
-                    np.asarray(group.time_us, dtype=float)[mask],
-                    maxent_input.frequencies_mhz,
-                    state.spectrum,
-                    phase_degrees=candidate,
+                radians = np.deg2rad(float(candidate))
+                pred = (
+                    amplitude * (np.cos(radians) * cos_proj - np.sin(radians) * sin_proj)
+                    + background
                 )
-                pred += state.backgrounds[group.group_id]
                 residual = y - pred
                 score = float(np.dot(residual, residual))
                 if score < best_score:
@@ -854,6 +943,7 @@ def run_cycles(
     frequencies = maxent_input.frequencies_mhz
     total_steps = max(1, n_cycles * (int(resolved_config.inner_iterations) + 1))
     completed_steps = 0
+    predictions: dict[int, NDArray[np.float64]] | None = None
     for _ in range(n_cycles):
         _check_cancel(cancel_callback)
         if progress_callback is not None:
@@ -867,6 +957,7 @@ def run_cycles(
             maxent_input,
             resolved_config,
             cancel_callback=cancel_callback,
+            predictions=predictions,
         )
         completed_steps += 1
         if progress_callback is not None:
@@ -877,22 +968,7 @@ def run_cycles(
             )
         for _inner in range(resolved_config.inner_iterations):
             _check_cancel(cancel_callback)
-            residuals, chi2, n_obs = _residual_payload(active_state, maxent_input)
-            weighted_residuals: dict[int, NDArray[np.float64]] = {}
-            for group in maxent_input.groups:
-                mask = group.mask if group.mask is not None else np.ones(group.time_us.size, bool)
-                sigma = np.asarray(group.sigma, dtype=float)
-                value = np.zeros_like(group.signal, dtype=float)
-                value[mask] = residuals[group.group_id][mask] / np.maximum(
-                    sigma[mask], _MIN_POSITIVE
-                )
-                weighted_residuals[group.group_id] = value
-            grad = tropus(
-                weighted_residuals,
-                maxent_input,
-                phases=active_state.phases,
-                amplitudes=active_state.amplitudes,
-            )
+            grad, chi2, n_obs = _residual_gradient_payload(active_state, maxent_input)
             entropy_grad = -np.log(
                 np.maximum(active_state.spectrum, _MIN_POSITIVE)
                 / max(float(resolved_config.default_level), _MIN_POSITIVE)
@@ -915,7 +991,9 @@ def run_cycles(
                 )
 
         _check_cancel(cancel_callback)
-        residuals, chi2, n_obs = _residual_payload(active_state, maxent_input)
+        # The end-of-cycle predictions are reused by the next cycle's nuisance
+        # fit — the state does not change between here and there.
+        predictions, chi2, n_obs = _residual_payload(active_state, maxent_input)
         entropy = _entropy(active_state.spectrum, resolved_config.default_level)
         target = max(float(n_obs) * resolved_config.chi2_target_over_n, _MIN_POSITIVE)
         test = float(abs(chi2 - target) / target)

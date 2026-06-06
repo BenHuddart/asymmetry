@@ -46,7 +46,7 @@ def _synthetic_run(*, frequency_mhz: float = 1.5) -> Run:
 
 def test_opus_tropus_are_adjoint() -> None:
     run = _synthetic_run()
-    config = MaxEntConfig(n_spectrum_points=64, f_min_mhz=0.1, f_max_mhz=4.0)
+    config = MaxEntConfig(n_spectrum_points=64, f_min_mhz=0.1, f_max_mhz=4.0, auto_window=False)
     prepared = build_maxent_input(run, config)
     rng = np.random.default_rng(5)
     spectrum = rng.random(prepared.n_spectrum_points)
@@ -70,6 +70,7 @@ def test_maxent_returns_non_negative_finite_spectrum_with_peak() -> None:
         n_spectrum_points=128,
         f_min_mhz=0.2,
         f_max_mhz=3.0,
+        auto_window=False,
         outer_cycles=4,
         inner_iterations=4,
         fit_phases=False,
@@ -91,6 +92,7 @@ def test_maxent_cycles_are_resumable() -> None:
         n_spectrum_points=64,
         f_min_mhz=0.2,
         f_max_mhz=3.0,
+        auto_window=False,
         outer_cycles=1,
         inner_iterations=3,
         fit_phases=False,
@@ -107,10 +109,10 @@ def test_maxent_cycles_are_resumable() -> None:
 
 def test_maxent_state_rejects_restart_required_changes() -> None:
     run = _synthetic_run()
-    config = MaxEntConfig(n_spectrum_points=64, f_min_mhz=0.2, f_max_mhz=3.0)
+    config = MaxEntConfig(n_spectrum_points=64, f_min_mhz=0.2, f_max_mhz=3.0, auto_window=False)
     prepared = build_maxent_input(run, config)
     state = initialize_state(prepared, config)
-    changed = MaxEntConfig(n_spectrum_points=128, f_min_mhz=0.2, f_max_mhz=3.0)
+    changed = MaxEntConfig(n_spectrum_points=128, f_min_mhz=0.2, f_max_mhz=3.0, auto_window=False)
     changed_input = build_maxent_input(run, changed)
 
     with pytest.raises(ValueError, match="restart"):
@@ -123,6 +125,7 @@ def test_maxent_time_range_and_binning_reduce_input_points() -> None:
         n_spectrum_points=64,
         f_min_mhz=0.2,
         f_max_mhz=3.0,
+        auto_window=False,
         t_min_us=1.0,
         t_max_us=5.0,
         time_binning_factor=4,
@@ -143,6 +146,7 @@ def test_maxent_progress_callback_reports_work() -> None:
         n_spectrum_points=64,
         f_min_mhz=0.2,
         f_max_mhz=3.0,
+        auto_window=False,
         outer_cycles=2,
         inner_iterations=1,
     )
@@ -160,6 +164,7 @@ def test_maxent_cancel_callback_stops_run() -> None:
         n_spectrum_points=64,
         f_min_mhz=0.2,
         f_max_mhz=3.0,
+        auto_window=False,
         outer_cycles=2,
         inner_iterations=1,
     )
@@ -176,6 +181,7 @@ def test_frequency_maxent_representation_round_trip_has_metadata_only() -> None:
                 n_spectrum_points=64,
                 f_min_mhz=0.2,
                 f_max_mhz=3.0,
+                auto_window=False,
                 outer_cycles=2,
                 inner_iterations=2,
             ).to_dict()
@@ -191,3 +197,111 @@ def test_frequency_maxent_representation_round_trip_has_metadata_only() -> None:
     assert "diagnostics" in payload["result_metadata"]
     assert "_datasets" not in payload
     assert restored.result_metadata["cycles"] == 2
+
+
+def test_maxent_fitted_amplitudes_converge_instead_of_oscillating() -> None:
+    """Regression: regressing against the amp/bg-scaled prediction made the
+    fitted amplitude alternate (amp_{n+1} ~ a / amp_n) every cycle."""
+    run = _synthetic_run()
+    config = MaxEntConfig(
+        n_spectrum_points=64,
+        f_min_mhz=0.2,
+        f_max_mhz=3.0,
+        auto_window=False,
+        outer_cycles=6,
+        inner_iterations=4,
+        fit_phases=False,
+    )
+
+    result = maxent(run, config)
+
+    for series in result.diagnostics.amplitudes[-1]:
+        last = [row[series] for row in result.diagnostics.amplitudes[-3:]]
+        spread = max(last) - min(last)
+        assert spread < 0.25 * max(abs(v) for v in last)
+
+
+def test_maxent_auto_window_takes_precedence_over_stale_explicit_bounds() -> None:
+    run = _synthetic_run()  # field = 110 G -> centre ~1.49 MHz
+    auto = MaxEntConfig(f_min_mhz=0.0, f_max_mhz=5.0, auto_window=True)
+    explicit = MaxEntConfig(f_min_mhz=0.0, f_max_mhz=5.0, auto_window=False)
+
+    auto_input = build_maxent_input(run, auto)
+    explicit_input = build_maxent_input(run, explicit)
+
+    assert explicit_input.f_max_mhz == pytest.approx(5.0)
+    assert auto_input.f_max_mhz != pytest.approx(5.0)
+    # Field-derived window: centre ± half-width, clipped at zero.
+    assert auto_input.f_min_mhz == pytest.approx(0.0)
+    assert auto_input.f_min_mhz <= 1.49 <= auto_input.f_max_mhz
+
+
+def test_maxent_use_deadtime_correction_flag_controls_preparation() -> None:
+    run = _synthetic_run()
+    grouping = dict(run.grouping)
+    grouping["deadtime_correction"] = True
+    grouping["dead_time_us"] = [0.5] * len(run.histograms)
+    grouping["good_frames"] = 1000.0
+    run_with_deadtime = Run(
+        run_number=run.run_number,
+        histograms=run.histograms,
+        metadata=run.metadata,
+        grouping=grouping,
+    )
+    config_off = MaxEntConfig(
+        n_spectrum_points=64,
+        f_min_mhz=0.2,
+        f_max_mhz=3.0,
+        auto_window=False,
+        use_deadtime_correction=False,
+    )
+    config_on = MaxEntConfig(
+        n_spectrum_points=64,
+        f_min_mhz=0.2,
+        f_max_mhz=3.0,
+        auto_window=False,
+        use_deadtime_correction=True,
+    )
+
+    off_input = build_maxent_input(run_with_deadtime, config_off)
+    on_input = build_maxent_input(run_with_deadtime, config_on)
+    plain_input = build_maxent_input(run, config_off)
+
+    # Off must ignore the run's metadata flag and match the uncorrected run.
+    for off_group, plain_group in zip(off_input.groups, plain_input.groups, strict=True):
+        np.testing.assert_allclose(off_group.signal, plain_group.signal)
+    # On must change the prepared signals.
+    assert any(
+        not np.allclose(on_group.signal, off_group.signal)
+        for on_group, off_group in zip(on_input.groups, off_input.groups, strict=True)
+    )
+
+
+def test_maxent_state_rejects_time_range_and_binning_changes() -> None:
+    run = _synthetic_run()
+    config = MaxEntConfig(n_spectrum_points=64, f_min_mhz=0.2, f_max_mhz=3.0, auto_window=False)
+    prepared = build_maxent_input(run, config)
+    state = initialize_state(prepared, config)
+
+    for changed in (
+        MaxEntConfig(
+            n_spectrum_points=64, f_min_mhz=0.2, f_max_mhz=3.0, auto_window=False, t_max_us=5.0
+        ),
+        MaxEntConfig(
+            n_spectrum_points=64,
+            f_min_mhz=0.2,
+            f_max_mhz=3.0,
+            auto_window=False,
+            time_binning_factor=2,
+        ),
+        MaxEntConfig(
+            n_spectrum_points=64,
+            f_min_mhz=0.2,
+            f_max_mhz=3.0,
+            auto_window=False,
+            use_deadtime_correction=False,
+        ),
+    ):
+        changed_input = build_maxent_input(run, changed)
+        with pytest.raises(ValueError, match="restart"):
+            run_cycles(changed_input, changed, state=state, cycles=1)

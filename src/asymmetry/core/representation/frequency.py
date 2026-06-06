@@ -94,6 +94,12 @@ class FrequencyMaxEnt(Representation):
 
     rep_type = RepresentationType.FREQ_MAXENT
 
+    #: MaxEnt is an expensive iterative reconstruction: recomputing it
+    #: synchronously during project load would freeze the GUI with no
+    #: progress/cancel and bypass the workload confirmation. It is recomputed
+    #: on demand (GUI worker thread, or an explicit scripted call) instead.
+    recompute_on_load = False
+
     def maxent_config(self) -> dict[str, Any]:
         """Return the raw ``maxent_config`` recipe block (possibly empty)."""
         config = self.recipe.get("maxent_config")

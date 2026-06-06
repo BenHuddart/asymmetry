@@ -4244,12 +4244,20 @@ class MainWindow(QMainWindow):
         config: MaxEntConfig,
         spectrum: MuonDataset,
         diagnostics: dict,
+        *,
+        total_cycles: int | None = None,
     ) -> None:
         """Persist the generation recipe and compact diagnostics for MaxEnt."""
         representation = self._project_model.ensure_dataset(int(run_number)).ensure(
             RepresentationType.FREQ_MAXENT
         )
-        representation.recipe = {"maxent_config": config.to_dict()}
+        config_dict = config.to_dict()
+        if total_cycles is not None:
+            # The button's config carries only the last increment ("+1" -> 1);
+            # the recipe must describe the cumulative resumed computation so a
+            # from-scratch recompute reproduces the displayed spectrum.
+            config_dict["outer_cycles"] = max(1, int(total_cycles))
+        representation.recipe = {"maxent_config": config_dict}
         representation.result_metadata = {
             "cycles": int(diagnostics.get("cycles", [0])[-1]) if diagnostics.get("cycles") else 0,
             "diagnostics": dict(diagnostics),
@@ -4373,7 +4381,13 @@ class MainWindow(QMainWindow):
         spectrum = result.as_dataset(self._maxent_active_run)
         diagnostics = result.diagnostics.to_dict()
         config = self._maxent_active_config or MaxEntConfig()
-        self._record_frequency_maxent_recipe(int(run_number), config, spectrum, diagnostics)
+        self._record_frequency_maxent_recipe(
+            int(run_number),
+            config,
+            spectrum,
+            diagnostics,
+            total_cycles=int(result.state.cycle),
+        )
         self._store_frequency_spectra_for_run(
             int(run_number),
             [spectrum],
@@ -4387,7 +4401,16 @@ class MainWindow(QMainWindow):
         already_maxent = self._plot_workspace.active_view() == "maxent"
         self._plot_workspace.set_active_view("maxent")
         if already_maxent:
-            self._sync_frequency_plot_for_run(int(run_number), preserve_x_limits=True)
+            # Plot the computed run only while it is still the browser
+            # selection; if the user moved on mid-compute, keep the plot in
+            # agreement with the selection instead of yanking it back.
+            current_run = (
+                None if self._current_dataset is None else int(self._current_dataset.run_number)
+            )
+            if current_run == int(run_number):
+                self._sync_frequency_plot_for_run(int(run_number), preserve_x_limits=True)
+            else:
+                self._sync_frequency_plot_for_current_dataset()
         self._show_panel("fourier")
         message = (
             f"Computed MaxEnt spectrum for run {run_number} through cycle {result.state.cycle}."
@@ -4447,6 +4470,11 @@ class MainWindow(QMainWindow):
             self._set_fourier_status("The active run does not define grouped raw counts.")
             return
 
+        # Store the in-table edits before syncing, mirroring the dataset-switch
+        # flow: the sync rebuilds the group table from the per-run store, so an
+        # unsaved phase/include edit would otherwise be wiped right before the
+        # config is read.
+        self._store_maxent_group_phase_state_for_dataset(self._current_dataset)
         self._sync_maxent_panel_for_dataset(self._current_dataset)
         run_number = int(self._current_dataset.run_number)
         config = self._maxent_panel.maxent_config(cycles=int(cycles))
@@ -4671,12 +4699,16 @@ class MainWindow(QMainWindow):
 
     def _on_plot_workspace_view_changed(self, view: str) -> None:
         """Map top-level workspace tab changes onto the shared time plot panel state."""
+        # Keep the spectrum dock's stacked panel in lockstep with the view for
+        # every transition: leaving "maxent" for a time view must restore the
+        # FFT controls (and the "Fourier" title), or FFT status messages land
+        # on the hidden page while stale MaxEnt controls stay visible.
+        self._sync_spectrum_panel_for_view(view)
         if view not in {"frequency", "maxent"}:
             if hasattr(self._plot_panel, "set_current_time_view_mode"):
                 self._plot_panel.set_current_time_view_mode(view, emit_signal=False)
             self._on_plot_time_view_changed(view)
         else:
-            self._sync_spectrum_panel_for_view(view)
             self._sync_frequency_plot_for_current_dataset()
         self._sync_domain_buttons(view)
         self._apply_inspector_for_domain(view)
@@ -5356,7 +5388,11 @@ class MainWindow(QMainWindow):
             t_fit, y_fit = fitted_curve
             axis_key = None
             dataset = (
-                self._frequency_cache().get(run_number, [None])[0]
+                # Resolve against the representation the fit was launched
+                # from, not the active view at result-arrival time.
+                self._frequency_cache(getattr(self, "_last_frequency_fit_rep_type", None)).get(
+                    run_number, [None]
+                )[0]
                 if is_frequency_fit
                 else self._data_browser.get_dataset(run_number)
             )
@@ -5734,12 +5770,18 @@ class MainWindow(QMainWindow):
         selected = self._data_browser.get_selected_datasets()
         datasets: list[MuonDataset] = []
         missing_run_numbers: list[int] = []
+        # Pin the representation the fit datasets are collected from: the
+        # async fit-completion handler must resolve run datasets against this
+        # same cache, not whichever view happens to be active when the result
+        # arrives (the user may switch FFT <-> MaxEnt mid-fit).
+        rep_type = self._active_frequency_rep_type()
+        self._last_frequency_fit_rep_type = rep_type
         for source in selected:
             try:
                 run_number = int(source.run_number)
             except (TypeError, ValueError):
                 continue
-            spectra = list(self._frequency_cache().get(run_number, []))
+            spectra = list(self._frequency_cache(rep_type).get(run_number, []))
             if not spectra:
                 missing_run_numbers.append(run_number)
                 continue
@@ -6456,7 +6498,16 @@ class MainWindow(QMainWindow):
             self.setWindowTitle("Asymmetry \u2014 \u03bcSR Data Analysis")
 
     def closeEvent(self, event) -> None:
-        """Save plot axis ranges to QSettings before closing."""
+        """Stop background work and save plot axis ranges before closing."""
+        # The MaxEnt thread is parented to this window: letting the window be
+        # destroyed while it runs aborts the process (QThread::~QThread calls
+        # qFatal). Request cooperative cancellation and wait for the worker.
+        if getattr(self, "_maxent_worker", None) is not None:
+            self._maxent_worker.cancel()
+        thread = getattr(self, "_maxent_thread", None)
+        if thread is not None:
+            thread.quit()
+            thread.wait(10_000)
         if hasattr(self, "_plot_panel") and hasattr(self._plot_panel, "get_view_limits"):
             x_min, x_max, y_min, y_max = self._plot_panel.get_view_limits()
             self._settings.setValue("plot/time_x_min", float(x_min))

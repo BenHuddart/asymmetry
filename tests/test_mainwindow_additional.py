@@ -11,7 +11,7 @@ import pytest
 pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
-from PySide6.QtCore import QSettings  # type: ignore
+from PySide6.QtCore import QSettings, Qt  # type: ignore
 from PySide6.QtWidgets import QApplication, QMessageBox, QToolBar, QWidget  # type: ignore
 
 import asymmetry.core.fourier.spectrum as spectrum_module
@@ -671,6 +671,39 @@ class TestMainWindowFourier:
         assert representation is not None
         assert representation.result_metadata["cycles"] == 1
         assert representation.recipe["maxent_config"]["time_binning_factor"] == 2
+
+    def test_compute_maxent_preserves_unsaved_group_table_edits(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Regression: the pre-compute panel sync wiped in-table edits made
+        after run selection (phases reset to 0, all groups re-included)."""
+        dataset = _make_fourier_ready_dataset(8841, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8841)
+        mainwindow._maxent_panel._points_spin.setValue(64)
+        mainwindow._maxent_panel._inner_spin.setValue(1)
+        mainwindow._maxent_panel._auto_window_check.setChecked(False)
+        mainwindow._maxent_panel._f_min_edit.setText("0.1")
+        mainwindow._maxent_panel._f_max_edit.setText("4.0")
+        # Edit the group table in place without re-selecting the dataset.
+        table = mainwindow._maxent_panel._group_table
+        table.item(0, 2).setText("33.0")
+        table.item(1, 0).setCheckState(Qt.CheckState.Unchecked)
+
+        mainwindow._on_compute_maxent(1)
+        wait_for(lambda: mainwindow._maxent_thread is None, QApplication.instance(), timeout_s=2.0)
+
+        representation = mainwindow._project_model.representation(
+            8841, RepresentationType.FREQ_MAXENT
+        )
+        assert representation is not None
+        config = representation.recipe["maxent_config"]
+        assert config["group_phase_degrees"][1] == pytest.approx(33.0)
+        assert config["selected_group_ids"] == [1]
+        # The visible table still shows the edits after the compute.
+        assert table.item(0, 2).text() == "33.000"
+        assert table.item(1, 0).checkState() == Qt.CheckState.Unchecked
 
     def test_project_restore_persists_cached_fourier_spectra(
         self,

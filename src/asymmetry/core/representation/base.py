@@ -120,6 +120,11 @@ class Representation(ABC):
     #: Set by each concrete subclass.
     rep_type: ClassVar[RepresentationType]
 
+    #: Whether :meth:`ProjectModel.recompute_all` should rebuild this
+    #: representation when a project loads.  Expensive iterative
+    #: representations (MaxEnt) opt out and are recomputed on demand instead.
+    recompute_on_load: ClassVar[bool] = True
+
     def __init__(
         self,
         recipe: dict | None = None,
@@ -159,9 +164,14 @@ class Representation(ABC):
         return self._datasets
 
     def invalidate(self) -> None:
-        """Drop the transient computed arrays (e.g. after a recipe change)."""
+        """Drop the transient computed arrays (e.g. after a recipe change).
+
+        ``result_metadata`` is deliberately left intact: it is persisted state
+        (saved diagnostics survive a failed recompute) and every successful
+        :meth:`compute` path overwrites it.  Callers that discard a result
+        outright (e.g. MaxEnt restart) clear it explicitly.
+        """
         self._datasets = None
-        self.result_metadata = {}
 
     def cache_datasets(self, datasets: list[MuonDataset]) -> None:
         """Store externally-computed curves as the transient cache.

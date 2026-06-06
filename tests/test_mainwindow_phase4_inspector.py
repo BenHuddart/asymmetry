@@ -163,6 +163,19 @@ def test_maxent_domain_makes_all_three_visible(win: MainWindow) -> None:
     assert win._dock_fit_parameters.isVisible()
 
 
+def test_spectrum_dock_returns_to_fft_controls_on_time_view(win: MainWindow) -> None:
+    """Regression: maxent → time-view switches skipped the spectrum-stack sync,
+    leaving MaxEnt controls (and the 'MaxEnt' dock title) in the dock while FFT
+    status messages were routed to the hidden Fourier page."""
+    win._on_plot_workspace_view_changed("maxent")
+    assert win._spectrum_stack.currentWidget() is win._maxent_panel
+    assert win._dock_fourier.windowTitle() == "MaxEnt"
+
+    win._on_plot_workspace_view_changed("fb_asymmetry")
+    assert win._spectrum_stack.currentWidget() is win._fourier_panel
+    assert win._dock_fourier.windowTitle() == "Fourier"
+
+
 # ── Dock tab bar recovery after domain switches ──────────────────────────────
 
 

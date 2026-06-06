@@ -228,15 +228,18 @@ class ProjectModel:
     def recompute_all(self, runs_by_number: dict[int, Run]) -> None:
         """Rebuild every representation's transient arrays from its recipe.
 
-        Representations whose run is missing, or whose recipe cannot currently
-        be computed (e.g. unimplemented MaxEnt), are left uncomputed rather than
-        aborting the whole load.
+        Representations whose run is missing, whose recipe cannot currently be
+        computed, or which opt out of load-time recomputation
+        (``recompute_on_load`` is false, e.g. the expensive MaxEnt iteration)
+        are left uncomputed rather than aborting the whole load.
         """
         for run_number, container in self.datasets.items():
             run = runs_by_number.get(run_number)
             if run is None:
                 continue
             for representation in container:
+                if not representation.recompute_on_load:
+                    continue
                 try:
                     representation.invalidate()
                     representation.ensure_computed(run)
