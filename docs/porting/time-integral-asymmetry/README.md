@@ -76,15 +76,28 @@ Implemented Qt-free in `src/asymmetry/core/transform/integral.py`
   (the low-level workhorse on grouped counts; `"integral"` and `"differential"`
   methods), `integrate_curve(time, asymmetry, error, …)` (mean of an
   already-formed curve, e.g. a combined G∓R spectrum), and
-  `integrate_run(dataset_or_run, …)` (reduces a loaded run via its grouping,
-  defaulting the window to the good-bin range). The `"integral"` path reuses
-  `compute_asymmetry`, so the integral and time-domain observables **share one
-  error model** (Mantid-compatible); `alpha = 1.0` reproduces WiMDA exactly.
+  `integrate_run(dataset_or_run, …, grouping_ref=…)` (reduces a loaded run via
+  its grouping, defaulting the window to the good-bin range). The `"integral"`
+  path reuses `compute_asymmetry`, so the integral and time-domain observables
+  **share one error model** (Mantid-compatible); `alpha = 1.0` reproduces WiMDA
+  exactly.
+- **Shared grouping path** — `integrate_run` and `TimeFBAsymmetry` both resolve
+  detector groups through the same `effective_grouping` + `group_forward_backward`
+  helpers in `core/transform/grouping.py` (extracted in this change). So the
+  integral observable agrees with the displayed time-domain asymmetry on detector
+  grouping, balance `alpha`, and recipe `grouping_ref` overrides **by
+  construction** — the GUI passes the user's effective grouping via
+  `grouping_ref`. The integral intentionally uses **native bins** (it ignores the
+  time-domain display `bunching_factor`, which is a plotting smoothing; the
+  count-integral is bunching-invariant). A degenerate grouping `alpha`
+  (non-finite/non-positive) falls back to 1.0 in the shared helper rather than
+  producing a NaN curve or being silently excluded.
 - **Field-scan assembly** — `build_field_scan(runs, …, order_key)` returns a
   `FieldScan` (sorted parallel `x` / `value` / `error` arrays + a list of
-  excluded runs), ordering by `field` / `temperature` / `run` (the same keys as
-  `FitSeries`). Runs missing the chosen log are skipped with a reason, not a
-  hard failure (Mantid parity).
+  excluded runs), ordering by `field` / `temperature` / `run` — the single
+  `ORDER_KEYS` tuple in `core/utils/constants.py` now shared with `FitSeries`.
+  Runs missing the chosen log are skipped with a reason, not a hard failure
+  (Mantid parity); a 0 G / 0 K point is kept (only *absent* metadata excludes).
 - **Derivative** — `differentiate_scan(scan, max_gap=…)` is the WiMDA `dA/dB`
   forward-difference transform.
 

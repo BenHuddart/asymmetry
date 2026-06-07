@@ -28,11 +28,12 @@ from asymmetry.core.data.dataset import Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation.base import RepresentationType
 
+# ORDER_KEYS is defined in asymmetry.core.utils.constants and re-exported here
+# (and via representation/__init__) so series and field scans share one tuple.
+from asymmetry.core.utils.constants import ORDER_KEYS
+
 #: Allowed per-parameter classification roles.
 PARAM_ROLES = ("global", "local", "fixed")
-
-#: Allowed series ordering keys.
-ORDER_KEYS = ("field", "temperature", "run")
 
 #: Allowed member kinds.
 MEMBER_KINDS = ("runs", "groups")

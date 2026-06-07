@@ -26,6 +26,16 @@ Two reduction methods are provided:
 
 The two methods agree only when the asymmetry is flat across the window.
 
+Consistency with the time-domain asymmetry: per-run reduction shares the
+grouping path with :class:`asymmetry.core.representation.time.TimeFBAsymmetry`
+(via :func:`asymmetry.core.transform.group_forward_backward` and
+:func:`~asymmetry.core.transform.effective_grouping`), so the two agree on
+detector grouping, the balance ``alpha``, and recipe ``grouping_ref`` overrides
+by construction.  The integral observable intentionally operates on **native
+bins**: it ignores the time-domain display ``bunching_factor`` (which is a
+plotting smoothing). The ``"integral"`` method is bunching-invariant anyway, and
+integrating native bins is the more faithful observable.
+
 Layering note: this is a pure transform.  It deliberately does **not** import
 ``asymmetry.core.io`` (``io`` depends on ``transform``, not the reverse).  For
 multi-period runs, select the period upstream with
@@ -44,7 +54,8 @@ import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.transform.asymmetry import compute_asymmetry
-from asymmetry.core.transform.grouping import apply_grouping_aligned, common_t0_for_groups
+from asymmetry.core.transform.grouping import effective_grouping, group_forward_backward
+from asymmetry.core.utils.constants import ORDER_KEYS
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from numpy.typing import NDArray
@@ -64,9 +75,9 @@ __all__ = [
 #: Supported per-run reduction methods.
 METHODS = ("integral", "differential")
 
-#: Supported scan ordering variables (mirrors
-#: :data:`asymmetry.core.representation.series.ORDER_KEYS`).
-ORDER_KEYS = ("field", "temperature", "run")
+# ORDER_KEYS ("field", "temperature", "run") is imported from
+# asymmetry.core.utils.constants — the same tuple FitSeries uses — so the field
+# scan and a fit series cannot diverge on which orderings are allowed.
 
 #: Human-facing axis labels for each ordering variable.
 _X_LABELS = {"field": "B (G)", "temperature": "T (K)", "run": "Run"}
@@ -178,14 +189,17 @@ def integrate_run(
     t_max: float | None = None,
     method: str = "integral",
     alpha: float | None = None,
+    grouping_ref: dict | None = None,
 ) -> tuple[float, float]:
     """Reduce a loaded run to a single integral-asymmetry ``(value, error)``.
 
-    The run's forward/backward groups are formed from ``run.grouping`` exactly
-    as :class:`asymmetry.core.representation.time.TimeFBAsymmetry` does, so the
-    integral observable is consistent with the time-domain asymmetry.  When the
-    window is unspecified it defaults to the run's good-bin range (matching the
-    WiMDA ALC / Mantid full-range behaviour).
+    The run's forward/backward groups are formed through the same shared path as
+    :class:`asymmetry.core.representation.time.TimeFBAsymmetry`
+    (:func:`asymmetry.core.transform.effective_grouping` +
+    :func:`~asymmetry.core.transform.group_forward_backward`), so the integral
+    observable agrees with the time-domain asymmetry on grouping and ``alpha``.
+    When the window is unspecified it defaults to the run's good-bin range
+    (matching the WiMDA ALC / Mantid full-range behaviour).
 
     Parameters
     ----------
@@ -198,12 +212,18 @@ def integrate_run(
     method
         See :func:`integrate_asymmetry`.
     alpha
-        Balance parameter; when ``None`` it is read from ``run.grouping['alpha']``
-        (default 1.0).
+        Balance parameter; when ``None`` it is taken from the effective grouping
+        (``grouping['alpha']``, default 1.0) leniently — exactly as the
+        time-domain reduction does. An explicit value is validated (> 0, finite).
+    grouping_ref
+        Optional grouping override (forward/backward group ids, alpha, good-bin
+        window) merged over ``run.grouping`` — the same ``grouping_ref`` a
+        :class:`TimeFBAsymmetry` recipe carries, so a GUI can pass the user's
+        effective grouping and the scan matches the displayed asymmetry.
     """
     _validate_method(method)
     run = _resolve_run(data)
-    time, forward, backward, alpha_used, good = _reduce_run_to_fb(run, alpha)
+    time, forward, backward, alpha_used, good = _reduce_run_to_fb(run, alpha, grouping_ref)
 
     if t_min is None:
         t_min = float(time[good[0]])
@@ -288,6 +308,7 @@ def build_field_scan(
     method: str = "integral",
     alpha: float | None = None,
     order_key: str = "field",
+    grouping_ref: dict | None = None,
 ) -> FieldScan:
     """Assemble a field scan from a series of loaded runs.
 
@@ -297,11 +318,12 @@ def build_field_scan(
         Iterable of loaded objects — each a :class:`MuonDataset` or :class:`Run`.
         For multi-period runs, select the period upstream and pass the per-period
         datasets in.
-    t_min, t_max, method, alpha
-        Passed through to :func:`integrate_run`.
+    t_min, t_max, method, alpha, grouping_ref
+        Passed through to :func:`integrate_run` (applied to every run in the
+        scan — the grouping/alpha is normally common across a scan).
     order_key
         ``"field"``, ``"temperature"``, or ``"run"`` — the x-axis variable the
-        points are ordered by (mirrors ``FitSeries.order_key``).
+        points are ordered by (the same :data:`ORDER_KEYS` ``FitSeries`` uses).
 
     Returns
     -------
@@ -329,7 +351,14 @@ def build_field_scan(
             excluded.append((run_number, f"no {order_key} value"))
             continue
         try:
-            value, error = integrate_run(run, t_min=t_min, t_max=t_max, method=method, alpha=alpha)
+            value, error = integrate_run(
+                run,
+                t_min=t_min,
+                t_max=t_max,
+                method=method,
+                alpha=alpha,
+                grouping_ref=grouping_ref,
+            )
         except ValueError as exc:
             excluded.append((run_number, str(exc)))
             continue
@@ -463,48 +492,38 @@ def _resolve_run(data: MuonDataset | Run) -> Run:
 def _reduce_run_to_fb(
     run: Run,
     alpha: float | None,
+    grouping_ref: dict | None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], float, tuple[int, int]]:
     """Form forward/backward groups + time axis + good-bin range from a run.
 
-    Mirrors :class:`asymmetry.core.representation.time.TimeFBAsymmetry` so the
-    integral observable agrees with the time-domain asymmetry by construction.
-    Returns ``(time, forward, backward, alpha_used, (good_start, good_end))``
-    where the good indices are 0-based into the returned full-length arrays.
+    Uses the same shared grouping path as
+    :class:`asymmetry.core.representation.time.TimeFBAsymmetry`
+    (:func:`effective_grouping` + :func:`group_forward_backward`), so the
+    integral observable agrees with the time-domain asymmetry on grouping and
+    ``alpha`` by construction. Returns
+    ``(time, forward, backward, alpha_used, (good_start, good_end))`` where the
+    good indices are 0-based into the returned full-length arrays.
     """
     histograms = list(run.histograms)
     if not histograms:
         raise ValueError("Integral reduction requires detector histograms.")
-    grouping = run.grouping if isinstance(run.grouping, dict) else {}
-    groups = grouping.get("groups")
-    if not isinstance(groups, dict) or not groups:
-        raise ValueError(
-            "Integral reduction requires a detector grouping definition (run.grouping['groups'])."
-        )
 
-    forward_gid = int(grouping.get("forward_group", 1))
-    backward_gid = int(grouping.get("backward_group", 2))
-    forward_indices = _resolve_group_indices(groups, forward_gid)
-    backward_indices = _resolve_group_indices(groups, backward_gid)
-    if not forward_indices or not backward_indices:
-        raise ValueError("Forward/backward groups do not reference any detectors.")
+    grouping = effective_grouping(run, grouping_ref)
+    fb = group_forward_backward(histograms, grouping)  # raises on missing/empty grouping
 
-    if alpha is None:
-        try:
-            alpha_used = float(grouping.get("alpha", 1.0))
-        except (TypeError, ValueError):
-            alpha_used = 1.0
-    else:
-        alpha_used = float(alpha)
-    _validate_alpha(alpha_used)
-
-    common_t0 = common_t0_for_groups(histograms, forward_indices, backward_indices)
-    forward = apply_grouping_aligned(histograms, forward_indices, common_t0_bin=common_t0)
-    backward = apply_grouping_aligned(histograms, backward_indices, common_t0_bin=common_t0)
-    n = min(forward.size, backward.size)
-    forward = forward[:n]
-    backward = backward[:n]
+    n = min(fb.forward.size, fb.backward.size)
+    forward = fb.forward[:n]
+    backward = fb.backward[:n]
     if n == 0:
         raise ValueError("Forward/backward grouping produced empty arrays.")
+
+    # alpha: explicit value is validated (user error surface); otherwise take the
+    # effective grouping's value leniently, exactly as the time-domain path does.
+    if alpha is None:
+        alpha_used = fb.alpha
+    else:
+        alpha_used = float(alpha)
+        _validate_alpha(alpha_used)
 
     try:
         first_good = max(0, int(grouping.get("first_good_bin", 0)))
@@ -519,33 +538,17 @@ def _reduce_run_to_fb(
         first_good, last_good = 0, n - 1
 
     bin_width = float(histograms[0].bin_width)
-    time = (np.arange(n, dtype=np.float64) - float(common_t0)) * bin_width
+    time = (np.arange(n, dtype=np.float64) - float(fb.common_t0)) * bin_width
     return time, forward, backward, alpha_used, (first_good, last_good)
-
-
-def _resolve_group_indices(groups: dict, group_id: int) -> list[int]:
-    """Return zero-based detector indices for *group_id* (1-based detector nos.).
-
-    Mirrors ``asymmetry.core.representation.time._resolve_group_indices``.
-    """
-    entries = groups.get(group_id)
-    if entries is None:
-        entries = groups.get(str(group_id))
-    if not isinstance(entries, list):
-        return []
-    indices: list[int] = []
-    for value in entries:
-        detector = value[0] if isinstance(value, (list, tuple)) and value else value
-        try:
-            indices.append(max(0, int(detector) - 1))
-        except (TypeError, ValueError):
-            continue
-    return indices
 
 
 def _order_value(run: Run, order_key: str) -> float | None:
     if order_key == "run":
         return float(run.run_number)
+    # Read metadata directly rather than via Run.field / Run.temperature: those
+    # properties default a missing value to 0.0, which we must NOT conflate with
+    # a genuine 0 G / 0 K scan point (a TF run at 0 G is a valid point — see the
+    # field-geometry study). Absent metadata -> None -> the run is excluded.
     raw = run.metadata.get(order_key)
     if raw is None:
         return None

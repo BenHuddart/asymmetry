@@ -210,6 +210,37 @@ def test_integrate_run_alpha_override():
     assert value == pytest.approx((400.0 - 800.0) / (400.0 + 800.0))
 
 
+def test_integrate_run_grouping_ref_swaps_forward_backward():
+    # grouping_ref overrides run.grouping (same key a TimeFBAsymmetry recipe uses).
+    run = _run(np.full(5, 100.0), np.full(5, 50.0))
+    base, _ = integrate_run(run)
+    swapped, _ = integrate_run(run, grouping_ref={"forward_group": 2, "backward_group": 1})
+    assert base == pytest.approx(1.0 / 3.0)
+    assert swapped == pytest.approx(-1.0 / 3.0)
+
+
+def test_integrate_run_grouping_alpha_sanitized_not_rejected():
+    # A degenerate grouping alpha (0 / negative / NaN) must not crash or exclude
+    # the run; the shared helper falls back to 1.0 — the same value the
+    # time-domain reduction now uses — so the integral matches the alpha=1.0 run.
+    good = _run(np.full(5, 100.0), np.full(5, 50.0), alpha=1.0)
+    degenerate = _run(np.full(5, 100.0), np.full(5, 50.0), alpha=0.0)
+    assert integrate_run(degenerate)[0] == pytest.approx(integrate_run(good)[0])
+
+
+def test_integrate_run_differential_matches_time_fb_asymmetry():
+    # The differential integral is the window-mean of the SAME per-bin asymmetry
+    # curve TimeFBAsymmetry produces — proving the shared grouping path agrees.
+    from asymmetry.core.representation.time import TimeFBAsymmetry
+
+    forward = np.array([120.0, 110.0, 100.0, 95.0, 90.0])
+    backward = np.array([60.0, 62.0, 64.0, 66.0, 68.0])
+    run = _run(forward, backward, first_good=1, last_good=4)
+    curve = TimeFBAsymmetry(recipe={}).compute(run)[0]
+    value, _ = integrate_run(run, method="differential")
+    assert value == pytest.approx(float(np.mean(curve.asymmetry)))
+
+
 def test_integrate_run_requires_groups():
     run = Run(run_number=1, histograms=[Histogram(counts=np.ones(4), bin_width=0.1)])
     with pytest.raises(ValueError, match="grouping definition"):

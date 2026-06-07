@@ -20,9 +20,13 @@ from asymmetry.core.transform.deadtime import (
     prepare_histograms_with_deadtime,
 )
 from asymmetry.core.transform.grouping import (
+    GroupedForwardBackward,
     apply_grouping,
     apply_grouping_aligned,
     common_t0_for_groups,
+    effective_grouping,
+    group_forward_backward,
+    resolve_group_indices,
 )
 from asymmetry.core.transform.integral import (
     FieldScan,
@@ -52,6 +56,10 @@ __all__ = [
     "apply_grouping",
     "apply_grouping_aligned",
     "common_t0_for_groups",
+    "resolve_group_indices",
+    "effective_grouping",
+    "group_forward_backward",
+    "GroupedForwardBackward",
     "integrate_asymmetry",
     "integrate_curve",
     "integrate_run",
