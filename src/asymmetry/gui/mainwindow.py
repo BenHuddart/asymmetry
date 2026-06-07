@@ -1042,6 +1042,7 @@ class MainWindow(QMainWindow):
             self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
         self._alc_fit_panel.build_requested.connect(self._on_scan_requested)
+        self._alc_fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
         if hasattr(self._fit_panel, "grouped_fit_completed"):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
         if hasattr(self._fit_panel, "preview_requested"):
@@ -3339,7 +3340,7 @@ class MainWindow(QMainWindow):
             t_min, t_max = (None, None)
             if hasattr(self._plot_panel, "get_fit_range"):
                 t_min, t_max = self._plot_panel.get_fit_range()
-            self._alc_fit_panel.set_integration_window(t_min, t_max)
+            self._alc_fit_panel.set_fit_range_display(t_min, t_max)
             for dock in (self._dock_fit, self._dock_fit_parameters):
                 dock.show()
                 dock.raise_()
@@ -4813,8 +4814,8 @@ class MainWindow(QMainWindow):
         """Refresh fit inputs when the selected fit x-range changes."""
         if hasattr(self._fit_panel, "set_fit_range_display"):
             self._fit_panel.set_fit_range_display(x_min, x_max)
-        # Echo the integration window in the ALC fit panel.
-        self._alc_fit_panel.set_integration_window(x_min, x_max)
+        # Keep the ALC fit panel's integration-window spinboxes in sync.
+        self._alc_fit_panel.set_fit_range_display(x_min, x_max)
         if self._multi_group_fit_window is not None and hasattr(
             self._multi_group_fit_window, "set_fit_range_display"
         ):

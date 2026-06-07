@@ -21,9 +21,11 @@ import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from numpy.typing import NDArray
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
+    QDoubleSpinBox,
     QGroupBox,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QPushButton,
@@ -33,16 +35,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.gui.styles.fonts import mono_font
+
 
 class ALCFitPanel(QWidget):
     """Build controls for an integral-asymmetry field scan (ALC mode).
 
-    The integration window reuses the time-spectrum fit-range: the user drags
-    the shaded range on the plot and the current bounds are echoed here. Clicking
-    *Build Scan* emits :attr:`build_requested`; the main window does the work.
+    The integration window IS the time-spectrum fit-range, mirroring the regular
+    fitting machinery: the user can drag the shaded range on the plot, or set it
+    precisely with the spinboxes here (the two stay in sync). Editing a spinbox
+    emits :attr:`fit_range_edit_committed`; clicking *Build Scan* emits
+    :attr:`build_requested`. The main window does the work.
     """
 
     build_requested = Signal()
+    #: (x_min, x_max) committed from the spinboxes — pushed to the plot fit-range.
+    fit_range_edit_committed = Signal(float, float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -61,13 +69,27 @@ class ALCFitPanel(QWidget):
 
         window_box = QGroupBox("Integration window")
         window_layout = QVBoxLayout(window_box)
-        self._window_label = QLabel(self._format_window(None, None))
-        window_layout.addWidget(self._window_label)
-        hint = QLabel("Drag the shaded range on the time plot to change it.")
+        range_row = QHBoxLayout()
+        range_row.setContentsMargins(6, 4, 6, 4)
+        range_row.setSpacing(4)
+        self._min_spin = self._make_time_spin()
+        mid_label = QLabel("≤ <i>t</i> ≤")
+        mid_label.setTextFormat(Qt.TextFormat.RichText)
+        self._max_spin = self._make_time_spin()
+        range_row.addWidget(self._min_spin)
+        range_row.addWidget(mid_label)
+        range_row.addWidget(self._max_spin)
+        range_row.addWidget(QLabel("μs"))
+        range_row.addStretch()
+        window_layout.addLayout(range_row)
+        hint = QLabel("Drag the shaded range on the time plot, or set it here.")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: gray;")
         window_layout.addWidget(hint)
         layout.addWidget(window_box)
+
+        self._min_spin.editingFinished.connect(self._on_spin_committed)
+        self._max_spin.editingFinished.connect(self._on_spin_committed)
 
         self._build_btn = QPushButton("Build Scan")
         self._build_btn.clicked.connect(self.build_requested.emit)
@@ -76,14 +98,35 @@ class ALCFitPanel(QWidget):
         layout.addStretch()
 
     @staticmethod
-    def _format_window(t_min: float | None, t_max: float | None) -> str:
-        if t_min is None or t_max is None:
-            return "Window: full good-bin range"
-        return f"Window: {t_min:.3f} – {t_max:.3f} μs"
+    def _make_time_spin() -> QDoubleSpinBox:
+        """A μs fit-range spinbox configured like the regular fit panel's."""
+        spin = QDoubleSpinBox()
+        spin.setDecimals(3)
+        spin.setRange(-1000.0, 1000.0)
+        spin.setSingleStep(0.1)
+        spin.setMinimumWidth(90)
+        spin.setFont(mono_font(11.0))
+        spin.setEnabled(False)  # enabled once the plot has a fit-range
+        return spin
 
-    def set_integration_window(self, t_min: float | None, t_max: float | None) -> None:
-        """Echo the current fit-range/integration window."""
-        self._window_label.setText(self._format_window(t_min, t_max))
+    def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
+        """Update the spinboxes from the plot fit-range without re-emitting.
+
+        Mirrors ``SingleFitTab.set_fit_range_display``; the spinboxes are
+        disabled until the plot has a fit-range.
+        """
+        have_range = x_min is not None and x_max is not None
+        self._min_spin.setEnabled(have_range)
+        self._max_spin.setEnabled(have_range)
+        if not have_range:
+            return
+        with QSignalBlocker(self._min_spin):
+            self._min_spin.setValue(float(x_min))
+        with QSignalBlocker(self._max_spin):
+            self._max_spin.setValue(float(x_max))
+
+    def _on_spin_committed(self) -> None:
+        self.fit_range_edit_committed.emit(self._min_spin.value(), self._max_spin.value())
 
 
 class ALCScanView(QWidget):

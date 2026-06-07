@@ -22,7 +22,7 @@ import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.representation import RepresentationType
 from asymmetry.gui.mainwindow import MainWindow
-from asymmetry.gui.panels.alc_panel import ALCScanView
+from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView
 
 _FB = RepresentationType.TIME_FB_ASYMMETRY
 
@@ -164,6 +164,39 @@ def test_deleting_scan_series_does_not_clear_run_fits(mainwindow: MainWindow, mo
 
 
 # --- scan view widget --------------------------------------------------------
+
+
+def test_alc_fit_panel_range_spinboxes(qapp: QApplication):
+    panel = ALCFitPanel()
+    # Spinboxes start disabled (no plot fit-range yet).
+    assert panel._min_spin.isEnabled() is False
+
+    # Plot -> panel: set_fit_range_display fills + enables the spinboxes.
+    panel.set_fit_range_display(0.2, 8.0)
+    assert panel._min_spin.isEnabled() is True
+    assert panel._min_spin.value() == pytest.approx(0.2)
+    assert panel._max_spin.value() == pytest.approx(8.0)
+
+    # Panel -> plot: editing a spinbox emits the committed range.
+    emitted: list[tuple[float, float]] = []
+    panel.fit_range_edit_committed.connect(lambda lo, hi: emitted.append((lo, hi)))
+    panel._max_spin.setValue(6.0)
+    panel._on_spin_committed()
+    assert emitted[-1] == pytest.approx((0.2, 6.0))
+
+    # A cleared range disables the spinboxes again.
+    panel.set_fit_range_display(None, None)
+    assert panel._max_spin.isEnabled() is False
+
+
+def test_alc_fit_panel_committed_range_drives_plot(mainwindow: MainWindow, monkeypatch):
+    # The ALC panel's committed range is pushed to the active plot, mirroring
+    # the regular fit-range spinbox path.
+    mw = mainwindow
+    pushed: list[tuple[float, float]] = []
+    monkeypatch.setattr(mw._plot_panel, "set_fit_range", lambda lo, hi: pushed.append((lo, hi)))
+    mw._alc_fit_panel.fit_range_edit_committed.emit(0.3, 7.5)
+    assert pushed[-1] == pytest.approx((0.3, 7.5))
 
 
 def test_alc_scan_view_show_and_clear(qapp: QApplication):
