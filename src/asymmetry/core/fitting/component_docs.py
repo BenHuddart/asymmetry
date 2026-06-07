@@ -156,6 +156,14 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "Use for zero-field static Gaussian Kubo-Toyabe relaxation from randomly oriented nuclear moments. "
         "It is a standard baseline for nonmagnetic or weakly magnetic static local-field distributions."
     ),
+    "LongitudinalFieldKT": (
+        "Use for a static, dense (Gaussian) local-field distribution of width Δ with an applied longitudinal "
+        "field Bₗ — the workhorse for frozen/static magnetism and dilute nuclear-dipole hosts. Sweeping Bₗ "
+        "through the decoupling crossover (γµBₗ ~ Δ) and watching the polarisation recover toward 1 is the "
+        "unambiguous signature that the local field is *static*; the Bₗ → 0 limit is the zero-field ⅓-tail "
+        "Kubo–Toyabe (StaticGKT_ZF). If the polarisation does not recover, or relaxation persists at high "
+        "field, the field is *dynamic* — use DynamicGaussianKT or Keren instead. Δ in µs⁻¹, Bₗ in Gauss."
+    ),
     "DynamicGaussianKT": (
         "Use when a dense (Gaussian) static local-field distribution of width Δ is partially averaged by "
         "fluctuations at rate ν, such as muon hopping or thermally fluctuating moments. It is the strong-collision "

@@ -6,10 +6,8 @@ its parameters.  Models are collected in the :data:`MODELS` registry.
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
-from functools import lru_cache
 
 import numpy as np
 from numpy.typing import NDArray
@@ -95,68 +93,6 @@ def static_gkt_zf(
     return A0 * (1.0 / 3.0 + 2.0 / 3.0 * (1.0 - dt2) * np.exp(exponent)) + baseline
 
 
-def _lf_kt_integral_term(t_val: float, Delta: float, omega0: float) -> float:
-    """Compute the integral term for LF-KT: integral_0^t exp(-0.5*Delta²*τ²) sin(omega0*τ) dτ.
-
-    Uses cached computation and optimized numerical integration for performance.
-
-    Parameters
-    ----------
-    t_val : float
-        Upper limit of integration (in microseconds).
-    Delta : float
-        Gaussian field distribution width (in us⁻¹).
-    omega0 : float
-        Larmor frequency (in rad/us).
-
-    Returns
-    -------
-    float
-        The value of the integral.
-    """
-    if t_val <= 0 or Delta <= 0 or abs(omega0) < 1e-12:
-        return 0.0
-
-    # Use cached computation with high precision
-    return _lf_kt_integral_cached(t_val, Delta, omega0)
-
-
-@lru_cache(maxsize=512)
-def _lf_kt_integral_cached(t_val: float, Delta: float, omega0: float) -> float:
-    """Cached numerical integration with optimized parameters.
-
-    Cache key based on quantized parameters to reduce cache misses while
-    maintaining numerical precision.
-    """
-
-    def integrand(tau):
-        return np.exp(-0.5 * (Delta * tau) ** 2) * np.sin(omega0 * tau)
-
-    try:
-        # Suppress integration warnings: we're using aggressive limits (500) and
-        # tight tolerances to handle even difficult integrands. Warnings are
-        # expected and handled gracefully.
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=integrate.IntegrationWarning)
-            # Use adaptive quadrature with:
-            # - limit=500 (much higher than default 100 to resolve difficult integrands)
-            # - epsabs=1e-11 (absolute tolerance for convergence)
-            # - epsrel=1e-9 (relative tolerance for convergence)
-            # These settings prioritize accuracy over speed for fitting
-            result, _ = integrate.quad(
-                integrand,
-                0,
-                t_val,
-                limit=500,
-                epsabs=1e-11,
-                epsrel=1e-9,
-            )
-        return float(result)
-    except Exception:
-        # Fallback: if integration fails, return 0 with warning suppressed
-        return 0.0
-
-
 def longitudinal_field_kubo_toyabe(
     t: NDArray,
     A0: float,
@@ -164,108 +100,90 @@ def longitudinal_field_kubo_toyabe(
     B_L: float,
     baseline: float = 0.0,
 ) -> NDArray:
-    """Static Gaussian Kubo-Toyabe with longitudinal field (Hayano et al. 1979).
+    r"""Static Gaussian Kubo-Toyabe relaxation in a longitudinal field.
 
-    Implements the longitudinal depolarization function for μSR in a static
-    Gaussian magnetic field distribution with applied longitudinal field.
+    The longitudinal-field depolarisation function for a muon in a static,
+    isotropic **Gaussian** distribution of local fields of width ``Delta`` with an
+    applied longitudinal decoupling field ``B_L``.  As ``B_L`` is swept through the
+    decoupling crossover the polarisation recovers toward unity, which is the
+    experimental signature of a *static* (rather than dynamic) local field.
+
+    .. math::
+
+        G_z(t) = 1 - \frac{2\Delta^2}{\omega_0^2}
+                 \left[1 - e^{-\Delta^2 t^2/2}\cos(\omega_0 t)\right]
+               + \frac{2\Delta^4}{\omega_0^3}
+                 \int_0^t e^{-\Delta^2\tau^2/2}\sin(\omega_0\tau)\,d\tau ,
+
+    with :math:`\omega_0 = \gamma_\mu B_L` (``B_L`` in Gauss, converted to Tesla
+    internally).  The returned asymmetry is :math:`A(t) = A_0\,G_z(t) + baseline`.
+    For ``B_L = 0`` it reduces exactly to the zero-field Gaussian Kubo-Toyabe
+    function (:func:`static_gkt_zf`); for large ``B_L`` it tends to 1 (decoupling).
 
     Parameters
     ----------
     t : NDArray
         Time values in microseconds.
     A0 : float
-        Initial asymmetry scaling.
+        Initial asymmetry amplitude at ``t = 0``.
     Delta : float
-        Gaussian field distribution width in us⁻¹.
+        Static Gaussian field-distribution width in us^-1 (Delta = gamma_mu * sqrt(<B^2>)).
     B_L : float
-        Longitudinal magnetic field in Gauss.
+        Applied longitudinal magnetic field in Gauss.
     baseline : float, optional
-        Constant baseline offset.
-
-    Returns
-    -------
-    NDArray
-        Depolarization function values at each time point.
+        Constant additive baseline.
 
     Notes
     -----
-    Uses the Hayano et al. analytic expression:
+    The oscillatory-decaying integral term is evaluated for all requested times at
+    once by **cumulative trapezoidal integration on a shared fine grid** whose step
+    is sized from ``omega0`` and ``Delta``.  This is both faster and smoother than
+    per-point adaptive quadrature (which left the integral noisy), so it speeds up
+    the static component and the dynamic Kubo-Toyabe that builds on it.
 
-        Gz(t) = 1 - (2 Δ² / ω₀²) [1 - exp(-Δ²t²/2) cos(ω₀t)]
-              + (2 Δ⁴ / ω₀³) ∫₀ᵗ exp(-Δ²τ²/2) sin(ω₀τ) dτ
-
-    where ω₀ = γμ B_L and B_L is provided in Gauss.
-    Internally, B_L is converted to Tesla via GAUSS_TO_TESLA.
-
-    When B_L = 0, reduces to the zero-field Kubo-Toyabe function.
+    References
+    ----------
+    R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki and R. Kubo,
+    "Zero- and low-field spin relaxation studied by positive muons",
+    Phys. Rev. B 20, 850 (1979).
     """
-    # Muon gyromagnetic ratio: gamma_mu = 2π * (gamma_mu / 2π) in rad/(us*T)
     gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
-
-    # B_L is user-facing in Gauss; convert to Tesla for omega0.
-    omega0 = gamma_mu * (B_L * GAUSS_TO_TESLA)
+    omega0 = gamma_mu * (float(B_L) * GAUSS_TO_TESLA)
 
     t = np.asarray(t, dtype=float)
     scalar_input = t.ndim == 0
-    if scalar_input:
-        t = t[np.newaxis]
+    tt = np.atleast_1d(np.abs(t))  # depolarisation is even in t
+    delta = float(Delta)
+    dt2 = (delta * tt) ** 2
+    exp_term = np.exp(np.clip(-dt2 / 2.0, -700, 0))
 
-    result = np.zeros_like(t)
-
-    # Threshold for treating field as effectively zero
-    omega0_threshold = 1e-10
-
-    # Handle the case where omega0 is very small (transition to zero field)
-    if abs(omega0) < omega0_threshold:
-        # Use zero-field KT limit for numerical stability
-        dt2 = (Delta * t) ** 2
-        exponent = np.clip(-dt2 / 2.0, -700, 0)
-        result = 1.0 / 3.0 + 2.0 / 3.0 * (1.0 - dt2) * np.exp(exponent)
+    # When the applied field is negligible compared with the local-field width
+    # (omega0 << Delta) the longitudinal correction is sub-percent, and the Hayano
+    # expression becomes ill-conditioned (the 2*Delta^2/omega0^2 prefactor amplifies
+    # floating-point cancellation).  Use the exact zero-field limit there.
+    if abs(omega0) < max(1e-10, 0.05 * delta) or delta <= 0.0 or tt.size == 0:
+        # Zero-field (or zero-width / empty) limit: exact analytic Gaussian KT.
+        gz = 1.0 / 3.0 + 2.0 / 3.0 * (1.0 - dt2) * exp_term
     else:
-        # General case: use Hayano formula
-        omega0_sq = omega0**2
-        omega0_cu = omega0**3
-        delta_sq = Delta**2
-        delta_qu = delta_sq**2
-        factor1 = 2.0 * delta_sq / omega0_sq
-        factor2 = 2.0 * delta_qu / omega0_cu
+        tmax = float(tt.max())
+        if tmax <= 0.0:
+            gz = np.ones_like(tt)
+        else:
+            # Step resolves the faster of the omega0 oscillation and the Gaussian
+            # envelope; point count capped to bound cost at very high field (where
+            # the 1/omega0^3 integral term is negligible anyway).
+            h = min(0.01, 0.25 / max(abs(omega0), 1e-9), 0.1 / max(delta, 1e-9))
+            n = int(min(max(round(tmax / h) + 1, 64), 200000))
+            tau = np.linspace(0.0, tmax, n)
+            integrand = np.exp(-0.5 * (delta * tau) ** 2) * np.sin(omega0 * tau)
+            integral = integrate.cumulative_trapezoid(integrand, tau, initial=0.0)
+            i_t = np.interp(tt, tau, integral)
+            factor1 = 2.0 * delta**2 / omega0**2
+            factor2 = 2.0 * delta**4 / omega0**3
+            gz = 1.0 - factor1 * (1.0 - exp_term * np.cos(omega0 * tt)) + factor2 * i_t
 
-        # Cache integrals to avoid redundant computation
-        integral_cache = {}
-
-        for i, t_i in enumerate(t):
-            if t_i <= 1e-12:
-                result[i] = 1.0
-                continue
-
-            # Use cached integral if available (for repeated t values)
-            # Round to 9 decimal places (microsecond precision) for better cache hits
-            t_key = round(t_i * 1e9) / 1e9
-            if t_key in integral_cache:
-                integral = integral_cache[t_key]
-            else:
-                integral = _lf_kt_integral_term(t_i, Delta, omega0)
-                integral_cache[t_key] = integral
-
-            # First term: 1 - (2 Δ² / ω₀²) [1 - exp(-Δ²t²/2) cos(ω₀t)]
-            dt2 = (Delta * t_i) ** 2
-            exponent = np.clip(-dt2 / 2.0, -700, 0)
-            exp_term = np.exp(exponent)
-            cos_term = np.cos(omega0 * t_i)
-            first_part = 1.0 - factor1 * (1.0 - exp_term * cos_term)
-
-            # Second term: (2 Δ⁴ / ω₀³) ∫₀ᵗ exp(-Δ²τ²/2) sin(ω₀τ) dτ
-            second_part = factor2 * integral
-
-            result[i] = first_part + second_part
-
-    gz = result
     output = A0 * gz + baseline
-
-    if scalar_input:
-        output = output[0]
-
-    return output
+    return float(output[0]) if scalar_input else output
 
 
 # ---------------------------------------------------------------------------
