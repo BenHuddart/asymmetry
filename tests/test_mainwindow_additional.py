@@ -712,6 +712,7 @@ class TestMainWindowFourier:
 
         assert mainwindow._maxent_panel_state_by_run[8862] == draft
 
+    @pytest.mark.timeout(300)
     def test_maxent_worker_finish_leaves_view_when_user_moved_on(
         self,
         mainwindow: MainWindow,
@@ -880,6 +881,7 @@ class TestMainWindowFourier:
             center + 0.25, abs=1e-3
         )
 
+    @pytest.mark.timeout(300)
     def test_compute_maxent_uses_maxent_view_and_separate_cache(
         self,
         mainwindow: MainWindow,
@@ -910,6 +912,7 @@ class TestMainWindowFourier:
         assert representation.result_metadata["cycles"] == 1
         assert representation.recipe["maxent_config"]["time_binning_factor"] == 2
 
+    @pytest.mark.timeout(300)
     def test_compute_maxent_preserves_unsaved_group_table_edits(
         self,
         mainwindow: MainWindow,
