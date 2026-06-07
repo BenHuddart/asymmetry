@@ -6,6 +6,115 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(scope="session")
+def qapp() -> object:
+    """Return the process-wide ``QApplication``, creating it once per session.
+
+    A single application instance is reused across every GUI test. Defining it
+    here (session scope) decouples the application's lifetime from the xdist
+    distribution strategy: workers no longer rebuild the app per file. Test
+    modules that still declare their own module-scoped ``qapp`` fixture simply
+    shadow this one harmlessly. Returns ``None`` if PySide6 is unavailable.
+    """
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception:
+        return None
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    return app
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_qt_widgets() -> Iterator[None]:
+    """Tear down all Qt state after every test to prevent cross-test bleed.
+
+    GUI tests historically created ``MainWindow`` (and other widgets) without
+    ever closing them. Under a shared ``QApplication`` the windows and their
+    parentless child widgets accumulated across a file (~58 top-level widgets
+    per ``MainWindow``). Because several construction steps scan every live
+    top-level widget, per-test setup time grew linearly with the number of
+    leaked windows — turning the file into an O(n^2) crawl (observed ~1s ->
+    45s ``MainWindow`` setup) and leaking state that made tests order-dependent.
+
+    The non-obvious part of the fix: ``deleteLater`` posts a ``DeferredDelete``
+    event that a bare ``processEvents()`` does NOT dispatch when there is no
+    running event loop (the test runner has none). Without explicitly flushing
+    those events the widgets are never actually destroyed. We therefore close
+    each top-level widget (firing real ``closeEvent`` handlers, where
+    ``MainWindow`` joins its MaxEnt thread), schedule deletion, then force the
+    ``DeferredDelete`` events through with ``sendPostedEvents`` — which drops
+    the live top-level count back to zero between tests and keeps setup flat.
+
+    The fixture depends on no other fixture (it queries
+    ``QApplication.instance()`` directly) so module-local ``qapp`` fixtures
+    cannot shadow it, and it is a no-op when PySide6 is absent or no
+    application has been created (pure-unit tests).
+    """
+    try:
+        from PySide6.QtCore import QEvent, QThread
+        from PySide6.QtWidgets import QApplication
+    except Exception:
+        yield
+        return
+
+    app = QApplication.instance()
+    if app is None:
+        yield
+        return
+
+    yield
+
+    _deferred_delete = QEvent.Type.DeferredDelete.value
+
+    def _drain() -> None:
+        # Force-dispatch deferred deletions; a bare processEvents() will not
+        # flush DeferredDelete events outside a running event loop.
+        try:
+            app.sendPostedEvents(None, _deferred_delete)
+            app.processEvents()
+            app.sendPostedEvents(None, _deferred_delete)
+        except Exception:
+            pass
+
+    # Stop any QThread still running (e.g. a MaxEnt worker whose window was not
+    # closed by the test). Bounded wait; pytest-timeout is the hard ceiling.
+    try:
+        for thread in app.findChildren(QThread):
+            try:
+                if thread.isRunning():
+                    thread.quit()
+                    thread.wait(5000)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Close every top-level widget (runs closeEvent handlers), then schedule
+    # and flush deletion so the C++ objects are gone before the next test.
+    for widget in list(app.topLevelWidgets()):
+        try:
+            widget.close()
+        except Exception:
+            pass
+    for widget in list(app.topLevelWidgets()):
+        try:
+            widget.deleteLater()
+        except Exception:
+            pass
+    _drain()
+
+    # Release any matplotlib figures embedded in the closed widgets.
+    try:
+        import matplotlib.pyplot as plt
+
+        plt.close("all")
+    except Exception:
+        pass
+
+
 @pytest.fixture(autouse=True)
 def _isolate_qsettings(tmp_path: Path) -> Iterator[None]:
     """Redirect ``QSettings`` to a per-test temp location.
