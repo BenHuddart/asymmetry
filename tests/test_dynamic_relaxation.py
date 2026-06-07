@@ -77,6 +77,27 @@ def test_dyn_gaussian_lf_decoupling() -> None:
     assert np.min(g) > 0.9
 
 
+def test_dynamic_kt_bounded_at_high_nu() -> None:
+    # Regression: the explicit strong-collision solver diverges in the fast-
+    # fluctuation regime; high nu must stay finite and within [-A0/2, A0] (the
+    # implementation switches to the analytic motional-narrowing limit there).
+    amp = 25.0
+    for fn in (dynamic_gaussian_kt, dynamic_lorentzian_kt):
+        for nu in (20.0, 50.0, 100.0, 500.0, 1000.0):
+            for b_l in (0.0, 20.0):
+                g = fn(T, amp, 0.4, nu, b_l)
+                assert np.all(np.isfinite(g)), (fn.__name__, nu, b_l)
+                assert g.max() <= amp * 1.01 and g.min() >= -0.5 * amp, (fn.__name__, nu, b_l)
+
+
+def test_dynamic_kt_continuous_across_fast_switch() -> None:
+    # No large discontinuity as nu crosses the solver -> analytic crossover.
+    for fn in (dynamic_gaussian_kt, dynamic_lorentzian_kt):
+        for b_l in (0.0, 20.0):
+            jump = np.max(np.abs(fn(T, 25.0, 0.4, 11.99, b_l) - fn(T, 25.0, 0.4, 12.01, b_l)))
+            assert jump < 0.5, (fn.__name__, b_l, jump)  # < 2% of A0=25
+
+
 # --- Keren / Abragam internal consistency -------------------------------------
 def test_keren_zf_equals_abragam_form() -> None:
     delta, nu = 0.3, 2.0

@@ -35,6 +35,12 @@ class ModelDefinition:
 # Model functions
 # ---------------------------------------------------------------------------
 
+# When the Larmor rate of the applied longitudinal field is below this fraction of
+# the local-field width (omega0 < ratio * width) the field is negligible and the
+# Kubo-Toyabe functions use their exact zero-field form, avoiding the
+# ill-conditioned 1/omega0 prefactors of the longitudinal-field expressions.
+_FIELD_DECOUPLING_RATIO = 0.05
+
 
 def exponential_relaxation(t: NDArray, A0: float, Lambda: float, baseline: float = 0.0) -> NDArray:
     """Simple exponential: A(t) = A0 exp(−Λt) + baseline."""
@@ -161,7 +167,7 @@ def longitudinal_field_kubo_toyabe(
     # (omega0 << Delta) the longitudinal correction is sub-percent, and the Hayano
     # expression becomes ill-conditioned (the 2*Delta^2/omega0^2 prefactor amplifies
     # floating-point cancellation).  Use the exact zero-field limit there.
-    if abs(omega0) < max(1e-10, 0.05 * delta) or delta <= 0.0 or tt.size == 0:
+    if abs(omega0) < max(1e-10, _FIELD_DECOUPLING_RATIO * delta) or delta <= 0.0 or tt.size == 0:
         # Zero-field (or zero-width / empty) limit: exact analytic Gaussian KT.
         gz = 1.0 / 3.0 + 2.0 / 3.0 * (1.0 - dt2) * exp_term
     else:
@@ -418,7 +424,8 @@ def _static_lorentzian_lf_grid(
     grid = np.linspace(0.0, tmax, n_t)
     gs = _lorentzian_lf_lineshape(a_L, omega0, grid)
     if len(_LOR_LF_CACHE) >= _LOR_LF_CACHE_MAX:
-        _LOR_LF_CACHE.clear()
+        # Evict the oldest entry rather than wiping the whole cache.
+        _LOR_LF_CACHE.pop(next(iter(_LOR_LF_CACHE)))
     _LOR_LF_CACHE[key] = (grid, gs)
     return grid, gs
 
@@ -454,7 +461,7 @@ def static_lorentzian_kt_lf(
     a = float(a_L)
     gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
     omega0 = gamma_mu * (float(B_L) * GAUSS_TO_TESLA)
-    if a <= 0 or omega0 < 0.05 * max(a, 1e-12):
+    if a <= 0 or omega0 < _FIELD_DECOUPLING_RATIO * max(a, 1e-12):
         # Field negligible vs the distribution width: indistinguishable from ZF,
         # where the analytic eqn 5.47 form is exact (and avoids the ill-conditioned
         # small-omega0 limit of the longitudinal-field reduction).
@@ -496,6 +503,17 @@ _DYN_KT_CACHE: dict[tuple, tuple[NDArray, NDArray]] = {}
 _DYN_KT_CACHE_MAX = 256
 
 
+# Above this fluctuation rate (MHz) the explicit trapezoidal strong-collision
+# solver is numerically unstable: the kernel e^{-nu t} G_s(t) decays within a few
+# grid steps and the recursion amplifies roundoff (it diverges, not "degrades
+# gracefully"), and refining the grid enough to stay stable is prohibitive.  The
+# system is then deep in the fast-fluctuation regime, where the analytic
+# motional-narrowing limit is accurate -- for the Gaussian case the Keren function
+# matches a converged solver to < 0.5 % for nu >~ 6*Delta, which is satisfied at
+# this crossover for any physical width.
+_DYN_KT_NU_SWITCH = 12.0
+
+
 def _dynamic_kt_grid(
     kind: str, width: float, nu: float, B_L: float, tmax: float
 ) -> tuple[NDArray, NDArray]:
@@ -504,31 +522,50 @@ def _dynamic_kt_grid(
     cached = _DYN_KT_CACHE.get(key)
     if cached is not None:
         return cached
-    # Uniform grid.  The explicit trapezoidal Volterra solve is stable/accurate
-    # only when nu*h is small (nu*h ~ 0.4 diverges; ~0.02 is <1%); size the step
-    # from nu, with a hard cap on the point count to bound the O(N^2) cost.  In
-    # the physical regime (nu <~ 10 MHz) this gives nu*h <= 0.02; for larger nu
-    # the step is floored by the cap and accuracy degrades gracefully (still
-    # bounded) in a regime already close to the analytic motional-narrowing limit.
-    n_max = 4001
-    h_des = min(0.02, 0.02 / max(nu, 1e-3))
-    n = int(min(max(round(tmax / h_des) + 1, 64), n_max))
-    grid = np.linspace(0.0, tmax, n)
-    h = grid[1] - grid[0] if n > 1 else tmax
-    if kind == "gaussian":
-        if abs(B_L) < 1e-9:
-            gs = static_gkt_zf(grid, 1.0, width, 0.0)
-        else:
-            gs = longitudinal_field_kubo_toyabe(grid, 1.0, width, B_L, 0.0)
-    else:  # lorentzian (zero-field analytic; LF computed numerically)
+
+    if nu <= _DYN_KT_NU_SWITCH:
+        # Slow/intermediate regime: strong-collision Volterra solve with a step
+        # sized so that nu*h <= 0.02 (stable and < 1 % here).
+        h_des = min(0.02, 0.02 / max(nu, 1e-3))
+        n = int(min(max(round(tmax / h_des) + 1, 64), 20001))
+        grid = np.linspace(0.0, tmax, n)
+        h = grid[1] - grid[0] if n > 1 else tmax
+        if kind == "gaussian":
+            if abs(B_L) < 1e-9:
+                gs = static_gkt_zf(grid, 1.0, width, 0.0)
+            else:
+                gs = longitudinal_field_kubo_toyabe(grid, 1.0, width, B_L, 0.0)
+        else:  # lorentzian (zero-field analytic; LF computed numerically)
+            if abs(B_L) < 1e-9:
+                gs = static_lorentzian_kt_zf(grid, 1.0, width, 0.0)
+            else:
+                gs = static_lorentzian_kt_lf(grid, 1.0, width, B_L, 0.0)
+        gd = _strong_collision_solve(np.asarray(gs, dtype=float), nu, h)
+    elif kind == "gaussian":
+        # Fast-fluctuation Gaussian: the Keren function is the analytic motional-
+        # narrowing limit (rate ~2*Delta^2/nu), accurate to <0.5% here and bounded.
+        grid = np.linspace(0.0, tmax, 800)
+        gd = keren(grid, 1.0, width, nu, B_L)
+    else:
+        # Fast-fluctuation Lorentzian: the relaxation rate saturates (it is
+        # ~independent of nu, since a Lorentzian distribution has no finite second
+        # moment), so reuse the stable solver evaluated at the crossover rate --
+        # continuous across the switch and physically correct.
+        nu_eff = _DYN_KT_NU_SWITCH
+        h_des = min(0.02, 0.02 / nu_eff)
+        n = int(min(max(round(tmax / h_des) + 1, 64), 20001))
+        grid = np.linspace(0.0, tmax, n)
+        h = grid[1] - grid[0] if n > 1 else tmax
         if abs(B_L) < 1e-9:
             gs = static_lorentzian_kt_zf(grid, 1.0, width, 0.0)
         else:
             gs = static_lorentzian_kt_lf(grid, 1.0, width, B_L, 0.0)
-    gs = np.asarray(gs, dtype=float)
-    gd = _strong_collision_solve(gs, nu, h)
+        gd = _strong_collision_solve(np.asarray(gs, dtype=float), nu_eff, h)
+
     if len(_DYN_KT_CACHE) >= _DYN_KT_CACHE_MAX:
-        _DYN_KT_CACHE.clear()
+        # Evict the oldest entry (dicts are insertion-ordered) rather than wiping
+        # the whole cache, which would force a full recompute on the next call.
+        _DYN_KT_CACHE.pop(next(iter(_DYN_KT_CACHE)))
     _DYN_KT_CACHE[key] = (grid, gd)
     return grid, gd
 
