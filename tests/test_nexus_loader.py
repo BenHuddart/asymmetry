@@ -28,11 +28,15 @@ def _write_v2_file(
     last_good_bin_attr: int | None = 3,
     first_good_time_us: float | None = None,
     last_good_time_us: float | None = None,
+    orientation: str = "L",
+    field_state: str | None = None,
 ) -> None:
     """Create a synthetic V2 NeXus file used by loader unit tests.
 
     Parameters control whether the file carries a pre-corrected time axis and
-    whether ``t0_bin`` is provided explicitly as an attribute.
+    whether ``t0_bin`` is provided explicitly as an attribute. ``orientation``
+    sets the detector-bank orientation; ``field_state`` writes
+    ``sample/magnetic_field_state`` when not ``None``.
     """
     with h5py.File(path, "w") as f:
         entry = f.create_group("raw_data_1")
@@ -95,11 +99,13 @@ def _write_v2_file(
         detector.create_dataset(
             "time_zero", data=np.array([time_zero_us, time_zero_us], dtype=np.float64)
         )
-        detector.create_dataset("orientation", data=np.bytes_("L"))
+        detector.create_dataset("orientation", data=np.bytes_(orientation))
 
         sample = entry.create_group("sample")
         sample.create_dataset("temperature", data=12.5)
         sample.create_dataset("magnetic_field", data=150.0)
+        if field_state is not None:
+            sample.create_dataset("magnetic_field_state", data=np.bytes_(field_state))
 
         temp_log = sample.create_group("Temp_Sample")
         temp_log.create_dataset("time", data=np.array([0.0, 10.0, 20.0], dtype=np.float64))
@@ -110,7 +116,7 @@ def _write_v2_file(
             periods.create_dataset("number", data=2)
 
 
-def _write_v1_file(path) -> None:
+def _write_v1_file(path, *, orientation: str = "T", field_state: str | None = None) -> None:
     with h5py.File(path, "w") as f:
         run = f.create_group("run")
         run.create_dataset("analysis", data=np.bytes_("muonTD"))
@@ -123,11 +129,13 @@ def _write_v1_file(path) -> None:
 
         instrument = run.create_group("instrument")
         detector = instrument.create_group("detector")
-        detector.create_dataset("orientation", data=np.bytes_("T"))
+        detector.create_dataset("orientation", data=np.bytes_(orientation))
 
         sample = run.create_group("sample")
         sample.create_dataset("temperature", data=5.0)
         sample.create_dataset("magnetic_field", data=20.0)
+        if field_state is not None:
+            sample.create_dataset("magnetic_field_state", data=np.bytes_(field_state))
 
         h_data = run.create_group("histogram_data_1")
         h_data.create_dataset(
@@ -355,3 +363,85 @@ def test_load_v2_normalizes_one_based_bin_attributes(tmp_path, loader: NexusLoad
     assert ds.run.grouping["first_good_bin"] == 7
     assert ds.run.grouping["bin_index_base"] == 1
     assert ds.run.histograms[0].t0_bin == 1
+
+
+# --- Field geometry (TF/LF/ZF) vs detector orientation ---------------------
+# The applied-field geometry comes from sample/magnetic_field_state, NOT from
+# detector orientation. On EMU/MuSR the banks read 'L' even for TF runs, so
+# orientation must never decide field_direction. See docs/porting/field-geometry/.
+
+
+def test_v2_field_state_tf_overrides_l_orientation(tmp_path, loader: NexusLoader) -> None:
+    """A TF run with L-oriented banks must read as Transverse, not Longitudinal."""
+    path = tmp_path / "run_v2_tf.nxs"
+    _write_v2_file(path, orientation="L", field_state="TF")
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field_state"] == "TF"
+    assert ds.metadata["field_direction"] == "Transverse"
+    # The instrument-axis value is preserved separately, not lost.
+    assert ds.metadata["detector_orientation"] == "Longitudinal"
+
+
+def test_v2_field_state_lf(tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v2_lf.nxs"
+    _write_v2_file(path, orientation="L", field_state="LF")
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field_state"] == "LF"
+    assert ds.metadata["field_direction"] == "Longitudinal"
+    assert ds.metadata["detector_orientation"] == "Longitudinal"
+
+
+def test_v2_field_state_zf(tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v2_zf.nxs"
+    _write_v2_file(path, orientation="L", field_state="ZF")
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field_state"] == "ZF"
+    assert ds.metadata["field_direction"] == "Zero field"
+
+
+def test_v2_field_state_absent_geometry_is_blank_no_orientation_fallback(
+    tmp_path, loader: NexusLoader
+) -> None:
+    """Without magnetic_field_state the geometry is unknown (blank), NOT orientation."""
+    path = tmp_path / "run_v2_no_state.nxs"
+    _write_v2_file(path, orientation="L", field_state=None)
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field_state"] == ""
+    assert ds.metadata["field_direction"] == ""
+    # Orientation is still captured for whoever needs the instrument axis.
+    assert ds.metadata["detector_orientation"] == "Longitudinal"
+
+
+def test_v2_field_state_blank_string_treated_as_unknown(tmp_path, loader: NexusLoader) -> None:
+    """An empty/unrecognised state string is treated as unknown, not an error."""
+    path = tmp_path / "run_v2_blank_state.nxs"
+    _write_v2_file(path, orientation="T", field_state="n/a")
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field_state"] == ""
+    assert ds.metadata["field_direction"] == ""
+    assert ds.metadata["detector_orientation"] == "Transverse"
+
+
+def test_v1_field_state_tf_overrides_l_orientation(tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v1_tf.nxs"
+    _write_v1_file(path, orientation="L", field_state="TF")
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field_state"] == "TF"
+    assert ds.metadata["field_direction"] == "Transverse"
+    assert ds.metadata["detector_orientation"] == "Longitudinal"
+
+
+def test_v1_field_state_absent_geometry_is_blank(tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v1_no_state.nxs"
+    _write_v1_file(path, orientation="T", field_state=None)
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field_state"] == ""
+    assert ds.metadata["field_direction"] == ""
+    assert ds.metadata["detector_orientation"] == "Transverse"
