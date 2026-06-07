@@ -542,6 +542,18 @@ class MainWindow(QMainWindow):
             "Available for the Forward-Backward asymmetry representation."
         )
         self._alc_mode_action.toggled.connect(self._on_alc_mode_toggled)
+        # Make the active state unmistakable: when checked, the button turns the
+        # ALC/FitSeries red. Styled on the specific tool button so the other
+        # toolbar buttons keep their native look.
+        alc_button = self._main_toolbar.widgetForAction(self._alc_mode_action)
+        if alc_button is not None:
+            alc_button.setStyleSheet(
+                "QToolButton { padding: 4px 8px; border-radius: 3px; }"
+                f"QToolButton:hover {{ background-color: {tokens.SURFACE_HI}; }}"
+                f"QToolButton:checked {{ background-color: {tokens.ACCENT_RED}; "
+                "color: #ffffff; font-weight: 700; }"
+                f"QToolButton:checked:hover {{ background-color: {tokens.ACCENT_RED}; }}"
+            )
         self._main_toolbar.addSeparator()
 
         # Domain → representation segmented control, grouped 2 + 2 under
