@@ -245,8 +245,24 @@ from the resonance), though the underlying composite-fit machinery is the same.
     now uses `order_key="run"` (include all integrable runs; the view picks the
     axis). The fit-range integration window also mirrors the regular machinery —
     draggable span + spinboxes (commit c71c9cb).
-- **G3 (GUI ALC analysis):** baseline regions + subtract + peak fit + results
-  read-out. **Add a centred-Lorentzian peak component** to `parameter_models.py`
-  (the built-in `Lorentzian` is centred at 0; `GaussianLCR` is the only
-  off-zero peak today) so users get both Gaussian and Lorentzian ALC peaks.
+- **G3 (GUI ALC analysis): IN PROGRESS** — baseline regions + subtract + peak
+  fit + results read-out. Decisions (2026-06-07): **bespoke controls in the ALC
+  scan view** (call G1's `fit_scan_baseline` / `fit_scan_model`, not the trend
+  panel); baseline regions defined **both** ways (draggable handles on the scan
+  plot *and* an editable numeric table, kept in sync); **multiple peaks** with
+  **Gaussian + Lorentzian** shapes.
+  - **G3a: DONE** (commit 046ea14) — added the centred **`LorentzianLCR`** peak
+    component (`f/(1+((B-B0)/Bwid)²)`, sharing `f/B0/Bwid` with `GaussianLCR` so
+    the two are interchangeable). Tests: single-peak recovery + a two-peak
+    composite recovering both resonance fields.
+  - **G3b (next):** baseline UI — draggable regions on the scan plot + a synced
+    numeric table; "Fit baseline" (`fit_scan_baseline` over the region union) →
+    show the corrected curve.
+  - **G3c:** peak UI — add/remove peaks (Gaussian/Lorentzian), "Fit peaks"
+    (`fit_scan_model` on the corrected curve) → overlay + a results table reading
+    off B₀ (resonance field), width, amplitude.
+  - Note (from review): the bespoke view duplicates the trend panel's
+    plot/x-selector and will re-implement the model-fit overlay; this is the
+    accepted cost of the bespoke-panel decision. The fit-range spinboxes could be
+    extracted into a shared `FitRangeSpinBoxes` widget (deferred cleanup).
 - **G4 (persistence):** scan/baseline/peak state in `.asymp` (+ migration, gui-smoke).
