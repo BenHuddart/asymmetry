@@ -42,15 +42,18 @@ def mainwindow(qapp: QApplication) -> MainWindow:
     return MainWindow()
 
 
-def _ds(run_number: int, fwd: float, bwd: float, field: float) -> MuonDataset:
+def _ds(
+    run_number: int, fwd: float, bwd: float, field: float, temperature: float = 10.0
+) -> MuonDataset:
     n = 4
+    meta = {"run_number": run_number, "field": field, "temperature": temperature}
     run = Run(
         run_number=run_number,
         histograms=[
             Histogram(counts=np.full(n, fwd), bin_width=0.01),
             Histogram(counts=np.full(n, bwd), bin_width=0.01),
         ],
-        metadata={"run_number": run_number, "field": field},
+        metadata=dict(meta),
         grouping={
             "groups": {1: [1], 2: [2]},
             "forward_group": 1,
@@ -66,7 +69,7 @@ def _ds(run_number: int, fwd: float, bwd: float, field: float) -> MuonDataset:
         time=t,
         asymmetry=np.zeros(n),
         error=np.full(n, 0.01),
-        metadata={"run_number": run_number, "field": field},
+        metadata=dict(meta),
         run=run,
     )
 
@@ -133,6 +136,47 @@ def test_alc_build_creates_percent_scan_and_renders(mainwindow: MainWindow, monk
 
     # The bespoke scan view rendered the three points.
     assert mw._alc_scan_view._table.rowCount() == 3
+
+
+def test_alc_x_axis_selector_reorders(mainwindow: MainWindow, monkeypatch):
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    mw._fit_panel.set_datasets(
+        [
+            _ds(11, 110.0, 90.0, field=100.0, temperature=5.0),
+            _ds(12, 120.0, 80.0, field=200.0, temperature=15.0),
+            _ds(13, 130.0, 70.0, field=300.0, temperature=25.0),
+        ]
+    )
+    mw._on_scan_requested()
+    view = mw._alc_scan_view
+    assert view.x_key() == "field"
+    assert view._table.rowCount() == 3
+
+    # Switching the x-axis to temperature re-renders the same 3 points.
+    view._x_combo.setCurrentIndex(1)  # "T (K)" -> triggers options_changed
+    assert view.x_key() == "temperature"
+    assert view._table.rowCount() == 3
+
+
+def test_alc_derivative_toggle(mainwindow: MainWindow, monkeypatch):
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    mw._fit_panel.set_datasets(
+        [
+            _ds(11, 110.0, 90.0, 100.0),
+            _ds(12, 120.0, 80.0, 200.0),
+            _ds(13, 130.0, 70.0, 300.0),
+        ]
+    )
+    mw._on_scan_requested()
+    view = mw._alc_scan_view
+    assert view._table.rowCount() == 3
+
+    # dA/dB derivative has one fewer point (midpoints between adjacent runs).
+    view._derivative_check.setChecked(True)
+    assert view.derivative_enabled() is True
+    assert view._table.rowCount() == 2
 
 
 def test_alc_build_needs_two_runs(mainwindow: MainWindow, monkeypatch):

@@ -23,6 +23,8 @@ from matplotlib.figure import Figure
 from numpy.typing import NDArray
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QGroupBox,
     QHBoxLayout,
@@ -130,11 +132,38 @@ class ALCFitPanel(QWidget):
 
 
 class ALCScanView(QWidget):
-    """Plot + table view of one integral-asymmetry field scan."""
+    """Plot + table view of one integral-asymmetry field scan.
+
+    Carries the view controls — an x-axis selector (field / temperature / run)
+    and a dA/dB derivative toggle — and emits :attr:`options_changed` when they
+    change. The main window owns the scan data and re-feeds arrays via
+    :meth:`show_scan`; this widget holds no analysis logic.
+    """
+
+    #: Emitted when the x-axis or derivative toggle changes.
+    options_changed = Signal()
+
+    #: x-combo index → ordering key.
+    _X_KEYS = ("field", "temperature", "run")
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
+
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel("x:"))
+        self._x_combo = QComboBox()
+        self._x_combo.addItems(["B (G)", "T (K)", "Run"])
+        self._x_combo.currentIndexChanged.connect(self._emit_options_changed)
+        controls.addWidget(self._x_combo)
+        self._derivative_check = QCheckBox("dA/dB")
+        self._derivative_check.setToolTip(
+            "Show the derivative of the scan (WiMDA 'differential ALC')."
+        )
+        self._derivative_check.toggled.connect(self._emit_options_changed)
+        controls.addWidget(self._derivative_check)
+        controls.addStretch()
+        layout.addLayout(controls)
 
         self._figure = Figure(constrained_layout=True)
         self._canvas = FigureCanvasQTAgg(self._figure)
@@ -149,6 +178,18 @@ class ALCScanView(QWidget):
         layout.addWidget(self._table)
 
         self.clear()
+
+    def _emit_options_changed(self, *_: object) -> None:
+        """Re-emit the combo/checkbox change as the 0-arg ``options_changed``."""
+        self.options_changed.emit()
+
+    def x_key(self) -> str:
+        """Return the selected ordering key: ``"field"``/``"temperature"``/``"run"``."""
+        return self._X_KEYS[self._x_combo.currentIndex()]
+
+    def derivative_enabled(self) -> bool:
+        """Return True when the dA/dB derivative toggle is on."""
+        return self._derivative_check.isChecked()
 
     def clear(self) -> None:
         """Show the empty-state placeholder."""
@@ -175,6 +216,7 @@ class ALCScanView(QWidget):
         *,
         x_label: str,
         y_label: str,
+        value_header: str = "value",
     ) -> None:
         """Render a scan from parallel arrays (already in display units)."""
         x = np.asarray(x, dtype=float)
@@ -192,6 +234,7 @@ class ALCScanView(QWidget):
         self._ax.grid(True, alpha=0.3)
         self._canvas.draw_idle()
 
+        self._table.setHorizontalHeaderLabels(["Run", x_label, value_header, "± err"])
         self._table.setRowCount(int(x.size))
         for row in range(int(x.size)):
             run = run_numbers[row] if row < len(run_numbers) else ""

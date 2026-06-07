@@ -82,6 +82,7 @@ from asymmetry.core.representation import (
 )
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
+    FieldScan,
     apply_deadtime_correction,
     apply_grouped_background_correction,
     apply_grouping_aligned,
@@ -89,6 +90,7 @@ from asymmetry.core.transform import (
     common_t0_for_groups,
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
+    differentiate_scan,
     has_file_deadtime,
     has_resolved_deadtime,
     prepare_histograms_with_deadtime,
@@ -137,6 +139,21 @@ _PLOT_DECIMATION_SETTINGS_KEY = "plot/enable_decimation"
 _MAXENT_WARN_PEAK_MATRIX_BYTES = 1 * 1024**3
 _MAXENT_WARN_TOTAL_MATRIX_BYTES = 8 * 1024**3
 _MAXENT_WARN_TOTAL_OBSERVATIONS = 500_000
+
+
+def _safe_float(value: object) -> float | None:
+    """Return ``value`` as a finite float, or ``None`` if absent/invalid.
+
+    Used to read per-run scan metadata (field/temperature) where a missing log
+    must be distinguishable from a genuine 0 — see ``_render_alc_scan``.
+    """
+    if value is None:
+        return None
+    try:
+        result = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return result if np.isfinite(result) else None
 
 
 def _normalise_source_path(path: str) -> str:
@@ -316,6 +333,9 @@ class MainWindow(QMainWindow):
         self._next_batch_index = 1
         self._next_scan_index = 1
         self._alc_mode = False
+        #: Per-run data for the current ALC scan (fractional value + metadata),
+        #: re-rendered when the scan-view x-axis / derivative options change.
+        self._alc_scan_points: list[dict] = []
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
         self._frequency_spectra_by_rep: dict[RepresentationType, dict[int, list[MuonDataset]]] = {
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
@@ -1043,6 +1063,7 @@ class MainWindow(QMainWindow):
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
         self._alc_fit_panel.build_requested.connect(self._on_scan_requested)
         self._alc_fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
+        self._alc_scan_view.options_changed.connect(self._render_alc_scan)
         if hasattr(self._fit_panel, "grouped_fit_completed"):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
         if hasattr(self._fit_panel, "preview_requested"):
@@ -5204,11 +5225,11 @@ class MainWindow(QMainWindow):
             t_min, t_max = self._plot_panel.get_fit_range()
 
         try:
-            # order_key="field": an ALC/repolarisation scan is plotted vs field,
-            # so field is both the ordering and exclusion key (a run with no
-            # field log is not a valid scan point and is dropped + logged).
+            # order_key="run" includes every integrable run; the scan view picks
+            # the displayed x-axis (field / temperature / run). A run is only
+            # dropped here if it cannot be integrated at all (no grouping).
             scan = build_field_scan(
-                runs, t_min=t_min, t_max=t_max, method="integral", order_key="field"
+                runs, t_min=t_min, t_max=t_max, method="integral", order_key="run"
             )
         except (ValueError, TypeError) as exc:
             QMessageBox.warning(self, "Integral scan", f"Could not build the scan: {exc}")
@@ -5223,20 +5244,36 @@ class MainWindow(QMainWindow):
             dropped = ", ".join(f"{run} ({reason})" for run, reason in scan.excluded)
             self._log_panel.log(f"Integral scan: excluded {len(scan.excluded)} run(s): {dropped}")
 
-        # The core integral is fractional; display/store in percent to match the
-        # time-domain asymmetry plots.
-        value_pct = scan.value * 100.0
-        error_pct = scan.error * 100.0
+        # Per-run scan data (fractional value + the run's field/temperature) for
+        # re-rendering when the x-axis / derivative options change.
+        runs_by_number = {
+            int(d.run.run_number): d.run for d in datasets if getattr(d, "run", None) is not None
+        }
+        self._alc_scan_points = []
+        for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error):
+            meta = getattr(runs_by_number.get(int(run_number)), "metadata", {}) or {}
+            self._alc_scan_points.append(
+                {
+                    "run": int(run_number),
+                    "value": float(value),  # fractional
+                    "error": float(error),
+                    "field": _safe_float(meta.get("field")),
+                    "temperature": _safe_float(meta.get("temperature")),
+                }
+            )
+
+        # Record the scan as a model-less FitSeries (percent units) for
+        # persistence / series management.
         quantity = self._SCAN_QUANTITY
         results_by_run = {
             int(run_number): {
                 "success": True,
-                "parameters": {quantity: float(value)},
-                "uncertainties": {quantity: float(error)},
+                "parameters": {quantity: float(value) * 100.0},
+                "uncertainties": {quantity: float(error) * 100.0},
                 "chi_squared": 0.0,
                 "reduced_chi_squared": 0.0,
             }
-            for run_number, value, error in zip(scan.run_numbers, value_pct, error_pct)
+            for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error)
         }
         series = FitSeries(
             f"scan-{self._next_scan_index}",
@@ -5249,22 +5286,81 @@ class MainWindow(QMainWindow):
             results_by_run=results_by_run,
         )
         self._next_scan_index += 1
-        runs_by_number = {
-            int(d.run.run_number): d.run for d in datasets if getattr(d, "run", None) is not None
-        }
         series.sort_members(runs_by_number)
         self._project_model.add_batch(series)
 
-        # Render in the bespoke ALC view (x = field, y = integral asymmetry %).
-        self._alc_scan_view.show_scan(
-            scan.x,
-            value_pct,
-            error_pct,
-            list(scan.run_numbers),
-            x_label=scan.x_label,
-            y_label=quantity,
-        )
+        self._render_alc_scan()
         self._log_panel.log(f"Built integral scan '{series.label}' ({scan.n_points} points).")
+
+    # x-axis key → (display label, derivative unit label).
+    _ALC_X_LABELS = {"field": "B (G)", "temperature": "T (K)", "run": "Run"}
+    _ALC_DERIV_UNITS = {"field": "%/G", "temperature": "%/K", "run": "%/run"}
+
+    def _render_alc_scan(self) -> None:
+        """Render the current ALC scan in the chosen x-axis / derivative view.
+
+        Reads the per-run scan data (``_alc_scan_points``) and the scan view's
+        options, maps each run to the selected x (field / temperature / run),
+        scales to percent, optionally takes the dA/dB derivative, and feeds the
+        view. Re-invoked whenever the scan or its view options change.
+        """
+        points = self._alc_scan_points
+        if not points:
+            self._alc_scan_view.clear()
+            return
+
+        x_key = self._alc_scan_view.x_key()
+        selected = []
+        for point in points:
+            x = point["run"] if x_key == "run" else point[x_key]
+            if x is None:  # run missing the chosen log (e.g. no field)
+                continue
+            selected.append(
+                (float(x), point["value"] * 100.0, point["error"] * 100.0, point["run"])
+            )
+        selected.sort(key=lambda item: (item[0], item[3]))
+
+        x_label = self._ALC_X_LABELS[x_key]
+        if len(selected) < 2:
+            self._alc_scan_view.clear()
+            return
+
+        xs = np.array([s[0] for s in selected], dtype=float)
+        values = np.array([s[1] for s in selected], dtype=float)
+        errors = np.array([s[2] for s in selected], dtype=float)
+        run_numbers = [s[3] for s in selected]
+
+        if self._alc_scan_view.derivative_enabled():
+            base = FieldScan(
+                x=xs,
+                value=values,
+                error=errors,
+                run_numbers=run_numbers,
+                order_key=x_key,
+                method="integral",
+                x_label=x_label,
+            )
+            deriv = differentiate_scan(base)
+            unit = self._ALC_DERIV_UNITS[x_key]
+            self._alc_scan_view.show_scan(
+                deriv.x,
+                deriv.value,
+                deriv.error,
+                deriv.run_numbers,
+                x_label=x_label,
+                y_label=f"dA/dx ({unit})",
+                value_header=f"dA/dx ({unit})",
+            )
+        else:
+            self._alc_scan_view.show_scan(
+                xs,
+                values,
+                errors,
+                run_numbers,
+                x_label=x_label,
+                y_label=self._SCAN_QUANTITY,
+                value_header="A (%)",
+            )
 
     def _active_grouped_state(self) -> dict:
         """Return the grouped-fit classification from the active grouped surface.
