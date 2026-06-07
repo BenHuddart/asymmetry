@@ -268,6 +268,270 @@ def longitudinal_field_kubo_toyabe(
 
 
 # ---------------------------------------------------------------------------
+# Dynamic / fluctuating-field relaxation functions
+# ---------------------------------------------------------------------------
+#
+# A static local-field distribution dephases the muon, giving the static
+# Kubo-Toyabe function G_s(t).  When the field reorients stochastically at rate
+# ``nu`` (strong-collision / Markovian model), the polarisation becomes the
+# *dynamic* G_d(t).  Limits: nu -> 0 recovers the static function; nu -> infinity
+# gives motional narrowing (exponential decay, rate 2*Delta^2/nu for Gaussian).
+# See docs/porting/dynamic-relaxation/.  ``nu`` is a rate in MHz (== us^-1).
+
+
+def abragam(
+    t: NDArray,
+    A0: float,
+    sigma: float,
+    nu: float,
+    baseline: float = 0.0,
+) -> NDArray:
+    """Abragam relaxation function (Abragam, *Principles of Nuclear Magnetism*, 1961).
+
+    G(t) = A0 exp[ -(sigma^2 / nu^2) (e^{-nu t} - 1 + nu t) ] + baseline
+
+    A single-component relaxation that interpolates between the static Gaussian
+    line shape and the motionally-narrowed exponential:
+
+    - ``nu -> 0``        : G -> A0 exp(-sigma^2 t^2 / 2)  (Gaussian)
+    - ``nu >> sigma``    : G -> A0 exp(-(sigma^2 / nu) t) (exponential)
+
+    Parameters
+    ----------
+    t : NDArray
+        Time values in microseconds.
+    A0 : float
+        Initial asymmetry amplitude.
+    sigma : float
+        Static Gaussian field-distribution width in us^-1.
+    nu : float
+        Field fluctuation (hop) rate in MHz (== us^-1).  ``nu`` <= 0 gives the
+        static Gaussian limit.
+    baseline : float, optional
+        Constant baseline offset.
+    """
+    t = np.asarray(t, dtype=float)
+    s2 = float(sigma) * float(sigma)
+    nt = float(nu) * np.abs(t)
+    if nu <= 1e-9:
+        exponent = -0.5 * s2 * t * t
+    else:
+        # e^{-nt} - 1 + nt is >= 0 and ~ (nt)^2/2 as nt -> 0 (Gaussian limit)
+        exponent = -(s2 / (float(nu) * float(nu))) * (np.exp(np.clip(-nt, -700, 0)) - 1.0 + nt)
+    exponent = np.clip(exponent, -700, 0)
+    return A0 * np.exp(exponent) + baseline
+
+
+def keren(
+    t: NDArray,
+    A0: float,
+    Delta: float,
+    nu: float,
+    B_L: float,
+    baseline: float = 0.0,
+) -> NDArray:
+    """Keren dynamic Gaussian relaxation in a longitudinal field (Keren, PRB 50, 10039 (1994)).
+
+    P(t) = A0 exp[-Gamma(t)] + baseline, with omega0 = gamma_mu * B_L and
+
+        Gamma(t) = (2 Delta^2 / (omega0^2 + nu^2)^2)
+                   * [ (omega0^2 + nu^2) nu t
+                       + (omega0^2 - nu^2) (1 - e^{-nu t} cos(omega0 t))
+                       - 2 nu omega0 e^{-nu t} sin(omega0 t) ]
+
+    Keren's analytic generalisation of the Abragam function to a longitudinal
+    field.  At ``B_L = 0`` it reduces to the Abragam exponent (x2, for the two
+    transverse zero-field components): Gamma = (2 Delta^2 / nu^2)(e^{-nu t} - 1 + nu t).
+
+    Parameters
+    ----------
+    t : NDArray
+        Time values in microseconds.
+    A0 : float
+        Initial asymmetry amplitude.
+    Delta : float
+        Static Gaussian field-distribution width in us^-1.
+    nu : float
+        Field fluctuation rate in MHz (== us^-1).
+    B_L : float
+        Longitudinal magnetic field in Gauss (omega0 = gamma_mu * B_L).
+    baseline : float, optional
+        Constant baseline offset.
+    """
+    t = np.asarray(t, dtype=float)
+    gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+    omega0 = gamma_mu * (float(B_L) * GAUSS_TO_TESLA)  # rad/us
+    delta2 = float(Delta) * float(Delta)
+    w2 = omega0 * omega0
+    n2 = float(nu) * float(nu)
+    denom = w2 + n2
+
+    if denom < 1e-20:
+        # nu -> 0 and B_L -> 0: Gamma -> Delta^2 t^2 (fast-Gaussian envelope limit)
+        exponent = np.clip(-delta2 * t * t, -700, 0)
+        return A0 * np.exp(exponent) + baseline
+
+    e = np.exp(np.clip(-float(nu) * np.abs(t), -700, 0))
+    gamma = (2.0 * delta2 / (denom * denom)) * (
+        denom * float(nu) * np.abs(t)
+        + (w2 - n2) * (1.0 - e * np.cos(omega0 * t))
+        - 2.0 * float(nu) * omega0 * e * np.sin(omega0 * t)
+    )
+    exponent = np.clip(-gamma, -700, 0)
+    return A0 * np.exp(exponent) + baseline
+
+
+def static_lorentzian_kt_zf(
+    t: NDArray,
+    A0: float,
+    a_L: float,
+    baseline: float = 0.0,
+) -> NDArray:
+    """Static Lorentzian Kubo-Toyabe, zero field (Uemura et al. PRB 31, 546 (1985)).
+
+    G(t) = A0 [1/3 + 2/3 (1 - a t) exp(-a t)] + baseline
+
+    For a dilute / Lorentzian distribution of local fields (e.g. spin glasses),
+    where ``a_L`` is the half-width of the field distribution expressed as a rate
+    in us^-1.
+    """
+    at = float(a_L) * np.abs(np.asarray(t, dtype=float))
+    exp_term = np.exp(np.clip(-at, -700, 0))
+    return A0 * (1.0 / 3.0 + 2.0 / 3.0 * (1.0 - at) * exp_term) + baseline
+
+
+def _strong_collision_solve(
+    gs_grid: NDArray,
+    nu: float,
+    h: float,
+) -> NDArray:
+    """Solve the strong-collision Volterra equation on a uniform grid.
+
+    G_d(t) = f(t) + nu * integral_0^t f(t - tau) G_d(tau) dtau, with
+    f(t) = e^{-nu t} G_s(t), discretised with the trapezoidal rule on a uniform
+    grid of spacing ``h``.  ``gs_grid`` is the static G_s sampled on that grid
+    (gs_grid[0] = G_s(0) = 1).
+    """
+    n = gs_grid.shape[0]
+    idx = np.arange(n)
+    f = np.exp(np.clip(-nu * idx * h, -700, 0)) * gs_grid
+    g = np.empty(n, dtype=float)
+    g[0] = 1.0
+    denom = 1.0 - 0.5 * nu * h * f[0]
+    for i in range(1, n):
+        conv = float(np.dot(f[i - 1 : 0 : -1], g[1:i])) if i > 1 else 0.0
+        g[i] = (f[i] + nu * h * (0.5 * f[i] * g[0] + conv)) / denom
+    return g
+
+
+# Cache of dynamic-KT solutions keyed by quantised (kind, width, nu, B_L, tmax).
+_DYN_KT_CACHE: dict[tuple, tuple[NDArray, NDArray]] = {}
+_DYN_KT_CACHE_MAX = 256
+
+
+def _dynamic_kt_grid(
+    kind: str, width: float, nu: float, B_L: float, tmax: float
+) -> tuple[NDArray, NDArray]:
+    """Return (grid, G_d) for a dynamic KT, computing+caching as needed."""
+    key = (kind, round(width, 6), round(nu, 6), round(B_L, 4), round(tmax, 5))
+    cached = _DYN_KT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    # Uniform grid.  The explicit trapezoidal Volterra solve is stable/accurate
+    # only when nu*h is small (nu*h ~ 0.4 diverges; ~0.02 is <1%); size the step
+    # from nu, with a hard cap on the point count to bound the O(N^2) cost.  In
+    # the physical regime (nu <~ 10 MHz) this gives nu*h <= 0.02; for larger nu
+    # the step is floored by the cap and accuracy degrades gracefully (still
+    # bounded) in a regime already close to the analytic motional-narrowing limit.
+    n_max = 4001
+    h_des = min(0.02, 0.02 / max(nu, 1e-3))
+    n = int(min(max(round(tmax / h_des) + 1, 64), n_max))
+    grid = np.linspace(0.0, tmax, n)
+    h = grid[1] - grid[0] if n > 1 else tmax
+    if kind == "gaussian":
+        if abs(B_L) < 1e-9:
+            gs = static_gkt_zf(grid, 1.0, width, 0.0)
+        else:
+            gs = longitudinal_field_kubo_toyabe(grid, 1.0, width, B_L, 0.0)
+    else:  # lorentzian (zero-field static; LF Lorentzian deferred)
+        gs = static_lorentzian_kt_zf(grid, 1.0, width, 0.0)
+    gs = np.asarray(gs, dtype=float)
+    gd = _strong_collision_solve(gs, nu, h)
+    if len(_DYN_KT_CACHE) >= _DYN_KT_CACHE_MAX:
+        _DYN_KT_CACHE.clear()
+    _DYN_KT_CACHE[key] = (grid, gd)
+    return grid, gd
+
+
+def dynamic_gaussian_kt(
+    t: NDArray,
+    A0: float,
+    Delta: float,
+    nu: float,
+    B_L: float = 0.0,
+    baseline: float = 0.0,
+) -> NDArray:
+    """Dynamic Gaussian Kubo-Toyabe (strong collision; Hayano et al. PRB 20, 850 (1979)).
+
+    Strong-collision generalisation of the static Gaussian KT: a Gaussian local
+    field of width ``Delta`` (us^-1) fluctuating at rate ``nu`` (MHz), with
+    optional longitudinal field ``B_L`` (Gauss).
+
+    - ``nu -> 0``     : recovers the static (LF) Gaussian Kubo-Toyabe.
+    - ``nu >> Delta`` : motional narrowing, G -> exp(-2 Delta^2 t / nu) (B_L = 0).
+    - ``B_L -> inf``  : decoupling, G -> 1.
+    """
+    t = np.asarray(t, dtype=float)
+    scalar = t.ndim == 0
+    tt = np.atleast_1d(np.abs(t))
+    if nu <= 1e-9:
+        if abs(B_L) < 1e-9:
+            gd = static_gkt_zf(tt, 1.0, Delta, 0.0)
+        else:
+            gd = longitudinal_field_kubo_toyabe(tt, 1.0, Delta, B_L, 0.0)
+    else:
+        tmax = float(max(tt.max(), 1e-6))
+        grid, gd_grid = _dynamic_kt_grid("gaussian", float(Delta), float(nu), float(B_L), tmax)
+        gd = np.interp(tt, grid, gd_grid)
+    out = A0 * np.asarray(gd, dtype=float) + baseline
+    return float(out[0]) if scalar else out
+
+
+def dynamic_lorentzian_kt(
+    t: NDArray,
+    A0: float,
+    a_L: float,
+    nu: float,
+    B_L: float = 0.0,
+    baseline: float = 0.0,
+) -> NDArray:
+    """Dynamic Lorentzian Kubo-Toyabe (strong collision; Uemura et al. PRB 31, 546 (1985)).
+
+    Strong-collision generalisation of the static Lorentzian KT for a dilute /
+    Lorentzian local-field distribution of half-width ``a_L`` (us^-1) fluctuating
+    at rate ``nu`` (MHz).
+
+    Note
+    ----
+    Longitudinal field is accepted for interface symmetry but the static
+    Lorentzian LF line shape (Uemura 1985 analytic form) is not yet wired in; for
+    ``B_L != 0`` this currently dynamicises the zero-field Lorentzian static
+    function.  Zero-field is exact.  See docs/porting/dynamic-relaxation/.
+    """
+    t = np.asarray(t, dtype=float)
+    scalar = t.ndim == 0
+    tt = np.atleast_1d(np.abs(t))
+    if nu <= 1e-9:
+        gd = static_lorentzian_kt_zf(tt, 1.0, a_L, 0.0)
+    else:
+        tmax = float(max(tt.max(), 1e-6))
+        grid, gd_grid = _dynamic_kt_grid("lorentzian", float(a_L), float(nu), float(B_L), tmax)
+        gd = np.interp(tt, grid, gd_grid)
+    out = A0 * np.asarray(gd, dtype=float) + baseline
+    return float(out[0]) if scalar else out
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -324,4 +588,36 @@ _register(
     longitudinal_field_kubo_toyabe,
     ["A0", "Delta", "B_L", "baseline"],
     {"A0": 25.0, "Delta": 0.5, "B_L": 0.0, "baseline": 0.0},
+)
+
+_register(
+    "DynamicGaussianKT",
+    "Dynamic Gaussian Kubo-Toyabe, strong collision (Hayano et al. 1979)",
+    dynamic_gaussian_kt,
+    ["A0", "Delta", "nu", "B_L", "baseline"],
+    {"A0": 25.0, "Delta": 0.5, "nu": 1.0, "B_L": 0.0, "baseline": 0.0},
+)
+
+_register(
+    "DynamicLorentzianKT",
+    "Dynamic Lorentzian Kubo-Toyabe, strong collision (Uemura et al. 1985)",
+    dynamic_lorentzian_kt,
+    ["A0", "a_L", "nu", "B_L", "baseline"],
+    {"A0": 25.0, "a_L": 0.5, "nu": 1.0, "B_L": 0.0, "baseline": 0.0},
+)
+
+_register(
+    "Keren",
+    "Keren dynamic Gaussian relaxation in longitudinal field (Keren 1994)",
+    keren,
+    ["A0", "Delta", "nu", "B_L", "baseline"],
+    {"A0": 25.0, "Delta": 0.5, "nu": 1.0, "B_L": 0.0, "baseline": 0.0},
+)
+
+_register(
+    "Abragam",
+    "Abragam relaxation, Gaussian-to-exponential crossover (Abragam 1961)",
+    abragam,
+    ["A0", "sigma", "nu", "baseline"],
+    {"A0": 25.0, "sigma": 0.5, "nu": 1.0, "baseline": 0.0},
 )
