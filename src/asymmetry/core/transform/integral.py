@@ -133,9 +133,15 @@ def integrate_asymmetry(
         asym, err = compute_asymmetry(f_int, b_int, alpha)
         return float(asym[0]), float(err[0])
 
-    # "differential": per-bin asymmetry, then mean over the window.
+    # "differential": per-bin asymmetry, then mean over the window. Exclude
+    # zero-denominator bins, where compute_asymmetry returns a sentinel
+    # (asym=0, err=1.0); including them would bias the mean toward zero and
+    # inflate the error.
     asym, err = compute_asymmetry(f, b, alpha)
-    return _mean_over_window(asym, err, mask)
+    valid = mask & ((f + alpha * b) != 0.0)
+    if not np.any(valid):
+        raise ValueError("Integration window selects no bins with non-zero counts.")
+    return _mean_over_window(asym, err, valid)
 
 
 def integrate_curve(
@@ -310,7 +316,13 @@ def build_field_scan(
     excluded: list[tuple[int, str]] = []
 
     for item in runs:
-        run = _resolve_run(item)
+        try:
+            run = _resolve_run(item)
+        except (TypeError, ValueError) as exc:
+            # One un-resolvable item must not abort the whole scan; exclude it
+            # with a reason, like a run missing its log value.
+            excluded.append((_excluded_run_number(item), str(exc)))
+            continue
         run_number = int(run.run_number)
         x_value = _order_value(run, order_key)
         if x_value is None:
@@ -390,8 +402,10 @@ def _validate_alpha(alpha: float) -> None:
 
 
 def _validate_window(t_min: float, t_max: float) -> None:
-    if t_min >= t_max:
-        raise ValueError(f"t_min must be < t_max, got t_min={t_min}, t_max={t_max}")
+    # Equal bounds are allowed: they select a single bin (for example a run
+    # whose good-bin range is one bin). Only an inverted window is rejected.
+    if t_min > t_max:
+        raise ValueError(f"t_min must be <= t_max, got t_min={t_min}, t_max={t_max}")
 
 
 def _window_mask(
@@ -536,6 +550,23 @@ def _order_value(run: Run, order_key: str) -> float | None:
     if raw is None:
         return None
     try:
-        return float(raw)
+        value = float(raw)
     except (TypeError, ValueError):
         return None
+    # Reject non-finite logs (NaN/inf) so they cannot corrupt the scan order or
+    # produce NaN derivative points downstream.
+    if not np.isfinite(value):
+        return None
+    return value
+
+
+def _excluded_run_number(item: object) -> int:
+    """Best-effort run number for an item that could not be resolved to a Run.
+
+    ``MuonDataset.run_number`` and ``Run.run_number`` both work via ``getattr``;
+    anything else (a stray ``list``/``None``) falls back to ``0``.
+    """
+    try:
+        return int(getattr(item, "run_number", None))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0

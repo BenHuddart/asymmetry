@@ -127,6 +127,22 @@ def test_methods_differ_for_non_flat_asymmetry():
     assert integral != pytest.approx(differential)
 
 
+def test_differential_excludes_zero_denominator_bins():
+    # The middle bin has F + alpha*B == 0; compute_asymmetry returns the
+    # (0, 1.0) sentinel there. It must not pollute the differential mean/error.
+    forward = np.array([100.0, 0.0, 110.0])
+    backward = np.array([50.0, 0.0, 55.0])
+    value, error = integrate_asymmetry(forward, backward, method="differential")
+    per_bin, errs = compute_asymmetry(forward, backward, 1.0)
+    assert value == pytest.approx((per_bin[0] + per_bin[2]) / 2.0)
+    assert error == pytest.approx(np.hypot(errs[0], errs[2]) / 2.0)
+
+
+def test_differential_all_zero_counts_rejected():
+    with pytest.raises(ValueError, match="non-zero counts"):
+        integrate_asymmetry(np.zeros(3), np.zeros(3), method="differential")
+
+
 # --- window selection --------------------------------------------------------
 
 
@@ -222,8 +238,26 @@ def test_non_positive_alpha_rejected(bad_alpha):
 
 def test_inverted_window_rejected():
     time = np.arange(3) * 0.1
-    with pytest.raises(ValueError, match="t_min must be < t_max"):
+    with pytest.raises(ValueError, match="t_min must be"):
         integrate_asymmetry(np.ones(3), np.ones(3), time=time, t_min=0.2, t_max=0.1)
+
+
+def test_equal_window_selects_single_bin():
+    # t_min == t_max is allowed and selects the single matching bin.
+    forward = np.array([100.0, 200.0, 100.0])
+    backward = np.array([50.0, 50.0, 50.0])
+    time = np.array([0.0, 0.1, 0.2])
+    value, _ = integrate_asymmetry(
+        forward, backward, time=time, t_min=0.1, t_max=0.1, method="integral"
+    )
+    assert value == pytest.approx((200.0 - 50.0) / (200.0 + 50.0))
+
+
+def test_integrate_run_single_good_bin():
+    # A run whose good-bin range is a single bin must integrate, not crash.
+    run = _run(np.full(5, 100.0), np.full(5, 50.0), first_good=2, last_good=2)
+    value, _ = integrate_run(run)
+    assert value == pytest.approx(1.0 / 3.0)
 
 
 def test_empty_counts_rejected():
@@ -270,6 +304,32 @@ def test_build_field_scan_excludes_runs_missing_log():
     scan = build_field_scan(runs, order_key="field")
     assert scan.run_numbers == [1]
     assert scan.excluded == [(2, "no field value")]
+
+
+def test_build_field_scan_excludes_non_finite_log():
+    # A NaN field log must be treated as missing, not sorted into the scan.
+    runs = [
+        _scan_run(1, field=100.0, level=10.0),
+        _run(np.full(5, 100.0), np.full(5, 50.0), run_number=2, field=float("nan")),
+    ]
+    scan = build_field_scan(runs, order_key="field")
+    assert scan.run_numbers == [1]
+    assert scan.excluded == [(2, "no field value")]
+
+
+def test_build_field_scan_excludes_unresolvable_item_without_aborting():
+    # A MuonDataset with no source run must be excluded, not crash the scan.
+    good = _scan_run(1, field=100.0, level=10.0)
+    orphan = MuonDataset(
+        time=np.array([]),
+        asymmetry=np.array([]),
+        error=np.array([]),
+        metadata={"run_number": 9},
+    )
+    scan = build_field_scan([good, orphan], order_key="field")
+    assert scan.run_numbers == [1]
+    assert len(scan.excluded) == 1
+    assert scan.excluded[0][0] == 9
 
 
 def test_build_field_scan_keeps_zero_field_point():
