@@ -114,6 +114,18 @@ class FitSeries:
         """Return the user-assigned label, or *fallback* when none is set."""
         return self.label or fallback
 
+    @property
+    def is_computed(self) -> bool:
+        """True for a model-less *computed* series (e.g. an integral/field scan).
+
+        A computed series carries per-run results directly in
+        :attr:`results_by_run` but owns **no** fit model and **no** per-run
+        :class:`FitSlot`\\ s. It must therefore be skipped by divergence checks
+        and must not clear runs' fit state when deleted (a real fit on the same
+        run is unrelated). A real batch/global fit always has a canonical model.
+        """
+        return self.canonical_model is None
+
     # ── classifier-derived scope ───────────────────────────────────────────
 
     def is_global(self) -> bool:

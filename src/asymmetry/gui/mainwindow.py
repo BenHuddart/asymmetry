@@ -5007,6 +5007,13 @@ class MainWindow(QMainWindow):
         series = self._project_model.batch(batch_id)
         if series is None:
             return
+        # A computed series (integral scan) owns no per-run FitSlots, so dropping
+        # it must NOT clear the runs' fit overlays — those belong to a real fit
+        # that may share the same run numbers.
+        if series.is_computed:
+            self._project_model.remove_batch(batch_id)
+            self._refresh_trend_panel()
+            return
         if series.member_kind == "groups":
             runs = list(series.member_source_run.values())
         else:
@@ -5138,6 +5145,10 @@ class MainWindow(QMainWindow):
             t_min, t_max = self._plot_panel.get_fit_range()
 
         try:
+            # order_key="run" so every integrable run is included (a run is never
+            # dropped for a missing field log); the trend panel chooses the
+            # displayed x-axis (field/temperature/run) via its own selector, and
+            # the FitSeries below sets "field" as the default for ALC.
             scan = build_field_scan(
                 runs, t_min=t_min, t_max=t_max, method="integral", order_key="run"
             )
@@ -5150,11 +5161,18 @@ class MainWindow(QMainWindow):
             )
             return
 
+        if scan.excluded:
+            dropped = ", ".join(f"{run} ({reason})" for run, reason in scan.excluded)
+            self._log_panel.log(f"Integral scan: excluded {len(scan.excluded)} run(s): {dropped}")
+
+        quantity = scan.y_label  # keep the quantity name in sync with the core scan
         results_by_run = {
             int(run_number): {
                 "success": True,
-                "parameters": {"Integral asymmetry": float(value)},
-                "uncertainties": {"Integral asymmetry": float(error)},
+                "parameters": {quantity: float(value)},
+                "uncertainties": {quantity: float(error)},
+                "chi_squared": 0.0,
+                "reduced_chi_squared": 0.0,
             }
             for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error)
         }

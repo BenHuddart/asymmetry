@@ -3113,10 +3113,12 @@ class GlobalFitTab(QWidget):
         return list(self._datasets)
 
     def _on_scan_mode_toggled(self, checked: bool) -> None:
-        """Relabel the action button to reflect integral-scan mode."""
-        if self.is_grouped_time_domain_mode():
-            return
-        self._fit_btn.setText("Build Integral Scan" if checked else "Run Batch Fit")
+        """Relabel the action button to reflect integral-scan mode.
+
+        Routes through ``_update_mode_ui`` so the button label has a single
+        writer (grouped/scan/time are decided in one place).
+        """
+        self._update_mode_ui(preserve_result=True)
 
     def _run_global_fit(self) -> None:
         """Execute global fit on all datasets."""
@@ -4137,7 +4139,14 @@ class GlobalFitTab(QWidget):
         self._grouped_context_label.setVisible(grouped)
         self._group_param_group.setVisible(grouped)
         self._group_model_group.setVisible(grouped)
-        self._fit_btn.setText("Run Grouped Fit" if grouped else "Run Batch Fit")
+        # Integral-scan mode is only meaningful on a time-domain run series.
+        self._scan_mode_check.setVisible(not grouped)
+        if grouped:
+            self._fit_btn.setText("Run Grouped Fit")
+        elif self._scan_mode_check.isChecked():
+            self._fit_btn.setText("Build Integral Scan")
+        else:
+            self._fit_btn.setText("Run Batch Fit")
         self._preview_btn.setVisible(grouped)
         _set_formula_label_text(
             self._formula_label,

@@ -173,6 +173,37 @@ def test_refresh_divergence_flags_excludes_and_re_includes():
     assert pm.trend_runs_for_batch(batch) == [10, 11]
 
 
+def test_computed_series_is_flagged_and_skips_divergence():
+    # A model-less "computed" series (e.g. an integral scan) must not flip the
+    # divergence/trend state of a real fit that shares the same run numbers.
+    model_a = CompositeModel(["Exponential", "Constant"]).to_dict()
+    pm = ProjectModel()
+    real = _batched_model(pm, model_a)  # real fit on runs 10, 11
+    pm.refresh_divergence()
+    assert pm.representation(11, _FB).fit.include_in_trend is True
+
+    scan = FitSeries(
+        "scan-1",
+        _FB,
+        member_run_numbers=[10, 11],
+        canonical_model=None,
+        param_roles={},
+        results_by_run={
+            10: {"success": True, "parameters": {"Integral asymmetry": 0.1}},
+            11: {"success": True, "parameters": {"Integral asymmetry": 0.2}},
+        },
+    )
+    assert scan.is_computed is True
+    assert real.is_computed is False
+    pm.add_batch(scan)
+
+    pm.refresh_divergence()
+    # The real fit's per-run state is untouched by the computed series.
+    assert pm.representation(11, _FB).fit.diverged is False
+    assert pm.representation(11, _FB).fit.include_in_trend is True
+    assert not real.is_diverged(11)
+
+
 def test_recompute_all_skips_missing_runs():
     model = ProjectModel()
     container = model.ensure_dataset(7)

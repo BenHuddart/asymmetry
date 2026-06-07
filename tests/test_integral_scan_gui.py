@@ -102,6 +102,18 @@ def test_scan_mode_state_round_trips(qapp: QApplication):
     assert other._global_tab.is_scan_mode()
 
 
+def test_scan_mode_label_survives_update_mode_ui(qapp: QApplication):
+    # The button label must not silently revert to "Run Batch Fit" while scan
+    # mode is still on (e.g. after a selection change re-runs _update_mode_ui).
+    panel = FitPanel()
+    tab = panel._global_tab
+    tab._scan_mode_check.setChecked(True)
+    assert tab._fit_btn.text() == "Build Integral Scan"
+    tab.set_datasets([])  # triggers _update_mode_ui
+    assert tab._fit_btn.text() == "Build Integral Scan"
+    assert tab.is_scan_mode()
+
+
 # --- main-window scan build --------------------------------------------------
 
 
@@ -136,6 +148,27 @@ def test_on_scan_requested_builds_scan_series(mainwindow: MainWindow, monkeypatc
 
     # The trend panel picked the scan up via the pull-based refresh.
     assert series.batch_id in mw._fit_parameters_panel._group_fit_results
+
+
+def test_deleting_scan_series_does_not_clear_run_fits(mainwindow: MainWindow, monkeypatch):
+    # A computed scan series owns no per-run FitSlots, so deleting it must not
+    # clear the fit overlays of runs it shares with a real fit.
+    mw = mainwindow
+    monkeypatch.setattr(
+        mw, "_active_representation_type", lambda: RepresentationType.TIME_FB_ASYMMETRY
+    )
+    mw._fit_panel.set_datasets([_ds(11, 110.0, 90.0, 100.0), _ds(12, 120.0, 80.0, 200.0)])
+    mw._on_scan_requested()
+    scan = next(s for s in mw._project_model.batches.values() if s.batch_id.startswith("scan-"))
+
+    cleared: list[object] = []
+    monkeypatch.setattr(mw._fit_panel, "clear_fits_for_runs", lambda runs: cleared.append(runs))
+    monkeypatch.setattr(mw._plot_panel, "clear_fits_for_runs", lambda runs: cleared.append(runs))
+
+    mw._on_series_delete_requested(scan.batch_id)
+
+    assert cleared == []  # no per-run fit state touched
+    assert mw._project_model.batch(scan.batch_id) is None  # series removed
 
 
 def test_on_scan_requested_needs_two_runs(mainwindow: MainWindow, monkeypatch):
