@@ -373,6 +373,29 @@
       },
       "supersedes_candidate": "dynamic-kubo-toyabe",
       "updated": "2026-06-07"
+    },
+    {
+      "slug": "period-selection",
+      "feature_name": "Period (red/green) selection",
+      "status": "study",
+      "path": "docs/porting/period-selection",
+      "references": [
+        "WiMDA",
+        "Mantid",
+        "musrfit"
+      ],
+      "docs": {
+        "readme": "docs/porting/period-selection/README.md",
+        "comparison": "docs/porting/period-selection/comparison.md",
+        "implementation_options": "docs/porting/period-selection/implementation-options.md",
+        "test_data": "docs/porting/period-selection/test-data.md",
+        "verification_plan": "docs/porting/period-selection/verification-plan.md"
+      },
+      "tests_path": "tests/test_period_selection.py",
+      "src_path": "src/asymmetry/core/io/periods.py",
+      "supersedes_candidate": "period-arithmetic",
+      "notes": "Moves the GUI 'RG box' (Red/Green/G-R/G+R) into core and adds scriptable per-period access. Realises the 'period-arithmetic' candidate (red/green selection slice). Validated against photo-uSR silicon runs 103277-103298.",
+      "updated": "2026-06-07"
     }
   ]
 }

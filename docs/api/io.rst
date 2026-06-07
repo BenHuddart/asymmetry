@@ -26,6 +26,22 @@ Main Interface
 
 .. autofunction:: asymmetry.core.io.load
 
+Period Selection
+----------------
+
+Period-mode (multi-period) runs — photo-µSR light-OFF/ON, RF on/off, ALC —
+expose a scriptable selection API in :mod:`asymmetry.core.io.periods`. The same
+helpers back the GUI red/green ("RG") selector, so scripts and the desktop app
+share one implementation. See :ref:`selecting-periods` for a worked example.
+
+.. autofunction:: asymmetry.core.io.periods.select_period
+
+.. autofunction:: asymmetry.core.io.periods.period_count
+
+.. autofunction:: asymmetry.core.io.periods.period_labels
+
+.. autofunction:: asymmetry.core.io.periods.resolve_period_index
+
 Registry
 --------
 

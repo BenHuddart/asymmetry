@@ -146,7 +146,16 @@ def _make_two_period_vector_dataset(run_number: int) -> MuonDataset:
 
     run = Run(
         run_number=run_number,
-        histograms=mw_module.MainWindow._clone_histogram_list(red_histograms),
+        histograms=[
+            Histogram(
+                counts=np.asarray(hist.counts, dtype=float).copy(),
+                bin_width=float(hist.bin_width),
+                t0_bin=int(hist.t0_bin),
+                good_bin_start=int(hist.good_bin_start),
+                good_bin_end=int(hist.good_bin_end),
+            )
+            for hist in red_histograms
+        ],
         metadata={"run_number": run_number, "field": 100.0},
         grouping={
             "groups": {1: [1], 2: [2], 3: [3], 4: [4], 5: [5], 6: [6]},

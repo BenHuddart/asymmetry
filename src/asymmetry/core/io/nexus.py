@@ -609,6 +609,24 @@ class NexusLoader(BaseLoader):
         green_grouping = green_ds.run.grouping if isinstance(green_ds.run.grouping, dict) else {}
         combined_grouping = dict(red_grouping)
         combined_grouping["period_histograms"] = [red_hist, green_hist]
+        # Retain each period's fully reduced arrays (the loader default
+        # reduction: alpha = 1.0, no deadtime/background) so the scriptable
+        # period-selection API (asymmetry.core.io.periods.select_period) can
+        # return exactly what the loader produced per period without redoing
+        # the good-bin windowing. In-memory only — grouping is not serialised
+        # verbatim into projects (see mainwindow._extract_grouping_overrides).
+        combined_grouping["period_reduced"] = [
+            (
+                np.asarray(red_ds.time, dtype=np.float64).copy(),
+                np.asarray(red_ds.asymmetry, dtype=np.float64).copy(),
+                np.asarray(red_ds.error, dtype=np.float64).copy(),
+            ),
+            (
+                np.asarray(green_ds.time, dtype=np.float64).copy(),
+                np.asarray(green_ds.asymmetry, dtype=np.float64).copy(),
+                np.asarray(green_ds.error, dtype=np.float64).copy(),
+            ),
+        ]
         combined_grouping["period_mode"] = str(PeriodMode.RED)
         combined_grouping["period_good_frames"] = [
             float(red_grouping.get("good_frames", 1.0)),
