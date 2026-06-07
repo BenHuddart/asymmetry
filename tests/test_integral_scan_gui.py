@@ -16,7 +16,7 @@ pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings  # type: ignore
-from PySide6.QtWidgets import QApplication  # type: ignore
+from PySide6.QtWidgets import QApplication, QTableWidgetItem  # type: ignore
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
@@ -264,6 +264,62 @@ def test_alc_fit_panel_committed_range_drives_plot(mainwindow: MainWindow, monke
     monkeypatch.setattr(mw._plot_panel, "set_fit_range", lambda lo, hi: pushed.append((lo, hi)))
     mw._alc_fit_panel.fit_range_edit_committed.emit(0.3, 7.5)
     assert pushed[-1] == pytest.approx((0.3, 7.5))
+
+
+def _set_regions(view, regions: list[tuple[float, float]]) -> None:
+    view._regions_table.setRowCount(0)
+    for lo, hi in regions:
+        r = view._regions_table.rowCount()
+        view._regions_table.insertRow(r)
+        view._regions_table.setItem(r, 0, QTableWidgetItem(str(lo)))
+        view._regions_table.setItem(r, 1, QTableWidgetItem(str(hi)))
+
+
+def _synthetic_alc_points(mw: MainWindow) -> None:
+    # Linear baseline (x100 -> 0.01*B + 2 %) plus a dip at B = 150.
+    mw._alc_scan_points = [
+        {
+            "run": 100 + i,
+            "value": 0.0001 * f + 0.02 + (-0.005 if f == 150 else 0.0),
+            "error": 1e-4,
+            "field": float(f),
+            "temperature": 10.0,
+        }
+        for i, f in enumerate([0, 50, 100, 150, 200, 250, 300])
+    ]
+
+
+def test_alc_baseline_regions_parsing(qapp: QApplication):
+    view = ALCScanView()
+    _set_regions(view, [(0.0, 100.0), (200.0, 300.0), (50.0, 10.0)])  # last is inverted
+    assert view.baseline_regions() == [(0.0, 100.0), (200.0, 300.0)]
+
+
+def test_alc_baseline_fit_produces_corrected(mainwindow: MainWindow, monkeypatch):
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    _synthetic_alc_points(mw)
+    view = mw._alc_scan_view
+    _set_regions(view, [(0.0, 100.0), (200.0, 300.0)])  # non-resonant edges
+
+    mw._on_fit_baseline()
+
+    assert mw._alc_corrected_scan is not None
+    corrected = mw._alc_corrected_scan
+    flat = (corrected.x <= 100.0) | (corrected.x >= 200.0)
+    assert np.allclose(corrected.value[flat], 0.0, atol=0.05)  # baseline removed
+    # The dip at B=150 survives (clearly negative after subtraction).
+    dip = corrected.value[np.argmin(np.abs(corrected.x - 150.0))]
+    assert dip < -0.2
+
+
+def test_alc_baseline_requires_regions(mainwindow: MainWindow, monkeypatch):
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    _synthetic_alc_points(mw)
+    monkeypatch.setattr(mw_module.QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    mw._on_fit_baseline()  # no regions set
+    assert mw._alc_corrected_scan is None
 
 
 def test_alc_scan_view_show_and_clear(qapp: QApplication):

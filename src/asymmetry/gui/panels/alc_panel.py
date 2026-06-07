@@ -142,12 +142,16 @@ class ALCScanView(QWidget):
 
     #: Emitted when the x-axis or derivative toggle changes.
     options_changed = Signal()
+    #: Emitted when the user requests a baseline fit (Fit baseline button).
+    baseline_fit_requested = Signal()
 
     #: x-combo index → ordering key.
     _X_KEYS = ("field", "temperature", "run")
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._last_plot: dict | None = None
+        self._baseline_curve: NDArray[np.float64] | None = None
         layout = QVBoxLayout(self)
 
         controls = QHBoxLayout()
@@ -171,14 +175,50 @@ class ALCScanView(QWidget):
         self._ax = self._figure.add_subplot(111)
         layout.addWidget(self._canvas, 1)
 
+        layout.addWidget(self._build_baseline_group())
+
         self._table = QTableWidget(0, 4)
         self._table.setHorizontalHeaderLabels(["Run", "x", "A (%)", "± err"])
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.setMaximumHeight(200)
+        self._table.setMaximumHeight(160)
         layout.addWidget(self._table)
 
         self.clear()
+
+    def _build_baseline_group(self) -> QGroupBox:
+        """Baseline controls: model + non-resonant regions table + Fit button."""
+        group = QGroupBox("Baseline")
+        outer = QVBoxLayout(group)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Model:"))
+        self._baseline_model_combo = QComboBox()
+        self._baseline_model_combo.addItems(["Linear", "Constant"])
+        row.addWidget(self._baseline_model_combo)
+        row.addStretch()
+        self._fit_baseline_btn = QPushButton("Fit baseline")
+        self._fit_baseline_btn.clicked.connect(self.baseline_fit_requested.emit)
+        row.addWidget(self._fit_baseline_btn)
+        outer.addLayout(row)
+
+        self._regions_table = QTableWidget(0, 2)
+        self._regions_table.setHorizontalHeaderLabels(["start", "end"])
+        self._regions_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._regions_table.setMaximumHeight(110)
+        self._regions_table.itemChanged.connect(self._render_plot)
+        outer.addWidget(self._regions_table)
+
+        btns = QHBoxLayout()
+        add_btn = QPushButton("+ region")
+        add_btn.clicked.connect(self._add_region)
+        remove_btn = QPushButton("− region")
+        remove_btn.clicked.connect(self._remove_region)
+        btns.addWidget(add_btn)
+        btns.addWidget(remove_btn)
+        btns.addStretch()
+        outer.addLayout(btns)
+        return group
 
     #: Derivative-checkbox label per x-axis (the y-quantity is dA/dx).
     _DERIV_LABELS = {"field": "dA/dB", "temperature": "dA/dT", "run": "dA/d(run)"}
@@ -200,8 +240,62 @@ class ALCScanView(QWidget):
         """Return True when the derivative toggle is on."""
         return self._derivative_check.isChecked()
 
+    # --- baseline controls ---------------------------------------------------
+
+    def baseline_model(self) -> str:
+        """Return the selected baseline model name (``"Linear"``/``"Constant"``)."""
+        return self._baseline_model_combo.currentText()
+
+    def baseline_regions(self) -> list[tuple[float, float]]:
+        """Parse the regions table into ``(start, end)`` pairs (skipping bad rows)."""
+        regions: list[tuple[float, float]] = []
+        for row in range(self._regions_table.rowCount()):
+            start_item = self._regions_table.item(row, 0)
+            end_item = self._regions_table.item(row, 1)
+            try:
+                lo = float(start_item.text())
+                hi = float(end_item.text())
+            except (AttributeError, ValueError):
+                continue
+            if lo < hi:
+                regions.append((lo, hi))
+        return regions
+
+    def _add_region(self) -> None:
+        """Append a region row defaulting to the left edge of the current x-range."""
+        lo, hi = 0.0, 1.0
+        if self._last_plot is not None and self._last_plot["x"].size:
+            xs = self._last_plot["x"]
+            span = float(xs.max() - xs.min()) or 1.0
+            lo = float(xs.min())
+            hi = lo + 0.1 * span
+        row = self._regions_table.rowCount()
+        self._regions_table.insertRow(row)
+        with QSignalBlocker(self._regions_table):
+            for col, val in ((0, lo), (1, hi)):
+                self._regions_table.setItem(row, col, QTableWidgetItem(f"{val:.4g}"))
+        self._render_plot()
+
+    def _remove_region(self) -> None:
+        """Remove the selected region row (or the last row)."""
+        row = self._regions_table.currentRow()
+        if row < 0:
+            row = self._regions_table.rowCount() - 1
+        if row >= 0:
+            self._regions_table.removeRow(row)
+            self._render_plot()
+
+    def show_baseline_overlay(self, baseline: NDArray[np.float64]) -> None:
+        """Overlay a fitted baseline curve on the current scan plot."""
+        self._baseline_curve = np.asarray(baseline, dtype=float)
+        self._render_plot()
+
+    # --- plotting ------------------------------------------------------------
+
     def clear(self, message: str = "Build a scan to see the ALC curve") -> None:
         """Show an empty-state placeholder with *message*."""
+        self._last_plot = None
+        self._baseline_curve = None
         self._ax.clear()
         self._ax.text(
             0.5,
@@ -229,32 +323,57 @@ class ALCScanView(QWidget):
         value_header: str = "value",
     ) -> None:
         """Render a scan from parallel arrays (already in display units)."""
-        x = np.asarray(x, dtype=float)
-        value = np.asarray(value, dtype=float)
-        error = np.asarray(error, dtype=float)
-
-        self._ax.clear()
-        self._ax.set_axis_on()
-        if x.size:
-            self._ax.errorbar(
-                x, value, yerr=error, fmt="o-", markersize=4, capsize=2, linewidth=1.0
-            )
-        self._ax.set_xlabel(x_label)
-        self._ax.set_ylabel(y_label)
-        self._ax.grid(True, alpha=0.3)
-        self._canvas.draw_idle()
+        self._last_plot = {
+            "x": np.asarray(x, dtype=float),
+            "value": np.asarray(value, dtype=float),
+            "error": np.asarray(error, dtype=float),
+            "x_label": x_label,
+            "y_label": y_label,
+        }
+        # A fresh scan (rebuild / x-axis change) invalidates any baseline overlay.
+        self._baseline_curve = None
+        self._render_plot()
 
         self._table.setHorizontalHeaderLabels(["Run", x_label, value_header, "± err"])
-        self._table.setRowCount(int(x.size))
-        for row in range(int(x.size)):
+        n = int(self._last_plot["x"].size)
+        self._table.setRowCount(n)
+        for row in range(n):
             run = run_numbers[row] if row < len(run_numbers) else ""
             cells = [
                 str(run),
-                f"{x[row]:.4g}",
-                f"{value[row]:.4f}",
-                f"{error[row]:.4f}",
+                f"{self._last_plot['x'][row]:.4g}",
+                f"{self._last_plot['value'][row]:.4f}",
+                f"{self._last_plot['error'][row]:.4f}",
             ]
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._table.setItem(row, col, item)
+
+    def _render_plot(self, *_: object) -> None:
+        """Draw the stored scan plus shaded baseline regions and any baseline fit."""
+        plot = self._last_plot
+        if plot is None or plot["x"].size == 0:
+            return
+        self._ax.clear()
+        self._ax.set_axis_on()
+        for lo, hi in self.baseline_regions():
+            self._ax.axvspan(lo, hi, color="0.85", alpha=0.6, zorder=0)
+        self._ax.errorbar(
+            plot["x"],
+            plot["value"],
+            yerr=plot["error"],
+            fmt="o-",
+            markersize=4,
+            capsize=2,
+            linewidth=1.0,
+        )
+        if self._baseline_curve is not None and self._baseline_curve.shape == plot["x"].shape:
+            self._ax.plot(
+                plot["x"], self._baseline_curve, color="#a8332a", linewidth=1.2, label="baseline"
+            )
+            self._ax.legend(loc="best", fontsize=8)
+        self._ax.set_xlabel(plot["x_label"])
+        self._ax.set_ylabel(plot["y_label"])
+        self._ax.grid(True, alpha=0.3)
+        self._canvas.draw_idle()

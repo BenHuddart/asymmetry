@@ -47,7 +47,11 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset
-from asymmetry.core.fitting import build_grouped_time_domain_datasets, fit_result_summary
+from asymmetry.core.fitting import (
+    build_grouped_time_domain_datasets,
+    fit_result_summary,
+    fit_scan_baseline,
+)
 from asymmetry.core.fourier import (
     GroupSpectrumConfig,
     build_group_signal_dataset,
@@ -338,6 +342,8 @@ class MainWindow(QMainWindow):
         self._alc_scan_points: list[dict] = []
         #: Project-model id of the current ALC scan series (replaced on rebuild).
         self._alc_scan_series_id: str | None = None
+        #: Baseline-corrected scan from the last baseline fit (basis for peaks).
+        self._alc_corrected_scan: FieldScan | None = None
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
         self._frequency_spectra_by_rep: dict[RepresentationType, dict[int, list[MuonDataset]]] = {
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
@@ -1078,6 +1084,7 @@ class MainWindow(QMainWindow):
         self._alc_fit_panel.build_requested.connect(self._on_scan_requested)
         self._alc_fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
         self._alc_scan_view.options_changed.connect(self._render_alc_scan)
+        self._alc_scan_view.baseline_fit_requested.connect(self._on_fit_baseline)
         if hasattr(self._fit_panel, "grouped_fit_completed"):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
         if hasattr(self._fit_panel, "preview_requested"):
@@ -5328,46 +5335,25 @@ class MainWindow(QMainWindow):
         scales to percent, optionally takes the dA/dB derivative, and feeds the
         view. Re-invoked whenever the scan or its view options change.
         """
-        points = self._alc_scan_points
-        if not points:
+        # Any re-render (rebuild or x-axis/derivative change) invalidates a
+        # previously-fitted baseline (it was tied to the old axis).
+        self._alc_corrected_scan = None
+        if not self._alc_scan_points:
             self._alc_scan_view.clear()
             return
 
         x_key = self._alc_scan_view.x_key()
-        selected = []
-        for point in points:
-            x = point["run"] if x_key == "run" else point[x_key]
-            if x is None:  # run missing the chosen log (e.g. no field)
-                continue
-            selected.append(
-                (float(x), point["value"] * 100.0, point["error"] * 100.0, point["run"])
-            )
-        selected.sort(key=lambda item: (item[0], item[3]))
-
         x_label = self._ALC_X_LABELS[x_key]
-        if len(selected) < 2:
+        scan = self._alc_display_scan(x_key)
+        if scan is None:
             # The scan built, but the chosen axis has too few points (e.g. runs
             # lack a field/temperature log) — say so rather than show the
             # "build a scan" placeholder.
             self._alc_scan_view.clear(f"No {x_label} values to plot — try a different x-axis.")
             return
 
-        xs = np.array([s[0] for s in selected], dtype=float)
-        values = np.array([s[1] for s in selected], dtype=float)
-        errors = np.array([s[2] for s in selected], dtype=float)
-        run_numbers = [s[3] for s in selected]
-
         if self._alc_scan_view.derivative_enabled():
-            base = FieldScan(
-                x=xs,
-                value=values,
-                error=errors,
-                run_numbers=run_numbers,
-                order_key=x_key,
-                method="integral",
-                x_label=x_label,
-            )
-            deriv = differentiate_scan(base)
+            deriv = differentiate_scan(scan)
             if deriv.n_points < 1:
                 self._alc_scan_view.clear(
                     f"No derivative points on {x_label} (need distinct, increasing x)."
@@ -5385,14 +5371,73 @@ class MainWindow(QMainWindow):
             )
         else:
             self._alc_scan_view.show_scan(
-                xs,
-                values,
-                errors,
-                run_numbers,
+                scan.x,
+                scan.value,
+                scan.error,
+                scan.run_numbers,
                 x_label=x_label,
                 y_label=self._SCAN_QUANTITY,
                 value_header="A (%)",
             )
+
+    def _alc_display_scan(self, x_key: str) -> FieldScan | None:
+        """Build the current scan as a FieldScan vs *x_key* (percent units).
+
+        Maps each stored run to the chosen x (dropping runs missing that log),
+        sorts, and returns a :class:`FieldScan`; ``None`` when fewer than two
+        points remain. Shared by the renderer and the baseline fit.
+        """
+        selected = []
+        for point in self._alc_scan_points:
+            x = point["run"] if x_key == "run" else point[x_key]
+            if x is None:
+                continue
+            selected.append(
+                (float(x), point["value"] * 100.0, point["error"] * 100.0, point["run"])
+            )
+        selected.sort(key=lambda item: (item[0], item[3]))
+        if len(selected) < 2:
+            return None
+        return FieldScan(
+            x=np.array([s[0] for s in selected], dtype=float),
+            value=np.array([s[1] for s in selected], dtype=float),
+            error=np.array([s[2] for s in selected], dtype=float),
+            run_numbers=[s[3] for s in selected],
+            order_key=x_key,
+            method="integral",
+            x_label=self._ALC_X_LABELS[x_key],
+        )
+
+    def _on_fit_baseline(self) -> None:
+        """Fit + overlay a baseline over the user-marked non-resonant regions."""
+        if self._alc_scan_view.derivative_enabled():
+            QMessageBox.information(
+                self, "Baseline", "Turn off dA/dB to fit a baseline on the scan."
+            )
+            return
+        scan = self._alc_display_scan(self._alc_scan_view.x_key())
+        if scan is None:
+            QMessageBox.information(
+                self, "Baseline", "Build a scan with at least two points first."
+            )
+            return
+        regions = self._alc_scan_view.baseline_regions()
+        if not regions:
+            QMessageBox.information(
+                self,
+                "Baseline",
+                "Add at least one non-resonant region (start/end) to define the baseline.",
+            )
+            return
+        model = self._alc_scan_view.baseline_model()
+        try:
+            result = fit_scan_baseline(scan, regions, model=model)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Baseline", str(exc))
+            return
+        self._alc_corrected_scan = result.corrected
+        self._alc_scan_view.show_baseline_overlay(result.baseline)
+        self._log_panel.log(f"Fitted {model} baseline over {len(regions)} region(s).")
 
     def _active_grouped_state(self) -> dict:
         """Return the grouped-fit classification from the active grouped surface.
