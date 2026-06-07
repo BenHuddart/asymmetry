@@ -159,6 +159,17 @@ def _lcr_gaussian(x: NDArray, f: float, B0: float, Bwid: float) -> NDArray[np.fl
     return float(f) * np.exp(exponent)
 
 
+def _lcr_lorentzian(x: NDArray, f: float, B0: float, Bwid: float) -> NDArray[np.float64]:
+    """LCR Lorentzian peak centred at B0: f / (1 + ((B - B0)/Bwid)^2).
+
+    The amplitude/centre/width parameter set (f, B0, Bwid) matches
+    :func:`_lcr_gaussian` so the two are interchangeable ALC peak shapes.
+    """
+    xx = np.asarray(x, dtype=float)
+    bwid_safe = max(abs(float(Bwid)), 1e-12)
+    return float(f) / (1.0 + ((xx - float(B0)) / bwid_safe) ** 2)
+
+
 def _lambda_bg(x: NDArray, lambda_BG: float) -> NDArray[np.float64]:
     return np.full_like(np.asarray(x, dtype=float), float(lambda_BG), dtype=float)
 
@@ -373,6 +384,21 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         },
         formula_template="{f}*G(x; {B0}; {Bwid})",
         latex_equation=r"\lambda_{LCR}(B) = f\,\exp\left(-\frac{(B-B_0)^2}{2 B_{wid}^2}\right)",
+        scopes=("field",),
+    ),
+    "LorentzianLCR": ParameterModelComponentDefinition(
+        name="LorentzianLCR",
+        description="f/(1 + ((B-B0)/Bwid)^2)",
+        function=_lcr_lorentzian,
+        param_names=["f", "B0", "Bwid"],
+        param_defaults={"f": 0.1, "B0": 1000.0, "Bwid": 100.0},
+        param_info={
+            "f": get_param_info("f"),
+            "B0": get_param_info("B0"),
+            "Bwid": get_param_info("Bwid"),
+        },
+        formula_template="{f}*L(x; {B0}; {Bwid})",
+        latex_equation=r"\lambda_{LCR}(B) = \frac{f}{1 + \left((B-B_0)/B_{wid}\right)^2}",
         scopes=("field",),
     ),
     "DiffusionLF_1D": ParameterModelComponentDefinition(

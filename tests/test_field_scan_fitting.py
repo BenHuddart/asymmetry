@@ -43,6 +43,10 @@ def _gaussian_lcr(x, f, B0, Bwid):
     return f * np.exp(-0.5 * ((x - B0) / Bwid) ** 2)
 
 
+def _lorentzian_lcr(x, f, B0, Bwid):
+    return f / (1.0 + ((x - B0) / Bwid) ** 2)
+
+
 # True model: a sloped linear baseline plus a Gaussian dip resonance at B0=100.
 _TRUE_M, _TRUE_B = 0.01, 2.0
 _TRUE_F, _TRUE_B0, _TRUE_BWID = -0.5, 100.0, 15.0
@@ -202,6 +206,38 @@ def test_fit_scan_model_rejects_parameters_and_initial_together():
     params = parameter_set_for_model(as_composite_model("GaussianLCR"))
     with pytest.raises(ValueError, match="either .* or .* not both"):
         fit_scan_model(scan, "GaussianLCR", parameters=params, initial={"B0": 100.0})
+
+
+def test_fit_scan_model_recovers_centred_lorentzian():
+    # The new centred LorentzianLCR peak (f, B0, Bwid) is fittable like GaussianLCR.
+    x = np.linspace(0.0, 200.0, 81)
+    scan = _scan(x, _lorentzian_lcr(x, -0.5, 100.0, 12.0))
+    fit = fit_scan_model(scan, "LorentzianLCR", initial={"f": -0.4, "B0": 95.0, "Bwid": 18.0})
+    assert fit.success
+    assert fit.parameters["B0"].value == pytest.approx(100.0, abs=2.0)
+    assert abs(fit.parameters["Bwid"].value) == pytest.approx(12.0, abs=2.0)
+
+
+def test_fit_scan_model_two_peak_composite():
+    # Two centred peaks at distinct fields; a 2-component composite recovers both.
+    x = np.linspace(0.0, 300.0, 151)
+    value = _lorentzian_lcr(x, -0.4, 80.0, 10.0) + _gaussian_lcr(x, -0.3, 210.0, 14.0)
+    scan = _scan(x, value)
+    fit = fit_scan_model(
+        scan,
+        ["LorentzianLCR", "GaussianLCR"],
+        initial={
+            "f_1": -0.35,
+            "B0_1": 85.0,
+            "Bwid_1": 12.0,
+            "f_2": -0.25,
+            "B0_2": 205.0,
+            "Bwid_2": 16.0,
+        },
+    )
+    assert fit.success
+    assert fit.parameters["B0_1"].value == pytest.approx(80.0, abs=3.0)
+    assert fit.parameters["B0_2"].value == pytest.approx(210.0, abs=3.0)
 
 
 def test_fit_scan_model_respects_x_range():
