@@ -278,4 +278,16 @@ from the resonance), though the underlying composite-fit machinery is the same.
     plot/x-selector and will re-implement the model-fit overlay; this is the
     accepted cost of the bespoke-panel decision. The fit-range spinboxes could be
     extracted into a shared `FitRangeSpinBoxes` widget (deferred cleanup).
-- **G4 (persistence):** scan/baseline/peak state in `.asymp` (+ migration, gui-smoke).
+- **G4 (persistence): DONE** (commit de4e9ca) — `.asymp` save/restore of the ALC
+  scan + analysis. `FitSeries` gained a freeform `extra` dict (schema **v7→v8**
+  with an additive migration). On save, `_sync_alc_series_extra` stamps the scan
+  view's options/regions/peaks/fit-flags onto the scan series' `extra`
+  (`kind="alc_scan"`). On load, `_restore_alc_scan` rebuilds `_alc_scan_points`
+  from the series' percent values (÷100) + loaded run metadata, restores the
+  view, renders, and re-runs the active fits (**"inputs + auto re-fit"**),
+  silencing dialogs via `_alc_loading`/`_alc_notify`. Full
+  build→fit→save→reopen round-trip tested + verified live on TCNQ (identical
+  B₀ = 3104 G).
+
+**Time-integral-asymmetry feature COMPLETE** (G1 core → G4 persistence); all 10
+code-review findings resolved. Full `validate` green (1597 passed).
