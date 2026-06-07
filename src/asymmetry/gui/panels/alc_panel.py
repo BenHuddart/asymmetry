@@ -164,6 +164,7 @@ class ALCScanView(QWidget):
         controls.addWidget(self._derivative_check)
         controls.addStretch()
         layout.addLayout(controls)
+        self._update_derivative_label()
 
         self._figure = Figure(constrained_layout=True)
         self._canvas = FigureCanvasQTAgg(self._figure)
@@ -179,29 +180,38 @@ class ALCScanView(QWidget):
 
         self.clear()
 
+    #: Derivative-checkbox label per x-axis (the y-quantity is dA/dx).
+    _DERIV_LABELS = {"field": "dA/dB", "temperature": "dA/dT", "run": "dA/d(run)"}
+
     def _emit_options_changed(self, *_: object) -> None:
         """Re-emit the combo/checkbox change as the 0-arg ``options_changed``."""
+        self._update_derivative_label()
         self.options_changed.emit()
+
+    def _update_derivative_label(self) -> None:
+        """Keep the derivative-toggle label in step with the x-axis."""
+        self._derivative_check.setText(self._DERIV_LABELS[self.x_key()])
 
     def x_key(self) -> str:
         """Return the selected ordering key: ``"field"``/``"temperature"``/``"run"``."""
         return self._X_KEYS[self._x_combo.currentIndex()]
 
     def derivative_enabled(self) -> bool:
-        """Return True when the dA/dB derivative toggle is on."""
+        """Return True when the derivative toggle is on."""
         return self._derivative_check.isChecked()
 
-    def clear(self) -> None:
-        """Show the empty-state placeholder."""
+    def clear(self, message: str = "Build a scan to see the ALC curve") -> None:
+        """Show an empty-state placeholder with *message*."""
         self._ax.clear()
         self._ax.text(
             0.5,
             0.5,
-            "Build a scan to see the ALC curve",
+            message,
             ha="center",
             va="center",
             transform=self._ax.transAxes,
             color="gray",
+            wrap=True,
         )
         self._ax.set_axis_off()
         self._canvas.draw_idle()

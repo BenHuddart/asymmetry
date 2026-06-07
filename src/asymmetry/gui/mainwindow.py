@@ -336,6 +336,8 @@ class MainWindow(QMainWindow):
         #: Per-run data for the current ALC scan (fractional value + metadata),
         #: re-rendered when the scan-view x-axis / derivative options change.
         self._alc_scan_points: list[dict] = []
+        #: Project-model id of the current ALC scan series (replaced on rebuild).
+        self._alc_scan_series_id: str | None = None
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
         self._frequency_spectra_by_rep: dict[RepresentationType, dict[int, list[MuonDataset]]] = {
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
@@ -3335,7 +3337,7 @@ class MainWindow(QMainWindow):
 
     def _sync_fit_dock_mode(self) -> None:
         """Swap the fit dock between regular, grouped and ALC content."""
-        if self._fit_stack is None:
+        if self._fit_stack is None or getattr(self, "_parameters_stack", None) is None:
             return
 
         # ALC mode takes precedence: the Fit dock shows the bespoke scan-build
@@ -5292,14 +5294,19 @@ class MainWindow(QMainWindow):
             rep_type,
             label=f"Integral scan {self._next_scan_index}",
             member_run_numbers=list(scan.run_numbers),
-            order_key="field",
+            order_key="run",  # built/sorted by run; the view picks the display axis
             canonical_model=None,
             param_roles={},
             results_by_run=results_by_run,
         )
         self._next_scan_index += 1
         series.sort_members(runs_by_number)
+        # Replace the previous ALC scan rather than accumulating one series per
+        # rebuild (the window is tweaked iteratively).
+        if self._alc_scan_series_id and self._project_model.batch(self._alc_scan_series_id):
+            self._project_model.remove_batch(self._alc_scan_series_id)
         self._project_model.add_batch(series)
+        self._alc_scan_series_id = series.batch_id
 
         self._render_alc_scan()
         self._log_panel.log(f"Built integral scan '{series.label}' ({scan.n_points} points).")
@@ -5339,7 +5346,10 @@ class MainWindow(QMainWindow):
 
         x_label = self._ALC_X_LABELS[x_key]
         if len(selected) < 2:
-            self._alc_scan_view.clear()
+            # The scan built, but the chosen axis has too few points (e.g. runs
+            # lack a field/temperature log) — say so rather than show the
+            # "build a scan" placeholder.
+            self._alc_scan_view.clear(f"No {x_label} values to plot — try a different x-axis.")
             return
 
         xs = np.array([s[0] for s in selected], dtype=float)
@@ -5358,6 +5368,11 @@ class MainWindow(QMainWindow):
                 x_label=x_label,
             )
             deriv = differentiate_scan(base)
+            if deriv.n_points < 1:
+                self._alc_scan_view.clear(
+                    f"No derivative points on {x_label} (need distinct, increasing x)."
+                )
+                return
             unit = self._ALC_DERIV_UNITS[x_key]
             self._alc_scan_view.show_scan(
                 deriv.x,

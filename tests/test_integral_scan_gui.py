@@ -179,6 +179,29 @@ def test_alc_derivative_toggle(mainwindow: MainWindow, monkeypatch):
     assert view._table.rowCount() == 2
 
 
+def test_alc_rebuild_replaces_scan_series(mainwindow: MainWindow, monkeypatch):
+    # Iterating the window (rebuilding) must replace the scan series, not
+    # accumulate a new one each time.
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    mw._fit_panel.set_datasets([_ds(11, 110.0, 90.0, 100.0), _ds(12, 120.0, 80.0, 200.0)])
+    mw._on_scan_requested()
+    mw._on_scan_requested()
+    mw._on_scan_requested()
+    scans = [s for s in mw._project_model.batches.values() if s.batch_id.startswith("scan-")]
+    assert len(scans) == 1
+    assert scans[0].order_key == "run"
+
+
+def test_alc_derivative_label_follows_x_axis(qapp: QApplication):
+    view = ALCScanView()
+    assert view._derivative_check.text() == "dA/dB"
+    view._x_combo.setCurrentIndex(1)  # T (K)
+    assert view._derivative_check.text() == "dA/dT"
+    view._x_combo.setCurrentIndex(2)  # Run
+    assert view._derivative_check.text() == "dA/d(run)"
+
+
 def test_alc_build_needs_two_runs(mainwindow: MainWindow, monkeypatch):
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
