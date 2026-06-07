@@ -46,6 +46,13 @@ from asymmetry.core.fitting.grouped_time_domain import (
     fit_grouped_series,
     fit_grouped_time_domain,
 )
+from asymmetry.core.fitting.field_scan import (
+    ScanBaselineResult,
+    as_composite_model,
+    fit_scan_baseline,
+    fit_scan_model,
+    parameter_set_for_model,
+)
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.parameter_models import (
     PARAMETER_MODEL_COMPONENTS,
@@ -122,6 +129,11 @@ __all__ = [
     "fit_parameter_model",
     "evaluate_parameter_model_fit",
     "component_names_for_x",
+    "fit_scan_baseline",
+    "fit_scan_model",
+    "parameter_set_for_model",
+    "as_composite_model",
+    "ScanBaselineResult",
     "ParamInfo",
     "get_param_info",
     "Parameter",
