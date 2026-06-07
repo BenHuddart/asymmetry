@@ -56,7 +56,7 @@ No `'ZF'` value appears in any file.
 | `Basics/data_hdf5/EMU00018850.nxs` | `TF` | 20 G | `L` | TF run, banks read L → must label **Transverse** (the headline mislabel) |
 | `Basics/data_hdf5/MUSR00044991.nxs` | `TF` | **0 G** | `L` | TF at zero field → must **not** be inferred ZF; label **Transverse** |
 | `56426.nxs` (Superconductivity) | `LF` | 560 G | `L` | genuine LF → label **Longitudinal**; agrees with orientation |
-| `emu00124218.nxs` | *absent* | 0 G | `l`/`L` | no field state → **fall back** to orientation ("Longitudinal"); provenance=`orientation` |
+| `emu00124218.nxs` | *absent* | 0 G | `l`/`L` | no field state → geometry **unknown** (NO orientation fallback); `detector_orientation` still "Longitudinal" |
 
 Locate each: `find ~/Documents/"WiMDA muon school" -iname "<name>"`.
 

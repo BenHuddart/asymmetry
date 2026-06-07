@@ -40,18 +40,38 @@ Refine the candidate fix:
    `sample/magnetic_field_state` (V1: `run/sample/...`; V2: `raw_data_1/sample/...`),
    normalised to `'TF'`/`'LF'`/`'ZF'` (uppercase, 2-letter).
 3. The **user-facing field geometry** = `field_state` when present and non-blank,
-   else fall back to the orientation-derived value, **and record which source was
-   used** (provenance flag, e.g. `field_geometry_source ∈ {field_state, orientation}`).
+   **else `None`/unknown — do NOT fall back to the orientation-derived value.**
+   (Decision 2026-06-07, user preference — see below.)
 4. **Never** synthesise ZF from a zero applied-field magnitude. Trust the string.
    (`MUSR00044991.nxs` is `'TF'` at 0 G.)
 
-- **Pro:** Fixes the bug; keeps Mantid-parity for the orientation value and for
-  the legacy/PSI fallback; strictly more correct than any reference program;
-  provenance makes the value auditable in the GUI.
+- **Pro:** Fixes the bug; keeps the orientation value (as a distinct
+  `detector_orientation` field) for whoever needs the instrument axis; strictly
+  more correct than any reference program; never presents a guessed geometry.
 - **Con:** Two new metadata keys + GUI surface for them; a little more code than B.
 - **Verdict:** **Recommended.** This is the candidate fix, refined with (a) an
-  explicit rename of the orientation value, (b) a provenance flag, and (c) the
-  "trust the string, never infer ZF from field=0" rule.
+  explicit rename of the orientation value, (b) **no orientation fallback for the
+  user-facing geometry — return unknown instead**, and (c) the "trust the string,
+  never infer ZF from field=0" rule.
+
+### Decision: no orientation fallback for the user-facing geometry
+
+The original candidate fix fell back to the orientation-derived value when
+`magnetic_field_state` was absent. **Rejected** (user preference, 2026-06-07):
+falling back to orientation reintroduces exactly the conflation this fix removes —
+on EMU/MuSR the banks read `'L'` regardless of the applied-field geometry, so a
+fallback value of "Longitudinal" would be a misleading guess, not a real reading.
+
+Instead, when `field_state` is absent the user-facing geometry is **`None` /
+"Unknown"**. The orientation is still recorded separately as `detector_orientation`
+(its honest meaning, the instrument main-field axis), so no information is lost —
+it is simply not promoted to stand in for the experiment geometry.
+
+Affected files (this corpus): the 137 files lacking `magnetic_field_state` — all
+ARGUS runs (76) and the EMU "Ferromagnetic nickel" set (61) — would report an
+**unknown** field geometry rather than "Longitudinal". This is the intended,
+honest outcome. All PSI `.bin`/`.mdu` and HDF4 v1 files would likewise report
+unknown geometry (they carry no `magnetic_field_state`).
 
 ## Detailed recommendation for the implementation pass
 
@@ -61,7 +81,8 @@ Refine the candidate fix:
 - V2 (`_load_v2`): read `entry/sample/magnetic_field_state` (note: `sample` is
   already fetched at [`nexus.py:293`](../../../src/asymmetry/core/io/nexus.py)).
 - Normalise: strip + uppercase; accept `'TF'`/`'LF'`/`'ZF'`. Treat empty / `'n/a'`
-  / unknown as **absent** (fall through to orientation), not as an error.
+  / unknown as **absent → unknown geometry** (do not fall through to orientation),
+  not as an error.
 - Keep `_normalise_orientation` for the orientation value; also handle lowercase
   `'l'` (already does via `.upper()`) — the corpus contains `'l'`.
 
@@ -70,24 +91,32 @@ Refine the candidate fix:
 - `field_state`: "TF"/"LF"/"ZF" or `""`.
 - `field_direction` (the user-facing geometry, kept as the existing key for GUI
   compatibility): mapped from `field_state` when present
-  (`TF`→"Transverse", `LF`→"Longitudinal", `ZF`→"Zero field"), else the
-  orientation value.
-- `field_geometry_source`: `"field_state"` | `"orientation"` | `""`.
+  (`TF`→"Transverse", `LF`→"Longitudinal", `ZF`→"Zero field"), else **`None` /
+  "Unknown"** (NOT the orientation value).
+- (`field_geometry_source` provenance flag is no longer needed: the geometry is
+  either from `field_state` or unknown — there is no second source to disambiguate.)
 
 > Decide during implementation whether to repurpose the existing `field_direction`
 > key (less GUI churn) or introduce a new key and migrate GUI usages. Grep GUI +
 > project-serialisation for `field_direction` first; it may be persisted in
 > `.asymp` projects, which would make a rename a schema concern.
 
-### Fallback ladder (per file)
-1. `sample/magnetic_field_state` present & recognised → use it; source=`field_state`.
-2. Else detector `orientation` present → map L/T; source=`orientation`.
-3. Else unknown (`""`); do **not** guess from field magnitude.
+### Resolution (per file) — for the user-facing geometry
+1. `sample/magnetic_field_state` present & recognised (`TF`/`LF`/`ZF`) → use it.
+2. Else **unknown** (`None`/"Unknown"). Do **not** fall back to orientation and do
+   **not** guess from field magnitude.
 
-PSI `.bin`/`.mdu` and HDF4 v1 NeXus: no `magnetic_field_state` → step 2/3. HDF4
-remains unreadable by h5py and is out of scope ([[project_hdf4_loader_gap]]).
+(The detector `orientation` is still read independently and stored as
+`detector_orientation` for every file that has it — it is just not used to resolve
+the geometry.)
+
+PSI `.bin`/`.mdu` and HDF4 v1 NeXus: no `magnetic_field_state` → step 2 (unknown).
+HDF4 remains unreadable by h5py and is out of scope ([[project_hdf4_loader_gap]]).
 
 ### Things to explicitly NOT do
+- **Do not fall back to detector orientation** for the user-facing geometry —
+  return unknown instead (it would be a misleading guess: banks read `L`
+  regardless of applied field).
 - Do not infer ZF from `magnetic_field == 0`.
 - Do not assume `'ZF'` exists in ISIS files — it does not appear in the corpus;
   handle it if present but don't synthesise it.

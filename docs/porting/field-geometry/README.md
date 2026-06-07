@@ -42,7 +42,7 @@ present in the file.
 | `('TF', 'L')` | 1731 | **mislabelled** — TF run, banks read L |
 | `('TF', 'T')` | 145 | TF run, orientation happens to agree |
 | `('LF', 'L')` | 37 | LF run (fields 560–840 G), agree |
-| `(absent, 'l'/'L')` | 137 | EMU runs at 0 G, **no field state** → fallback needed |
+| `(absent, 'l'/'L')` | 137 | all ARGUS (76) + EMU nickel set (61), **no field state** → geometry reported **unknown** |
 | (HDF4, unreadable by h5py) | 1913 | out of scope — see [[project_hdf4_loader_gap]] |
 
 - `EMU00018850.nxs`: `magnetic_field_state='TF'`, `magnetic_field=20 G`,
@@ -91,12 +91,16 @@ the better signal. The recommendation (detailed in
 1. Keep the orientation-derived value, but rename it to its true meaning
    (`detector_orientation` / `main_field_direction`, matching Mantid).
 2. Add a separate `field_state` read from `sample/magnetic_field_state`.
-3. Make the user-facing geometry prefer `field_state` when present and fall back
-   to the orientation-derived value when it is absent (legacy / PSI).
+3. Make the user-facing geometry come from `field_state` when present, and be
+   **`None`/"Unknown" when it is absent** — do **not** fall back to the
+   orientation-derived value (decision 2026-06-07: that fallback would
+   reintroduce the conflation, since the banks read `L` regardless of the applied
+   field). The orientation is still kept as a separate `detector_orientation`
+   field, so nothing is lost.
 4. Never infer ZF from a zero field magnitude — trust the string.
 
 This is strictly more correct than any reference program while keeping the
-orientation value as a distinct field, so it does not regress Mantid-parity.
+orientation value as a distinct field.
 
 ## Files in this study
 

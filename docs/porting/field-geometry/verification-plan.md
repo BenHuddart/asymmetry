@@ -15,9 +15,10 @@ resolved metadata:
    `field_state == "TF"`, geometry == "Transverse" (NOT "Zero field"),
    despite `field == 0`.
 3. **Genuine LF** — `56426.nxs`: `field_state == "LF"`, geometry == "Longitudinal".
-4. **Fallback to orientation** — `emu00124218.nxs` (no field state):
-   `field_state == ""`, geometry == "Longitudinal",
-   `field_geometry_source == "orientation"`.
+4. **Absent state → unknown (no orientation fallback)** — `emu00124218.nxs` (no
+   field state): `field_state == ""`, user-facing geometry == `None`/"Unknown"
+   (NOT "Longitudinal"), while `detector_orientation == "Longitudinal"` is still
+   recorded separately.
 5. **Synthetic ZF unit test** — craft an in-memory/temp h5py file with
    `magnetic_field_state == "ZF"` and assert geometry == "Zero field" (no real
    ZF file exists in the corpus).
