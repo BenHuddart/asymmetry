@@ -62,6 +62,7 @@ from asymmetry.gui.export_paths import (
     resolve_gle_export_paths,
 )
 from asymmetry.gui.gle_settings import get_gle_executable
+from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.plots import draw_fit_range_span, style_axes, style_figure, style_legend
@@ -3449,15 +3450,12 @@ class PlotPanel(QWidget):
         if hit_axis is None:
             return None
 
-        min_px = hit_axis.transData.transform((self._fit_x_min, 0.0))[0]
-        max_px = hit_axis.transData.transform((self._fit_x_max, 0.0))[0]
-        tolerance_px = 8.0
-
-        if abs(event.x - min_px) <= tolerance_px:
-            return "min"
-        if abs(event.x - max_px) <= tolerance_px:
-            return "max"
-        return None
+        return nearest_handle(
+            hit_axis,
+            [(self._fit_x_min, "min"), (self._fit_x_max, "max")],
+            event.x,
+            tolerance_px=8.0,
+        )
 
     def _detect_annotation_hit(self, event) -> int | None:
         """Return annotation index hit by the mouse event, if any."""

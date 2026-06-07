@@ -47,7 +47,13 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset
-from asymmetry.core.fitting import build_grouped_time_domain_datasets, fit_result_summary
+from asymmetry.core.fitting import (
+    as_composite_model,
+    build_grouped_time_domain_datasets,
+    fit_result_summary,
+    fit_scan_baseline,
+    fit_scan_model,
+)
 from asymmetry.core.fourier import (
     GroupSpectrumConfig,
     build_group_signal_dataset,
@@ -82,12 +88,15 @@ from asymmetry.core.representation import (
 )
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
+    FieldScan,
     apply_deadtime_correction,
     apply_grouped_background_correction,
     apply_grouping_aligned,
+    build_field_scan,
     common_t0_for_groups,
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
+    differentiate_scan,
     has_file_deadtime,
     has_resolved_deadtime,
     prepare_histograms_with_deadtime,
@@ -101,6 +110,7 @@ from asymmetry.core.utils.constants import (
 )
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.gle_settings import GleSetupDialog
+from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
 from asymmetry.gui.panels.fit_panel import FitPanel
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
@@ -135,6 +145,21 @@ _PLOT_DECIMATION_SETTINGS_KEY = "plot/enable_decimation"
 _MAXENT_WARN_PEAK_MATRIX_BYTES = 1 * 1024**3
 _MAXENT_WARN_TOTAL_MATRIX_BYTES = 8 * 1024**3
 _MAXENT_WARN_TOTAL_OBSERVATIONS = 500_000
+
+
+def _safe_float(value: object) -> float | None:
+    """Return ``value`` as a finite float, or ``None`` if absent/invalid.
+
+    Used to read per-run scan metadata (field/temperature) where a missing log
+    must be distinguishable from a genuine 0 — see ``_render_alc_scan``.
+    """
+    if value is None:
+        return None
+    try:
+        result = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return result if np.isfinite(result) else None
 
 
 def _normalise_source_path(path: str) -> str:
@@ -312,6 +337,19 @@ class MainWindow(QMainWindow):
         # fallbacks.
         self._project_model = ProjectModel()
         self._next_batch_index = 1
+        self._next_scan_index = 1
+        self._alc_mode = False
+        #: Per-run data for the current ALC scan (fractional value + metadata),
+        #: re-rendered when the scan-view x-axis / derivative options change.
+        self._alc_scan_points: list[dict] = []
+        #: Project-model id of the current ALC scan series (replaced on rebuild).
+        self._alc_scan_series_id: str | None = None
+        #: Baseline-corrected scan from the last baseline fit (basis for peaks).
+        self._alc_corrected_scan: FieldScan | None = None
+        #: The fitted baseline curve (display units), for the total-fit overlay.
+        self._alc_baseline_curve: object | None = None
+        #: True while restoring a project, to silence ALC fit dialogs.
+        self._alc_loading = False
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
         self._frequency_spectra_by_rep: dict[RepresentationType, dict[int, list[MuonDataset]]] = {
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
@@ -508,6 +546,28 @@ class MainWindow(QMainWindow):
             "Global Fit", self._on_global_parameter_fit
         )
         self._global_parameter_fit_toolbar_action.setEnabled(False)
+        # ALC mode: integral-asymmetry field scan. Enabled only for the F-B
+        # asymmetry representation (see _on_plot_workspace_view_changed).
+        self._alc_mode_action = self._main_toolbar.addAction("ALC mode")
+        self._alc_mode_action.setCheckable(True)
+        self._alc_mode_action.setEnabled(False)
+        self._alc_mode_action.setToolTip(
+            "Integral-asymmetry field scan (ALC / repolarisation / QLCR). "
+            "Available for the Forward-Backward asymmetry representation."
+        )
+        self._alc_mode_action.toggled.connect(self._on_alc_mode_toggled)
+        # Make the active state unmistakable: when checked, the button turns the
+        # ALC/FitSeries red. Styled on the specific tool button so the other
+        # toolbar buttons keep their native look.
+        alc_button = self._main_toolbar.widgetForAction(self._alc_mode_action)
+        if alc_button is not None:
+            alc_button.setStyleSheet(
+                "QToolButton { padding: 4px 8px; border-radius: 3px; }"
+                f"QToolButton:hover {{ background-color: {tokens.SURFACE_HI}; }}"
+                f"QToolButton:checked {{ background-color: {tokens.ACCENT_RED}; "
+                "color: #ffffff; font-weight: 700; }"
+                f"QToolButton:checked:hover {{ background-color: {tokens.ACCENT_RED}; }}"
+            )
         self._main_toolbar.addSeparator()
 
         # Domain → representation segmented control, grouped 2 + 2 under
@@ -917,9 +977,13 @@ class MainWindow(QMainWindow):
                 else None,
             )
         )
+        # Bespoke ALC-mode build panel, swapped into the Fit dock when ALC mode
+        # is on (see _sync_fit_dock_mode).
+        self._alc_fit_panel = ALCFitPanel()
         self._fit_stack = QStackedWidget(self)
         self._fit_stack.addWidget(self._fit_panel)
         self._fit_stack.addWidget(self._multi_group_fit_window)
+        self._fit_stack.addWidget(self._alc_fit_panel)
         self._dock_fit = QDockWidget("Fit", self)
         self._dock_fit.setWidget(self._fit_stack)
         self._dock_fit.setMinimumWidth(320)
@@ -937,10 +1001,15 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fourier)
         self.tabifyDockWidget(self._dock_fit, self._dock_fourier)
 
-        # Right dock — fitted parameter trends (tabbed with fit/fourier)
+        # Right dock — fitted parameter trends (tabbed with fit/fourier). In ALC
+        # mode the dock swaps to the bespoke scan view via _parameters_stack.
         self._fit_parameters_panel = FitParametersPanel()
+        self._alc_scan_view = ALCScanView()
+        self._parameters_stack = QStackedWidget(self)
+        self._parameters_stack.addWidget(self._fit_parameters_panel)
+        self._parameters_stack.addWidget(self._alc_scan_view)
         self._dock_fit_parameters = QDockWidget("Parameters", self)
-        self._dock_fit_parameters.setWidget(self._fit_parameters_panel)
+        self._dock_fit_parameters.setWidget(self._parameters_stack)
         self._dock_fit_parameters.setMinimumWidth(340)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit_parameters)
         self.tabifyDockWidget(self._dock_fit, self._dock_fit_parameters)
@@ -1018,6 +1087,12 @@ class MainWindow(QMainWindow):
         if hasattr(self._fit_panel, "global_fit_started"):
             self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
+        self._alc_fit_panel.build_requested.connect(self._on_scan_requested)
+        self._alc_fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
+        self._alc_scan_view.options_changed.connect(self._render_alc_scan)
+        self._alc_scan_view.baseline_fit_requested.connect(self._on_fit_baseline)
+        self._alc_scan_view.peaks_fit_requested.connect(self._on_fit_peaks)
+        self._alc_scan_view.baseline_invalidated.connect(self._on_alc_baseline_invalidated)
         if hasattr(self._fit_panel, "grouped_fit_completed"):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
         if hasattr(self._fit_panel, "preview_requested"):
@@ -3276,9 +3351,18 @@ class MainWindow(QMainWindow):
         return bool(self._grouped_time_domain_display_datasets())
 
     def _sync_fit_dock_mode(self) -> None:
-        """Swap the fit dock between regular and grouped content for the current plot view."""
-        if self._fit_stack is None:
+        """Swap the fit dock between regular, grouped and ALC content."""
+        if self._fit_stack is None or getattr(self, "_parameters_stack", None) is None:
             return
+
+        # ALC mode takes precedence: the Fit dock shows the bespoke scan-build
+        # panel and the Parameters dock shows the scan view.
+        if self._alc_mode:
+            self._fit_stack.setCurrentWidget(self._alc_fit_panel)
+            self._parameters_stack.setCurrentWidget(self._alc_scan_view)
+            self._dock_fit.setWindowTitle("ALC scan")
+            return
+        self._parameters_stack.setCurrentWidget(self._fit_parameters_panel)
 
         show_grouped = self._should_launch_multi_group_fit_window()
         current_widget = self._multi_group_fit_window if show_grouped else self._fit_panel
@@ -3292,6 +3376,24 @@ class MainWindow(QMainWindow):
             self._dock_fit.setWindowTitle(self._multi_group_fit_window.dock_title())
         else:
             self._dock_fit.setWindowTitle("Fit")  # inspector tab label — title case per spec
+
+    def _on_alc_mode_toggled(self, checked: bool) -> None:
+        """Enter/leave ALC mode: swap the Fit and Parameters docks accordingly."""
+        if checked and self._active_representation_type() != RepresentationType.TIME_FB_ASYMMETRY:
+            # Guard: ALC mode is only valid for the F-B asymmetry representation.
+            self._alc_mode_action.setChecked(False)
+            return
+        self._alc_mode = bool(checked)
+        self._sync_fit_dock_mode()
+        if self._alc_mode:
+            # Echo the current integration window and surface the docks.
+            t_min, t_max = (None, None)
+            if hasattr(self._plot_panel, "get_fit_range"):
+                t_min, t_max = self._plot_panel.get_fit_range()
+            self._alc_fit_panel.set_fit_range_display(t_min, t_max)
+            for dock in (self._dock_fit, self._dock_fit_parameters):
+                dock.show()
+                dock.raise_()
 
     # Maps each toolbar domain token to (ordered visible dock keys, default raised key).
     # Fourier is hidden in the groups domain; mgfit is surfaced by swapping _fit_stack.
@@ -4749,6 +4851,12 @@ class MainWindow(QMainWindow):
         self._sync_domain_buttons(view)
         self._apply_inspector_for_domain(view)
         self._update_status_selection()
+        # ALC mode is only valid for the F-B asymmetry view; enable the toggle
+        # there and auto-exit ALC mode when the user leaves it.
+        is_fb = view == "fb_asymmetry"
+        self._alc_mode_action.setEnabled(is_fb)
+        if not is_fb and self._alc_mode_action.isChecked():
+            self._alc_mode_action.setChecked(False)  # fires _on_alc_mode_toggled(False)
         # Refresh the trend panel for the newly-active representation.
         self._refresh_trend_panel()
 
@@ -4756,6 +4864,8 @@ class MainWindow(QMainWindow):
         """Refresh fit inputs when the selected fit x-range changes."""
         if hasattr(self._fit_panel, "set_fit_range_display"):
             self._fit_panel.set_fit_range_display(x_min, x_max)
+        # Keep the ALC fit panel's integration-window spinboxes in sync.
+        self._alc_fit_panel.set_fit_range_display(x_min, x_max)
         if self._multi_group_fit_window is not None and hasattr(
             self._multi_group_fit_window, "set_fit_range_display"
         ):
@@ -5003,6 +5113,13 @@ class MainWindow(QMainWindow):
         series = self._project_model.batch(batch_id)
         if series is None:
             return
+        # A computed series (integral scan) owns no per-run FitSlots, so dropping
+        # it must NOT clear the runs' fit overlays — those belong to a real fit
+        # that may share the same run numbers.
+        if series.is_computed:
+            self._project_model.remove_batch(batch_id)
+            self._refresh_trend_panel()
+            return
         if series.member_kind == "groups":
             runs = list(series.member_source_run.values())
         else:
@@ -5101,6 +5218,303 @@ class MainWindow(QMainWindow):
             )
         # Fresh batch members all share the canonical model (no divergence yet).
         self._project_model.refresh_divergence()
+
+    #: Display quantity name for the integral-asymmetry scan (percent units).
+    _SCAN_QUANTITY = "Integral asymmetry (%)"
+
+    def _on_scan_requested(self) -> None:
+        """Build an integral-asymmetry field scan (ALC mode) from the selected runs.
+
+        Integrates each run's asymmetry over the current fit-range window (one
+        value per run, in percent), records it as a model-less ("computed")
+        ``FitSeries`` for persistence/series management, and renders it in the
+        bespoke ALC scan view.
+        """
+        rep_type = self._active_representation_type()
+        if rep_type != RepresentationType.TIME_FB_ASYMMETRY:
+            QMessageBox.information(
+                self,
+                "Integral scan",
+                "Integral-scan (ALC) mode applies to the Forward-Backward asymmetry only.",
+            )
+            return
+
+        datasets = (
+            self._fit_panel.batch_datasets() if hasattr(self._fit_panel, "batch_datasets") else []
+        )
+        runs = [d.run for d in datasets if getattr(d, "run", None) is not None]
+        if len(runs) < 2:
+            QMessageBox.information(
+                self, "Integral scan", "Select at least two runs to build a field scan."
+            )
+            return
+
+        t_min = t_max = None
+        if hasattr(self._plot_panel, "get_fit_range"):
+            t_min, t_max = self._plot_panel.get_fit_range()
+
+        try:
+            # order_key="run" includes every integrable run; the scan view picks
+            # the displayed x-axis (field / temperature / run). A run is only
+            # dropped here if it cannot be integrated at all (no grouping).
+            scan = build_field_scan(
+                runs, t_min=t_min, t_max=t_max, method="integral", order_key="run"
+            )
+        except (ValueError, TypeError) as exc:
+            QMessageBox.warning(self, "Integral scan", f"Could not build the scan: {exc}")
+            return
+        if scan.n_points < 2:
+            QMessageBox.warning(
+                self, "Integral scan", "The scan has too few usable points to plot."
+            )
+            return
+
+        if scan.excluded:
+            dropped = ", ".join(f"{run} ({reason})" for run, reason in scan.excluded)
+            self._log_panel.log(f"Integral scan: excluded {len(scan.excluded)} run(s): {dropped}")
+
+        # Per-run scan data (fractional value + the run's field/temperature) for
+        # re-rendering when the x-axis / derivative options change.
+        runs_by_number = {
+            int(d.run.run_number): d.run for d in datasets if getattr(d, "run", None) is not None
+        }
+        self._alc_scan_points = [
+            self._alc_scan_point(run_number, value, error, runs_by_number.get(int(run_number)))
+            for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error)
+        ]
+
+        # Record the scan as a model-less FitSeries (percent units) for
+        # persistence / series management.
+        quantity = self._SCAN_QUANTITY
+        results_by_run = {
+            int(run_number): {
+                "success": True,
+                "parameters": {quantity: float(value) * 100.0},
+                "uncertainties": {quantity: float(error) * 100.0},
+                "chi_squared": 0.0,
+                "reduced_chi_squared": 0.0,
+            }
+            for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error)
+        }
+        series = FitSeries(
+            f"scan-{self._next_scan_index}",
+            rep_type,
+            label=f"Integral scan {self._next_scan_index}",
+            member_run_numbers=list(scan.run_numbers),
+            order_key="run",  # built/sorted by run; the view picks the display axis
+            canonical_model=None,
+            param_roles={},
+            results_by_run=results_by_run,
+        )
+        self._next_scan_index += 1
+        series.sort_members(runs_by_number)
+        # Replace the previous ALC scan rather than accumulating one series per
+        # rebuild (the window is tweaked iteratively).
+        if self._alc_scan_series_id and self._project_model.batch(self._alc_scan_series_id):
+            self._project_model.remove_batch(self._alc_scan_series_id)
+        self._project_model.add_batch(series)
+        self._alc_scan_series_id = series.batch_id
+
+        self._render_alc_scan()
+        self._log_panel.log(f"Built integral scan '{series.label}' ({scan.n_points} points).")
+
+        # Bring the freshly-built scan into view: raise the Parameters dock
+        # (the ALC scan view) over the Fit dock.
+        self._dock_fit_parameters.show()
+        self._dock_fit_parameters.raise_()
+
+    # x-axis key → (display label, derivative unit label).
+    _ALC_X_LABELS = {"field": "B (G)", "temperature": "T (K)", "run": "Run"}
+    _ALC_DERIV_UNITS = {"field": "%/G", "temperature": "%/K", "run": "%/run"}
+
+    def _render_alc_scan(self) -> None:
+        """Render the current ALC scan in the chosen x-axis / derivative view.
+
+        Reads the per-run scan data (``_alc_scan_points``) and the scan view's
+        options, maps each run to the selected x (field / temperature / run),
+        scales to percent, optionally takes the dA/dB derivative, and feeds the
+        view. Re-invoked whenever the scan or its view options change.
+        """
+        # Any re-render (rebuild or x-axis/derivative change) invalidates a
+        # previously-fitted baseline (it was tied to the old axis).
+        self._alc_corrected_scan = None
+        self._alc_baseline_curve = None
+        if not self._alc_scan_points:
+            self._alc_scan_view.clear()
+            return
+
+        x_key = self._alc_scan_view.x_key()
+        x_label = self._ALC_X_LABELS[x_key]
+        scan = self._alc_display_scan(x_key)
+        if scan is None:
+            # The scan built, but the chosen axis has too few points (e.g. runs
+            # lack a field/temperature log) — say so rather than show the
+            # "build a scan" placeholder.
+            self._alc_scan_view.clear(f"No {x_label} values to plot — try a different x-axis.")
+            return
+
+        if self._alc_scan_view.derivative_enabled():
+            deriv = differentiate_scan(scan)
+            if deriv.n_points < 1:
+                self._alc_scan_view.clear(
+                    f"No derivative points on {x_label} (need distinct, increasing x)."
+                )
+                return
+            unit = self._ALC_DERIV_UNITS[x_key]
+            self._alc_scan_view.show_scan(
+                deriv.x,
+                deriv.value,
+                deriv.error,
+                deriv.run_numbers,
+                x_label=x_label,
+                y_label=f"dA/dx ({unit})",
+                value_header=f"dA/dx ({unit})",
+            )
+        else:
+            self._alc_scan_view.show_scan(
+                scan.x,
+                scan.value,
+                scan.error,
+                scan.run_numbers,
+                x_label=x_label,
+                y_label=self._SCAN_QUANTITY,
+                value_header="A (%)",
+            )
+
+    def _alc_display_scan(self, x_key: str) -> FieldScan | None:
+        """Build the current scan as a FieldScan vs *x_key* (percent units).
+
+        Maps each stored run to the chosen x (dropping runs missing that log),
+        sorts, and returns a :class:`FieldScan`; ``None`` when fewer than two
+        points remain. Shared by the renderer and the baseline fit.
+        """
+        selected = []
+        for point in self._alc_scan_points:
+            x = point["run"] if x_key == "run" else point[x_key]
+            if x is None:
+                continue
+            selected.append(
+                (float(x), point["value"] * 100.0, point["error"] * 100.0, point["run"])
+            )
+        selected.sort(key=lambda item: (item[0], item[3]))
+        if len(selected) < 2:
+            return None
+        return FieldScan(
+            x=np.array([s[0] for s in selected], dtype=float),
+            value=np.array([s[1] for s in selected], dtype=float),
+            error=np.array([s[2] for s in selected], dtype=float),
+            run_numbers=[s[3] for s in selected],
+            order_key=x_key,
+            method="integral",
+            x_label=self._ALC_X_LABELS[x_key],
+        )
+
+    def _alc_notify(self, title: str, text: str, *, warning: bool = False) -> None:
+        """Show an ALC info/warning dialog, suppressed while restoring a project."""
+        if self._alc_loading:
+            return
+        if warning:
+            QMessageBox.warning(self, title, text)
+        else:
+            QMessageBox.information(self, title, text)
+
+    def _on_fit_baseline(self) -> None:
+        """Fit + overlay a baseline over the user-marked non-resonant regions."""
+        if self._alc_scan_view.derivative_enabled():
+            self._alc_notify("Baseline", "Turn off dA/dB to fit a baseline on the scan.")
+            return
+        scan = self._alc_display_scan(self._alc_scan_view.x_key())
+        if scan is None:
+            self._alc_notify("Baseline", "Build a scan with at least two points first.")
+            return
+        regions = self._alc_scan_view.baseline_regions()
+        if not regions:
+            self._alc_notify(
+                "Baseline",
+                "Add at least one non-resonant region (start/end) to define the baseline.",
+            )
+            return
+        model = self._alc_scan_view.baseline_model()
+        try:
+            result = fit_scan_baseline(scan, regions, model=model)
+        except ValueError as exc:
+            self._alc_notify("Baseline", str(exc), warning=True)
+            return
+        self._alc_corrected_scan = result.corrected
+        self._alc_baseline_curve = result.baseline
+        self._alc_scan_view.show_baseline_overlay(result.baseline)
+        self._log_panel.log(f"Fitted {model} baseline over {len(regions)} region(s).")
+
+    def _on_alc_baseline_invalidated(self) -> None:
+        """A region edit/drag dropped the baseline: discard the corrected scan.
+
+        Prevents a later peak fit from running against a baseline-corrected scan
+        that no longer matches the regions the user now sees.
+        """
+        self._alc_corrected_scan = None
+        self._alc_baseline_curve = None
+
+    def _on_fit_peaks(self) -> None:
+        """Fit the peak composite to the baseline-corrected scan; overlay + read off."""
+        corrected = self._alc_corrected_scan
+        if corrected is None:
+            self._alc_notify(
+                "Peaks", "Fit a baseline first; peaks are fitted on the corrected curve."
+            )
+            return
+        try:
+            specs = self._alc_scan_view.peak_specs()
+        except ValueError as exc:
+            self._alc_notify("Peaks", str(exc))
+            return
+        if not specs:
+            self._alc_notify("Peaks", "Add at least one peak (+ Gaussian / + Lorentzian).")
+            return
+
+        model = as_composite_model([spec["component"] for spec in specs])
+        # Address each peak's params by name (composite suffixes them _i when >1
+        # peak), not by positional arithmetic over param_names.
+        initial: dict[str, float] = {}
+        for i, spec in enumerate(specs):
+            for local in ("f", "B0", "Bwid"):
+                initial[model.component_param_name(i, local)] = spec[local]
+
+        try:
+            fit = fit_scan_model(corrected, model, initial=initial)
+        except (ValueError, TypeError) as exc:
+            self._alc_notify("Peaks", f"Could not fit peaks: {exc}", warning=True)
+            return
+        if not fit.success:
+            self._alc_notify("Peaks", f"Peak fit did not converge: {fit.message}", warning=True)
+            return
+
+        fitted_values = {name: fit.parameters[name].value for name in model.param_names}
+        results: list[dict] = []
+        summary_lines: list[str] = []
+        for i, spec in enumerate(specs):
+            b0_name = model.component_param_name(i, "B0")
+            f_val = fitted_values[model.component_param_name(i, "f")]
+            b0_val = fitted_values[b0_name]
+            bwid_val = abs(fitted_values[model.component_param_name(i, "Bwid")])
+            b0_err = fit.uncertainties.get(b0_name, 0.0)
+            factor = model.components[i].fwhm_factor
+            fwhm = factor * bwid_val if factor is not None else float("nan")
+            results.append({"f": f_val, "B0": b0_val, "Bwid": bwid_val})
+            summary_lines.append(
+                f"Peak {i + 1} ({spec['label']}): B₀ = {b0_val:.4g} ± {b0_err:.2g} G, "
+                f"FWHM = {fwhm:.4g} G, amp = {f_val:.3g} %"
+            )
+
+        # Overlay the total fit = baseline + peaks on the raw scan.
+        peak_curve = np.asarray(model.function(corrected.x, **fitted_values), dtype=float)
+        total = peak_curve
+        if self._alc_baseline_curve is not None:
+            baseline = np.asarray(self._alc_baseline_curve, dtype=float)
+            if baseline.shape == peak_curve.shape:
+                total = baseline + peak_curve
+        self._alc_scan_view.set_peak_results(results, "\n".join(summary_lines))
+        self._alc_scan_view.show_fit_overlay(total)
+        self._log_panel.log(f"Fitted {len(specs)} peak(s): " + "; ".join(summary_lines))
 
     def _active_grouped_state(self) -> dict:
         """Return the grouped-fit classification from the active grouped surface.
@@ -6122,11 +6536,106 @@ class MainWindow(QMainWindow):
             },
             "fourier_spectra_state": self._serialize_frequency_spectra_state(),
         }
+        # Stamp the current ALC analysis onto its scan series before the model is
+        # serialised, so the baseline/peaks/options travel with the saved scan.
+        self._sync_alc_series_extra()
         # Recipe-only representation/batch state (v6).  Frequency spectra are
         # recomputed from these recipes on load; the array snapshot above is a
         # transitional fallback removed in cleanup.
         self._project_model.write_to_project_state(project_state)
         return project_state
+
+    def _sync_alc_series_extra(self) -> None:
+        """Write the ALC scan view's analysis state into the scan series' ``extra``."""
+        if not self._alc_scan_series_id:
+            return
+        batch = self._project_model.batch(self._alc_scan_series_id)
+        if batch is None:
+            return
+        extra = self._alc_scan_view.analysis_state()
+        extra["kind"] = "alc_scan"
+        extra["mode_active"] = self._alc_mode
+        batch.extra = extra
+
+    def _restore_alc_scan(self) -> None:
+        """Rebuild the ALC scan + analysis from the persisted computed series."""
+        series = next(
+            (
+                batch
+                for batch in self._project_model.batches.values()
+                if batch.is_computed
+                and isinstance(getattr(batch, "extra", None), dict)
+                and batch.extra.get("kind") == "alc_scan"
+            ),
+            None,
+        )
+        if series is None:
+            return
+        self._alc_scan_series_id = series.batch_id
+        self._alc_scan_points = self._alc_points_from_series(series)
+        if not self._alc_scan_points:
+            return
+        self._alc_scan_view.restore_analysis_state(series.extra)
+        self._render_alc_scan()
+        # Re-run whichever fits were active so the overlays/read-out reappear
+        # (deterministic: same data + inputs). Dialogs are silenced via the flag.
+        self._alc_loading = True
+        try:
+            if series.extra.get("baseline_fitted"):
+                self._on_fit_baseline()
+                if self._alc_corrected_scan is None:
+                    self._log_panel.log(
+                        "ALC: the saved baseline could not be re-fitted on load "
+                        "(some runs may be missing the scan's x-axis log)."
+                    )
+                elif series.extra.get("peaks_fitted"):
+                    self._on_fit_peaks()
+        finally:
+            self._alc_loading = False
+        # Resume ALC mode if it was active at save time and the restored view is
+        # F-B asymmetry. Read the active representation directly — restore_state
+        # sets the view without firing the signal that enables the toggle, so the
+        # action's enabled flag is still stale here. The toggle only swaps docks
+        # (no re-render), so the restored scan + overlays survive.
+        if (
+            series.extra.get("mode_active")
+            and self._active_representation_type() == RepresentationType.TIME_FB_ASYMMETRY
+        ):
+            self._alc_mode_action.setEnabled(True)
+            self._alc_mode_action.setChecked(True)
+
+    def _alc_points_from_series(self, series) -> list[dict]:
+        """Reconstruct per-run scan points from the series + loaded run metadata."""
+        points: list[dict] = []
+        for run, summary in series.results_by_run.items():
+            pct = summary.get("parameters", {}).get(self._SCAN_QUANTITY)
+            if pct is None:
+                continue
+            err_pct = summary.get("uncertainties", {}).get(self._SCAN_QUANTITY, 0.0)
+            try:
+                value, error = float(pct) / 100.0, float(err_pct) / 100.0
+            except (TypeError, ValueError):
+                continue
+            run_obj = None
+            if hasattr(self._data_browser, "get_dataset"):
+                dataset = self._data_browser.get_dataset(int(run))
+                # Mirror the build path, which reads the Run's metadata (the
+                # field/temperature log may live there, not on the dataset).
+                run_obj = getattr(dataset, "run", None) or dataset
+            points.append(self._alc_scan_point(run, value, error, run_obj))
+        return points
+
+    @staticmethod
+    def _alc_scan_point(run_number, value: float, error: float, run_obj) -> dict:
+        """Build one ALC scan point (fractional value + the run's field/temperature)."""
+        meta = getattr(run_obj, "metadata", {}) or {}
+        return {
+            "run": int(run_number),
+            "value": float(value),
+            "error": float(error),
+            "field": _safe_float(meta.get("field")),
+            "temperature": _safe_float(meta.get("temperature")),
+        }
 
     def restore_project_state(self, state: dict, project_path: str) -> None:
         """Restore the full application state from a project file state dict.
@@ -6477,6 +6986,13 @@ class MainWindow(QMainWindow):
 
         if _has_saved_fit_parameters_results(fit_parameters_state):
             self._show_panel("fit_parameters")
+
+        # Rebuild the ALC scan view (scan points + analysis) from its series.
+        # Never let a malformed/foreign ALC `extra` abort the whole project open.
+        try:
+            self._restore_alc_scan()
+        except Exception as exc:  # noqa: BLE001 — restore is best-effort
+            self._log_panel.log(f"Could not restore ALC scan: {exc}")
 
         n_loaded = len(loaded_run_numbers)
         self._log_panel.log(f"Project opened: {n_loaded} run(s) loaded from {project_path}")

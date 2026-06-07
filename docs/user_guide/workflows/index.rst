@@ -49,7 +49,8 @@ The internal porting workspace
 catalogues additional workflows that Asymmetry partially or
 fully supports — F–μ–F identification, paramagnetic Knight shift,
 spin-glass freezing, muonium-radical hyperfine, and others.
-Workflows that Asymmetry does **not** yet support (e.g. ALC
-resonance scans, multi-period arithmetic, LEM depth profiling) are
+ALC resonance scans are covered as a reference feature in
+:doc:`/user_guide/alc_mode`. Workflows that Asymmetry does **not**
+yet support (e.g. multi-period arithmetic, LEM depth profiling) are
 catalogued there too and surface as candidates in
 ``docs/porting/ROADMAP.md``.

@@ -3091,6 +3091,10 @@ class GlobalFitTab(QWidget):
         if dialog.exec():
             self._user_initial_values_by_run = dialog.edited_values()
 
+    def batch_datasets(self) -> list[MuonDataset]:
+        """Return the datasets currently configured for the batch/scan."""
+        return list(self._datasets)
+
     def _run_global_fit(self) -> None:
         """Execute global fit on all datasets."""
         if self.is_grouped_time_domain_mode():
@@ -4948,6 +4952,10 @@ class FitPanel(QWidget):
         """Set the datasets for global fitting tab and track for group sharing."""
         self._all_datasets = datasets
         self._global_tab.set_datasets(datasets)
+
+    def batch_datasets(self) -> list[MuonDataset]:
+        """Return the datasets configured for the batch/integral-scan."""
+        return self._global_tab.batch_datasets()
 
     def set_frequency_missing_spectra_status(
         self, missing_run_numbers: list[int], cached_count: int

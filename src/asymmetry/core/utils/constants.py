@@ -14,6 +14,12 @@ class PeriodMode(StrEnum):
     GREEN_PLUS_RED = "green_plus_red"
 
 
+#: Allowed ordering keys for run series and field scans — the per-run variable
+#: an x-axis is sorted by. Shared by :class:`asymmetry.core.representation.series.FitSeries`
+#: and :func:`asymmetry.core.transform.build_field_scan` so the two cannot drift.
+ORDER_KEYS = ("field", "temperature", "run")
+
+
 # Muon gyromagnetic ratio  γ_μ / (2π)  in MHz/T
 MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = 135.538817
 
