@@ -16,9 +16,9 @@ packages do.
 
 If you are loading a new dataset for the first time, the subsections
 below document the metadata each loader extracts and the common failure
-modes. Multi-period ISIS data is currently limited to returning every
-period as a list; explicit period arithmetic in the analysis path is on
-the roadmap (:doc:`/user_guide/comparison`).
+modes. Period-mode files (e.g. photo-µSR light-OFF/ON, RF on/off, ALC) can
+be navigated with the scriptable period-selection API — see
+:ref:`selecting-periods` below.
 
 For an end-to-end walk-through that starts with loading, see
 :doc:`workflows/temperature_scan_magnetism`.
@@ -278,13 +278,47 @@ The returned ``MuonDataset`` contains:
 * ``metadata``: Run metadata (temperature, field, etc.)
 * ``run``: Reference to the original Run object
 
+.. _selecting-periods:
+
+Selecting Periods (Red / Green)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Period-mode runs record several period histograms in one file — for example
+**light-OFF** and **light-ON** in a photo-µSR experiment, RF on/off, or ALC
+steps. Use the period-selection API to pull out a single period as an ordinary
+``MuonDataset`` with its own provenance (``t0``, good-bin window, grouping,
+temperature, field, per-period ``good_frames`` and deadtime):
+
+.. code-block:: python
+
+   from asymmetry.core.io import load, select_period, period_count, period_labels
+
+   run = load("HIFI00103277.nxs")          # two-period photo-µSR run
+   print(period_count(run))                 # 2
+   print(period_labels(run))                # ['red', 'green']
+
+   light_on = select_period(run, "red")     # period 1
+   light_off = select_period(run, "green")  # period 2
+
+   # ...or select at load time:
+   light_off = load("HIFI00103277.nxs", period="green")
+
+For the common two-period case the first period is labelled ``"red"`` and the
+second ``"green"`` (the same convention as the GUI "RG box"). You can also pass
+a 1-based integer period number, which is the way to address files with three
+or more periods. In a photo-µSR experiment the convention is **light-OFF =
+Green** (period 2) and **light-ON = Red** (period 1); confirm this against the
+relaxation for your instrument. Out-of-range numbers and unknown labels raise a
+clear error at the boundary. The GUI red/green selector calls this same core
+API, so scripts and the desktop app agree on the per-period spectra.
+
 Accessing Metadata
 ~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
    dataset = load("data.nxs")
-   
+
    print(f"Run number: {dataset.run_number}")
    print(f"Temperature: {dataset.metadata.get('temperature')} K")
    print(f"Field: {dataset.metadata.get('field')} G")

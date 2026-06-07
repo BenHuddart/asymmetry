@@ -57,6 +57,10 @@ from asymmetry.core.fourier import (
     fft_complex_asymmetry,
     fourier_mode_uses_phase_correction,
 )
+from asymmetry.core.io.periods import (
+    combine_period_asymmetry,
+    select_period_histograms,
+)
 from asymmetry.core.maxent import (
     MaxEntCancelledError,
     MaxEntConfig,
@@ -2864,26 +2868,17 @@ class MainWindow(QMainWindow):
                     use_background=use_background,
                 )
             )
-            n_period = min(
-                len(red_time),
-                len(green_time),
-                len(red_asym),
-                len(green_asym),
-                len(red_err),
-                len(green_err),
+            time_axis, asymmetry, error = combine_period_asymmetry(
+                red_time,
+                red_asym,
+                red_err,
+                green_time,
+                green_asym,
+                green_err,
+                period_mode,
             )
-            if n_period <= 0:
+            if len(time_axis) == 0:
                 return False, bool(red_dt or green_dt)
-            time_axis = np.asarray(red_time[:n_period], dtype=np.float64).copy()
-            if period_mode == str(PeriodMode.GREEN_MINUS_RED):
-                asymmetry = np.asarray(
-                    green_asym[:n_period] - red_asym[:n_period], dtype=np.float64
-                )
-            else:
-                asymmetry = np.asarray(
-                    green_asym[:n_period] + red_asym[:n_period], dtype=np.float64
-                )
-            error = np.sqrt(np.square(green_err[:n_period]) + np.square(red_err[:n_period]))
             dt_applied = bool(red_dt or green_dt)
             if use_background:
                 if red_background == green_background:
@@ -3010,22 +3005,6 @@ class MainWindow(QMainWindow):
             run.grouping.pop("instrument", None)
         return True, dt_applied
 
-    @staticmethod
-    def _clone_histogram_list(histograms: list[Histogram]) -> list[Histogram]:
-        """Return copied histogram containers for regrouping calculations."""
-        out: list[Histogram] = []
-        for hist in histograms:
-            out.append(
-                Histogram(
-                    counts=np.asarray(hist.counts, dtype=np.float64).copy(),
-                    bin_width=float(hist.bin_width),
-                    t0_bin=int(hist.t0_bin),
-                    good_bin_start=int(hist.good_bin_start),
-                    good_bin_end=int(hist.good_bin_end),
-                )
-            )
-        return out
-
     def _period_histograms_for_mode(
         self,
         histograms: list[Histogram],
@@ -3033,50 +3012,13 @@ class MainWindow(QMainWindow):
         *,
         period_index: int,
     ) -> tuple[list[Histogram], dict]:
-        """Return period-specific histograms plus effective grouping metadata."""
-        period_grouping = dict(grouping)
+        """Return period-specific histograms plus effective grouping metadata.
 
-        period_good_frames = grouping.get("period_good_frames")
-        if isinstance(period_good_frames, list) and period_index < len(period_good_frames):
-            try:
-                period_grouping["good_frames"] = float(period_good_frames[period_index])
-            except (TypeError, ValueError):
-                pass
-
-        period_dead_time_us = grouping.get("period_dead_time_us")
-        if isinstance(period_dead_time_us, list) and period_index < len(period_dead_time_us):
-            raw_deadtime = period_dead_time_us[period_index]
-            if isinstance(raw_deadtime, list):
-                cleaned_deadtime: list[float] = []
-                for value in raw_deadtime:
-                    try:
-                        cleaned_deadtime.append(float(value))
-                    except (TypeError, ValueError):
-                        continue
-                period_grouping["dead_time_us"] = cleaned_deadtime
-
-        period_histograms = grouping.get("period_histograms")
-        if not (isinstance(period_histograms, list) and period_index < len(period_histograms)):
-            return self._clone_histogram_list(histograms), period_grouping
-
-        selected_period = period_histograms[period_index]
-        if not isinstance(selected_period, list):
-            return self._clone_histogram_list(histograms), period_grouping
-
-        cloned_period: list[Histogram] = []
-        for hist in selected_period:
-            if not isinstance(hist, Histogram):
-                return self._clone_histogram_list(histograms), period_grouping
-            cloned_period.append(
-                Histogram(
-                    counts=np.asarray(hist.counts, dtype=np.float64).copy(),
-                    bin_width=float(hist.bin_width),
-                    t0_bin=int(hist.t0_bin),
-                    good_bin_start=int(hist.good_bin_start),
-                    good_bin_end=int(hist.good_bin_end),
-                )
-            )
-        return cloned_period or self._clone_histogram_list(histograms), period_grouping
+        Thin wrapper over :func:`asymmetry.core.io.periods.select_period_histograms`
+        so the GUI and the scriptable core API share one implementation of the
+        red/green period-selection rule.
+        """
+        return select_period_histograms(histograms, grouping, period_index)
 
     def _reduce_grouped_histograms_to_asymmetry(
         self,
