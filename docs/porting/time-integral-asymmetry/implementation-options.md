@@ -121,3 +121,103 @@ existing alternative, not the port.
   excluded from the scan with a recorded reason (mirror Mantid's per-run skip),
   not a hard failure of the whole scan.
 - `alpha > 0`.
+
+---
+
+# GUI integration — chosen design (2026-06-07)
+
+The core observable is implemented (see [README.md](README.md)). This section
+records the GUI decisions taken with the maintainer (see
+[gui-presentation.md](gui-presentation.md) for the WiMDA/Mantid UX study that
+informed them) and the implementation plan.
+
+## Decisions
+
+| Question | Decision |
+| --- | --- |
+| **Entry point** | A **mode toggle on the F-B asymmetry representation** (not a separate representation). Scan mode reuses the rep's grouping/α/period and the fit-range control. |
+| **Depth (this pass)** | **Full**: build + display the scan, the `dA/dB` derivative, **and** baseline subtraction + peak fitting (resonance position/width). This absorbs the `alc-avoided-level-crossing` candidate. |
+| **Options exposed** | **Integral reduction only** (the count-sum; `method="integral"`) plus a **`dA/dB` derivative** view toggle (WiMDA). The Mantid *Differential* reduction method is **not** surfaced in the UI (still available in core). |
+| **Rendering** | The scan curve lives in the **trending-panel space**. **Batch** builds the scan across the series; **single** shows the selected run's integral read-out. The **main plot keeps the time spectrum** with the integration window shaded. |
+
+## Key reuse insight
+
+Asymmetry's **trending panel already fits composite parameter models** to an
+arbitrary `(x, y, err)` curve, and the model library already ships the pieces ALC
+needs. So the Mantid "baseline + peak fit" is *mostly existing machinery*:
+
+- `core/fitting/parameter_models.py` — `fit_parameter_model(x, y, yerr, model,
+  params, x_min, x_max)` fits a `ParameterCompositeModel` to any curve;
+  components include **`Lorentzian`** (`a/(1+(B/B0)²)+c`, peak), **`Linear`**
+  (`m·x+b`) and **`Constant`** (baseline).
+- `gui/panels/fit_parameters_panel.py` — owns the x-axis selector (𝐵/𝑇/Run),
+  the matplotlib canvas + mouse handlers, and the **model-fit-on-trend** flow
+  (`trend_state.model_fits`).
+- `gui/.../plot_panel.py` + `styles/plots.py::draw_fit_range_span` — the
+  **draggable fit-range span** already used on the time spectrum; reused as the
+  integration window, and (adapted) as baseline-region handles on the scan plot.
+- `core/fitting/engine.py::FitEngine.fit` — domain-agnostic `(x, **params)`
+  fitting if a richer engine is wanted.
+
+So the ALC curve fit ≈ fitting a `Lorentzian + Constant/Linear` composite to the
+scan with the **same** machinery the trend panel uses to fit a parameter trend.
+The only genuinely new y-quantity is the **integral itself** (from
+`build_field_scan`, not from per-run fit results).
+
+## Components to build
+
+**Core (Qt-free):**
+
+1. `differentiate_scan` — **done** (WiMDA `dA/dB`).
+2. A small **baseline helper** so a baseline can be fit on *disjoint non-resonant
+   regions* (Mantid-style): `fit_scan_baseline(scan, regions, model="Linear")`
+   masking to the union of `regions` before `fit_parameter_model`, returning the
+   baseline curve + corrected `FieldScan`. (Refinement over a single-range fit;
+   see open point below.)
+3. A thin **`FieldScan` → fittable adapter** (x=`scan.x`, y=`scan.value`,
+   err=`scan.error`) so the scan flows into `fit_parameter_model` / the trend
+   panel unchanged.
+
+**GUI:**
+
+4. **Mode toggle** on the F-B asymmetry rep ("Time fit" ↔ "Integral scan / ALC").
+   Stored in `recipe["scan_mode"]`.
+5. **Integration window** = the existing draggable fit-range span on the time
+   spectrum; in scan mode its value feeds `t_min/t_max`. Shaded as today.
+6. **Batch → build scan**: in scan mode the batch action calls
+   `build_field_scan(members, t_min, t_max, method="integral", order_key=<x-combo>,
+   grouping_ref=<rep effective grouping>)`; **single** shows the selected run's
+   `integrate_run` value.
+7. **Scan view in the trend panel**: plot the scan (raw / baseline / corrected /
+   `dA/dB` toggle); the y-quantity is the integral. Reuse the x-combo and canvas.
+8. **ALC analysis in the trend panel**: baseline-region handles + baseline fit +
+   subtract; then peak fit (`Lorentzian` [+ baseline]) via the existing trend
+   model-fit; show **B₀ = resonance field** and width in the results table.
+9. **Persistence**: `recipe["scan_mode"]`, integration window, `baseline_regions`,
+   and the peak `model_fits` persist via the rep's `recipe`/`trend_state`
+   (`representation.to_dict`); schema-version bump if a migration is needed.
+
+## Open sub-decision (to confirm before coding)
+
+**How baseline + peak relate.** Two faithful options:
+
+- **(a) Two-step, Mantid-faithful (recommended):** fit a baseline on
+  user-marked non-resonant **regions**, subtract, then fit the **peak** on the
+  corrected curve. Matches Mantid's mental model and is robust when the baseline
+  is sloped; needs the small `fit_scan_baseline` region helper (#2) and
+  baseline-region handles (#8).
+- **(b) One-shot composite:** fit `Lorentzian + Linear` to the whole scan in a
+  single `fit_parameter_model` call (peak + baseline simultaneously). Less new
+  UI (no region handles), but no separate corrected-curve view and weaker when
+  the baseline is only constrained away from the resonance.
+
+Leaning (a) for parity and clarity; (b) is the cheaper fallback if region
+handles prove fiddly.
+
+## Sequencing
+
+- **G1 (core):** `fit_scan_baseline` + `FieldScan` fit adapter + tests. (`differentiate_scan` done.)
+- **G2 (GUI minimal):** mode toggle, integration-window reuse, batch→scan, scan
+  rendered in the trend panel, `dA/dB` toggle. ← usable repolarisation/ALC scans.
+- **G3 (GUI ALC analysis):** baseline regions + subtract + peak fit + results read-out.
+- **G4 (persistence):** scan/baseline/peak state in `.asymp` (+ migration, gui-smoke).
