@@ -211,6 +211,27 @@ def test_metadata_units_citation_latex_infohelp() -> None:
             assert info.description  # every parameter has a description
 
 
+def test_all_component_equations_render_with_mathtext() -> None:
+    # The component-info dialog renders ``latex_equation`` with matplotlib
+    # mathtext (a LaTeX subset).  Guard against unsupported commands
+    # (e.g. \tfrac, \big, \lvert) that silently fall back to raw source.
+    import io
+
+    from matplotlib.mathtext import math_to_image
+
+    failures = []
+    for name, comp in COMPONENTS.items():
+        eq = (comp.latex_equation or "").strip()
+        if not eq:
+            continue
+        expr = eq if eq.startswith("$") else f"${eq}$"
+        try:
+            math_to_image(expr, io.BytesIO(), dpi=120, format="png")
+        except Exception as exc:  # noqa: BLE001 - report which component/why
+            failures.append(f"{name}: {exc}")
+    assert not failures, "latex_equation does not render under mathtext:\n" + "\n".join(failures)
+
+
 # --- Fitting round-trip -------------------------------------------------------
 def test_dynamic_gaussian_kt_round_trip() -> None:
     rng = np.random.default_rng(0)

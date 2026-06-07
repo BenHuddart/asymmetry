@@ -245,7 +245,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "beta": get_param_info("beta"),
         },
         formula_template="{A}*exp(-(abs({Lambda})*t)^({beta}))",
-        latex_equation=r"A(t) = A \exp\left(-(\lvert \Lambda \rvert t)^\beta\right)",
+        latex_equation=r"A(t) = A \exp\left(-(|\Lambda| t)^\beta\right)",
     ),
     "StaticGKT_ZF": ComponentDefinition(
         name="StaticGKT_ZF",
@@ -317,7 +317,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{A}*G_dyn_L(t; a_L={a_L}, nu={nu}, B_L={B_L})",
         latex_equation=(
             r"A(t)=A\,G^{\mathrm{dyn}}_{\mathrm{LKT}}(t;a_L,\nu,B_L),\quad "
-            r"G^{\mathrm{stat}}_{\mathrm{LKT}}(t)=\tfrac{1}{3}+\tfrac{2}{3}(1-a_L t)e^{-a_L t}"
+            r"G^{\mathrm{stat}}_{\mathrm{LKT}}(t)=\frac{1}{3}+\frac{2}{3}(1-a_L t)e^{-a_L t}"
         ),
     ),
     "Keren": ComponentDefinition(
@@ -338,8 +338,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         formula_template="{A}*exp(-Gamma(t; Delta={Delta}, nu={nu}, B_L={B_L}))",
         latex_equation=(
             r"A(t)=A\exp[-\Gamma(t)],\ \Gamma(t)=\frac{2\Delta^2}{(\omega_0^2+\nu^2)^2}"
-            r"\big[(\omega_0^2+\nu^2)\nu t+(\omega_0^2-\nu^2)(1-e^{-\nu t}\cos\omega_0 t)"
-            r"-2\nu\omega_0 e^{-\nu t}\sin\omega_0 t\big],\ \omega_0=\gamma_\mu B_L"
+            r"\left[(\omega_0^2+\nu^2)\nu t+(\omega_0^2-\nu^2)(1-e^{-\nu t}\cos\omega_0 t)"
+            r"-2\nu\omega_0 e^{-\nu t}\sin\omega_0 t\right],\ \omega_0=\gamma_\mu B_L"
         ),
     ),
     "Abragam": ComponentDefinition(
