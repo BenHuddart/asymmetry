@@ -418,6 +418,29 @@
       "src_path": "src/asymmetry/core/io/nexus.py",
       "updated": "2026-06-07",
       "notes": "IMPLEMENTED in nexus.py (_load_v1/_load_v2): adds field_state (TF/LF/ZF raw) + detector_orientation (instrument axis) metadata; field_direction repurposed to the user-facing geometry derived ONLY from field_state (words: Transverse/Longitudinal/Zero field), blank when absent, NO orientation fallback. GUI: run-info dialog 'Detector Orientation' row + selectable browser column. Tests in test_nexus_loader.py; verified vs real corpus files. KEY FINDING (study): none of Mantid/musrfit/WiMDA reads sample/magnetic_field_state for geometry. Mantid derives main_field_direction from detector orientation (same source Asymmetry uses) but names it as the instrument axis and uses it only for default MUSR/CHRONUS grouping, not fitting. musrfit stores free-text Setup/Orientation + numeric field (informational); user declares TF/LF/ZF in .msr THEORY. WiMDA: user picks grouping/mode; reads field value + ISIS a_selected_magnet L/T/A for logbook only. Asymmetry's bug is a labelling conflation: it derives field_direction from detector orientation and presents it as the experiment geometry. Ground truth corpus (2050 pulsedTD files): 1731 TF runs mislabelled Longitudinal (orientation=L); MUSR00044991 is TF at 0 G (do NOT infer ZF from field magnitude); no 'ZF' string appears in any file; 137 EMU files lack magnetic_field_state (need orientation fallback). RECOMMENDATION (Option C, refines candidate fix): keep orientation as a separate detector_orientation field, add field_state from magnetic_field_state, user-facing geometry comes from field_state else None/unknown (decision 2026-06-07: NO orientation fallback - it would reintroduce the conflation; affects 137 files = all ARGUS + EMU nickel set + all PSI/HDF4), never synthesise ZF. NeXus NXmuon spec not available locally - confirm enum before relying on edge wording."
+    },
+    {
+      "slug": "time-integral-asymmetry",
+      "feature_name": "Time-integral asymmetry / field-scan observable (ALC / repolarisation / QLCR)",
+      "status": "study",
+      "path": "docs/porting/time-integral-asymmetry",
+      "references": [
+        "WiMDA",
+        "Mantid",
+        "musrfit"
+      ],
+      "docs": {
+        "readme": "docs/porting/time-integral-asymmetry/README.md",
+        "comparison": "docs/porting/time-integral-asymmetry/comparison.md",
+        "implementation_options": "docs/porting/time-integral-asymmetry/implementation-options.md",
+        "test_data": "docs/porting/time-integral-asymmetry/test-data.md",
+        "verification_plan": "docs/porting/time-integral-asymmetry/verification-plan.md"
+      },
+      "tests_path": null,
+      "src_path": null,
+      "depends_on": ["period-selection"],
+      "notes": "STUDY ONLY (no implementation yet). Flagged by WiMDA Muon School corpus testing: unblocks ALC/repolarisation/QLCR. Two-layer feature: (1) per-run reduction counts/asymmetry over [t_min,t_max] -> one (value,error) scalar; (2) series assembly across runs ordered by field/temperature/run -> scan curve. FINDINGS: WiMDA ALC mode = count-integral (F-B)/(F+B) over full good-bin window, NO alpha, Poisson error, plus dA/dB differential transform (muondata.pas:807-815, FitTableUnit.pas:322-402). Mantid PlotAsymmetryByLogValue is the most complete + most portable reference: alpha-aware, two Types - Integral (integrate counts THEN form (F-aB)/(F+aB)) and Differential (form A(t) per bin THEN integrate) - single [TimeMin,TimeMax], Red/Green periods, LogValue sample-log x-axis + Function(Mean/Min/Max/First/Last); feeds 3-step ALC interface (load->baseline->peak fit). musrfit NEGATIVE RESULT: no native integral observable; ALC is just a filename instrument tag fitted as ordinary fittype-2 asymmetry; mupp plots FITTED params vs field, never integrates counts. RECOMMENDATION (Option A): port Mantid model as behavioural contract with WiMDA count-integral as default Integral formula (alpha=1.0 reproduces WiMDA exactly); reject musrfit param-only approach for core observable. Realise as Qt-free core/transform/integral.py reusing compute_asymmetry kernel (shared Mantid-compatible error model) + good-bin windowing + periods.py red/green, plus a FIELD_SCAN_INTEGRAL representation/series reusing FitSeries order_key + fit_parameters_panel trend surface. Mantid GPL-3 = oracle only, do NOT vendor (same rule as maxent study). ALC baseline-subtraction + peak-fitting DEFERRED to follow-up alc-avoided-level-crossing candidate (depends on this). Asymmetry already has every primitive (alpha-aware asymmetry, good-bin window, period selection, field/T metadata, series ordering, trend plot) - port is mostly composition.",
+      "updated": "2026-06-07"
     }
   ]
 }
