@@ -157,30 +157,30 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "It is a standard baseline for nonmagnetic or weakly magnetic static local-field distributions."
     ),
     "DynamicGaussianKT": (
-        "Use when a dense (Gaussian) static local-field distribution of width Delta is partially averaged by "
-        "fluctuations at rate nu, such as muon hopping or thermally fluctuating moments. It is the strong-collision "
-        "generalisation of the static Gaussian Kubo-Toyabe: nu -> 0 recovers the static function (with its 1/3 tail in "
-        "zero field), while nu >> Delta gives motional narrowing toward exponential decay with rate 2*Delta^2/nu. Set "
-        "B_L for longitudinal-field decoupling studies (e.g. ionic-motion field sweeps). This is the standard model for "
+        "Use when a dense (Gaussian) static local-field distribution of width Δ is partially averaged by "
+        "fluctuations at rate ν, such as muon hopping or thermally fluctuating moments. It is the strong-collision "
+        "generalisation of the static Gaussian Kubo–Toyabe: ν → 0 recovers the static function (with its ⅓ tail in "
+        "zero field), while ν ≫ Δ gives motional narrowing toward exponential decay with rate 2Δ²/ν. Set "
+        "Bₗ for longitudinal-field decoupling studies (e.g. ionic-motion field sweeps). This is the standard model for "
         "extracting a hop/fluctuation rate and its activation energy in metals (Cu) and ionic conductors. "
         "Computed via the strong-collision dynamicisation integral; grid-independent to better than 0.5%."
     ),
     "DynamicLorentzianKT": (
         "Use instead of the Gaussian dynamic KT when the local-field distribution is Lorentzian rather than Gaussian, "
-        "i.e. for dilute or randomly diluted moments (spin glasses, dilute-spin systems), with half-width a_L fluctuating "
-        "at rate nu. nu -> 0 recovers the static Lorentzian Kubo-Toyabe. Zero field is exact (analytic); the "
-        "longitudinal-field line shape is computed by an analytic angular average (~0.2% accurate for B_L >~ 20 G). "
+        "i.e. for dilute or randomly diluted moments (spin glasses, dilute-spin systems), with half-width aₗ fluctuating "
+        "at rate ν. ν → 0 recovers the static Lorentzian Kubo–Toyabe. Zero field is exact (analytic); the "
+        "longitudinal-field line shape is computed by an analytic angular average (≈0.2% accurate for Bₗ ≳ 20 G). "
         "See the 'Dynamic and fluctuating-field relaxation functions' user-guide page for the method and accuracy."
     ),
     "Keren": (
         "Use as the analytic longitudinal-field dynamic Gaussian relaxation function: an exact strong-collision result in "
         "the fast/intermediate fluctuation regime that avoids the numerical convolution of the full dynamic KT. It is the "
         "model named for longitudinal-field decoupling analyses (e.g. ionic diffusion) and reduces to the Abragam function "
-        "at zero field. Prefer the full DynamicGaussianKT when fluctuations are slow (nu <~ Delta) or the static 1/3 tail matters."
+        "at zero field. Prefer the full DynamicGaussianKT when fluctuations are slow (ν ≲ Δ) or the static ⅓ tail matters."
     ),
     "Abragam": (
-        "Use for single-component relaxation that crosses over from a Gaussian line shape (slow fluctuations, nu -> 0: "
-        "exp(-Delta^2 t^2/2)) to an exponential (fast fluctuations, nu >> Delta: exp(-(Delta^2/nu) t)). It is the classic "
+        "Use for single-component relaxation that crosses over from a Gaussian line shape (slow fluctuations, ν → 0: "
+        "exp(−Δ²t²/2)) to an exponential (fast fluctuations, ν ≫ Δ: exp(−(Δ²/ν) t)). It is the classic "
         "model for extracting a hop/correlation rate from a transverse-field line shape, e.g. the Cu diffusion line-shape "
         "change from Gaussian to Lorentzian on warming."
     ),
