@@ -172,7 +172,11 @@ class NexusLoader(BaseLoader):
         orientation_raw = self._safe_str(
             self._read_optional(self._read_optional(entry, "instrument"), "detector/orientation")
         )
-        field_direction = self._normalise_orientation(orientation_raw)
+        detector_orientation = self._normalise_orientation(orientation_raw)
+        field_state = self._normalise_field_state(
+            self._safe_str(self._read_optional(sample, "magnetic_field_state"))
+        )
+        field_direction = self._field_direction_from_state(field_state)
 
         metadata_base = {
             "run_number": run_number,
@@ -184,6 +188,8 @@ class NexusLoader(BaseLoader):
             "field": magnetic_field,
             "instrument": instrument_name,
             "field_direction": field_direction,
+            "field_state": field_state,
+            "detector_orientation": detector_orientation,
             "source_file": source_file,
             "nexus_version": "v1",
         }
@@ -297,7 +303,11 @@ class NexusLoader(BaseLoader):
         )
 
         orientation_raw = self._safe_str(self._read_optional(detector, "orientation"))
-        field_direction = self._normalise_orientation(orientation_raw)
+        detector_orientation = self._normalise_orientation(orientation_raw)
+        field_state = self._normalise_field_state(
+            self._safe_str(self._read_optional(sample, "magnetic_field_state"))
+        )
+        field_direction = self._field_direction_from_state(field_state)
 
         counts_ds = detector.get("counts")
         n_bins = int(counts_periods[0].shape[-1])
@@ -350,6 +360,8 @@ class NexusLoader(BaseLoader):
             "field": magnetic_field,
             "instrument": instrument_name,
             "field_direction": field_direction,
+            "field_state": field_state,
+            "detector_orientation": detector_orientation,
             "source_file": source_file,
             "nexus_version": "v2",
         }
@@ -1074,13 +1086,44 @@ class NexusLoader(BaseLoader):
         return np.asarray(out, dtype=np.float64)
 
     def _normalise_orientation(self, raw: str) -> str:
-        """Map short orientation labels to user-facing text."""
+        """Map short detector-bank orientation labels to user-facing text.
+
+        This describes where the detector banks physically sit (an
+        instrument-build property), not the applied-field geometry of the run.
+        It is surfaced as ``detector_orientation`` and must not be conflated
+        with ``field_direction`` (see docs/porting/field-geometry/).
+        """
         text = (raw or "").strip().upper()
         if text.startswith("L"):
             return "Longitudinal"
         if text.startswith("T"):
             return "Transverse"
         return raw or ""
+
+    def _normalise_field_state(self, raw: str) -> str:
+        """Normalise ``sample/magnetic_field_state`` to a ``TF``/``LF``/``ZF`` code.
+
+        Returns an empty string for blank, ``"n/a"``, or unrecognised values so
+        callers treat the field geometry as unknown rather than guessing.
+        """
+        text = (raw or "").strip().upper()
+        return text if text in {"TF", "LF", "ZF"} else ""
+
+    def _field_direction_from_state(self, state: str) -> str:
+        """Map a field-state code to a user-facing geometry, ``""`` when unknown.
+
+        The applied-field geometry is taken solely from
+        ``sample/magnetic_field_state``. Detector orientation is deliberately
+        NOT used as a fallback: the banks read ``"L"`` regardless of the applied
+        field, so deriving a direction from orientation would be a misleading
+        guess. When the field state is absent the geometry is reported as
+        unknown (empty). See docs/porting/field-geometry/ for the rationale.
+        """
+        return {
+            "TF": "Transverse",
+            "LF": "Longitudinal",
+            "ZF": "Zero field",
+        }.get(state, "")
 
     def _read_optional(self, node: Any, name: str, default: Any = None) -> Any:
         """Read a dataset or nested path from a group-like object if present."""
