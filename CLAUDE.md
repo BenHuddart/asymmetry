@@ -31,9 +31,13 @@ push it, and open a PR — don't commit directly to `main`.
 
 - Use the project virtualenv: `.venv/bin/python`. It pins numpy 2.2.x and a working
   iminuit; the system Python has numpy ≥ 2.3, which breaks fitting.
-- CI's "Harness validation" job runs `python tools/harness.py validate` (lint +
-  structural checks + the full pytest suite). The full suite is **slow — roughly
-  30–60 min** because the GUI tests in `tests/test_mainwindow_additional.py` are
-  serialized onto a single `xdist` worker (`--dist loadfile`). A long-running
-  validate or a CI check "pending" for that long is normal, not a hang.
+- CI runs `python tools/harness.py validate` (lint + structural checks + the full
+  pytest suite). The harness parallelizes the suite with `-n auto --dist load`, so
+  a full local `validate` completes in **~2 min**. (Historically it took 30–60 min:
+  GUI tests created a `MainWindow` per test without destroying it, and because
+  `deleteLater` is not dispatched without forcing `DeferredDelete`, leaked widgets
+  accumulated and `MainWindow` setup degraded to O(n²). The autouse
+  `_cleanup_qt_widgets` fixture in `tests/conftest.py` fixes this.)
+- A per-test timeout (`--timeout=120`) is set, so a genuinely hung test fails fast
+  rather than stalling the whole run.
 - GUI tests need `QT_QPA_PLATFORM=offscreen` in headless environments.
