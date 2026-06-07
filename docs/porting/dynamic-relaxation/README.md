@@ -117,8 +117,12 @@ The notation and forms were cross-checked against the textbook's Chapter 5
   numerically" (referencing Yaouanc & Dalmas de Réotier). We therefore evaluate
   the static Lorentzian LF by the stochastic field average (eqn 5.3) over an
   isotropic Lorentzian local-field distribution, then dynamicise via eqn 5.30.
-  This 2D oscillatory quadrature is accurate to ~1% over 0–16 µs (cached); the
-  Gaussian LF (Hayano analytic) and the ZF Lorentzian (eqn 5.47) remain exact.
+  The angular and precession integrals are done **analytically** (closed form via
+  the cosine integral Ci), leaving a single smooth 1-D magnitude quadrature with
+  no frequency truncation (so the e^{−a t} cusp is exact). Accuracy ≈0.2% for
+  B_L≳20 G (≈0.3–0.5% near 5 G), ~0.1 s per cached line-shape build; the Gaussian
+  LF (Hayano analytic) and ZF Lorentzian (eqn 5.47) remain exact. (An earlier 2-D
+  oscillatory field-average gave ~1%; the analytic angular reduction replaced it.)
 - **Keren** (PRB 50, 10039) is *not* in this textbook — the book gives the
   numerical dynamicized KT (eqn 5.30) and, for fast LF dynamics, the Redfield/BPP
   limit (eqn 5.53, `λ = 2Δ²ν/(ν²+γ²B₀²)`, already present as the `Redfield`

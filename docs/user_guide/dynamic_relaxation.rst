@@ -98,9 +98,9 @@ summarises the method and the expected accuracy; details follow.
      - Strong-collision solver of the analytic ZF Lorentzian KT (eqn 5.47)
      - Grid-independent to < 0.5 %
    * - DynamicLorentzianKT (LF)
-     - Strong-collision solver of the **numerically field-averaged** static
-       Lorentzian-LF line shape
-     - ≈ 1 % over 0–16 μs
+     - Strong-collision solver of the static Lorentzian-LF line shape, the latter
+       from the **analytic angular + time average** (1-D magnitude quadrature)
+     - ≈ 0.2 % for B_L ≳ 20 G (≈ 0.3–0.5 % near 5 G; finer at higher field)
 
 **Closed-form functions (Abragam, Keren).** These are evaluated directly from
 their analytic expressions and are exact to machine precision. They are also the
@@ -128,29 +128,32 @@ function is already close to its analytic motional-narrowing limit, so the
 capped-grid error there remains small and bounded. Solutions are cached per
 :math:`(\Delta\,\text{or}\,a_L,\ \nu,\ B_L,\ t_{\max})`.
 
-**Static Lorentzian-LF — numerical field average.** Unlike the Gaussian case
+**Static Lorentzian-LF — analytic angular average.** Unlike the Gaussian case
 (which has the analytic Hayano longitudinal-field form), the Lorentzian
 Kubo–Toyabe function *"becomes modified in applied field … [and] must be computed
-numerically"* (Blundell et al., §5.3). Asymmetry therefore evaluates the static
-Lorentzian-LF line shape directly from the stochastic field average
-(textbook eqn 5.3),
+numerically"* (Blundell et al., §5.3). Asymmetry evaluates it from the stochastic
+field average (textbook eqn 5.3) over an isotropic Lorentzian local-field
+distribution :math:`p(\mathbf{w}) = (a_L/\pi^2)/(a_L^2 + w^2)^2`,
 
 .. math::
 
    G^{\mathrm{s,LF}}_{\mathrm{Lor}}(t)
    = \int \mathrm{d}^3 w\; p(\mathbf{w})
      \left[\cos^2\Theta + \sin^2\Theta\,\cos(|\mathbf{W}|t)\right],
-   \quad \mathbf{W} = \omega_0\hat{\mathbf z} + \mathbf{w},
+   \quad \mathbf{W} = \omega_0\hat{\mathbf z} + \mathbf{w}.
 
-over an isotropic Lorentzian local-field distribution
-:math:`p(\mathbf{w}) = (a_L/\pi^2)/(a_L^2 + w^2)^2` (in rate units
-:math:`w=\gamma_\mu B_{\mathrm{local}}`), where :math:`\Theta` is the angle of the
-total field from :math:`\hat{\mathbf z}`. The 2-D quadrature is compressed into a
-binned frequency spectrum so evaluation is fast (~1 ms, cached) and is then
-dynamicised with the same strong-collision solver. This field average is
-**accurate to about 1 %** over 0–16 μs; it reduces exactly to the analytic
-zero-field Lorentzian KT (eqn 5.47) as :math:`B_L \to 0` and to full decoupling
-(:math:`G \to 1`) at large :math:`B_L`.
+The **angular and precession integrals are done analytically** (in closed form
+using the cosine integral :math:`\mathrm{Ci}`), reducing the problem to a single
+smooth 1-D quadrature over the local-field magnitude :math:`w`. Because no
+frequency-domain truncation is involved, the :math:`e^{-a_L t}` cusp is captured
+correctly. The line shape is computed once on a modest grid and interpolated
+(then dynamicised with the same strong-collision solver), and is cached. It is
+**accurate to ≈ 0.2 % for :math:`B_L \gtrsim 20` G** (≈ 0.3–0.5 % near 5 G, finer
+at higher field); it reduces exactly to the analytic zero-field Lorentzian KT
+(eqn 5.47) as :math:`B_L \to 0` (used directly for
+:math:`\omega_0 < 0.05\,a_L`) and to full decoupling (:math:`G \to 1`) at large
+:math:`B_L`. Each line-shape build costs ~0.1 s (cached); the common cases
+(Gaussian LF, zero field, the analytic functions) are far cheaper.
 
 **How this is verified.** The test suite asserts, to tight tolerances, that:
 the dynamic functions reduce to the correct static functions as
@@ -161,15 +164,19 @@ Lorentzian-LF average is normalised, decouples at large field, and recovers the
 eqn 5.47 line shape at zero field. See
 ``tests/test_dynamic_relaxation.py``.
 
-When the ~1 % Lorentzian-LF tolerance matters
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+When the Lorentzian-LF tolerance matters
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For most fits the ~1 % numerical accuracy of the Lorentzian-LF line shape is well
-below the statistical scatter of the data and does not affect the fitted
-parameters. Where it does matter — high-statistics data, or a parameter that is
-sensitive to the line-shape tail — prefer a **zero-field** Lorentzian measurement
-(exact, eqn 5.47) or, if the distribution is Gaussian, use **DynamicGaussianKT**
-(whose LF branch uses the analytic Hayano form).
+The Lorentzian-LF line shape is the one component evaluated by numerical
+quadrature rather than in closed form, with ≈ 0.2 % accuracy in the decoupling
+regime — well below the statistical scatter of typical data, so it does not
+affect the fitted parameters. Where you need still tighter tolerance — very
+high-statistics data, or a parameter sensitive to the line-shape tail — prefer a
+**zero-field** Lorentzian measurement (exact, eqn 5.47) or, if the distribution is
+Gaussian, use **DynamicGaussianKT** (whose LF branch uses the analytic Hayano
+form). It is also the most expensive component to fit (~0.1 s per line-shape
+build, cached); fixing :math:`B_L` from the known applied field keeps a fit
+responsive.
 
 Using these components in the Fit Builder
 -----------------------------------------

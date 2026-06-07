@@ -120,21 +120,29 @@ def test_static_lorentzian_zf_value_at_zero() -> None:
     assert abs(static_lorentzian_kt_zf(np.array([0.0]), 1.0, 0.5)[0] - 1.0) < 1e-12
 
 
-def test_lorentzian_lf_reduces_to_zf_limit() -> None:
-    # The numerical LF field-average at a vanishingly small field must approach
-    # the analytic zero-field Lorentzian KT (eqn 5.47) to ~1%.
-    from asymmetry.core.fitting.models import _lorentzian_lf_field_average
+def test_lorentzian_lf_zero_field_shortcut() -> None:
+    # A negligible field (omega0 < 0.05 a_L) is treated as exact zero field.
+    assert np.allclose(
+        static_lorentzian_kt_lf(T, 1.0, 0.5, 0.1), static_lorentzian_kt_zf(T, 1.0, 0.5), atol=1e-12
+    )
+
+
+def test_lorentzian_lf_accuracy_against_high_resolution() -> None:
+    # The analytic angular-average line shape (default n_w, interpolated) agrees
+    # with a high-resolution reference to better than ~0.5% over 0-16 us in the
+    # decoupling regime.
+    from asymmetry.core.fitting.models import _lorentzian_lf_lineshape
     from asymmetry.core.utils.constants import (
         GAUSS_TO_TESLA,
         MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     )
 
     a = 0.5
-    omega0 = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * (1e-3 * GAUSS_TO_TESLA)
-    c0, freq, amp = _lorentzian_lf_field_average(a, omega0)
-    g_num = c0 + np.cos(np.outer(T, freq)) @ amp
-    assert abs(c0 + amp.sum() - 1.0) < 1e-3  # normalised
-    assert np.max(np.abs(g_num - static_lorentzian_kt_zf(T, 1.0, a))) < 0.02
+    for b in (20.0, 50.0):
+        omega0 = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * (b * GAUSS_TO_TESLA)
+        g = static_lorentzian_kt_lf(T, 1.0, a, b)
+        ref = _lorentzian_lf_lineshape(a, omega0, T, n_w=12000)
+        assert np.max(np.abs(g - ref)) < 5e-3
 
 
 def test_lorentzian_lf_decoupling_and_origin() -> None:

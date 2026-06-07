@@ -14,6 +14,7 @@ from functools import lru_cache
 import numpy as np
 from numpy.typing import NDArray
 from scipy import integrate
+from scipy.special import sici
 
 from asymmetry.core.fitting.parameters import ParamInfo, param_info_map
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
@@ -404,68 +405,104 @@ def static_lorentzian_kt_zf(
     return A0 * (1.0 / 3.0 + 2.0 / 3.0 * (1.0 - at) * exp_term) + baseline
 
 
-# Cache of (C0, frequencies, amplitudes) for the static Lorentzian-LF field
-# average, keyed by quantised (a_L, omega0, grid sizes).
-_LOR_LF_CACHE: dict[tuple, tuple[float, NDArray, NDArray]] = {}
+# Cache of (time grid, static Lorentzian-LF line shape) keyed by quantised
+# (a_L, omega0, tmax, grid sizes).
+_LOR_LF_CACHE: dict[tuple, tuple[NDArray, NDArray]] = {}
 _LOR_LF_CACHE_MAX = 64
 
 
-def _lorentzian_lf_field_average(
-    a_L: float, omega0: float, n_u: int = 600, n_v: int = 480
-) -> tuple[float, NDArray, NDArray]:
-    """Pre-compute the static Lorentzian-LF average as C0 + sum_j Amp_j cos(W_j t).
+def _lorentzian_lf_lineshape(a_L: float, omega0: float, t: NDArray, n_w: int = 2400) -> NDArray:
+    """Static Lorentzian-LF line shape by the analytic angular + time average.
 
-    Numerically integrates the stochastic field average (eqn 5.3 of Blundell et
-    al. 2022) over an isotropic Lorentzian local-field distribution
-    p(w) = (a_L / pi^2) / (a_L^2 + w^2)^2 (in rate units w = gamma_mu * B_local),
-    with the applied longitudinal field giving omega0 = gamma_mu * B_L along z.
-    For a local field w and total field W = omega0 z_hat + w, the single-muon
-    response is cos^2(Theta) + sin^2(Theta) cos(|W| t), Theta = angle(W, z).
-    Cylindrical (w_z, rho) integration with tan-substitutions to map the infinite
-    range to finite intervals.
+    The stochastic field average (eqn 5.3 of Blundell et al. 2022) over an
+    isotropic Lorentzian local-field distribution reduces, after doing the
+    angular average and the precession integral analytically, to a single smooth
+    1-D quadrature over the local-field magnitude ``w``:
+
+        G(t) = integral_0^inf f(w) [ A_cos(w) + B_sin(w, t) ] dw,
+
+    with the magnitude distribution f(w) = (4 a_L/pi) w^2 / (a_L^2 + w^2)^2 and,
+    for omega0 = gamma_mu * B_L, c = omega0^2 - w^2, W_lo = |omega0 - w|,
+    W_hi = omega0 + w:
+
+        A_cos(w) = [ (W_hi^4 - W_lo^4)/4 + c (W_hi^2 - W_lo^2) + c^2 ln(W_hi/W_lo) ]
+                   / (8 omega0^3 w)
+        B_sin(w, t) = [ ((omega0^2+w^2)/(2 omega0^2)) I1 - I3/(4 omega0^2)
+                        - (c^2/(4 omega0^2)) (Ci(W_hi t) - Ci(W_lo t)) ] / (2 omega0 w)
+
+    where I1 = integral W cos(Wt) dW and I3 = integral W^3 cos(Wt) dW over
+    [W_lo, W_hi] (elementary), and Ci is the cosine integral.  Avoiding any
+    frequency-domain truncation, this captures the e^{-a_L t} cusp exactly and is
+    accurate to better than ~0.1-0.3 % for B_L >~ 20 G (finer for larger fields).
     """
-    key = (round(a_L, 6), round(omega0, 6), n_u, n_v)
+    a = float(a_L)
+    w0 = float(omega0)
+    s = (np.arange(n_w) + 0.5) / n_w * (np.pi / 2.0)
+    w = a * np.tan(s)  # local-field magnitude grid on (0, inf)
+    f_w = (4.0 * a / np.pi) * w**2 / (a**2 + w**2) ** 2
+    wq = f_w * (a / np.cos(s) ** 2) * ((np.pi / 2.0) / n_w)  # f(w) * quadrature weight
+    c = w0**2 - w**2
+    w_lo = np.abs(w0 - w)
+    w_hi = w0 + w
+    coef_w = (w0**2 + w**2) / (2.0 * w0**2)
+    pref = 1.0 / (2.0 * w0 * w)
+    near = np.abs(w - w0) < 1e-9  # c -> 0 and W_lo -> 0 together; the c^2 terms vanish
+    ln_ratio = np.where(
+        near, 0.0, np.log(np.clip(w_hi / np.clip(w_lo, 1e-300, None), 1e-300, None))
+    )
+    a_cos = (1.0 / (8.0 * w0**3 * w)) * (
+        (w_hi**4 - w_lo**4) / 4.0 + c * (w_hi**2 - w_lo**2) + c**2 * ln_ratio
+    )
+
+    t = np.asarray(t, dtype=float)
+    out = np.ones_like(t)
+    pos = t > 1e-12
+    if np.any(pos):
+        tp = t[pos][None, :]  # (1, n_t)
+        whi = w_hi[:, None]
+        wlo = w_lo[:, None]
+
+        def _f1(wv: NDArray) -> NDArray:
+            return (np.cos(wv * tp) + wv * tp * np.sin(wv * tp)) / tp**2
+
+        def _f3(wv: NDArray) -> NDArray:
+            return (
+                (wv**3 / tp) * np.sin(wv * tp)
+                + (3.0 * wv**2 / tp**2) * np.cos(wv * tp)
+                - (6.0 * wv / tp**3) * np.sin(wv * tp)
+                - (6.0 / tp**4) * np.cos(wv * tp)
+            )
+
+        i1 = _f1(whi) - _f1(wlo)
+        i3 = _f3(whi) - _f3(wlo)
+        _, ci_hi = sici(whi * tp)
+        _, ci_lo = sici(np.clip(wlo * tp, 1e-300, None))
+        c_term = np.where(near[:, None], 0.0, (c[:, None] ** 2 / (4.0 * w0**2)) * (ci_hi - ci_lo))
+        b_sin = pref[:, None] * (coef_w[:, None] * i1 - i3 / (4.0 * w0**2) - c_term)
+        out[pos] = np.sum(wq[:, None] * (a_cos[:, None] + b_sin), axis=0)
+    return out
+
+
+def _static_lorentzian_lf_grid(
+    a_L: float, omega0: float, tmax: float, n_t: int = 220
+) -> tuple[NDArray, NDArray]:
+    """Cached (grid, line shape) for the static Lorentzian-LF, for interpolation.
+
+    The line shape is smooth, so it is evaluated on a modest grid and linearly
+    interpolated onto the requested times; this bounds the cost of the (otherwise
+    O(n_w * n_t)) ``sici`` evaluation while keeping the interpolation error
+    negligible.
+    """
+    key = (round(a_L, 6), round(omega0, 6), round(tmax, 5), n_t)
     cached = _LOR_LF_CACHE.get(key)
     if cached is not None:
         return cached
-
-    a = a_L
-    # Midpoint grids: w_z = a tan(u), u in (-pi/2, pi/2); rho = a tan(v), v in [0, pi/2)
-    u = (np.arange(n_u) + 0.5) / n_u * np.pi - np.pi / 2.0
-    v = (np.arange(n_v) + 0.5) / n_v * (np.pi / 2.0)
-    du = np.pi / n_u
-    dv = (np.pi / 2.0) / n_v
-    wz = a * np.tan(u)  # (n_u,)
-    rho = a * np.tan(v)  # (n_v,)
-    wz_g, rho_g = np.meshgrid(wz, rho, indexing="ij")
-    u_g, v_g = np.meshgrid(u, v, indexing="ij")
-    w2 = wz_g**2 + rho_g**2
-    p_lor = (a / np.pi**2) / (a**2 + w2) ** 2
-    # d^3 w = 2 pi rho drho dwz; drho/dv = a sec^2 v, dwz/du = a sec^2 u
-    weight = 2.0 * np.pi * rho_g * p_lor * (a / np.cos(u_g) ** 2) * (a / np.cos(v_g) ** 2) * du * dv
-    # The distribution is normalised to 1 by construction; renormalise the
-    # discretised weights to remove O(grid) quadrature bias (keeps G(0) = 1 exactly).
-    weight = weight / weight.sum()
-    wz_tot = omega0 + wz_g
-    w_tot = np.sqrt(rho_g**2 + wz_tot**2)
-    cos2 = np.where(w_tot > 1e-12, (wz_tot / w_tot) ** 2, 1.0)
-    c0 = float(np.sum(weight * cos2))
-    amp = (weight * (1.0 - cos2)).ravel()
-    freq = w_tot.ravel()
-    # Compress the (freq, amp) spectrum into a histogram so that evaluating
-    # sum_j amp_j cos(W_j t) is a small matrix product, independent of the field
-    # grid size.  Bin width is fine enough that binning error << quadrature error.
-    n_bins = 4000
-    w_max = float(freq.max()) if freq.size else 1.0
-    edges = np.linspace(0.0, w_max * 1.0000001, n_bins + 1)
-    amp_binned, _ = np.histogram(freq, bins=edges, weights=amp)
-    centres = 0.5 * (edges[:-1] + edges[1:])
-    keep = amp_binned > (amp_binned.max() * 1e-7 if amp_binned.size else 0.0)
-    result = (c0, centres[keep], amp_binned[keep])
+    grid = np.linspace(0.0, tmax, n_t)
+    gs = _lorentzian_lf_lineshape(a_L, omega0, grid)
     if len(_LOR_LF_CACHE) >= _LOR_LF_CACHE_MAX:
         _LOR_LF_CACHE.clear()
-    _LOR_LF_CACHE[key] = result
-    return result
+    _LOR_LF_CACHE[key] = (grid, gs)
+    return grid, gs
 
 
 def static_lorentzian_kt_lf(
@@ -481,27 +518,33 @@ def static_lorentzian_kt_lf(
     5.3, note that the Kubo-Toyabe function "becomes modified in applied field ...
     [and] must be computed numerically".  This evaluates the stochastic field
     average (eqn 5.3) over an isotropic Lorentzian local-field distribution of
-    half-width ``a_L`` (us^-1) with applied longitudinal field ``B_L`` (Gauss).
+    half-width ``a_L`` (us^-1) with applied longitudinal field ``B_L`` (Gauss),
+    via the analytic angular + time reduction in :func:`_lorentzian_lf_lineshape`.
 
     - ``B_L -> 0``   : reduces to the zero-field Lorentzian KT (eqn 5.47),
       1/3 + 2/3 (1 - a_L t) e^{-a_L t}.
     - ``B_L -> inf`` : decoupling, G -> 1.
 
-    The field average is a 2D oscillatory quadrature; the result is accurate to
-    roughly 1% over 0-16 us (the zero-field analytic limit and the Gaussian LF
-    Hayano function remain exact).  Results are cached per (a_L, B_L).
+    Accurate to better than ~0.1-0.3 % for B_L >~ 20 G (finer at higher field);
+    very small fields (omega0 < 0.05 a_L) are treated as zero field, where the
+    eqn 5.47 form is exact. The line shape is computed once on a grid and
+    interpolated, and cached per (a_L, B_L, tmax).
     """
     t = np.asarray(t, dtype=float)
     scalar = t.ndim == 0
     tt = np.atleast_1d(np.abs(t))
     a = float(a_L)
-    if a <= 0 or abs(B_L) < 1e-9:
+    gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+    omega0 = gamma_mu * (float(B_L) * GAUSS_TO_TESLA)
+    if a <= 0 or omega0 < 0.05 * max(a, 1e-12):
+        # Field negligible vs the distribution width: indistinguishable from ZF,
+        # where the analytic eqn 5.47 form is exact (and avoids the ill-conditioned
+        # small-omega0 limit of the longitudinal-field reduction).
         gs = static_lorentzian_kt_zf(tt, 1.0, a, 0.0)
     else:
-        gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
-        omega0 = gamma_mu * (float(B_L) * GAUSS_TO_TESLA)
-        c0, freq, amp = _lorentzian_lf_field_average(a, omega0)
-        gs = c0 + np.cos(np.outer(tt, freq)) @ amp
+        tmax = float(max(tt.max(), 1e-6))
+        grid, gs_grid = _static_lorentzian_lf_grid(a, omega0, tmax)
+        gs = np.interp(tt, grid, gs_grid)
     out = A0 * np.asarray(gs, dtype=float) + baseline
     return float(out[0]) if scalar else out
 

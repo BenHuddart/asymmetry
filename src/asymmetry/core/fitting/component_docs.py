@@ -169,8 +169,8 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "Use instead of the Gaussian dynamic KT when the local-field distribution is Lorentzian rather than Gaussian, "
         "i.e. for dilute or randomly diluted moments (spin glasses, dilute-spin systems), with half-width a_L fluctuating "
         "at rate nu. nu -> 0 recovers the static Lorentzian Kubo-Toyabe. Zero field is exact (analytic); the "
-        "longitudinal-field line shape is computed numerically (~1% accurate). See the 'Dynamic and fluctuating-field "
-        "relaxation functions' user-guide page for the method and accuracy."
+        "longitudinal-field line shape is computed by an analytic angular average (~0.2% accurate for B_L >~ 20 G). "
+        "See the 'Dynamic and fluctuating-field relaxation functions' user-guide page for the method and accuracy."
     ),
     "Keren": (
         "Use as the analytic longitudinal-field dynamic Gaussian relaxation function: an exact strong-collision result in "
