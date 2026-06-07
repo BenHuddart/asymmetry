@@ -125,6 +125,12 @@ class RunInfoDialog(QDialog):
                 "field_direction",
                 self._series_path_for_field("field_direction"),
             ),
+            (
+                "Detector Orientation",
+                str(meta.get("detector_orientation", "")),
+                "detector_orientation",
+                None,
+            ),
             ("Orientation", orientation, "nexus_fields.sample.shape", None),
             ("Periods", str(meta.get("period_count", 1)), "period_count", None),
             ("Points", str(self._dataset.n_points), "run_info.points", None),

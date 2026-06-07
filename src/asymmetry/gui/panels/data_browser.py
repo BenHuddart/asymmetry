@@ -293,6 +293,7 @@ class DataBrowserPanel(QWidget):
         "temperature": "Temperature (K)",
         "field": "Magnetic Field (G)",
         "field_direction": "Field Direction",
+        "detector_orientation": "Detector Orientation",
         "period_count": "Periods",
         "run_info.points": "Points",
         "run_info.histograms": "Histograms",
