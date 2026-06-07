@@ -322,6 +322,62 @@ def test_alc_baseline_requires_regions(mainwindow: MainWindow, monkeypatch):
     assert mw._alc_corrected_scan is None
 
 
+def _gauss(x, amp, b0, w):
+    return amp * np.exp(-0.5 * ((x - b0) / w) ** 2)
+
+
+def test_alc_peak_specs_and_add_remove(qapp: QApplication):
+    view = ALCScanView()
+    view._add_peak("Gaussian")
+    view._add_peak("Lorentzian")
+    specs = view.peak_specs()
+    assert [s["component"] for s in specs] == ["GaussianLCR", "LorentzianLCR"]
+    view._peaks_table.setCurrentCell(0, 0)
+    view._remove_peak()
+    assert len(view.peak_specs()) == 1
+
+
+def test_alc_peak_fit_recovers_resonance(mainwindow: MainWindow, monkeypatch):
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    fields = np.linspace(0.0, 300.0, 31)
+    # A corrected scan = a single Gaussian dip at B0 = 150 G (-5 %, width 20 G).
+    mw._alc_scan_points = [
+        {
+            "run": 100 + i,
+            "value": float(_gauss(f, -0.05, 150.0, 20.0)),
+            "error": 1e-4,
+            "field": float(f),
+            "temperature": 10.0,
+        }
+        for i, f in enumerate(fields)
+    ]
+    mw._render_alc_scan()  # populate the view's plot state
+    mw._alc_corrected_scan = mw._alc_display_scan("field")
+    mw._alc_baseline_curve = np.zeros(fields.size)
+
+    view = mw._alc_scan_view
+    view._add_peak("Gaussian")  # default guess B0 = mid-range = 150
+    view._peaks_table.item(0, 1).setText("140")  # offset so it's a real fit
+
+    mw._on_fit_peaks()
+
+    fitted_b0 = float(view._peaks_table.item(0, 1).text())
+    assert abs(fitted_b0 - 150.0) < 5.0
+    assert view._peaks_results.text()  # summary populated
+    assert view._fit_curve is not None  # overlay drawn
+
+
+def test_alc_peaks_require_baseline(mainwindow: MainWindow, monkeypatch):
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    monkeypatch.setattr(mw_module.QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    mw._alc_corrected_scan = None
+    mw._alc_scan_view._add_peak("Gaussian")
+    mw._on_fit_peaks()
+    assert mw._alc_scan_view._fit_curve is None
+
+
 def test_alc_scan_view_show_and_clear(qapp: QApplication):
     view = ALCScanView()
     view.show_scan(

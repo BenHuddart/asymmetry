@@ -48,9 +48,11 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset
 from asymmetry.core.fitting import (
+    as_composite_model,
     build_grouped_time_domain_datasets,
     fit_result_summary,
     fit_scan_baseline,
+    fit_scan_model,
 )
 from asymmetry.core.fourier import (
     GroupSpectrumConfig,
@@ -344,6 +346,8 @@ class MainWindow(QMainWindow):
         self._alc_scan_series_id: str | None = None
         #: Baseline-corrected scan from the last baseline fit (basis for peaks).
         self._alc_corrected_scan: FieldScan | None = None
+        #: The fitted baseline curve (display units), for the total-fit overlay.
+        self._alc_baseline_curve: object | None = None
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
         self._frequency_spectra_by_rep: dict[RepresentationType, dict[int, list[MuonDataset]]] = {
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
@@ -1085,6 +1089,7 @@ class MainWindow(QMainWindow):
         self._alc_fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
         self._alc_scan_view.options_changed.connect(self._render_alc_scan)
         self._alc_scan_view.baseline_fit_requested.connect(self._on_fit_baseline)
+        self._alc_scan_view.peaks_fit_requested.connect(self._on_fit_peaks)
         if hasattr(self._fit_panel, "grouped_fit_completed"):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
         if hasattr(self._fit_panel, "preview_requested"):
@@ -5436,8 +5441,71 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Baseline", str(exc))
             return
         self._alc_corrected_scan = result.corrected
+        self._alc_baseline_curve = result.baseline
         self._alc_scan_view.show_baseline_overlay(result.baseline)
         self._log_panel.log(f"Fitted {model} baseline over {len(regions)} region(s).")
+
+    #: FWHM = factor × Bwid per peak shape.
+    _PEAK_FWHM_FACTOR = {"GaussianLCR": 2.3548, "LorentzianLCR": 2.0}
+
+    def _on_fit_peaks(self) -> None:
+        """Fit the peak composite to the baseline-corrected scan; overlay + read off."""
+        corrected = self._alc_corrected_scan
+        if corrected is None:
+            QMessageBox.information(
+                self, "Peaks", "Fit a baseline first; peaks are fitted on the corrected curve."
+            )
+            return
+        specs = self._alc_scan_view.peak_specs()
+        if not specs:
+            QMessageBox.information(
+                self, "Peaks", "Add at least one peak (+ Gaussian / + Lorentzian)."
+            )
+            return
+
+        model = as_composite_model([spec["component"] for spec in specs])
+        names = model.param_names  # [f,B0,Bwid] per peak, suffixed _i when >1 peak
+        initial: dict[str, float] = {}
+        for i, spec in enumerate(specs):
+            initial[names[3 * i + 0]] = spec["f"]
+            initial[names[3 * i + 1]] = spec["B0"]
+            initial[names[3 * i + 2]] = spec["Bwid"]
+
+        try:
+            fit = fit_scan_model(corrected, model, initial=initial)
+        except (ValueError, TypeError) as exc:
+            QMessageBox.warning(self, "Peaks", f"Could not fit peaks: {exc}")
+            return
+        if not fit.success:
+            QMessageBox.warning(self, "Peaks", f"Peak fit did not converge: {fit.message}")
+            return
+
+        fitted_values = {name: fit.parameters[name].value for name in names}
+        results: list[dict] = []
+        summary_lines: list[str] = []
+        for i, spec in enumerate(specs):
+            f_val = fitted_values[names[3 * i + 0]]
+            b0_val = fitted_values[names[3 * i + 1]]
+            bwid_val = abs(fitted_values[names[3 * i + 2]])
+            b0_err = fit.uncertainties.get(names[3 * i + 1], 0.0)
+            fwhm = self._PEAK_FWHM_FACTOR[spec["component"]] * bwid_val
+            results.append({"f": f_val, "B0": b0_val, "Bwid": bwid_val})
+            shape = "Gaussian" if spec["component"] == "GaussianLCR" else "Lorentzian"
+            summary_lines.append(
+                f"Peak {i + 1} ({shape}): B₀ = {b0_val:.4g} ± {b0_err:.2g} G, "
+                f"FWHM = {fwhm:.4g} G, amp = {f_val:.3g} %"
+            )
+
+        # Overlay the total fit = baseline + peaks on the raw scan.
+        peak_curve = np.asarray(model.function(corrected.x, **fitted_values), dtype=float)
+        total = peak_curve
+        if self._alc_baseline_curve is not None:
+            baseline = np.asarray(self._alc_baseline_curve, dtype=float)
+            if baseline.shape == peak_curve.shape:
+                total = baseline + peak_curve
+        self._alc_scan_view.set_peak_results(results, "\n".join(summary_lines))
+        self._alc_scan_view.show_fit_overlay(total)
+        self._log_panel.log(f"Fitted {len(specs)} peak(s): " + "; ".join(summary_lines))
 
     def _active_grouped_state(self) -> dict:
         """Return the grouped-fit classification from the active grouped surface.

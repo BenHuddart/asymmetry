@@ -144,14 +144,19 @@ class ALCScanView(QWidget):
     options_changed = Signal()
     #: Emitted when the user requests a baseline fit (Fit baseline button).
     baseline_fit_requested = Signal()
+    #: Emitted when the user requests a peak fit (Fit peaks button).
+    peaks_fit_requested = Signal()
 
     #: x-combo index → ordering key.
     _X_KEYS = ("field", "temperature", "run")
+    #: Peak-row "Type" → core component name.
+    _PEAK_COMPONENTS = {"Gaussian": "GaussianLCR", "Lorentzian": "LorentzianLCR"}
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._last_plot: dict | None = None
         self._baseline_curve: NDArray[np.float64] | None = None
+        self._fit_curve: NDArray[np.float64] | None = None
         layout = QVBoxLayout(self)
 
         controls = QHBoxLayout()
@@ -176,6 +181,7 @@ class ALCScanView(QWidget):
         layout.addWidget(self._canvas, 1)
 
         layout.addWidget(self._build_baseline_group())
+        layout.addWidget(self._build_peaks_group())
 
         self._table = QTableWidget(0, 4)
         self._table.setHorizontalHeaderLabels(["Run", "x", "A (%)", "± err"])
@@ -218,6 +224,39 @@ class ALCScanView(QWidget):
         btns.addWidget(remove_btn)
         btns.addStretch()
         outer.addLayout(btns)
+        return group
+
+    def _build_peaks_group(self) -> QGroupBox:
+        """Peak controls: add/remove Gaussian/Lorentzian peaks + Fit peaks."""
+        group = QGroupBox("Peaks")
+        outer = QVBoxLayout(group)
+
+        row = QHBoxLayout()
+        add_g = QPushButton("+ Gaussian")
+        add_g.clicked.connect(lambda: self._add_peak("Gaussian"))
+        add_l = QPushButton("+ Lorentzian")
+        add_l.clicked.connect(lambda: self._add_peak("Lorentzian"))
+        remove_peak = QPushButton("− peak")
+        remove_peak.clicked.connect(self._remove_peak)
+        row.addWidget(add_g)
+        row.addWidget(add_l)
+        row.addWidget(remove_peak)
+        row.addStretch()
+        self._fit_peaks_btn = QPushButton("Fit peaks")
+        self._fit_peaks_btn.clicked.connect(self.peaks_fit_requested.emit)
+        row.addWidget(self._fit_peaks_btn)
+        outer.addLayout(row)
+
+        self._peaks_table = QTableWidget(0, 4)
+        self._peaks_table.setHorizontalHeaderLabels(["Type", "B0 (G)", "Width (G)", "Amp (%)"])
+        self._peaks_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._peaks_table.setMaximumHeight(110)
+        outer.addWidget(self._peaks_table)
+
+        self._peaks_results = QLabel("")
+        self._peaks_results.setWordWrap(True)
+        self._peaks_results.setStyleSheet("color: #1f4d8a;")
+        outer.addWidget(self._peaks_results)
         return group
 
     #: Derivative-checkbox label per x-axis (the y-quantity is dA/dx).
@@ -286,8 +325,70 @@ class ALCScanView(QWidget):
             self._render_plot()
 
     def show_baseline_overlay(self, baseline: NDArray[np.float64]) -> None:
-        """Overlay a fitted baseline curve on the current scan plot."""
+        """Overlay a fitted baseline curve; invalidate any prior peak fit."""
         self._baseline_curve = np.asarray(baseline, dtype=float)
+        self._fit_curve = None
+        self._peaks_results.setText("")
+        self._render_plot()
+
+    # --- peak controls -------------------------------------------------------
+
+    def _add_peak(self, peak_type: str) -> None:
+        """Append a peak row (Type read-only) with guesses from the x-range."""
+        b0, wid, amp = 0.0, 1.0, -1.0
+        if self._last_plot is not None and self._last_plot["x"].size:
+            xs = self._last_plot["x"]
+            span = float(xs.max() - xs.min()) or 1.0
+            b0 = float(0.5 * (xs.min() + xs.max()))
+            wid = 0.1 * span
+        row = self._peaks_table.rowCount()
+        self._peaks_table.insertRow(row)
+        type_item = QTableWidgetItem(peak_type)
+        type_item.setFlags(type_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self._peaks_table.setItem(row, 0, type_item)
+        for col, val in ((1, b0), (2, wid), (3, amp)):
+            self._peaks_table.setItem(row, col, QTableWidgetItem(f"{val:.4g}"))
+
+    def _remove_peak(self) -> None:
+        """Remove the selected peak row (or the last row)."""
+        row = self._peaks_table.currentRow()
+        if row < 0:
+            row = self._peaks_table.rowCount() - 1
+        if row >= 0:
+            self._peaks_table.removeRow(row)
+
+    def peak_specs(self) -> list[dict]:
+        """Return the peaks as ``{component, f, B0, Bwid}`` initial guesses."""
+        specs: list[dict] = []
+        for row in range(self._peaks_table.rowCount()):
+            type_item = self._peaks_table.item(row, 0)
+            component = self._PEAK_COMPONENTS.get(type_item.text()) if type_item else None
+            if component is None:
+                continue
+            try:
+                b0 = float(self._peaks_table.item(row, 1).text())
+                bwid = float(self._peaks_table.item(row, 2).text())
+                amp = float(self._peaks_table.item(row, 3).text())
+            except (AttributeError, ValueError):
+                continue
+            specs.append({"component": component, "f": amp, "B0": b0, "Bwid": bwid})
+        return specs
+
+    def set_peak_results(self, results: list[dict], summary: str = "") -> None:
+        """Update the peaks table to the fitted values and show *summary*."""
+        with QSignalBlocker(self._peaks_table):
+            for row, res in enumerate(results):
+                if row >= self._peaks_table.rowCount():
+                    break
+                for col, key in ((1, "B0"), (2, "Bwid"), (3, "f")):
+                    item = self._peaks_table.item(row, col)
+                    if item is not None:
+                        item.setText(f"{res[key]:.4g}")
+        self._peaks_results.setText(summary)
+
+    def show_fit_overlay(self, fit_curve: NDArray[np.float64]) -> None:
+        """Overlay the total (baseline + peaks) fit curve on the scan plot."""
+        self._fit_curve = np.asarray(fit_curve, dtype=float)
         self._render_plot()
 
     # --- plotting ------------------------------------------------------------
@@ -296,6 +397,7 @@ class ALCScanView(QWidget):
         """Show an empty-state placeholder with *message*."""
         self._last_plot = None
         self._baseline_curve = None
+        self._fit_curve = None
         self._ax.clear()
         self._ax.text(
             0.5,
@@ -330,8 +432,10 @@ class ALCScanView(QWidget):
             "x_label": x_label,
             "y_label": y_label,
         }
-        # A fresh scan (rebuild / x-axis change) invalidates any baseline overlay.
+        # A fresh scan (rebuild / x-axis change) invalidates any fit overlays.
         self._baseline_curve = None
+        self._fit_curve = None
+        self._peaks_results.setText("")
         self._render_plot()
 
         self._table.setHorizontalHeaderLabels(["Run", x_label, value_header, "± err"])
@@ -351,7 +455,7 @@ class ALCScanView(QWidget):
                 self._table.setItem(row, col, item)
 
     def _render_plot(self, *_: object) -> None:
-        """Draw the stored scan plus shaded baseline regions and any baseline fit."""
+        """Draw the stored scan plus shaded regions, the baseline, and the fit."""
         plot = self._last_plot
         if plot is None or plot["x"].size == 0:
             return
@@ -359,19 +463,20 @@ class ALCScanView(QWidget):
         self._ax.set_axis_on()
         for lo, hi in self.baseline_regions():
             self._ax.axvspan(lo, hi, color="0.85", alpha=0.6, zorder=0)
+        # Data as markers only (no joining line).
         self._ax.errorbar(
-            plot["x"],
-            plot["value"],
-            yerr=plot["error"],
-            fmt="o-",
-            markersize=4,
-            capsize=2,
-            linewidth=1.0,
+            plot["x"], plot["value"], yerr=plot["error"], fmt="o", markersize=4, capsize=2
         )
+        has_overlay = False
         if self._baseline_curve is not None and self._baseline_curve.shape == plot["x"].shape:
             self._ax.plot(
                 plot["x"], self._baseline_curve, color="#a8332a", linewidth=1.2, label="baseline"
             )
+            has_overlay = True
+        if self._fit_curve is not None and self._fit_curve.shape == plot["x"].shape:
+            self._ax.plot(plot["x"], self._fit_curve, color="#1f4d8a", linewidth=1.4, label="fit")
+            has_overlay = True
+        if has_overlay:
             self._ax.legend(loc="best", fontsize=8)
         self._ax.set_xlabel(plot["x_label"])
         self._ax.set_ylabel(plot["y_label"])
