@@ -218,8 +218,21 @@ from the resonance), though the underlying composite-fit machinery is the same.
   `parameter_set_for_model` / `as_composite_model` helpers. Tests in
   `tests/test_field_scan_fitting.py` (recovers a known baseline + Gaussian
   resonance). `differentiate_scan` was done in the core API phase.
-- **G2 (GUI minimal):** mode toggle, integration-window reuse, batch→scan, scan
-  rendered in the trend panel, `dA/dB` toggle. ← usable repolarisation/ALC scans.
+- **G2 (GUI minimal): core DONE** (commit 7a23f9d) — an "Integral scan (ALC)"
+  toggle on the Batch tab of the F-B asymmetry fit panel; in scan mode the batch
+  action emits `scan_requested`, and `mainwindow._on_scan_requested` integrates
+  the batch members via `build_field_scan` (fit-range → `[t_min,t_max]`, each
+  run's own grouping) and records a **model-less `FitSeries`** (decided storage:
+  scan = a first-class series in `ProjectModel`) whose `results_by_run` carries
+  the per-run "Integral asymmetry". The existing pull-based trend panel renders
+  it — no new render path, no threaded worker. The time spectrum keeps the
+  fit-range/integration window shaded. Tests: `tests/test_integral_scan_gui.py`.
+  - **G2b (remaining):** the **`dA/dB` derivative** view (`differentiate_scan`
+    is midpoint-based, so it doesn't map onto per-run rows — needs its own
+    rendering, e.g. a per-run centred difference or a transient overlay).
+  - **Open UX nit:** the scan value is **fractional** (core `compute_asymmetry`
+    convention, ~0.1) while the time-domain plot shows **percent** (×100);
+    decide whether to scale the scan to percent for display consistency.
 - **G3 (GUI ALC analysis):** baseline regions + subtract + peak fit + results
   read-out. **Add a centred-Lorentzian peak component** to `parameter_models.py`
   (the built-in `Lorentzian` is centred at 0; `GaussianLCR` is the only
