@@ -314,7 +314,9 @@ class ALCScanView(QWidget):
 
     def analysis_state(self) -> dict:
         """Serialise the view options, baseline regions, and peaks to a dict."""
-        regions = [[lo, hi] for _row, lo, hi in self._raw_regions()]
+        # Persist only valid (normalised lo<hi) regions — the ones the fit uses —
+        # so a reopened scan can't show a phantom region with no effect.
+        regions = [[lo, hi] for lo, hi in self.baseline_regions()]
         peaks: list[list] = []
         for row in range(self._peaks_table.rowCount()):
             type_item = self._peaks_table.item(row, 0)
@@ -351,26 +353,44 @@ class ALCScanView(QWidget):
 
         with QSignalBlocker(self._regions_table):
             self._regions_table.setRowCount(0)
-            for region in state.get("regions", []):
-                if len(region) != 2:
-                    continue
+            for region in self._coerce_rows(state.get("regions"), 2):
                 row = self._regions_table.rowCount()
                 self._regions_table.insertRow(row)
                 for col, val in enumerate(region):
-                    self._regions_table.setItem(row, col, QTableWidgetItem(f"{float(val):.4g}"))
+                    self._regions_table.setItem(row, col, QTableWidgetItem(f"{val:.4g}"))
 
         with QSignalBlocker(self._peaks_table):
             self._peaks_table.setRowCount(0)
             for peak in state.get("peaks", []):
-                if len(peak) != 4 or str(peak[0]) not in self._PEAK_COMPONENTS:
+                if not isinstance(peak, (list, tuple)) or len(peak) != 4:
+                    continue
+                if str(peak[0]) not in self._PEAK_COMPONENTS:
+                    continue
+                vals = self._coerce_rows([peak[1:]], 3)
+                if not vals:
                     continue
                 row = self._peaks_table.rowCount()
                 self._peaks_table.insertRow(row)
                 type_item = QTableWidgetItem(str(peak[0]))
                 type_item.setFlags(type_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self._peaks_table.setItem(row, 0, type_item)
-                for col, val in zip((1, 2, 3), peak[1:], strict=True):
-                    self._peaks_table.setItem(row, col, QTableWidgetItem(f"{float(val):.4g}"))
+                for col, val in zip((1, 2, 3), vals[0], strict=True):
+                    self._peaks_table.setItem(row, col, QTableWidgetItem(f"{val:.4g}"))
+
+    @staticmethod
+    def _coerce_rows(rows: object, width: int) -> list[list[float]]:
+        """Coerce *rows* (untrusted on-disk data) to ``width``-float lists, skipping bad ones."""
+        out: list[list[float]] = []
+        if not isinstance(rows, (list, tuple)):
+            return out
+        for row in rows:
+            if not isinstance(row, (list, tuple)) or len(row) != width:
+                continue
+            try:
+                out.append([float(v) for v in row])
+            except (TypeError, ValueError):
+                continue
+        return out
 
     def _invalidate_baseline(self, *_: object) -> None:
         """A region change makes the baseline (and the peak fit on it) stale.

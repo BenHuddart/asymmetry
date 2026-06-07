@@ -504,6 +504,7 @@ def test_alc_persistence_round_trip(mainwindow: MainWindow, monkeypatch):
     assert saved["extra"]["regions"] == [[50.0, 175.0], [225.0, 350.0]]
     assert saved["extra"]["baseline_fitted"] is True
     assert saved["extra"]["peaks_fitted"] is True
+    assert saved["extra"]["mode_active"] is True  # ALC mode was on at save
 
     # Load into a fresh window: scan points + analysis reconstructed, fits re-run.
     settings = QSettings()
@@ -512,6 +513,9 @@ def test_alc_persistence_round_trip(mainwindow: MainWindow, monkeypatch):
     for ds in datasets:
         mw2._data_browser.add_dataset(ds)
     mw2._project_model.add_batch(FitSeries.from_dict(saved))
+    # Make ALC mode resumable (FB active) so the restored scan becomes visible.
+    mw2._alc_mode_action.setEnabled(True)
+    monkeypatch.setattr(mw2, "_active_representation_type", lambda: _FB)
     mw2._restore_alc_scan()
 
     assert {p["run"] for p in mw2._alc_scan_points} == {11, 12, 13, 14, 15}
@@ -519,6 +523,50 @@ def test_alc_persistence_round_trip(mainwindow: MainWindow, monkeypatch):
     assert len(mw2._alc_scan_view.peak_specs()) == 1
     assert mw2._alc_corrected_scan is not None  # baseline re-fit on load
     assert mw2._alc_scan_view._fit_curve is not None  # peak overlay re-fit
+    assert mw2._alc_mode is True  # ALC mode resumed
+
+
+def test_alc_analysis_state_is_json_serialisable(qapp: QApplication):
+    import json
+
+    view = ALCScanView()
+    _seed_view_scan(view)
+    _set_regions(view, [(10.0, 50.0)])
+    view._add_peak("Gaussian")
+    json.dumps(view.analysis_state())  # must not raise (e.g. no numpy scalars)
+
+
+def test_alc_analysis_state_persists_valid_regions_only(qapp: QApplication):
+    # A degenerate (inverted/zero-width) region must not be persisted as a
+    # phantom region the fit would silently ignore.
+    view = ALCScanView()
+    _seed_view_scan(view)
+    _set_regions(view, [(10.0, 50.0), (90.0, 90.0)])  # second is zero-width
+    assert view.analysis_state()["regions"] == [[10.0, 50.0]]
+
+
+def test_alc_restore_tolerates_malformed_extra(mainwindow: MainWindow):
+    # A computed series with a garbage `extra` must not raise out of restore.
+    mw = mainwindow
+    mw._data_browser.add_dataset(_ds(11, 110.0, 90.0, 100.0))
+    mw._data_browser.add_dataset(_ds(12, 120.0, 80.0, 200.0))
+    series = FitSeries(
+        "scan-9",
+        _FB,
+        results_by_run={
+            11: {"parameters": {mw._SCAN_QUANTITY: 10.0}},
+            12: {"parameters": {mw._SCAN_QUANTITY: 20.0}},
+        },
+        extra={
+            "kind": "alc_scan",
+            "regions": [123, None, [1.0, 2.0]],  # garbage + one good
+            "peaks": [["Gaussian", "x", 1, 1], ["NotAShape", 1, 1, 1]],  # both bad
+        },
+    )
+    mw._project_model.add_batch(series)
+    mw._restore_alc_scan()  # must not raise
+    assert mw._alc_scan_view.baseline_regions() == [(1.0, 2.0)]  # only the good row
+    assert mw._alc_scan_view.peak_specs() == []  # both peaks skipped
 
 
 def test_alc_data_table_dialog(mainwindow: MainWindow, monkeypatch):

@@ -5278,18 +5278,10 @@ class MainWindow(QMainWindow):
         runs_by_number = {
             int(d.run.run_number): d.run for d in datasets if getattr(d, "run", None) is not None
         }
-        self._alc_scan_points = []
-        for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error):
-            meta = getattr(runs_by_number.get(int(run_number)), "metadata", {}) or {}
-            self._alc_scan_points.append(
-                {
-                    "run": int(run_number),
-                    "value": float(value),  # fractional
-                    "error": float(error),
-                    "field": _safe_float(meta.get("field")),
-                    "temperature": _safe_float(meta.get("temperature")),
-                }
-            )
+        self._alc_scan_points = [
+            self._alc_scan_point(run_number, value, error, runs_by_number.get(int(run_number)))
+            for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error)
+        ]
 
         # Record the scan as a model-less FitSeries (percent units) for
         # persistence / series management.
@@ -6562,6 +6554,7 @@ class MainWindow(QMainWindow):
             return
         extra = self._alc_scan_view.analysis_state()
         extra["kind"] = "alc_scan"
+        extra["mode_active"] = self._alc_mode
         batch.extra = extra
 
     def _restore_alc_scan(self) -> None:
@@ -6590,10 +6583,26 @@ class MainWindow(QMainWindow):
         try:
             if series.extra.get("baseline_fitted"):
                 self._on_fit_baseline()
-                if series.extra.get("peaks_fitted") and self._alc_corrected_scan is not None:
+                if self._alc_corrected_scan is None:
+                    self._log_panel.log(
+                        "ALC: the saved baseline could not be re-fitted on load "
+                        "(some runs may be missing the scan's x-axis log)."
+                    )
+                elif series.extra.get("peaks_fitted"):
                     self._on_fit_peaks()
         finally:
             self._alc_loading = False
+        # Resume ALC mode if it was active at save time and the restored view is
+        # F-B asymmetry. Read the active representation directly — restore_state
+        # sets the view without firing the signal that enables the toggle, so the
+        # action's enabled flag is still stale here. The toggle only swaps docks
+        # (no re-render), so the restored scan + overlays survive.
+        if (
+            series.extra.get("mode_active")
+            and self._active_representation_type() == RepresentationType.TIME_FB_ASYMMETRY
+        ):
+            self._alc_mode_action.setEnabled(True)
+            self._alc_mode_action.setChecked(True)
 
     def _alc_points_from_series(self, series) -> list[dict]:
         """Reconstruct per-run scan points from the series + loaded run metadata."""
@@ -6603,20 +6612,30 @@ class MainWindow(QMainWindow):
             if pct is None:
                 continue
             err_pct = summary.get("uncertainties", {}).get(self._SCAN_QUANTITY, 0.0)
-            meta = {}
+            try:
+                value, error = float(pct) / 100.0, float(err_pct) / 100.0
+            except (TypeError, ValueError):
+                continue
+            run_obj = None
             if hasattr(self._data_browser, "get_dataset"):
                 dataset = self._data_browser.get_dataset(int(run))
-                meta = getattr(dataset, "metadata", {}) or {}
-            points.append(
-                {
-                    "run": int(run),
-                    "value": float(pct) / 100.0,  # series stores percent
-                    "error": float(err_pct) / 100.0,
-                    "field": _safe_float(meta.get("field")),
-                    "temperature": _safe_float(meta.get("temperature")),
-                }
-            )
+                # Mirror the build path, which reads the Run's metadata (the
+                # field/temperature log may live there, not on the dataset).
+                run_obj = getattr(dataset, "run", None) or dataset
+            points.append(self._alc_scan_point(run, value, error, run_obj))
         return points
+
+    @staticmethod
+    def _alc_scan_point(run_number, value: float, error: float, run_obj) -> dict:
+        """Build one ALC scan point (fractional value + the run's field/temperature)."""
+        meta = getattr(run_obj, "metadata", {}) or {}
+        return {
+            "run": int(run_number),
+            "value": float(value),
+            "error": float(error),
+            "field": _safe_float(meta.get("field")),
+            "temperature": _safe_float(meta.get("temperature")),
+        }
 
     def restore_project_state(self, state: dict, project_path: str) -> None:
         """Restore the full application state from a project file state dict.
@@ -6969,7 +6988,11 @@ class MainWindow(QMainWindow):
             self._show_panel("fit_parameters")
 
         # Rebuild the ALC scan view (scan points + analysis) from its series.
-        self._restore_alc_scan()
+        # Never let a malformed/foreign ALC `extra` abort the whole project open.
+        try:
+            self._restore_alc_scan()
+        except Exception as exc:  # noqa: BLE001 — restore is best-effort
+            self._log_panel.log(f"Could not restore ALC scan: {exc}")
 
         n_loaded = len(loaded_run_numbers)
         self._log_panel.log(f"Project opened: {n_loaded} run(s) loaded from {project_path}")

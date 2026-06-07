@@ -361,6 +361,31 @@ class TestSchemaMigrationV7toV8:
         result = migrate_to_current(state)
         assert result["batches"][0]["extra"] == {"kind": "x"}
 
+    def test_current_version_is_idempotent(self):
+        # A file already at the current version passes through untouched (no
+        # migration block re-fires and mutates already-current state).
+        state = {
+            "schema_version": CURRENT_SCHEMA_VERSION,
+            "datasets": [],
+            "batches": [
+                {"batch_id": "b1", "rep_type": "time_fb_asymmetry", "extra": {"kind": "x"}}
+            ],
+        }
+        result = migrate_to_current(state)
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
+        assert result["batches"][0]["extra"] == {"kind": "x"}
+
+    def test_handles_missing_or_malformed_batches(self):
+        # batches absent, None, or carrying a non-dict element must not crash.
+        assert migrate_to_current({"schema_version": 7, "datasets": []})["schema_version"] == 8
+        none_batches = {"schema_version": 7, "datasets": [], "batches": None}
+        assert migrate_to_current(none_batches)["schema_version"] == 8
+        out = migrate_to_current(
+            {"schema_version": 7, "datasets": [], "batches": ["stray", {"batch_id": "b"}]}
+        )
+        assert out["batches"][0] == "stray"
+        assert out["batches"][1]["extra"] == {}
+
     def test_trend_state_unknown_keys_preserved_under_legacy(self):
         state = {
             "schema_version": 6,

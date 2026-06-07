@@ -11,7 +11,7 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 5)
+Current schema (version 8)
 --------------------------
 ::
 
