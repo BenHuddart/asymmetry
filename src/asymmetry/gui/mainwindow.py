@@ -102,6 +102,7 @@ from asymmetry.core.utils.constants import (
 )
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.gle_settings import GleSetupDialog
+from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
 from asymmetry.gui.panels.fit_panel import FitPanel
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
@@ -314,6 +315,7 @@ class MainWindow(QMainWindow):
         self._project_model = ProjectModel()
         self._next_batch_index = 1
         self._next_scan_index = 1
+        self._alc_mode = False
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
         self._frequency_spectra_by_rep: dict[RepresentationType, dict[int, list[MuonDataset]]] = {
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
@@ -510,6 +512,16 @@ class MainWindow(QMainWindow):
             "Global Fit", self._on_global_parameter_fit
         )
         self._global_parameter_fit_toolbar_action.setEnabled(False)
+        # ALC mode: integral-asymmetry field scan. Enabled only for the F-B
+        # asymmetry representation (see _on_plot_workspace_view_changed).
+        self._alc_mode_action = self._main_toolbar.addAction("ALC mode")
+        self._alc_mode_action.setCheckable(True)
+        self._alc_mode_action.setEnabled(False)
+        self._alc_mode_action.setToolTip(
+            "Integral-asymmetry field scan (ALC / repolarisation / QLCR). "
+            "Available for the Forward-Backward asymmetry representation."
+        )
+        self._alc_mode_action.toggled.connect(self._on_alc_mode_toggled)
         self._main_toolbar.addSeparator()
 
         # Domain → representation segmented control, grouped 2 + 2 under
@@ -919,9 +931,13 @@ class MainWindow(QMainWindow):
                 else None,
             )
         )
+        # Bespoke ALC-mode build panel, swapped into the Fit dock when ALC mode
+        # is on (see _sync_fit_dock_mode).
+        self._alc_fit_panel = ALCFitPanel()
         self._fit_stack = QStackedWidget(self)
         self._fit_stack.addWidget(self._fit_panel)
         self._fit_stack.addWidget(self._multi_group_fit_window)
+        self._fit_stack.addWidget(self._alc_fit_panel)
         self._dock_fit = QDockWidget("Fit", self)
         self._dock_fit.setWidget(self._fit_stack)
         self._dock_fit.setMinimumWidth(320)
@@ -939,10 +955,15 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fourier)
         self.tabifyDockWidget(self._dock_fit, self._dock_fourier)
 
-        # Right dock — fitted parameter trends (tabbed with fit/fourier)
+        # Right dock — fitted parameter trends (tabbed with fit/fourier). In ALC
+        # mode the dock swaps to the bespoke scan view via _parameters_stack.
         self._fit_parameters_panel = FitParametersPanel()
+        self._alc_scan_view = ALCScanView()
+        self._parameters_stack = QStackedWidget(self)
+        self._parameters_stack.addWidget(self._fit_parameters_panel)
+        self._parameters_stack.addWidget(self._alc_scan_view)
         self._dock_fit_parameters = QDockWidget("Parameters", self)
-        self._dock_fit_parameters.setWidget(self._fit_parameters_panel)
+        self._dock_fit_parameters.setWidget(self._parameters_stack)
         self._dock_fit_parameters.setMinimumWidth(340)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit_parameters)
         self.tabifyDockWidget(self._dock_fit, self._dock_fit_parameters)
@@ -1020,8 +1041,7 @@ class MainWindow(QMainWindow):
         if hasattr(self._fit_panel, "global_fit_started"):
             self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
-        if hasattr(self._fit_panel, "scan_requested"):
-            self._fit_panel.scan_requested.connect(self._on_scan_requested)
+        self._alc_fit_panel.build_requested.connect(self._on_scan_requested)
         if hasattr(self._fit_panel, "grouped_fit_completed"):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
         if hasattr(self._fit_panel, "preview_requested"):
@@ -3280,9 +3300,18 @@ class MainWindow(QMainWindow):
         return bool(self._grouped_time_domain_display_datasets())
 
     def _sync_fit_dock_mode(self) -> None:
-        """Swap the fit dock between regular and grouped content for the current plot view."""
+        """Swap the fit dock between regular, grouped and ALC content."""
         if self._fit_stack is None:
             return
+
+        # ALC mode takes precedence: the Fit dock shows the bespoke scan-build
+        # panel and the Parameters dock shows the scan view.
+        if self._alc_mode:
+            self._fit_stack.setCurrentWidget(self._alc_fit_panel)
+            self._parameters_stack.setCurrentWidget(self._alc_scan_view)
+            self._dock_fit.setWindowTitle("ALC scan")
+            return
+        self._parameters_stack.setCurrentWidget(self._fit_parameters_panel)
 
         show_grouped = self._should_launch_multi_group_fit_window()
         current_widget = self._multi_group_fit_window if show_grouped else self._fit_panel
@@ -3296,6 +3325,24 @@ class MainWindow(QMainWindow):
             self._dock_fit.setWindowTitle(self._multi_group_fit_window.dock_title())
         else:
             self._dock_fit.setWindowTitle("Fit")  # inspector tab label — title case per spec
+
+    def _on_alc_mode_toggled(self, checked: bool) -> None:
+        """Enter/leave ALC mode: swap the Fit and Parameters docks accordingly."""
+        if checked and self._active_representation_type() != RepresentationType.TIME_FB_ASYMMETRY:
+            # Guard: ALC mode is only valid for the F-B asymmetry representation.
+            self._alc_mode_action.setChecked(False)
+            return
+        self._alc_mode = bool(checked)
+        self._sync_fit_dock_mode()
+        if self._alc_mode:
+            # Echo the current integration window and surface the docks.
+            t_min, t_max = (None, None)
+            if hasattr(self._plot_panel, "get_fit_range"):
+                t_min, t_max = self._plot_panel.get_fit_range()
+            self._alc_fit_panel.set_integration_window(t_min, t_max)
+            for dock in (self._dock_fit, self._dock_fit_parameters):
+                dock.show()
+                dock.raise_()
 
     # Maps each toolbar domain token to (ordered visible dock keys, default raised key).
     # Fourier is hidden in the groups domain; mgfit is surfaced by swapping _fit_stack.
@@ -4753,6 +4800,12 @@ class MainWindow(QMainWindow):
         self._sync_domain_buttons(view)
         self._apply_inspector_for_domain(view)
         self._update_status_selection()
+        # ALC mode is only valid for the F-B asymmetry view; enable the toggle
+        # there and auto-exit ALC mode when the user leaves it.
+        is_fb = view == "fb_asymmetry"
+        self._alc_mode_action.setEnabled(is_fb)
+        if not is_fb and self._alc_mode_action.isChecked():
+            self._alc_mode_action.setChecked(False)  # fires _on_alc_mode_toggled(False)
         # Refresh the trend panel for the newly-active representation.
         self._refresh_trend_panel()
 
@@ -4760,6 +4813,8 @@ class MainWindow(QMainWindow):
         """Refresh fit inputs when the selected fit x-range changes."""
         if hasattr(self._fit_panel, "set_fit_range_display"):
             self._fit_panel.set_fit_range_display(x_min, x_max)
+        # Echo the integration window in the ALC fit panel.
+        self._alc_fit_panel.set_integration_window(x_min, x_max)
         if self._multi_group_fit_window is not None and hasattr(
             self._multi_group_fit_window, "set_fit_range_display"
         ):
@@ -5113,13 +5168,16 @@ class MainWindow(QMainWindow):
         # Fresh batch members all share the canonical model (no divergence yet).
         self._project_model.refresh_divergence()
 
-    def _on_scan_requested(self) -> None:
-        """Build an integral-asymmetry field scan (ALC mode) from the batch members.
+    #: Display quantity name for the integral-asymmetry scan (percent units).
+    _SCAN_QUANTITY = "Integral asymmetry (%)"
 
-        Integrates each selected run's asymmetry over the current fit-range
-        window and records the result as a model-less ("computed") ``FitSeries``
-        so the trend panel renders integral asymmetry vs the run variable using
-        the existing series-trending machinery.
+    def _on_scan_requested(self) -> None:
+        """Build an integral-asymmetry field scan (ALC mode) from the selected runs.
+
+        Integrates each run's asymmetry over the current fit-range window (one
+        value per run, in percent), records it as a model-less ("computed")
+        ``FitSeries`` for persistence/series management, and renders it in the
+        bespoke ALC scan view.
         """
         rep_type = self._active_representation_type()
         if rep_type != RepresentationType.TIME_FB_ASYMMETRY:
@@ -5145,12 +5203,11 @@ class MainWindow(QMainWindow):
             t_min, t_max = self._plot_panel.get_fit_range()
 
         try:
-            # order_key="run" so every integrable run is included (a run is never
-            # dropped for a missing field log); the trend panel chooses the
-            # displayed x-axis (field/temperature/run) via its own selector, and
-            # the FitSeries below sets "field" as the default for ALC.
+            # order_key="field": an ALC/repolarisation scan is plotted vs field,
+            # so field is both the ordering and exclusion key (a run with no
+            # field log is not a valid scan point and is dropped + logged).
             scan = build_field_scan(
-                runs, t_min=t_min, t_max=t_max, method="integral", order_key="run"
+                runs, t_min=t_min, t_max=t_max, method="integral", order_key="field"
             )
         except (ValueError, TypeError) as exc:
             QMessageBox.warning(self, "Integral scan", f"Could not build the scan: {exc}")
@@ -5165,7 +5222,11 @@ class MainWindow(QMainWindow):
             dropped = ", ".join(f"{run} ({reason})" for run, reason in scan.excluded)
             self._log_panel.log(f"Integral scan: excluded {len(scan.excluded)} run(s): {dropped}")
 
-        quantity = scan.y_label  # keep the quantity name in sync with the core scan
+        # The core integral is fractional; display/store in percent to match the
+        # time-domain asymmetry plots.
+        value_pct = scan.value * 100.0
+        error_pct = scan.error * 100.0
+        quantity = self._SCAN_QUANTITY
         results_by_run = {
             int(run_number): {
                 "success": True,
@@ -5174,7 +5235,7 @@ class MainWindow(QMainWindow):
                 "chi_squared": 0.0,
                 "reduced_chi_squared": 0.0,
             }
-            for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error)
+            for run_number, value, error in zip(scan.run_numbers, value_pct, error_pct)
         }
         series = FitSeries(
             f"scan-{self._next_scan_index}",
@@ -5192,7 +5253,17 @@ class MainWindow(QMainWindow):
         }
         series.sort_members(runs_by_number)
         self._project_model.add_batch(series)
-        self._refresh_trend_panel()
+
+        # Render in the bespoke ALC view (x = field, y = integral asymmetry %).
+        self._alc_scan_view.show_scan(
+            scan.x,
+            value_pct,
+            error_pct,
+            list(scan.run_numbers),
+            x_label=scan.x_label,
+            y_label=quantity,
+        )
+        self._log_panel.log(f"Built integral scan '{series.label}' ({scan.n_points} points).")
 
     def _active_grouped_state(self) -> dict:
         """Return the grouped-fit classification from the active grouped surface.
