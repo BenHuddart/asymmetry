@@ -95,6 +95,7 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "Lambda": ParamInfo("Lambda", "Lambda", "λ", r"$\lambda$", r"\lambda", "μs⁻¹", default_min=0.0),
     "sigma": ParamInfo("sigma", "sigma", "σ", r"$\sigma$", r"\sigma", "μs⁻¹", default_min=0.0),
     "Delta": ParamInfo("Delta", "Delta", "Δ", r"$\Delta$", r"\Delta", "μs⁻¹", default_min=0.0),
+    "a_L": ParamInfo("a_L", "a_L", "a", r"$a$", r"{\it a}", "μs⁻¹", default_min=0.0),
     "beta": ParamInfo("beta", "beta", "β", r"$\beta$", r"\beta", default_min=0.0),
     "alpha": ParamInfo("alpha", "alpha", "α", r"$\alpha$", r"\alpha", default_min=0.0),
     "y0": ParamInfo(
@@ -303,6 +304,7 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "Lambda": "Exponential relaxation rate constant.",
     "sigma": "Gaussian relaxation rate related to field-distribution width.",
     "Delta": "Static Gaussian field-distribution width in Kubo-Toyabe models.",
+    "a_L": "Static Lorentzian field-distribution half-width (rate) in Lorentzian Kubo-Toyabe models.",
     "beta": "Stretching exponent controlling deviation from simple exponential relaxation.",
     "phase": "Phase offset of oscillatory precession.",
     "frequency": "Muon spin precession frequency.",

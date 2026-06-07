@@ -17,8 +17,12 @@ from numpy.typing import NDArray
 
 from asymmetry.core.fitting.models import (
     ModelDefinition,
+    abragam,
+    dynamic_gaussian_kt,
+    dynamic_lorentzian_kt,
     exponential_relaxation,
     gaussian_relaxation,
+    keren,
     longitudinal_field_kubo_toyabe,
     static_gkt_zf,
     stretched_exponential,
@@ -94,6 +98,32 @@ def _lf_kt_component(t: NDArray, A: float, Delta: float, B_L: float) -> NDArray[
     Wrapper adapting longitudinal_field_kubo_toyabe for use as a composite component.
     """
     return longitudinal_field_kubo_toyabe(t, A0=A, Delta=Delta, B_L=B_L, baseline=0.0)
+
+
+def _dynamic_gkt_component(
+    t: NDArray, A: float, Delta: float, nu: float, B_L: float
+) -> NDArray[np.float64]:
+    """Dynamic (strong-collision) Gaussian Kubo-Toyabe composite component."""
+    return dynamic_gaussian_kt(t, A0=A, Delta=Delta, nu=nu, B_L=B_L, baseline=0.0)
+
+
+def _dynamic_lkt_component(
+    t: NDArray, A: float, a_L: float, nu: float, B_L: float
+) -> NDArray[np.float64]:
+    """Dynamic (strong-collision) Lorentzian Kubo-Toyabe composite component."""
+    return dynamic_lorentzian_kt(t, A0=A, a_L=a_L, nu=nu, B_L=B_L, baseline=0.0)
+
+
+def _keren_component(
+    t: NDArray, A: float, Delta: float, nu: float, B_L: float
+) -> NDArray[np.float64]:
+    """Keren dynamic Gaussian LF relaxation composite component."""
+    return keren(t, A0=A, Delta=Delta, nu=nu, B_L=B_L, baseline=0.0)
+
+
+def _abragam_component(t: NDArray, A: float, Delta: float, nu: float) -> NDArray[np.float64]:
+    """Abragam relaxation composite component."""
+    return abragam(t, A0=A, Delta=Delta, nu=nu, baseline=0.0)
 
 
 def _constant_component(t: NDArray, A_bg: float) -> NDArray[np.float64]:
@@ -215,7 +245,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "beta": get_param_info("beta"),
         },
         formula_template="{A}*exp(-(abs({Lambda})*t)^({beta}))",
-        latex_equation=r"A(t) = A \exp\left(-(\lvert \Lambda \rvert t)^\beta\right)",
+        latex_equation=r"A(t) = A \exp\left(-(|\Lambda| t)^\beta\right)",
     ),
     "StaticGKT_ZF": ComponentDefinition(
         name="StaticGKT_ZF",
@@ -245,6 +275,90 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"A(t) = A\left[1 - \frac{2\Delta^2}{\omega_0^2}\left(1 - e^{-\Delta^2 t^2/2}\cos(\omega_0 t)\right) "
             r"+ \frac{2\Delta^4}{\omega_0^3}\int_0^t e^{-\Delta^2\tau^2/2}\sin(\omega_0\tau)\,d\tau\right] "
             r"\quad\text{where}\quad \omega_0 = \gamma_\mu B_L"
+        ),
+    ),
+    "DynamicGaussianKT": ComponentDefinition(
+        name="DynamicGaussianKT",
+        description=(
+            "Dynamic Gaussian Kubo-Toyabe (strong-collision; Hayano et al., "
+            "Phys. Rev. B 20, 850 (1979))"
+        ),
+        function=_dynamic_gkt_component,
+        param_names=["A", "Delta", "nu", "B_L"],
+        param_defaults={"A": 25.0, "Delta": 0.5, "nu": 1.0, "B_L": 0.0},
+        param_info={
+            "A": get_param_info("A"),
+            "Delta": get_param_info("Delta"),
+            "nu": get_param_info("nu"),
+            "B_L": get_param_info("B_L"),
+        },
+        formula_template="{A}*G_dyn(t; Delta={Delta}, nu={nu}, B_L={B_L})",
+        latex_equation=(
+            r"A(t)=A\,G^{\mathrm{dyn}}_{\mathrm{GKT}}(t;\Delta,\nu,B_L),\quad "
+            r"G_d(t)=g(t)+\nu\!\int_0^t\! g(t-\tau)\,G_d(\tau)\,d\tau,\ "
+            r"g(t)=e^{-\nu t}G^{\mathrm{stat}}_{\mathrm{GKT}}(t)"
+        ),
+    ),
+    "DynamicLorentzianKT": ComponentDefinition(
+        name="DynamicLorentzianKT",
+        description=(
+            "Dynamic Lorentzian Kubo-Toyabe (strong-collision; Uemura et al., "
+            "Phys. Rev. B 31, 546 (1985))"
+        ),
+        function=_dynamic_lkt_component,
+        param_names=["A", "a_L", "nu", "B_L"],
+        param_defaults={"A": 25.0, "a_L": 0.5, "nu": 1.0, "B_L": 0.0},
+        param_info={
+            "A": get_param_info("A"),
+            "a_L": get_param_info("a_L"),
+            "nu": get_param_info("nu"),
+            "B_L": get_param_info("B_L"),
+        },
+        formula_template="{A}*G_dyn_L(t; a_L={a_L}, nu={nu}, B_L={B_L})",
+        latex_equation=(
+            r"A(t)=A\,G^{\mathrm{dyn}}_{\mathrm{LKT}}(t;a_L,\nu,B_L),\quad "
+            r"G^{\mathrm{stat}}_{\mathrm{LKT}}(t)=\frac{1}{3}+\frac{2}{3}(1-a_L t)e^{-a_L t}"
+        ),
+    ),
+    "Keren": ComponentDefinition(
+        name="Keren",
+        description=(
+            "Keren dynamic Gaussian relaxation in a longitudinal field "
+            "(Keren, Phys. Rev. B 50, 10039 (1994))"
+        ),
+        function=_keren_component,
+        param_names=["A", "Delta", "nu", "B_L"],
+        param_defaults={"A": 25.0, "Delta": 0.5, "nu": 1.0, "B_L": 0.0},
+        param_info={
+            "A": get_param_info("A"),
+            "Delta": get_param_info("Delta"),
+            "nu": get_param_info("nu"),
+            "B_L": get_param_info("B_L"),
+        },
+        formula_template="{A}*exp(-Gamma(t; Delta={Delta}, nu={nu}, B_L={B_L}))",
+        latex_equation=(
+            r"A(t)=A\exp[-\Gamma(t)],\ \Gamma(t)=\frac{2\Delta^2}{(\omega_0^2+\nu^2)^2}"
+            r"\left[(\omega_0^2+\nu^2)\nu t+(\omega_0^2-\nu^2)(1-e^{-\nu t}\cos\omega_0 t)"
+            r"-2\nu\omega_0 e^{-\nu t}\sin\omega_0 t\right],\ \omega_0=\gamma_\mu B_L"
+        ),
+    ),
+    "Abragam": ComponentDefinition(
+        name="Abragam",
+        description=(
+            "Abragam relaxation, Gaussian-to-exponential crossover "
+            "(Abragam, Principles of Nuclear Magnetism, 1961)"
+        ),
+        function=_abragam_component,
+        param_names=["A", "Delta", "nu"],
+        param_defaults={"A": 25.0, "Delta": 0.5, "nu": 1.0},
+        param_info={
+            "A": get_param_info("A"),
+            "Delta": get_param_info("Delta"),
+            "nu": get_param_info("nu"),
+        },
+        formula_template="{A}*exp(-({Delta}^2/{nu}^2)*(exp(-{nu}*t)-1+{nu}*t))",
+        latex_equation=(
+            r"A(t)=A\exp\!\left[-\frac{\Delta^2}{\nu^2}\left(e^{-\nu t}-1+\nu t\right)\right]"
         ),
     ),
     "MuF": ComponentDefinition(

@@ -349,6 +349,30 @@
         "scoring": "docs/porting/candidates/lem-depth-profiling/scoring.md"
       },
       "updated": "2026-05-23"
+    },
+    {
+      "slug": "dynamic-relaxation",
+      "feature_name": "Dynamic relaxation functions (dynamic Kubo-Toyabe Gaussian/Lorentzian, Keren, Abragam)",
+      "status": "study",
+      "path": "docs/porting/dynamic-relaxation",
+      "references": [
+        "Hayano et al. PRB 20 850 (1979)",
+        "Uemura et al. PRB 31 546 (1985)",
+        "Keren PRB 50 10039 (1994)",
+        "Abragam (1961)",
+        "Mantid",
+        "musrfit",
+        "WiMDA"
+      ],
+      "docs": {
+        "readme": "docs/porting/dynamic-relaxation/README.md",
+        "comparison": "docs/porting/dynamic-relaxation/comparison.md",
+        "implementation_options": "docs/porting/dynamic-relaxation/implementation-options.md",
+        "test_data": "docs/porting/dynamic-relaxation/test-data.md",
+        "verification_plan": "docs/porting/dynamic-relaxation/verification-plan.md"
+      },
+      "supersedes_candidate": "dynamic-kubo-toyabe",
+      "updated": "2026-06-07"
     }
   ]
 }

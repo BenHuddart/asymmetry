@@ -217,24 +217,29 @@ Known Limitations
 -----------------
 
 Numerical Integration
-   The LF-KT formula includes a numerical integral term for the oscillatory part:
-   
+   The LF-KT formula includes the oscillatory-decaying integral term
+
    .. math::
-   
+
       I(t) = \int_0^t e^{-\Delta^2\tau^2/2}\sin(\omega_0\tau)\,d\tau
 
-   This integral can be challenging to compute numerically when:
-   
-   - Very small longitudinal fields (:math:`|\omega_0| < 10^{-8}`): Consider fixing B_L = 0 and using pure zero-field KT
-   - Very large field distributions (Δ > 10): Integration may require tuning
-   - Noisy data with few time points: Parameter recovery (especially Δ) may be degraded
-   
-   The implementation uses ``scipy.integrate.quad`` with adaptive quadrature. For edge cases,
-   consider:
-   
-   1. **Fixing B_L** if it is poorly constrained
-   2. **Starting near expected values** to improve convergence
-   3. **Using a simpler model** (pure zero-field KT or Exponential) as a first pass
+   which is evaluated for **all requested times at once** by cumulative
+   trapezoidal integration on a shared fine grid whose step is sized from
+   :math:`\omega_0` and :math:`\Delta`. This is fast (sub-millisecond for a
+   typical run) and smooth — accurate to ``<1e-6`` against adaptive quadrature —
+   so it also makes the dynamic Kubo–Toyabe (which dynamicises this static
+   function) responsive.
+
+   Practical notes:
+
+   - **Negligible field** (:math:`\gamma_\mu B_L \ll \Delta`): the function
+     returns the exact zero-field Kubo–Toyabe, avoiding the ill-conditioned
+     :math:`2\Delta^2/\omega_0^2` prefactor as :math:`\omega_0 \to 0`.
+   - **Δ poorly constrained from a single run:** the amplitude and Δ are
+     partially degenerate; pin Δ with a **decoupling field sweep** (or a global
+     fit sharing Δ across runs, :doc:`global_fit_wizard`) rather than one run.
+   - **Fix B_L** from the known applied field when it is not the quantity of
+     interest.
 
 Physics References
 -------------------

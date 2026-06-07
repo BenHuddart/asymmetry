@@ -116,13 +116,13 @@ class TestLFKuboToyabe:
         # because the longitudinal field decouples the muon from the field distribution
         assert np.mean(result_strong[50:]) > np.mean(result_weak[50:])
 
-    @pytest.mark.xfail(
-        reason="scipy.integrate.quad struggles with oscillatory decaying integrals; "
-        "small B_L convergence difficult at rtol=0.05",
-        strict=False,
-    )
     def test_lf_kt_numerically_stable_small_field(self) -> None:
-        """Verify numerical stability for small B_L values."""
+        """Verify numerical stability for small B_L values.
+
+        With the vectorised integral and the ``omega0 << Delta`` crossover to the
+        exact zero-field limit, a negligible applied field reproduces the ZF KT
+        instead of amplifying the ``2*Delta^2/omega0^2`` floating-point cancellation.
+        """
         t = np.linspace(0, 20, 200)
         delta = 0.3
 
@@ -145,11 +145,13 @@ class TestLFKuboToyabe:
         assert np.all(result >= -1.0)  # Physical bounds
 
     @pytest.mark.xfail(
-        reason="Integration noise causes scattered non-monotonic behavior in oscillatory integrals",
+        reason="The zero-field Kubo-Toyabe function is intrinsically non-monotonic: it dips "
+        "to ~0.036 at t=sqrt(3)/Delta and recovers to the 1/3 tail, so 'monotonic decay' "
+        "is not the expected physical behaviour (kept as a documented expectation).",
         strict=False,
     )
     def test_lf_kt_monotonic_decay_no_field(self) -> None:
-        """Verify monotonic decay in zero-field limit."""
+        """Document that the zero-field limit is *not* monotonic (1/3 recovery)."""
         t = np.linspace(0, 10, 100)
         result = longitudinal_field_kubo_toyabe(t, A0=1.0, Delta=0.5, B_L=1e-6, baseline=0.0)
 
@@ -160,8 +162,9 @@ class TestLFKuboToyabe:
 
     @pytest.mark.slow
     @pytest.mark.xfail(
-        reason="Difficulty recovering Delta parameter in fitting due to integration accuracy; "
-        "synthetic noisy data amplifies integration errors",
+        reason="Delta recovery from a single noisy synthetic LF run is weakly constrained "
+        "(amplitude/Delta degeneracy); a decoupling field sweep or global fit is needed "
+        "to pin Delta, independent of the now-accurate integral.",
         strict=False,
     )
     def test_lf_kt_with_fitting_engine(self) -> None:
