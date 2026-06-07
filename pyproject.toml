@@ -108,6 +108,7 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "tests/test_fit_panel_tabs.py" = ["N802", "E402"]  # Qt-style test doubles; importorskip guard
 "tests/test_fit_parameters_panel.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/test_field_scan_fitting.py" = ["N803"]  # Physics parameter names (B0, Bwid)
+"tests/test_integral_scan_gui.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/test_fitting_engine.py" = ["N803"]  # Physics-style model parameter names
 "tests/test_grouped_time_domain_fitting.py" = ["N803"]  # Physics parameter names (Lambda)
 # E402: pytest.importorskip / pytestmark before optional-dependency imports is intentional in all GUI and IO test files

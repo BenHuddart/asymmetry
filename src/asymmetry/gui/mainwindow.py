@@ -85,6 +85,7 @@ from asymmetry.core.transform import (
     apply_deadtime_correction,
     apply_grouped_background_correction,
     apply_grouping_aligned,
+    build_field_scan,
     common_t0_for_groups,
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
@@ -312,6 +313,7 @@ class MainWindow(QMainWindow):
         # fallbacks.
         self._project_model = ProjectModel()
         self._next_batch_index = 1
+        self._next_scan_index = 1
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
         self._frequency_spectra_by_rep: dict[RepresentationType, dict[int, list[MuonDataset]]] = {
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
@@ -1018,6 +1020,8 @@ class MainWindow(QMainWindow):
         if hasattr(self._fit_panel, "global_fit_started"):
             self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
+        if hasattr(self._fit_panel, "scan_requested"):
+            self._fit_panel.scan_requested.connect(self._on_scan_requested)
         if hasattr(self._fit_panel, "grouped_fit_completed"):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
         if hasattr(self._fit_panel, "preview_requested"):
@@ -5101,6 +5105,76 @@ class MainWindow(QMainWindow):
             )
         # Fresh batch members all share the canonical model (no divergence yet).
         self._project_model.refresh_divergence()
+
+    def _on_scan_requested(self) -> None:
+        """Build an integral-asymmetry field scan (ALC mode) from the batch members.
+
+        Integrates each selected run's asymmetry over the current fit-range
+        window and records the result as a model-less ("computed") ``FitSeries``
+        so the trend panel renders integral asymmetry vs the run variable using
+        the existing series-trending machinery.
+        """
+        rep_type = self._active_representation_type()
+        if rep_type != RepresentationType.TIME_FB_ASYMMETRY:
+            QMessageBox.information(
+                self,
+                "Integral scan",
+                "Integral-scan (ALC) mode applies to the Forward-Backward asymmetry only.",
+            )
+            return
+
+        datasets = (
+            self._fit_panel.batch_datasets() if hasattr(self._fit_panel, "batch_datasets") else []
+        )
+        runs = [d.run for d in datasets if getattr(d, "run", None) is not None]
+        if len(runs) < 2:
+            QMessageBox.information(
+                self, "Integral scan", "Select at least two runs to build a field scan."
+            )
+            return
+
+        t_min = t_max = None
+        if hasattr(self._plot_panel, "get_fit_range"):
+            t_min, t_max = self._plot_panel.get_fit_range()
+
+        try:
+            scan = build_field_scan(
+                runs, t_min=t_min, t_max=t_max, method="integral", order_key="run"
+            )
+        except (ValueError, TypeError) as exc:
+            QMessageBox.warning(self, "Integral scan", f"Could not build the scan: {exc}")
+            return
+        if scan.n_points < 2:
+            QMessageBox.warning(
+                self, "Integral scan", "The scan has too few usable points to plot."
+            )
+            return
+
+        results_by_run = {
+            int(run_number): {
+                "success": True,
+                "parameters": {"Integral asymmetry": float(value)},
+                "uncertainties": {"Integral asymmetry": float(error)},
+            }
+            for run_number, value, error in zip(scan.run_numbers, scan.value, scan.error)
+        }
+        series = FitSeries(
+            f"scan-{self._next_scan_index}",
+            rep_type,
+            label=f"Integral scan {self._next_scan_index}",
+            member_run_numbers=list(scan.run_numbers),
+            order_key="field",
+            canonical_model=None,
+            param_roles={},
+            results_by_run=results_by_run,
+        )
+        self._next_scan_index += 1
+        runs_by_number = {
+            int(d.run.run_number): d.run for d in datasets if getattr(d, "run", None) is not None
+        }
+        series.sort_members(runs_by_number)
+        self._project_model.add_batch(series)
+        self._refresh_trend_panel()
 
     def _active_grouped_state(self) -> dict:
         """Return the grouped-fit classification from the active grouped surface.

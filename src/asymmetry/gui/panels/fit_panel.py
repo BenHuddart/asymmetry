@@ -1765,6 +1765,7 @@ class GlobalFitTab(QWidget):
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
     grouped_preview_requested = Signal(object, object)  # (grouped_datasets, preview_curves)
     fit_range_edit_committed = Signal(float, float)  # (x_min, x_max) from spinbox commit
+    scan_requested = Signal()  # integral-scan (ALC) mode: build the field scan instead of fitting
 
     def __init__(
         self,
@@ -1937,6 +1938,18 @@ class GlobalFitTab(QWidget):
         self._group_model_table.itemChanged.connect(self._on_group_model_table_item_changed)
         group_model_layout.addWidget(self._group_model_table)
         layout.addWidget(self._group_model_group)
+
+        # Integral-scan (ALC) mode toggle. When on, the batch action integrates
+        # the asymmetry over the current fit-range window for every run in the
+        # series and renders the resulting field scan in the trend panel instead
+        # of running a time-domain fit.
+        self._scan_mode_check = QCheckBox("Integral scan (ALC)")
+        self._scan_mode_check.setToolTip(
+            "Integrate the asymmetry over the fit-range window for each run and "
+            "build a field scan (ALC / repolarisation) in the Parameters panel."
+        )
+        self._scan_mode_check.toggled.connect(self._on_scan_mode_toggled)
+        layout.addWidget(self._scan_mode_check)
 
         # Fit button
         btn_layout = QHBoxLayout()
@@ -3091,10 +3104,30 @@ class GlobalFitTab(QWidget):
         if dialog.exec():
             self._user_initial_values_by_run = dialog.edited_values()
 
+    def is_scan_mode(self) -> bool:
+        """Return True when integral-scan (ALC) mode is enabled."""
+        return self._scan_mode_check.isChecked()
+
+    def batch_datasets(self) -> list[MuonDataset]:
+        """Return the datasets currently configured for the batch/scan."""
+        return list(self._datasets)
+
+    def _on_scan_mode_toggled(self, checked: bool) -> None:
+        """Relabel the action button to reflect integral-scan mode."""
+        if self.is_grouped_time_domain_mode():
+            return
+        self._fit_btn.setText("Build Integral Scan" if checked else "Run Batch Fit")
+
     def _run_global_fit(self) -> None:
         """Execute global fit on all datasets."""
         if self.is_grouped_time_domain_mode():
             self._run_grouped_time_domain_fit()
+            return
+
+        # Integral-scan (ALC) mode: defer to the main window, which integrates
+        # each run over the fit-range window and builds the field-scan series.
+        if self._scan_mode_check.isChecked():
+            self.scan_requested.emit()
             return
 
         if self._fit_blocked:
@@ -3979,6 +4012,7 @@ class GlobalFitTab(QWidget):
                 for name, entry in self._current_group_param_table_state().items()
             ],
             "group_model_parameters": self._table_state_for(self._group_model_table),
+            "scan_mode": self._scan_mode_check.isChecked(),
         }
         wizard_state_by_run_set = self._serialize_wizard_cache_store()
         if wizard_state_by_run_set:
@@ -4000,6 +4034,7 @@ class GlobalFitTab(QWidget):
         """Restore global-fit tab state from a saved dict."""
         self._wizard_cache_by_run_set = {}
         self._set_active_wizard_cache(None, signature=None, log_text="")
+        self._scan_mode_check.setChecked(bool(state.get("scan_mode", False)))
 
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):
@@ -4809,6 +4844,7 @@ class FitPanel(QWidget):
     share_function_with_group_requested = Signal(int)
     add_single_fit_to_series_requested = Signal()
     fit_range_edit_committed = Signal(float, float)  # forwarded from SingleFitTab
+    scan_requested = Signal()  # forwarded from GlobalFitTab: build integral-scan (ALC)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -4846,6 +4882,7 @@ class FitPanel(QWidget):
         self._global_tab.global_fit_completed.connect(self.global_fit_completed.emit)
         self._global_tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
         self._global_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
+        self._global_tab.scan_requested.connect(self.scan_requested.emit)
         self._tabs.addTab(self._global_tab, "Batch")
 
         layout.addWidget(self._tabs)
@@ -4948,6 +4985,10 @@ class FitPanel(QWidget):
         """Set the datasets for global fitting tab and track for group sharing."""
         self._all_datasets = datasets
         self._global_tab.set_datasets(datasets)
+
+    def batch_datasets(self) -> list[MuonDataset]:
+        """Return the datasets configured for the batch/integral-scan."""
+        return self._global_tab.batch_datasets()
 
     def set_frequency_missing_spectra_status(
         self, missing_run_numbers: list[int], cached_count: int
