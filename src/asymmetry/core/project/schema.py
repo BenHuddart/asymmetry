@@ -11,7 +11,7 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 5)
+Current schema (version 8)
 --------------------------
 ::
 
@@ -102,9 +102,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 7
+CURRENT_SCHEMA_VERSION: int = 8
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8})
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
 #: persistence carries these into each dataset's ``freq_fft`` representation).
@@ -171,6 +171,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 6
     if version == 6:
         migrated = _migrate_v6_to_v7(migrated)
+        version = 7
+    if version == 7:
+        migrated = _migrate_v7_to_v8(migrated)
     return migrated
 
 
@@ -393,6 +396,32 @@ def _migrate_v6_to_v7(data: dict) -> dict:
                 ds["representations"] = normalised
             updated_datasets.append(ds)
         migrated["datasets"] = updated_datasets
+
+    return migrated
+
+
+def _migrate_v7_to_v8(data: dict) -> dict:
+    """Migrate schema v7 project state to v8.
+
+    v8 adds a freeform ``extra`` dict to each top-level series (``FitSeries``),
+    carrying per-series state such as the ALC scan's baseline regions, peaks, and
+    view options. The migration is **additive and lossless**: every series gains
+    an empty ``extra`` map.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 8
+
+    series_list = migrated.get("batches")
+    if isinstance(series_list, list):
+        updated_series: list[dict] = []
+        for series in series_list:
+            if isinstance(series, dict):
+                entry = dict(series)
+                entry.setdefault("extra", {})
+                updated_series.append(entry)
+            else:
+                updated_series.append(series)
+        migrated["batches"] = updated_series
 
     return migrated
 

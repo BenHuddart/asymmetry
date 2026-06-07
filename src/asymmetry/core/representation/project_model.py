@@ -114,6 +114,11 @@ class ProjectModel:
         therefore diverge/reconverge together.
         """
         for batch in self.batches.values():
+            # A computed series (e.g. an integral scan) has no fit model and no
+            # per-run FitSlots; divergence is meaningless and would wrongly flag
+            # a real fit that happens to share the same run numbers.
+            if batch.is_computed:
+                continue
             if batch.member_kind == "groups":
                 self._refresh_group_series_divergence(batch)
             else:

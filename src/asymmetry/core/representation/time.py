@@ -20,39 +20,8 @@ from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.grouped_time_domain import build_grouped_time_domain_datasets
 from asymmetry.core.representation.base import Representation, RepresentationType
 from asymmetry.core.transform.asymmetry import compute_asymmetry
-from asymmetry.core.transform.grouping import apply_grouping_aligned, common_t0_for_groups
+from asymmetry.core.transform.grouping import effective_grouping, group_forward_backward
 from asymmetry.core.transform.rebin import rebin
-
-
-def _resolve_group_indices(groups: dict, group_id: int) -> list[int]:
-    """Return zero-based detector indices for *group_id*.
-
-    Grouping entries are 1-based detector numbers (matching the convention in
-    ``fourier.grouped`` / ``grouped_time_domain``); they are converted to
-    zero-based histogram indices here.  Group keys may be ``int`` or ``str``.
-    """
-    entries = groups.get(group_id)
-    if entries is None:
-        entries = groups.get(str(group_id))
-    if not isinstance(entries, list):
-        return []
-    indices: list[int] = []
-    for value in entries:
-        detector = value[0] if isinstance(value, (list, tuple)) and value else value
-        try:
-            indices.append(max(0, int(detector) - 1))
-        except (TypeError, ValueError):
-            continue
-    return indices
-
-
-def _effective_grouping(run: Run, recipe: dict) -> dict:
-    """Merge the run grouping with any recipe overrides (recipe wins)."""
-    base = dict(run.grouping) if isinstance(run.grouping, dict) else {}
-    override = recipe.get("grouping_ref")
-    if isinstance(override, dict):
-        base.update(override)
-    return base
 
 
 class TimeFBAsymmetry(Representation):
@@ -69,29 +38,16 @@ class TimeFBAsymmetry(Representation):
         histograms = list(run.histograms)
         if not histograms:
             raise ValueError("F-B asymmetry requires detector histograms.")
-        grouping = _effective_grouping(run, self.recipe)
-        groups = grouping.get("groups")
-        if not isinstance(groups, dict) or not groups:
-            raise ValueError("F-B asymmetry requires a detector grouping definition.")
+        grouping = effective_grouping(run, self.recipe.get("grouping_ref"))
+        fb = group_forward_backward(histograms, grouping)
+        forward_gid = fb.forward_gid
+        backward_gid = fb.backward_gid
+        alpha = fb.alpha
+        common_t0 = fb.common_t0
 
-        forward_gid = int(grouping.get("forward_group", 1))
-        backward_gid = int(grouping.get("backward_group", 2))
-        forward_indices = _resolve_group_indices(groups, forward_gid)
-        backward_indices = _resolve_group_indices(groups, backward_gid)
-        if not forward_indices or not backward_indices:
-            raise ValueError("Forward/backward groups do not reference any detectors.")
-
-        try:
-            alpha = float(grouping.get("alpha", 1.0))
-        except (TypeError, ValueError):
-            alpha = 1.0
-
-        common_t0 = common_t0_for_groups(histograms, forward_indices, backward_indices)
-        forward = apply_grouping_aligned(histograms, forward_indices, common_t0_bin=common_t0)
-        backward = apply_grouping_aligned(histograms, backward_indices, common_t0_bin=common_t0)
-        n = min(forward.size, backward.size)
-        forward = forward[:n]
-        backward = backward[:n]
+        n = min(fb.forward.size, fb.backward.size)
+        forward = fb.forward[:n]
+        backward = fb.backward[:n]
 
         asymmetry, error = compute_asymmetry(forward, backward, alpha)
 

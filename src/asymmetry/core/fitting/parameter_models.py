@@ -44,6 +44,8 @@ class ParameterModelComponentDefinition:
     formula_template: str
     latex_equation: str = ""
     scopes: tuple[str, ...] = ("common",)
+    #: For centred-peak components, FWHM = ``fwhm_factor * Bwid`` (None otherwise).
+    fwhm_factor: float | None = None
 
 
 def _constant(x: NDArray, c: float) -> NDArray[np.float64]:
@@ -157,6 +159,17 @@ def _lcr_gaussian(x: NDArray, f: float, B0: float, Bwid: float) -> NDArray[np.fl
     bwid_safe = max(abs(float(Bwid)), 1e-12)
     exponent = -0.5 * ((xx - float(B0)) / bwid_safe) ** 2
     return float(f) * np.exp(exponent)
+
+
+def _lcr_lorentzian(x: NDArray, f: float, B0: float, Bwid: float) -> NDArray[np.float64]:
+    """LCR Lorentzian peak centred at B0: f / (1 + ((B - B0)/Bwid)^2).
+
+    The amplitude/centre/width parameter set (f, B0, Bwid) matches
+    :func:`_lcr_gaussian` so the two are interchangeable ALC peak shapes.
+    """
+    xx = np.asarray(x, dtype=float)
+    bwid_safe = max(abs(float(Bwid)), 1e-12)
+    return float(f) / (1.0 + ((xx - float(B0)) / bwid_safe) ** 2)
 
 
 def _lambda_bg(x: NDArray, lambda_BG: float) -> NDArray[np.float64]:
@@ -374,6 +387,23 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         formula_template="{f}*G(x; {B0}; {Bwid})",
         latex_equation=r"\lambda_{LCR}(B) = f\,\exp\left(-\frac{(B-B_0)^2}{2 B_{wid}^2}\right)",
         scopes=("field",),
+        fwhm_factor=2.0 * np.sqrt(2.0 * np.log(2.0)),  # ≈ 2.3548
+    ),
+    "LorentzianLCR": ParameterModelComponentDefinition(
+        name="LorentzianLCR",
+        description="f/(1 + ((B-B0)/Bwid)^2)",
+        function=_lcr_lorentzian,
+        param_names=["f", "B0", "Bwid"],
+        param_defaults={"f": 0.1, "B0": 1000.0, "Bwid": 100.0},
+        param_info={
+            "f": get_param_info("f"),
+            "B0": get_param_info("B0"),
+            "Bwid": get_param_info("Bwid"),
+        },
+        formula_template="{f}*L(x; {B0}; {Bwid})",
+        latex_equation=r"\lambda_{LCR}(B) = \frac{f}{1 + \left((B-B_0)/B_{wid}\right)^2}",
+        scopes=("field",),
+        fwhm_factor=2.0,  # half-max at |B - B0| = Bwid
     ),
     "DiffusionLF_1D": ParameterModelComponentDefinition(
         name="DiffusionLF_1D",
@@ -902,6 +932,16 @@ class ParameterCompositeModel:
             self.open_parentheses,
             self.close_parentheses,
         )
+
+    def component_param_name(self, component_index: int, local_name: str) -> str:
+        """Global (possibly index-suffixed) param name for a component's param.
+
+        For ``["GaussianLCR", "LorentzianLCR"]`` the second component's ``"B0"``
+        is ``"B0_2"``; for a single component it is the bare ``"B0"``. Lets callers
+        address a component's parameters by name instead of positional arithmetic
+        over :attr:`param_names`.
+        """
+        return self._param_mappings[component_index][local_name]
 
     def _build_param_mapping(self) -> list[dict[str, str]]:
         counts = Counter(pname for component in self.components for pname in component.param_names)

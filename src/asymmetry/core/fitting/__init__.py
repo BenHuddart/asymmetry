@@ -11,6 +11,13 @@ from asymmetry.core.fitting.composite_parameters import (
     validate_composite_expression,
 )
 from asymmetry.core.fitting.engine import FitEngine
+from asymmetry.core.fitting.field_scan import (
+    ScanBaselineResult,
+    as_composite_model,
+    fit_scan_baseline,
+    fit_scan_model,
+    parameter_set_for_model,
+)
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     CandidateTemplate,
@@ -122,6 +129,11 @@ __all__ = [
     "fit_parameter_model",
     "evaluate_parameter_model_fit",
     "component_names_for_x",
+    "fit_scan_baseline",
+    "fit_scan_model",
+    "parameter_set_for_model",
+    "as_composite_model",
+    "ScanBaselineResult",
     "ParamInfo",
     "get_param_info",
     "Parameter",

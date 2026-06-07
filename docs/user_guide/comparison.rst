@@ -144,7 +144,7 @@ strength.
      - ❌
      - ❌
      - ★
-     - ❌
+     - ✅
    * - Period arithmetic (pulsed data)
      - ◐
      - ❌
@@ -248,12 +248,6 @@ candidate in the roadmap (see below).
   Asymmetry currently reports symmetric Hessian errors only.
   Tracked as ``minos-error-analysis``.
 
-**Avoided Level Crossing interface (Mantid).**
-  Dedicated workflow for muon ALC measurements (data load →
-  baseline modelling → peak fitting on residuals). Unique to
-  Mantid; widely used in semiconductor and chemistry μSR.
-  Tracked as ``alc-avoided-level-crossing``.
-
 **Rotating Reference Frame transform (Mantid).**
   RRF demodulation for high-TF and vortex-lattice studies. Tracked
   as ``rrf-transform``.
@@ -314,9 +308,6 @@ methodology). Four candidates are scheduled for the next 4 months:
 **Later (9–12+ months).**
 
 * **Spectral moments analysis** in the Fourier panel.
-* **Avoided Level Crossing (ALC) interface** — flagship Mantid
-  feature, heaviest in this roadmap; scheduled once the lower-
-  friction items have landed.
 
 The roadmap is refreshed quarterly. The latest ranked candidate
 list lives in ``docs/porting/ROADMAP.md`` in the repository.
