@@ -197,22 +197,17 @@ The only genuinely new y-quantity is the **integral itself** (from
    and the peak `model_fits` persist via the rep's `recipe`/`trend_state`
    (`representation.to_dict`); schema-version bump if a migration is needed.
 
-## Open sub-decision (to confirm before coding)
+## Baseline + peak relationship — decided: two-step (Mantid-faithful)
 
-**How baseline + peak relate.** Two faithful options:
+Fit a baseline on user-marked non-resonant **regions**, subtract to produce a
+corrected curve, then fit the **peak** on the corrected curve. This matches
+Mantid's mental model, is robust when the baseline is sloped, and gives a
+distinct "corrected data" view. It needs the `fit_scan_baseline(scan, regions)`
+region helper (#2) and the draggable baseline-region handles (#8).
 
-- **(a) Two-step, Mantid-faithful (recommended):** fit a baseline on
-  user-marked non-resonant **regions**, subtract, then fit the **peak** on the
-  corrected curve. Matches Mantid's mental model and is robust when the baseline
-  is sloped; needs the small `fit_scan_baseline` region helper (#2) and
-  baseline-region handles (#8).
-- **(b) One-shot composite:** fit `Lorentzian + Linear` to the whole scan in a
-  single `fit_parameter_model` call (peak + baseline simultaneously). Less new
-  UI (no region handles), but no separate corrected-curve view and weaker when
-  the baseline is only constrained away from the resonance.
-
-Leaning (a) for parity and clarity; (b) is the cheaper fallback if region
-handles prove fiddly.
+The one-shot `Lorentzian + Linear` composite fit was **not** chosen (it has no
+corrected-curve view and is weaker when the baseline is only constrained away
+from the resonance), though the underlying composite-fit machinery is the same.
 
 ## Sequencing
 
