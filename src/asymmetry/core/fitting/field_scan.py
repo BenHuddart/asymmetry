@@ -30,7 +30,7 @@ whatever component is supplied.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
@@ -81,6 +81,12 @@ def parameter_set_for_model(
     edited guesses). Mirrors how the trending panel seeds parameters.
     """
     overrides = overrides or {}
+    unknown = set(overrides) - set(model.param_names)
+    if unknown:
+        raise ValueError(
+            f"Unknown parameter override(s) {sorted(unknown)}; "
+            f"model parameters are {model.param_names}."
+        )
     params = ParameterSet()
     for name in model.param_names:
         value = float(overrides.get(name, model.param_defaults.get(name, 0.0)))
@@ -102,11 +108,17 @@ def fit_scan_model(
 
     The thin adapter that lets a :class:`FieldScan` flow into the existing
     ``fit_parameter_model``. Used for the peak-fit step on a (typically
-    baseline-corrected) scan; the resonance field and width are read from the
-    returned :attr:`ParameterModelFitResult.parameters` (e.g. ``B0`` / ``Bwid``
-    for ``GaussianLCR``).
+    baseline-corrected) scan; **check ``result.success`` before** reading the
+    resonance field and width from :attr:`ParameterModelFitResult.parameters`
+    (e.g. ``B0`` / ``Bwid`` for ``GaussianLCR``) — on a failed fit the parameter
+    set may be empty.
+
+    Pass starting values via *either* an explicit ``parameters`` set *or* an
+    ``initial`` override dict, not both.
     """
     composite = as_composite_model(model)
+    if parameters is not None and initial is not None:
+        raise ValueError("Pass either `parameters` or `initial`, not both.")
     if parameters is None:
         parameters = parameter_set_for_model(composite, initial)
     return fit_parameter_model(
@@ -131,7 +143,6 @@ class ScanBaselineResult:
     regions: list[tuple[float, float]]
     fit: ParameterModelFitResult
     n_points: int
-    excluded_regions: list[tuple[float, float]] = field(default_factory=list)
 
     @property
     def success(self) -> bool:
@@ -171,37 +182,44 @@ def fit_scan_baseline(
     Raises
     ------
     ValueError
-        If no valid regions are given, or the regions select fewer points than
-        the model has parameters (an underdetermined baseline fit).
+        If no valid regions are given; if the regions select fewer *usable*
+        points (finite value, error > 0) than the baseline has free parameters
+        (an underdetermined fit); or if the baseline fit does not converge. A
+        failed fit never returns a (silently wrong) corrected scan.
     """
     composite = as_composite_model(model)
     clean_regions = _validate_regions(regions)
 
     x = np.asarray(scan.x, dtype=np.float64)
-    mask = np.zeros(x.size, dtype=bool)
+    value = np.asarray(scan.value, dtype=np.float64)
+    error = np.asarray(scan.error, dtype=np.float64)
+
+    in_region = np.zeros(x.size, dtype=bool)
     for lo, hi in clean_regions:
-        mask |= (x >= lo) & (x <= hi)
+        in_region |= (x >= lo) & (x <= hi)
+    # Count only the points the fitter will actually use — in a region AND
+    # usable (finite value, positive error). fit_parameter_model re-masks on the
+    # same criteria, so counting here keeps the underdetermined guard sound and
+    # keeps the fit off its empty-input failure path.
+    mask = in_region & np.isfinite(value) & np.isfinite(error) & (error > 0.0)
 
     n_sel = int(np.count_nonzero(mask))
     if n_sel == 0:
-        raise ValueError("Baseline regions select no scan points.")
-    n_params = len(composite.param_names)
-    if n_sel < n_params:
-        raise ValueError(
-            f"Baseline fit needs at least {n_params} point(s) in the regions, got {n_sel}."
-        )
+        raise ValueError("Baseline regions select no usable scan points (finite value, error > 0).")
 
     if parameters is None:
         parameters = parameter_set_for_model(composite)
+    n_free = len(parameters.free_parameters)
+    if n_sel < n_free:
+        raise ValueError(
+            f"Baseline fit needs at least {n_free} usable point(s) in the regions, got {n_sel}."
+        )
 
     fit = fit_parameter_model(
-        x[mask],
-        np.asarray(scan.value, dtype=np.float64)[mask],
-        np.asarray(scan.error, dtype=np.float64)[mask],
-        composite,
-        parameters,
-        method=method,
+        x[mask], value[mask], error[mask], composite, parameters, method=method
     )
+    if not fit.success:
+        raise ValueError(f"Baseline fit did not converge: {fit.message or 'unknown error'}")
 
     baseline = _evaluate_model(composite, fit.parameters, x)
     corrected = _subtract_baseline(scan, baseline)
@@ -238,7 +256,10 @@ def _evaluate_model(
     parameters: ParameterSet,
     x: NDArray[np.float64],
 ) -> NDArray[np.float64]:
-    # Start from defaults so every parameter is present, then apply fitted values.
+    # On the success path `parameters` already holds every model parameter; the
+    # defaults merge is belt-and-suspenders so a partial set can never reach
+    # model.function() (which would KeyError) — callers reach here only after a
+    # converged fit.
     values = dict(model.param_defaults)
     for param in parameters:
         if param.name in values:
@@ -247,6 +268,10 @@ def _evaluate_model(
 
 
 def _subtract_baseline(scan: FieldScan, baseline: NDArray[np.float64]) -> FieldScan:
+    # Errors carry through unchanged: the baseline fit's covariance is
+    # intentionally not propagated into the corrected curve (matching Mantid's
+    # ALC baseline subtraction). Downstream peak-fit error bars are therefore
+    # mildly optimistic where the baseline is extrapolated outside its regions.
     corrected_value = np.asarray(scan.value, dtype=np.float64) - baseline
     y_label = scan.y_label
     suffix = " (baseline-subtracted)"

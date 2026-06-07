@@ -11,6 +11,13 @@ from asymmetry.core.fitting.composite_parameters import (
     validate_composite_expression,
 )
 from asymmetry.core.fitting.engine import FitEngine
+from asymmetry.core.fitting.field_scan import (
+    ScanBaselineResult,
+    as_composite_model,
+    fit_scan_baseline,
+    fit_scan_model,
+    parameter_set_for_model,
+)
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     CandidateTemplate,
@@ -45,13 +52,6 @@ from asymmetry.core.fitting.grouped_time_domain import (
     build_grouped_time_domain_groups,
     fit_grouped_series,
     fit_grouped_time_domain,
-)
-from asymmetry.core.fitting.field_scan import (
-    ScanBaselineResult,
-    as_composite_model,
-    fit_scan_baseline,
-    fit_scan_model,
-    parameter_set_for_model,
 )
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.parameter_models import (

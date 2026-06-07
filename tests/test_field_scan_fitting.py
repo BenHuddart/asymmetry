@@ -72,6 +72,12 @@ def test_parameter_set_for_model_uses_defaults_and_overrides():
     assert params["b"].value == pytest.approx(0.0)  # default
 
 
+def test_parameter_set_for_model_rejects_unknown_override():
+    model = as_composite_model("Linear")
+    with pytest.raises(ValueError, match="Unknown parameter override"):
+        parameter_set_for_model(model, {"slope": 5.0})  # typo for "m"
+
+
 # --- baseline fit + subtract -------------------------------------------------
 
 
@@ -131,15 +137,46 @@ def test_fit_scan_baseline_rejects_inverted_region():
 
 def test_fit_scan_baseline_rejects_empty_selection():
     scan = _alc_scan()
-    with pytest.raises(ValueError, match="select no scan points"):
+    with pytest.raises(ValueError, match="no usable scan points"):
         fit_scan_baseline(scan, [(1000.0, 2000.0)])
 
 
 def test_fit_scan_baseline_rejects_underdetermined():
     scan = _alc_scan()
     # A single point can't constrain the 2-parameter Linear baseline.
-    with pytest.raises(ValueError, match="at least 2 point"):
+    with pytest.raises(ValueError, match="at least 2"):
         fit_scan_baseline(scan, [(99.0, 101.0)], model="Linear")
+
+
+def test_fit_scan_baseline_ignores_unusable_points_in_guard():
+    # Region selects 3 x-points but two have non-positive / non-finite error, so
+    # only 1 usable point remains — must be rejected, not fit to garbage.
+    x = np.linspace(0.0, 200.0, 41)
+    value = _TRUE_M * x + _TRUE_B
+    error = np.full(x.size, 1e-3)
+    # Points at x = 0, 5, 10 fall in the region below; spoil two of them.
+    error[1] = 0.0
+    value[2] = np.nan
+    scan = _scan(x, value, error)
+    with pytest.raises(ValueError, match="usable"):
+        fit_scan_baseline(scan, [(0.0, 10.0)], model="Linear")
+
+
+def test_fit_scan_baseline_raises_on_failed_fit_no_silent_corruption():
+    # All region points have non-positive error -> the fitter has nothing to fit.
+    # Must raise, NOT return a corrected scan built from default parameters.
+    scan = _alc_scan()
+    bad = FieldScan(
+        x=scan.x,
+        value=scan.value,
+        error=np.zeros_like(scan.error),  # error == 0 everywhere
+        run_numbers=scan.run_numbers,
+        order_key=scan.order_key,
+        method=scan.method,
+        x_label=scan.x_label,
+    )
+    with pytest.raises(ValueError, match="no usable scan points"):
+        fit_scan_baseline(bad, [(0.0, 40.0), (160.0, 200.0)], model="Linear")
 
 
 # --- peak fit on the corrected curve -----------------------------------------
@@ -158,6 +195,13 @@ def test_fit_scan_model_recovers_resonance_position():
     assert fit.parameters["B0"].value == pytest.approx(_TRUE_B0, abs=2.0)
     assert abs(fit.parameters["Bwid"].value) == pytest.approx(_TRUE_BWID, abs=2.0)
     assert fit.parameters["f"].value == pytest.approx(_TRUE_F, abs=5e-2)
+
+
+def test_fit_scan_model_rejects_parameters_and_initial_together():
+    scan = _alc_scan()
+    params = parameter_set_for_model(as_composite_model("GaussianLCR"))
+    with pytest.raises(ValueError, match="either .* or .* not both"):
+        fit_scan_model(scan, "GaussianLCR", parameters=params, initial={"B0": 100.0})
 
 
 def test_fit_scan_model_respects_x_range():
