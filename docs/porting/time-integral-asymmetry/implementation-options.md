@@ -211,8 +211,17 @@ from the resonance), though the underlying composite-fit machinery is the same.
 
 ## Sequencing
 
-- **G1 (core):** `fit_scan_baseline` + `FieldScan` fit adapter + tests. (`differentiate_scan` done.)
+- **G1 (core): DONE** (commit 6a61448) — `core/fitting/field_scan.py`:
+  `fit_scan_baseline(scan, regions, model)` (region-masked baseline fit +
+  subtract → `ScanBaselineResult`), `fit_scan_model(scan, model, …)` (the
+  `FieldScan`→`fit_parameter_model` adapter for the peak fit), and
+  `parameter_set_for_model` / `as_composite_model` helpers. Tests in
+  `tests/test_field_scan_fitting.py` (recovers a known baseline + Gaussian
+  resonance). `differentiate_scan` was done in the core API phase.
 - **G2 (GUI minimal):** mode toggle, integration-window reuse, batch→scan, scan
   rendered in the trend panel, `dA/dB` toggle. ← usable repolarisation/ALC scans.
-- **G3 (GUI ALC analysis):** baseline regions + subtract + peak fit + results read-out.
+- **G3 (GUI ALC analysis):** baseline regions + subtract + peak fit + results
+  read-out. **Add a centred-Lorentzian peak component** to `parameter_models.py`
+  (the built-in `Lorentzian` is centred at 0; `GaussianLCR` is the only
+  off-zero peak today) so users get both Gaussian and Lorentzian ALC peaks.
 - **G4 (persistence):** scan/baseline/peak state in `.asymp` (+ migration, gui-smoke).
