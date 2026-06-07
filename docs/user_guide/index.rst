@@ -47,6 +47,7 @@ material.
    oscillatory
    static_gkt_zf
    lf_kubo_toyabe
+   dynamic_relaxation
    muon_fluorine
 
 .. toctree::
