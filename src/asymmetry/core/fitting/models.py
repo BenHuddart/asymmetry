@@ -282,19 +282,24 @@ def longitudinal_field_kubo_toyabe(
 def abragam(
     t: NDArray,
     A0: float,
-    sigma: float,
+    Delta: float,
     nu: float,
     baseline: float = 0.0,
 ) -> NDArray:
     """Abragam relaxation function (Abragam, *Principles of Nuclear Magnetism*, 1961).
 
-    G(t) = A0 exp[ -(sigma^2 / nu^2) (e^{-nu t} - 1 + nu t) ] + baseline
+    G(t) = A0 exp[ -(Delta^2 / nu^2) (e^{-nu t} - 1 + nu t) ] + baseline
 
     A single-component relaxation that interpolates between the static Gaussian
     line shape and the motionally-narrowed exponential:
 
-    - ``nu -> 0``        : G -> A0 exp(-sigma^2 t^2 / 2)  (Gaussian)
-    - ``nu >> sigma``    : G -> A0 exp(-(sigma^2 / nu) t) (exponential)
+    - ``nu -> 0``        : G -> A0 exp(-Delta^2 t^2 / 2)  (Gaussian)
+    - ``nu >> Delta``    : G -> A0 exp(-(Delta^2 / nu) t) (exponential)
+
+    Notation and form follow Blundell, De Renzi, Lancaster & Pratt, *Muon
+    Spectroscopy: An Introduction* (OUP, 2022), eqn 5.52 (the damping factor of
+    the transverse-field Abragam function), with the same Gaussian width symbol
+    ``Delta`` as the Kubo-Toyabe family.
 
     Parameters
     ----------
@@ -302,7 +307,7 @@ def abragam(
         Time values in microseconds.
     A0 : float
         Initial asymmetry amplitude.
-    sigma : float
+    Delta : float
         Static Gaussian field-distribution width in us^-1.
     nu : float
         Field fluctuation (hop) rate in MHz (== us^-1).  ``nu`` <= 0 gives the
@@ -311,13 +316,13 @@ def abragam(
         Constant baseline offset.
     """
     t = np.asarray(t, dtype=float)
-    s2 = float(sigma) * float(sigma)
+    d2 = float(Delta) * float(Delta)
     nt = float(nu) * np.abs(t)
     if nu <= 1e-9:
-        exponent = -0.5 * s2 * t * t
+        exponent = -0.5 * d2 * t * t
     else:
         # e^{-nt} - 1 + nt is >= 0 and ~ (nt)^2/2 as nt -> 0 (Gaussian limit)
-        exponent = -(s2 / (float(nu) * float(nu))) * (np.exp(np.clip(-nt, -700, 0)) - 1.0 + nt)
+        exponent = -(d2 / (float(nu) * float(nu))) * (np.exp(np.clip(-nt, -700, 0)) - 1.0 + nt)
     exponent = np.clip(exponent, -700, 0)
     return A0 * np.exp(exponent) + baseline
 
@@ -400,6 +405,108 @@ def static_lorentzian_kt_zf(
     return A0 * (1.0 / 3.0 + 2.0 / 3.0 * (1.0 - at) * exp_term) + baseline
 
 
+# Cache of (C0, frequencies, amplitudes) for the static Lorentzian-LF field
+# average, keyed by quantised (a_L, omega0, grid sizes).
+_LOR_LF_CACHE: dict[tuple, tuple[float, NDArray, NDArray]] = {}
+_LOR_LF_CACHE_MAX = 64
+
+
+def _lorentzian_lf_field_average(
+    a_L: float, omega0: float, n_u: int = 600, n_v: int = 480
+) -> tuple[float, NDArray, NDArray]:
+    """Pre-compute the static Lorentzian-LF average as C0 + sum_j Amp_j cos(W_j t).
+
+    Numerically integrates the stochastic field average (eqn 5.3 of Blundell et
+    al. 2022) over an isotropic Lorentzian local-field distribution
+    p(w) = (a_L / pi^2) / (a_L^2 + w^2)^2 (in rate units w = gamma_mu * B_local),
+    with the applied longitudinal field giving omega0 = gamma_mu * B_L along z.
+    For a local field w and total field W = omega0 z_hat + w, the single-muon
+    response is cos^2(Theta) + sin^2(Theta) cos(|W| t), Theta = angle(W, z).
+    Cylindrical (w_z, rho) integration with tan-substitutions to map the infinite
+    range to finite intervals.
+    """
+    key = (round(a_L, 6), round(omega0, 6), n_u, n_v)
+    cached = _LOR_LF_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    a = a_L
+    # Midpoint grids: w_z = a tan(u), u in (-pi/2, pi/2); rho = a tan(v), v in [0, pi/2)
+    u = (np.arange(n_u) + 0.5) / n_u * np.pi - np.pi / 2.0
+    v = (np.arange(n_v) + 0.5) / n_v * (np.pi / 2.0)
+    du = np.pi / n_u
+    dv = (np.pi / 2.0) / n_v
+    wz = a * np.tan(u)  # (n_u,)
+    rho = a * np.tan(v)  # (n_v,)
+    wz_g, rho_g = np.meshgrid(wz, rho, indexing="ij")
+    u_g, v_g = np.meshgrid(u, v, indexing="ij")
+    w2 = wz_g**2 + rho_g**2
+    p_lor = (a / np.pi**2) / (a**2 + w2) ** 2
+    # d^3 w = 2 pi rho drho dwz; drho/dv = a sec^2 v, dwz/du = a sec^2 u
+    weight = 2.0 * np.pi * rho_g * p_lor * (a / np.cos(u_g) ** 2) * (a / np.cos(v_g) ** 2) * du * dv
+    # The distribution is normalised to 1 by construction; renormalise the
+    # discretised weights to remove O(grid) quadrature bias (keeps G(0) = 1 exactly).
+    weight = weight / weight.sum()
+    wz_tot = omega0 + wz_g
+    w_tot = np.sqrt(rho_g**2 + wz_tot**2)
+    cos2 = np.where(w_tot > 1e-12, (wz_tot / w_tot) ** 2, 1.0)
+    c0 = float(np.sum(weight * cos2))
+    amp = (weight * (1.0 - cos2)).ravel()
+    freq = w_tot.ravel()
+    # Compress the (freq, amp) spectrum into a histogram so that evaluating
+    # sum_j amp_j cos(W_j t) is a small matrix product, independent of the field
+    # grid size.  Bin width is fine enough that binning error << quadrature error.
+    n_bins = 4000
+    w_max = float(freq.max()) if freq.size else 1.0
+    edges = np.linspace(0.0, w_max * 1.0000001, n_bins + 1)
+    amp_binned, _ = np.histogram(freq, bins=edges, weights=amp)
+    centres = 0.5 * (edges[:-1] + edges[1:])
+    keep = amp_binned > (amp_binned.max() * 1e-7 if amp_binned.size else 0.0)
+    result = (c0, centres[keep], amp_binned[keep])
+    if len(_LOR_LF_CACHE) >= _LOR_LF_CACHE_MAX:
+        _LOR_LF_CACHE.clear()
+    _LOR_LF_CACHE[key] = result
+    return result
+
+
+def static_lorentzian_kt_lf(
+    t: NDArray,
+    A0: float,
+    a_L: float,
+    B_L: float,
+    baseline: float = 0.0,
+) -> NDArray:
+    """Static Lorentzian Kubo-Toyabe in a longitudinal field (computed numerically).
+
+    Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy* (OUP, 2022), sec
+    5.3, note that the Kubo-Toyabe function "becomes modified in applied field ...
+    [and] must be computed numerically".  This evaluates the stochastic field
+    average (eqn 5.3) over an isotropic Lorentzian local-field distribution of
+    half-width ``a_L`` (us^-1) with applied longitudinal field ``B_L`` (Gauss).
+
+    - ``B_L -> 0``   : reduces to the zero-field Lorentzian KT (eqn 5.47),
+      1/3 + 2/3 (1 - a_L t) e^{-a_L t}.
+    - ``B_L -> inf`` : decoupling, G -> 1.
+
+    The field average is a 2D oscillatory quadrature; the result is accurate to
+    roughly 1% over 0-16 us (the zero-field analytic limit and the Gaussian LF
+    Hayano function remain exact).  Results are cached per (a_L, B_L).
+    """
+    t = np.asarray(t, dtype=float)
+    scalar = t.ndim == 0
+    tt = np.atleast_1d(np.abs(t))
+    a = float(a_L)
+    if a <= 0 or abs(B_L) < 1e-9:
+        gs = static_lorentzian_kt_zf(tt, 1.0, a, 0.0)
+    else:
+        gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+        omega0 = gamma_mu * (float(B_L) * GAUSS_TO_TESLA)
+        c0, freq, amp = _lorentzian_lf_field_average(a, omega0)
+        gs = c0 + np.cos(np.outer(tt, freq)) @ amp
+    out = A0 * np.asarray(gs, dtype=float) + baseline
+    return float(out[0]) if scalar else out
+
+
 def _strong_collision_solve(
     gs_grid: NDArray,
     nu: float,
@@ -453,8 +560,11 @@ def _dynamic_kt_grid(
             gs = static_gkt_zf(grid, 1.0, width, 0.0)
         else:
             gs = longitudinal_field_kubo_toyabe(grid, 1.0, width, B_L, 0.0)
-    else:  # lorentzian (zero-field static; LF Lorentzian deferred)
-        gs = static_lorentzian_kt_zf(grid, 1.0, width, 0.0)
+    else:  # lorentzian (zero-field analytic; LF computed numerically)
+        if abs(B_L) < 1e-9:
+            gs = static_lorentzian_kt_zf(grid, 1.0, width, 0.0)
+        else:
+            gs = static_lorentzian_kt_lf(grid, 1.0, width, B_L, 0.0)
     gs = np.asarray(gs, dtype=float)
     gd = _strong_collision_solve(gs, nu, h)
     if len(_DYN_KT_CACHE) >= _DYN_KT_CACHE_MAX:
@@ -509,20 +619,20 @@ def dynamic_lorentzian_kt(
 
     Strong-collision generalisation of the static Lorentzian KT for a dilute /
     Lorentzian local-field distribution of half-width ``a_L`` (us^-1) fluctuating
-    at rate ``nu`` (MHz).
+    at rate ``nu`` (MHz), with optional longitudinal field ``B_L`` (Gauss).
 
-    Note
-    ----
-    Longitudinal field is accepted for interface symmetry but the static
-    Lorentzian LF line shape (Uemura 1985 analytic form) is not yet wired in; for
-    ``B_L != 0`` this currently dynamicises the zero-field Lorentzian static
-    function.  Zero-field is exact.  See docs/porting/dynamic-relaxation/.
+    - ``nu -> 0``    : recovers the static Lorentzian KT (zero-field analytic
+      eqn 5.47; longitudinal field computed numerically per Blundell et al. 2022).
+    - ``B_L -> inf`` : decoupling, G -> 1.
     """
     t = np.asarray(t, dtype=float)
     scalar = t.ndim == 0
     tt = np.atleast_1d(np.abs(t))
     if nu <= 1e-9:
-        gd = static_lorentzian_kt_zf(tt, 1.0, a_L, 0.0)
+        if abs(B_L) < 1e-9:
+            gd = static_lorentzian_kt_zf(tt, 1.0, a_L, 0.0)
+        else:
+            gd = static_lorentzian_kt_lf(tt, 1.0, a_L, B_L, 0.0)
     else:
         tmax = float(max(tt.max(), 1e-6))
         grid, gd_grid = _dynamic_kt_grid("lorentzian", float(a_L), float(nu), float(B_L), tmax)
@@ -618,6 +728,6 @@ _register(
     "Abragam",
     "Abragam relaxation, Gaussian-to-exponential crossover (Abragam 1961)",
     abragam,
-    ["A0", "sigma", "nu", "baseline"],
-    {"A0": 25.0, "sigma": 0.5, "nu": 1.0, "baseline": 0.0},
+    ["A0", "Delta", "nu", "baseline"],
+    {"A0": 25.0, "Delta": 0.5, "nu": 1.0, "baseline": 0.0},
 )

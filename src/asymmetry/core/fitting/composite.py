@@ -121,9 +121,9 @@ def _keren_component(
     return keren(t, A0=A, Delta=Delta, nu=nu, B_L=B_L, baseline=0.0)
 
 
-def _abragam_component(t: NDArray, A: float, sigma: float, nu: float) -> NDArray[np.float64]:
+def _abragam_component(t: NDArray, A: float, Delta: float, nu: float) -> NDArray[np.float64]:
     """Abragam relaxation composite component."""
-    return abragam(t, A0=A, sigma=sigma, nu=nu, baseline=0.0)
+    return abragam(t, A0=A, Delta=Delta, nu=nu, baseline=0.0)
 
 
 def _constant_component(t: NDArray, A_bg: float) -> NDArray[np.float64]:
@@ -349,16 +349,16 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "(Abragam, Principles of Nuclear Magnetism, 1961)"
         ),
         function=_abragam_component,
-        param_names=["A", "sigma", "nu"],
-        param_defaults={"A": 25.0, "sigma": 0.5, "nu": 1.0},
+        param_names=["A", "Delta", "nu"],
+        param_defaults={"A": 25.0, "Delta": 0.5, "nu": 1.0},
         param_info={
             "A": get_param_info("A"),
-            "sigma": get_param_info("sigma"),
+            "Delta": get_param_info("Delta"),
             "nu": get_param_info("nu"),
         },
-        formula_template="{A}*exp(-({sigma}^2/{nu}^2)*(exp(-{nu}*t)-1+{nu}*t))",
+        formula_template="{A}*exp(-({Delta}^2/{nu}^2)*(exp(-{nu}*t)-1+{nu}*t))",
         latex_equation=(
-            r"A(t)=A\exp\!\left[-\frac{\sigma^2}{\nu^2}\left(e^{-\nu t}-1+\nu t\right)\right]"
+            r"A(t)=A\exp\!\left[-\frac{\Delta^2}{\nu^2}\left(e^{-\nu t}-1+\nu t\right)\right]"
         ),
     ),
     "MuF": ComponentDefinition(

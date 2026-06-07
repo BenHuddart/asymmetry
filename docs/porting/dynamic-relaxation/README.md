@@ -92,5 +92,35 @@ These four relations are the backbone of the verification plan.
   Keren and Abragam. All four in **one PR**.
 - **Fluctuation/hop rate ν in MHz** (≡ µs⁻¹ numerically for a rate; matches the
   guides' "fluctuation rate 0.2 MHz" and the existing `nu` ParamInfo). Static
-  widths Δ/σ stay in µs⁻¹.
+  widths Δ/a stay in µs⁻¹.
 - **References:** original papers (above), cited in each component description.
+
+## Textbook-consistency check (Blundell, De Renzi, Lancaster & Pratt, OUP 2022)
+
+The notation and forms were cross-checked against the textbook's Chapter 5
+("Polarization functions"); the implementation follows it:
+
+- **Gaussian width is `Delta` (Δ, µs⁻¹) everywhere** — static KT (eqn 5.26/5.51),
+  dynamic KT, **and the Abragam function** (eqn 5.52:
+  `exp{−(Δ²/ν²)[e^{−νt}−1+νt]}`). The Abragam width was therefore named **`Delta`**
+  (not σ) to match the book and the rest of the KT family.
+- **Lorentzian width is `a` (µs⁻¹)** — eqn 5.47 `1/3 + 2/3(1−at)e^{−at}` (HWHM in
+  field = a/γ_µ, eqns 5.13/5.44). Implemented as `a_L` (display symbol "a").
+- **Strong-collision dynamicization** matches the book's eqn 5.30 exactly
+  (`P_z = P_z^s e^{−νt} + ν∫ P_z(t−t') P_z^s(t')e^{−νt'} dt'`), written `G_KT^Dyn`;
+  Laplace form eqn 5.36. Fluctuation rate **`ν`**.
+- **Longitudinal field:** the book writes the applied field as **B₀**; Asymmetry
+  uses **`B_L`** to stay consistent with the existing `LFKuboToyabe` component
+  (same quantity, ω₀ = γ_µ B_L).
+- **Lorentzian-LF is computed numerically.** The book states (sec 5.3) that the KT
+  function "becomes modified in applied field … [and] must be computed
+  numerically" (referencing Yaouanc & Dalmas de Réotier). We therefore evaluate
+  the static Lorentzian LF by the stochastic field average (eqn 5.3) over an
+  isotropic Lorentzian local-field distribution, then dynamicise via eqn 5.30.
+  This 2D oscillatory quadrature is accurate to ~1% over 0–16 µs (cached); the
+  Gaussian LF (Hayano analytic) and the ZF Lorentzian (eqn 5.47) remain exact.
+- **Keren** (PRB 50, 10039) is *not* in this textbook — the book gives the
+  numerical dynamicized KT (eqn 5.30) and, for fast LF dynamics, the Redfield/BPP
+  limit (eqn 5.53, `λ = 2Δ²ν/(ν²+γ²B₀²)`, already present as the `Redfield`
+  trend model). Keren is retained as a useful analytic LF approximation with
+  book-consistent symbols (Δ, ν, B_L).

@@ -37,8 +37,11 @@ New pure functions in `src/asymmetry/core/fitting/models.py`, each
 same docstring/Notes style as `longitudinal_field_kubo_toyabe`:
 
 - `static_lorentzian_kt_zf(t, A0, a, baseline)` — `1/3 + 2/3(1−at)e^{−at}`.
-- `static_lorentzian_kt_lf(t, A0, a, B_L, baseline)` — Uemura 1985 (j₀, j₁ +
-  cached integral term, structured exactly like the Hayano LF integral helper).
+- `static_lorentzian_kt_lf(t, A0, a_L, B_L, baseline)` — **numerical** stochastic
+  field average (textbook eqn 5.3) over an isotropic Lorentzian local-field
+  distribution; reduces to eqn 5.47 at B_L=0, decouples at large B_L. (The
+  textbook states the LF case "must be computed numerically"; ~1% accurate,
+  spectrum-binned and cached for fast evaluation.)
 - `_strong_collision_dynamicise(static_fn, t, nu, *static_args)` — shared
   Volterra solver (Option A1) returning G_d on the requested grid; cached.
 - `dynamic_gaussian_kt(t, A0, Delta, nu, B_L, baseline)` — dynamicise the static

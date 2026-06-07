@@ -20,6 +20,7 @@ from asymmetry.core.fitting.models import (
     keren,
     longitudinal_field_kubo_toyabe,
     static_gkt_zf,
+    static_lorentzian_kt_lf,
     static_lorentzian_kt_zf,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -117,6 +118,43 @@ def test_dyn_lorentzian_nu0_equals_static() -> None:
 
 def test_static_lorentzian_zf_value_at_zero() -> None:
     assert abs(static_lorentzian_kt_zf(np.array([0.0]), 1.0, 0.5)[0] - 1.0) < 1e-12
+
+
+def test_lorentzian_lf_reduces_to_zf_limit() -> None:
+    # The numerical LF field-average at a vanishingly small field must approach
+    # the analytic zero-field Lorentzian KT (eqn 5.47) to ~1%.
+    from asymmetry.core.fitting.models import _lorentzian_lf_field_average
+    from asymmetry.core.utils.constants import (
+        GAUSS_TO_TESLA,
+        MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
+    )
+
+    a = 0.5
+    omega0 = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * (1e-3 * GAUSS_TO_TESLA)
+    c0, freq, amp = _lorentzian_lf_field_average(a, omega0)
+    g_num = c0 + np.cos(np.outer(T, freq)) @ amp
+    assert abs(c0 + amp.sum() - 1.0) < 1e-3  # normalised
+    assert np.max(np.abs(g_num - static_lorentzian_kt_zf(T, 1.0, a))) < 0.02
+
+
+def test_lorentzian_lf_decoupling_and_origin() -> None:
+    g = static_lorentzian_kt_lf(T, 1.0, 0.5, 5000.0)
+    assert abs(g[0] - 1.0) < 1e-6  # G(0) = 1
+    assert np.min(g) > 0.99  # large longitudinal field decouples
+
+
+def test_lorentzian_lf_recovers_with_field() -> None:
+    # Long-time polarization rises monotonically as the longitudinal field grows.
+    tails = [static_lorentzian_kt_lf(T, 1.0, 0.5, b)[-1] for b in (0.0, 20.0, 50.0, 200.0)]
+    assert tails == sorted(tails)
+
+
+def test_dynamic_lorentzian_lf_consistency() -> None:
+    # nu -> 0 with a field uses the numerical static Lorentzian LF directly.
+    g0 = dynamic_lorentzian_kt(T, 1.0, 0.5, 0.0, 50.0)
+    assert np.allclose(g0, static_lorentzian_kt_lf(T, 1.0, 0.5, 50.0), atol=1e-9)
+    gd = dynamic_lorentzian_kt(T, 1.0, 0.5, 1.0, 50.0)
+    assert np.all(np.isfinite(gd)) and abs(gd[0] - 1.0) < 1e-6
 
 
 # --- General properties -------------------------------------------------------

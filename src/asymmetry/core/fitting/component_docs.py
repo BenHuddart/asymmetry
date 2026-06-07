@@ -178,7 +178,7 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
     ),
     "Abragam": (
         "Use for single-component relaxation that crosses over from a Gaussian line shape (slow fluctuations, nu -> 0: "
-        "exp(-sigma^2 t^2/2)) to an exponential (fast fluctuations, nu >> sigma: exp(-(sigma^2/nu) t)). It is the classic "
+        "exp(-Delta^2 t^2/2)) to an exponential (fast fluctuations, nu >> Delta: exp(-(Delta^2/nu) t)). It is the classic "
         "model for extracting a hop/correlation rate from a transverse-field line shape, e.g. the Cu diffusion line-shape "
         "change from Gaussian to Lorentzian on warming."
     ),
