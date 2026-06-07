@@ -23,6 +23,7 @@ from PySide6.QtWidgets import QApplication, QTableWidgetItem  # type: ignore
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.representation import RepresentationType
+from asymmetry.core.representation.series import FitSeries
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView
 
@@ -449,6 +450,75 @@ def test_alc_peak_edit_clears_stale_fit_overlay(qapp: QApplication):
     view._fit_curve = np.zeros(4)  # simulate an existing fit overlay
     view._peaks_table.item(0, 1).setText("123")  # move the peak centre
     assert view._fit_curve is None
+
+
+# --- persistence (G4) --------------------------------------------------------
+
+
+def test_alc_scan_view_analysis_state_round_trip(qapp: QApplication):
+    view = ALCScanView()
+    _seed_view_scan(view)
+    _set_regions(view, [(10.0, 50.0), (80.0, 120.0)])
+    view._add_peak("Lorentzian")
+    view._peaks_table.item(0, 1).setText("123")
+    state = view.analysis_state()
+    assert state["regions"] == [[10.0, 50.0], [80.0, 120.0]]
+    assert state["peaks"][0][0] == "Lorentzian"
+
+    view2 = ALCScanView()
+    view2.restore_analysis_state(state)
+    assert view2.baseline_regions() == [(10.0, 50.0), (80.0, 120.0)]
+    specs = view2.peak_specs()
+    assert specs[0]["component"] == "LorentzianLCR"
+    assert specs[0]["B0"] == pytest.approx(123.0)
+    assert view2.baseline_model() == view.baseline_model()
+    assert view2.x_key() == view.x_key()
+
+
+def test_alc_persistence_round_trip(mainwindow: MainWindow, monkeypatch):
+    # Build a scan with a dip, fit baseline + peaks, then save the analysis onto
+    # the series and restore it into a fresh window — scan + fits come back.
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    datasets = [
+        _ds(11, 110.0, 90.0, 100.0),
+        _ds(12, 110.0, 90.0, 150.0),
+        _ds(13, 105.0, 95.0, 200.0),  # dip (A = 0.05)
+        _ds(14, 110.0, 90.0, 250.0),
+        _ds(15, 110.0, 90.0, 300.0),
+    ]
+    mw._fit_panel.set_datasets(datasets)
+    mw._on_scan_requested()
+    view = mw._alc_scan_view
+    _set_regions(view, [(50.0, 175.0), (225.0, 350.0)])
+    mw._on_fit_baseline()
+    view._add_peak("Gaussian")  # default guess B0 = mid-range = 200 (the dip)
+    mw._on_fit_peaks()
+    assert mw._alc_corrected_scan is not None
+    assert view._fit_curve is not None
+
+    # Save: the analysis is stamped onto the scan series' `extra`.
+    mw._sync_alc_series_extra()
+    saved = mw._project_model.batch(mw._alc_scan_series_id).to_dict()
+    assert saved["extra"]["kind"] == "alc_scan"
+    assert saved["extra"]["regions"] == [[50.0, 175.0], [225.0, 350.0]]
+    assert saved["extra"]["baseline_fitted"] is True
+    assert saved["extra"]["peaks_fitted"] is True
+
+    # Load into a fresh window: scan points + analysis reconstructed, fits re-run.
+    settings = QSettings()
+    settings.setValue(mw_module._UI_SCALE_SETTINGS_KEY, 1.0)
+    mw2 = MainWindow()
+    for ds in datasets:
+        mw2._data_browser.add_dataset(ds)
+    mw2._project_model.add_batch(FitSeries.from_dict(saved))
+    mw2._restore_alc_scan()
+
+    assert {p["run"] for p in mw2._alc_scan_points} == {11, 12, 13, 14, 15}
+    assert mw2._alc_scan_view.baseline_regions() == [(50.0, 175.0), (225.0, 350.0)]
+    assert len(mw2._alc_scan_view.peak_specs()) == 1
+    assert mw2._alc_corrected_scan is not None  # baseline re-fit on load
+    assert mw2._alc_scan_view._fit_curve is not None  # peak overlay re-fit
 
 
 def test_alc_data_table_dialog(mainwindow: MainWindow, monkeypatch):

@@ -211,3 +211,21 @@ def test_recompute_all_skips_missing_runs():
     container.by_type[RepresentationType.TIME_FB_ASYMMETRY] = fb
     model.recompute_all({})  # run 7 not supplied
     assert fb.primary is None
+
+
+def test_fitseries_extra_round_trips():
+    # The freeform `extra` dict (carries the ALC scan's analysis) survives
+    # to_dict/from_dict; ordinary series default to an empty dict.
+    series = FitSeries(
+        "scan-1",
+        _FB,
+        extra={"kind": "alc_scan", "regions": [[0.0, 100.0]], "baseline_fitted": True},
+    )
+    restored = FitSeries.from_dict(series.to_dict())
+    assert restored.extra == {
+        "kind": "alc_scan",
+        "regions": [[0.0, 100.0]],
+        "baseline_fitted": True,
+    }
+    assert FitSeries("b", _FB).extra == {}
+    assert FitSeries.from_dict(FitSeries("b", _FB).to_dict()).extra == {}

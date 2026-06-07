@@ -348,6 +348,8 @@ class MainWindow(QMainWindow):
         self._alc_corrected_scan: FieldScan | None = None
         #: The fitted baseline curve (display units), for the total-fit overlay.
         self._alc_baseline_curve: object | None = None
+        #: True while restoring a project, to silence ALC fit dialogs.
+        self._alc_loading = False
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
         self._frequency_spectra_by_rep: dict[RepresentationType, dict[int, list[MuonDataset]]] = {
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
@@ -5415,23 +5417,27 @@ class MainWindow(QMainWindow):
             x_label=self._ALC_X_LABELS[x_key],
         )
 
+    def _alc_notify(self, title: str, text: str, *, warning: bool = False) -> None:
+        """Show an ALC info/warning dialog, suppressed while restoring a project."""
+        if self._alc_loading:
+            return
+        if warning:
+            QMessageBox.warning(self, title, text)
+        else:
+            QMessageBox.information(self, title, text)
+
     def _on_fit_baseline(self) -> None:
         """Fit + overlay a baseline over the user-marked non-resonant regions."""
         if self._alc_scan_view.derivative_enabled():
-            QMessageBox.information(
-                self, "Baseline", "Turn off dA/dB to fit a baseline on the scan."
-            )
+            self._alc_notify("Baseline", "Turn off dA/dB to fit a baseline on the scan.")
             return
         scan = self._alc_display_scan(self._alc_scan_view.x_key())
         if scan is None:
-            QMessageBox.information(
-                self, "Baseline", "Build a scan with at least two points first."
-            )
+            self._alc_notify("Baseline", "Build a scan with at least two points first.")
             return
         regions = self._alc_scan_view.baseline_regions()
         if not regions:
-            QMessageBox.information(
-                self,
+            self._alc_notify(
                 "Baseline",
                 "Add at least one non-resonant region (start/end) to define the baseline.",
             )
@@ -5440,7 +5446,7 @@ class MainWindow(QMainWindow):
         try:
             result = fit_scan_baseline(scan, regions, model=model)
         except ValueError as exc:
-            QMessageBox.warning(self, "Baseline", str(exc))
+            self._alc_notify("Baseline", str(exc), warning=True)
             return
         self._alc_corrected_scan = result.corrected
         self._alc_baseline_curve = result.baseline
@@ -5460,19 +5466,17 @@ class MainWindow(QMainWindow):
         """Fit the peak composite to the baseline-corrected scan; overlay + read off."""
         corrected = self._alc_corrected_scan
         if corrected is None:
-            QMessageBox.information(
-                self, "Peaks", "Fit a baseline first; peaks are fitted on the corrected curve."
+            self._alc_notify(
+                "Peaks", "Fit a baseline first; peaks are fitted on the corrected curve."
             )
             return
         try:
             specs = self._alc_scan_view.peak_specs()
         except ValueError as exc:
-            QMessageBox.information(self, "Peaks", str(exc))
+            self._alc_notify("Peaks", str(exc))
             return
         if not specs:
-            QMessageBox.information(
-                self, "Peaks", "Add at least one peak (+ Gaussian / + Lorentzian)."
-            )
+            self._alc_notify("Peaks", "Add at least one peak (+ Gaussian / + Lorentzian).")
             return
 
         model = as_composite_model([spec["component"] for spec in specs])
@@ -5486,10 +5490,10 @@ class MainWindow(QMainWindow):
         try:
             fit = fit_scan_model(corrected, model, initial=initial)
         except (ValueError, TypeError) as exc:
-            QMessageBox.warning(self, "Peaks", f"Could not fit peaks: {exc}")
+            self._alc_notify("Peaks", f"Could not fit peaks: {exc}", warning=True)
             return
         if not fit.success:
-            QMessageBox.warning(self, "Peaks", f"Peak fit did not converge: {fit.message}")
+            self._alc_notify("Peaks", f"Peak fit did not converge: {fit.message}", warning=True)
             return
 
         fitted_values = {name: fit.parameters[name].value for name in model.param_names}
@@ -6540,11 +6544,79 @@ class MainWindow(QMainWindow):
             },
             "fourier_spectra_state": self._serialize_frequency_spectra_state(),
         }
+        # Stamp the current ALC analysis onto its scan series before the model is
+        # serialised, so the baseline/peaks/options travel with the saved scan.
+        self._sync_alc_series_extra()
         # Recipe-only representation/batch state (v6).  Frequency spectra are
         # recomputed from these recipes on load; the array snapshot above is a
         # transitional fallback removed in cleanup.
         self._project_model.write_to_project_state(project_state)
         return project_state
+
+    def _sync_alc_series_extra(self) -> None:
+        """Write the ALC scan view's analysis state into the scan series' ``extra``."""
+        if not self._alc_scan_series_id:
+            return
+        batch = self._project_model.batch(self._alc_scan_series_id)
+        if batch is None:
+            return
+        extra = self._alc_scan_view.analysis_state()
+        extra["kind"] = "alc_scan"
+        batch.extra = extra
+
+    def _restore_alc_scan(self) -> None:
+        """Rebuild the ALC scan + analysis from the persisted computed series."""
+        series = next(
+            (
+                batch
+                for batch in self._project_model.batches.values()
+                if batch.is_computed
+                and isinstance(getattr(batch, "extra", None), dict)
+                and batch.extra.get("kind") == "alc_scan"
+            ),
+            None,
+        )
+        if series is None:
+            return
+        self._alc_scan_series_id = series.batch_id
+        self._alc_scan_points = self._alc_points_from_series(series)
+        if not self._alc_scan_points:
+            return
+        self._alc_scan_view.restore_analysis_state(series.extra)
+        self._render_alc_scan()
+        # Re-run whichever fits were active so the overlays/read-out reappear
+        # (deterministic: same data + inputs). Dialogs are silenced via the flag.
+        self._alc_loading = True
+        try:
+            if series.extra.get("baseline_fitted"):
+                self._on_fit_baseline()
+                if series.extra.get("peaks_fitted") and self._alc_corrected_scan is not None:
+                    self._on_fit_peaks()
+        finally:
+            self._alc_loading = False
+
+    def _alc_points_from_series(self, series) -> list[dict]:
+        """Reconstruct per-run scan points from the series + loaded run metadata."""
+        points: list[dict] = []
+        for run, summary in series.results_by_run.items():
+            pct = summary.get("parameters", {}).get(self._SCAN_QUANTITY)
+            if pct is None:
+                continue
+            err_pct = summary.get("uncertainties", {}).get(self._SCAN_QUANTITY, 0.0)
+            meta = {}
+            if hasattr(self._data_browser, "get_dataset"):
+                dataset = self._data_browser.get_dataset(int(run))
+                meta = getattr(dataset, "metadata", {}) or {}
+            points.append(
+                {
+                    "run": int(run),
+                    "value": float(pct) / 100.0,  # series stores percent
+                    "error": float(err_pct) / 100.0,
+                    "field": _safe_float(meta.get("field")),
+                    "temperature": _safe_float(meta.get("temperature")),
+                }
+            )
+        return points
 
     def restore_project_state(self, state: dict, project_path: str) -> None:
         """Restore the full application state from a project file state dict.
@@ -6895,6 +6967,9 @@ class MainWindow(QMainWindow):
 
         if _has_saved_fit_parameters_results(fit_parameters_state):
             self._show_panel("fit_parameters")
+
+        # Rebuild the ALC scan view (scan points + analysis) from its series.
+        self._restore_alc_scan()
 
         n_loaded = len(loaded_run_numbers)
         self._log_panel.log(f"Project opened: {n_loaded} run(s) loaded from {project_path}")

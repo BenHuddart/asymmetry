@@ -80,6 +80,7 @@ class FitSeries:
         nuisance_params: list[str] | None = None,
         results_by_run: dict[int, dict] | None = None,
         diverged_runs: set[int] | list[int] | None = None,
+        extra: dict | None = None,
     ) -> None:
         self.batch_id = str(batch_id)
         self.label: str | None = str(label).strip() or None if label else None
@@ -107,6 +108,9 @@ class FitSeries:
             int(run): dict(result) for run, result in (results_by_run or {}).items()
         }
         self.diverged_runs: set[int] = {int(r) for r in (diverged_runs or set())}
+        #: Freeform JSON-able state attached to this series (e.g. the ALC scan's
+        #: baseline regions / peaks / view options). Empty for ordinary fits.
+        self.extra: dict = dict(extra) if isinstance(extra, dict) else {}
 
     # ── label ──────────────────────────────────────────────────────────────
 
@@ -235,6 +239,7 @@ class FitSeries:
             "nuisance_params": list(self.nuisance_params),
             "results_by_run": {str(run): dict(res) for run, res in self.results_by_run.items()},
             "diverged_runs": sorted(self.diverged_runs),
+            "extra": dict(self.extra),
         }
 
     @classmethod
@@ -264,4 +269,5 @@ class FitSeries:
             nuisance_params=data.get("nuisance_params"),
             results_by_run=results,
             diverged_runs=data.get("diverged_runs"),
+            extra=data.get("extra"),
         )
