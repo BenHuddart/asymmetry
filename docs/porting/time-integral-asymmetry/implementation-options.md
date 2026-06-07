@@ -135,7 +135,7 @@ informed them) and the implementation plan.
 
 | Question | Decision |
 | --- | --- |
-| **Entry point** | A **mode toggle on the F-B asymmetry representation** (not a separate representation). Scan mode reuses the rep's grouping/α/period and the fit-range control. |
+| **Entry point** | A **main-window ALC-mode toolbar toggle**, enabled only when the F-B asymmetry view is active. Enabling it **swaps the Fit and Parameters docks** for bespoke ALC widgets (build panel + scan view). Reuses the rep's grouping/α/period and the fit-range control. *(Refined 2026-06-07 — see the GUI rework note below; the earlier "checkbox on the Batch tab" framing was wrong.)* |
 | **Depth (this pass)** | **Full**: build + display the scan, the `dA/dB` derivative, **and** baseline subtraction + peak fitting (resonance position/width). This absorbs the `alc-avoided-level-crossing` candidate. |
 | **Options exposed** | **Integral reduction only** (the count-sum; `method="integral"`) plus a **`dA/dB` derivative** view toggle (WiMDA). The Mantid *Differential* reduction method is **not** surfaced in the UI (still available in core). |
 | **Rendering** | The scan curve lives in the **trending-panel space**. **Batch** builds the scan across the series; **single** shows the selected run's integral read-out. The **main plot keeps the time spectrum** with the integration window shaded. |
@@ -218,21 +218,27 @@ from the resonance), though the underlying composite-fit machinery is the same.
   `parameter_set_for_model` / `as_composite_model` helpers. Tests in
   `tests/test_field_scan_fitting.py` (recovers a known baseline + Gaussian
   resonance). `differentiate_scan` was done in the core API phase.
-- **G2 (GUI minimal): core DONE** (commit 7a23f9d) — an "Integral scan (ALC)"
-  toggle on the Batch tab of the F-B asymmetry fit panel; in scan mode the batch
-  action emits `scan_requested`, and `mainwindow._on_scan_requested` integrates
-  the batch members via `build_field_scan` (fit-range → `[t_min,t_max]`, each
-  run's own grouping) and records a **model-less `FitSeries`** (decided storage:
-  scan = a first-class series in `ProjectModel`) whose `results_by_run` carries
-  the per-run "Integral asymmetry". The existing pull-based trend panel renders
-  it — no new render path, no threaded worker. The time spectrum keeps the
-  fit-range/integration window shaded. Tests: `tests/test_integral_scan_gui.py`.
+- **G2 (GUI): DONE** (commits 7a23f9d → ba31a8b → b5702de). Final design after a
+  maintainer correction: a **main-window "ALC mode" toolbar toggle**, enabled only
+  for the F-B asymmetry view, that **swaps the Fit and Parameters docks** for
+  bespoke ALC widgets (`src/asymmetry/gui/panels/alc_panel.py`):
+  - `ALCFitPanel` — integration-window echo (reuses the time-plot fit-range) +
+    **Build Scan** (`build_requested`).
+  - `ALCScanView` — plot + table of the scan (integral asymmetry **%** vs field).
+  - `mainwindow._on_scan_requested` integrates the selected runs via
+    `build_field_scan(order_key="field")`, scales to **percent (×100)**, records a
+    **model-less `FitSeries`** (scan = first-class series in `ProjectModel`;
+    `is_computed` gates it out of divergence + fit-clearing), and renders the scan
+    view. The Fit dock uses the existing `_fit_stack`; the Parameters dock gained a
+    `_parameters_stack`. Toggle auto-exits when leaving F-B. Tests:
+    `tests/test_integral_scan_gui.py` (+ `is_computed` core test in
+    `test_project_model.py`).
+  - **Decided:** scan units = **percent** (matches the plots); ALC plots vs
+    **field** (field-less runs dropped + logged). The Batch-tab checkbox first cut
+    was reverted.
   - **G2b (remaining):** the **`dA/dB` derivative** view (`differentiate_scan`
     is midpoint-based, so it doesn't map onto per-run rows — needs its own
-    rendering, e.g. a per-run centred difference or a transient overlay).
-  - **Open UX nit:** the scan value is **fractional** (core `compute_asymmetry`
-    convention, ~0.1) while the time-domain plot shows **percent** (×100);
-    decide whether to scale the scan to percent for display consistency.
+    rendering); an x-axis selector (field/temperature/run) on the scan view.
 - **G3 (GUI ALC analysis):** baseline regions + subtract + peak fit + results
   read-out. **Add a centred-Lorentzian peak component** to `parameter_models.py`
   (the built-in `Lorentzian` is centred at 0; `GaussianLCR` is the only
