@@ -255,12 +255,19 @@ from the resonance), though the underlying composite-fit machinery is the same.
     component (`f/(1+((B-B0)/Bwid)²)`, sharing `f/B0/Bwid` with `GaussianLCR` so
     the two are interchangeable). Tests: single-peak recovery + a two-peak
     composite recovering both resonance fields.
-  - **G3b (next):** baseline UI — draggable regions on the scan plot + a synced
-    numeric table; "Fit baseline" (`fit_scan_baseline` over the region union) →
-    show the corrected curve.
-  - **G3c:** peak UI — add/remove peaks (Gaussian/Lorentzian), "Fit peaks"
-    (`fit_scan_model` on the corrected curve) → overlay + a results table reading
-    off B₀ (resonance field), width, amplitude.
+  - **G3b: DONE** (commit bab4e8f) — baseline UI: a "Baseline" group (Linear/
+    Constant model + editable non-resonant regions table + Fit baseline). Regions
+    shade on the plot; `fit_scan_baseline` over the region union overlays the
+    baseline and stores the corrected scan. Layout = **stacked sections below the
+    plot** (chosen with the maintainer).
+  - **G3c: DONE** (commit 246a6bf) — peak UI: a "Peaks" group (+ Gaussian /
+    + Lorentzian / − peak, an editable peaks table, Fit peaks). Builds the peak
+    composite (multiple peaks, both shapes), fits via `fit_scan_model` on the
+    corrected scan, overlays the total (baseline + peaks) fit, and reads off
+    B₀ ± err, FWHM, and amplitude per peak. The scan data is now drawn as
+    **markers only** (fits/baseline remain lines).
+  - **Remaining in G3:** draggable region/peak handles on the plot (a usability
+    layer over the numeric tables — the "both" choice; the table path is done).
   - Note (from review): the bespoke view duplicates the trend panel's
     plot/x-selector and will re-implement the model-fit overlay; this is the
     accepted cost of the bespoke-panel decision. The fit-range spinboxes could be
