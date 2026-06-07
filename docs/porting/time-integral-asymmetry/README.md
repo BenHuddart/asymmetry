@@ -1,6 +1,6 @@
 # Time-integral asymmetry / field-scan observable — porting study
 
-Status: **study** (no implementation yet).
+Status: **core API implemented** (Qt-free; GUI surface deferred).
 
 ## Feature
 
@@ -66,3 +66,35 @@ transform. **Reject** musrfit's parameter-only approach for the core observable
 
 See [verification-plan.md](verification-plan.md) and [test-data.md](test-data.md)
 for how the port will be validated against the reference programs and corpus.
+
+## Outcome (core API)
+
+Implemented Qt-free in `src/asymmetry/core/transform/integral.py`
+(tests in `tests/test_time_integral_asymmetry.py`):
+
+- **Per-run reduction** — `integrate_asymmetry(forward, backward, …, method)`
+  (the low-level workhorse on grouped counts; `"integral"` and `"differential"`
+  methods), `integrate_curve(time, asymmetry, error, …)` (mean of an
+  already-formed curve, e.g. a combined G∓R spectrum), and
+  `integrate_run(dataset_or_run, …)` (reduces a loaded run via its grouping,
+  defaulting the window to the good-bin range). The `"integral"` path reuses
+  `compute_asymmetry`, so the integral and time-domain observables **share one
+  error model** (Mantid-compatible); `alpha = 1.0` reproduces WiMDA exactly.
+- **Field-scan assembly** — `build_field_scan(runs, …, order_key)` returns a
+  `FieldScan` (sorted parallel `x` / `value` / `error` arrays + a list of
+  excluded runs), ordering by `field` / `temperature` / `run` (the same keys as
+  `FitSeries`). Runs missing the chosen log are skipped with a reason, not a
+  hard failure (Mantid parity).
+- **Derivative** — `differentiate_scan(scan, max_gap=…)` is the WiMDA `dA/dB`
+  forward-difference transform.
+
+Validated end-to-end on the corpus: an EMU LF series (10→100 G at 350 K)
+reproduces the expected repolarisation/decoupling recovery curve.
+
+**Deferred** (follow-ups, not in this change): the GUI surface (a scan
+representation + trend panel), persistence as a project representation type, and
+the ALC baseline-subtraction + peak-fitting analysis
+(`alc-avoided-level-crossing` candidate, which depends on this observable). For
+multi-period runs, callers select the period upstream with
+`asymmetry.core.io.periods.select_period` — kept out of this module so the
+transform layer takes no `io` dependency.

@@ -24,6 +24,15 @@ from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
     common_t0_for_groups,
 )
+from asymmetry.core.transform.integral import (
+    FieldScan,
+    FieldScanPoint,
+    build_field_scan,
+    differentiate_scan,
+    integrate_asymmetry,
+    integrate_curve,
+    integrate_run,
+)
 from asymmetry.core.transform.rebin import rebin
 
 __all__ = [
@@ -43,5 +52,12 @@ __all__ = [
     "apply_grouping",
     "apply_grouping_aligned",
     "common_t0_for_groups",
+    "integrate_asymmetry",
+    "integrate_curve",
+    "integrate_run",
+    "build_field_scan",
+    "differentiate_scan",
+    "FieldScan",
+    "FieldScanPoint",
     "rebin",
 ]
