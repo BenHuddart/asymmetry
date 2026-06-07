@@ -1,7 +1,9 @@
 # Field geometry (TF / LF / ZF) determination — study
 
-**Status:** study (investigation only). No loader behaviour was changed in this
-pass. Implementation is a separate follow-up.
+**Status:** implemented. The study pass (investigation) is below; the loader
+change has since landed in `src/asymmetry/core/io/nexus.py` per the recommendation
+in [implementation-options.md](implementation-options.md) (Option C, no
+orientation fallback). See the "Implementation outcome" section at the end.
 
 **Slug:** `field-geometry`
 **References studied:** Mantid, musrfit, WiMDA (all from local source checkouts
@@ -111,3 +113,29 @@ orientation value as a distinct field.
 - [test-data.md](test-data.md) — the ground-truth files and inspection command.
 - [verification-plan.md](verification-plan.md) — how a future implementation pass
   should be verified.
+
+## Implementation outcome
+
+The loader change landed in `src/asymmetry/core/io/nexus.py` (both `_load_v1` and
+`_load_v2`):
+
+- New helpers `_normalise_field_state` (→ `'TF'`/`'LF'`/`'ZF'`/`''`) and
+  `_field_direction_from_state` (→ "Transverse"/"Longitudinal"/"Zero field"/`''`).
+- Three metadata keys are now emitted:
+  - `field_state` — raw code from `sample/magnetic_field_state` (or `''`).
+  - `field_direction` — **repurposed**: now the user-facing geometry derived
+    *only* from `field_state`; `''` when the state is absent (no orientation
+    fallback).
+  - `detector_orientation` — the instrument-axis value (the old `field_direction`
+    source), kept distinct.
+- GUI: the run-info dialog gained a separate **"Detector Orientation"** row
+  (`run_info_dialog.py`), and `detector_orientation` is a selectable browser
+  column (`data_browser.py`). Per the 2026-06-07 UX decision, an absent field
+  state shows **blank** (not "Unknown"), the geometry reads as **words**, and the
+  detector orientation is surfaced separately.
+
+Tests: `tests/test_nexus_loader.py` covers TF-overrides-L-orientation (V1+V2), LF,
+ZF, absent-state→blank (no fallback), and blank/`n/a`→unknown. Verified end-to-end
+against real corpus files: `EMU00018850.nxs` (TF/L → Transverse),
+`MUSR00044991.nxs` (TF at 0 G → Transverse, not ZF), `56426.nxs` (LF →
+Longitudinal), `emu00124218.nxs` (no state → blank, orientation Longitudinal).
