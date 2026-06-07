@@ -541,7 +541,7 @@ def cmd_test(args: argparse.Namespace) -> int:
 
     parallel_args: list[str] = []
     if parallel and tier in ("standard", "full"):
-        parallel_args = ["-n", "auto", "--dist", "loadfile"]
+        parallel_args = ["-n", "auto", "--dist", "load"]
 
     return _run_command([sys.executable, "-m", "pytest", *parallel_args, *pytest_args])
 
