@@ -9,6 +9,8 @@ asymmetry over the fit-range window (percent units) and records a model-less
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -381,6 +383,68 @@ def test_alc_data_table_dialog(mainwindow: MainWindow, monkeypatch):
     view._on_show_data_table()
     assert view._data_table is not None
     assert view._data_table.rowCount() == 3
+
+
+def _seed_view_scan(view: ALCScanView) -> None:
+    view.show_scan(
+        np.array([0.0, 100.0, 200.0, 300.0]),
+        np.array([1.0, 2.0, 3.0, 4.0]),
+        np.full(4, 0.1),
+        [1, 2, 3, 4],
+        x_label="B (G)",
+        y_label="A (%)",
+    )
+
+
+def test_alc_drag_handles_lists_region_edges_and_peaks(qapp: QApplication):
+    view = ALCScanView()
+    _seed_view_scan(view)
+    _set_regions(view, [(10.0, 90.0)])
+    view._add_peak("Gaussian")  # default B0 = mid-range = 150
+    handles = view._drag_handles()
+    assert sorted({kind for _x, kind, _r, _c in handles}) == ["peak", "region"]
+    assert sorted(x for x, kind, _r, _c in handles if kind == "region") == [10.0, 90.0]
+
+
+def test_alc_region_edge_drag_updates_table(qapp: QApplication):
+    view = ALCScanView()
+    _seed_view_scan(view)
+    _set_regions(view, [(0.0, 100.0)])
+    view._drag = ("region", 0, 1)  # grab the end edge
+    view._on_canvas_motion(SimpleNamespace(inaxes=view._ax, xdata=150.0))
+    assert view.baseline_regions() == [(0.0, 150.0)]
+    view._on_canvas_release(SimpleNamespace())
+    assert view._drag is None
+
+
+def test_alc_peak_centre_drag_updates_b0(qapp: QApplication):
+    view = ALCScanView()
+    _seed_view_scan(view)
+    view._add_peak("Gaussian")
+    view._drag = ("peak", 0, 1)
+    view._on_canvas_motion(SimpleNamespace(inaxes=view._ax, xdata=175.0))
+    assert view.peak_specs()[0]["B0"] == pytest.approx(175.0)
+
+
+def test_alc_x_axis_change_clears_analysis(mainwindow: MainWindow, monkeypatch):
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    mw._fit_panel.set_datasets(
+        [
+            _ds(11, 110.0, 90.0, field=100.0, temperature=5.0),
+            _ds(12, 120.0, 80.0, field=200.0, temperature=15.0),
+            _ds(13, 130.0, 70.0, field=300.0, temperature=25.0),
+        ]
+    )
+    mw._on_scan_requested()
+    view = mw._alc_scan_view
+    _set_regions(view, [(0.0, 50.0)])
+    view._add_peak("Gaussian")
+    assert view.baseline_regions() and view.peak_specs()
+
+    view._x_combo.setCurrentIndex(1)  # field -> temperature clears the analysis
+    assert view.baseline_regions() == []
+    assert view.peak_specs() == []
 
 
 def test_alc_peaks_require_baseline(mainwindow: MainWindow, monkeypatch):

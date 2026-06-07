@@ -160,13 +160,15 @@ class ALCScanView(QWidget):
         self._fit_curve: NDArray[np.float64] | None = None
         self._data_dialog: QDialog | None = None
         self._data_table: QTableWidget | None = None
+        #: Active plot drag, as ("region", row, col) or ("peak", row, 1).
+        self._drag: tuple[str, int, int] | None = None
         layout = QVBoxLayout(self)
 
         controls = QHBoxLayout()
         controls.addWidget(QLabel("x:"))
         self._x_combo = QComboBox()
         self._x_combo.addItems(["B (G)", "T (K)", "Run"])
-        self._x_combo.currentIndexChanged.connect(self._emit_options_changed)
+        self._x_combo.currentIndexChanged.connect(self._on_x_changed)
         controls.addWidget(self._x_combo)
         self._derivative_check = QCheckBox("dA/dB")
         self._derivative_check.setToolTip(
@@ -186,6 +188,10 @@ class ALCScanView(QWidget):
         self._canvas = FigureCanvasQTAgg(self._figure)
         self._canvas.setMinimumHeight(260)
         self._ax = self._figure.add_subplot(111)
+        # Drag baseline-region edges and peak centres directly on the plot.
+        self._canvas.mpl_connect("button_press_event", self._on_canvas_press)
+        self._canvas.mpl_connect("motion_notify_event", self._on_canvas_motion)
+        self._canvas.mpl_connect("button_release_event", self._on_canvas_release)
         # The plot takes all spare vertical space; the analysis sections below
         # are collapsible so the plot keeps the room when they are not in use.
         layout.addWidget(self._canvas, 1)
@@ -266,6 +272,7 @@ class ALCScanView(QWidget):
         self._peaks_table.setHorizontalHeaderLabels(["Type", "B0 (G)", "Width (G)", "Amp (%)"])
         self._peaks_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._peaks_table.setMaximumHeight(110)
+        self._peaks_table.itemChanged.connect(self._render_plot)
         outer.addWidget(self._peaks_table)
 
         self._peaks_results = QLabel("")
@@ -282,6 +289,19 @@ class ALCScanView(QWidget):
         self._update_derivative_label()
         self.options_changed.emit()
 
+    def _on_x_changed(self, *_: object) -> None:
+        """X-axis changed: the regions/peaks (in x units) no longer apply."""
+        self.clear_analysis()
+        self._emit_options_changed()
+
+    def clear_analysis(self) -> None:
+        """Drop the baseline regions, peaks, and any fitted overlays."""
+        self._regions_table.setRowCount(0)
+        self._peaks_table.setRowCount(0)
+        self._baseline_curve = None
+        self._fit_curve = None
+        self._peaks_results.setText("")
+
     def _update_derivative_label(self) -> None:
         """Keep the derivative-toggle label in step with the x-axis."""
         self._derivative_check.setText(self._DERIV_LABELS[self.x_key()])
@@ -294,6 +314,49 @@ class ALCScanView(QWidget):
         """Return True when the derivative toggle is on."""
         return self._derivative_check.isChecked()
 
+    # --- plot drag (region edges + peak centres) -----------------------------
+
+    def _drag_handles(self) -> list[tuple[float, str, int, int]]:
+        """Return draggable handles as ``(x, kind, row, col)`` from the tables."""
+        handles: list[tuple[float, str, int, int]] = []
+        for row, lo, hi in self._raw_regions():
+            handles.append((lo, "region", row, 0))
+            handles.append((hi, "region", row, 1))
+        for row in range(self._peaks_table.rowCount()):
+            item = self._peaks_table.item(row, 1)
+            try:
+                handles.append((float(item.text()), "peak", row, 1))
+            except (AttributeError, ValueError):
+                continue
+        return handles
+
+    def _on_canvas_press(self, event: object) -> None:
+        if event.inaxes is not self._ax or event.button != 1 or self._last_plot is None:
+            return
+        nearest = None
+        best = 12.0  # grab tolerance in device px (≈6 logical px on a 2× display)
+        for x, kind, row, col in self._drag_handles():
+            px = self._ax.transData.transform((x, 0.0))[0]
+            distance = abs(px - event.x)
+            if distance <= best:
+                best = distance
+                nearest = (kind, row, col)
+        self._drag = nearest
+
+    def _on_canvas_motion(self, event: object) -> None:
+        if self._drag is None or event.inaxes is not self._ax or event.xdata is None:
+            return
+        kind, row, col = self._drag
+        table = self._regions_table if kind == "region" else self._peaks_table
+        with QSignalBlocker(table):
+            item = table.item(row, col)
+            if item is not None:
+                item.setText(f"{float(event.xdata):.4g}")
+        self._render_plot()
+
+    def _on_canvas_release(self, _event: object) -> None:
+        self._drag = None
+
     # --- baseline controls ---------------------------------------------------
 
     def baseline_model(self) -> str:
@@ -301,19 +364,24 @@ class ALCScanView(QWidget):
         return self._baseline_model_combo.currentText()
 
     def baseline_regions(self) -> list[tuple[float, float]]:
-        """Parse the regions table into ``(start, end)`` pairs (skipping bad rows)."""
-        regions: list[tuple[float, float]] = []
+        """Parse the regions table into valid ``(start, end)`` pairs (``lo < hi``)."""
+        return [(lo, hi) for _row, lo, hi in self._raw_regions() if lo < hi]
+
+    def _raw_regions(self) -> list[tuple[int, float, float]]:
+        """Parse the regions table into ``(row, lo, hi)`` (any parseable values).
+
+        Unlike :meth:`baseline_regions`, this keeps rows where ``lo >= hi`` so a
+        handle stays visible/draggable mid-drag past the other edge.
+        """
+        rows: list[tuple[int, float, float]] = []
         for row in range(self._regions_table.rowCount()):
             start_item = self._regions_table.item(row, 0)
             end_item = self._regions_table.item(row, 1)
             try:
-                lo = float(start_item.text())
-                hi = float(end_item.text())
+                rows.append((row, float(start_item.text()), float(end_item.text())))
             except (AttributeError, ValueError):
                 continue
-            if lo < hi:
-                regions.append((lo, hi))
-        return regions
+        return rows
 
     def _add_region(self) -> None:
         """Append a region row defaulting to the left edge of the current x-range."""
@@ -358,11 +426,13 @@ class ALCScanView(QWidget):
             wid = 0.1 * span
         row = self._peaks_table.rowCount()
         self._peaks_table.insertRow(row)
-        type_item = QTableWidgetItem(peak_type)
-        type_item.setFlags(type_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self._peaks_table.setItem(row, 0, type_item)
-        for col, val in ((1, b0), (2, wid), (3, amp)):
-            self._peaks_table.setItem(row, col, QTableWidgetItem(f"{val:.4g}"))
+        with QSignalBlocker(self._peaks_table):
+            type_item = QTableWidgetItem(peak_type)
+            type_item.setFlags(type_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._peaks_table.setItem(row, 0, type_item)
+            for col, val in ((1, b0), (2, wid), (3, amp)):
+                self._peaks_table.setItem(row, col, QTableWidgetItem(f"{val:.4g}"))
+        self._render_plot()  # show the new peak marker
 
     def _remove_peak(self) -> None:
         """Remove the selected peak row (or the last row)."""
@@ -371,6 +441,7 @@ class ALCScanView(QWidget):
             row = self._peaks_table.rowCount() - 1
         if row >= 0:
             self._peaks_table.removeRow(row)
+            self._render_plot()
 
     def peak_specs(self) -> list[dict]:
         """Return the peaks as ``{component, f, B0, Bwid}`` initial guesses."""
@@ -512,8 +583,21 @@ class ALCScanView(QWidget):
             return
         self._ax.clear()
         self._ax.set_axis_on()
-        for lo, hi in self.baseline_regions():
-            self._ax.axvspan(lo, hi, color="0.85", alpha=0.6, zorder=0)
+        # Baseline regions: shaded spans with draggable edge lines.
+        for _row, lo, hi in self._raw_regions():
+            if lo < hi:
+                self._ax.axvspan(lo, hi, color="0.85", alpha=0.6, zorder=0)
+            for edge in (lo, hi):
+                self._ax.axvline(edge, color="0.55", linewidth=0.8, zorder=1)
+        # Peak centres: draggable dashed markers.
+        for row in range(self._peaks_table.rowCount()):
+            item = self._peaks_table.item(row, 1)
+            try:
+                self._ax.axvline(
+                    float(item.text()), color="#2a7a3f", linestyle="--", linewidth=0.9, zorder=1
+                )
+            except (AttributeError, ValueError):
+                continue
         # Data as markers only (no joining line).
         self._ax.errorbar(
             plot["x"], plot["value"], yerr=plot["error"], fmt="o", markersize=4, capsize=2
