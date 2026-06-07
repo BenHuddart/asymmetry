@@ -373,6 +373,28 @@
       },
       "supersedes_candidate": "dynamic-kubo-toyabe",
       "updated": "2026-06-07"
+    },
+    {
+      "slug": "field-geometry",
+      "feature_name": "Experimental field geometry (TF/LF/ZF) determination",
+      "status": "study",
+      "path": "docs/porting/field-geometry",
+      "references": [
+        "Mantid",
+        "musrfit",
+        "WiMDA"
+      ],
+      "docs": {
+        "readme": "docs/porting/field-geometry/README.md",
+        "comparison": "docs/porting/field-geometry/comparison.md",
+        "implementation_options": "docs/porting/field-geometry/implementation-options.md",
+        "test_data": "docs/porting/field-geometry/test-data.md",
+        "verification_plan": "docs/porting/field-geometry/verification-plan.md"
+      },
+      "tests_path": null,
+      "src_path": null,
+      "updated": "2026-06-07",
+      "notes": "Investigation only; loader unchanged this pass. KEY FINDING: none of Mantid/musrfit/WiMDA reads sample/magnetic_field_state for geometry. Mantid derives main_field_direction from detector orientation (same source Asymmetry uses) but names it as the instrument axis and uses it only for default MUSR/CHRONUS grouping, not fitting. musrfit stores free-text Setup/Orientation + numeric field (informational); user declares TF/LF/ZF in .msr THEORY. WiMDA: user picks grouping/mode; reads field value + ISIS a_selected_magnet L/T/A for logbook only. Asymmetry's bug is a labelling conflation: it derives field_direction from detector orientation and presents it as the experiment geometry. Ground truth corpus (2050 pulsedTD files): 1731 TF runs mislabelled Longitudinal (orientation=L); MUSR00044991 is TF at 0 G (do NOT infer ZF from field magnitude); no 'ZF' string appears in any file; 137 EMU files lack magnetic_field_state (need orientation fallback). RECOMMENDATION (Option C, refines candidate fix): keep orientation as a separate detector_orientation field, add field_state from magnetic_field_state, user-facing geometry prefers field_state with orientation fallback + provenance flag, never synthesise ZF. NeXus NXmuon spec not available locally - confirm enum before relying on edge wording."
     }
   ]
 }
