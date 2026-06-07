@@ -25,6 +25,7 @@ from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QGroupBox,
     QHBoxLayout,
@@ -157,6 +158,8 @@ class ALCScanView(QWidget):
         self._last_plot: dict | None = None
         self._baseline_curve: NDArray[np.float64] | None = None
         self._fit_curve: NDArray[np.float64] | None = None
+        self._data_dialog: QDialog | None = None
+        self._data_table: QTableWidget | None = None
         layout = QVBoxLayout(self)
 
         controls = QHBoxLayout()
@@ -172,30 +175,43 @@ class ALCScanView(QWidget):
         self._derivative_check.toggled.connect(self._emit_options_changed)
         controls.addWidget(self._derivative_check)
         controls.addStretch()
+        data_btn = QPushButton("Data table…")
+        data_btn.setToolTip("Show the scan's per-point values in a separate window.")
+        data_btn.clicked.connect(self._on_show_data_table)
+        controls.addWidget(data_btn)
         layout.addLayout(controls)
         self._update_derivative_label()
 
         self._figure = Figure(constrained_layout=True)
         self._canvas = FigureCanvasQTAgg(self._figure)
+        self._canvas.setMinimumHeight(260)
         self._ax = self._figure.add_subplot(111)
+        # The plot takes all spare vertical space; the analysis sections below
+        # are collapsible so the plot keeps the room when they are not in use.
         layout.addWidget(self._canvas, 1)
 
         layout.addWidget(self._build_baseline_group())
         layout.addWidget(self._build_peaks_group())
-
-        self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(["Run", "x", "A (%)", "± err"])
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.setMaximumHeight(160)
-        layout.addWidget(self._table)
+        layout.addStretch(0)
 
         self.clear()
 
+    @staticmethod
+    def _collapsible_group(title: str) -> tuple[QGroupBox, QVBoxLayout]:
+        """A checkable group box that hides its content when unchecked."""
+        group = QGroupBox(title)
+        group.setCheckable(True)
+        group.setChecked(True)
+        content = QWidget()
+        shell = QVBoxLayout(group)
+        shell.setContentsMargins(6, 2, 6, 6)
+        shell.addWidget(content)
+        group.toggled.connect(content.setVisible)
+        return group, QVBoxLayout(content)
+
     def _build_baseline_group(self) -> QGroupBox:
         """Baseline controls: model + non-resonant regions table + Fit button."""
-        group = QGroupBox("Baseline")
-        outer = QVBoxLayout(group)
+        group, outer = self._collapsible_group("Baseline")
 
         row = QHBoxLayout()
         row.addWidget(QLabel("Model:"))
@@ -228,8 +244,7 @@ class ALCScanView(QWidget):
 
     def _build_peaks_group(self) -> QGroupBox:
         """Peak controls: add/remove Gaussian/Lorentzian peaks + Fit peaks."""
-        group = QGroupBox("Peaks")
-        outer = QVBoxLayout(group)
+        group, outer = self._collapsible_group("Peaks")
 
         row = QHBoxLayout()
         add_g = QPushButton("+ Gaussian")
@@ -391,6 +406,53 @@ class ALCScanView(QWidget):
         self._fit_curve = np.asarray(fit_curve, dtype=float)
         self._render_plot()
 
+    # --- data-table dialog ---------------------------------------------------
+
+    def point_count(self) -> int:
+        """Number of points in the current scan view (0 when empty)."""
+        return int(self._last_plot["x"].size) if self._last_plot is not None else 0
+
+    def _on_show_data_table(self) -> None:
+        """Open (or raise) the per-point data table in a separate dialog."""
+        if self._data_dialog is None:
+            self._data_dialog = QDialog(self)
+            self._data_dialog.setWindowTitle("ALC scan data")
+            self._data_dialog.resize(440, 360)
+            dialog_layout = QVBoxLayout(self._data_dialog)
+            self._data_table = QTableWidget(0, 4)
+            self._data_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            self._data_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            dialog_layout.addWidget(self._data_table)
+        self._fill_data_table()
+        self._data_dialog.show()
+        self._data_dialog.raise_()
+
+    def _fill_data_table(self) -> None:
+        """Populate the data-table dialog from the current scan (if both exist)."""
+        table = self._data_table
+        plot = self._last_plot
+        if table is None:
+            return
+        if plot is None:
+            table.setRowCount(0)
+            return
+        table.setHorizontalHeaderLabels(["Run", plot["x_label"], plot["value_header"], "± err"])
+        run_numbers = plot["run_numbers"]
+        n = int(plot["x"].size)
+        table.setRowCount(n)
+        for row in range(n):
+            run = run_numbers[row] if row < len(run_numbers) else ""
+            cells = [
+                str(run),
+                f"{plot['x'][row]:.4g}",
+                f"{plot['value'][row]:.4f}",
+                f"{plot['error'][row]:.4f}",
+            ]
+            for col, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                table.setItem(row, col, item)
+
     # --- plotting ------------------------------------------------------------
 
     def clear(self, message: str = "Build a scan to see the ALC curve") -> None:
@@ -411,7 +473,7 @@ class ALCScanView(QWidget):
         )
         self._ax.set_axis_off()
         self._canvas.draw_idle()
-        self._table.setRowCount(0)
+        self._fill_data_table()
 
     def show_scan(
         self,
@@ -429,7 +491,9 @@ class ALCScanView(QWidget):
             "x": np.asarray(x, dtype=float),
             "value": np.asarray(value, dtype=float),
             "error": np.asarray(error, dtype=float),
+            "run_numbers": list(run_numbers),
             "x_label": x_label,
+            "value_header": value_header,
             "y_label": y_label,
         }
         # A fresh scan (rebuild / x-axis change) invalidates any fit overlays.
@@ -437,22 +501,9 @@ class ALCScanView(QWidget):
         self._fit_curve = None
         self._peaks_results.setText("")
         self._render_plot()
-
-        self._table.setHorizontalHeaderLabels(["Run", x_label, value_header, "± err"])
-        n = int(self._last_plot["x"].size)
-        self._table.setRowCount(n)
-        for row in range(n):
-            run = run_numbers[row] if row < len(run_numbers) else ""
-            cells = [
-                str(run),
-                f"{self._last_plot['x'][row]:.4g}",
-                f"{self._last_plot['value'][row]:.4f}",
-                f"{self._last_plot['error'][row]:.4f}",
-            ]
-            for col, text in enumerate(cells):
-                item = QTableWidgetItem(text)
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self._table.setItem(row, col, item)
+        # Keep the data-table dialog in sync if it is open.
+        if self._data_dialog is not None and self._data_dialog.isVisible():
+            self._fill_data_table()
 
     def _render_plot(self, *_: object) -> None:
         """Draw the stored scan plus shaded regions, the baseline, and the fit."""

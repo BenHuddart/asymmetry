@@ -135,7 +135,7 @@ def test_alc_build_creates_percent_scan_and_renders(mainwindow: MainWindow, monk
     assert by_run[13] == pytest.approx(30.0)
 
     # The bespoke scan view rendered the three points.
-    assert mw._alc_scan_view._table.rowCount() == 3
+    assert mw._alc_scan_view.point_count() == 3
 
 
 def test_alc_x_axis_selector_reorders(mainwindow: MainWindow, monkeypatch):
@@ -151,12 +151,12 @@ def test_alc_x_axis_selector_reorders(mainwindow: MainWindow, monkeypatch):
     mw._on_scan_requested()
     view = mw._alc_scan_view
     assert view.x_key() == "field"
-    assert view._table.rowCount() == 3
+    assert view.point_count() == 3
 
     # Switching the x-axis to temperature re-renders the same 3 points.
     view._x_combo.setCurrentIndex(1)  # "T (K)" -> triggers options_changed
     assert view.x_key() == "temperature"
-    assert view._table.rowCount() == 3
+    assert view.point_count() == 3
 
 
 def test_alc_derivative_toggle(mainwindow: MainWindow, monkeypatch):
@@ -171,12 +171,12 @@ def test_alc_derivative_toggle(mainwindow: MainWindow, monkeypatch):
     )
     mw._on_scan_requested()
     view = mw._alc_scan_view
-    assert view._table.rowCount() == 3
+    assert view.point_count() == 3
 
     # dA/dB derivative has one fewer point (midpoints between adjacent runs).
     view._derivative_check.setChecked(True)
     assert view.derivative_enabled() is True
-    assert view._table.rowCount() == 2
+    assert view.point_count() == 2
 
 
 def test_alc_rebuild_replaces_scan_series(mainwindow: MainWindow, monkeypatch):
@@ -368,6 +368,21 @@ def test_alc_peak_fit_recovers_resonance(mainwindow: MainWindow, monkeypatch):
     assert view._fit_curve is not None  # overlay drawn
 
 
+def test_alc_data_table_dialog(mainwindow: MainWindow, monkeypatch):
+    # The per-point table now lives in a separate dialog (to free plot space).
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    mw._fit_panel.set_datasets(
+        [_ds(11, 110.0, 90.0, 100.0), _ds(12, 120.0, 80.0, 200.0), _ds(13, 130.0, 70.0, 300.0)]
+    )
+    mw._on_scan_requested()
+    view = mw._alc_scan_view
+    assert view.point_count() == 3
+    view._on_show_data_table()
+    assert view._data_table is not None
+    assert view._data_table.rowCount() == 3
+
+
 def test_alc_peaks_require_baseline(mainwindow: MainWindow, monkeypatch):
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
@@ -388,6 +403,6 @@ def test_alc_scan_view_show_and_clear(qapp: QApplication):
         x_label="B (G)",
         y_label="Integral asymmetry (%)",
     )
-    assert view._table.rowCount() == 3
+    assert view.point_count() == 3
     view.clear()
-    assert view._table.rowCount() == 0
+    assert view.point_count() == 0
