@@ -40,7 +40,6 @@ jobs:
               - 'tools/**'
               - 'pyproject.toml'
               - 'constraints.txt'
-              - '.test_durations'
               - '.github/workflows/ci.yml'
 
   # Fast lint + structural checks. Always run (cheap, and structural validates
@@ -63,18 +62,15 @@ jobs:
       - name: Lint
         run: python tools/harness.py lint
 
-  # Test suite, sharded across parallel runners with pytest-split (balanced by
-  # the committed .test_durations timings). Each GitHub job gets its own 2-core
-  # runner, so N shards ~= N x the parallelism without going public.
+  # Full test suite on a single runner. The harness runs it with
+  # `-n auto --dist load`, which (since the GUI-teardown fix) completes in a
+  # few minutes — so the previous 4-way pytest-split sharding and the committed
+  # .test_durations timings are no longer needed.
   test:
     name: Tests
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        group: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -89,14 +85,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -c constraints.txt -e ".[gui,hdf5,root,dev]"
-      - name: Run test shard ${{ matrix.group }} of 4
+      - name: Run test suite
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python tools/harness.py test -- --splits 4 --group ${{ matrix.group }}
+        run: python tools/harness.py test
 
-  # Single required status check that aggregates the matrix + checks, so the
-  # branch ruleset doesn't need updating when shard count changes. Passes when
-  # checks succeeded and tests succeeded (or were skipped for a non-code change).
+  # Single required status check that aggregates the checks + test jobs, so the
+  # branch ruleset only needs to require this one status. Passes when checks
+  # succeeded and tests succeeded (or were skipped for a non-code change).
   ci-success:
     name: CI success
     if: always()
