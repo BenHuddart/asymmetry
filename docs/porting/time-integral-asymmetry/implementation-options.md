@@ -266,8 +266,14 @@ from the resonance), though the underlying composite-fit machinery is the same.
     corrected scan, overlays the total (baseline + peaks) fit, and reads off
     B₀ ± err, FWHM, and amplitude per peak. The scan data is now drawn as
     **markers only** (fits/baseline remain lines).
-  - **Remaining in G3:** draggable region/peak handles on the plot (a usability
-    layer over the numeric tables — the "both" choice; the table path is done).
+  - **Draggable handles: DONE** (commit 60122e5) — baseline-region start/end
+    edges and peak centres (B₀) are draggable on the scan plot, writing back to
+    the numeric tables (two-way sync; regions added via the + button). Switching
+    the x-axis clears the regions/peaks (they are in x units). Also gave the plot
+    more room: data table moved to a "Data table…" dialog, Baseline/Peaks
+    sections made collapsible (commit 48e69d2).
+  - **G3 COMPLETE.** Plot extras (markers-only data) and the centred Lorentzian
+    are in.
   - Note (from review): the bespoke view duplicates the trend panel's
     plot/x-selector and will re-implement the model-fit overlay; this is the
     accepted cost of the bespoke-panel decision. The fit-range spinboxes could be
