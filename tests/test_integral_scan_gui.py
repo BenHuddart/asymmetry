@@ -293,8 +293,10 @@ def _synthetic_alc_points(mw: MainWindow) -> None:
 
 def test_alc_baseline_regions_parsing(qapp: QApplication):
     view = ALCScanView()
-    _set_regions(view, [(0.0, 100.0), (200.0, 300.0), (50.0, 10.0)])  # last is inverted
-    assert view.baseline_regions() == [(0.0, 100.0), (200.0, 300.0)]
+    # The last row's edges are reversed; a region is its two edges regardless of
+    # order, so it normalises to (10, 50) rather than being silently dropped.
+    _set_regions(view, [(0.0, 100.0), (200.0, 300.0), (50.0, 10.0)])
+    assert view.baseline_regions() == [(0.0, 100.0), (200.0, 300.0), (10.0, 50.0)]
 
 
 def test_alc_baseline_fit_produces_corrected(mainwindow: MainWindow, monkeypatch):
@@ -368,6 +370,85 @@ def test_alc_peak_fit_recovers_resonance(mainwindow: MainWindow, monkeypatch):
     assert abs(fitted_b0 - 150.0) < 5.0
     assert view._peaks_results.text()  # summary populated
     assert view._fit_curve is not None  # overlay drawn
+
+
+# --- staleness / invalidation (review fixes #1-#5) ---------------------------
+
+
+def test_alc_region_edit_invalidates_corrected_scan(mainwindow: MainWindow, monkeypatch):
+    # #1: editing a baseline region after a fit must discard the corrected scan,
+    # so a later peak fit can't run against a baseline that no longer matches.
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    _synthetic_alc_points(mw)
+    mw._render_alc_scan()
+    view = mw._alc_scan_view
+    _set_regions(view, [(0.0, 100.0), (200.0, 300.0)])
+    mw._on_fit_baseline()
+    assert mw._alc_corrected_scan is not None
+
+    view._regions_table.item(0, 1).setText("120")  # move a region edge
+    assert mw._alc_corrected_scan is None
+    assert mw._alc_baseline_curve is None
+    assert view._baseline_curve is None  # red overlay dropped too
+
+
+def test_alc_peak_specs_rejects_invalid_row(qapp: QApplication):
+    # #2: an unparseable peak row raises (naming the row) instead of being
+    # silently skipped, which would misalign fitted values written back by row.
+    view = ALCScanView()
+    _seed_view_scan(view)
+    view._add_peak("Gaussian")
+    view._peaks_table.item(0, 1).setText("not-a-number")
+    with pytest.raises(ValueError, match="Peak 1"):
+        view.peak_specs()
+
+
+def test_alc_fit_peaks_aborts_on_invalid_row(mainwindow: MainWindow, monkeypatch):
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    _synthetic_alc_points(mw)
+    mw._render_alc_scan()
+    mw._alc_corrected_scan = mw._alc_display_scan("field")
+    monkeypatch.setattr(mw_module.QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    view = mw._alc_scan_view
+    view._add_peak("Gaussian")
+    view._peaks_table.item(0, 2).setText("")  # blank width
+    mw._on_fit_peaks()
+    assert view._fit_curve is None  # no fit ran
+
+
+def test_alc_clear_empties_analysis_tables(qapp: QApplication):
+    # #3: when the scan goes away, its regions/peaks/results go with it.
+    view = ALCScanView()
+    _seed_view_scan(view)
+    _set_regions(view, [(0.0, 50.0)])
+    view._add_peak("Gaussian")
+    assert view._regions_table.rowCount() == 1
+    assert view._peaks_table.rowCount() == 1
+    view.clear()
+    assert view._regions_table.rowCount() == 0
+    assert view._peaks_table.rowCount() == 0
+
+
+def test_alc_inverted_region_normalises(qapp: QApplication):
+    # #4: dragging an edge past the other reverses the cells; the region is its
+    # two edges regardless of order, not silently dropped.
+    view = ALCScanView()
+    _seed_view_scan(view)
+    _set_regions(view, [(150.0, 100.0)])
+    assert view.baseline_regions() == [(100.0, 150.0)]
+
+
+def test_alc_peak_edit_clears_stale_fit_overlay(qapp: QApplication):
+    # #5: editing/dragging a peak after a fit drops the now-stale total-fit
+    # overlay (the marker would otherwise diverge from the drawn curve).
+    view = ALCScanView()
+    _seed_view_scan(view)
+    view._add_peak("Gaussian")
+    view._fit_curve = np.zeros(4)  # simulate an existing fit overlay
+    view._peaks_table.item(0, 1).setText("123")  # move the peak centre
+    assert view._fit_curve is None
 
 
 def test_alc_data_table_dialog(mainwindow: MainWindow, monkeypatch):

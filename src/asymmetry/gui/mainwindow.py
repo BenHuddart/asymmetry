@@ -1090,6 +1090,7 @@ class MainWindow(QMainWindow):
         self._alc_scan_view.options_changed.connect(self._render_alc_scan)
         self._alc_scan_view.baseline_fit_requested.connect(self._on_fit_baseline)
         self._alc_scan_view.peaks_fit_requested.connect(self._on_fit_peaks)
+        self._alc_scan_view.baseline_invalidated.connect(self._on_alc_baseline_invalidated)
         if hasattr(self._fit_panel, "grouped_fit_completed"):
             self._fit_panel.grouped_fit_completed.connect(self._on_grouped_fit_completed)
         if hasattr(self._fit_panel, "preview_requested"):
@@ -5343,6 +5344,7 @@ class MainWindow(QMainWindow):
         # Any re-render (rebuild or x-axis/derivative change) invalidates a
         # previously-fitted baseline (it was tied to the old axis).
         self._alc_corrected_scan = None
+        self._alc_baseline_curve = None
         if not self._alc_scan_points:
             self._alc_scan_view.clear()
             return
@@ -5445,6 +5447,15 @@ class MainWindow(QMainWindow):
         self._alc_scan_view.show_baseline_overlay(result.baseline)
         self._log_panel.log(f"Fitted {model} baseline over {len(regions)} region(s).")
 
+    def _on_alc_baseline_invalidated(self) -> None:
+        """A region edit/drag dropped the baseline: discard the corrected scan.
+
+        Prevents a later peak fit from running against a baseline-corrected scan
+        that no longer matches the regions the user now sees.
+        """
+        self._alc_corrected_scan = None
+        self._alc_baseline_curve = None
+
     #: FWHM = factor × Bwid per peak shape.
     _PEAK_FWHM_FACTOR = {"GaussianLCR": 2.3548, "LorentzianLCR": 2.0}
 
@@ -5456,7 +5467,11 @@ class MainWindow(QMainWindow):
                 self, "Peaks", "Fit a baseline first; peaks are fitted on the corrected curve."
             )
             return
-        specs = self._alc_scan_view.peak_specs()
+        try:
+            specs = self._alc_scan_view.peak_specs()
+        except ValueError as exc:
+            QMessageBox.information(self, "Peaks", str(exc))
+            return
         if not specs:
             QMessageBox.information(
                 self, "Peaks", "Add at least one peak (+ Gaussian / + Lorentzian)."

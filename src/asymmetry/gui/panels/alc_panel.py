@@ -147,6 +147,8 @@ class ALCScanView(QWidget):
     baseline_fit_requested = Signal()
     #: Emitted when the user requests a peak fit (Fit peaks button).
     peaks_fit_requested = Signal()
+    #: Emitted when a region edit/drag invalidates the baseline-corrected scan.
+    baseline_invalidated = Signal()
 
     #: x-combo index → ordering key.
     _X_KEYS = ("field", "temperature", "run")
@@ -234,7 +236,7 @@ class ALCScanView(QWidget):
         self._regions_table.setHorizontalHeaderLabels(["start", "end"])
         self._regions_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._regions_table.setMaximumHeight(110)
-        self._regions_table.itemChanged.connect(self._render_plot)
+        self._regions_table.itemChanged.connect(self._invalidate_baseline)
         outer.addWidget(self._regions_table)
 
         btns = QHBoxLayout()
@@ -272,7 +274,7 @@ class ALCScanView(QWidget):
         self._peaks_table.setHorizontalHeaderLabels(["Type", "B0 (G)", "Width (G)", "Amp (%)"])
         self._peaks_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._peaks_table.setMaximumHeight(110)
-        self._peaks_table.itemChanged.connect(self._render_plot)
+        self._peaks_table.itemChanged.connect(self._invalidate_peaks)
         outer.addWidget(self._peaks_table)
 
         self._peaks_results = QLabel("")
@@ -296,11 +298,31 @@ class ALCScanView(QWidget):
 
     def clear_analysis(self) -> None:
         """Drop the baseline regions, peaks, and any fitted overlays."""
-        self._regions_table.setRowCount(0)
-        self._peaks_table.setRowCount(0)
+        with QSignalBlocker(self._regions_table), QSignalBlocker(self._peaks_table):
+            self._regions_table.setRowCount(0)
+            self._peaks_table.setRowCount(0)
         self._baseline_curve = None
         self._fit_curve = None
         self._peaks_results.setText("")
+
+    def _invalidate_baseline(self, *_: object) -> None:
+        """A region change makes the baseline (and the peak fit on it) stale.
+
+        Drops the baseline + total-fit overlays and tells the main window to
+        discard the stored baseline-corrected scan, so a later peak fit cannot
+        run against a baseline that no longer matches the regions on screen.
+        """
+        self._baseline_curve = None
+        self._fit_curve = None
+        self._peaks_results.setText("")
+        self.baseline_invalidated.emit()
+        self._render_plot()
+
+    def _invalidate_peaks(self, *_: object) -> None:
+        """A peak change makes the peak fit stale (the baseline still holds)."""
+        self._fit_curve = None
+        self._peaks_results.setText("")
+        self._render_plot()
 
     def _update_derivative_label(self) -> None:
         """Keep the derivative-toggle label in step with the x-axis."""
@@ -342,6 +364,12 @@ class ALCScanView(QWidget):
                 best = distance
                 nearest = (kind, row, col)
         self._drag = nearest
+        # Grabbing a handle starts an edit: the existing fit is now stale.
+        if nearest is not None:
+            if nearest[0] == "region":
+                self._invalidate_baseline()
+            else:
+                self._invalidate_peaks()
 
     def _on_canvas_motion(self, event: object) -> None:
         if self._drag is None or event.inaxes is not self._ax or event.xdata is None:
@@ -364,8 +392,18 @@ class ALCScanView(QWidget):
         return self._baseline_model_combo.currentText()
 
     def baseline_regions(self) -> list[tuple[float, float]]:
-        """Parse the regions table into valid ``(start, end)`` pairs (``lo < hi``)."""
-        return [(lo, hi) for _row, lo, hi in self._raw_regions() if lo < hi]
+        """Parse the regions table into valid ``(lo, hi)`` pairs.
+
+        A region is defined by its two edges regardless of which was typed/dragged
+        first, so the pair is normalised to ``(min, max)``; only a zero-width
+        region (``lo == hi``) is dropped.
+        """
+        regions = []
+        for _row, a, b in self._raw_regions():
+            lo, hi = (a, b) if a <= b else (b, a)
+            if lo < hi:
+                regions.append((lo, hi))
+        return regions
 
     def _raw_regions(self) -> list[tuple[int, float, float]]:
         """Parse the regions table into ``(row, lo, hi)`` (any parseable values).
@@ -396,7 +434,7 @@ class ALCScanView(QWidget):
         with QSignalBlocker(self._regions_table):
             for col, val in ((0, lo), (1, hi)):
                 self._regions_table.setItem(row, col, QTableWidgetItem(f"{val:.4g}"))
-        self._render_plot()
+        self._invalidate_baseline()
 
     def _remove_region(self) -> None:
         """Remove the selected region row (or the last row)."""
@@ -405,7 +443,7 @@ class ALCScanView(QWidget):
             row = self._regions_table.rowCount() - 1
         if row >= 0:
             self._regions_table.removeRow(row)
-            self._render_plot()
+            self._invalidate_baseline()
 
     def show_baseline_overlay(self, baseline: NDArray[np.float64]) -> None:
         """Overlay a fitted baseline curve; invalidate any prior peak fit."""
@@ -432,7 +470,7 @@ class ALCScanView(QWidget):
             self._peaks_table.setItem(row, 0, type_item)
             for col, val in ((1, b0), (2, wid), (3, amp)):
                 self._peaks_table.setItem(row, col, QTableWidgetItem(f"{val:.4g}"))
-        self._render_plot()  # show the new peak marker
+        self._invalidate_peaks()  # new peak invalidates the prior fit; draw its marker
 
     def _remove_peak(self) -> None:
         """Remove the selected peak row (or the last row)."""
@@ -441,22 +479,28 @@ class ALCScanView(QWidget):
             row = self._peaks_table.rowCount() - 1
         if row >= 0:
             self._peaks_table.removeRow(row)
-            self._render_plot()
+            self._invalidate_peaks()
 
     def peak_specs(self) -> list[dict]:
-        """Return the peaks as ``{component, f, B0, Bwid}`` initial guesses."""
+        """Return the peaks as ``{component, f, B0, Bwid}`` initial guesses.
+
+        Every peak row must be valid: a row with an unknown type or an
+        unparseable B0/Width/Amp raises ``ValueError`` (naming the row) rather
+        than being silently skipped, so the returned specs stay aligned 1:1 with
+        the table rows (the fitted values are written straight back by row).
+        """
         specs: list[dict] = []
         for row in range(self._peaks_table.rowCount()):
             type_item = self._peaks_table.item(row, 0)
             component = self._PEAK_COMPONENTS.get(type_item.text()) if type_item else None
             if component is None:
-                continue
+                raise ValueError(f"Peak {row + 1}: unknown peak type.")
             try:
                 b0 = float(self._peaks_table.item(row, 1).text())
                 bwid = float(self._peaks_table.item(row, 2).text())
                 amp = float(self._peaks_table.item(row, 3).text())
-            except (AttributeError, ValueError):
-                continue
+            except (AttributeError, ValueError) as exc:
+                raise ValueError(f"Peak {row + 1}: B0, Width and Amp must be numbers.") from exc
             specs.append({"component": component, "f": amp, "B0": b0, "Bwid": bwid})
         return specs
 
@@ -527,10 +571,19 @@ class ALCScanView(QWidget):
     # --- plotting ------------------------------------------------------------
 
     def clear(self, message: str = "Build a scan to see the ALC curve") -> None:
-        """Show an empty-state placeholder with *message*."""
+        """Show an empty-state placeholder with *message*.
+
+        The scan is gone, so its analysis goes with it: the region/peak tables
+        and the results read-out are emptied (otherwise stale rows, markers, and
+        draggable handles would persist onto the next, unrelated scan).
+        """
         self._last_plot = None
         self._baseline_curve = None
         self._fit_curve = None
+        with QSignalBlocker(self._regions_table), QSignalBlocker(self._peaks_table):
+            self._regions_table.setRowCount(0)
+            self._peaks_table.setRowCount(0)
+        self._peaks_results.setText("")
         self._ax.clear()
         self._ax.text(
             0.5,
@@ -583,11 +636,13 @@ class ALCScanView(QWidget):
             return
         self._ax.clear()
         self._ax.set_axis_on()
-        # Baseline regions: shaded spans with draggable edge lines.
-        for _row, lo, hi in self._raw_regions():
+        # Baseline regions: shaded spans with draggable edge lines (the span is
+        # the same whichever edge was dragged first, so shade min..max).
+        for _row, a, b in self._raw_regions():
+            lo, hi = (a, b) if a <= b else (b, a)
             if lo < hi:
                 self._ax.axvspan(lo, hi, color="0.85", alpha=0.6, zorder=0)
-            for edge in (lo, hi):
+            for edge in (a, b):
                 self._ax.axvline(edge, color="0.55", linewidth=0.8, zorder=1)
         # Peak centres: draggable dashed markers.
         for row in range(self._peaks_table.rowCount()):
