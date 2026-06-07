@@ -240,6 +240,25 @@ def test_fit_scan_model_two_peak_composite():
     assert fit.parameters["B0_2"].value == pytest.approx(210.0, abs=3.0)
 
 
+def test_composite_component_param_name_single_and_multi():
+    # Single peak: bare names; two peaks: index-suffixed by component position.
+    single = as_composite_model("GaussianLCR")
+    assert single.component_param_name(0, "B0") == "B0"
+    pair = as_composite_model(["LorentzianLCR", "GaussianLCR"])
+    assert pair.component_param_name(0, "B0") == "B0_1"
+    assert pair.component_param_name(1, "B0") == "B0_2"
+
+
+def test_lcr_components_carry_fwhm_factor():
+    from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
+
+    gauss = PARAMETER_MODEL_COMPONENTS["GaussianLCR"].fwhm_factor
+    lorentz = PARAMETER_MODEL_COMPONENTS["LorentzianLCR"].fwhm_factor
+    assert gauss == pytest.approx(2.0 * np.sqrt(2.0 * np.log(2.0)))  # ≈ 2.3548
+    assert lorentz == pytest.approx(2.0)
+    assert PARAMETER_MODEL_COMPONENTS["Linear"].fwhm_factor is None
+
+
 def test_fit_scan_model_respects_x_range():
     scan = _alc_scan()
     fit = fit_scan_model(

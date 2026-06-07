@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles.fonts import mono_font
 
 
@@ -164,6 +165,10 @@ class ALCScanView(QWidget):
         self._data_table: QTableWidget | None = None
         #: Active plot drag, as ("region", row, col) or ("peak", row, 1).
         self._drag: tuple[str, int, int] | None = None
+        #: The Line2D being dragged (moved in place; full re-render on release).
+        self._drag_artist = None
+        #: Handle key → drawn edge/centre Line2D, rebuilt by each _render_plot.
+        self._handle_artists: dict[tuple[str, int, int], object] = {}
         layout = QVBoxLayout(self)
 
         controls = QHBoxLayout()
@@ -338,52 +343,76 @@ class ALCScanView(QWidget):
 
     # --- plot drag (region edges + peak centres) -----------------------------
 
-    def _drag_handles(self) -> list[tuple[float, str, int, int]]:
-        """Return draggable handles as ``(x, kind, row, col)`` from the tables."""
-        handles: list[tuple[float, str, int, int]] = []
-        for row, lo, hi in self._raw_regions():
-            handles.append((lo, "region", row, 0))
-            handles.append((hi, "region", row, 1))
+    @staticmethod
+    def _cell_float(table: QTableWidget, row: int, col: int) -> float | None:
+        """Parse a table cell to float, or ``None`` if empty/unparseable."""
+        item = table.item(row, col)
+        try:
+            return float(item.text())
+        except (AttributeError, ValueError):
+            return None
+
+    def _peak_centres(self) -> list[tuple[int, float]]:
+        """Return ``(row, B0)`` for each peak row with a parseable centre."""
+        centres = []
         for row in range(self._peaks_table.rowCount()):
-            item = self._peaks_table.item(row, 1)
-            try:
-                handles.append((float(item.text()), "peak", row, 1))
-            except (AttributeError, ValueError):
-                continue
+            b0 = self._cell_float(self._peaks_table, row, 1)
+            if b0 is not None:
+                centres.append((row, b0))
+        return centres
+
+    def _drag_handles(self) -> list[tuple[float, tuple[str, int, int]]]:
+        """Return draggable handles as ``(x, (kind, row, col))`` from the tables.
+
+        This is the single source of truth for which handles exist; the renderer
+        draws the same set so every drawn handle is grabbable and vice versa.
+        """
+        handles: list[tuple[float, tuple[str, int, int]]] = []
+        for row, lo, hi in self._raw_regions():
+            handles.append((lo, ("region", row, 0)))
+            handles.append((hi, ("region", row, 1)))
+        for row, b0 in self._peak_centres():
+            handles.append((b0, ("peak", row, 1)))
         return handles
 
     def _on_canvas_press(self, event: object) -> None:
         if event.inaxes is not self._ax or event.button != 1 or self._last_plot is None:
             return
-        nearest = None
-        best = 12.0  # grab tolerance in device px (≈6 logical px on a 2× display)
-        for x, kind, row, col in self._drag_handles():
-            px = self._ax.transData.transform((x, 0.0))[0]
-            distance = abs(px - event.x)
-            if distance <= best:
-                best = distance
-                nearest = (kind, row, col)
-        self._drag = nearest
+        # 12 device px ≈ 6 logical px on a 2× display.
+        self._drag = nearest_handle(self._ax, self._drag_handles(), event.x, tolerance_px=12.0)
+        if self._drag is None:
+            return
         # Grabbing a handle starts an edit: the existing fit is now stale.
-        if nearest is not None:
-            if nearest[0] == "region":
-                self._invalidate_baseline()
-            else:
-                self._invalidate_peaks()
+        if self._drag[0] == "region":
+            self._invalidate_baseline()
+        else:
+            self._invalidate_peaks()
+        # Grab the drawn line for this handle so the drag moves only it (the
+        # full re-render — shaded span included — is deferred to release).
+        self._drag_artist = self._handle_artists.get(self._drag)
 
     def _on_canvas_motion(self, event: object) -> None:
         if self._drag is None or event.inaxes is not self._ax or event.xdata is None:
             return
         kind, row, col = self._drag
+        x = float(event.xdata)
         table = self._regions_table if kind == "region" else self._peaks_table
         with QSignalBlocker(table):
             item = table.item(row, col)
             if item is not None:
-                item.setText(f"{float(event.xdata):.4g}")
-        self._render_plot()
+                item.setText(f"{x:.4g}")
+        if self._drag_artist is not None:
+            self._drag_artist.set_xdata([x, x])
+            self._canvas.draw_idle()
+        else:
+            self._render_plot()
 
     def _on_canvas_release(self, _event: object) -> None:
+        was_dragging = self._drag is not None
         self._drag = None
+        self._drag_artist = None
+        if was_dragging:
+            self._render_plot()  # restore the shaded span at the final edges
 
     # --- baseline controls ---------------------------------------------------
 
@@ -413,12 +442,10 @@ class ALCScanView(QWidget):
         """
         rows: list[tuple[int, float, float]] = []
         for row in range(self._regions_table.rowCount()):
-            start_item = self._regions_table.item(row, 0)
-            end_item = self._regions_table.item(row, 1)
-            try:
-                rows.append((row, float(start_item.text()), float(end_item.text())))
-            except (AttributeError, ValueError):
-                continue
+            lo = self._cell_float(self._regions_table, row, 0)
+            hi = self._cell_float(self._regions_table, row, 1)
+            if lo is not None and hi is not None:
+                rows.append((row, lo, hi))
         return rows
 
     def _add_region(self) -> None:
@@ -482,26 +509,27 @@ class ALCScanView(QWidget):
             self._invalidate_peaks()
 
     def peak_specs(self) -> list[dict]:
-        """Return the peaks as ``{component, f, B0, Bwid}`` initial guesses.
+        """Return the peaks as ``{component, label, f, B0, Bwid}`` initial guesses.
 
         Every peak row must be valid: a row with an unknown type or an
         unparseable B0/Width/Amp raises ``ValueError`` (naming the row) rather
         than being silently skipped, so the returned specs stay aligned 1:1 with
         the table rows (the fitted values are written straight back by row).
+        ``label`` is the row's display type (e.g. ``"Gaussian"``).
         """
         specs: list[dict] = []
         for row in range(self._peaks_table.rowCount()):
             type_item = self._peaks_table.item(row, 0)
-            component = self._PEAK_COMPONENTS.get(type_item.text()) if type_item else None
+            label = type_item.text() if type_item else ""
+            component = self._PEAK_COMPONENTS.get(label)
             if component is None:
                 raise ValueError(f"Peak {row + 1}: unknown peak type.")
-            try:
-                b0 = float(self._peaks_table.item(row, 1).text())
-                bwid = float(self._peaks_table.item(row, 2).text())
-                amp = float(self._peaks_table.item(row, 3).text())
-            except (AttributeError, ValueError) as exc:
-                raise ValueError(f"Peak {row + 1}: B0, Width and Amp must be numbers.") from exc
-            specs.append({"component": component, "f": amp, "B0": b0, "Bwid": bwid})
+            b0 = self._cell_float(self._peaks_table, row, 1)
+            bwid = self._cell_float(self._peaks_table, row, 2)
+            amp = self._cell_float(self._peaks_table, row, 3)
+            if b0 is None or bwid is None or amp is None:
+                raise ValueError(f"Peak {row + 1}: B0, Width and Amp must be numbers.")
+            specs.append({"component": component, "label": label, "f": amp, "B0": b0, "Bwid": bwid})
         return specs
 
     def set_peak_results(self, results: list[dict], summary: str = "") -> None:
@@ -636,23 +664,23 @@ class ALCScanView(QWidget):
             return
         self._ax.clear()
         self._ax.set_axis_on()
+        # Draw the draggable handles from the same source the hit-test uses, and
+        # remember each line so a drag can move just it (keys: region edge cols
+        # 0/1; peak centre col 1).
+        self._handle_artists = {}
         # Baseline regions: shaded spans with draggable edge lines (the span is
         # the same whichever edge was dragged first, so shade min..max).
-        for _row, a, b in self._raw_regions():
+        for row, a, b in self._raw_regions():
             lo, hi = (a, b) if a <= b else (b, a)
             if lo < hi:
                 self._ax.axvspan(lo, hi, color="0.85", alpha=0.6, zorder=0)
-            for edge in (a, b):
-                self._ax.axvline(edge, color="0.55", linewidth=0.8, zorder=1)
+            for col, edge in ((0, a), (1, b)):
+                line = self._ax.axvline(edge, color="0.55", linewidth=0.8, zorder=1)
+                self._handle_artists[("region", row, col)] = line
         # Peak centres: draggable dashed markers.
-        for row in range(self._peaks_table.rowCount()):
-            item = self._peaks_table.item(row, 1)
-            try:
-                self._ax.axvline(
-                    float(item.text()), color="#2a7a3f", linestyle="--", linewidth=0.9, zorder=1
-                )
-            except (AttributeError, ValueError):
-                continue
+        for row, b0 in self._peak_centres():
+            line = self._ax.axvline(b0, color="#2a7a3f", linestyle="--", linewidth=0.9, zorder=1)
+            self._handle_artists[("peak", row, 1)] = line
         # Data as markers only (no joining line).
         self._ax.errorbar(
             plot["x"], plot["value"], yerr=plot["error"], fmt="o", markersize=4, capsize=2

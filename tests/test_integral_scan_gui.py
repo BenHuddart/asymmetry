@@ -482,9 +482,9 @@ def test_alc_drag_handles_lists_region_edges_and_peaks(qapp: QApplication):
     _seed_view_scan(view)
     _set_regions(view, [(10.0, 90.0)])
     view._add_peak("Gaussian")  # default B0 = mid-range = 150
-    handles = view._drag_handles()
-    assert sorted({kind for _x, kind, _r, _c in handles}) == ["peak", "region"]
-    assert sorted(x for x, kind, _r, _c in handles if kind == "region") == [10.0, 90.0]
+    handles = view._drag_handles()  # (x, (kind, row, col))
+    assert sorted({key[0] for _x, key in handles}) == ["peak", "region"]
+    assert sorted(x for x, key in handles if key[0] == "region") == [10.0, 90.0]
 
 
 def test_alc_region_edge_drag_updates_table(qapp: QApplication):

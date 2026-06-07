@@ -5456,9 +5456,6 @@ class MainWindow(QMainWindow):
         self._alc_corrected_scan = None
         self._alc_baseline_curve = None
 
-    #: FWHM = factor × Bwid per peak shape.
-    _PEAK_FWHM_FACTOR = {"GaussianLCR": 2.3548, "LorentzianLCR": 2.0}
-
     def _on_fit_peaks(self) -> None:
         """Fit the peak composite to the baseline-corrected scan; overlay + read off."""
         corrected = self._alc_corrected_scan
@@ -5479,12 +5476,12 @@ class MainWindow(QMainWindow):
             return
 
         model = as_composite_model([spec["component"] for spec in specs])
-        names = model.param_names  # [f,B0,Bwid] per peak, suffixed _i when >1 peak
+        # Address each peak's params by name (composite suffixes them _i when >1
+        # peak), not by positional arithmetic over param_names.
         initial: dict[str, float] = {}
         for i, spec in enumerate(specs):
-            initial[names[3 * i + 0]] = spec["f"]
-            initial[names[3 * i + 1]] = spec["B0"]
-            initial[names[3 * i + 2]] = spec["Bwid"]
+            for local in ("f", "B0", "Bwid"):
+                initial[model.component_param_name(i, local)] = spec[local]
 
         try:
             fit = fit_scan_model(corrected, model, initial=initial)
@@ -5495,19 +5492,20 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Peaks", f"Peak fit did not converge: {fit.message}")
             return
 
-        fitted_values = {name: fit.parameters[name].value for name in names}
+        fitted_values = {name: fit.parameters[name].value for name in model.param_names}
         results: list[dict] = []
         summary_lines: list[str] = []
         for i, spec in enumerate(specs):
-            f_val = fitted_values[names[3 * i + 0]]
-            b0_val = fitted_values[names[3 * i + 1]]
-            bwid_val = abs(fitted_values[names[3 * i + 2]])
-            b0_err = fit.uncertainties.get(names[3 * i + 1], 0.0)
-            fwhm = self._PEAK_FWHM_FACTOR[spec["component"]] * bwid_val
+            b0_name = model.component_param_name(i, "B0")
+            f_val = fitted_values[model.component_param_name(i, "f")]
+            b0_val = fitted_values[b0_name]
+            bwid_val = abs(fitted_values[model.component_param_name(i, "Bwid")])
+            b0_err = fit.uncertainties.get(b0_name, 0.0)
+            factor = model.components[i].fwhm_factor
+            fwhm = factor * bwid_val if factor is not None else float("nan")
             results.append({"f": f_val, "B0": b0_val, "Bwid": bwid_val})
-            shape = "Gaussian" if spec["component"] == "GaussianLCR" else "Lorentzian"
             summary_lines.append(
-                f"Peak {i + 1} ({shape}): B₀ = {b0_val:.4g} ± {b0_err:.2g} G, "
+                f"Peak {i + 1} ({spec['label']}): B₀ = {b0_val:.4g} ± {b0_err:.2g} G, "
                 f"FWHM = {fwhm:.4g} G, amp = {f_val:.3g} %"
             )
 
