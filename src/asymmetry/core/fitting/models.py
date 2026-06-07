@@ -337,12 +337,11 @@ def keren(
 ) -> NDArray:
     """Keren dynamic Gaussian relaxation in a longitudinal field (Keren, PRB 50, 10039 (1994)).
 
-    P(t) = A0 exp[-Gamma(t)] + baseline, with omega0 = gamma_mu * B_L and
+    P(t) = A0 exp[-Gamma(t)] + baseline, with omega0 = gamma_mu * B_L and::
 
-        Gamma(t) = (2 Delta^2 / (omega0^2 + nu^2)^2)
-                   * [ (omega0^2 + nu^2) nu t
-                       + (omega0^2 - nu^2) (1 - e^{-nu t} cos(omega0 t))
-                       - 2 nu omega0 e^{-nu t} sin(omega0 t) ]
+        Gamma(t) = (2 Delta^2 / (omega0^2 + nu^2)^2) * [
+            (omega0^2 + nu^2) nu t + (omega0^2 - nu^2) (1 - e^{-nu t} cos(omega0 t))
+            - 2 nu omega0 e^{-nu t} sin(omega0 t) ]
 
     Keren's analytic generalisation of the Abragam function to a longitudinal
     field.  At ``B_L = 0`` it reduces to the Abragam exponent (x2, for the two

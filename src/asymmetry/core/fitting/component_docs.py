@@ -162,13 +162,15 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "generalisation of the static Gaussian Kubo-Toyabe: nu -> 0 recovers the static function (with its 1/3 tail in "
         "zero field), while nu >> Delta gives motional narrowing toward exponential decay with rate 2*Delta^2/nu. Set "
         "B_L for longitudinal-field decoupling studies (e.g. ionic-motion field sweeps). This is the standard model for "
-        "extracting a hop/fluctuation rate and its activation energy in metals (Cu) and ionic conductors."
+        "extracting a hop/fluctuation rate and its activation energy in metals (Cu) and ionic conductors. "
+        "Computed via the strong-collision dynamicisation integral; grid-independent to better than 0.5%."
     ),
     "DynamicLorentzianKT": (
         "Use instead of the Gaussian dynamic KT when the local-field distribution is Lorentzian rather than Gaussian, "
         "i.e. for dilute or randomly diluted moments (spin glasses, dilute-spin systems), with half-width a_L fluctuating "
-        "at rate nu. nu -> 0 recovers the static Lorentzian Kubo-Toyabe. Zero field is exact; longitudinal-field support "
-        "currently dynamicises the zero-field line shape (see the dynamic-relaxation porting study)."
+        "at rate nu. nu -> 0 recovers the static Lorentzian Kubo-Toyabe. Zero field is exact (analytic); the "
+        "longitudinal-field line shape is computed numerically (~1% accurate). See the 'Dynamic and fluctuating-field "
+        "relaxation functions' user-guide page for the method and accuracy."
     ),
     "Keren": (
         "Use as the analytic longitudinal-field dynamic Gaussian relaxation function: an exact strong-collision result in "
