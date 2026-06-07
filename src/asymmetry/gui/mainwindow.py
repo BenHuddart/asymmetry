@@ -5292,6 +5292,11 @@ class MainWindow(QMainWindow):
         self._render_alc_scan()
         self._log_panel.log(f"Built integral scan '{series.label}' ({scan.n_points} points).")
 
+        # Bring the freshly-built scan into view: raise the Parameters dock
+        # (the ALC scan view) over the Fit dock.
+        self._dock_fit_parameters.show()
+        self._dock_fit_parameters.raise_()
+
     # x-axis key → (display label, derivative unit label).
     _ALC_X_LABELS = {"field": "B (G)", "temperature": "T (K)", "run": "Run"}
     _ALC_DERIV_UNITS = {"field": "%/G", "temperature": "%/K", "run": "%/run"}
