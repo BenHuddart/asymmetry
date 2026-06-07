@@ -236,9 +236,15 @@ from the resonance), though the underlying composite-fit machinery is the same.
   - **Decided:** scan units = **percent** (matches the plots); ALC plots vs
     **field** (field-less runs dropped + logged). The Batch-tab checkbox first cut
     was reverted.
-  - **G2b (remaining):** the **`dA/dB` derivative** view (`differentiate_scan`
-    is midpoint-based, so it doesn't map onto per-run rows — needs its own
-    rendering); an x-axis selector (field/temperature/run) on the scan view.
+  - **G2b: DONE** (commit a9c138c) — the `ALCScanView` gained a control row: an
+    **x-axis selector (B / T / Run)** and a **`dA/dB` derivative checkbox**
+    (replace-toggle). `mainwindow._render_alc_scan` owns the per-run data
+    (`_alc_scan_points`) and re-derives the display on build/options-change: map
+    each run to the chosen x (drop runs missing that log), sort, scale to
+    percent, optionally `differentiate_scan` (labelled %/G | %/K | %/run). Build
+    now uses `order_key="run"` (include all integrable runs; the view picks the
+    axis). The fit-range integration window also mirrors the regular machinery —
+    draggable span + spinboxes (commit c71c9cb).
 - **G3 (GUI ALC analysis):** baseline regions + subtract + peak fit + results
   read-out. **Add a centred-Lorentzian peak component** to `parameter_models.py`
   (the built-in `Lorentzian` is centred at 0; `GaussianLCR` is the only
