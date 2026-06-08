@@ -106,9 +106,67 @@ def test_alc_toggle_guarded_to_fb_representation(mainwindow: MainWindow, monkeyp
     assert mw._alc_mode_action.isChecked() is False  # guard reverted it
 
 
-def test_alc_action_starts_disabled(mainwindow: MainWindow):
-    # The toolbar action is disabled until the F-B asymmetry view is active.
-    assert mainwindow._alc_mode_action.isEnabled() is False
+def test_alc_action_enabled_in_default_fb_view(mainwindow: MainWindow):
+    # The app opens in the F-B asymmetry view, where ALC mode applies, so the
+    # toggle is enabled at startup — no view-switch workaround needed.
+    assert mainwindow._plot_workspace.active_view() == "fb_asymmetry"
+    assert mainwindow._alc_mode_action.isEnabled() is True
+
+
+def test_alc_enabled_predicate_tracks_representation(mainwindow: MainWindow, monkeypatch):
+    # Enabled iff the active representation is F-B asymmetry, regardless of how
+    # many runs are selected (the fixture has none). The two-run requirement is
+    # enforced at build time, not on the toggle.
+    mw = mainwindow
+    cases = {
+        RepresentationType.TIME_FB_ASYMMETRY: True,
+        RepresentationType.TIME_GROUPS: False,
+        RepresentationType.FREQ_FFT: False,
+        RepresentationType.FREQ_MAXENT: False,
+    }
+    for rep, expected in cases.items():
+        monkeypatch.setattr(mw, "_active_representation_type", lambda rep=rep: rep)
+        mw._refresh_alc_mode_enabled()
+        assert mw._alc_mode_action.isEnabled() is expected
+        expected_tip = (
+            mw_module._ALC_TOOLTIP_ENABLED if expected else mw_module._ALC_TOOLTIP_DISABLED
+        )
+        assert mw._alc_mode_action.toolTip() == expected_tip
+
+
+def test_alc_toggle_enabled_state_follows_view_change(mainwindow: MainWindow):
+    # Switching views drives the enabled flag through the real signal path.
+    mw = mainwindow
+    mw._plot_workspace.set_active_view("fb_asymmetry")
+    assert mw._alc_mode_action.isEnabled() is True
+    mw._plot_workspace.set_active_view("frequency")
+    assert mw._alc_mode_action.isEnabled() is False
+    mw._plot_workspace.set_active_view("fb_asymmetry")
+    assert mw._alc_mode_action.isEnabled() is True
+
+
+def test_alc_disabled_button_shows_tooltip_via_event_filter(mainwindow: MainWindow, monkeypatch):
+    # Qt suppresses tooltips on disabled widgets; the event filter renders the
+    # "switch to F-B view" hint itself when the button is disabled, and defers to
+    # default handling when it is enabled.
+    from PySide6.QtCore import QEvent, QPoint
+    from PySide6.QtGui import QHelpEvent
+
+    mw = mainwindow
+    if mw._alc_mode_button is None:
+        pytest.skip("toolbar provides no widget for the ALC action")
+
+    monkeypatch.setattr(mw, "_active_representation_type", lambda: RepresentationType.FREQ_FFT)
+    mw._refresh_alc_mode_enabled()
+    assert mw._alc_mode_action.isEnabled() is False
+    disabled_event = QHelpEvent(QEvent.Type.ToolTip, QPoint(1, 1), QPoint(1, 1))
+    assert mw.eventFilter(mw._alc_mode_button, disabled_event) is True
+
+    monkeypatch.setattr(mw, "_active_representation_type", lambda: _FB)
+    mw._refresh_alc_mode_enabled()
+    assert mw._alc_mode_action.isEnabled() is True
+    enabled_event = QHelpEvent(QEvent.Type.ToolTip, QPoint(1, 1), QPoint(1, 1))
+    assert mw.eventFilter(mw._alc_mode_button, enabled_event) is False
 
 
 # --- build + render ----------------------------------------------------------

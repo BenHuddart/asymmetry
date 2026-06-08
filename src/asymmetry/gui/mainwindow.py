@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QObject, QSettings, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QActionGroup, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QTabBar,
     QToolBar,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -144,6 +145,14 @@ _PERF_LOGGING_ENV_VAR = "ASYMMETRY_PERF_LOGGING"
 _PLOT_DECIMATION_SETTINGS_KEY = "plot/enable_decimation"
 _MAXENT_WARN_PEAK_MATRIX_BYTES = 1 * 1024**3
 _MAXENT_WARN_TOTAL_MATRIX_BYTES = 8 * 1024**3
+
+# ALC-mode toggle tooltips. The enabled text describes the feature; the disabled
+# text tells the user how to reach it (the toggle is only valid in the F-B view).
+_ALC_TOOLTIP_ENABLED = (
+    "Integral-asymmetry field scan (ALC / repolarisation / QLCR). "
+    "Available for the Forward-Backward asymmetry representation."
+)
+_ALC_TOOLTIP_DISABLED = "Switch to the F-B asymmetry view to use ALC mode."
 _MAXENT_WARN_TOTAL_OBSERVATIONS = 500_000
 
 
@@ -392,6 +401,9 @@ class MainWindow(QMainWindow):
         self._connect_actions()
         self._ui_manager.restore_settings()
         self._restore_plot_ranges_from_settings()
+        # The app can land in the default F-B view without firing a view-change
+        # signal, so seed the ALC-mode toggle's enabled state from the view now.
+        self._refresh_alc_mode_enabled()
 
         # Check for SciPy availability and warn if using fallback
         from asymmetry.core.fitting.diffusion import is_scipy_available
@@ -551,10 +563,7 @@ class MainWindow(QMainWindow):
         self._alc_mode_action = self._main_toolbar.addAction("ALC mode")
         self._alc_mode_action.setCheckable(True)
         self._alc_mode_action.setEnabled(False)
-        self._alc_mode_action.setToolTip(
-            "Integral-asymmetry field scan (ALC / repolarisation / QLCR). "
-            "Available for the Forward-Backward asymmetry representation."
-        )
+        self._alc_mode_action.setToolTip(_ALC_TOOLTIP_ENABLED)
         self._alc_mode_action.toggled.connect(self._on_alc_mode_toggled)
         # Make the active state unmistakable: when checked, the button turns the
         # ALC/FitSeries red. Styled on the specific tool button so the other
@@ -568,6 +577,12 @@ class MainWindow(QMainWindow):
                 "color: #ffffff; font-weight: 700; }"
                 f"QToolButton:checked:hover {{ background-color: {tokens.ACCENT_RED}; }}"
             )
+            # A disabled QToolButton swallows hover events, so Qt won't show its
+            # tooltip — yet the disabled state is exactly when the user needs the
+            # "switch to F-B view" hint. Filter the help event to show it anyway.
+            alc_button.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
+            alc_button.installEventFilter(self)
+        self._alc_mode_button = alc_button
         self._main_toolbar.addSeparator()
 
         # Domain → representation segmented control, grouped 2 + 2 under
@@ -1909,6 +1924,9 @@ class MainWindow(QMainWindow):
 
         # Update selected datasets for global fitting
         self._update_selected_datasets()
+        # Loading runs into the already-active F-B view doesn't fire a view
+        # change, so re-evaluate the ALC-mode toggle against the current view.
+        self._refresh_alc_mode_enabled()
 
         # Update status message
         if successful > 0:
@@ -4889,12 +4907,9 @@ class MainWindow(QMainWindow):
         self._sync_domain_buttons(view)
         self._apply_inspector_for_domain(view)
         self._update_status_selection()
-        # ALC mode is only valid for the F-B asymmetry view; enable the toggle
-        # there and auto-exit ALC mode when the user leaves it.
-        is_fb = view == "fb_asymmetry"
-        self._alc_mode_action.setEnabled(is_fb)
-        if not is_fb and self._alc_mode_action.isChecked():
-            self._alc_mode_action.setChecked(False)  # fires _on_alc_mode_toggled(False)
+        # ALC mode is only valid for the F-B asymmetry view; keep the toggle's
+        # enabled state in sync and auto-exit ALC mode when the user leaves it.
+        self._refresh_alc_mode_enabled()
         # Refresh the trend panel for the newly-active representation.
         self._refresh_trend_panel()
 
@@ -4966,6 +4981,45 @@ class MainWindow(QMainWindow):
             "frequency": RepresentationType.FREQ_FFT,
             "maxent": RepresentationType.FREQ_MAXENT,
         }.get(self._plot_workspace.active_view())
+
+    def _refresh_alc_mode_enabled(self) -> None:
+        """Sync the ALC-mode toggle's enabled state with the active representation.
+
+        ALC mode (integral-asymmetry field scan) is meaningful only for the
+        Forward-Backward asymmetry representation, and is enabled there
+        regardless of how many runs are selected — the "need two runs" rule is
+        enforced at build time in :meth:`_on_scan_requested`, not on the toggle.
+
+        Driving the flag off the active representation (rather than only the
+        view-change signal) keeps it correct on every path that lands in the F-B
+        view without firing that signal: startup, loading runs into the default
+        view, and project restore. When the view is not F-B the toggle is
+        disabled, its tooltip explains how to reach it, and any active ALC mode
+        is exited.
+        """
+        if not hasattr(self, "_alc_mode_action"):
+            return
+        is_fb = self._active_representation_type() == RepresentationType.TIME_FB_ASYMMETRY
+        self._alc_mode_action.setEnabled(is_fb)
+        self._alc_mode_action.setToolTip(_ALC_TOOLTIP_ENABLED if is_fb else _ALC_TOOLTIP_DISABLED)
+        if not is_fb and self._alc_mode_action.isChecked():
+            self._alc_mode_action.setChecked(False)  # fires _on_alc_mode_toggled(False)
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        """Show the ALC-mode tooltip on hover even while the button is disabled.
+
+        Qt suppresses tooltips for disabled widgets, but the disabled state is
+        precisely when the user needs the "switch to F-B view" hint, so we render
+        the help event ourselves.
+        """
+        if (
+            event.type() == QEvent.Type.ToolTip
+            and obj is getattr(self, "_alc_mode_button", None)
+            and not obj.isEnabled()
+        ):
+            QToolTip.showText(event.globalPos(), self._alc_mode_action.toolTip(), obj)
+            return True
+        return super().eventFilter(obj, event)
 
     @staticmethod
     def _fit_result_summary(fit_result) -> dict:
@@ -6597,6 +6651,11 @@ class MainWindow(QMainWindow):
 
     def _restore_alc_scan(self) -> None:
         """Rebuild the ALC scan + analysis from the persisted computed series."""
+        # restore_state sets the workspace view without firing the view-change
+        # signal, so sync the toggle's enabled state to the restored view here —
+        # before any early return — so an F-B restore enables it even when no
+        # ALC scan was saved.
+        self._refresh_alc_mode_enabled()
         series = next(
             (
                 batch
@@ -6631,15 +6690,13 @@ class MainWindow(QMainWindow):
         finally:
             self._alc_loading = False
         # Resume ALC mode if it was active at save time and the restored view is
-        # F-B asymmetry. Read the active representation directly — restore_state
-        # sets the view without firing the signal that enables the toggle, so the
-        # action's enabled flag is still stale here. The toggle only swaps docks
-        # (no re-render), so the restored scan + overlays survive.
+        # F-B asymmetry. The enabled flag was already synced at the top of this
+        # method; here we only re-check the toggle. (It just swaps docks with no
+        # re-render, so the restored scan + overlays survive.)
         if (
             series.extra.get("mode_active")
             and self._active_representation_type() == RepresentationType.TIME_FB_ASYMMETRY
         ):
-            self._alc_mode_action.setEnabled(True)
             self._alc_mode_action.setChecked(True)
 
     def _alc_points_from_series(self, series) -> list[dict]:
