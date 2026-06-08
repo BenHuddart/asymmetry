@@ -1870,6 +1870,12 @@ class MainWindow(QMainWindow):
                     if auto_grouping_payload is not None:
                         auto_grouping_attempts += 1
                         grouping_payload = dict(auto_grouping_payload)
+                        # good_frames and its period companions are measured
+                        # per-run normalisers; they must come from each dataset's
+                        # own loader metadata, never be inherited from the
+                        # template run, or the dead-time correction diverges.
+                        for per_run_key in self._PER_RUN_NORMALISER_KEYS:
+                            grouping_payload.pop(per_run_key, None)
                         active_axis = None
                         if hasattr(self._plot_panel, "get_current_polarization_axis"):
                             active_axis = self._normalize_vector_axis(
@@ -2533,6 +2539,38 @@ class MainWindow(QMainWindow):
         setattr(dataset, "_grouping_source_arrays_cache", cached)
         return cached
 
+    # Strictly per-run normalisers. ``good_frames`` is the universal dead-time
+    # normaliser: ``apply_deadtime_correction`` divides the loss term by
+    # ``dt * good_frames``, so a wrong (another run's) or missing value makes the
+    # denominator clip and the asymmetry saturate at +-100%. The ``period_*``
+    # companions let per-period selection re-resolve it. None of these may be
+    # inherited from another run's grouping template — they belong to the run
+    # whose DAQ produced them and must be re-resolved per dataset.
+    _PER_RUN_NORMALISER_KEYS = (
+        "good_frames",
+        "period_good_frames",
+        "period_dead_time_us",
+        "period_histograms",
+        "period_reduced",
+    )
+
+    def _preserve_per_run_normalisers(
+        self, target: dict, existing_grouping: dict, grouping_result: dict
+    ) -> None:
+        """Keep this run's own per-run normalisers when rebuilding its grouping.
+
+        Always prefer the dataset's own value (``existing_grouping``, the run's
+        loader-resolved metadata); fall back to ``grouping_result`` only when the
+        run never carried one. This stops a grouping template from clobbering a
+        run's ``good_frames`` with a different run's value.
+        """
+        for key in self._PER_RUN_NORMALISER_KEYS:
+            own = existing_grouping.get(key)
+            if own is not None:
+                target[key] = own
+            elif grouping_result.get(key) is not None:
+                target[key] = grouping_result.get(key)
+
     def _apply_grouping_settings_to_dataset(
         self, dataset, grouping_result: dict
     ) -> tuple[bool, bool]:
@@ -2760,6 +2798,7 @@ class MainWindow(QMainWindow):
                 run.grouping["instrument"] = str(instrument_name)
             else:
                 run.grouping.pop("instrument", None)
+            self._preserve_per_run_normalisers(run.grouping, existing_grouping, grouping_result)
             return True, False
 
         if not groups:
@@ -2848,8 +2887,7 @@ class MainWindow(QMainWindow):
             run.grouping["dead_time_us"] = list(grouping_result.get("dead_time_us", []))
         elif isinstance(grouping_result.get("deadtime_loaded_us"), list):
             run.grouping["dead_time_us"] = list(grouping_result.get("deadtime_loaded_us", []))
-        if "good_frames" in grouping_result:
-            run.grouping["good_frames"] = grouping_result.get("good_frames")
+        self._preserve_per_run_normalisers(run.grouping, existing_grouping, grouping_result)
         for key in (
             "background_ranges",
             "background_range",

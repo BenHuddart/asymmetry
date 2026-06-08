@@ -193,6 +193,48 @@ def _make_two_period_vector_dataset(run_number: int) -> MuonDataset:
     )
 
 
+def _make_deadtime_dataset(run_number: int, *, good_frames: float) -> MuonDataset:
+    """Two-detector dataset wired for File-mode deadtime correction.
+
+    Counts and deadtime are chosen so the correction stays a tiny (<1%) bump
+    when normalised by the *correct* ``good_frames`` but makes the
+    ``1 - N*tau/(dt*good_frames)`` denominator clip — and the asymmetry saturate
+    at +-100% — if ``good_frames`` is replaced by a much smaller value or lost.
+    """
+    counts_f = np.full(8, 20000.0)
+    counts_b = np.full(8, 5000.0)
+    run = Run(
+        run_number=run_number,
+        histograms=[
+            Histogram(counts=counts_f, bin_width=0.01, t0_bin=0),
+            Histogram(counts=counts_b, bin_width=0.01, t0_bin=0),
+        ],
+        metadata={"run_number": run_number, "field": 100.0},
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 7,
+            "bunching_factor": 1,
+            "deadtime_correction": True,
+            "deadtime_method": "file",
+            "deadtime_mode": "file",
+            "dead_time_us": [0.01, 0.01],
+            "good_frames": float(good_frames),
+        },
+    )
+    t = np.arange(8, dtype=float) * 0.01
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number, "field": 100.0},
+        run=run,
+    )
+
+
 class TestMainWindowFourier:
     def test_fill_fourier_phases_populates_group_phase_table(self, mainwindow: MainWindow) -> None:
         dataset = _make_fourier_ready_dataset(8801, with_grouping=True)
@@ -3480,6 +3522,107 @@ class TestMainWindowBasic:
         assert restored_2 is ds2
         assert restored_1.run.grouping["alpha"] == pytest.approx(2.5)
         assert restored_2.run.grouping["alpha"] == pytest.approx(2.5)
+
+
+class TestPerRunGoodFramesNormaliser:
+    """``good_frames`` is the per-run dead-time normaliser and must never be
+    dropped on regroup nor inherited from another run's grouping template.
+
+    Regression coverage for the HIGH-severity bug where enabling dead-time
+    correction made the time-domain asymmetry diverge and saturate at +-100%
+    because a run lost (or inherited the wrong) ``good_frames``.
+    """
+
+    def test_file_deadtime_stays_bounded_when_good_frames_preserved(
+        self, mainwindow: MainWindow
+    ) -> None:
+        # Run B carries its own large good_frames; a template from another run
+        # supplies a much smaller value that would clip the correction.
+        dataset = _make_deadtime_dataset(34998, good_frames=1_395_561.0)
+        template_from_other_run = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 7,
+            "bunching_factor": 1,
+            "deadtime_correction": True,
+            "deadtime_mode": "file",
+            "good_frames": 11_299.0,  # a different run's normaliser
+        }
+
+        applied, deadtime_applied = mainwindow._apply_grouping_settings_to_dataset(
+            dataset, template_from_other_run
+        )
+
+        assert applied is True
+        assert deadtime_applied is True
+        assert dataset.run is not None
+        # The run keeps its own normaliser, not the template's.
+        assert dataset.run.grouping["good_frames"] == pytest.approx(1_395_561.0)
+        # Asymmetry is the physical 60% (20000 vs 5000), not a +-100% saturation.
+        max_abs = float(np.max(np.abs(dataset.asymmetry)))
+        assert max_abs < 90.0
+        assert max_abs == pytest.approx(60.0, abs=1.0)
+
+    def test_apply_grouping_does_not_overwrite_own_good_frames(
+        self, mainwindow: MainWindow
+    ) -> None:
+        # Loading run B after run A: A's template must not clobber B's value.
+        run_a = _make_deadtime_dataset(34997, good_frames=11_299.0)
+        run_b = _make_deadtime_dataset(34998, good_frames=1_395_561.0)
+
+        template = mainwindow._extract_grouping_overrides(run_a)
+        assert template["good_frames"] == pytest.approx(11_299.0)
+
+        mainwindow._apply_grouping_settings_to_dataset(run_b, template)
+
+        assert run_b.run is not None
+        assert run_b.run.grouping["good_frames"] == pytest.approx(1_395_561.0)
+
+    def test_auto_grouping_template_strips_per_run_normalisers(
+        self, mainwindow: MainWindow
+    ) -> None:
+        # The cross-run auto-grouping payload must not carry per-run scalars.
+        template = mainwindow._extract_grouping_overrides(
+            _make_deadtime_dataset(34997, good_frames=11_299.0)
+        )
+        payload = dict(template)
+        for key in mainwindow._PER_RUN_NORMALISER_KEYS:
+            payload.pop(key, None)
+
+        assert "good_frames" not in payload
+        # Group definitions and deadtime mode remain shareable template fields.
+        assert payload["groups"] == {1: [1], 2: [2]}
+        assert payload["deadtime_mode"] == "file"
+
+    def test_period_run_keeps_per_period_good_frames_through_regroup(
+        self, mainwindow: MainWindow
+    ) -> None:
+        dataset = _make_two_period_vector_dataset(103277)
+        dataset.run.grouping["period_good_frames"] = [28108.0, 27950.0]
+        dataset.run.grouping["good_frames"] = 28108.0
+
+        regroup_payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+            "period_mode": str(mw_module.PeriodMode.RED),
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, regroup_payload)
+
+        assert applied is True
+        assert dataset.run is not None
+        # Per-period normalisers survive the grouping round-trip.
+        assert dataset.run.grouping["period_good_frames"] == pytest.approx([28108.0, 27950.0])
+        assert dataset.run.grouping["good_frames"] == pytest.approx(28108.0)
 
 
 class TestPlotWorkspaceDomainPhase7:
