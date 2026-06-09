@@ -288,6 +288,41 @@ class TestMainWindowFourier:
         mainwindow._on_plot_workspace_view_changed("frequency")
         assert mainwindow._domain_buttons[3].isEnabled() is False
 
+    def test_maxent_divergence_surfaces_visible_warning(self, mainwindow: MainWindow) -> None:
+        """A diverged MaxEnt result must raise a visible, warning-coloured status
+        (not just the small diagnostics line); the engine keeps the last stable
+        spectrum so the plot is not diverged junk."""
+        import dataclasses
+
+        from asymmetry.core.maxent import MaxEntConfig, maxent
+
+        dataset = _make_fourier_ready_dataset(8821, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8821)
+        config = MaxEntConfig(
+            n_spectrum_points=128,
+            f_min_mhz=0.2,
+            f_max_mhz=3.0,
+            auto_window=False,
+            inner_iterations=4,
+            fit_phases=False,
+        )
+        # Flag the (real, valid) result as diverged to drive the GUI branch.
+        result = maxent(dataset.run, config, cycles=12)
+        diverged = dataclasses.replace(
+            result, diverged=True, converged=False, stop_reason="diverged"
+        )
+        mainwindow._maxent_active_run_number = 8821
+        mainwindow._maxent_active_run = dataset.run
+        mainwindow._maxent_active_config = config
+        mainwindow._maxent_active_cycles = 12
+
+        mainwindow._on_maxent_worker_finished(diverged)
+
+        status = mainwindow._maxent_panel._status_label.text()
+        assert "diverged" in status.lower()
+        assert tokens.WARN in status  # rendered in the warning colour
+
     def test_compute_fourier_plots_frequency_domain_dataset(self, mainwindow: MainWindow) -> None:
         dataset = _make_fourier_ready_dataset(8802, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)

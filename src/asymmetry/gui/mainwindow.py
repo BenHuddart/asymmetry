@@ -4599,10 +4599,26 @@ class MainWindow(QMainWindow):
             if already_maxent:
                 self._sync_frequency_plot_for_run(int(run_number), preserve_x_limits=True)
             self._show_panel("fourier")
-        message = (
-            f"Computed MaxEnt spectrum for run {run_number} through cycle {result.state.cycle}."
-        )
-        self._set_fourier_status(message, success=True)
+        # Surface the engine's early-stop verdict.  Drive it off the result's
+        # own flags rather than the requested cycle count: state.cycle is
+        # cumulative across the incremental cycle buttons, so a per-call request
+        # would read "cycle 26 of 1" on a resumed run.  Divergence is a visible
+        # warning; a plain early stop reports the cycle it settled on.
+        ran = int(result.state.cycle)
+        if getattr(result, "diverged", False):
+            message = (
+                f"MaxEnt diverged for run {run_number}: stopped early at cycle {ran} "
+                f"as χ² began rising past the optimum. Try fewer cycles or adjust "
+                f"the time/frequency window."
+            )
+            self._maxent_panel.set_status(message, warning=True)
+            self.statusBar().showMessage(message)
+        elif getattr(result, "early_stopped", False):
+            message = f"MaxEnt converged for run {run_number} at cycle {ran}."
+            self._set_fourier_status(message, success=True)
+        else:
+            message = f"Computed MaxEnt spectrum for run {run_number} through cycle {ran}."
+            self._set_fourier_status(message, success=True)
         self._log_panel.log(message)
         self._log_maxent_perf()
 

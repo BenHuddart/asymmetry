@@ -70,7 +70,9 @@ class MaxEntPanel(QWidget):
         self._points_spin = QSpinBox()
         self._points_spin.setRange(8, 1 << 20)
         self._points_spin.setSingleStep(512)
-        self._points_spin.setValue(4096)
+        # 1024 resolves the line cleanly; the old 4096 default added a spurious
+        # band-edge spike that dominated the spectrum even at low cycle counts.
+        self._points_spin.setValue(1024)
         spectrum_form.addRow("Spectrum points:", self._points_spin)
 
         self._default_level_edit = QLineEdit("0.01")
@@ -390,9 +392,19 @@ class MaxEntPanel(QWidget):
             )
         self._update_window_controls()
 
-    def set_status(self, message: str, *, success: bool = False) -> None:
-        """Set status text below the action buttons."""
-        if success:
+    def set_status(self, message: str, *, success: bool = False, warning: bool = False) -> None:
+        """Set status text below the action buttons.
+
+        *warning* renders the message in the warning colour (and wins over
+        *success*) so a divergence / early-stop notice is visible rather than
+        buried in the small diagnostics line.
+        """
+        if warning:
+            self._status_label.setText(
+                f'<span style="color: {tokens.WARN}; font-weight: 600;">'
+                f"{html.escape(str(message))}</span>"
+            )
+        elif success:
             self._status_label.setText(
                 f'<span style="color: {tokens.OK};">{html.escape(str(message))}</span>'
             )
