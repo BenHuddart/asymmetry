@@ -213,12 +213,88 @@ def test_maxent_fitted_amplitudes_converge_instead_of_oscillating() -> None:
         fit_phases=False,
     )
 
-    result = maxent(run, config)
+    # This asserts amplitude behaviour over a fixed cycle count, so opt out of
+    # the χ²-plateau early-stop rather than relying on staying under its gate.
+    result = maxent(run, config, early_stop=False)
 
     for series in result.diagnostics.amplitudes[-1]:
         last = [row[series] for row in result.diagnostics.amplitudes[-3:]]
         spread = max(last) - min(last)
         assert spread < 0.25 * max(abs(v) for v in last)
+
+
+def test_maxent_forced_cycles_stop_at_chi2_plateau_instead_of_diverging() -> None:
+    """Regression: forcing a high cycle count used to iterate past the χ²
+    optimum, collapsing spectral weight onto a grid edge (DC for field scans,
+    the band edge here) and losing the line.  Early-stop (the default) treats
+    the count as a maximum and halts at the plateau, keeping the resolved peak.
+    """
+    run = _synthetic_run(frequency_mhz=1.5)
+    config = MaxEntConfig(
+        n_spectrum_points=128,
+        f_min_mhz=0.2,
+        f_max_mhz=3.0,
+        auto_window=False,
+        inner_iterations=4,
+        fit_phases=False,
+    )
+
+    diverged = maxent(run, config, cycles=60, early_stop=False)
+    guarded = maxent(run, config, cycles=60, early_stop=True)
+
+    # Without the guard the spectrum drifts off the line to the band edge.
+    diverged_peak = diverged.frequencies_mhz[int(np.argmax(diverged.spectrum))]
+    assert abs(diverged_peak - 1.5) > 1.0
+
+    # With the guard it stops well short of the requested 60 cycles, the global
+    # argmax is the real line, and χ² stays finite and bounded.
+    assert guarded.early_stopped is True
+    assert guarded.state.cycle < 60
+    assert np.all(np.isfinite(guarded.spectrum))
+    guarded_peak = guarded.frequencies_mhz[int(np.argmax(guarded.spectrum))]
+    assert guarded_peak == pytest.approx(1.5, abs=0.2)
+    assert guarded.diagnostics.chi2[-1] < 2.0 * diverged.diagnostics.chi2[-1]
+
+
+def test_maxent_stop_reason_flags_behave() -> None:
+    """The converged/diverged/early_stopped flags report how the loop ended."""
+    run = _synthetic_run(frequency_mhz=1.5)
+    base = dict(
+        n_spectrum_points=128,
+        f_min_mhz=0.2,
+        f_max_mhz=3.0,
+        auto_window=False,
+        fit_phases=False,
+    )
+
+    # A short run never reaches the early-stop gate: exact count, no flags.
+    short = maxent(run, MaxEntConfig(inner_iterations=4, **base), cycles=4)
+    assert short.state.cycle == 4
+    assert short.stop_reason == "max_cycles"
+    assert short.early_stopped is False
+    assert short.converged is False
+    assert short.diverged is False
+
+    # Slow convergence (optimum past the gate): stops on the plateau, converged.
+    converged = maxent(run, MaxEntConfig(inner_iterations=4, **base), cycles=60)
+    assert converged.early_stopped is True
+    assert converged.converged is True
+    assert converged.diverged is False
+    assert converged.converged is not converged.diverged
+    assert converged.metadata["maxent_stop_reason"] == "converged"
+
+    # Divergence: resume from deep in the post-optimum regime, where χ² has been
+    # rising monotonically for many cycles, so the next cycle's improvement is
+    # robustly negative (not a knife-edge sign at the plateau knee).  The guard
+    # fires immediately and flags divergence for the GUI to warn on.
+    config = MaxEntConfig(inner_iterations=4, **base)
+    prepared = build_maxent_input(run, config)
+    past_optimum = run_cycles(prepared, config, cycles=25, early_stop=False)
+    diverged = run_cycles(prepared, config, state=past_optimum.state, cycles=3)
+    assert diverged.early_stopped is True
+    assert diverged.diverged is True
+    assert diverged.stop_reason == "diverged"
+    assert diverged.metadata["maxent_diverged"] is True
 
 
 def test_maxent_auto_window_takes_precedence_over_stale_explicit_bounds() -> None:
