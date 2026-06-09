@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-
 import pytest
 
 from asymmetry.core.data.dataset import Histogram

@@ -81,8 +81,6 @@ class TestConstruction:
             assert isinstance(widget._patches[det_id], Rectangle)
 
     def test_hal_rectangle_hit_test_selects_correct_detector(self, qapp):
-        import math
-
         layout = get_instrument_layout("HAL")
         fwd = layout.banks[0].segments
         # The F1 bar sits near the octagon's top edge; a point there hits F1 (id 2).
