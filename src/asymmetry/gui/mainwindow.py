@@ -381,6 +381,11 @@ class MainWindow(QMainWindow):
         self._last_frequency_fit_rep_type: RepresentationType | None = None
         self._active_global_fit_rep_type: RepresentationType | None = None
         self._fourier_group_phase_state_by_run: dict[int, dict[str, object]] = {}
+        # Runs whose FFT group inclusion has been seeded from the grouping
+        # default (e.g. HAL-9500 MV excluded). Seeding happens once per run so
+        # later panel syncs preserve the user's live checkbox edits. (MaxEnt
+        # stores its panel state before each re-sync, so it needs no such guard.)
+        self._fourier_included_seeded: set[int] = set()
         self._global_parameter_fit_window: GlobalParameterFitWindow | None = None
         self._multi_group_fit_window: MultiGroupFitWindow | None = None
         self._fit_stack: QStackedWidget | None = None
@@ -3599,6 +3604,30 @@ class MainWindow(QMainWindow):
             resolved[group_id] = str(group_names.get(group_id, f"Group {group_id}"))
         return resolved
 
+    def _default_group_enabled_table(
+        self, dataset: MuonDataset | None, group_names: dict[int, str]
+    ) -> dict[int, bool]:
+        """Seed per-group inclusion for a fresh run from ``grouping.included_groups``.
+
+        This carries the loader/grouping default (e.g. PSI HAL-9500 excludes the
+        muon-veto ``MV`` group) into the FFT and MaxEnt panels, which otherwise
+        default every group to enabled. Falls back to all-enabled when the run
+        records no inclusion flags.
+        """
+        included: dict = {}
+        if (
+            dataset is not None
+            and dataset.run is not None
+            and isinstance(dataset.run.grouping, dict)
+        ):
+            raw = dataset.run.grouping.get("included_groups")
+            if isinstance(raw, dict):
+                included = raw
+        return {
+            int(gid): bool(included.get(int(gid), included.get(str(gid), True)))
+            for gid in group_names
+        }
+
     def _dataset_supports_maxent(self, dataset: MuonDataset | None) -> bool:
         """Return whether *dataset* has the raw grouped counts MaxEnt needs."""
         return bool(
@@ -3615,6 +3644,17 @@ class MainWindow(QMainWindow):
         state = (
             None if run_number is None else self._fourier_group_phase_state_by_run.get(run_number)
         )
+        if (
+            state is None
+            and run_number is not None
+            and run_number not in self._fourier_included_seeded
+        ):
+            # First time this run is shown: seed group inclusion from the grouping
+            # default so excluded groups (e.g. HAL-9500 MV) start unchecked.
+            # Later syncs leave state None, which preserves live checkbox edits.
+            state = {"group_enabled_table": self._default_group_enabled_table(dataset, group_names)}
+        if run_number is not None:
+            self._fourier_included_seeded.add(run_number)
         self._fourier_panel.restore_group_phase_state(state, group_names)
         if hasattr(self, "_maxent_panel"):
             self._sync_maxent_panel_for_dataset(dataset)
@@ -3720,6 +3760,10 @@ class MainWindow(QMainWindow):
         if state is None:
             state = self._inherited_maxent_panel_state()
         state = self._normalise_maxent_panel_state(state, group_names)
+        if "group_enabled_table" not in state:
+            # Fresh run with no saved selection: seed inclusion from the grouping
+            # default so excluded groups (e.g. HAL-9500 MV) start unchecked.
+            state["group_enabled_table"] = self._default_group_enabled_table(dataset, group_names)
         self._maxent_panel.set_group_definitions(group_names)
         self._maxent_panel.restore_state(state)
 
@@ -4205,6 +4249,9 @@ class MainWindow(QMainWindow):
         if self._current_dataset is None:
             self._set_fourier_status("Select a run before estimating group phases.")
             return
+        # Preserve any live MaxEnt panel edits across the cascaded re-sync below
+        # (the Fourier sync also refreshes the MaxEnt group table).
+        self._store_maxent_panel_state_for_dataset(self._current_dataset)
         self._sync_fourier_panel_for_dataset(self._current_dataset)
         phases = self._estimate_group_fourier_phases(self._current_dataset, state)
         if not phases:
@@ -4249,6 +4296,9 @@ class MainWindow(QMainWindow):
                 )
                 return
 
+            # Preserve any live MaxEnt panel edits across the cascaded re-sync
+            # below (the Fourier sync also refreshes the MaxEnt group table).
+            self._store_maxent_panel_state_for_dataset(self._current_dataset)
             self._sync_fourier_panel_for_dataset(self._current_dataset)
             if auto_phase and apply_phase_correction:
                 estimated = self._estimate_group_fourier_phases(self._current_dataset, state)
@@ -7089,6 +7139,7 @@ class MainWindow(QMainWindow):
         if fourier_state:
             raw_group_phase_states = fourier_state.get("group_phase_state_by_run", {})
             self._fourier_group_phase_state_by_run = {}
+            self._fourier_included_seeded.clear()
             if isinstance(raw_group_phase_states, dict):
                 for run_number, run_state in raw_group_phase_states.items():
                     try:
@@ -7155,6 +7206,7 @@ class MainWindow(QMainWindow):
         self._maxent_state_by_run = {}
         self._maxent_panel_state_by_run = {}
         self._fourier_group_phase_state_by_run = {}
+        self._fourier_included_seeded.clear()
         self._data_browser.clear()
         self._plot_workspace.clear()
         if hasattr(self._frequency_plot_panel, "_frequency_x_unit_combo"):

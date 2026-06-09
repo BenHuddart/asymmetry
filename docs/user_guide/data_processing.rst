@@ -99,7 +99,8 @@ Combine detector histograms into logical groups:
    backward_counts = apply_grouping(histograms, grouping["backward"])
 
 In the GUI, grouping is configured from the Grouping dialog. For supported
-instrument layouts, including ISIS HiFi/MuSR/EMU and PSI FLAME, the
+instrument layouts, including ISIS HiFi/MuSR/EMU and the PSI FLAME and HAL-9500
+spectrometers, the
 **Detector Layout...** editor provides an interactive detector schematic,
 preset groupings, and named group slots that are saved with project state and
 ``.grp`` files.
