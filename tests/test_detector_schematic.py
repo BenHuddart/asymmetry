@@ -65,6 +65,43 @@ class TestConstruction:
         widget = DetectorSchematicWidget(layout)
         assert len(widget._patches) == 8
 
+    def test_hal_patch_count(self, qapp):
+        layout = get_instrument_layout("HAL")
+        widget = DetectorSchematicWidget(layout)
+        assert len(widget._patches) == 17
+
+    def test_hal_ring_segments_render_as_rectangles(self, qapp):
+        from matplotlib.patches import Rectangle
+
+        layout = get_instrument_layout("HAL")
+        widget = DetectorSchematicWidget(layout)
+        # The 16 positron detectors (ids 2-17) are edge-aligned rectangular bars;
+        # MV (id 1) stays a central disc wedge.
+        for det_id in range(2, 18):
+            assert isinstance(widget._patches[det_id], Rectangle)
+
+    def test_hal_rectangle_hit_test_selects_correct_detector(self, qapp):
+        import math
+
+        layout = get_instrument_layout("HAL")
+        fwd = layout.banks[0].segments
+        # The F1 bar sits near the octagon's top edge; a point there hits F1 (id 2).
+        f1 = next(s for s in fwd if s.label == "F1")
+        hits = [
+            s.detector_id
+            for s in fwd
+            if DetectorSchematicWidget._point_in_segment(f1.x_center, f1.y_center, s)
+        ]
+        assert hits == [2]
+
+    def test_hal_mv_disc_hit_test_is_full_circle(self, qapp):
+        layout = get_instrument_layout("HAL")
+        mv = next(s for s in layout.banks[0].segments if s.label == "MV")
+        # Any point inside the disc radius is inside MV, regardless of angle.
+        assert DetectorSchematicWidget._point_in_segment(0.0, 0.15, mv)
+        assert DetectorSchematicWidget._point_in_segment(0.15, 0.0, mv)
+        assert not DetectorSchematicWidget._point_in_segment(0.6, 0.0, mv)
+
     def test_axes_count_matches_banks(self, qapp, instrument_name):
         layout = get_instrument_layout(instrument_name)
         widget = DetectorSchematicWidget(layout)

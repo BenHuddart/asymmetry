@@ -72,10 +72,30 @@ class TestDetectInstrument:
         )
 
     def test_psi_metadata_does_not_select_isis_layout(self):
-        assert detect_instrument(64, metadata={"facility": "PSI", "instrument": "HIFI"}) is None
+        # PSI "HIFI" is the HAL-9500 high-field instrument, not the ISIS HiFi.
+        assert detect_instrument(64, metadata={"facility": "PSI", "instrument": "HIFI"}) == "HAL"
+        # A PSI file claiming an ISIS-only instrument name still must not map to
+        # that ISIS layout.
         assert (
             detect_instrument(64, metadata={"psi_format": "psi-bin", "instrument": "MuSR"}) is None
         )
+
+    def test_psi_hal_detected_from_metadata_and_filename(self):
+        md = {"facility": "PSI", "psi_format": "psi-mdu", "instrument": "HIFI"}
+        assert detect_instrument(9, metadata=md) == "HAL"
+        assert detect_instrument(17, metadata=md) == "HAL"
+        assert (
+            detect_instrument(
+                17,
+                metadata={"facility": "PSI", "psi_format": "psi-mdu", "instrument": ""},
+                source_file="/data/tdc_hifi_2025_01425.mdu",
+            )
+            == "HAL"
+        )
+
+    def test_isis_hifi_still_resolves_without_psi_flag(self):
+        # Without a PSI marker, the bare "HiFi" name remains the ISIS layout.
+        assert detect_instrument(64, metadata={"instrument": "HiFi"}) == "HiFi"
 
     def test_96_returns_emu(self):
         assert detect_instrument(96) == "EMU"
@@ -289,6 +309,115 @@ class TestHiFiLayout:
             for gdef in preset.groups.values():
                 for det_id in gdef.detector_ids:
                     assert 1 <= det_id <= 64, f"{det_id} out of range for HiFi"
+
+
+# ---------------------------------------------------------------------------
+# HAL-9500 layout
+# ---------------------------------------------------------------------------
+
+
+class TestHALLayout:
+    @pytest.fixture(scope="class")
+    def layout(self):
+        return get_instrument_layout("HAL")
+
+    def test_registered_in_instrument_names(self):
+        assert "HAL" in INSTRUMENT_NAMES
+
+    def test_n_detectors(self, layout):
+        # MV + 8 forward + 8 backward.
+        assert layout.n_detectors == 17
+
+    def test_radial_view(self, layout):
+        assert layout.view == "radial"
+
+    def test_two_banks(self, layout):
+        assert len(layout.banks) == 2
+        assert layout.banks[0].name == "Forward"
+        assert layout.banks[1].name == "Backward"
+
+    def test_forward_bank_contains_mv_and_eight_wedges(self, layout):
+        ids = {s.detector_id for s in layout.banks[0].segments}
+        assert ids == {1} | set(range(2, 10))  # MV + F1..F8
+
+    def test_backward_bank_eight_wedges(self, layout):
+        ids = {s.detector_id for s in layout.banks[1].segments}
+        assert ids == set(range(10, 18))  # B1..B8
+
+    def test_no_duplicate_ids(self, layout):
+        all_ids = _all_detector_ids(layout)
+        assert len(all_ids) == len(set(all_ids))
+
+    def test_all_ids_covered(self, layout):
+        assert set(_all_detector_ids(layout)) == set(range(1, 18))
+
+    def test_detector_labels_map_to_histogram_order(self, layout):
+        # Histogram order is MV, F1..F8, B1..B8 -> detector N is histogram N-1.
+        by_id = {s.detector_id: s for s in layout.all_segments}
+        assert by_id[1].label == "MV"
+        assert [by_id[i].label for i in range(2, 10)] == [f"F{k}" for k in range(1, 9)]
+        assert [by_id[i].label for i in range(10, 18)] == [f"B{k}" for k in range(1, 9)]
+
+    def test_mv_is_central_disc(self, layout):
+        mv = next(s for s in layout.all_segments if s.detector_id == 1)
+        assert mv.r_inner < 0.3
+        # Effectively a full disc so the radial hit-test selects it anywhere.
+        assert mv.angle_half_width_deg > 179.0
+
+    def test_forward_wedges_are_octagonal(self, layout):
+        fwd = [s for s in layout.banks[0].segments if s.detector_id != 1]
+        assert len(fwd) == 8
+        for seg in fwd:
+            # Each detector is a rectangular bar along one octagon edge.
+            assert seg.shape == "rectangle"
+            assert seg.width > 0 and seg.height > 0
+        # F1 at the top, numbering clockwise by 45 degrees.
+        f1 = next(s for s in fwd if s.label == "F1")
+        f5 = next(s for s in fwd if s.label == "F5")
+        assert abs(f1.angle_center_deg - 90.0) < 1e-6
+        # F1's bar sits at the top (positive y, ~zero x); F5 at the bottom.
+        assert f1.y_center > 0.5 and abs(f1.x_center) < 1e-6
+        assert f5.y_center < -0.5 and abs(f5.x_center) < 1e-6
+        # F5 is diametrically opposite F1 (musrfit opposed pair).
+        assert abs(((f5.angle_center_deg - f1.angle_center_deg) % 360.0) - 180.0) < 1e-6
+
+    def test_default_preset_is_longitudinal(self, layout):
+        assert layout.default_preset_name == "Longitudinal"
+
+    def test_presets_present(self, layout):
+        assert set(layout.presets) == {
+            "Longitudinal",
+            "Transverse (opposed pairs)",
+            "Per-octant",
+        }
+
+    def test_longitudinal_forward_ring_vs_backward_ring(self, layout):
+        preset = layout.presets["Longitudinal"]
+        assert preset.forward_group == 1
+        assert preset.backward_group == 2
+        assert set(preset.groups[1].detector_ids) == set(range(2, 10))
+        assert set(preset.groups[2].detector_ids) == set(range(10, 18))
+
+    def test_transverse_opposed_pair_default(self, layout):
+        preset = layout.presets["Transverse (opposed pairs)"]
+        # Each forward detector is its own group; default pair is F1 (group 1)
+        # vs F5 (group 5), which are 180 degrees apart.
+        assert preset.groups[1].detector_ids == (2,)
+        assert preset.groups[5].detector_ids == (6,)
+        assert preset.forward_group == 1
+        assert preset.backward_group == 5
+
+    def test_per_octant_combines_forward_and_backward_wedge(self, layout):
+        preset = layout.presets["Per-octant"]
+        # Octant k pairs F_k with B_k (same azimuth).
+        assert preset.groups[1].detector_ids == (2, 10)
+        assert preset.groups[8].detector_ids == (9, 17)
+
+    def test_preset_detector_ids_in_valid_range(self, layout):
+        for preset in layout.presets.values():
+            for gdef in preset.groups.values():
+                for det_id in gdef.detector_ids:
+                    assert 1 <= det_id <= 17, f"{det_id} out of range for HAL"
 
 
 # ---------------------------------------------------------------------------

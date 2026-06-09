@@ -932,6 +932,9 @@ class PsiLoader(BaseLoader):
         grouping = {
             "groups": groups,
             "group_names": group_names,
+            "included_groups": {
+                int(gid): not self._is_non_positron_label(name) for gid, name in group_names.items()
+            },
             "forward_group": forward_gid,
             "backward_group": backward_gid,
             "alpha": alpha,
@@ -1057,6 +1060,20 @@ class PsiLoader(BaseLoader):
                 label = f"{label} {seen[key]}"
             groups.append((label, [detector_id]))
         return groups
+
+    def _is_non_positron_label(self, label: str) -> bool:
+        """Return True for veto/muon counters that are not positron detectors.
+
+        PSI high-field (HAL-9500) and related instruments record a muon-veto /
+        validation counter (``MV``, and forward/backward vetoes ``FV``/``BV``)
+        plus incoming-muon counters (``M1``, ``M2``). These are not positron
+        detectors, so they should not feed per-detector analyses (individual
+        groups, FFT, MaxEnt) by default.
+        """
+        token = re.sub(r"[^a-z0-9]+", "", str(label).lower())
+        if token in {"mv", "fv", "bv", "veto"}:
+            return True
+        return bool(re.fullmatch(r"m\d+", token))  # muon counters M1, M2, ...
 
     def _label_direction(self, label: str) -> str | None:
         token = re.sub(r"[^a-z0-9]+", "", str(label).lower())
