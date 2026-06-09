@@ -339,7 +339,32 @@ Complete workflow for frequency analysis:
 GUI Fourier Workflow
 --------------------
 
-The docked Fourier panel in the desktop application now supports the current
+The FFT spectrum does **not** compute automatically. Nothing is transformed
+until you click ``Compute FFT``, and — exactly like the MaxEnt panel's cycle
+buttons (see `Maximum Entropy Method`_) — that button sits below the fold in a
+scrollable panel, so on a narrow dock it is easy to miss. A run you have not
+computed shows an **empty Frequency-domain tab**: that is the expected
+"not computed yet" state, not a broken transform.
+
+To compute an FFT spectrum:
+
+#. **Select the run** in the Data Browser. Selecting a run populates the
+   Fourier panel's ``Groups`` table (``Group 1`` / ``Group 2`` …). With no run
+   selected the ``Groups`` table — and therefore the spectrum — stays empty.
+#. **Bring up the Fourier panel** if it is not already visible (the toolbar
+   ``FFT`` button raises it). This only surfaces the panel and syncs it to the
+   selected run; it does **not** run the transform.
+#. *(Optional)* **Tune the settings** — phase mode, apodisation, included
+   groups, phases — using the controls described below.
+#. **Click** ``Compute FFT``. This button is at the **bottom** of the panel,
+   below the settings groups; on a narrow dock you must scroll the panel down to
+   reach it. Only this click runs the transform and fills the
+   **Frequency Domain** tab.
+
+If the Frequency-domain tab is empty, the status line reads ``No FFT computed
+for run <n>`` — select the run and click ``Compute FFT``.
+
+Before you click ``Compute FFT``, the docked Fourier panel lets you tune the
 WiMDA-first FFT workflow directly:
 
 * choose an ``FFT Phase Mode`` first. The ``Info`` button beside it opens an
@@ -414,9 +439,10 @@ Frequency-Domain Plot Behavior
 
 FFT output is shown on the dedicated ``Frequency Domain`` tab in the central
 plot workspace. Each loaded run keeps its own frequency-domain view state in the
-session, and runs with no computed FFT remain empty on that tab. The current
-x-range is preserved when switching onto a run whose Fourier spectrum has not
-yet been computed.
+session, and runs with no computed FFT remain empty on that tab until you click
+``Compute FFT`` for them (see `GUI Fourier Workflow`_). The current x-range is
+preserved when switching onto a run whose Fourier spectrum has not yet been
+computed.
 
 The frequency viewer keeps canonical FFT x-data in absolute MHz or Gauss on the
 axis itself. The main toolbar also provides an ``FFT X relative to field``
