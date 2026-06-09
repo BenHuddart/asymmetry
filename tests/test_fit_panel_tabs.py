@@ -15,7 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QComboBox, QMessageBox, QSizePolicy
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QMessageBox, QSizePolicy
 
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
@@ -2934,3 +2934,65 @@ def test_single_fit_link_column_feeds_the_fit(qapp: QApplication) -> None:
     # The two followers ended exactly equal to their group main.
     assert _row_value(tab, "Lambda_4") == _row_value(tab, "Lambda_2")
     assert _row_value(tab, "Lambda_6") == _row_value(tab, "Lambda_2")
+
+
+def _row_fix_checkbox(tab: SingleFitTab, param_name: str) -> QCheckBox:
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        if name_item and name_item.data(Qt.ItemDataRole.UserRole) == param_name:
+            return tab._param_table.cellWidget(row, 2).findChild(QCheckBox)
+    raise AssertionError(f"no row for {param_name}")
+
+
+def _row_link_combo(tab: SingleFitTab, param_name: str) -> QComboBox:
+    from asymmetry.gui.panels.fit_panel import _SINGLE_PARAM_LINK_COLUMN
+
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        if name_item and name_item.data(Qt.ItemDataRole.UserRole) == param_name:
+            return tab._param_table.cellWidget(row, _SINGLE_PARAM_LINK_COLUMN)
+    raise AssertionError(f"no row for {param_name}")
+
+
+def test_single_fit_fix_and_link_are_mutually_exclusive(qapp: QApplication) -> None:
+    """Ticking Fix clears/disables Link and vice versa, so a fixed follower can't be made."""
+    tab = SingleFitTab()
+    tab._set_composite_model(CompositeModel.from_expression("Oscillatory * Exponential + Constant"))
+    fix = _row_fix_checkbox(tab, "Lambda")
+    combo = _row_link_combo(tab, "Lambda")
+
+    # Selecting a link group disables and clears Fix.
+    _set_row_link_group(tab, "Lambda", 1)
+    assert not fix.isChecked()
+    assert not fix.isEnabled()
+
+    # Clearing the link group re-enables Fix.
+    _set_row_link_group(tab, "Lambda", None)
+    assert fix.isEnabled()
+
+    # Ticking Fix disables and clears the link group.
+    fix.setChecked(True)
+    assert _link_group_combo_value_for(combo) is None
+    assert not combo.isEnabled()
+
+
+def _link_group_combo_value_for(combo: QComboBox) -> int | None:
+    data = combo.currentData()
+    return int(data) if data is not None else None
+
+
+def test_restore_preserves_out_of_range_link_group(qapp: QApplication) -> None:
+    """A link_group beyond the default 1..4 range survives restore instead of being dropped."""
+    tab = SingleFitTab()
+    tab._set_composite_model(CompositeModel.from_expression("Oscillatory * Exponential + Constant"))
+    state = tab.get_state()
+    for entry in state["parameters"]:
+        if entry["name"] == "Lambda":
+            entry["link_group"] = 7  # e.g. a hand-edited or newer-version project
+
+    tab.restore_state(state)
+    combo = _row_link_combo(tab, "Lambda")
+    assert _link_group_combo_value_for(combo) == 7
+    # And it round-trips back out.
+    restored = {p["name"]: p for p in tab.get_state()["parameters"]}
+    assert restored["Lambda"]["link_group"] == 7
