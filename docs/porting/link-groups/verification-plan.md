@@ -41,6 +41,23 @@ never committed.
 
 ## Outcome
 
-_Filled in during the implementation pass:_ engine + GUI + serialization landed;
-synthetic suite green under `validate`; CdS engine acceptance reproduced
-(central f, 2δ, χ²ᵣ as above).
+Implemented: `Parameter.link_group` + `ParameterSet.link_groups/link_main/
+link_followers`; `FitEngine.fit` substitutes followers and propagates the main's
+uncertainty; a "Link" column in the single-fit table; `link_group` round-trips
+through `.asymp`. Synthetic suite (`tests/test_link_groups.py`) + GUI/serialization
+tests green.
+
+CdS engine acceptance reproduced on the real 5.12 K run (EMU00020721, TF 100 G),
+fitting three free-frequency `Oscillatory*Exponential` lines + `Constant`, with
+the three relaxation rates linked (group 1), the two satellite amplitudes linked
+(group 2), and the three phases linked (group 3), window 0.1–10 µs:
+
+- converged, **χ²ᵣ = 1.35**
+- central **f = 1.3889 ± 0.0003 MHz**
+- satellites at 1.2684 / 1.5099 MHz → **splitting 2δ = 0.2416 MHz**, centre
+  1.3892 MHz (symmetric about the central line)
+- 8 free parameters of 13 (five followers dropped out); each follower equals its
+  group main and reports the main's propagated uncertainty
+
+Equal spacing is recovered from the data with free frequencies, exactly as WiMDA
+does it — no offset tie required.

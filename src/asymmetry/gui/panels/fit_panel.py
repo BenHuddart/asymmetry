@@ -562,7 +562,49 @@ _PARAM_BATCH_ROLE_DATA = Qt.ItemDataRole.UserRole + 1
 #: Column of the single-fit parameter table holding the batch-role read-out.
 _SINGLE_PARAM_BATCH_COLUMN = 5
 
+#: Column of the single-fit parameter table holding the equality link-group
+#: selector (WiMDA "Ties"). Index 0 of the combo means "unlinked".
+_SINGLE_PARAM_LINK_COLUMN = 6
+
+#: Number of equality link groups offered in the single-fit table, matching
+#: WiMDA's four groups.
+_LINK_GROUP_COUNT = 4
+
 _PARAM_ROLE_LABELS = {"global": "Global", "local": "Local", "fixed": "Fixed", "file": "File"}
+
+
+def _make_link_group_combo() -> QComboBox:
+    """Build the per-row equality link-group selector for the single-fit table.
+
+    Item 0 is "—" (unlinked); items 1..N select link groups 1..N. Parameters
+    sharing a non-zero group are constrained equal during the fit, and every
+    non-main member drops out of the free-fit set.
+    """
+    combo = QComboBox()
+    combo.addItem("—", None)
+    for gid in range(1, _LINK_GROUP_COUNT + 1):
+        combo.addItem(str(gid), gid)
+    combo.setToolTip(
+        "Link group (equality tie): parameters sharing a group are fit as one "
+        "value; only the group's main parameter is free."
+    )
+    return combo
+
+
+def _link_group_combo_value(combo: QComboBox | None) -> int | None:
+    """Return the selected link-group id for a link-column combo (None if unlinked)."""
+    if not isinstance(combo, QComboBox):
+        return None
+    data = combo.currentData()
+    return int(data) if data is not None else None
+
+
+def _set_link_group_combo_value(combo: QComboBox | None, group: int | None) -> None:
+    """Select ``group`` in a link-column combo (index 0 / "—" when None)."""
+    if not isinstance(combo, QComboBox):
+        return
+    idx = combo.findData(group) if group is not None else 0
+    combo.setCurrentIndex(idx if idx >= 0 else 0)
 
 
 def _make_param_name_item(label: str, raw_name: str) -> QTableWidgetItem:
@@ -979,8 +1021,10 @@ class SingleFitTab(QWidget):
         # Parameter table
         param_group = QGroupBox("Parameters")
         param_layout = QVBoxLayout(param_group)
-        self._param_table = QTableWidget(0, 6)
-        self._param_table.setHorizontalHeaderLabels(["Name", "Value", "Fix", "Min", "Max", "Batch"])
+        self._param_table = QTableWidget(0, 7)
+        self._param_table.setHorizontalHeaderLabels(
+            ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link"]
+        )
         self._param_table.horizontalHeader().setStretchLastSection(False)
         self._param_table.setColumnWidth(0, 80)  # Name
         self._param_table.setColumnWidth(1, 100)  # Value
@@ -988,6 +1032,7 @@ class SingleFitTab(QWidget):
         self._param_table.setColumnWidth(3, 80)  # Min
         self._param_table.setColumnWidth(4, 80)  # Max
         self._param_table.setColumnWidth(5, 70)  # Batch role (read-only)
+        self._param_table.setColumnWidth(6, 60)  # Link group (equality tie)
 
         _apply_param_table_style(self._param_table)
         self._param_table.setItemDelegateForColumn(1, _ValueUncertaintyDelegate(self._param_table))
@@ -996,12 +1041,8 @@ class SingleFitTab(QWidget):
         # row. A many-parameter model (e.g. the 13-param CdS three-line fit) must
         # keep all rows reachable; without this the table collapses to a handful
         # of rows with no scrollbar and the lower parameters become unreachable.
-        self._param_table.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
-        self._param_table.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
+        self._param_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._param_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._param_table.setMinimumHeight(160)
 
         self._param_table.itemChanged.connect(self._on_param_table_item_changed)
@@ -1228,6 +1269,9 @@ class SingleFitTab(QWidget):
 
             # Batch role column — read-only; filled when a batch result is piped back.
             _set_param_batch_role_cell(self._param_table, i, None)
+
+            # Link column — equality link-group selector (WiMDA "Ties").
+            self._param_table.setCellWidget(i, _SINGLE_PARAM_LINK_COLUMN, _make_link_group_combo())
 
         _configure_fraction_rows_in_table(
             self._param_table,
@@ -1523,12 +1567,16 @@ class SingleFitTab(QWidget):
             except (ValueError, AttributeError):
                 max_val = float("inf")
 
+            link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
+            link_group = _link_group_combo_value(link_combo)
+
             param = Parameter(
                 name=param_name,
                 value=value,
                 min=min_val,
                 max=max_val,
                 fixed=fixed,
+                link_group=link_group,
             )
             parameters.add(param)
 
@@ -1643,6 +1691,7 @@ class SingleFitTab(QWidget):
             max_item = self._param_table.item(i, 4)
             role_item = self._param_table.item(i, _SINGLE_PARAM_BATCH_COLUMN)
             role = role_item.data(_PARAM_BATCH_ROLE_DATA) if role_item is not None else None
+            link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
             params.append(
                 {
                     "name": param_name,
@@ -1652,6 +1701,7 @@ class SingleFitTab(QWidget):
                     "max": max_item.text() if max_item else "inf",
                     "uncertainty": unc,
                     "role": role if isinstance(role, str) else None,
+                    "link_group": _link_group_combo_value(link_combo),
                 }
             )
 
@@ -1739,6 +1789,12 @@ class SingleFitTab(QWidget):
                 max_item.setText(str(p_data.get("max", "inf")))
 
             _set_param_batch_role_cell(self._param_table, i, p_data.get("role"))
+
+            link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
+            raw_link = p_data.get("link_group")
+            _set_link_group_combo_value(
+                link_combo, int(raw_link) if isinstance(raw_link, (int, float)) else None
+            )
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
 

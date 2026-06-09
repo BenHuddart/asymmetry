@@ -407,6 +407,7 @@ class Parameter:
     max: float = float("inf")
     fixed: bool = False
     expr: str | None = None  # Expression constraint (e.g. tie to another param)
+    link_group: int | None = None  # Equality link group id (WiMDA-style); None = unlinked
 
     @property
     def is_constrained(self) -> bool:
@@ -438,11 +439,49 @@ class ParameterSet:
 
     @property
     def free_parameters(self) -> list[Parameter]:
-        return [p for p in self if not p.is_constrained]
+        followers = set(self.link_followers())
+        return [p for p in self if not p.is_constrained and p.name not in followers]
 
     @property
     def names(self) -> list[str]:
         return list(self._params)
+
+    # --- equality link groups (WiMDA "Ties") ---------------------------------
+
+    def link_groups(self) -> dict[int, list[Parameter]]:
+        """Return members of each equality link group, keyed by group id.
+
+        Singletons (a group with one member) are dropped — linking one
+        parameter to nothing is a no-op.
+        """
+        groups: dict[int, list[Parameter]] = {}
+        for p in self:
+            if p.link_group is not None:
+                groups.setdefault(p.link_group, []).append(p)
+        return {gid: members for gid, members in groups.items() if len(members) > 1}
+
+    def link_main(self, group: int) -> Parameter:
+        """Return the "main" parameter of a link group.
+
+        Mirrors WiMDA: the first member, unless a later member is free
+        (non-fixed) — then the first free member is the main, so the free-fit
+        set always contains the group main.
+        """
+        members = self.link_groups()[group]
+        for member in members:
+            if not member.fixed:
+                return member
+        return members[0]
+
+    def link_followers(self) -> dict[str, str]:
+        """Map each non-main linked parameter name to its group main's name."""
+        followers: dict[str, str] = {}
+        for gid, members in self.link_groups().items():
+            main = self.link_main(gid)
+            for member in members:
+                if member.name != main.name:
+                    followers[member.name] = main.name
+        return followers
 
     def values_array(self) -> list[float]:
         return [p.value for p in self]

@@ -2835,11 +2835,102 @@ def test_many_parameter_model_keeps_every_row_reachable(qapp: QApplication) -> N
 
     # The table is configured to scroll rather than clip: it grows with the
     # dock and shows a scrollbar on demand instead of suppressing it.
-    assert (
-        tab._param_table.verticalScrollBarPolicy()
-        != Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert tab._param_table.verticalScrollBarPolicy() != Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert tab._param_table.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+
+
+def _set_row_link_group(tab: SingleFitTab, param_name: str, group: int | None) -> None:
+    """Set the Link-column combo for the row whose parameter is ``param_name``."""
+    from asymmetry.gui.panels.fit_panel import _SINGLE_PARAM_LINK_COLUMN
+
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        if name_item and name_item.data(Qt.ItemDataRole.UserRole) == param_name:
+            combo = tab._param_table.cellWidget(row, _SINGLE_PARAM_LINK_COLUMN)
+            idx = combo.findData(group) if group is not None else 0
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+            return
+    raise AssertionError(f"no row for {param_name}")
+
+
+def _row_value(tab: SingleFitTab, param_name: str) -> float:
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        if name_item and name_item.data(Qt.ItemDataRole.UserRole) == param_name:
+            return float(tab._param_table.item(row, 1).text())
+    raise AssertionError(f"no row for {param_name}")
+
+
+def test_single_fit_link_column_persists_in_state(qapp: QApplication) -> None:
+    """Assigning a link group in the table round-trips through tab state."""
+    tab = SingleFitTab()
+    tab._set_composite_model(
+        CompositeModel.from_expression(
+            "Oscillatory * Exponential + Oscillatory * Exponential + Constant"
+        )
     )
-    assert (
-        tab._param_table.sizePolicy().verticalPolicy()
-        == QSizePolicy.Policy.Expanding
+    _set_row_link_group(tab, "Lambda_2", 1)
+    _set_row_link_group(tab, "Lambda_4", 1)
+
+    state = tab.get_state()
+    by_name = {p["name"]: p for p in state["parameters"]}
+    assert by_name["Lambda_2"]["link_group"] == 1
+    assert by_name["Lambda_4"]["link_group"] == 1
+    assert by_name["A_1"]["link_group"] is None
+
+    # Restoring into a fresh tab re-selects the combos.
+    other = SingleFitTab()
+    other.restore_state(state)
+    restored = {p["name"]: p for p in other.get_state()["parameters"]}
+    assert restored["Lambda_2"]["link_group"] == 1
+    assert restored["Lambda_4"]["link_group"] == 1
+
+
+def test_single_fit_link_column_feeds_the_fit(qapp: QApplication) -> None:
+    """A link group set in the table forces the followers equal after the fit."""
+    model = CompositeModel.from_expression(
+        "Oscillatory * Exponential + Oscillatory * Exponential "
+        "+ Oscillatory * Exponential + Constant"
     )
+    truth = {
+        "A_1": 10.0,
+        "frequency_1": 1.389,
+        "phase_1": 0.0,
+        "Lambda_2": 0.30,
+        "A_3": 6.0,
+        "frequency_3": 1.268,
+        "phase_3": 0.0,
+        "Lambda_4": 0.30,
+        "A_5": 6.0,
+        "frequency_5": 1.510,
+        "phase_5": 0.0,
+        "Lambda_6": 0.30,
+        "A_bg": 0.5,
+    }
+    t = np.linspace(0.0, 12.0, 600)
+    rng = np.random.default_rng(1)
+    ds = MuonDataset(
+        time=t,
+        asymmetry=model.function(t, **truth) + rng.normal(0.0, 0.15, size=t.shape),
+        error=np.full_like(t, 0.15),
+        metadata={"run_number": 1},
+    )
+
+    tab = SingleFitTab()
+    tab.set_dataset(ds)
+    tab._set_composite_model(model)
+
+    # Seed sensible values and link the three relaxation rates into group 1.
+    for name, val in truth.items():
+        for row in range(tab._param_table.rowCount()):
+            name_item = tab._param_table.item(row, 0)
+            if name_item and name_item.data(Qt.ItemDataRole.UserRole) == name:
+                tab._param_table.item(row, 1).setText(str(val))
+    for name in ("Lambda_2", "Lambda_4", "Lambda_6"):
+        _set_row_link_group(tab, name, 1)
+
+    tab._run_fit()
+
+    # The two followers ended exactly equal to their group main.
+    assert _row_value(tab, "Lambda_4") == _row_value(tab, "Lambda_2")
+    assert _row_value(tab, "Lambda_6") == _row_value(tab, "Lambda_2")
