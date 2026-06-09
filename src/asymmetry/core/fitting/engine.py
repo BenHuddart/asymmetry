@@ -147,6 +147,9 @@ class FitEngine:
         # Prepare parameter names, values, and constraints
         free = parameters.free_parameters
         fixed_kw = {p.name: p.value for p in parameters if p.fixed}
+        # Equality link groups: each follower takes its group main's value, so
+        # it drops out of the free-fit set (WiMDA "Ties").
+        followers = parameters.link_followers()
 
         # Create model wrapper that accepts free parameters
         param_names = [p.name for p in free]
@@ -154,6 +157,8 @@ class FitEngine:
         def model_wrapper(t, *args):
             """Model wrapper for iminuit."""
             kw = {**fixed_kw, **dict(zip(param_names, args))}
+            for follower, main in followers.items():
+                kw[follower] = kw[main]
             return model_fn(t, **kw)
 
         # Create least squares cost function
@@ -181,12 +186,37 @@ class FitEngine:
         uncertainties: dict[str, float] = {}
 
         for p in parameters:
-            if p.fixed:
-                result_params.add(Parameter(name=p.name, value=p.value))
+            # Linking wins over fix (matching WiMDA): a follower always tracks its
+            # group main, so this branch precedes the plain ``fixed`` case.
+            if p.name in followers:
+                # Equality link: inherit the group main's fitted value and, by
+                # the delta method (∂follower/∂main = 1), its uncertainty.
+                main_name = followers[p.name]
+                if main_name in param_names:
+                    main_idx = param_names.index(main_name)
+                    value = m.values[main_idx]
+                    main_err = m.errors[main_idx]
+                else:
+                    # Main is itself fixed: the whole group is fixed.
+                    value = parameters[main_name].value
+                    main_err = None
+                result_params.add(
+                    Parameter(
+                        name=p.name, value=value, min=p.min, max=p.max, link_group=p.link_group
+                    )
+                )
+                if main_err is not None:
+                    uncertainties[p.name] = main_err
+            elif p.fixed:
+                result_params.add(Parameter(name=p.name, value=p.value, link_group=p.link_group))
             else:
                 idx = param_names.index(p.name)
                 value = m.values[idx]
-                result_params.add(Parameter(name=p.name, value=value, min=p.min, max=p.max))
+                result_params.add(
+                    Parameter(
+                        name=p.name, value=value, min=p.min, max=p.max, link_group=p.link_group
+                    )
+                )
                 if m.errors[idx] is not None:
                     uncertainties[p.name] = m.errors[idx]
 

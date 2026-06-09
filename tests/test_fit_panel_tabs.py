@@ -15,7 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QComboBox, QMessageBox
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QMessageBox, QSizePolicy
 
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
@@ -2795,3 +2795,204 @@ def test_bounded_phase_seed_padding_caps_large_signals() -> None:
     n = _MAX_PHASE_SEED_FFT_POINTS // 2
     assert _bounded_phase_seed_padding(n, desired=8) * n <= _MAX_PHASE_SEED_FFT_POINTS
     assert _bounded_phase_seed_padding(0) == 1
+
+
+def test_many_parameter_model_keeps_every_row_reachable(qapp: QApplication) -> None:
+    """A 13-parameter model must expose every parameter row for editing.
+
+    Regression: the single-fit Parameters table used to collapse to a handful
+    of rows with no scrollbar, so the lower parameters of the CdS three-line
+    model (A_5/frequency_5/phase_5/Lambda_6/A_bg) were unreachable — they could
+    not be seen, seeded, or fixed.
+    """
+    tab = SingleFitTab()
+    cds_model = CompositeModel.from_expression(
+        "Oscillatory * Exponential + Oscillatory * Exponential "
+        "+ Oscillatory * Exponential + Constant"
+    )
+    tab._set_composite_model(cds_model)
+
+    # Every model parameter has its own row.
+    assert tab._param_table.rowCount() == len(cds_model.param_names) == 13
+
+    # Each row carries an editable Value cell, including the very last one.
+    row_by_name: dict[str, int] = {}
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        assert name_item is not None
+        row_by_name[str(name_item.data(Qt.ItemDataRole.UserRole))] = row
+        value_item = tab._param_table.item(row, 1)
+        assert value_item is not None
+        assert value_item.flags() & Qt.ItemFlag.ItemIsEditable
+
+    assert set(row_by_name) == set(cds_model.param_names)
+
+    # The last parameter (A_bg) is reachable and round-trips an edited value.
+    last_row = row_by_name["A_bg"]
+    assert last_row == tab._param_table.rowCount() - 1
+    tab._param_table.item(last_row, 1).setText("3.5")
+    assert float(tab._param_table.item(last_row, 1).text()) == pytest.approx(3.5)
+
+    # The table is configured to scroll rather than clip: it grows with the
+    # dock and shows a scrollbar on demand instead of suppressing it.
+    assert tab._param_table.verticalScrollBarPolicy() != Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert tab._param_table.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+
+
+def _set_row_link_group(tab: SingleFitTab, param_name: str, group: int | None) -> None:
+    """Set the Link-column combo for the row whose parameter is ``param_name``."""
+    from asymmetry.gui.panels.fit_panel import _SINGLE_PARAM_LINK_COLUMN
+
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        if name_item and name_item.data(Qt.ItemDataRole.UserRole) == param_name:
+            combo = tab._param_table.cellWidget(row, _SINGLE_PARAM_LINK_COLUMN)
+            idx = combo.findData(group) if group is not None else 0
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+            return
+    raise AssertionError(f"no row for {param_name}")
+
+
+def _row_value(tab: SingleFitTab, param_name: str) -> float:
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        if name_item and name_item.data(Qt.ItemDataRole.UserRole) == param_name:
+            return float(tab._param_table.item(row, 1).text())
+    raise AssertionError(f"no row for {param_name}")
+
+
+def test_single_fit_link_column_persists_in_state(qapp: QApplication) -> None:
+    """Assigning a link group in the table round-trips through tab state."""
+    tab = SingleFitTab()
+    tab._set_composite_model(
+        CompositeModel.from_expression(
+            "Oscillatory * Exponential + Oscillatory * Exponential + Constant"
+        )
+    )
+    _set_row_link_group(tab, "Lambda_2", 1)
+    _set_row_link_group(tab, "Lambda_4", 1)
+
+    state = tab.get_state()
+    by_name = {p["name"]: p for p in state["parameters"]}
+    assert by_name["Lambda_2"]["link_group"] == 1
+    assert by_name["Lambda_4"]["link_group"] == 1
+    assert by_name["A_1"]["link_group"] is None
+
+    # Restoring into a fresh tab re-selects the combos.
+    other = SingleFitTab()
+    other.restore_state(state)
+    restored = {p["name"]: p for p in other.get_state()["parameters"]}
+    assert restored["Lambda_2"]["link_group"] == 1
+    assert restored["Lambda_4"]["link_group"] == 1
+
+
+def test_single_fit_link_column_feeds_the_fit(qapp: QApplication) -> None:
+    """A link group set in the table forces the followers equal after the fit."""
+    model = CompositeModel.from_expression(
+        "Oscillatory * Exponential + Oscillatory * Exponential "
+        "+ Oscillatory * Exponential + Constant"
+    )
+    truth = {
+        "A_1": 10.0,
+        "frequency_1": 1.389,
+        "phase_1": 0.0,
+        "Lambda_2": 0.30,
+        "A_3": 6.0,
+        "frequency_3": 1.268,
+        "phase_3": 0.0,
+        "Lambda_4": 0.30,
+        "A_5": 6.0,
+        "frequency_5": 1.510,
+        "phase_5": 0.0,
+        "Lambda_6": 0.30,
+        "A_bg": 0.5,
+    }
+    t = np.linspace(0.0, 12.0, 600)
+    rng = np.random.default_rng(1)
+    ds = MuonDataset(
+        time=t,
+        asymmetry=model.function(t, **truth) + rng.normal(0.0, 0.15, size=t.shape),
+        error=np.full_like(t, 0.15),
+        metadata={"run_number": 1},
+    )
+
+    tab = SingleFitTab()
+    tab.set_dataset(ds)
+    tab._set_composite_model(model)
+
+    # Seed sensible values and link the three relaxation rates into group 1.
+    for name, val in truth.items():
+        for row in range(tab._param_table.rowCount()):
+            name_item = tab._param_table.item(row, 0)
+            if name_item and name_item.data(Qt.ItemDataRole.UserRole) == name:
+                tab._param_table.item(row, 1).setText(str(val))
+    for name in ("Lambda_2", "Lambda_4", "Lambda_6"):
+        _set_row_link_group(tab, name, 1)
+
+    tab._run_fit()
+
+    # The two followers ended exactly equal to their group main.
+    assert _row_value(tab, "Lambda_4") == _row_value(tab, "Lambda_2")
+    assert _row_value(tab, "Lambda_6") == _row_value(tab, "Lambda_2")
+
+
+def _row_fix_checkbox(tab: SingleFitTab, param_name: str) -> QCheckBox:
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        if name_item and name_item.data(Qt.ItemDataRole.UserRole) == param_name:
+            return tab._param_table.cellWidget(row, 2).findChild(QCheckBox)
+    raise AssertionError(f"no row for {param_name}")
+
+
+def _row_link_combo(tab: SingleFitTab, param_name: str) -> QComboBox:
+    from asymmetry.gui.panels.fit_panel import _SINGLE_PARAM_LINK_COLUMN
+
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        if name_item and name_item.data(Qt.ItemDataRole.UserRole) == param_name:
+            return tab._param_table.cellWidget(row, _SINGLE_PARAM_LINK_COLUMN)
+    raise AssertionError(f"no row for {param_name}")
+
+
+def test_single_fit_fix_and_link_are_mutually_exclusive(qapp: QApplication) -> None:
+    """Ticking Fix clears/disables Link and vice versa, so a fixed follower can't be made."""
+    tab = SingleFitTab()
+    tab._set_composite_model(CompositeModel.from_expression("Oscillatory * Exponential + Constant"))
+    fix = _row_fix_checkbox(tab, "Lambda")
+    combo = _row_link_combo(tab, "Lambda")
+
+    # Selecting a link group disables and clears Fix.
+    _set_row_link_group(tab, "Lambda", 1)
+    assert not fix.isChecked()
+    assert not fix.isEnabled()
+
+    # Clearing the link group re-enables Fix.
+    _set_row_link_group(tab, "Lambda", None)
+    assert fix.isEnabled()
+
+    # Ticking Fix disables and clears the link group.
+    fix.setChecked(True)
+    assert _link_group_combo_value_for(combo) is None
+    assert not combo.isEnabled()
+
+
+def _link_group_combo_value_for(combo: QComboBox) -> int | None:
+    data = combo.currentData()
+    return int(data) if data is not None else None
+
+
+def test_restore_preserves_out_of_range_link_group(qapp: QApplication) -> None:
+    """A link_group beyond the default 1..4 range survives restore instead of being dropped."""
+    tab = SingleFitTab()
+    tab._set_composite_model(CompositeModel.from_expression("Oscillatory * Exponential + Constant"))
+    state = tab.get_state()
+    for entry in state["parameters"]:
+        if entry["name"] == "Lambda":
+            entry["link_group"] = 7  # e.g. a hand-edited or newer-version project
+
+    tab.restore_state(state)
+    combo = _row_link_combo(tab, "Lambda")
+    assert _link_group_combo_value_for(combo) == 7
+    # And it round-trips back out.
+    restored = {p["name"]: p for p in tab.get_state()["parameters"]}
+    assert restored["Lambda"]["link_group"] == 7
