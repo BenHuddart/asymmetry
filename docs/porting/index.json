@@ -2,6 +2,26 @@
   "version": 1,
   "studies": [
     {
+      "slug": "link-groups",
+      "feature_name": "Link groups (parameter ties)",
+      "status": "study",
+      "path": "docs/porting/link-groups",
+      "references": [
+        "WiMDA"
+      ],
+      "docs": {
+        "readme": "docs/porting/link-groups/README.md",
+        "comparison": "docs/porting/link-groups/comparison.md",
+        "implementation_options": "docs/porting/link-groups/implementation-options.md",
+        "test_data": "docs/porting/link-groups/test-data.md",
+        "verification_plan": "docs/porting/link-groups/verification-plan.md"
+      },
+      "tests_path": "tests/test_link_groups.py",
+      "src_path": null,
+      "updated": "2026-06-09",
+      "notes": "WiMDA link groups are equality-only (p[follower]:=p[main]); 4 groups; main=first non-fixed member; followers drop out of the free set. No offset/linear tie exists in WiMDA. The CdS docx 'Use Ties to keep the lines equally spaced' is loose wording: equal spacing comes either from the muonium model (ZFmuonium/TFMuonium: splitting is one parameter) or from three free frequencies recovered from the data. Chosen port: equality link groups + free frequencies (matches WiMDA, no offset ties), with the improvement that a follower reports the propagated (=main's) uncertainty. Follow-on: a MuoniumTriplet model component that enforces symmetry via a single splitting parameter."
+    },
+    {
       "slug": "deadtime-correction",
       "feature_name": "Deadtime correction",
       "status": "study",
