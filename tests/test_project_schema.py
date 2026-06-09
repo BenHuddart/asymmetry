@@ -545,6 +545,28 @@ class TestProjectIO:
         assert isinstance(fit_curve["t"], list)
         assert len(fit_curve["t"]) == 5
 
+    def test_link_groups_persist_in_project_round_trip(self, tmp_path):
+        """Equality link groups on single-fit parameters survive save/load."""
+        state = _minimal_state()
+        state["single_fit_state"] = {
+            "model_name": "Composite",
+            "composite_model": _composite_model_dict("Oscillatory"),
+            "parameters": [
+                {"name": "Lambda_2", "value": 0.30, "link_group": 1},
+                {"name": "Lambda_4", "value": 0.30, "link_group": 1},
+                {"name": "frequency_1", "value": 1.389, "link_group": None},
+            ],
+            "result_html": "",
+        }
+        path = tmp_path / "links.asymp"
+        save_project(state, path)
+        loaded = load_project(path)
+
+        by_name = {p["name"]: p for p in loaded["single_fit_state"]["parameters"]}
+        assert by_name["Lambda_2"]["link_group"] == 1
+        assert by_name["Lambda_4"]["link_group"] == 1
+        assert by_name["frequency_1"]["link_group"] is None
+
     def test_load_unsupported_version_raises(self, tmp_path):
         bad_state = {"schema_version": 999, "datasets": []}
         path = tmp_path / "future.asymp"

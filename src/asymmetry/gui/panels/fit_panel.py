@@ -562,7 +562,58 @@ _PARAM_BATCH_ROLE_DATA = Qt.ItemDataRole.UserRole + 1
 #: Column of the single-fit parameter table holding the batch-role read-out.
 _SINGLE_PARAM_BATCH_COLUMN = 5
 
+#: Column of the single-fit parameter table holding the equality link-group
+#: selector (WiMDA "Ties"). Index 0 of the combo means "unlinked".
+_SINGLE_PARAM_LINK_COLUMN = 6
+
+#: Number of equality link groups offered in the single-fit table, matching
+#: WiMDA's four groups.
+_LINK_GROUP_COUNT = 4
+
 _PARAM_ROLE_LABELS = {"global": "Global", "local": "Local", "fixed": "Fixed", "file": "File"}
+
+
+def _make_link_group_combo() -> QComboBox:
+    """Build the per-row equality link-group selector for the single-fit table.
+
+    Item 0 is "—" (unlinked); items 1..N select link groups 1..N. Parameters
+    sharing a non-zero group are constrained equal during the fit, and every
+    non-main member drops out of the free-fit set.
+    """
+    combo = QComboBox()
+    combo.addItem("—", None)
+    for gid in range(1, _LINK_GROUP_COUNT + 1):
+        combo.addItem(str(gid), gid)
+    combo.setToolTip(
+        "Link group (equality tie): parameters sharing a group are fit as one "
+        "value; only the group's main parameter is free."
+    )
+    return combo
+
+
+def _link_group_combo_value(combo: QComboBox | None) -> int | None:
+    """Return the selected link-group id for a link-column combo (None if unlinked)."""
+    if not isinstance(combo, QComboBox):
+        return None
+    data = combo.currentData()
+    return int(data) if data is not None else None
+
+
+def _set_link_group_combo_value(combo: QComboBox | None, group: int | None) -> None:
+    """Select ``group`` in a link-column combo (index 0 / "—" when None)."""
+    if not isinstance(combo, QComboBox):
+        return
+    if group is None:
+        combo.setCurrentIndex(0)
+        return
+    idx = combo.findData(group)
+    if idx < 0:
+        # A group id outside the default 1..N range (e.g. from a hand-edited
+        # project, or one written by a build whose core exposes more groups):
+        # add it rather than silently dropping the link assignment.
+        combo.addItem(str(group), group)
+        idx = combo.findData(group)
+    combo.setCurrentIndex(idx)
 
 
 def _make_param_name_item(label: str, raw_name: str) -> QTableWidgetItem:
@@ -979,8 +1030,10 @@ class SingleFitTab(QWidget):
         # Parameter table
         param_group = QGroupBox("Parameters")
         param_layout = QVBoxLayout(param_group)
-        self._param_table = QTableWidget(0, 6)
-        self._param_table.setHorizontalHeaderLabels(["Name", "Value", "Fix", "Min", "Max", "Batch"])
+        self._param_table = QTableWidget(0, 7)
+        self._param_table.setHorizontalHeaderLabels(
+            ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link"]
+        )
         self._param_table.horizontalHeader().setStretchLastSection(False)
         self._param_table.setColumnWidth(0, 80)  # Name
         self._param_table.setColumnWidth(1, 100)  # Value
@@ -988,13 +1041,24 @@ class SingleFitTab(QWidget):
         self._param_table.setColumnWidth(3, 80)  # Min
         self._param_table.setColumnWidth(4, 80)  # Max
         self._param_table.setColumnWidth(5, 70)  # Batch role (read-only)
+        self._param_table.setColumnWidth(6, 60)  # Link group (equality tie)
 
         _apply_param_table_style(self._param_table)
         self._param_table.setItemDelegateForColumn(1, _ValueUncertaintyDelegate(self._param_table))
 
+        # Let the table grow with the dock and scroll when it can't show every
+        # row. A many-parameter model (e.g. the 13-param CdS three-line fit) must
+        # keep all rows reachable; without this the table collapses to a handful
+        # of rows with no scrollbar and the lower parameters become unreachable.
+        self._param_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._param_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._param_table.setMinimumHeight(160)
+
         self._param_table.itemChanged.connect(self._on_param_table_item_changed)
         param_layout.addWidget(self._param_table)
-        layout.addWidget(param_group)
+        # Stretch factor 1 lets the Parameters group claim the dock's free
+        # vertical space ahead of the fixed-height Results group below it.
+        layout.addWidget(param_group, 1)
 
         # Buttons
         btn_layout = QGridLayout()
@@ -1021,8 +1085,6 @@ class SingleFitTab(QWidget):
         self._result_label.setWordWrap(True)
         results_layout.addWidget(self._result_label)
         layout.addWidget(self._results_group)
-
-        layout.addStretch()
 
         self._set_composite_model(self._composite_model)
 
@@ -1217,6 +1279,15 @@ class SingleFitTab(QWidget):
             # Batch role column — read-only; filled when a batch result is piped back.
             _set_param_batch_role_cell(self._param_table, i, None)
 
+            # Link column — equality link-group selector (WiMDA "Ties").
+            link_combo = _make_link_group_combo()
+            self._param_table.setCellWidget(i, _SINGLE_PARAM_LINK_COLUMN, link_combo)
+            # Fix and Link are mutually exclusive: a linked follower tracks its
+            # group main (linking wins over fix in the engine), so allowing both
+            # would silently discard the fixed value. Couple the two controls so
+            # the ambiguous combination can't be created.
+            self._wire_fix_link_exclusion(fix_checkbox, link_combo)
+
         _configure_fraction_rows_in_table(
             self._param_table,
             model,
@@ -1244,6 +1315,41 @@ class SingleFitTab(QWidget):
         param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
         if isinstance(param_name, str):
             self._synchronize_fraction_value_rows(param_name)
+
+    def _wire_fix_link_exclusion(self, fix_checkbox: QCheckBox, link_combo: QComboBox) -> None:
+        """Keep a row's Fix checkbox and Link-group combo mutually exclusive.
+
+        Selecting a link group disables (and clears) Fix; ticking Fix disables
+        (and clears) the link group. Programmatic table updates set
+        ``_updating_fraction_values`` and are ignored, so restoring saved state
+        never fights itself.
+        """
+
+        def on_fix_toggled(checked: bool) -> None:
+            if self._updating_fraction_values:
+                return
+            if checked and _link_group_combo_value(link_combo) is not None:
+                self._updating_fraction_values = True
+                try:
+                    _set_link_group_combo_value(link_combo, None)
+                finally:
+                    self._updating_fraction_values = False
+            link_combo.setEnabled(not checked)
+
+        def on_link_changed(_index: int) -> None:
+            if self._updating_fraction_values:
+                return
+            linked = _link_group_combo_value(link_combo) is not None
+            if linked and fix_checkbox.isChecked():
+                self._updating_fraction_values = True
+                try:
+                    fix_checkbox.setChecked(False)
+                finally:
+                    self._updating_fraction_values = False
+            fix_checkbox.setEnabled(not linked)
+
+        fix_checkbox.toggled.connect(on_fix_toggled)
+        link_combo.currentIndexChanged.connect(on_link_changed)
 
     def _edit_function(self) -> None:
         """Launch the fit-function builder dialog."""
@@ -1511,12 +1617,16 @@ class SingleFitTab(QWidget):
             except (ValueError, AttributeError):
                 max_val = float("inf")
 
+            link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
+            link_group = _link_group_combo_value(link_combo)
+
             param = Parameter(
                 name=param_name,
                 value=value,
                 min=min_val,
                 max=max_val,
                 fixed=fixed,
+                link_group=link_group,
             )
             parameters.add(param)
 
@@ -1631,6 +1741,7 @@ class SingleFitTab(QWidget):
             max_item = self._param_table.item(i, 4)
             role_item = self._param_table.item(i, _SINGLE_PARAM_BATCH_COLUMN)
             role = role_item.data(_PARAM_BATCH_ROLE_DATA) if role_item is not None else None
+            link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
             params.append(
                 {
                     "name": param_name,
@@ -1640,6 +1751,7 @@ class SingleFitTab(QWidget):
                     "max": max_item.text() if max_item else "inf",
                     "uncertainty": unc,
                     "role": role if isinstance(role, str) else None,
+                    "link_group": _link_group_combo_value(link_combo),
                 }
             )
 
@@ -1727,6 +1839,12 @@ class SingleFitTab(QWidget):
                 max_item.setText(str(p_data.get("max", "inf")))
 
             _set_param_batch_role_cell(self._param_table, i, p_data.get("role"))
+
+            link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
+            raw_link = p_data.get("link_group")
+            _set_link_group_combo_value(
+                link_combo, int(raw_link) if isinstance(raw_link, (int, float)) else None
+            )
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
 
