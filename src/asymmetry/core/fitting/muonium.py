@@ -55,11 +55,17 @@ def _tf_levels(field: float, A_hf: float) -> tuple[float, float, float, float, f
 
     Mirrors WiMDA: ``x = (g_e+g_µ)·B/A_hf`` (with ``x → 1e20`` when ``A_hf ≤ 0``,
     as WiMDA guards), ``δ = x/√(1+x²)``, and the four energy levels ``E_i``.
+
+    ``x`` is clamped to ``±1e20`` (WiMDA's own saturation sentinel) so that a
+    pathologically small ``A_hf`` can never overflow ``x²`` to ``inf`` and yield
+    a NaN curve — keeping the model finite for every trial value the minimiser
+    might probe.
     """
     if A_hf > 0.0:
         x = (G_E_MHZ_PER_G + G_MU_MHZ_PER_G) * field / A_hf
     else:
         x = 1.0e20
+    x = float(np.clip(x, -1.0e20, 1.0e20))
     d = (G_E_MHZ_PER_G - G_MU_MHZ_PER_G) / (G_E_MHZ_PER_G + G_MU_MHZ_PER_G)
     root = np.sqrt(1.0 + x * x)
     delta = x / root

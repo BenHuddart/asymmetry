@@ -163,3 +163,12 @@ def test_model_with_muonium_component_round_trips() -> None:
 def test_muonium_functions_are_picklable() -> None:
     for fn in (mu.tf_muonium, mu.low_tf_muonium, mu.zf_muonium):
         assert pickle.loads(pickle.dumps(fn)) is fn
+
+
+def test_tf_lineshapes_stay_finite_for_extreme_parameters() -> None:
+    """x is clamped, so even a pathological A_hf can't overflow to a NaN curve."""
+    t = np.linspace(0.0, 12.0, 200)
+    for a_hf in (0.0, 1e-12, -0.01, 1e-200):
+        for field in (0.0, 100.0, -100.0, 20000.0):
+            assert np.all(np.isfinite(mu.tf_muonium(t, field, a_hf, 0.3)))
+            assert np.all(np.isfinite(mu.low_tf_muonium(t, field, a_hf, 0.3)))

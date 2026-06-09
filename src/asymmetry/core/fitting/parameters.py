@@ -161,7 +161,7 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     ),
     "field": ParamInfo("field", "field", "B", r"$B$", r"{\it B}", "G"),
     "A_hf": ParamInfo("A_hf", "A_hf", "Aµ", r"$A_\mu$", r"{\it A}_{\mu}", "MHz", default_min=0.0),
-    "D_mu": ParamInfo("D_mu", "D_mu", "D", r"$D$", r"{\it D}", "MHz"),
+    "D_mu": ParamInfo("D_mu", "D_mu", "D_µ", r"$D_\mu$", r"{\it D}_{\mu}", "MHz"),
     "f_cut": ParamInfo(
         "f_cut", "f_cut", "f_cut", r"$f_{\mathrm{cut}}$", r"{\it f}_{cut}", "MHz", default_min=0.0
     ),
