@@ -96,6 +96,7 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "src/asymmetry/core/fitting/diffusion.py" = ["N802", "N803"]  # Physics notation (nD, D_nD)
 "src/asymmetry/core/fitting/models.py" = ["N803"]  # Physics parameter names (A0, Lambda, Delta)
 "src/asymmetry/core/fitting/muon_fluorine/polarization.py" = ["N803"]  # Physics parameter names (r_muF)
+"src/asymmetry/core/fitting/muonium.py" = ["N803"]  # Physics parameter names (A_hf, D)
 "src/asymmetry/core/fitting/parameter_models.py" = ["N803", "N806"]  # Physics parameter names (Tc, B0, D_2D)
 "src/asymmetry/core/fitting/sc/models.py" = ["N803"]  # Physics parameter names (Tc)
 "src/asymmetry/core/project/schema.py" = ["N818"]  # Public API exception class predates the suffix rule

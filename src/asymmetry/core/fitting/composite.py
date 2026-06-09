@@ -32,6 +32,11 @@ from asymmetry.core.fitting.muon_fluorine.polarization import (
     linear_fmuf_polarization,
     mu_f_polarization,
 )
+from asymmetry.core.fitting.muonium import (
+    low_tf_muonium,
+    tf_muonium,
+    zf_muonium,
+)
 from asymmetry.core.fitting.parameters import ParamInfo, get_param_info
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
@@ -77,6 +82,24 @@ def _oscillatory_field_component(
 ) -> NDArray[np.float64]:
     frequency = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * float(field)
     return A * np.cos(2.0 * np.pi * frequency * t + phase)
+
+
+def _muonium_tf_component(
+    t: NDArray, A: float, field: float, A_hf: float, phase: float
+) -> NDArray[np.float64]:
+    return A * tf_muonium(t, field, A_hf, phase)
+
+
+def _muonium_low_tf_component(
+    t: NDArray, A: float, field: float, A_hf: float, phase: float
+) -> NDArray[np.float64]:
+    return A * low_tf_muonium(t, field, A_hf, phase)
+
+
+def _muonium_zf_component(
+    t: NDArray, A: float, A_hf: float, D_mu: float, f_cut: float, phase: float
+) -> NDArray[np.float64]:
+    return A * zf_muonium(t, A_hf, D_mu, f_cut, phase)
 
 
 def _stretched_component(
@@ -232,6 +255,65 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         },
         formula_template="{A}*cos(2*pi*gamma_mu*{field}*t + {phase})",
         latex_equation=r"A(t) = A \cos(2\pi \gamma_\mu B t + \phi)",
+    ),
+    "MuoniumTF": ComponentDefinition(
+        name="MuoniumTF",
+        description="Transverse-field muonium: four Mu0 transitions about gamma_mu B",
+        function=_muonium_tf_component,
+        param_names=["A", "field", "A_hf", "phase"],
+        param_defaults={"A": 25.0, "field": 100.0, "A_hf": 0.24, "phase": 0.0},
+        param_info={
+            "A": get_param_info("A"),
+            "field": get_param_info("field"),
+            "A_hf": get_param_info("A_hf"),
+            "phase": get_param_info("phase"),
+        },
+        formula_template="{A}*TFmuonium(t; {field}, {A_hf}, {phase})",
+        latex_equation=(
+            r"A(t) = \frac{A}{4}\sum_{ij}(1\pm\delta)\cos(2\pi w_{ij} t + \phi),"
+            r"\ \ w_{ij}=E_i-E_j,\ \delta=\frac{x}{\sqrt{1+x^2}},"
+            r"\ x=\frac{(\gamma_e+\gamma_\mu)B}{A_\mu}"
+        ),
+        category="Muonium",
+    ),
+    "MuoniumLowTF": ComponentDefinition(
+        name="MuoniumLowTF",
+        description="Low transverse-field muonium: two Mu0 satellite frequencies",
+        function=_muonium_low_tf_component,
+        param_names=["A", "field", "A_hf", "phase"],
+        param_defaults={"A": 25.0, "field": 100.0, "A_hf": 0.24, "phase": 0.0},
+        param_info={
+            "A": get_param_info("A"),
+            "field": get_param_info("field"),
+            "A_hf": get_param_info("A_hf"),
+            "phase": get_param_info("phase"),
+        },
+        formula_template="{A}*LowTFmuonium(t; {field}, {A_hf}, {phase})",
+        latex_equation=(
+            r"A(t) = \frac{A}{4}\left[(1+\delta)\cos(2\pi w_{12} t + \phi)"
+            r"+(1-\delta)\cos(2\pi w_{23} t + \phi)\right]"
+        ),
+        category="Muonium",
+    ),
+    "MuoniumZF": ComponentDefinition(
+        name="MuoniumZF",
+        description="Zero-field axial muonium: three hyperfine lines",
+        function=_muonium_zf_component,
+        param_names=["A", "A_hf", "D_mu", "f_cut", "phase"],
+        param_defaults={"A": 25.0, "A_hf": 1.0, "D_mu": 0.5, "f_cut": 0.0, "phase": 0.0},
+        param_info={
+            "A": get_param_info("A"),
+            "A_hf": get_param_info("A_hf"),
+            "D_mu": get_param_info("D_mu"),
+            "f_cut": get_param_info("f_cut"),
+            "phase": get_param_info("phase"),
+        },
+        formula_template="{A}*ZFmuonium(t; {A_hf}, {D_mu}, {f_cut}, {phase})",
+        latex_equation=(
+            r"A(t) = \frac{A}{6}\sum_k a_k\cos(2\pi f_k t + \phi),"
+            r"\ f_1=A_\mu-D,\ f_2=A_\mu+\frac{D}{2},\ f_3=\frac{3D}{2}"
+        ),
+        category="Muonium",
     ),
     "StretchedExponential": ComponentDefinition(
         name="StretchedExponential",

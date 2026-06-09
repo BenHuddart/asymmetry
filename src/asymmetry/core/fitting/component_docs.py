@@ -146,7 +146,25 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
     ),
     "OscillatoryField": (
         "Use when precession frequency is parameterized via field B using gamma_mu instead of direct f. "
-        "This is convenient when field is the physically controlled variable in the experiment model."
+        "This is convenient when field is the physically controlled variable in the experiment model. "
+        "For a transverse-field muonium experiment, model the central diamagnetic Mu+ line with this "
+        "component and add MuoniumTF for the Mu0 satellites."
+    ),
+    "MuoniumTF": (
+        "Use for transverse-field muonium (Mu0): the four hyperfine transitions about the applied field, "
+        "parameterized by field B and the hyperfine coupling A_hf. In the shallow-donor (small A_hf) limit "
+        "it reduces to two satellites straddling the diamagnetic line with separation A_hf, so A_hf reads "
+        "off the hyperfine constant directly. Compose with *Exponential for relaxation and add a separate "
+        "OscillatoryField for the central diamagnetic line."
+    ),
+    "MuoniumLowTF": (
+        "Low-field approximation to transverse-field muonium: the two dominant Mu0 satellite frequencies "
+        "(WiMDA's LowTFMuonium). Use when only two satellites are resolved; otherwise prefer MuoniumTF."
+    ),
+    "MuoniumZF": (
+        "Use for zero-field axial muonium: three hyperfine lines f1=A_hf-D, f2=A_hf+D/2, f3=3D/2 set by the "
+        "hyperfine A_hf and axial anisotropy D, with an optional Lorentzian cutoff f_cut. There is no applied "
+        "field, so no central diamagnetic line."
     ),
     "StretchedExponential": (
         "Use for distributed relaxation-rate environments where a single exponential is insufficient. "
