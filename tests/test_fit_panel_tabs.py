@@ -15,7 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QComboBox, QMessageBox
+from PySide6.QtWidgets import QApplication, QComboBox, QMessageBox, QSizePolicy
 
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
@@ -2795,3 +2795,51 @@ def test_bounded_phase_seed_padding_caps_large_signals() -> None:
     n = _MAX_PHASE_SEED_FFT_POINTS // 2
     assert _bounded_phase_seed_padding(n, desired=8) * n <= _MAX_PHASE_SEED_FFT_POINTS
     assert _bounded_phase_seed_padding(0) == 1
+
+
+def test_many_parameter_model_keeps_every_row_reachable(qapp: QApplication) -> None:
+    """A 13-parameter model must expose every parameter row for editing.
+
+    Regression: the single-fit Parameters table used to collapse to a handful
+    of rows with no scrollbar, so the lower parameters of the CdS three-line
+    model (A_5/frequency_5/phase_5/Lambda_6/A_bg) were unreachable — they could
+    not be seen, seeded, or fixed.
+    """
+    tab = SingleFitTab()
+    cds_model = CompositeModel.from_expression(
+        "Oscillatory * Exponential + Oscillatory * Exponential "
+        "+ Oscillatory * Exponential + Constant"
+    )
+    tab._set_composite_model(cds_model)
+
+    # Every model parameter has its own row.
+    assert tab._param_table.rowCount() == len(cds_model.param_names) == 13
+
+    # Each row carries an editable Value cell, including the very last one.
+    row_by_name: dict[str, int] = {}
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        assert name_item is not None
+        row_by_name[str(name_item.data(Qt.ItemDataRole.UserRole))] = row
+        value_item = tab._param_table.item(row, 1)
+        assert value_item is not None
+        assert value_item.flags() & Qt.ItemFlag.ItemIsEditable
+
+    assert set(row_by_name) == set(cds_model.param_names)
+
+    # The last parameter (A_bg) is reachable and round-trips an edited value.
+    last_row = row_by_name["A_bg"]
+    assert last_row == tab._param_table.rowCount() - 1
+    tab._param_table.item(last_row, 1).setText("3.5")
+    assert float(tab._param_table.item(last_row, 1).text()) == pytest.approx(3.5)
+
+    # The table is configured to scroll rather than clip: it grows with the
+    # dock and shows a scrollbar on demand instead of suppressing it.
+    assert (
+        tab._param_table.verticalScrollBarPolicy()
+        != Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    )
+    assert (
+        tab._param_table.sizePolicy().verticalPolicy()
+        == QSizePolicy.Policy.Expanding
+    )

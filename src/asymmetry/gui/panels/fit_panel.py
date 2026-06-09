@@ -992,9 +992,23 @@ class SingleFitTab(QWidget):
         _apply_param_table_style(self._param_table)
         self._param_table.setItemDelegateForColumn(1, _ValueUncertaintyDelegate(self._param_table))
 
+        # Let the table grow with the dock and scroll when it can't show every
+        # row. A many-parameter model (e.g. the 13-param CdS three-line fit) must
+        # keep all rows reachable; without this the table collapses to a handful
+        # of rows with no scrollbar and the lower parameters become unreachable.
+        self._param_table.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self._param_table.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._param_table.setMinimumHeight(160)
+
         self._param_table.itemChanged.connect(self._on_param_table_item_changed)
         param_layout.addWidget(self._param_table)
-        layout.addWidget(param_group)
+        # Stretch factor 1 lets the Parameters group claim the dock's free
+        # vertical space ahead of the fixed-height Results group below it.
+        layout.addWidget(param_group, 1)
 
         # Buttons
         btn_layout = QGridLayout()
@@ -1021,8 +1035,6 @@ class SingleFitTab(QWidget):
         self._result_label.setWordWrap(True)
         results_layout.addWidget(self._result_label)
         layout.addWidget(self._results_group)
-
-        layout.addStretch()
 
         self._set_composite_model(self._composite_model)
 
