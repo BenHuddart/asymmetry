@@ -252,6 +252,42 @@ class TestMainWindowFourier:
             == tokens.OK
         )
 
+    def test_maxent_domain_button_enabled_after_switch_from_fft(
+        self, mainwindow: MainWindow
+    ) -> None:
+        # FFT and MaxEnt share the frequency domain, so switching between them
+        # fires active_view_changed but NOT active_domain_changed -- and
+        # _refresh_time_view_selector (which used to be the only place that set
+        # the button's enabled state) runs on selection/domain change only. A
+        # pure FFT -> MaxEnt view change must still re-evaluate the button so it
+        # is not left stale-disabled for a maxent-capable dataset.
+        dataset = _make_fourier_ready_dataset(8809, with_grouping=True)
+        assert mainwindow._dataset_supports_maxent(dataset) is True
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8809)
+        mainwindow._refresh_time_view_selector()
+        # Move into the FFT view and simulate the stale-disabled MaxEnt button.
+        mainwindow._plot_workspace.set_active_view("frequency")
+        mainwindow._domain_buttons[3].setEnabled(False)
+        # The exact handler wired to active_view_changed for an FFT -> MaxEnt
+        # toolbar switch -- no reselection in the F-B view.
+        mainwindow._on_plot_workspace_view_changed("maxent")
+        assert mainwindow._domain_buttons[3].isEnabled() is True
+
+    def test_maxent_domain_button_disabled_for_unsupported_after_view_change(
+        self, mainwindow: MainWindow
+    ) -> None:
+        # The same re-evaluation must turn the button OFF when the active dataset
+        # cannot produce MaxEnt spectra (no raw grouped histograms).
+        dataset = _make_dataset(8811, with_grouping=False)
+        assert mainwindow._dataset_supports_maxent(dataset) is False
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8811)
+        mainwindow._plot_workspace.set_active_view("frequency")
+        mainwindow._domain_buttons[3].setEnabled(True)  # stale-enabled
+        mainwindow._on_plot_workspace_view_changed("frequency")
+        assert mainwindow._domain_buttons[3].isEnabled() is False
+
     def test_compute_fourier_plots_frequency_domain_dataset(self, mainwindow: MainWindow) -> None:
         dataset = _make_fourier_ready_dataset(8802, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
