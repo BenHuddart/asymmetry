@@ -34,42 +34,49 @@ drawn as reference lines straddling the diamagnetic line `ν_d = γ_µ·B = gm·
 degrees (`(deg)/360·2π`). The free-muonium hyperfine `A ≈ 4463 MHz` is *not*
 hardcoded — it is the fitted `A`.
 
-## The CdS regime, and why a (centre, splitting) parameterisation
+## The CdS regime — faithful TFMuonium auto-reduces to the symmetric pair
 
 CdS is a **shallow-donor** muonium: the hyperfine coupling is tiny
-(`A_µ ≪ 4463 MHz`; the engine link-groups fit found `2δ ≈ 0.242 MHz`). At TF
-100 G the diamagnetic line sits at `ν_d ≈ gm·100 ≈ 1.355 MHz` and the two Mu⁰
-satellites straddle it symmetrically at `ν_d ± (A_µ/2)` to leading order. The
-docx states the splitting *equals* the hyperfine constant.
+(`A_µ ≪ 4463 MHz`; the link-groups fit found the splitting `≈ 0.242 MHz`). The
+key realisation is that the **faithful** WiMDA `TFMuonium` already produces
+exactly the observed structure in this regime — no phenomenological
+re-parameterisation is needed.
 
-The full WiMDA TFMuonium 4-level expression is overkill and field-coupled
-(`x = (ge+gm)·B/A`); for the shallow-donor small-A regime the observable is
-simply **a central line + two symmetric satellites**. So rather than port the
-4-transition QM, the component is parameterised by what the experiment measures:
+Validating `TFMuonium` numerically at B = 100 G, A_hf = 0.242 MHz
+(`x = (ge+gm)·B/A_hf ≈ 1163`, `δ = x/√(1+x²) ≈ 1`):
 
-- `f_centre` — the central (≈ diamagnetic) frequency,
-- `hyperfine` Δ — the **full** satellite splitting `f₊ − f₋`, i.e. the hyperfine
-  constant; satellites at `f_centre ± Δ/2`.
+```
+ν_d = g_µ·B            = 1.3553 MHz   (central diamagnetic, separate component)
+w12 = −1.2344 MHz  weight (1+δ)=2.000   in band
+w34 = +1.4764 MHz  weight (1+δ)=2.000   in band   → |w12|,|w34| straddle ν_d
+w14 = +280.36 MHz  weight (1−δ)=0.000   suppressed
+w23 = +280.12 MHz  weight (1−δ)=0.000   suppressed
+|w34| − |w12| = 0.2420 MHz  ≈ A_hf  (the hyperfine constant)
+```
 
-This makes the fitted parameter the physical observable, and enforces the
-symmetry the docx describes (which free-frequency link-group fits only recover).
+So the two in-band satellites straddle `ν_d` symmetrically with separation equal
+to the hyperfine coupling, and the two extra transitions vanish via the `(1−δ)`
+weight. Porting `TFMuonium` verbatim therefore *is* the symmetry-enforcing
+triplet, with `A_hf` the single splitting parameter — while remaining fully
+faithful to WiMDA (including the high-field/strong-coupling case where all four
+lines matter).
 
-## Mapping to / divergence from WiMDA
+## Mapping WiMDA → Asymmetry (full parity)
 
-| Aspect | WiMDA TFMuonium | This component |
+| Aspect | WiMDA | Asymmetry port |
 | --- | --- | --- |
-| Inputs | Field B, hyperfine A | centre f₀, splitting Δ (observed) |
-| Lines | 4 transitions (or 2) | central + 2 satellites (3) |
-| Symmetry | from the level structure | enforced: f₀, f₀±Δ/2 |
-| Damping/phase | external | built-in (shared λ, shared φ) |
-| Amplitudes | (1±delta) weights | free `A_centre`, `A_sat` |
-| Hyperfine read-out | post-fit from w_ij | `hyperfine` Δ directly |
+| Functions | TFMuonium / LowTFMuonium / ZFmuonium | `MuoniumTF` / `MuoniumLowTF` / `MuoniumZF` |
+| Hyperfine input `A` | param `A` (MHz) | `A_hf` (renamed; `A` is the amplitude) |
+| Field `B` | param (Gauss) | `field` (Gauss), via existing γ_µ constants |
+| Amplitude | external scale | leading `A` (standard chain-amplitude param) |
+| Damping | external | by composition (`* Exponential`) |
+| Phase | degrees `(deg)/360·2π` | `phase` in radians |
+| Central diamagnetic line | separate oscillation | separate `OscillatoryField` |
+| g-factors | `gm=0.01355342`, `ge=2.8024` | from `MUON_…·GAUSS_TO_TESLA`, `ELECTRON_…/2π` |
+| Frequency weights `(1±δ)`, ZF `f_cut` Lorentzian | as in source | ported verbatim |
 
-Divergences are deliberate and documented: (a) we model the *observed* 3-line TF
-structure, not the 4-level QM, because the shallow-donor small-A limit makes the
-extra TFMuonium lines negligible and the symmetric pair the physical picture;
-(b) damping/phase are built in so the component is usable as a single additive
-term; (c) amplitudes are free so `A_sat` can be trended (Arrhenius vs T) — the
-actual CdS deliverable. A faithful 4-level `TFMuonium` (field-parameterised) is
-recorded as a possible future addition for high-field/strong-coupling muonium,
-but is not what the CdS exercise needs.
+Deliberate, documented divergences (all convention-only, not physics): amplitude
+named `A` and applied as the standard leading scale; damping/phase via
+composition rather than baked in; phase in radians. The frequency arithmetic and
+amplitude weights are ported exactly. The central diamagnetic Mu⁺ line is a
+separate `OscillatoryField`, matching WiMDA (its muonium functions exclude it).

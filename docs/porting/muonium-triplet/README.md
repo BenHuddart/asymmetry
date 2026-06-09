@@ -34,36 +34,59 @@ oscillations. Our component is a phenomenological, user-facing
 `(centre, splitting)` parameterisation of the *observed* TF structure — see
 [comparison.md](comparison.md).
 
-## Chosen design (for sign-off)
+## Chosen design — full WiMDA parity
 
-A self-contained, **additively-used** damped triplet component
-**`MuoniumTriplet`** (used as `MuoniumTriplet + Constant`):
+Port WiMDA's muonium oscillation functions **faithfully**, mapped onto Asymmetry
+conventions, rather than inventing a phenomenological `(centre, splitting)`
+triplet. Three new baseline-free, **undamped** components (damping/background by
+composition, exactly like `Oscillatory`):
 
-```
-A(t) = e^(−λ t) · [ A_c·cos(2π f₀ t + φ)
-                   + A_s·cos(2π (f₀ − Δ/2) t + φ)
-                   + A_s·cos(2π (f₀ + Δ/2) t + φ) ]
-```
+| Component | WiMDA fn | Params (Asymmetry conventions) | Lines |
+| --- | --- | --- | --- |
+| `MuoniumTF` | `TFMuonium` | `A`, `field` (B, G), `A_hf` (hyperfine, MHz), `phase` (rad) | 4 transitions |
+| `MuoniumLowTF` | `LowTFMuonium` | `A`, `field`, `A_hf`, `phase` | 2 transitions |
+| `MuoniumZF` | `ZFmuonium` | `A`, `A_hf`, `D`, `f_cut` (MHz), `phase` | 3 (zero-field axial) |
 
-Parameters (6): `A_centre`, `A_sat`, `f_centre` (MHz), `hyperfine` Δ = full
-satellite splitting = the hyperfine constant (MHz, satellites at f₀ ± Δ/2),
-`Lambda` (shared relaxation, µs⁻¹), `phase` (shared, rad).
+**Why this is faithful *and* gives the symmetric triplet for free.** Numerically
+validating `TFMuonium` at the CdS regime (B = 100 G, A_hf = 0.242 MHz):
 
-Why self-contained and additive: `_is_scaling_parameter` treats only the exact
-names `A`/`A_bg` as collapsible chain amplitudes, so distinct names
-(`A_centre`/`A_sat`) sidestep the multiplicative amplitude-sharing machinery;
-built-in damping and phase avoid a `* Exponential` chain that would double the
-amplitude. The satellite amplitude `A_sat` is a first-class fitted parameter, so
-the CdS **Arrhenius trend of the Mu⁰ satellite amplitude vs T** drops out of the
-batch/trend workflow directly.
+- the two in-band transitions `|w12| = 1.234`, `|w34| = 1.476 MHz` straddle the
+  diamagnetic line `ν_d = γ_µ·B = 1.355 MHz` **symmetrically**, split = 0.2420
+  MHz ≈ the hyperfine coupling;
+- the other two transitions sit at ~280 MHz with weight `(1−δ) → 0` (since
+  `δ = x/√(1+x²) → 1` for the shallow-donor large-`x` limit), so they
+  **auto-suppress**.
+
+So porting `TFMuonium` verbatim *is* the symmetry-enforcing triplet, with the
+hyperfine coupling `A_hf` as the single physical splitting parameter — no
+phenomenological shortcut needed.
+
+**Conventions kept consistent with Asymmetry:**
+
+- leading amplitude `A` (engages the standard chain-amplitude sharing, so
+  `MuoniumTF * Exponential` collapses to one amplitude and damps — exactly like
+  `Oscillatory`); the hyperfine is `A_hf` (distinct from `A`/`A_bg`, so it is
+  *not* treated as a scaling param);
+- the **central diamagnetic Mu⁺ line stays a separate `OscillatoryField`** (it is
+  a different species; WiMDA's muonium functions also exclude it);
+- **phase in radians** (Asymmetry) rather than WiMDA's degrees;
+- g-factors from existing constants: `g_µ = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T ·
+  GAUSS_TO_TESLA`, `g_e = ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G / 2π`;
+- module-level, picklable component functions (batch/global parallelism).
+
+CdS model: `OscillatoryField*Exponential + MuoniumTF*Exponential + Constant` —
+central diamagnetic line + the muonium satellites, each damped, plus background.
+`A_hf` reads off the hyperfine constant directly; the muonium-component amplitude
+trends as the Mu⁰ fraction for the Arrhenius/ionisation-energy plot.
 
 Complements (does not replace) link groups: three independent
-`Oscillatory*Exponential` lines + link groups remain the flexible option (free
-frequencies, per-line phases); `MuoniumTriplet` is the constrained,
-symmetry-enforcing option with the hyperfine coupling as one parameter.
+`Oscillatory*Exponential` lines + link groups remain the flexible, model-free
+option; the muonium components are the physics-faithful, hyperfine-parameterised
+option.
 
-See [implementation-options.md](implementation-options.md) for the exact seams,
+See [comparison.md](comparison.md) for the WiMDA physics and the validation,
+[implementation-options.md](implementation-options.md) for the exact seams,
 [test-data.md](test-data.md) for the synthetic fixture, and
 [verification-plan.md](verification-plan.md) for the CdS acceptance bar.
 
-**Status: STUDY — awaiting design sign-off before implementation.**
+**Status: STUDY (design agreed: full WiMDA parity) — implementation in progress.**

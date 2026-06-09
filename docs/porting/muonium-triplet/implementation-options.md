@@ -1,83 +1,103 @@
-# Muonium triplet — implementation options & chosen design
+# Muonium components — implementation options & chosen design
 
 ## Option 1 — three independent lines + link groups (already shipped, NOT this)
 
 `Oscillatory*Exponential ×3 + Constant` with link groups sharing
-amplitude/phase/relaxation. Frequencies free; symmetry only recovered, not
-enforced; hyperfine = `f₅ − f₃` post-fit. This is the flexible baseline; the new
-component is the constrained complement, not a replacement.
+amplitude/phase/relaxation; frequencies free, symmetry recovered not enforced.
+The flexible, model-free baseline. The muonium components are the
+physics-faithful complement, not a replacement.
 
-## Option 2 — faithful WiMDA `TFMuonium` (4-level, field-parameterised) — deferred
+## Option 2 — phenomenological `(centre, splitting)` triplet (rejected)
 
-Port `TFMuonium`/`LowTFMuonium` verbatim, params `(B, A, phase)`. Maximum
-fidelity, but field-coupled and 4-line; overkill for the shallow-donor small-A
-CdS case and awkward to seed. Recorded as a future high-field addition.
+A single self-contained `MuoniumTriplet(A_centre, A_sat, f_centre, hyperfine,
+Lambda, phase)`. Rejected in favour of full WiMDA parity: the faithful
+`TFMuonium` already reduces to the symmetric pair (see comparison.md), so the
+phenomenological shortcut buys nothing and is less faithful.
 
-## Option 3 — self-contained symmetric triplet component (CHOSEN)
+## Option 3 — full WiMDA parity (CHOSEN)
 
-A new baseline-free `ComponentDefinition` `MuoniumTriplet`, used additively
-(`MuoniumTriplet + Constant`).
+Port WiMDA's three muonium oscillation functions as **undamped, baseline-free**
+components, composed with `* Exponential` / `+ Constant` like `Oscillatory`.
 
-### Function (top-level, picklable — required for batch/global)
+### Functions (top-level, picklable)
+
+In a new module `src/asymmetry/core/fitting/muonium.py`. g-factors from
+`asymmetry.core.utils.constants`:
+`G_MU = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA` (MHz/G),
+`G_E = ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G / (2*pi)` (MHz/G).
 
 ```python
-def _muonium_triplet_component(
-    t, A_centre, A_sat, f_centre, hyperfine, Lambda, phase
-):
-    t = np.asarray(t, dtype=float)
-    damp = np.exp(-Lambda * t)
-    two_pi = 2.0 * np.pi
-    f_lo = f_centre - 0.5 * hyperfine
-    f_hi = f_centre + 0.5 * hyperfine
-    return damp * (
-        A_centre * np.cos(two_pi * f_centre * t + phase)
-        + A_sat * np.cos(two_pi * f_lo * t + phase)
-        + A_sat * np.cos(two_pi * f_hi * t + phase)
+def _muonium_tf(t, A, field, A_hf, phase):           # WiMDA TFMuonium
+    x = (G_E + G_MU) * field / A_hf
+    d = (G_E - G_MU) / (G_E + G_MU)
+    delta = x / np.sqrt(1.0 + x*x)
+    E1 = A_hf/4*(1+2*d*x); E2 = A_hf/4*(-1+2*np.sqrt(1+x*x))
+    E3 = A_hf/4*(1-2*d*x); E4 = A_hf/4*(-1-2*np.sqrt(1+x*x))
+    w12,w14,w34,w23 = E1-E2, E1-E4, E3-E4, E2-E3
+    tp = 2*np.pi
+    return A * 0.25 * (
+        (1+delta)*np.cos(tp*w12*t + phase) + (1-delta)*np.cos(tp*w14*t + phase)
+        + (1+delta)*np.cos(tp*w34*t + phase) + (1-delta)*np.cos(tp*w23*t + phase)
     )
+
+def _muonium_low_tf(t, A, field, A_hf, phase):        # WiMDA LowTFMuonium (w12,w23, -ve sign)
+    ... E1,E2,E3 as above; w12=E1-E2, w23=E2-E3
+    return A * 0.25 * ((1+delta)*np.cos(tp*(-w12)*t + phase)
+                       + (1-delta)*np.cos(tp*(-w23)*t + phase))
+
+def _muonium_zf(t, A, A_hf, D, f_cut, phase):          # WiMDA ZFmuonium
+    f1,f2,f3 = A_hf - D, A_hf + D/2, 1.5*D
+    a1 = 1/(1+(f1/f_cut)**2) if f_cut > 0 else 1.0
+    a2 = 2/(1+(f2/f_cut)**2) if f_cut > 0 else 2.0
+    a3 = 2/(1+(f3/f_cut)**2) if f_cut > 0 else 2.0
+    return A * (a1*np.cos(tp*f1*t+phase) + a2*np.cos(tp*f2*t+phase)
+                + a3*np.cos(tp*f3*t+phase)) / 6.0
 ```
 
-Lives in `src/asymmetry/core/fitting/` (new small module `muonium.py`, or
-alongside the other component fns in `composite.py`). Must be module-level.
+Notes: frequency arithmetic, `(1±delta)` weights, the `-w` sign in LowTF, and the
+ZF `/6` and `f_cut` Lorentzian are ported verbatim. `A` is the standard leading
+amplitude; `phase` is radians (WiMDA degrees adapted). Guard `A_hf > 0` /
+`field`-domain validity by returning a finite penalty (as `_general_fmuf_component`
+does) so the minimiser never sees NaN at trial points.
 
 ### Registry & metadata
 
-- Add to `COMPONENTS` in `composite.py`:
-  `param_names = ["A_centre","A_sat","f_centre","hyperfine","Lambda","phase"]`,
-  `param_defaults`, `param_info`, `formula_template`, `latex_equation`,
-  `category="Muonium"` (a new category; the builder groups by `category`
-  automatically), `domain="time"`.
-- Parameter metadata in `parameters.py` `PARAM_INFO_REGISTRY` / `get_param_info`:
-  reuse `frequency`, `Lambda`, `phase`; **add** `A_centre`, `A_sat` (amplitude,
-  `default_min=0.0`, unit "%") and `hyperfine` (label "Aµ", unit "MHz",
-  `default_min=0.0`, the satellite splitting). Names are distinct from `A`/`A_bg`
-  so `_is_scaling_parameter` does not fold them into the chain-amplitude logic.
-- Component applicability blurb in `component_docs.py`
-  (`FIT_COMPONENT_APPLICABILITY`) for the Component-Info dialog.
+- Add three `ComponentDefinition` entries to `COMPONENTS` in `composite.py`
+  (`category="Muonium"`, `domain="time"`), each with `param_names`,
+  `param_defaults`, `param_info`, `formula_template`, `latex_equation`.
+- `parameters.py` `PARAM_INFO_REGISTRY`: reuse `A`, `field`, `phase`; **add**
+  `A_hf` (hyperfine, MHz, `default_min=0.0`, label Aµ), `D` (anisotropy, MHz),
+  `f_cut` (cutoff, MHz, `default_min=0.0`). Names are distinct from `A`/`A_bg` so
+  they are not folded into chain-amplitude logic.
+- `component_docs.py` `FIT_COMPONENT_APPLICABILITY`: a blurb per component.
+
+### Defaults / seeding
+
+`MuoniumTF`/`MuoniumLowTF`: `A=10, field=100, A_hf=0.24, phase=0` (`field`
+auto-seeds from run metadata like other field params; fix it when B is known).
+`MuoniumZF`: `A=10, A_hf=1.0, D=0.5, f_cut=0.0, phase=0`. Seed `A_hf` away from 0
+(at `A_hf→0`, `x→∞` and the split collapses — same seed-trap class as
+OrderParameter `Tc`).
 
 ### No GUI code changes
 
-The builder dropdown (`fit_function_builder.py` `_build_components_by_category`)
-and the Component-Info dialog read `COMPONENTS`/metadata, so the component
-appears and renders its equation automatically. It is reachable via typed
-expressions too (`MuoniumTriplet + Constant`).
+The builder dropdown groups by `category` automatically and the Component-Info
+dialog renders `latex_equation` + `param_info`; the components are also reachable
+by typed expression (`OscillatoryField*Exponential + MuoniumTF*Exponential +
+Constant`). `.asymp` round-trips via the existing model/param dict path.
 
-### Seeding & robustness notes
+### CdS model
 
-- `hyperfine` and `Lambda` and the amplitudes get `default_min = 0.0`.
-- Default seeds chosen for visibility (e.g. `f_centre = 1.0` MHz, `hyperfine =
-  0.2` MHz, `A_centre = 25`, `A_sat = 10`, `Lambda = 0.3`, `phase = 0`). Seeding
-  `hyperfine` away from 0 matters — at Δ=0 the three lines collapse and the
-  splitting gradient vanishes (same class of trap as the OrderParameter Tc seed).
-- `.asymp` round-trip is automatic (model serialises via `CompositeModel.to_dict`
-  by component name; params via the existing dict path).
+`OscillatoryField*Exponential + MuoniumTF*Exponential + Constant`: central
+diamagnetic line + muonium satellites (each damped) + background. `field` fixed
+at the run field (100 G); `A_hf` is the fitted hyperfine constant; the
+muonium-component amplitude is the Mu⁰ fraction for the Arrhenius trend.
 
-### Design decisions taken
+### Decisions taken
 
-- **Full splitting** `hyperfine` Δ (= f₊ − f₋) as the param, not the half δ, so
-  the fitted value is the hyperfine constant directly (acceptance `2δ ≈ 0.242`).
-- **Shared** `Lambda` and `phase` across all three lines (matches the linked CdS
-  fit that gave χ²ᵣ=1.35). Per-line satellite phase / central-vs-satellite
-  damping are recorded as future refinements (the docx hints satellite phases may
-  vary), kept out to stay minimal and symmetry-pure.
-- **Free** `A_centre`, `A_sat` (not a single A + ratio) so `A_sat` trends
-  directly in the Arrhenius batch workflow.
+- Port all three WiMDA functions (full parity), not just TF.
+- Central diamagnetic line kept as a separate `OscillatoryField` (faithful).
+- Undamped components + composition for damping (consistent with `Oscillatory`);
+  do **not** bake in relaxation.
+- `A_hf` (not WiMDA's `A`) for the hyperfine, to avoid colliding with the
+  amplitude convention; `phase` in radians.
