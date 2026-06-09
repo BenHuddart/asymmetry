@@ -392,12 +392,22 @@ def test_load_psi_mdu_t5(tmp_path) -> None:
     assert len(ds.run.histograms) == 2
     assert ds.run.grouping["groups"] == {1: [1], 2: [2]}
     assert ds.run.grouping["group_names"] == {1: "F1", 2: "B1"}
+    # Positron detectors are included by default.
+    assert ds.run.grouping["included_groups"] == {1: True, 2: True}
     assert ds.run.grouping["forward_group"] == 2
     assert ds.run.grouping["backward_group"] == 1
     assert ds.run.grouping["t0_bin"] == 1
     assert ds.run.grouping["first_good_bin"] == 2
     assert ds.run.grouping["last_good_bin"] == 5
     assert ds.n_points == 4
+
+
+def test_non_positron_label_classifier() -> None:
+    loader = PsiLoader()
+    for label in ("MV", "mv", "FV", "BV", "M1", "M2", "Veto"):
+        assert loader._is_non_positron_label(label), label
+    for label in ("F1", "B8", "Forw", "Back", "Left", "Right", "R_F"):
+        assert not loader._is_non_positron_label(label), label
 
 
 def test_load_psi_bin_preserves_individual_labeled_groups(tmp_path) -> None:
@@ -561,6 +571,10 @@ def test_musrfit_mdu_fixture_matches_musrfit_psi_reader_dump() -> None:
         20071,
     ]
     assert ds.run.grouping["detector_last_good_bins"] == [409190] * 17
+    # The muon-veto MV (group 1) is excluded by default; F1-8/B1-8 are included.
+    included = ds.run.grouping["included_groups"]
+    assert included[1] is False
+    assert all(included[gid] for gid in range(2, 18))
     assert [float(np.sum(h.counts)) for h in ds.run.histograms] == pytest.approx(
         [
             1006775.0,
@@ -582,6 +596,33 @@ def test_musrfit_mdu_fixture_matches_musrfit_psi_reader_dump() -> None:
             2750281.0,
         ]
     )
+
+
+def test_hal_layout_matches_musrfit_mdu_histogram_order() -> None:
+    """The HAL-9500 layout's detector labels match the file's histogram order.
+
+    Detector IDs map positionally to histogram indices (detector N ->
+    histogram N-1), so the layout labels must line up with the file's
+    ``MV, F1..F8, B1..B8`` ordering for grouping to select the right channels.
+    """
+    from asymmetry.core.instrument import detect_instrument, get_instrument_layout
+
+    path = MUSRFIT_EXAMPLE_DATA / "tdc_hifi_2014_00153.mdu"
+    if not path.exists():
+        pytest.skip("musrfit PSI-MDU fixture not available")
+
+    ds = PsiLoader().load(str(path))
+    n_hist = len(ds.run.histograms)
+    file_labels = ds.run.grouping["histogram_labels"]
+
+    assert detect_instrument(n_hist, metadata=ds.metadata, source_file=str(path)) == "HAL"
+
+    layout = get_instrument_layout("HAL")
+    by_id = {s.detector_id: s for s in layout.all_segments}
+    assert layout.n_detectors == n_hist
+    # Layout detector N labels histogram index N-1.
+    for hist_index, file_label in enumerate(file_labels):
+        assert by_id[hist_index + 1].label == file_label
 
 
 def test_aligned_grouping_preserves_per_detector_t0() -> None:

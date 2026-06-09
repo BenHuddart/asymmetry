@@ -497,6 +497,24 @@ class TestMainWindowFourier:
         mainwindow._on_apply_fourier_to_selection()
         assert 8832 not in mainwindow._frequency_spectra_by_run
 
+    def test_fourier_inclusion_seeded_from_grouping_default(self, mainwindow: MainWindow) -> None:
+        # A group flagged excluded in the grouping (e.g. a HAL-9500 MV veto)
+        # should start unchecked in the FFT panel and be left out of the average.
+        dataset = _make_fourier_ready_dataset(8807, with_grouping=True)
+        assert dataset.run is not None
+        dataset.run.grouping["included_groups"] = {1: True, 2: False}
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8807)
+
+        enabled = mainwindow._fourier_panel.group_enabled_table()
+        assert enabled.get(1) is True
+        assert enabled.get(2) is False
+
+        mainwindow._on_compute_fourier()
+        plotted = mainwindow._frequency_plot_panel._current_dataset
+        assert plotted is not None
+        assert plotted.metadata["group_ids"] == [1]
+
     def test_compute_group_fourier_can_average_selected_groups(
         self, mainwindow: MainWindow
     ) -> None:

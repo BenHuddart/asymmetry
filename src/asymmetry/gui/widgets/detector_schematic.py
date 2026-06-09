@@ -143,21 +143,26 @@ class DetectorSchematicWidget(QWidget):
 
             # Draw all segments for this bank
             for seg in bank.segments:
-                patch = self._make_wedge(seg)
+                patch = self._make_radial_patch(seg)
                 ax.add_patch(patch)
                 self._patches[seg.detector_id] = patch
                 # Label at centroid
                 self._add_label(ax, seg)
 
-            hole = Circle(
-                (0, 0),
-                radius=min(s.r_inner for s in bank.segments) - 0.01,
-                facecolor=_BEAM_HOLE_COLOUR,
-                edgecolor=_EDGE_COLOUR,
-                linewidth=0.8,
-                zorder=5,
-            )
-            ax.add_patch(hole)
+            # Annular instruments (wedge banks) get a central beam-hole disc.
+            # Banks built from edge-rectangles (HAL) define their own centre via
+            # the MV disc, so the generic hole is skipped.
+            annular = [s for s in bank.segments if s.shape == "wedge" and s.r_inner > 0]
+            if annular and not any(s.shape == "rectangle" for s in bank.segments):
+                hole = Circle(
+                    (0, 0),
+                    radius=min(s.r_inner for s in annular) - 0.01,
+                    facecolor=_BEAM_HOLE_COLOUR,
+                    edgecolor=_EDGE_COLOUR,
+                    linewidth=0.8,
+                    zorder=5,
+                )
+                ax.add_patch(hole)
 
         self._fig.tight_layout(pad=0.4)
         self._canvas.draw_idle()
@@ -294,6 +299,16 @@ class DetectorSchematicWidget(QWidget):
         )
         return patch
 
+    def _make_radial_patch(self, seg: DetectorSegment):
+        """Create the patch for a radial-bank segment, dispatching on shape.
+
+        Banks mix curved wedges (HiFi/MuSR/EMU rings) with edge-aligned
+        rectangles (the HAL-9500 octagon of detector bars).
+        """
+        if seg.shape == "rectangle":
+            return self._make_rectangle(seg)
+        return self._make_wedge(seg)
+
     def _make_rectangle(self, seg: DetectorSegment) -> Rectangle:
         """Create a matplotlib rectangle patch for a plan-view detector."""
         patch = Rectangle(
@@ -313,7 +328,12 @@ class DetectorSchematicWidget(QWidget):
     def _add_label(self, ax, seg: DetectorSegment) -> None:
         """Draw the detector number at the segment centroid."""
         if seg.shape == "rectangle":
-            label = f"{seg.detector_id}\n{seg.label}" if seg.label else str(seg.detector_id)
+            # Plan-view banks (FLAME) show "id + name"; radial edge-bars (HAL)
+            # show just the physical label to stay uncluttered.
+            if self._instrument.view == "plan":
+                label = f"{seg.detector_id}\n{seg.label}" if seg.label else str(seg.detector_id)
+            else:
+                label = seg.label if seg.label else str(seg.detector_id)
             ax.text(
                 seg.x_center,
                 seg.y_center,
@@ -335,10 +355,14 @@ class DetectorSchematicWidget(QWidget):
         n_sectors = max(len(set(s.sector_index for s in self._instrument.all_segments)), 1)
         fontsize = max(3.5, min(6.5, 130.0 / n_sectors))
 
+        # Prefer the physical detector label (e.g. "F1", "MV") when present;
+        # fall back to the bare detector ID for label-free banks (HiFi/MuSR/EMU).
+        text = seg.label if seg.label else str(seg.detector_id)
+
         ax.text(
             x,
             y,
-            str(seg.detector_id),
+            text,
             ha="center",
             va="center",
             fontsize=fontsize,
@@ -476,6 +500,11 @@ class DetectorSchematicWidget(QWidget):
         r = math.sqrt(x * x + y * y)
         if not (seg.r_inner <= r <= seg.r_outer):
             return False
+
+        # A full-circle wedge (e.g. the MV disc) has no meaningful angular
+        # bounds, so any point within the radius is inside.
+        if seg.angle_half_width_deg >= 179.95:
+            return True
 
         # Compute CCW angle from +x axis, normalised to [0, 360)
         angle = math.degrees(math.atan2(y, x)) % 360.0

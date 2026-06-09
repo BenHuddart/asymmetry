@@ -10,9 +10,9 @@ per-detector amplitudes and phases needed for a paramagnetic Knight-shift
 measurement (:doc:`grouped_time_domain_fitting`); and a vector-polarisation
 experiment needs distinct pairs assigned to :math:`P_x`, :math:`P_y`, and
 :math:`P_z` (:doc:`vector_polarization`). For new data from any of the
-supported instruments — ISIS HiFi, MuSR, EMU and PSI FLAME — the matching
-preset in the Detector Layout editor seeds sensible defaults that can then
-be refined graphically before being applied.
+supported instruments — ISIS HiFi, MuSR, EMU and the PSI FLAME and HAL-9500
+spectrometers — the matching preset in the Detector Layout editor seeds
+sensible defaults that can then be refined graphically before being applied.
 
 Grouping is configured from the Grouping dialog and edited graphically
 with the Detector Layout editor.
@@ -44,7 +44,11 @@ defaults are derived from PSI detector labels where the file provides them
 (``Forw``/``Back`` in BIN files, and labels such as ``F1``/``B1`` in MDU
 files). For PSI FLAME BIN files, filenames, detector labels, or metadata
 containing ``FLAME`` select the FLAME detector layout automatically; this
-includes PSI instrument strings such as ``LMU_BULKMUSR_FLAME``. This behavior
+includes PSI instrument strings such as ``LMU_BULKMUSR_FLAME``. PSI HAL-9500
+runs (the high-field πE3 spectrometer) are recognised from their ``HIFI``
+instrument string and ``tdc_hifi_*`` run names and open with the HAL-9500
+octagonal layout; this is a distinct instrument from the ISIS HiFi
+spectrometer despite the shared ``hifi`` token. This behavior
 follows the detector metadata exposed by musrfit's PSI raw-data reader, with
 Mantid's PSI-BIN loader used as a cross-check for BIN layout details.
 When labels repeat, Asymmetry keeps one visible group per histogram and makes
@@ -227,6 +231,25 @@ PSI FLAME
    3 Right, 4 Left, 5 R_F, 6 R_B, 7 L_F, and 8 L_B. The Left and Right banks
    use equal-height rectangles with the central detector drawn wider than the
    front/back side detectors.
+
+PSI HAL-9500
+~~~~~~~~~~~~
+
+.. figure:: images/hal-program-schematic.png
+   :width: 90%
+   :align: center
+   :alt: PSI HAL-9500 detector schematic generated from the program layout model.
+
+   PSI HAL-9500 detector layout, viewed along the beam axis. The 16 positron
+   detectors form two octagonal rings of eight — a forward ring (F1–F8) and a
+   backward ring (B1–B8) — drawn as separate octagons. The central muon-veto
+   detector (MV) is shown at the centre of the forward ring. The histograms are
+   stored in the order ``MV, F1…F8, B1…B8``, so detector IDs run MV → 1,
+   F1–F8 → 2–9, and B1–B8 → 10–17. Presets include **Longitudinal**
+   (forward ring vs backward ring), **Transverse (opposed pairs)** (each
+   forward detector as its own group, defaulting to the F1–F5 diametric pair),
+   and **Per-octant** (each azimuthal sector combining its forward and
+   backward wedge).
 
 Related Topics
 --------------

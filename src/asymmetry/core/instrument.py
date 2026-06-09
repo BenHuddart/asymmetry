@@ -1,7 +1,8 @@
 """Instrument layout definitions for muon spectrometers.
 
 This module provides static geometric descriptions of the detector arrangements
-for HiFi, EMU, MuSR, and PSI FLAME, along with standard grouping presets.  The
+for HiFi, EMU, MuSR, PSI FLAME, and PSI HAL-9500, along with standard grouping
+presets.  The
 data here is used by the interactive detector layout editor
 (:class:`~asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog`)
 but has no GUI dependencies and can be used independently.
@@ -13,6 +14,7 @@ is the responsibility of the caller.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -205,7 +207,7 @@ class InstrumentLayout:
 # ---------------------------------------------------------------------------
 
 #: Canonical names of all supported instruments.
-INSTRUMENT_NAMES: Final[tuple[str, ...]] = ("HiFi", "MuSR", "EMU", "FLAME")
+INSTRUMENT_NAMES: Final[tuple[str, ...]] = ("HiFi", "MuSR", "EMU", "FLAME", "HAL")
 
 
 # ---------------------------------------------------------------------------
@@ -683,6 +685,134 @@ def _build_flame() -> InstrumentLayout:
 
 
 # ---------------------------------------------------------------------------
+# HAL-9500 layout builder
+# ---------------------------------------------------------------------------
+
+
+def _build_hal() -> InstrumentLayout:
+    """Build the HAL-9500 detector layout (PSI high-field spectrometer).
+
+    HAL-9500 (πE3 beamline) has 16 positron detectors arranged as two
+    octagonal rings of eight — a **forward** ring (F1–F8) and a **backward**
+    ring (B1–B8) — plus a central muon-veto detector (MV).  Viewed along the
+    beam axis the two rings project onto the same octagon.
+
+    This is a distinct instrument from the ISIS *HiFi* spectrometer
+    (:func:`_build_hifi`); the shared ``hifi`` token in PSI run names
+    (``tdc_hifi_*``) is a legacy naming collision.
+
+    PSI data files store the histograms in the fixed order
+    ``MV, F1…F8, B1…B8``.  Because detector IDs in this module map positionally
+    to histogram indices (detector *N* → histogram ``N − 1``), the IDs are:
+
+    * MV → 1   (histogram 0, the muon veto)
+    * F1–F8 → 2–9   (histograms 1–8, forward ring)
+    * B1–B8 → 10–17 (histograms 9–16, backward ring)
+
+    Source: `PSI HAL-9500 instrument page
+    <https://www.psi.ch/en/smus/hal-9500>`_; musrfit ``instrument_def_psi.xml``
+    (``<instrument name="HAL9500">``) and the shipped ``tdc_hifi_2014_00153``
+    example data (see ``tests/test_psi_loader.py``).
+    """
+    pitch = 45.0  # degrees per sector (360/8)
+    # Each detector is a rectangular bar lying along one edge of the octagon
+    # (constant-width slabs forming the perimeter), matching the schematic.
+    apothem = math.cos(math.radians(22.5))  # distance to an octagon edge midpoint
+    thickness = 0.26  # radial depth of each bar
+    bar_width = 0.54  # tangential length; small gaps at the octagon vertices
+    center_r = apothem - thickness / 2.0  # bar centre; outer face sits on the octagon
+
+    def _ring(start_id: int, prefix: str) -> list[DetectorSegment]:
+        segs: list[DetectorSegment] = []
+        for k in range(8):
+            # k = 0 at the top (90°), numbering clockwise to match the schematic.
+            angle = (90.0 - k * pitch) % 360.0
+            rad = math.radians(angle)
+            segs.append(
+                DetectorSegment(
+                    detector_id=start_id + k,
+                    sector_index=k,
+                    ring_index=0,
+                    angle_center_deg=angle,
+                    angle_half_width_deg=0.0,
+                    r_inner=0.0,
+                    r_outer=0.0,
+                    shape="rectangle",  # edge-aligned bar forming one octagon side
+                    label=f"{prefix}{k + 1}",
+                    x_center=center_r * math.cos(rad),
+                    y_center=center_r * math.sin(rad),
+                    width=bar_width,
+                    height=thickness,
+                    rotation_deg=angle - 90.0,  # long edge tangential to the ring
+                )
+            )
+        return segs
+
+    fwd_segs = _ring(2, "F")  # F1–F8 -> detector IDs 2–9
+    bwd_segs = _ring(10, "B")  # B1–B8 -> detector IDs 10–17
+
+    # Central muon veto (MV) -> detector ID 1, drawn as a disc at the ring centre.
+    # half_width 180° is rendered/hit-tested as a full circle by the widget.
+    mv = DetectorSegment(
+        detector_id=1,
+        sector_index=0,
+        ring_index=0,
+        angle_center_deg=90.0,
+        angle_half_width_deg=180.0,
+        r_inner=0.0,
+        r_outer=0.26,
+        label="MV",
+    )
+
+    banks = (
+        BankLayout(name="Forward", segments=(mv, *fwd_segs)),
+        BankLayout(name="Backward", segments=tuple(bwd_segs)),
+    )
+
+    fwd_ring = tuple(range(2, 10))  # F1–F8
+    bwd_ring = tuple(range(10, 18))  # B1–B8
+
+    presets: dict[str, PresetGrouping] = {}
+
+    # Longitudinal (default): forward ring vs backward ring.
+    presets["Longitudinal"] = PresetGrouping(
+        name="Longitudinal",
+        groups={
+            1: GroupDefinition("Forward", fwd_ring),
+            2: GroupDefinition("Backward", bwd_ring),
+        },
+        forward_group=1,
+        backward_group=2,
+    )
+
+    # Transverse (opposed pairs): musrfit's high-field scheme — each forward
+    # detector is its own group so any diametrically-opposed pair (F_k vs
+    # F_{k+4}, 180° apart) can form the asymmetry.  Defaults to F1 vs F5 (0°).
+    presets["Transverse (opposed pairs)"] = PresetGrouping(
+        name="Transverse (opposed pairs)",
+        groups={k + 1: GroupDefinition(f"F{k + 1}", (2 + k,)) for k in range(8)},
+        forward_group=1,  # F1
+        backward_group=5,  # F5 (180° opposite F1)
+    )
+
+    # Per-octant: one group per azimuthal sector, combining the forward and
+    # backward wedge at that angle.  Useful for angle-resolved high-field work.
+    presets["Per-octant"] = PresetGrouping(
+        name="Per-octant",
+        groups={k + 1: GroupDefinition(f"Octant {k + 1}", (2 + k, 10 + k)) for k in range(8)},
+        forward_group=1,  # octant 1 (top)
+        backward_group=5,  # octant 5 (bottom, 180° opposite)
+    )
+
+    return InstrumentLayout(
+        name="HAL",
+        n_detectors=17,
+        banks=banks,
+        presets=presets,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
 
@@ -695,6 +825,7 @@ def _build_registry() -> dict[str, InstrumentLayout]:
         "MuSR": _build_musr(),
         "EMU": _build_emu(),
         "FLAME": _build_flame(),
+        "HAL": _build_hal(),
     }
 
 
@@ -771,6 +902,26 @@ def _labels_match_flame(labels: list[str], n_histograms: int) -> bool:
     return has_main and has_corners
 
 
+def _is_psi_hal(metadata: dict, source_file: str | None) -> bool:
+    """Return True when PSI metadata/filename identifies a HAL-9500 run.
+
+    HAL-9500 files report ``instrument = "HIFI"`` and run names of the form
+    ``tdc_hifi_*``; both carry the ``hifi`` token. Caller must already have
+    established that the data is from PSI.
+    """
+    tokens = [
+        str(metadata.get(key, ""))
+        for key in ("instrument", "instrument_name", "spectrometer", "name")
+    ]
+    if source_file:
+        tokens.append(Path(source_file).stem)
+    compact = re.sub(r"[^a-z0-9]+", "", " ".join(tokens).lower())
+    # Match the legacy "hifi" run-name/instrument token and the explicit
+    # "hal9500" name; avoid a bare "hal" substring that would catch unrelated
+    # words (e.g. a sample name like "halite").
+    return "hifi" in compact or "hal9500" in compact
+
+
 def detect_instrument(
     n_histograms: int,
     *,
@@ -802,6 +953,12 @@ def detect_instrument(
     if isinstance(metadata, dict):
         facility = str(metadata.get("facility", "")).strip().lower()
         psi_data = facility == "psi" or bool(metadata.get("psi_format"))
+        # PSI HAL-9500 (high-field): its run files carry the legacy "hifi"
+        # token / "HIFI" instrument string, but it is a distinct instrument
+        # from the ISIS HiFi spectrometer. Route it to the HAL layout before
+        # the generic ISIS-name resolution below (which would mis-map it).
+        if psi_data and _is_psi_hal(metadata, source_file):
+            return "HAL"
         for key in (
             "instrument",
             "instrument_name",

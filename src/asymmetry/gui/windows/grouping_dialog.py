@@ -1347,6 +1347,44 @@ class GroupingDialog(QDialog):
             self._set_combo_to_group(self._backward_combo, pz_bwd)
             self._alpha_spin.setValue(float(self._vector_alpha_spins["P_z"].value()))
 
+    def _resolve_detector_layout(self, n_histo: int, metadata: dict[str, Any]):
+        """Resolve the InstrumentLayout to show in the detector layout editor.
+
+        Resolution order:
+
+        1. A previously chosen layout name (``_detector_layout_instrument_name``)
+           when it maps to a known layout.
+        2. Facility-aware auto-detection. PSI data is always re-detected when the
+           stored name resolves to an ISIS-only layout, because the PSI loader
+           records the raw instrument string (e.g. ``"HIFI"``) which otherwise
+           canonicalises to the unrelated ISIS HiFi layout instead of HAL-9500.
+        3. HiFi as a final fallback.
+        """
+        instrument = None
+        instrument_name = self._detector_layout_instrument_name
+        if instrument_name:
+            try:
+                instrument = get_instrument_layout(instrument_name)
+            except KeyError:
+                instrument = None
+
+        psi = self._reference_is_psi()
+        if instrument is None or (psi and instrument.name in {"HiFi", "MuSR", "EMU"}):
+            detected = detect_instrument(
+                n_histo,
+                metadata=metadata,
+                source_file=self._run.source_file if self._run else None,
+            )
+            if detected:
+                try:
+                    instrument = get_instrument_layout(detected)
+                except KeyError:
+                    pass
+
+        if instrument is None:
+            instrument = get_instrument_layout("HiFi")
+        return instrument
+
     def _on_detector_layout(self) -> None:
         """Open the interactive detector layout editor as a sub-dialog."""
         from asymmetry.gui.windows.detector_layout_dialog import DetectorLayoutDialog
@@ -1362,27 +1400,10 @@ class GroupingDialog(QDialog):
                 if key in grouping and key not in metadata:
                     metadata[key] = grouping[key]
 
-        instrument_name = self._detector_layout_instrument_name
-        instrument = None
-        if instrument_name:
-            try:
-                instrument = get_instrument_layout(instrument_name)
-            except KeyError:
-                instrument_name = None
-
-        if instrument is None:
-            instrument_name = detect_instrument(
-                n_histo,
-                metadata=metadata,
-                source_file=self._run.source_file if self._run else None,
-            )
-            try:
-                instrument = get_instrument_layout(instrument_name) if instrument_name else None
-            except KeyError:
-                instrument = None
-
-        if instrument is None:
-            instrument = get_instrument_layout("HiFi")
+        # Resolve only to seed the editor; the chosen instrument is committed to
+        # _detector_layout_instrument_name from the dialog result on Accept, so a
+        # cancelled editor session leaves the stored selection untouched.
+        instrument = self._resolve_detector_layout(n_histo, metadata)
 
         forward_gid = int(grouping.get("forward_group", self._forward_combo.currentData() or 1))
         backward_gid = int(grouping.get("backward_group", self._backward_combo.currentData() or 2))

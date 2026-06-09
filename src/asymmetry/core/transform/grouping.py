@@ -14,6 +14,16 @@ from numpy.typing import NDArray
 from asymmetry.core.data.dataset import Histogram, Run
 
 
+def _present_indices(group_indices: list[int], n_histograms: int) -> list[int]:
+    """Drop indices that fall outside ``[0, n_histograms)``.
+
+    A grouping (e.g. a HAL-9500 preset that names the backward ring) can
+    reference detectors a particular run does not contain. Filtering here keeps
+    the summing helpers from indexing past the histogram list.
+    """
+    return [i for i in group_indices if 0 <= i < n_histograms]
+
+
 def apply_grouping(
     histograms: list[Histogram],
     group_indices: list[int],
@@ -32,7 +42,9 @@ def apply_grouping(
     NDArray
         Summed counts array.
     """
-    arrays = [histograms[i].counts for i in group_indices]
+    arrays = [histograms[i].counts for i in _present_indices(group_indices, len(histograms))]
+    if not arrays:
+        return np.array([], dtype=np.float64)
     # Truncate to shortest length in case of mismatch
     min_len = min(len(a) for a in arrays)
     total = np.zeros(min_len, dtype=np.float64)
@@ -54,7 +66,7 @@ def apply_grouping_aligned(
     ``t0`` values per detector. This helper shifts each selected detector so
     that its local ``t0_bin`` lands on ``common_t0_bin`` before summing.
     """
-    selected = [histograms[i] for i in group_indices]
+    selected = [histograms[i] for i in _present_indices(group_indices, len(histograms))]
     if not selected:
         return np.array([], dtype=np.float64)
 
@@ -87,6 +99,7 @@ def common_t0_for_groups(
 ) -> int:
     """Return a common t0 suitable for comparing multiple detector groups."""
     indices = sorted({idx for group in group_indices for idx in group})
+    indices = _present_indices(indices, len(histograms))
     if not indices:
         return int(histograms[0].t0_bin) if histograms else 0
     return max(0, max(int(histograms[idx].t0_bin) for idx in indices))
@@ -168,10 +181,13 @@ def group_forward_backward(
 
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
-    forward_indices = resolve_group_indices(groups, forward_gid)
-    backward_indices = resolve_group_indices(groups, backward_gid)
+    n = len(histograms)
+    forward_indices = _present_indices(resolve_group_indices(groups, forward_gid), n)
+    backward_indices = _present_indices(resolve_group_indices(groups, backward_gid), n)
     if not forward_indices or not backward_indices:
-        raise ValueError("Forward/backward groups do not reference any detectors.")
+        raise ValueError(
+            "Forward/backward groups do not reference any detectors present in this run."
+        )
 
     try:
         alpha = float(grouping.get("alpha", 1.0))

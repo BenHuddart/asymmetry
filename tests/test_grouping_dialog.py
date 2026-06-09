@@ -807,6 +807,81 @@ def test_detector_layout_retries_detection_when_saved_instrument_is_generic_psi(
     assert captured["instrument"] == "FLAME"
 
 
+def test_detector_layout_resolves_psi_hifi_to_hal(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The PSI loader stores instrument="HIFI" for HAL-9500 runs; this string
+    # canonicalises to the unrelated ISIS HiFi layout, so it must be re-detected
+    # to HAL for PSI data. Uses the real detector/layout functions.
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.metadata["facility"] = "PSI"
+    dataset.run.metadata["psi_format"] = "psi-mdu"
+    dataset.run.metadata["instrument"] = "HIFI"
+    dataset.run.grouping["instrument"] = "HIFI"
+
+    captured: dict[str, str] = {}
+
+    class _FakeDialog:
+        DialogCode = type("DialogCode", (), {"Accepted": 1})
+
+        def __init__(self, *args, instrument, **kwargs):
+            captured["instrument"] = instrument.name
+
+        def exec(self):
+            return 1  # Accepted
+
+        def get_result(self):
+            return {"instrument": captured["instrument"], "groups": {}, "group_names": {}}
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
+        _FakeDialog,
+    )
+
+    dialog = GroupingDialog([dataset])
+    dialog._on_detector_layout()
+
+    # The editor is seeded with the HAL layout (not the unrelated ISIS HiFi),
+    assert captured["instrument"] == "HAL"
+    # and on Accept the corrected layout name is committed, so it does not revert
+    # to the raw "HIFI" string on subsequent opens.
+    assert dialog._detector_layout_instrument_name == "HAL"
+
+
+def test_detector_layout_cancel_does_not_change_stored_instrument(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Cancelling the editor must be a no-op for the stored instrument selection.
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.metadata["facility"] = "PSI"
+    dataset.run.metadata["psi_format"] = "psi-mdu"
+    dataset.run.metadata["instrument"] = "HIFI"
+    dataset.run.grouping["instrument"] = "HIFI"
+
+    class _FakeDialog:
+        DialogCode = type("DialogCode", (), {"Accepted": 1})
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 0  # Rejected / cancelled
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
+        _FakeDialog,
+    )
+
+    dialog = GroupingDialog([dataset])
+    before = dialog._detector_layout_instrument_name
+    dialog._on_detector_layout()
+    assert dialog._detector_layout_instrument_name == before
+
+
 def test_psi_detector_layout_result_is_swapped_for_analysis_dropdowns(
     qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,

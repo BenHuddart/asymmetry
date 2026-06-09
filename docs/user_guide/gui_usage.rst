@@ -359,8 +359,9 @@ Detector Layout Editor
 ~~~~~~~~~~~~~~~~~~~~~~
 
 The full Grouping dialog includes a **Detector Layout...** button that opens a
-visual grouping editor for ISIS instruments **HiFi**, **MuSR**, **EMU**, and
-PSI **FLAME** data loaded from BIN or ROOT files.
+visual grouping editor for ISIS instruments **HiFi**, **MuSR**, **EMU**, and the
+PSI **FLAME** and **HAL-9500** spectrometers, for data loaded from NeXus, BIN,
+MDU, or ROOT files.
 
 The editor has three panels:
 
