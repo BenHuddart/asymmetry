@@ -18,6 +18,7 @@ material.
    :caption: Data and GUI
 
    loading_data
+   grouping_calibration
    logbook
    data_processing
    detector_grouping
