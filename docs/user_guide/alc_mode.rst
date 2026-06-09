@@ -50,9 +50,16 @@ When you enable it:
 
 * the toggle highlights **red** while ALC mode is active, so the bespoke mode is
   always obvious;
-* the **Fit** dock is replaced by the **Integral scan (ALC)** build panel;
+* the **Fit** dock is replaced by the **Integral scan (ALC)** build panel —
+  this is where the **Integration window** and **Build Scan** controls live;
 * the **Parameters** dock is replaced by the **ALC scan view** (the scan plot
   plus its baseline and peak controls).
+
+Both docks are raised on entry, but the **Parameters** dock lands *on top*,
+showing the placeholder *"Build a scan to see the ALC curve."* The **Build
+Scan** button is in the **Fit** dock *behind* it — so until you raise the Fit
+dock and build a scan, it looks like nothing happened. Click the **Fit**
+toolbar button to bring the build panel forward (Step 1 below).
 
 Toggling ALC mode off restores the normal **Fit** and **Parameters** docks; your
 scan and its analysis are kept and reappear when you re-enter ALC mode.
@@ -63,21 +70,37 @@ The ALC workflow
 Step 1 — Build the scan
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Load the runs of the scan and select them in the **Data Browser** (the scan is
-built from the current selection, exactly like a batch fit). Then:
+The **Build Scan** control is in the **Fit** dock, which ALC mode leaves
+*behind* the **Parameters** dock and its *"Build a scan to see the ALC curve"*
+placeholder. So the build is a four-step sequence — and raising the Fit dock is
+the step most people miss:
 
-* set the **integration window**. The window *is* the time-spectrum fit range:
-  drag the shaded range directly on the time plot, or type precise
-  :math:`t_\mathrm{min}` and :math:`t_\mathrm{max}` values (in μs) into the
-  spinboxes in the **Integration window** group of the build panel. The two stay
-  in sync;
-* press **Build Scan**.
+#. **Load and multi-select the runs.** Load the field-scan runs, then select
+   them all in the **Data Browser**: click the first row and **Shift-click** the
+   last (the scan is built from the current selection, exactly like a batch
+   fit). The Data Browser resolves the **B (G)** column from each run's field;
+   that column becomes the scan's field axis.
+#. **Raise the Fit dock.** Click the **Fit** toolbar button to bring the
+   **Integral scan (ALC)** build panel to the front, in front of the Parameters
+   dock. This is the step that is easy to miss — the placeholder in the
+   Parameters dock makes it look like nothing happened, when the **Build Scan**
+   button was simply hidden behind it.
+#. **Set the integration window.** The window *is* the time-spectrum fit range:
+   drag the shaded range directly on the time plot, or type precise
+   :math:`t_\mathrm{min}` and :math:`t_\mathrm{max}` values (in μs) into the
+   spinboxes in the **Integration window** group of the build panel. The two
+   stay in sync.
+#. **Press Build Scan.**
 
 Each selected run is integrated over the window to one point, and the scan is
 plotted in the **Parameters** dock, which is raised automatically. Runs that are
 missing the chosen x-axis log (for example, a run with no recorded field on a
 field scan) are dropped and listed in the log. Re-pressing **Build Scan** after
 changing the window rebuilds the scan in place — it does not accumulate copies.
+
+As a worked example, the TCNQ ALC scan (31 runs at 350 K, stepped over
+2000–5000 G) with an integration window of roughly 0.2–8 μs resolves a clean D1
+dip at :math:`B_0 \approx 3100` G. See :doc:`workflows/alc_scan_tcnq`.
 
 Step 2 — Choose the x-axis and (optionally) the differential view
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -163,6 +186,11 @@ you resume exactly where you left off. See :doc:`project_files`.
 Common pitfalls
 ---------------
 
+* **"Build a scan to see the ALC curve" — nothing seems to happen.** That
+  placeholder is in the **Parameters** dock, which sits *on top* when you enter
+  ALC mode. The **Build Scan** button (and the **Integration window**) are in
+  the **Fit** dock *behind* it — click the **Fit** toolbar button to raise it,
+  set the window, and press **Build Scan**.
 * **ALC mode is greyed out.** It is only available in the Forward–Backward
   asymmetry view. Switch the central plot to that view first.
 * **A run is missing from the scan.** Field-axis scans drop runs with no recorded
