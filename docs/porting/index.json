@@ -2,6 +2,26 @@
   "version": 1,
   "studies": [
     {
+      "slug": "muonium-triplet",
+      "feature_name": "Muonium triplet model component",
+      "status": "study",
+      "path": "docs/porting/muonium-triplet",
+      "references": [
+        "WiMDA"
+      ],
+      "docs": {
+        "readme": "docs/porting/muonium-triplet/README.md",
+        "comparison": "docs/porting/muonium-triplet/comparison.md",
+        "implementation_options": "docs/porting/muonium-triplet/implementation-options.md",
+        "test_data": "docs/porting/muonium-triplet/test-data.md",
+        "verification_plan": "docs/porting/muonium-triplet/verification-plan.md"
+      },
+      "tests_path": "tests/test_muonium_triplet.py",
+      "src_path": null,
+      "updated": "2026-06-09",
+      "notes": "Follow-on from link-groups (PR #27). Symmetry-enforcing muonium triplet: central Mu+ line + two Mu0 satellites at f0 +/- Delta/2 from a single splitting parameter (the hyperfine constant). WiMDA TFMuonium/LowTFMuonium emit the 4-/2-level QM transition set, field-parameterised (B,A); ZFmuonium is zero-field axial (not symmetric). For the shallow-donor small-A CdS regime the observable is just centre+2 symmetric satellites, so the component is parameterised by (f_centre, hyperfine Delta) rather than (B,A). Chosen design: self-contained additive component MuoniumTriplet(A_centre, A_sat, f_centre, hyperfine, Lambda, phase), built-in shared damping+phase, distinct amplitude names to avoid the A/A_bg chain-amplitude collapse. Complements (not replaces) link-group free-frequency fits. STUDY status; awaiting design sign-off."
+    },
+    {
       "slug": "link-groups",
       "feature_name": "Link groups (parameter ties)",
       "status": "study",
