@@ -1,58 +1,32 @@
 # Muonium components — test data
 
-## Synthetic fixtures (in-repo, no corpus dependency)
+No corpus dependency. Physics is checked against the WiMDA arithmetic; the fit
+round-trip uses a signal generated from the component itself (genuine muonium).
 
-Built from the ported component functions themselves, so the suite never depends
-on the WiMDA corpus.
+## WiMDA-arithmetic checks (closed form)
 
-### TF muonium (the CdS-relevant case)
+- g-factors equal the WiMDA literals (`gm = 0.01355342`, `ge = 2.8024` MHz/G).
+- `MuoniumTF` at `field`, `A_hf`: in-band transitions straddle `ν_d = γ_µ·field`
+  symmetrically, separation = `A_hf`; out-of-band pair weight `(1−δ) ≈ 0`.
+- Positive-frequency convention: `tf_muonium(t=0; …, φ) = cos(φ)` (all lines +φ).
+- `MuoniumZF`: `f1=A_hf−D_mu`, `f2=A_hf+D_mu/2`, `f3=3D_mu/2`; with `f_cut=0` the
+  weights are `1,2,2` normalised by 6; with `f_cut>0` the Lorentzian rolls them off.
 
-`MuoniumTF` at `field = 100` G, `A_hf = 0.242` MHz, `A = 1`, `phase = 0`. The
-reference behaviour (validated against the WiMDA arithmetic):
+## Self-consistency fit fixture (genuine muonium)
 
-- diamagnetic line `ν_d = g_µ·100 ≈ 1.3553` MHz (modelled separately by
-  `OscillatoryField`),
-- in-band satellites at `≈ 1.234` and `≈ 1.476` MHz, symmetric about `ν_d`,
-  separation `≈ 0.242` MHz = `A_hf`,
-- the two extra transitions (~280 MHz) carry weight `(1−δ) ≈ 0`.
+Generated from `MuoniumTF * Exponential + Constant` with well-separated
+satellites so the fit is well-conditioned:
 
-Full synthetic CdS-like signal for the round-trip test:
+- `A = 20`, `field = 100` G, `A_hf = 2.0` MHz (satellites at `ν_d ± 1` MHz),
+  `phase = 0.3`, `Lambda = 0.2` µs⁻¹, `A_bg = 0.5`,
+- t-grid 0–12 µs, Gaussian noise σ = 0.2.
 
-```
-A(t) = e^(−λ t)·A_d·cos(2π·γ_µ·B·t + φ)            # central (OscillatoryField)
-     + e^(−λ t)·MuoniumTF(t; A_s, B, A_hf, φ)        # satellites
-     + bg
-```
+Seeded near truth (e.g. `A_hf = 2.1`), the fit recovers `A_hf ≈ 2.0` at χ²ᵣ ≈ 1.
+(Verified: χ²ᵣ = 1.01, `A_hf = 2.0001 ± 0.0002`.)
 
-with `B = 100` G, `A_hf = 0.242` MHz, `λ = 0.30` µs⁻¹, `φ = 0`, sensible
-amplitudes, flat `bg`, t-grid 0–12 µs, per-point error ~0.15.
+## Why not CdS
 
-### ZF muonium
-
-`MuoniumZF` at `A_hf, D, f_cut` chosen so `f1=A_hf−D`, `f2=A_hf+D/2`, `f3=1.5D`
-are distinct and in band; assert the three frequencies and the `f_cut` Lorentzian
-amplitude weighting match the WiMDA formula.
-
-## What the synthetic tests assert
-
-1. **Frequencies match WiMDA arithmetic**: `MuoniumTF` in-band lines straddle
-   `ν_d` with separation `A_hf`; the out-of-band pair carries weight `(1−δ)≈0`.
-   `MuoniumLowTF` gives its two lines (with the `−w` sign). `MuoniumZF` gives
-   `f1,f2,f3` with the `a1,a2,a3`/`f_cut` weights.
-2. **Single-parameter splitting**: varying `A_hf` moves the satellites
-   symmetrically about `ν_d`; varying `field` shifts them with the diamagnetic
-   line.
-3. **Round-trip recovery**: fitting the synthetic CdS-like signal with
-   `OscillatoryField*Exponential + MuoniumTF*Exponential + Constant` recovers
-   `A_hf ≈ 0.242` MHz and `λ`, χ²ᵣ ≈ 1, with `A_hf` read directly.
-4. **Composite/registry integration**: each component builds via
-   `CompositeModel.from_expression(...)` with the expected `param_names`, appears
-   in the builder category map, and renders its equation/applicability.
-5. **`.asymp` round-trip** of a model containing a muonium component.
-6. **Picklability**: the component functions are module-level callables.
-
-## CdS real-data acceptance (corpus, not committed)
-
-Run EMU00020721 (≈5.12 K, TF 100 G), Data_hdf5 copy. Used only for the
-manual/engine acceptance in verification-plan.md; never committed, never imported
-by the suite.
+Shallow-donor CdS (tiny `A_hf`, TF 100 G) is fit with three independent
+oscillating lines + link groups, which reach χ²ᵣ ≈ 1.35; the constrained muonium
+parameterisation tops out at χ²ᵣ ≈ 22 there (see comparison.md). So the muonium
+components are verified on genuine-muonium synthetic data, not the CdS corpus.

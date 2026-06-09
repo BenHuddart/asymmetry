@@ -75,8 +75,30 @@ lines matter).
 | g-factors | `gm=0.01355342`, `ge=2.8024` | from `MUON_…·GAUSS_TO_TESLA`, `ELECTRON_…/2π` |
 | Frequency weights `(1±δ)`, ZF `f_cut` Lorentzian | as in source | ported verbatim |
 
-Deliberate, documented divergences (all convention-only, not physics): amplitude
-named `A` and applied as the standard leading scale; damping/phase via
-composition rather than baked in; phase in radians. The frequency arithmetic and
-amplitude weights are ported exactly. The central diamagnetic Mu⁺ line is a
-separate `OscillatoryField`, matching WiMDA (its muonium functions exclude it).
+Deliberate, documented divergences: amplitude named `A` and applied as the
+standard leading scale; damping/phase via composition rather than baked in; phase
+in radians; ZF anisotropy named `D_mu` (the bare `D` is already a Redfield
+parameter). The frequency arithmetic and amplitude weights are ported exactly.
+The central diamagnetic Mu⁺ line is a separate `OscillatoryField`, matching WiMDA.
+
+## Two findings from verification
+
+**1. Frequency sign / phase (positive-frequency correction).** `TFMuonium` uses
+the *signed* `w12` (negative), so `cos(2π w12 t + φ)` puts the lower satellite at
+`−φ`; yet `LowTFMuonium` *negates* `w12` to make it positive — WiMDA is
+internally inconsistent. Physically the precession lines share one phase, so the
+port uses `|w|` (positive, `+φ` for all lines). With the literal signed form a
+nonzero φ flips the lower satellite and badly mis-fits same-phase data.
+
+**2. Why CdS is *not* fit with these components.** Even with the positive-phase
+correction, fitting the real CdS 5.12 K run with
+`OscillatoryField*Exponential + MuoniumTF*Exponential + Constant` tops out at
+χ²ᵣ ≈ 22, whereas three independent damped lines reach χ²ᵣ ≈ 1.35. The cause:
+the `(field, A_hf)` parameterisation ties the central line and both satellites to
+two numbers (symmetric about `γ_µ·B`), which is over-determined when the data's
+lines are not *exactly* symmetric — and the χ² landscape is razor-sharp (the
+three-line model itself jumps to χ²ᵣ ≈ 22 if its parameters are merely rounded to
+four decimals). This matches WiMDA's own CdS docx, which says to fit *three
+independent oscillating functions* (= link groups), not `TFMuonium`. These
+components are therefore scoped to **genuine muonium** and verified by
+self-consistency + the WiMDA arithmetic, not against the CdS corpus.

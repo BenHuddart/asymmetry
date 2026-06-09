@@ -45,21 +45,39 @@ composition, exactly like `Oscillatory`):
 | --- | --- | --- | --- |
 | `MuoniumTF` | `TFMuonium` | `A`, `field` (B, G), `A_hf` (hyperfine, MHz), `phase` (rad) | 4 transitions |
 | `MuoniumLowTF` | `LowTFMuonium` | `A`, `field`, `A_hf`, `phase` | 2 transitions |
-| `MuoniumZF` | `ZFmuonium` | `A`, `A_hf`, `D`, `f_cut` (MHz), `phase` | 3 (zero-field axial) |
+| `MuoniumZF` | `ZFmuonium` | `A`, `A_hf`, `D_mu`, `f_cut` (MHz), `phase` | 3 (zero-field axial) |
 
-**Why this is faithful *and* gives the symmetric triplet for free.** Numerically
-validating `TFMuonium` at the CdS regime (B = 100 G, A_hf = 0.242 MHz):
+**Scope (decided after verification): a general muonium-spectroscopy feature,
+not the CdS tool.** Verification showed that faithful `TFMuonium` does **not**
+meet a CdS χ²≈1.3 bar — see comparison.md — and WiMDA's own CdS docx routes that
+shallow-donor case to *three independent oscillating lines* (= Asymmetry's link
+groups, PR #27), which is where CdS stays. These components target *genuine*
+muonium, where all transitions and their `(1±δ)` weights matter; they are
+verified by self-consistency (generate from the component, recover the
+parameters) and against the WiMDA arithmetic, not against the CdS corpus.
+
+**Positive-frequency (same-phase) convention.** WiMDA's `TFMuonium` uses the
+signed `w12` (negative), placing the lower satellite at phase `−φ`, while its own
+`LowTFMuonium` negates `w12` to make it positive — an internal inconsistency.
+Physically the precession lines share one phase, so the port uses `|w|` (positive
+frequencies, `+φ` for all lines). This is a deliberate, documented deviation from
+`TFMuonium`'s literal signed form.
+
+**Behaviour in the shallow-donor limit.** Numerically validating `TFMuonium` at
+the CdS regime (B = 100 G, A_hf = 0.242 MHz):
 
 - the two in-band transitions `|w12| = 1.234`, `|w34| = 1.476 MHz` straddle the
-  diamagnetic line `ν_d = γ_µ·B = 1.355 MHz` **symmetrically**, split = 0.2420
+  diamagnetic line `ν_d = γ_µ·B = 1.355 MHz` symmetrically, split = 0.2420
   MHz ≈ the hyperfine coupling;
 - the other two transitions sit at ~280 MHz with weight `(1−δ) → 0` (since
-  `δ = x/√(1+x²) → 1` for the shallow-donor large-`x` limit), so they
-  **auto-suppress**.
+  `δ = x/√(1+x²) → 1`), so they auto-suppress.
 
-So porting `TFMuonium` verbatim *is* the symmetry-enforcing triplet, with the
-hyperfine coupling `A_hf` as the single physical splitting parameter — no
-phenomenological shortcut needed.
+The line *positions* are therefore correct, but the constrained `(field, A_hf)`
+parameterisation is over-determined relative to three independent frequencies,
+and (with the literal signed phase) mis-phases the lower satellite — which is why
+the shallow-donor CdS fit is better served by independent lines + link groups
+(see comparison.md). These components shine for genuine muonium where the four
+transitions and their weights are physically present.
 
 **Conventions kept consistent with Asymmetry:**
 
@@ -74,19 +92,20 @@ phenomenological shortcut needed.
   GAUSS_TO_TESLA`, `g_e = ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G / 2π`;
 - module-level, picklable component functions (batch/global parallelism).
 
-CdS model: `OscillatoryField*Exponential + MuoniumTF*Exponential + Constant` —
-central diamagnetic line + the muonium satellites, each damped, plus background.
-`A_hf` reads off the hyperfine constant directly; the muonium-component amplitude
-trends as the Mu⁰ fraction for the Arrhenius/ionisation-energy plot.
+Usage: compose like any oscillation, e.g.
+`MuoniumTF*Exponential + Constant` (or add an `OscillatoryField` term for a
+co-existing diamagnetic line). `A_hf` reads off the hyperfine coupling directly.
 
 Complements (does not replace) link groups: three independent
 `Oscillatory*Exponential` lines + link groups remain the flexible, model-free
-option; the muonium components are the physics-faithful, hyperfine-parameterised
-option.
+option (and the right one for shallow-donor CdS); the muonium components are the
+physics-faithful, hyperfine-parameterised option for genuine muonium.
 
-See [comparison.md](comparison.md) for the WiMDA physics and the validation,
-[implementation-options.md](implementation-options.md) for the exact seams,
-[test-data.md](test-data.md) for the synthetic fixture, and
-[verification-plan.md](verification-plan.md) for the CdS acceptance bar.
+See [comparison.md](comparison.md) for the WiMDA physics and the verification
+finding, [implementation-options.md](implementation-options.md) for the exact
+seams, [test-data.md](test-data.md) for the synthetic fixtures, and
+[verification-plan.md](verification-plan.md) for the verification done.
 
-**Status: STUDY (design agreed: full WiMDA parity) — implementation in progress.**
+**Status: IMPLEMENTED — faithful WiMDA muonium components (positive-frequency
+convention), shipped as a general muonium feature; CdS remains served by link
+groups.**
