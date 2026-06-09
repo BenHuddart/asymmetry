@@ -32,6 +32,23 @@ _MAX_SPECTRUM_POINTS = 1 << 20
 _MIN_POSITIVE = 1.0e-15
 _MAX_DESIGN_CHUNK_ELEMENTS = 2_000_000
 
+# Early-stop guard for forced cycle counts.  Past the χ² optimum the projected
+# gradient keeps minimising χ² by collapsing spectral weight onto a grid edge
+# (DC at f=0 for field scans, the band edge otherwise) — the line is lost even
+# though χ² is flat or still falling.  So treat an explicit ``cycles`` count as a
+# maximum and stop at the χ² plateau: the first cycle whose relative χ²
+# improvement over the previous cycle drops below the tolerance.
+#
+# The minimum-cycle gate is a short warm-up so the guard does not trip on the
+# steep early descent.  Its value is tightly constrained: it must be small
+# enough to fire before the spectrum degrades (on the test synthetic the line is
+# intact through cycle 8 but flips to the band edge by cycle 9), yet ``> N`` so
+# an exact ``cycles=N`` run is unaffected.  Tests/scripts that need an exact
+# count regardless should pass ``early_stop=False`` rather than rely on staying
+# under this gate.
+_EARLY_STOP_MIN_CYCLES = 6
+_EARLY_STOP_CHI2_REL_TOL = 5.0e-3
+
 MaxEntProgressCallback = Callable[[int, int, str], None]
 MaxEntCancelCallback = Callable[[], bool]
 
@@ -345,6 +362,18 @@ class MaxEntResult:
     state: MaxEntState
     diagnostics: MaxEntDiagnostics
     metadata: dict[str, Any]
+    # How the cycle loop ended: ``"max_cycles"`` ran the full requested count,
+    # ``"converged"`` stopped at the χ² plateau, ``"diverged"`` stopped because
+    # χ² had started rising past the optimum.  ``converged``/``diverged`` are
+    # convenience views; either implies ``early_stopped``.
+    stop_reason: str = "max_cycles"
+    converged: bool = False
+    diverged: bool = False
+
+    @property
+    def early_stopped(self) -> bool:
+        """Whether the run stopped before the requested cycle count."""
+        return self.stop_reason != "max_cycles"
 
     def as_dataset(self, run: Run | None = None) -> MuonDataset:
         """Return the primary MaxEnt spectrum as a plottable dataset."""
@@ -983,10 +1012,17 @@ def run_cycles(
     *,
     state: MaxEntState | None = None,
     cycles: int | None = None,
+    early_stop: bool = True,
     progress_callback: MaxEntProgressCallback | None = None,
     cancel_callback: MaxEntCancelCallback | None = None,
 ) -> MaxEntResult:
-    """Run *cycles* outer MaxEnt cycles, returning the updated result."""
+    """Run up to *cycles* outer MaxEnt cycles, returning the updated result.
+
+    With *early_stop* (the default) ``cycles`` is a maximum: the loop halts at
+    the χ² plateau instead of iterating into the post-optimum divergence that a
+    forced high cycle count (e.g. the GUI's 50-cycle Converge) otherwise drives.
+    Pass ``early_stop=False`` to run the exact count regardless.
+    """
     resolved_config = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
     active_state = state or initialize_state(maxent_input, resolved_config)
     signature = _state_signature(maxent_input, resolved_config)
@@ -999,6 +1035,12 @@ def run_cycles(
     total_steps = max(1, n_cycles * (int(resolved_config.inner_iterations) + 1))
     completed_steps = 0
     predictions: dict[int, NDArray[np.float64]] | None = None
+    # Seed the plateau test from the resumed history so incremental cycle calls
+    # (the GUI's 1/5/25 buttons) share one continuous χ² trajectory.
+    prev_chi2 = active_state.diagnostics.chi2[-1] if active_state.diagnostics.chi2 else None
+    stop_reason = "max_cycles"
+    converged = False
+    diverged = False
     for _ in range(n_cycles):
         _check_cancel(cancel_callback)
         if progress_callback is not None:
@@ -1067,6 +1109,27 @@ def run_cycles(
             backgrounds=active_state.backgrounds,
         )
 
+        # Plateau guard: once χ² stops improving meaningfully, further cycles only
+        # degrade the spectrum (collapse onto DC / the band edge), so stop and
+        # keep this iterate.  The minimum-cycle gate keeps short exact-count runs
+        # on the legacy path; the test rides on the resumed history so it spans
+        # incremental cycle calls.
+        if (
+            early_stop
+            and active_state.cycle > _EARLY_STOP_MIN_CYCLES
+            and prev_chi2 not in (None, 0)
+        ):
+            improvement = (prev_chi2 - chi2) / prev_chi2
+            # A non-finite improvement means χ² blew up (NaN/inf); treat that,
+            # like a rising χ², as divergence so the loop bails rather than
+            # spinning to the cycle cap (every NaN comparison is False).
+            if not np.isfinite(improvement) or improvement < _EARLY_STOP_CHI2_REL_TOL:
+                diverged = not np.isfinite(improvement) or improvement < 0.0
+                converged = not diverged
+                stop_reason = "diverged" if diverged else "converged"
+                break
+        prev_chi2 = chi2
+
     metadata = dict(maxent_input.metadata)
     metadata.update(
         {
@@ -1081,6 +1144,9 @@ def run_cycles(
             "maxent_chi2": (
                 float(active_state.diagnostics.chi2[-1]) if active_state.diagnostics.chi2 else None
             ),
+            "maxent_stop_reason": stop_reason,
+            "maxent_converged": bool(converged),
+            "maxent_diverged": bool(diverged),
         }
     )
     return MaxEntResult(
@@ -1089,6 +1155,9 @@ def run_cycles(
         state=active_state,
         diagnostics=active_state.diagnostics,
         metadata=metadata,
+        stop_reason=stop_reason,
+        converged=converged,
+        diverged=diverged,
     )
 
 
@@ -1098,10 +1167,15 @@ def maxent(
     *,
     cycles: int | None = None,
     state: MaxEntState | None = None,
+    early_stop: bool = True,
     progress_callback: MaxEntProgressCallback | None = None,
     cancel_callback: MaxEntCancelCallback | None = None,
 ) -> MaxEntResult:
-    """Compute a grouped MaxEnt spectrum for *run*."""
+    """Compute a grouped MaxEnt spectrum for *run*.
+
+    *cycles* is an upper bound: the run stops early at the χ² plateau unless
+    *early_stop* is ``False``.
+    """
     resolved_config = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
     _check_cancel(cancel_callback)
     maxent_input = build_maxent_input(run, resolved_config)
@@ -1110,6 +1184,7 @@ def maxent(
         resolved_config,
         state=state,
         cycles=cycles,
+        early_stop=early_stop,
         progress_callback=progress_callback,
         cancel_callback=cancel_callback,
     )

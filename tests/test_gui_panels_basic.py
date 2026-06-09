@@ -79,7 +79,7 @@ def test_maxent_panel_defaults_and_group_state(qapp: QApplication) -> None:
 
     state = panel.get_state()
 
-    assert panel._points_spin.value() == 4096
+    assert panel._points_spin.value() == 1024
     assert state["default_level"] == pytest.approx(0.01)
     assert state["auto_window"] is True
     assert state["window_half_width_gauss"] == pytest.approx(300.0)

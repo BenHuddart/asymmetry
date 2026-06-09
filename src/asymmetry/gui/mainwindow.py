@@ -1414,7 +1414,7 @@ class MainWindow(QMainWindow):
                 if self._plot_workspace.active_domain() == "time":
                     self._plot_workspace.set_active_view("fb_asymmetry")
             self._domain_buttons[1].setEnabled(False)
-            self._domain_buttons[3].setEnabled(False)
+            self._refresh_maxent_domain_enabled()
             return
 
         target = self._current_dataset or (selected[0] if len(selected) == 1 else None)
@@ -1424,7 +1424,7 @@ class MainWindow(QMainWindow):
             modes.append("maxent")
 
         self._domain_buttons[1].setEnabled("groups" in modes)
-        self._domain_buttons[3].setEnabled("maxent" in modes)
+        self._refresh_maxent_domain_enabled()
 
         current_mode = None
         if hasattr(self._plot_panel, "current_time_view_mode"):
@@ -4599,10 +4599,26 @@ class MainWindow(QMainWindow):
             if already_maxent:
                 self._sync_frequency_plot_for_run(int(run_number), preserve_x_limits=True)
             self._show_panel("fourier")
-        message = (
-            f"Computed MaxEnt spectrum for run {run_number} through cycle {result.state.cycle}."
-        )
-        self._set_fourier_status(message, success=True)
+        # Surface the engine's early-stop verdict.  Drive it off the result's
+        # own flags rather than the requested cycle count: state.cycle is
+        # cumulative across the incremental cycle buttons, so a per-call request
+        # would read "cycle 26 of 1" on a resumed run.  Divergence is a visible
+        # warning; a plain early stop reports the cycle it settled on.
+        ran = int(result.state.cycle)
+        if getattr(result, "diverged", False):
+            message = (
+                f"MaxEnt diverged for run {run_number}: stopped early at cycle {ran} "
+                f"as χ² began rising past the optimum. Try fewer cycles or adjust "
+                f"the time/frequency window."
+            )
+            self._maxent_panel.set_status(message, warning=True)
+            self.statusBar().showMessage(message)
+        elif getattr(result, "early_stopped", False):
+            message = f"MaxEnt converged for run {run_number} at cycle {ran}."
+            self._set_fourier_status(message, success=True)
+        else:
+            message = f"Computed MaxEnt spectrum for run {run_number} through cycle {ran}."
+            self._set_fourier_status(message, success=True)
         self._log_panel.log(message)
         self._log_maxent_perf()
 
@@ -4910,6 +4926,10 @@ class MainWindow(QMainWindow):
         # ALC mode is only valid for the F-B asymmetry view; keep the toggle's
         # enabled state in sync and auto-exit ALC mode when the user leaves it.
         self._refresh_alc_mode_enabled()
+        # FFT <-> MaxEnt is a view change within the frequency domain (no
+        # active_domain_changed), so re-evaluate the MaxEnt button here too or it
+        # stays stale-disabled when the dataset actually supports MaxEnt.
+        self._refresh_maxent_domain_enabled()
         # Refresh the trend panel for the newly-active representation.
         self._refresh_trend_panel()
 
@@ -5004,6 +5024,37 @@ class MainWindow(QMainWindow):
         self._alc_mode_action.setToolTip(_ALC_TOOLTIP_ENABLED if is_fb else _ALC_TOOLTIP_DISABLED)
         if not is_fb and self._alc_mode_action.isChecked():
             self._alc_mode_action.setChecked(False)  # fires _on_alc_mode_toggled(False)
+
+    def _current_selection_supports_maxent(self) -> bool:
+        """Whether the active selection/dataset can produce MaxEnt spectra.
+
+        Overlaying several runs has no single grouped run to transform, so
+        MaxEnt is unavailable there; otherwise the current dataset (or the lone
+        selected row) decides. Mirrors the target resolution in
+        :meth:`_refresh_time_view_selector`.
+        """
+        selected = list(self._data_browser.get_selected_datasets())
+        if len(selected) > 1 and self._overlay_enabled():
+            return False
+        target = self._current_dataset or (selected[0] if len(selected) == 1 else None)
+        return self._dataset_supports_maxent(target)
+
+    def _refresh_maxent_domain_enabled(self) -> None:
+        """Sync the MaxEnt domain button's enabled state with the active dataset.
+
+        Driving the flag from its own method (rather than only
+        :meth:`_refresh_time_view_selector`, which runs on selection/domain
+        change) keeps it correct on a pure view change too. FFT and MaxEnt share
+        the frequency *domain*, so switching between them emits
+        ``active_view_changed`` but not ``active_domain_changed`` -- without this
+        the button could stay stale-disabled in the FFT view even though the
+        current dataset supports MaxEnt. This is the same stale-enable-flag class
+        as the ALC toggle, so it is refreshed alongside
+        :meth:`_refresh_alc_mode_enabled`.
+        """
+        if len(getattr(self, "_domain_buttons", [])) <= 3:
+            return
+        self._domain_buttons[3].setEnabled(self._current_selection_supports_maxent())
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         """Show the ALC-mode tooltip on hover even while the button is disabled.
