@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 from itertools import product
 
 import numpy as np
@@ -1269,6 +1270,57 @@ class ParameterCompositeModel:
         )
 
 
+class ErrorMode(str, Enum):
+    """How per-point σ values are assigned when weighting a model fit.
+
+    ``COLUMN`` uses the propagated errors of the trended parameter (the
+    default and the only mode where the stabilisation floor applies);
+    ``PERCENT`` sets σᵢ = (value/100)·|yᵢ|; ``ABSOLUTE`` a constant σ =
+    value; ``NONE`` unit weights; ``SCATTER`` fits with unit weights and
+    rescales the parameter errors by √(χ²/ν) afterwards — the standard
+    estimate of errors from the scatter of the points (and the fixed point
+    of WiMDA's iterated Estimate mode).
+    """
+
+    COLUMN = "column"
+    PERCENT = "percent"
+    ABSOLUTE = "absolute"
+    NONE = "none"
+    SCATTER = "scatter"
+
+
+def apply_error_mode(
+    y: NDArray,
+    yerr: NDArray | None,
+    mode: ErrorMode | str = ErrorMode.COLUMN,
+    value: float | None = None,
+) -> NDArray[np.float64] | None:
+    """Return the σ array a fit should weight with under ``mode``.
+
+    ``value`` is the percentage for ``PERCENT`` and the constant σ for
+    ``ABSOLUTE`` (a missing/invalid value falls back to σ = 1, matching
+    WiMDA). Returns ``None`` for ``COLUMN`` with no error column, which
+    callers treat as unit weights. Percent-mode points with y = 0 get σ = 0
+    and are excluded by the standard validity mask — they carry no error
+    information.
+    """
+    mode = ErrorMode(mode)
+    yy = np.asarray(y, dtype=float)
+    if mode is ErrorMode.COLUMN:
+        return None if yerr is None else np.asarray(yerr, dtype=float)
+    if mode is ErrorMode.PERCENT:
+        pct = abs(float(value)) if value is not None and np.isfinite(value) else 1.0
+        return (pct / 100.0) * np.abs(yy)
+    if mode is ErrorMode.ABSOLUTE:
+        const = abs(float(value)) if value is not None and np.isfinite(value) else 1.0
+        if const <= 0.0:
+            const = 1.0
+        return np.full_like(yy, const)
+    # NONE and SCATTER both weight uniformly; SCATTER additionally rescales
+    # the resulting parameter errors after the fit.
+    return np.ones_like(yy)
+
+
 @dataclass
 class ParameterModelFitResult:
     """Result of fitting a parameter-vs-x model."""
@@ -1279,17 +1331,78 @@ class ParameterModelFitResult:
     parameters: ParameterSet = field(default_factory=ParameterSet)
     uncertainties: dict[str, float] = field(default_factory=dict)
     message: str = ""
+    #: Error mode the fit was run with (χ²ᵣ carries no goodness information
+    #: for ``"none"``/``"scatter"`` — quality verdicts should be suppressed).
+    error_mode: str = ErrorMode.COLUMN.value
+    #: Number of points that entered the fit (0 when unknown/legacy).
+    n_points: int = 0
 
 
 @dataclass
 class ModelFitRange:
-    """A model and fit results over a specific x-range."""
+    """A model and fit results over a specific x-range.
+
+    ``windows`` optionally restricts the range to a union of (min, max)
+    intervals: a point enters the fit if it falls in *any* window
+    (OR-combination), with one model fitted across the union. When absent,
+    the plain ``x_min``/``x_max`` bounds apply.
+    """
 
     x_min: float | None
     x_max: float | None
     model: ParameterCompositeModel
     parameters: ParameterSet
     result: ParameterModelFitResult | None = None
+    windows: list[tuple[float, float]] | None = None
+
+
+def validate_fit_windows(
+    windows: Sequence[tuple[float, float]] | None,
+) -> list[tuple[float, float]] | None:
+    """Normalise a window list: drop None, reject inverted windows."""
+    if not windows:
+        return None
+    normalised: list[tuple[float, float]] = []
+    for window in windows:
+        lo, hi = float(window[0]), float(window[1])
+        if not (np.isfinite(lo) and np.isfinite(hi)):
+            raise ValueError(f"Fit window bounds must be finite, got ({lo}, {hi})")
+        if lo > hi:
+            raise ValueError(f"Fit window is inverted: ({lo}, {hi})")
+        normalised.append((lo, hi))
+    return normalised
+
+
+def windows_mask(
+    x: NDArray,
+    windows: Sequence[tuple[float, float]] | None,
+    x_min: float | None = None,
+    x_max: float | None = None,
+) -> NDArray[np.bool_]:
+    """Boolean mask of points inside the window union (or x_min/x_max).
+
+    With ``windows`` present the mask is the OR over all (min, max)
+    intervals and ``x_min``/``x_max`` are ignored; otherwise the plain
+    bounds apply (``None`` bounds are open).
+    """
+    xx = np.asarray(x, dtype=float)
+    valid = validate_fit_windows(windows)
+    if valid is not None:
+        mask = np.zeros(xx.shape, dtype=bool)
+        for lo, hi in valid:
+            mask |= (xx >= lo) & (xx <= hi)
+        return mask
+    mask = np.ones(xx.shape, dtype=bool)
+    if x_min is not None:
+        mask &= xx >= float(x_min)
+    if x_max is not None:
+        mask &= xx <= float(x_max)
+    return mask
+
+
+def range_mask(x: NDArray, fit_range: ModelFitRange) -> NDArray[np.bool_]:
+    """Window-union (or min/max) mask for a :class:`ModelFitRange`."""
+    return windows_mask(x, fit_range.windows, fit_range.x_min, fit_range.x_max)
 
 
 @dataclass
@@ -1624,28 +1737,40 @@ def fit_parameter_model(
     x_min: float | None = None,
     x_max: float | None = None,
     method: str = "migrad",
+    error_mode: ErrorMode | str = ErrorMode.COLUMN,
+    error_value: float | None = None,
+    windows: Sequence[tuple[float, float]] | None = None,
 ) -> ParameterModelFitResult:
-    """Fit a parameter-vs-x model using iminuit."""
+    """Fit a parameter-vs-x model using iminuit.
+
+    ``error_mode``/``error_value`` select the per-point σ assignment (see
+    :class:`ErrorMode`); ``windows`` optionally restricts the fit to a union
+    of (min, max) intervals, overriding ``x_min``/``x_max``.
+    """
+    error_mode = ErrorMode(error_mode)
     xx = np.asarray(x, dtype=float)
     yy = np.asarray(y, dtype=float)
-    if yerr is None:
+    ee = apply_error_mode(yy, yerr, error_mode, error_value)
+    if ee is None:
         ee = np.ones_like(xx)
-    else:
-        ee = np.asarray(yerr, dtype=float)
 
     mask = np.isfinite(xx) & np.isfinite(yy) & np.isfinite(ee) & (ee > 0)
-    if x_min is not None:
-        mask &= xx >= float(x_min)
-    if x_max is not None:
-        mask &= xx <= float(x_max)
+    mask &= windows_mask(xx, windows, x_min, x_max)
 
     if not np.any(mask):
-        return ParameterModelFitResult(success=False, message="No valid points in selected range")
+        return ParameterModelFitResult(
+            success=False,
+            message="No valid points in selected range",
+            error_mode=error_mode.value,
+        )
 
     x_fit = xx[mask]
     y_fit = yy[mask]
     e_fit = ee[mask]
-    e_fit = _stabilize_parameter_model_errors(e_fit)
+    if error_mode is ErrorMode.COLUMN:
+        # The stabilisation floor exists to tame near-zero propagated errors;
+        # explicit Percent/Absolute/unit weights are honoured verbatim.
+        e_fit = _stabilize_parameter_model_errors(e_fit)
 
     initial_candidates: list[dict[str, float] | None] = [None]
     heuristic_seed = _transport_seed_initial_values(x_fit, y_fit, e_fit, model, parameters)
@@ -1678,7 +1803,23 @@ def fit_parameter_model(
             best_fval = fval
 
     if best_result is None:
-        return ParameterModelFitResult(success=False, message="Fit failed")
+        return ParameterModelFitResult(
+            success=False, message="Fit failed", error_mode=error_mode.value
+        )
+
+    best_result.error_mode = error_mode.value
+    best_result.n_points = int(len(x_fit))
+    if error_mode is ErrorMode.SCATTER and best_result.success:
+        # Estimate errors from the scatter of the points: the unit-weight fit
+        # location is independent of a uniform σ rescale, so multiplying the
+        # parameter errors by √(χ²/ν) is exactly the fixed point of WiMDA's
+        # iterated Estimate mode (σ ← σ·√χ²ᵣ until χ²ᵣ = 1).
+        ndof = max(len(x_fit) - len(parameters.free_parameters), 1)
+        scale = float(np.sqrt(best_result.chi_squared / ndof))
+        if np.isfinite(scale) and scale > 0.0:
+            best_result.uncertainties = {
+                name: err * scale for name, err in best_result.uncertainties.items()
+            }
     return best_result
 
 
@@ -1904,8 +2045,15 @@ def evaluate_parameter_model_fit(
         if fit_range.result is None or not fit_range.result.success:
             continue
 
-        x_min = fit_range.x_min
-        x_max = fit_range.x_max
+        windows = validate_fit_windows(fit_range.windows)
+        if windows is not None:
+            # One model across the window union: sample the full envelope so
+            # the curve is drawn continuously through the excluded gaps.
+            x_min: float | None = min(lo for lo, _ in windows)
+            x_max: float | None = max(hi for _, hi in windows)
+        else:
+            x_min = fit_range.x_min
+            x_max = fit_range.x_max
         if x_min is None or x_max is None:
             continue
         if x_max <= x_min:

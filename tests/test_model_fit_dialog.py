@@ -416,3 +416,156 @@ def test_component_info_html_explains_shape_factor_a_fallbacks() -> None:
 
     assert "a = 4/3" in ext_html
     assert "Carrington-Manzano" in ext_html
+
+
+# ---------------------------------------------------------------------------
+# WiMDA Model-layer machinery (Phase 2): error modes, windows, quality verdict
+# ---------------------------------------------------------------------------
+
+
+def _make_dialog(qapp: QApplication) -> ModelFitDialog:
+    x = np.linspace(1.0, 10.0, 20)
+    y = 2.0 * x + 1.0
+    yerr = np.full_like(x, 0.1)
+    return ModelFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        x_values=x,
+        y_values=y,
+        y_errors=yerr,
+        existing_fit=None,
+    )
+
+
+def _wait_for_fit(dlg: ModelFitDialog) -> None:
+    loop = QEventLoop()
+    check = QTimer()
+    check.timeout.connect(lambda: loop.quit() if not dlg._fit_in_progress else None)
+    check.start(20)
+    QTimer.singleShot(30000, loop.quit)
+    loop.exec()
+    check.stop()
+
+
+def test_error_mode_selector_defaults_to_column_and_toggles_value_field(
+    qapp: QApplication,
+) -> None:
+    from asymmetry.core.fitting.parameter_models import ErrorMode
+
+    dlg = _make_dialog(qapp)
+    assert dlg._error_mode() is ErrorMode.COLUMN
+    assert not dlg._error_value_spin.isEnabled()
+    assert dlg._error_value() is None
+
+    for index in range(dlg._error_mode_combo.count()):
+        dlg._error_mode_combo.setCurrentIndex(index)
+        mode = dlg._error_mode()
+        needs_value = mode in (ErrorMode.PERCENT, ErrorMode.ABSOLUTE)
+        assert dlg._error_value_spin.isEnabled() == needs_value
+        assert (dlg._error_value() is not None) == needs_value
+
+
+def test_run_fit_passes_error_mode_and_windows_to_core(qapp: QApplication, monkeypatch) -> None:
+    from asymmetry.core.fitting.parameter_models import ErrorMode, ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    dlg._fit.ranges[0].windows = [(1.0, 4.0), (7.0, 10.0)]
+    idx = dlg._error_mode_combo.findData(ErrorMode.PERCENT.value)
+    dlg._error_mode_combo.setCurrentIndex(idx)
+    dlg._error_value_spin.setValue(7.5)
+
+    captured: dict[str, object] = {}
+
+    def _fake_fit(**kwargs):
+        captured.update(kwargs)
+        return ParameterModelFitResult(success=True, reduced_chi_squared=1.0)
+
+    monkeypatch.setattr("asymmetry.gui.panels.model_fit_dialog.fit_parameter_model", _fake_fit)
+    dlg._run_fit(0)
+    _wait_for_fit(dlg)
+
+    assert captured["error_mode"] is ErrorMode.PERCENT
+    assert captured["error_value"] == 7.5
+    assert captured["windows"] == [(1.0, 4.0), (7.0, 10.0)]
+
+
+def test_window_editor_round_trips_model_fit_range(qapp: QApplication) -> None:
+    dlg = _make_dialog(qapp)
+    fit_range = dlg._fit.ranges[0]
+    assert fit_range.windows is None
+
+    # First click seeds one window from the current bounds; second appends.
+    dlg._add_window(0)
+    assert dlg._fit.ranges[0].windows == [(1.0, 10.0)]
+    dlg._add_window(0)
+    assert len(dlg._fit.ranges[0].windows) == 2
+    assert "∪" in dlg._range_selector.currentText()
+
+    # Range bounds are disabled while windows drive the mask.
+    assert not dlg._range_widgets[0].x_min.isEnabled()
+    assert not dlg._range_widgets[0].x_max.isEnabled()
+
+    dlg._on_window_bounds_changed(0, 0, 1, 4.0)
+    assert dlg._fit.ranges[0].windows[0] == (1.0, 4.0)
+
+    # Removing all windows restores plain min/max behaviour.
+    dlg._remove_window(0, 1)
+    dlg._remove_window(0, 0)
+    assert dlg._fit.ranges[0].windows is None
+    assert dlg._range_widgets[0].x_min.isEnabled()
+
+
+def test_run_fit_rejects_inverted_window(qapp: QApplication, monkeypatch) -> None:
+    dlg = _make_dialog(qapp)
+    dlg._fit.ranges[0].windows = [(5.0, 2.0)]
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.model_fit_dialog._show_warning",
+        lambda _parent, _title, text: warnings.append(text),
+    )
+    dlg._run_fit(0)
+    assert warnings and "inverted" in warnings[0]
+    assert not dlg._fit_in_progress
+
+
+def test_quality_verdict_shown_for_column_mode_fit(qapp: QApplication) -> None:
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    fit_range = dlg._fit.ranges[0]
+    fit_range.result = ParameterModelFitResult(
+        success=True,
+        chi_squared=9.0,
+        reduced_chi_squared=0.9,
+        parameters=fit_range.parameters,
+        error_mode="column",
+        n_points=12,
+    )
+    dlg._select_range(0)
+    text = dlg._quality_label.text()
+    assert "Quality of fit" in text
+    assert "good" in text
+    assert "target band" in text
+    assert dlg._quality_label.toolTip()
+
+
+def test_quality_verdict_suppressed_for_scatter_mode(qapp: QApplication) -> None:
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    fit_range = dlg._fit.ranges[0]
+    fit_range.result = ParameterModelFitResult(
+        success=True,
+        chi_squared=10.0,
+        reduced_chi_squared=1.0,
+        parameters=fit_range.parameters,
+        error_mode="scatter",
+        n_points=12,
+    )
+    dlg._select_range(0)
+    text = dlg._quality_label.text()
+    assert "No χ² quality verdict" in text
+
+    fit_range.result = None
+    dlg._select_range(0)
+    assert dlg._quality_label.text() == ""

@@ -27,13 +27,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core.fitting.fit_quality import assess_fit_quality
 from asymmetry.core.fitting.parameter_models import (
     PARAMETER_MODEL_COMPONENTS,
+    ErrorMode,
     ModelFitRange,
     ParameterCompositeModel,
     ParameterModelFit,
     component_names_for_x,
     fit_parameter_model,
+    validate_fit_windows,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.styles import tokens
@@ -46,6 +49,38 @@ from asymmetry.gui.widgets.function_expression_builder import (
 )
 
 _OPERATOR_OPTIONS = ["+", "-", "*", "/"]
+
+#: (label, ErrorMode, value-field meaning) for the dialog-level error selector.
+_ERROR_MODE_OPTIONS: list[tuple[str, ErrorMode, str | None]] = [
+    ("Column (propagated errors)", ErrorMode.COLUMN, None),
+    ("Percent of y", ErrorMode.PERCENT, "%"),
+    ("Absolute", ErrorMode.ABSOLUTE, "σ"),
+    ("None (unit weights)", ErrorMode.NONE, None),
+    ("Estimate from scatter", ErrorMode.SCATTER, None),
+]
+
+_ERROR_MODE_TOOLTIP = (
+    "How each point is weighted in the fit.\n"
+    "Column: the propagated errors of the trended parameter (default).\n"
+    "Percent of y: σᵢ = (value/100)·|yᵢ|.\n"
+    "Absolute: one constant σ for every point.\n"
+    "None: unit weights — χ² loses its absolute meaning.\n"
+    "Estimate from scatter: unit-weight fit whose parameter errors are\n"
+    "rescaled by √(χ²/ν), i.e. errors estimated from the scatter of the\n"
+    "points themselves. Use it when the trend has no trustworthy error bars."
+)
+
+_QUALITY_TOOLTIP = (
+    "For a correct model with correct error bars, χ² follows the chi-squared\n"
+    "distribution with ν = N − N_free degrees of freedom; at 95 % confidence a\n"
+    "good fit's reduced χ² falls inside the band shown (the band tightens\n"
+    "toward 1 as ν grows). Above the band (poor): the model misses real\n"
+    "structure, or the errors are underestimated. Below it (overdone): the fit\n"
+    "reproduces the data better than the errors allow — usually overestimated\n"
+    "errors or too many free parameters. The verdict assumes real (Column-mode)\n"
+    "errors; with unit weights or scatter-estimated errors χ²ᵣ carries no\n"
+    "goodness information and no verdict is shown."
+)
 
 _Y_PARAM_UNITS = {
     "A": "%",
@@ -347,8 +382,32 @@ class ModelFitDialog(QDialog):
 
         x_min_data = float(np.nanmin(self._x)) if np.any(np.isfinite(self._x)) else 0.0
         x_max_data = float(np.nanmax(self._x)) if np.any(np.isfinite(self._x)) else 1.0
+        self._x_min_data = x_min_data
+        self._x_max_data = x_max_data
         self._data_range_label = QLabel(f"Data range: {x_min_data:.6g} to {x_max_data:.6g}")
         layout.addWidget(self._data_range_label)
+
+        error_row = QHBoxLayout()
+        error_row.addWidget(QLabel("Errors:"))
+        self._error_mode_combo = QComboBox()
+        for label, mode, _meaning in _ERROR_MODE_OPTIONS:
+            self._error_mode_combo.addItem(label, userData=mode.value)
+        self._error_mode_combo.setToolTip(_ERROR_MODE_TOOLTIP)
+        self._error_mode_combo.currentIndexChanged.connect(self._on_error_mode_changed)
+        error_row.addWidget(self._error_mode_combo)
+        self._error_value_label = QLabel("Value:")
+        error_row.addWidget(self._error_value_label)
+        self._error_value_spin = QDoubleSpinBox()
+        self._error_value_spin.setRange(1e-12, 1e12)
+        self._error_value_spin.setDecimals(6)
+        self._error_value_spin.setValue(1.0)
+        self._error_value_spin.setToolTip(
+            "Percent of |y| (Percent mode) or the constant σ (Absolute mode)."
+        )
+        error_row.addWidget(self._error_value_spin)
+        error_row.addStretch()
+        layout.addLayout(error_row)
+        self._on_error_mode_changed(0)
 
         ranges_group = QGroupBox("Model ranges")
         ranges_layout = QVBoxLayout(ranges_group)
@@ -384,6 +443,11 @@ class ModelFitDialog(QDialog):
         self._chi2_label = QLabel("")
         self._chi2_label.setTextFormat(Qt.TextFormat.RichText)
         params_layout.addWidget(self._chi2_label)
+
+        self._quality_label = QLabel("")
+        self._quality_label.setTextFormat(Qt.TextFormat.RichText)
+        self._quality_label.setToolTip(_QUALITY_TOOLTIP)
+        params_layout.addWidget(self._quality_label)
 
         self._fit_progress_label = QLabel("")
         self._fit_progress_label.setStyleSheet(f"color: {tokens.WARN};")
@@ -423,6 +487,21 @@ class ModelFitDialog(QDialog):
 
     def was_removed(self) -> bool:
         return self._removed
+
+    def _error_mode(self) -> ErrorMode:
+        data = self._error_mode_combo.currentData()
+        return ErrorMode(data) if data is not None else ErrorMode.COLUMN
+
+    def _error_value(self) -> float | None:
+        if self._error_mode() in (ErrorMode.PERCENT, ErrorMode.ABSOLUTE):
+            return float(self._error_value_spin.value())
+        return None
+
+    def _on_error_mode_changed(self, _idx: int) -> None:
+        needs_value = self._error_mode() in (ErrorMode.PERCENT, ErrorMode.ABSOLUTE)
+        self._error_value_label.setVisible(needs_value)
+        self._error_value_spin.setVisible(needs_value)
+        self._error_value_spin.setEnabled(needs_value)
 
     def _create_default_range(self) -> ModelFitRange:
         x_min = float(np.nanmin(self._x)) if np.any(np.isfinite(self._x)) else 0.0
@@ -495,6 +574,8 @@ class ModelFitDialog(QDialog):
 
             row.addWidget(QLabel(f"Range {idx + 1}"))
 
+            has_windows = bool(fit_range.windows)
+
             xmin = QDoubleSpinBox()
             xmin.setRange(-1e12, 1e12)
             xmin.setDecimals(8)
@@ -510,6 +591,12 @@ class ModelFitDialog(QDialog):
             xmax.valueChanged.connect(lambda _v, i=idx: self._on_range_bounds_changed(i))
             row.addWidget(QLabel("x max"))
             row.addWidget(xmax)
+
+            if has_windows:
+                xmin.setEnabled(False)
+                xmax.setEnabled(False)
+                xmin.setToolTip("Fit windows below override the range bounds.")
+                xmax.setToolTip("Fit windows below override the range bounds.")
 
             model_label = QLabel(fit_range.model.formula_string())
             model_label.setMinimumWidth(220)
@@ -535,8 +622,51 @@ class ModelFitDialog(QDialog):
             select_btn.clicked.connect(lambda _checked=False, i=idx: self._select_range(i))
             row.addWidget(select_btn)
 
+            add_window_btn = QPushButton("+ Window")
+            add_window_btn.setToolTip(
+                "Restrict this range to a union of (min, max) windows — one model "
+                "fitted across all of them. Useful for excluding a region (e.g. "
+                "the critical region around a transition) from the fit."
+            )
+            add_window_btn.clicked.connect(lambda _checked=False, i=idx: self._add_window(i))
+            row.addWidget(add_window_btn)
+
             row.addStretch()
             self._ranges_host.addWidget(row_widget)
+
+            for widx, (w_lo, w_hi) in enumerate(fit_range.windows or []):
+                window_widget = QWidget()
+                window_row = QHBoxLayout(window_widget)
+                window_row.addSpacing(36)
+                window_row.addWidget(QLabel(f"Window {widx + 1}"))
+
+                w_min = QDoubleSpinBox()
+                w_min.setRange(-1e12, 1e12)
+                w_min.setDecimals(8)
+                w_min.setValue(float(w_lo))
+                w_min.valueChanged.connect(
+                    lambda value, i=idx, w=widx: self._on_window_bounds_changed(i, w, 0, value)
+                )
+                window_row.addWidget(QLabel("min"))
+                window_row.addWidget(w_min)
+
+                w_max = QDoubleSpinBox()
+                w_max.setRange(-1e12, 1e12)
+                w_max.setDecimals(8)
+                w_max.setValue(float(w_hi))
+                w_max.valueChanged.connect(
+                    lambda value, i=idx, w=widx: self._on_window_bounds_changed(i, w, 1, value)
+                )
+                window_row.addWidget(QLabel("max"))
+                window_row.addWidget(w_max)
+
+                remove_window_btn = QPushButton("Remove Window")
+                remove_window_btn.clicked.connect(
+                    lambda _checked=False, i=idx, w=widx: self._remove_window(i, w)
+                )
+                window_row.addWidget(remove_window_btn)
+                window_row.addStretch()
+                self._ranges_host.addWidget(window_widget)
 
             self._range_widgets.append(
                 _RangeWidgets(
@@ -558,16 +688,93 @@ class ModelFitDialog(QDialog):
         self._range_selector.blockSignals(True)
         self._range_selector.clear()
         for idx, fit_range in enumerate(self._fit.ranges, start=1):
-            x_min = fit_range.x_min if fit_range.x_min is not None else float("nan")
-            x_max = fit_range.x_max if fit_range.x_max is not None else float("nan")
-            text = f"Range {idx}: [{x_min:.6g}, {x_max:.6g}]"
+            if fit_range.windows:
+                union = " ∪ ".join(f"[{lo:.6g}, {hi:.6g}]" for lo, hi in fit_range.windows)
+                text = f"Range {idx}: {union}"
+            else:
+                x_min = fit_range.x_min if fit_range.x_min is not None else float("nan")
+                x_max = fit_range.x_max if fit_range.x_max is not None else float("nan")
+                text = f"Range {idx}: [{x_min:.6g}, {x_max:.6g}]"
             self._range_selector.addItem(text)
         self._range_selector.blockSignals(False)
+
+    def _add_window(self, idx: int) -> None:
+        if idx < 0 or idx >= len(self._fit.ranges):
+            return
+        fit_range = self._fit.ranges[idx]
+        if not fit_range.windows:
+            # First window inherits the current range bounds so the fitted
+            # span is unchanged until the user edits or adds windows.
+            lo = float(fit_range.x_min if fit_range.x_min is not None else self._x_min_data)
+            hi = float(fit_range.x_max if fit_range.x_max is not None else self._x_max_data)
+            fit_range.windows = [(lo, hi)]
+        else:
+            fit_range.windows = list(fit_range.windows) + [(self._x_min_data, self._x_max_data)]
+        fit_range.result = None
+        self._rebuild_ranges_ui()
+        self._select_range(idx)
+
+    def _remove_window(self, idx: int, window_idx: int) -> None:
+        if idx < 0 or idx >= len(self._fit.ranges):
+            return
+        fit_range = self._fit.ranges[idx]
+        windows = list(fit_range.windows or [])
+        if window_idx < 0 or window_idx >= len(windows):
+            return
+        del windows[window_idx]
+        fit_range.windows = windows or None
+        fit_range.result = None
+        self._rebuild_ranges_ui()
+        self._select_range(idx)
+
+    def _on_window_bounds_changed(
+        self, idx: int, window_idx: int, bound: int, value: float
+    ) -> None:
+        if idx < 0 or idx >= len(self._fit.ranges):
+            return
+        fit_range = self._fit.ranges[idx]
+        windows = list(fit_range.windows or [])
+        if window_idx < 0 or window_idx >= len(windows):
+            return
+        lo, hi = windows[window_idx]
+        windows[window_idx] = (float(value), hi) if bound == 0 else (lo, float(value))
+        fit_range.windows = windows
+        self._refresh_range_selector()
 
     def _on_range_selector_changed(self, idx: int) -> None:
         if idx < 0:
             return
         self._select_range(idx)
+
+    def _quality_text_for_range(self, fit_range: ModelFitRange) -> str:
+        """χ² quality verdict line for a fitted range (empty when not fitted)."""
+        result = fit_range.result
+        if result is None or not result.success:
+            return ""
+        if result.error_mode in (ErrorMode.NONE.value, ErrorMode.SCATTER.value):
+            return (
+                f'<span style="color:{tokens.ACCENT};">No χ² quality verdict: with '
+                "unit-weight or scatter-estimated errors χ²ᵣ carries no goodness "
+                "information.</span>"
+            )
+        n_free = sum(1 for p in fit_range.parameters if not p.fixed)
+        quality = assess_fit_quality(result.chi_squared, result.n_points - n_free)
+        if quality.verdict is None:
+            return (
+                f'<span style="color:{tokens.ACCENT};">No χ² quality verdict '
+                "(no degrees of freedom).</span>"
+            )
+        color = {
+            "good": tokens.OK,
+            "poor": tokens.WARN,
+            "overdone": tokens.ACCENT,
+        }[quality.verdict]
+        return (
+            f'<span style="color:{color};">Quality of fit: <b>{quality.verdict}</b> '
+            f"— χ²ᵣ target band {quality.band_low:.3f} to {quality.band_high:.3f} "
+            f"(ν = {quality.dof}, {quality.confidence:.0%} confidence). "
+            "Hover for what this means.</span>"
+        )
 
     def _status_text_for_range(self, fit_range: ModelFitRange) -> str:
         if fit_range.result is None:
@@ -642,7 +849,13 @@ class ModelFitDialog(QDialog):
         self._commit_param_table(notify_adjustments=True)
         fit_range = self._fit.ranges[idx]
 
-        if (
+        if fit_range.windows:
+            try:
+                validate_fit_windows(fit_range.windows)
+            except ValueError as exc:
+                _show_warning(self, "Invalid window", str(exc))
+                return
+        elif (
             fit_range.x_max is not None
             and fit_range.x_min is not None
             and fit_range.x_max <= fit_range.x_min
@@ -671,6 +884,9 @@ class ModelFitDialog(QDialog):
         y_errs = np.asarray(self._yerr, dtype=float).copy()
         x_min = fit_range.x_min
         x_max = fit_range.x_max
+        windows = list(fit_range.windows) if fit_range.windows else None
+        error_mode = self._error_mode()
+        error_value = self._error_value()
 
         self._fit_progress_label.setText(f"Fit in progress for Range {idx + 1}...")
 
@@ -683,6 +899,9 @@ class ModelFitDialog(QDialog):
                 parameters=params_snapshot,
                 x_min=x_min,
                 x_max=x_max,
+                error_mode=error_mode,
+                error_value=error_value,
+                windows=windows,
             )
 
         def _on_done(result: object) -> None:
@@ -739,6 +958,7 @@ class ModelFitDialog(QDialog):
             self._chi2_label.setText(
                 f'<span style="color:{tokens.ACCENT};">Fitting not yet run for selected range</span>'
             )
+        self._quality_label.setText(self._quality_text_for_range(fit_range))
 
         self._param_table.blockSignals(True)
         self._param_table.setRowCount(0)
