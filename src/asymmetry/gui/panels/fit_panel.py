@@ -4477,6 +4477,28 @@ class GlobalFitTab(QWidget):
         except (TypeError, ValueError):
             return None
 
+    def update_grouped_phase_seed(self, run_number: int, phases_rad: dict[int, float]) -> bool:
+        """Write per-group phases (radians) into the cached grouped fit seed.
+
+        Used by the MaxEnt "Send phases to fit" exchange to push MaxEnt phases
+        back onto the grouped time-domain fit's per-group ``relative_phase``.
+        Returns ``True`` when an existing seed was updated, ``False`` when the
+        run has no grouped fit to receive the phases.
+        """
+        try:
+            seed = self._grouped_simulate_seed.get(int(run_number))
+        except (TypeError, ValueError):
+            return False
+        if not isinstance(seed, dict) or not isinstance(seed.get("specs"), list):
+            return False
+        updated = False
+        for spec in seed["specs"]:
+            gid = spec.get("group_id")
+            if gid in phases_rad:
+                spec["relative_phase"] = float(phases_rad[gid])
+                updated = True
+        return updated
+
     def _on_grouped_fit_finished(self, grouped_datasets: list[MuonDataset], grouped_result) -> None:
         """Handle successful grouped fit completion."""
         self._update_mode_ui(preserve_result=True)

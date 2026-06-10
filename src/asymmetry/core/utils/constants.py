@@ -32,6 +32,11 @@ PROTON_GYROMAGNETIC_RATIO_MHZ_PER_T = 42.577478
 # Muon lifetime in microseconds
 MUON_LIFETIME_US = 2.1969811
 
+# Pion lifetime in microseconds — sets the intrinsic short-time limit of the
+# muon-pulse arrival distribution at a pulsed source (surface muons come from
+# pion decay), so it enters the MaxEnt pulse-shape response.
+PION_LIFETIME_US = 0.026
+
 # Conversion: 1 Gauss = 1e-4 Tesla
 GAUSS_TO_TESLA = 1.0e-4
 

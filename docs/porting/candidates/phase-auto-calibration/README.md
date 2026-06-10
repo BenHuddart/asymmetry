@@ -1,6 +1,14 @@
 # Automatic phase calibration
 
-**Status:** candidate.
+**Status:** candidate (partially absorbed).
+
+**Note (2026-06-10):** the WiMDA/MaxEnt slice of this candidate — exchanging
+fitted phases between a grouped time-domain fit and MaxEnt ("Use fitted phases"
+/ "Send phases to fit", matched by group id, with provenance) — has been
+implemented in the `maxent-completion` project (Phase 3,
+`docs/porting/maxent-completion/`). What remains here is the general
+auto-calibration of phases from a reference TF run
+(Mantid `CalMuonDetectorPhases`-style), which is unaffected.
 
 ## What
 
