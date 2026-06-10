@@ -180,6 +180,12 @@ ALPHA_ESTIMATION_METHODS = ("diamagnetic", "general", "ratio")
 # to [0.1, 10]; a wider window costs nothing with a bounded scalar minimiser.
 _LN_ALPHA_BOUNDS = (float(np.log(0.01)), float(np.log(100.0)))
 
+# Bootstrap replicas sit close to the base estimate, so the diamagnetic
+# minimiser searches only a narrow ln window around it with a relaxed tolerance
+# — far cheaper than a full bounded minimisation per replica (~200×).
+_BOOTSTRAP_LN_WINDOW = 1.0
+_BOOTSTRAP_XATOL = 1e-4
+
 
 @dataclass(frozen=True)
 class AlphaEstimate:
@@ -367,13 +373,29 @@ def _positive_mask(
     return f[mask], b[mask], t
 
 
-def _minimise_alpha(objective) -> float:
-    """Minimise an objective of alpha on ln(alpha) within the search bounds."""
+def _minimise_alpha(
+    objective,
+    *,
+    center: float | None = None,
+    xatol: float = 1e-10,
+) -> float:
+    """Minimise an objective of alpha on ln(alpha) within the search bounds.
+
+    With *center* given (a finite, positive alpha), the bracket is narrowed to
+    a small ln window around ``ln(center)`` (clamped to the global bounds) — the
+    bootstrap path passes the base estimate so each replica solves a tight,
+    relaxed-tolerance problem instead of a full bounded minimisation.
+    """
+    lo, hi = _LN_ALPHA_BOUNDS
+    if center is not None and np.isfinite(center) and center > 0.0:
+        c = float(np.log(center))
+        lo = max(lo, c - _BOOTSTRAP_LN_WINDOW)
+        hi = min(hi, c + _BOOTSTRAP_LN_WINDOW)
     result = minimize_scalar(
         lambda ln_alpha: objective(float(np.exp(ln_alpha))),
-        bounds=_LN_ALPHA_BOUNDS,
+        bounds=(lo, hi),
         method="bounded",
-        options={"xatol": 1e-10},
+        options={"xatol": xatol},
     )
     return float(np.exp(result.x))
 
@@ -383,11 +405,15 @@ def _single_alpha_estimate(
     f: NDArray[np.float64],
     b: NDArray[np.float64],
     t: NDArray[np.float64] | None,
+    *,
+    center: float | None = None,
+    xatol: float = 1e-10,
 ) -> float | None:
     """One alpha estimate on prepared counts; ``None`` when degenerate.
 
     ``ratio`` and ``general`` expect raw windowed counts (both are linear in
     the data); ``diamagnetic`` expects packed, positive-masked counts.
+    ``center``/``xatol`` narrow the diamagnetic minimiser for bootstrap replicas.
     """
     if f.size == 0:
         return None
@@ -395,7 +421,9 @@ def _single_alpha_estimate(
         bs = float(np.sum(b))
         return float(np.sum(f)) / bs if bs > 0.0 else None
     if method == "diamagnetic":
-        return _minimise_alpha(lambda a: _diamagnetic_objective(a, f, b))
+        return _minimise_alpha(
+            lambda a: _diamagnetic_objective(a, f, b), center=center, xatol=xatol
+        )
     return _general_two_window_alpha(f, b, t)
 
 
@@ -505,7 +533,9 @@ def estimate_alpha_detailed(
                 br = rng.poisson(b_lam).astype(np.float64)
                 if method == "diamagnetic":
                     fr, br, t_rep = _positive_mask(fr, br, t)
-                    replica = _single_alpha_estimate(method, fr, br, t_rep)
+                    replica = _single_alpha_estimate(
+                        method, fr, br, t_rep, center=alpha, xatol=_BOOTSTRAP_XATOL
+                    )
                 else:
                     replica = _single_alpha_estimate(method, fr, br, t)
                 if replica is not None and np.isfinite(replica):

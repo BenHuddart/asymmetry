@@ -424,6 +424,25 @@ def test_vector_payload_contains_per_axis_alpha_values(qapp: QApplication) -> No
     assert payload["alpha"] == pytest.approx(1.33)
 
 
+def test_vector_payload_records_per_axis_alpha_provenance(qapp: QApplication) -> None:
+    """After estimating an axis, the payload carries that axis's error and
+    reference run (per-axis provenance, skipped in Phase 1)."""
+    dialog = GroupingDialog([_vector_dataset_with_histograms()])
+    dialog._estimate_alpha_for_axis("P_x")
+    estimated = dialog._vector_alpha_spins["P_x"].value()
+
+    payload = dialog._current_grouping_payload()
+
+    assert payload["alpha_x"] == pytest.approx(estimated)
+    assert "alpha_x_reference_run" in payload
+    # P_y was not estimated, so it carries a value but no provenance.
+    assert "alpha_y_reference_run" not in payload
+    # A manual edit invalidates the provenance for that axis.
+    dialog._vector_alpha_spins["P_x"].setValue(estimated + 0.5)
+    payload2 = dialog._current_grouping_payload()
+    assert "alpha_x_reference_run" not in payload2
+
+
 def test_vector_estimate_alpha_for_axis_updates_axis_spin(qapp: QApplication) -> None:
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
     dialog._estimate_alpha_for_axis("P_x")

@@ -600,6 +600,59 @@ class TestPlotPanel:
             mask, np.array([False, False, False, False, False, True, True, True, True, True])
         )
 
+    def test_low_count_mask_skips_raw_denominator_under_variable_binning(
+        self,
+        panel: PlotPanel,
+    ) -> None:
+        """Under variable binning the per-raw-bin denominator no longer maps to
+        the displayed bins, so the mask returns the saturation flags only — an
+        explicit skip, not a silent array-shape mismatch. Same counts as the
+        fixed-binning test above, where bins 8-9 (zero denominator) are flagged;
+        here they are not."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        f_counts = np.array([80, 70, 60, 50, 40, 2, 1, 0, 0, 0], dtype=float)
+        b_counts = np.array([80, 70, 60, 50, 40, 0, 0, 1, 0, 0], dtype=float)
+        denominator = f_counts + b_counts
+        asym = np.zeros_like(denominator)
+        safe = denominator > 0.0
+        asym[safe] = ((f_counts[safe] - b_counts[safe]) / denominator[safe]) * 100.0
+
+        run = Run(
+            run_number=3240,
+            histograms=[
+                Histogram(counts=f_counts, bin_width=1.0, t0_bin=0),
+                Histogram(counts=b_counts, bin_width=1.0, t0_bin=0),
+            ],
+            grouping={
+                "groups": {1: [1], 2: [2]},
+                "forward_group": 1,
+                "backward_group": 2,
+                "alpha": 1.0,
+                "first_good_bin": 0,
+                "last_good_bin": 9,
+                "binning_mode": "variable",
+                "bin0_us": 0.08,
+                "bin10_us": 0.25,
+            },
+        )
+        ds = MuonDataset(
+            time=np.arange(10, dtype=float),
+            asymmetry=asym,
+            error=np.ones_like(asym),
+            metadata={"run_number": 3240},
+            run=run,
+        )
+
+        mask = panel._low_count_mask_for_dataset(ds, source_dataset=ds)
+
+        # Saturation only: bins 5-7 (±100%); zero-denominator bins 8-9 are NOT
+        # added because the raw-bin reduction is explicitly skipped here.
+        assert np.array_equal(
+            mask, np.array([False, False, False, False, False, True, True, True, False, False])
+        )
+
     def test_low_count_mask_uses_background_corrected_psi_denominator(
         self,
         panel: PlotPanel,

@@ -24,8 +24,8 @@ import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.base import BaseLoader, LoadResult
+from asymmetry.core.io.periods import combine_mapped_periods
 from asymmetry.core.transform import apply_grouping, compute_asymmetry
-from asymmetry.core.utils.constants import PeriodMode
 
 try:  # optional dependency
     import h5py  # type: ignore[import-untyped]
@@ -602,85 +602,34 @@ class NexusLoader(BaseLoader):
         source_run_number: int,
         source_file: str,
     ) -> MuonDataset:
-        """Merge two period datasets into one run with red/green period metadata."""
-        red_ds, green_ds = period_datasets[0], period_datasets[1]
-        if red_ds.run is None or green_ds.run is None:
-            raise ValueError("Two-period combination requires run metadata for both periods")
+        """Merge two period datasets into one run with red/green period metadata.
 
-        red_hist = self._clone_histograms(red_ds.run.histograms)
-        green_hist = self._clone_histograms(green_ds.run.histograms)
-
-        metadata = dict(red_ds.metadata)
-        metadata["run_number"] = int(source_run_number)
-        metadata["source_run_number"] = int(source_run_number)
-        metadata["run_label"] = str(source_run_number)
-        metadata["period_number"] = 1
-        metadata["period_count"] = 2
-
-        red_grouping = red_ds.run.grouping if isinstance(red_ds.run.grouping, dict) else {}
-        green_grouping = green_ds.run.grouping if isinstance(green_ds.run.grouping, dict) else {}
-        combined_grouping = dict(red_grouping)
-        combined_grouping["period_histograms"] = [red_hist, green_hist]
-        # Retain each period's fully reduced arrays (the loader default
-        # reduction: alpha = 1.0, no deadtime/background) so the scriptable
-        # period-selection API (asymmetry.core.io.periods.select_period) can
-        # return exactly what the loader produced per period without redoing
-        # the good-bin windowing. In-memory only — grouping is not serialised
-        # verbatim into projects (see mainwindow._extract_grouping_overrides).
-        combined_grouping["period_reduced"] = [
-            (
-                np.asarray(red_ds.time, dtype=np.float64).copy(),
-                np.asarray(red_ds.asymmetry, dtype=np.float64).copy(),
-                np.asarray(red_ds.error, dtype=np.float64).copy(),
-            ),
-            (
-                np.asarray(green_ds.time, dtype=np.float64).copy(),
-                np.asarray(green_ds.asymmetry, dtype=np.float64).copy(),
-                np.asarray(green_ds.error, dtype=np.float64).copy(),
-            ),
-        ]
-        combined_grouping["period_mode"] = str(PeriodMode.RED)
-        combined_grouping["period_good_frames"] = [
-            float(red_grouping.get("good_frames", 1.0)),
-            float(green_grouping.get("good_frames", 1.0)),
-        ]
-        combined_grouping["period_dead_time_us"] = [
-            [float(v) for v in red_grouping.get("dead_time_us", [])],
-            [float(v) for v in green_grouping.get("dead_time_us", [])],
-        ]
-        combined_grouping["good_frames"] = float(combined_grouping["period_good_frames"][0])
-        combined_grouping["dead_time_us"] = list(combined_grouping["period_dead_time_us"][0])
-
-        run = Run(
-            run_number=int(source_run_number),
-            histograms=self._clone_histograms(red_hist),
-            metadata=metadata,
-            grouping=combined_grouping,
+        Delegates the count / good-frame / deadtime assembly to the shared
+        :func:`asymmetry.core.io.periods.combine_mapped_periods` with the
+        trivial ``{1: red, 2: green}`` mapping, so the loader's two-period
+        combination and the N-period "Map periods…" reducer are one code path.
+        It then caches each period's loader-default reduced arrays
+        (``period_reduced``) so the scriptable period-selection API
+        (:func:`asymmetry.core.io.periods.select_period`) can return exactly
+        what the loader produced per period without redoing the good-bin
+        windowing — the mapped reducer drops that cache because summed sets no
+        longer correspond to a single per-period reduction.
+        """
+        combined = combine_mapped_periods(
+            period_datasets,
+            {1: "red", 2: "green"},
+            source_run_number=int(source_run_number),
             source_file=source_file,
         )
-
-        return MuonDataset(
-            time=np.asarray(red_ds.time, dtype=np.float64).copy(),
-            asymmetry=np.asarray(red_ds.asymmetry, dtype=np.float64).copy(),
-            error=np.asarray(red_ds.error, dtype=np.float64).copy(),
-            metadata=metadata,
-            run=run,
-        )
-
-    def _clone_histograms(self, histograms: list[Histogram]) -> list[Histogram]:
-        """Return deep-copy style clones of histogram containers."""
-        out: list[Histogram] = []
-        for hist in histograms:
-            out.append(
-                Histogram(
-                    counts=np.asarray(hist.counts, dtype=np.float64).copy(),
-                    bin_width=float(hist.bin_width),
-                    t0_bin=int(hist.t0_bin),
-                    good_bin_start=int(hist.good_bin_start),
-                    good_bin_end=int(hist.good_bin_end),
-                )
+        combined.run.grouping["period_reduced"] = [
+            (
+                np.asarray(ds.time, dtype=np.float64).copy(),
+                np.asarray(ds.asymmetry, dtype=np.float64).copy(),
+                np.asarray(ds.error, dtype=np.float64).copy(),
             )
-        return out
+            for ds in period_datasets
+        ]
+        return combined
 
     def _build_histograms(
         self,

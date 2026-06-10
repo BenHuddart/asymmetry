@@ -10,6 +10,7 @@ from asymmetry.core.transform.grouping import (
     apply_grouping,
     apply_grouping_aligned,
     common_t0_for_groups,
+    good_frames,
     group_forward_backward,
 )
 from asymmetry.core.utils.constants import (
@@ -17,6 +18,20 @@ from asymmetry.core.utils.constants import (
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     MUON_LIFETIME_US,
 )
+
+
+def test_good_frames_accessor() -> None:
+    assert good_frames({"good_frames": 1000.0}) == 1000.0
+    # Missing / non-positive / unparseable collapse to the default.
+    assert good_frames({}) == 1.0
+    assert good_frames({"good_frames": 0.0}) == 1.0
+    assert good_frames({"good_frames": -5.0}) == 1.0
+    assert good_frames({"good_frames": "x"}) == 1.0
+    assert good_frames(None) == 1.0
+    # default=0.0 lets callers treat a falsy result as "unknown".
+    assert good_frames({}, default=0.0) == 0.0
+    assert (good_frames({}, default=0.0) or None) is None
+    assert good_frames({"good_frames": 250.0}, default=0.0) == 250.0
 
 
 def test_apply_grouping_sums_and_truncates_to_shortest() -> None:

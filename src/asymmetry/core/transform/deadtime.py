@@ -6,6 +6,7 @@ import numpy as np
 from scipy.optimize import curve_fit
 
 from asymmetry.core.data.dataset import Histogram
+from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -269,12 +270,7 @@ def _prepare_histograms_with_resolved_deadtime(
     grouping: dict,
     dead_time_us: list,
 ) -> tuple[list[Histogram], bool]:
-    try:
-        good_frames = float(grouping.get("good_frames", 1.0))
-    except (TypeError, ValueError):
-        good_frames = 1.0
-    if good_frames <= 0.0:
-        good_frames = 1.0
+    frames = good_frames(grouping)
 
     corrected: list[Histogram] = []
     applied_any = False
@@ -290,7 +286,7 @@ def _prepare_histograms_with_resolved_deadtime(
                 counts,
                 tau_us,
                 hist.bin_width,
-                num_good_frames=good_frames,
+                num_good_frames=frames,
             )
             applied_any = True
 
