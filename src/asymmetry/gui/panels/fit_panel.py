@@ -1353,7 +1353,9 @@ class SingleFitTab(QWidget):
 
     def _edit_function(self) -> None:
         """Launch the fit-function builder dialog."""
-        dialog = FitFunctionBuilderDialog(self, initial_model=self._composite_model)
+        dialog = FitFunctionBuilderDialog(
+            self, initial_model=self._composite_model, domain=self._domain
+        )
         if dialog.exec():
             new_model = dialog.get_composite_model()
             if new_model is not None:
@@ -2833,7 +2835,9 @@ class GlobalFitTab(QWidget):
 
     def _edit_function(self) -> None:
         """Launch the fit-function builder dialog."""
-        dialog = FitFunctionBuilderDialog(self, initial_model=self._composite_model)
+        dialog = FitFunctionBuilderDialog(
+            self, initial_model=self._composite_model, domain=self._domain
+        )
         if dialog.exec():
             new_model = dialog.get_composite_model()
             if new_model is not None:

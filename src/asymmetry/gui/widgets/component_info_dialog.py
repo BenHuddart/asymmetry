@@ -310,6 +310,9 @@ def _references_payload(component_name: str) -> tuple[str, ...]:
 def _availability_text(component: ComponentDocDefinition) -> str:
     scopes = getattr(component, "scopes", ())
     if not scopes:
+        domain = str(getattr(component, "domain", "time")).strip().lower()
+        if domain == "frequency":
+            return "Frequency-domain fit builder"
         return "Time-domain fit builder"
 
     mapping = {

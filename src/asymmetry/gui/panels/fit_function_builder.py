@@ -15,6 +15,10 @@ from asymmetry.core.fitting.composite import (
     parse_component_expression,
     parse_composite_expression,
 )
+from asymmetry.core.fitting.domain_library import (
+    components_for_domain,
+    default_model_for_domain,
+)
 from asymmetry.gui.widgets.function_expression_builder import (
     ComponentSelectorButton as _ComponentSelectorButton,  # noqa: F401
 )
@@ -40,9 +44,17 @@ _CATEGORY_ORDER = [
 ]
 
 
-def _build_components_by_category() -> dict[str, list[str]]:
+def _build_components_by_category(domain: str = "time") -> dict[str, list[str]]:
+    domain_components = components_for_domain(domain)
+
+    if domain == "frequency":
+        # The frequency catalogue is short (and expected to stay so): present it
+        # as a flat list ("General" renders at the top level of the picker)
+        # rather than a single redundant submenu.
+        return {"General": sorted(domain_components)}
+
     grouped: dict[str, list[str]] = defaultdict(list)
-    for name, definition in COMPONENTS.items():
+    for name, definition in domain_components.items():
         category = (definition.category or "General").strip() or "General"
         grouped[category].append(name)
 
@@ -65,8 +77,11 @@ class FitFunctionBuilderDialog(FunctionExpressionBuilderDialog):
         self,
         parent: QWidget | None = None,
         initial_model: CompositeModel | None = None,
+        domain: str = "time",
     ) -> None:
-        self._allowed_components = set(COMPONENTS)
+        self._domain = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        domain_components = components_for_domain(self._domain)
+        self._allowed_components = set(domain_components)
         self._fraction_groups = (
             sorted(initial_model.fraction_groups) if initial_model is not None else []
         )
@@ -75,21 +90,27 @@ class FitFunctionBuilderDialog(FunctionExpressionBuilderDialog):
         ) = None
         self._preserve_fraction_groups_once = False
         self._normalizing_fraction_syntax = False
-        initial_expression = (
-            self._display_expression_for_model(initial_model)
-            if initial_model is not None
-            else "Exponential + Constant"
+        initial_expression = self._display_expression_for_model(
+            initial_model if initial_model is not None else default_model_for_domain(self._domain)
         )
+        if self._domain == "frequency":
+            expression_prefix = "S(ν)"
+            expression_placeholder = (
+                "e.g. GaussianPeak + ConstantBackground or LorentzianPeak + LinearBackground"
+            )
+        else:
+            expression_prefix = "A(t)"
+            expression_placeholder = (
+                "e.g. Exponential + Gaussian or Exponential * ( Gaussian + Constant )"
+            )
         super().__init__(
             title="Build Fit Function",
-            expression_prefix="A(t)",
-            components_by_category=_build_components_by_category(),
-            component_definitions=COMPONENTS,
+            expression_prefix=expression_prefix,
+            components_by_category=_build_components_by_category(self._domain),
+            component_definitions=domain_components,
             model_parser=CompositeModel.from_expression,
             initial_expression=initial_expression,
-            expression_placeholder=(
-                "e.g. Exponential + Gaussian or Exponential * ( Gaussian + Constant )"
-            ),
+            expression_placeholder=expression_placeholder,
             syntax_help_text=(
                 "Select two or more additive components, press Fractions to link them, "
                 "and use the matching colors in the editor and preview to track each group."
@@ -113,6 +134,31 @@ class FitFunctionBuilderDialog(FunctionExpressionBuilderDialog):
             root_layout.insertLayout(2, selection_row)
 
         self._on_fields_changed()
+
+    def _parse_components(
+        self, expression: str
+    ) -> tuple[list[str], list[str], list[int], list[int]]:
+        """Parse *expression*, upgrading unknown-name errors with a domain hint.
+
+        A component that exists in the registry but belongs to the other
+        analysis domain gets an explanatory message instead of the generic
+        "Unknown component" error.
+        """
+        try:
+            return parse_component_expression(
+                expression,
+                allowed_components=self._allowed_components,
+            )
+        except ValueError as exc:
+            match = re.search(r"Unknown component '([^']+)'", str(exc))
+            if match is not None:
+                definition = COMPONENTS.get(match.group(1))
+                if definition is not None and definition.domain != self._domain:
+                    raise ValueError(
+                        f"'{definition.name}' is a {definition.domain}-domain component "
+                        f"and is not available when fitting in the {self._domain} domain."
+                    ) from exc
+            raise
 
     @staticmethod
     def _display_expression_for_model(model: CompositeModel | None) -> str:
@@ -259,11 +305,8 @@ class FitFunctionBuilderDialog(FunctionExpressionBuilderDialog):
             return None
 
         expression = self._expression_edit.text().strip()
-        component_names, operators, open_parentheses, close_parentheses = (
-            parse_component_expression(
-                expression,
-                allowed_components=self._allowed_components,
-            )
+        component_names, operators, open_parentheses, close_parentheses = self._parse_components(
+            expression
         )
         spans = self._component_spans(expression, component_names)
         selection_start, selection_end = self._expression_edit.selectionRange()
@@ -319,11 +362,8 @@ class FitFunctionBuilderDialog(FunctionExpressionBuilderDialog):
         if not expression:
             return False, "Expression is required.", None
 
-        component_names, operators, open_parentheses, close_parentheses = (
-            parse_component_expression(
-                expression,
-                allowed_components=self._allowed_components,
-            )
+        component_names, operators, open_parentheses, close_parentheses = self._parse_components(
+            expression
         )
         current_structure = self._structure_key(
             component_names,

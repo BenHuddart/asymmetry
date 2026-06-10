@@ -202,7 +202,7 @@ def test_component_selector_category_submenus(qapp: QApplication) -> None:
 
     submenu_titles = [action.text() for action in menu.actions() if action.menu() is not None]
     # Canonical display order (no top-level "General" components remain in the
-    # time-domain registry).
+    # time-domain registry; frequency-domain components are filtered out).
     expected_order = [
         "Relaxation",
         "Oscillation",
@@ -210,7 +210,6 @@ def test_component_selector_category_submenus(qapp: QApplication) -> None:
         "Muonium",
         "Nuclear dipolar",
         "Background",
-        "Frequency Domain",
     ]
     assert submenu_titles == expected_order
 
@@ -240,3 +239,68 @@ def test_component_selector_category_submenus(qapp: QApplication) -> None:
     assert "GaussianBroadenedKT" in _submenu_items("Kubo-Toyabe")
     for name in ("MuoniumHighTF", "MuoniumHighTFAniso", "MuoniumLFRelax"):
         assert name in _submenu_items("Muonium")
+
+
+def test_time_domain_builder_excludes_frequency_components(qapp: QApplication) -> None:
+    dialog = FitFunctionBuilderDialog()
+
+    assert dialog._domain == "time"
+    assert "GaussianPeak" not in dialog._allowed_components
+    assert "LorentzianPeak" not in dialog._allowed_components
+    assert "Exponential" in dialog._allowed_components
+
+
+def test_frequency_domain_builder_is_flat_and_filtered(qapp: QApplication) -> None:
+    dialog = FitFunctionBuilderDialog(domain="frequency")
+
+    assert dialog._domain == "frequency"
+    assert dialog._allowed_components == {
+        "GaussianPeak",
+        "LorentzianPeak",
+        "ConstantBackground",
+        "LinearBackground",
+    }
+    # Default model follows the frequency-domain default.
+    assert dialog._expression_edit.text().strip() == "GaussianPeak + ConstantBackground"
+
+    menu = dialog._component_selector._build_component_menu()
+    assert menu is not None
+    submenu_titles = [action.text() for action in menu.actions() if action.menu() is not None]
+    assert submenu_titles == []  # flat list: no submenus
+    top_level = [
+        action.text()
+        for action in menu.actions()
+        if action.menu() is None and not action.isSeparator()
+    ]
+    assert top_level == sorted(dialog._allowed_components)
+
+
+def test_out_of_domain_component_gets_domain_hint_error(qapp: QApplication) -> None:
+    dialog = FitFunctionBuilderDialog()
+    dialog._expression_edit.setText("GaussianPeak + Constant")
+
+    valid, error, model = False, None, None
+    try:
+        valid, error, model = dialog._validate_expression()
+    except ValueError as exc:
+        error = str(exc)
+
+    assert not valid or model is None
+    assert error is not None
+    assert "frequency-domain component" in error
+    assert "time domain" in error
+
+    ok_button = dialog._buttons.button(QDialogButtonBox.StandardButton.Ok)
+    assert ok_button is not None and not ok_button.isEnabled()
+
+
+def test_component_info_availability_reflects_domain(qapp: QApplication) -> None:
+    from asymmetry.core.fitting.composite import COMPONENTS
+    from asymmetry.gui.widgets.component_info_dialog import build_component_info_html
+
+    freq_html = build_component_info_html(COMPONENTS["GaussianPeak"], render_latex_images=False)
+    time_html = build_component_info_html(COMPONENTS["Exponential"], render_latex_images=False)
+
+    assert "Frequency-domain fit builder" in freq_html
+    assert "Time-domain fit builder" not in freq_html
+    assert "Time-domain fit builder" in time_html
