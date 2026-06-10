@@ -528,7 +528,7 @@
     {
       "slug": "wimda-fit-function-parity",
       "feature_name": "WiMDA Time-Domain Fit Function Parity",
-      "status": "study",
+      "status": "implemented",
       "path": "docs/porting/wimda-fit-function-parity",
       "references": [
         "WiMDA"
@@ -540,8 +540,8 @@
         "test_data": "docs/porting/wimda-fit-function-parity/test-data.md",
         "verification_plan": "docs/porting/wimda-fit-function-parity/verification-plan.md"
       },
-      "tests_path": null,
-      "src_path": null,
+      "tests_path": "tests/test_wimda_parity_components.py",
+      "src_path": "src/asymmetry/core/fitting",
       "updated": "2026-06-10"
     }
   ]

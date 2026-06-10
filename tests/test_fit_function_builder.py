@@ -192,7 +192,7 @@ def test_dialog_has_info_button_and_selector(qapp: QApplication) -> None:
     assert dialog._component_selector.text().endswith("\u25be")
 
 
-def test_component_selector_includes_muon_fluorine_submenu(qapp: QApplication) -> None:
+def test_component_selector_category_submenus(qapp: QApplication) -> None:
     dialog = FitFunctionBuilderDialog()
     component_widget = dialog._component_selector
 
@@ -201,19 +201,42 @@ def test_component_selector_includes_muon_fluorine_submenu(qapp: QApplication) -
     assert menu is not None
 
     submenu_titles = [action.text() for action in menu.actions() if action.menu() is not None]
-    assert "Muon-Fluorine" in submenu_titles
+    # Canonical display order (no top-level "General" components remain in the
+    # time-domain registry).
+    expected_order = [
+        "Relaxation",
+        "Oscillation",
+        "Kubo-Toyabe",
+        "Muonium",
+        "Nuclear dipolar",
+        "Background",
+        "Frequency Domain",
+    ]
+    assert submenu_titles == expected_order
 
-    muon_items: list[str] = []
-    for action in menu.actions():
-        submenu = action.menu()
-        if submenu is None or action.text() != "Muon-Fluorine":
-            continue
-        muon_items = [
-            sub_action.text() for sub_action in submenu.actions() if sub_action.isEnabled()
-        ]
-        break
+    def _submenu_items(title: str) -> list[str]:
+        for action in menu.actions():
+            submenu = action.menu()
+            if submenu is not None and action.text() == title:
+                return [a.text() for a in submenu.actions() if a.isEnabled()]
+        return []
 
-    assert muon_items
-    assert "MuF" in muon_items
-    assert "FmuF_Linear" in muon_items
-    assert "FmuF_General" in muon_items
+    dipolar_items = _submenu_items("Nuclear dipolar")
+    for name in (
+        "MuF",
+        "FmuF_Linear",
+        "FmuF_General",
+        "FmuF_Triangle",
+        "DynamicFmuF",
+        "DipolarPairField",
+        "ProtonDipole",
+        "ElectronDipole",
+        "DipolarSpinJ",
+    ):
+        assert name in dipolar_items
+
+    assert "Bessel" in _submenu_items("Oscillation")
+    assert "RischKehr" in _submenu_items("Relaxation")
+    assert "GaussianBroadenedKT" in _submenu_items("Kubo-Toyabe")
+    for name in ("MuoniumHighTF", "MuoniumHighTFAniso", "MuoniumLFRelax"):
+        assert name in _submenu_items("Muonium")

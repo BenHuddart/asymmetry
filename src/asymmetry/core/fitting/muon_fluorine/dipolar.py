@@ -146,10 +146,74 @@ def three_spin_hamiltonian_rad_per_us(
     )
 
 
+# --- four-spin (muon + three fluorines) machinery ---------------------------
+#
+# Spin index 0 is the muon; indices 1..3 are the fluorines.  Operators are
+# built once at import; the per-pair (3, 3, 16, 16) tensors stay small enough
+# (~100 kB total) to precompute for all six pairs.
+
+_N_FOUR = 4
+_DIM_FOUR = 2**_N_FOUR
+
+
+def _kron_chain(mats: list[NDArray[np.complex128]]) -> NDArray[np.complex128]:
+    out = mats[0]
+    for m in mats[1:]:
+        out = np.kron(out, m)
+    return out
+
+
+_SPIN_OPS_FOUR: dict[tuple[int, int], NDArray[np.complex128]] = {}
+for _s in range(_N_FOUR):
+    for _a, _mat in enumerate((_SX, _SY, _SZ)):
+        _factors: list[NDArray[np.complex128]] = [_ID2] * _N_FOUR
+        _factors[_s] = _mat
+        _SPIN_OPS_FOUR[(_s, _a)] = _kron_chain(_factors)
+
+MUON_SIGMA_Z_FOUR_SPIN = _kron_chain([_SIGMA_Z, _ID2, _ID2, _ID2])
+
+_PAIRS_FOUR: list[tuple[int, int]] = [(i, j) for i in range(_N_FOUR) for j in range(i + 1, _N_FOUR)]
+
+_PAIR_ISO_FOUR: dict[tuple[int, int], NDArray[np.complex128]] = {}
+_PAIR_TENSOR_FOUR: dict[tuple[int, int], NDArray[np.complex128]] = {}
+for _pair4 in _PAIRS_FOUR:
+    _tensor4 = np.empty((3, 3, _DIM_FOUR, _DIM_FOUR), dtype=complex)
+    for _i in range(3):
+        for _j in range(3):
+            _tensor4[_i, _j] = _SPIN_OPS_FOUR[(_pair4[0], _i)] @ _SPIN_OPS_FOUR[(_pair4[1], _j)]
+    _PAIR_ISO_FOUR[_pair4] = _tensor4[0, 0] + _tensor4[1, 1] + _tensor4[2, 2]
+    _PAIR_TENSOR_FOUR[_pair4] = _tensor4
+
+
+def four_spin_hamiltonian_rad_per_us(
+    couplings: list[tuple[tuple[int, int], float, NDArray[np.float64]]],
+) -> NDArray[np.complex128]:
+    """Construct the 16x16 dipolar Hamiltonian for the muon + 3F system.
+
+    ``couplings`` is a list of ``(pair, coupling_rad_per_us, unit_vector)``
+    entries, one per spin pair (pair indices: 0 = muon, 1-3 = fluorines).
+    Each pair contributes ``coupling * [S_i . S_j - 3 (S_i . n)(S_j . n)]``.
+    """
+    h = np.zeros((_DIM_FOUR, _DIM_FOUR), dtype=complex)
+    for pair, coupling, n_vec in couplings:
+        if pair not in _PAIR_TENSOR_FOUR:
+            raise ValueError(f"Unsupported four-spin pair index: {pair}")
+        n = np.asarray(n_vec, dtype=float)
+        norm = float(np.linalg.norm(n))
+        if norm <= 0.0:
+            raise ValueError("unit_vector must be non-zero")
+        n = n / norm
+        anisotropic = np.tensordot(np.outer(n, n), _PAIR_TENSOR_FOUR[pair], axes=((0, 1), (0, 1)))
+        h = h + float(coupling) * (_PAIR_ISO_FOUR[pair] - 3.0 * anisotropic)
+    return h
+
+
 __all__ = [
     "MUON_SIGMA_Z_THREE_SPIN",
+    "MUON_SIGMA_Z_FOUR_SPIN",
     "omega_d_mu_f_rad_per_us",
     "omega_d_f_f_rad_per_us",
     "omega_dipolar_rad_per_us",
     "three_spin_hamiltonian_rad_per_us",
+    "four_spin_hamiltonian_rad_per_us",
 ]

@@ -234,6 +234,119 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "[Cu(NO3)(pyz)2]PF6, where a linear FmuF model is too restrictive. The present implementation still assumes only three coupled spins "
         "(F-mu-F); it is therefore not intended for Case III situations that require an additional nearby nucleus, such as the proton in HF2-."
     ),
+    "RischKehr": (
+        "Use when the muon (or muonium) polarization is relaxed by a spin carrier diffusing in one dimension, "
+        "such as a polaron moving along a conducting-polymer chain or an excitation confined to a structural channel. "
+        "The Risch-Kehr function G(t) = exp(Γt)·erfc(√(Γt)) (Risch and Kehr, Phys. Rev. B 46, 5246 (1992)) replaces the "
+        "exponential expected for 3D fluctuations: the 1D random walk keeps returning the carrier to the muon, giving a "
+        "characteristic (πΓt)^(-1/2) long-time tail. A signature of the 1D regime is a stretched-exponential fit returning "
+        "beta near 1/2 at early times; prefer this function over a stretched exponential when 1D transport is physically "
+        "motivated (cf. the mobile-excitation discussion in Blundell, De Renzi, Lancaster & Pratt, Muon Spectroscopy, "
+        "OUP 2022, section 8.4). Γ is a rate in μs⁻¹ and must be non-negative."
+    ),
+    "Bessel": (
+        "Use for magnets with incommensurate order, such as spin-density-wave states, where the muon samples the "
+        "Overhauser distribution of local fields between -B₁ and +B₁ rather than a single value. The zero-field "
+        "polarization is A·J₀(2πft) with f = γ_μB₁/2π set by the field-distribution edge (Muon Spectroscopy, OUP 2022, "
+        "eqn 6.47; the (TMTSF)₂PF₆ example of section 6.4). At late times it resembles a damped cosine with a "
+        "characteristic -45° phase shift (eqn 6.48) — if a free-phase Oscillatory fit insists on a phase near -45°, "
+        "try this component instead. Compose with *Exponential or *Gaussian for additional relaxation. For "
+        "commensurate order use Oscillatory/OscillatoryField instead."
+    ),
+    "MuoniumHighTF": (
+        "Use for transverse-field muonium at high field (B well above B₀ = A_hf/(γ_e+γ_μ) ≈ 1585 G for vacuum muonium), "
+        "where only the two intramultiplet transitions ν₁₂ and ν₃₄ carry appreciable amplitude and are observed as a pair "
+        "of lines whose frequencies sum to the hyperfine constant: ν₁₂ + ν₃₄ = A_hf (Muon Spectroscopy, OUP 2022, "
+        "eqn 4.65). Fitting the pair therefore measures A_hf directly even when neither line is individually assigned. "
+        "Both lines are given equal weight (the high-field limit); at lower fields, where the (1±δ) weights and the other "
+        "two transitions matter, use MuoniumTF. The frequencies are computed from the exact Breit-Rabi levels, so the "
+        "component remains correct down to intermediate fields apart from the equal-weight approximation."
+    ),
+    "MuoniumHighTFAniso": (
+        "Use for high transverse-field muonium with an axially anisotropic hyperfine interaction — bond-centred muonium "
+        "in semiconductors or muoniated radicals — measured on a polycrystalline or powder sample. The hyperfine tensor "
+        "is written as an isotropic part A_hf plus an axial (traceless) part D (Muon Spectroscopy, OUP 2022, eqn 4.68); "
+        "each crystallite shifts the two high-field lines by ±d/2 with d = (D/2)(3cos²θ-1), and the powder average over "
+        "cosθ produces the characteristic asymmetric Pake-like broadening of the pair. D = 0 reduces exactly to "
+        "MuoniumHighTF. For single crystals fit the orientation-dependent lines directly with MuoniumTF or Oscillatory "
+        "components instead."
+    ),
+    "MuoniumLFRelax": (
+        "Use for the longitudinal-field spin-lattice (T1) relaxation of muonium when a fluctuating coupling — nuclear "
+        "hyperfine fields modulated by muonium hopping, or electron spin exchange with carriers — relaxes the muon spin "
+        "via the intratriplet ν₁₂ transition. The rate follows the BPP/Redfield form λ = (1-δ)·δ_ex²·τ_c/(1+(2πν₁₂τ_c)²) "
+        "with ν₁₂ from the exact Breit-Rabi levels and δ = x/√(1+x²) (cf. the quantum-diffusion analyses of Kiefl et al., "
+        "Phys. Rev. Lett. 62, 792 (1989) and Kadono et al., Phys. Rev. Lett. 64, 665 (1990); Redfield form as in Muon "
+        "Spectroscopy, OUP 2022, eqn 5.53). Measuring λ versus B_L and locating the T1 minimum (2πν₁₂τ_c ≈ 1) "
+        "determines both δ_ex and τ_c. A_hf defaults to vacuum muonium (4463 MHz) and should normally be fixed. "
+        "This component is a relaxation envelope: multiply an amplitude component, or use it standalone for the "
+        "repolarized muonium fraction."
+    ),
+    "GaussianBroadenedKT": (
+        "Use when a static Kubo-Toyabe fit is qualitatively right but the dip is too sharp and the 1/3-tail recovery too "
+        "pronounced — the signature of a *distribution* of static widths Δ across muon sites, as in structurally "
+        "disordered hosts, dilute magnetic alloys, or systems with several inequivalent sites. The component averages the "
+        "static (longitudinal-field) Gaussian Kubo-Toyabe over a Gaussian distribution of Δ with fractional standard "
+        "deviation w_Δ (the Gaussian-broadened Gaussian of Noakes and Kalvius, Phys. Rev. B 56, 2352 (1997); WiMDA's "
+        "'Gau broad KT', whose 'rel width' equals w_Δ·√2). w_Δ = 0 reduces exactly to LongitudinalFieldKT. For dynamic "
+        "(fluctuating) fields use DynamicGaussianKT instead — broadening and dynamics both fill in the dip and are "
+        "difficult to distinguish from a single spectrum, so vary temperature or field before trusting either."
+    ),
+    "DynamicFmuF": (
+        "Use when an F-mu-F signal (clear at low temperature) progressively damps and loses its oscillations on warming "
+        "because the muon hops away from the F-mu-F site or the coupling fluctuates: the static collinear F-mu-F "
+        "polarization (Muon Spectroscopy, OUP 2022, eqn 4.81) is dynamicized by the strong-collision model (eqn 5.30) "
+        "with fluctuation rate ν. ν = 0 recovers FmuF_Linear exactly; large ν gives motional narrowing toward "
+        "exp(-2ω_d²t/ν). Fitting a temperature series with shared r_muF and free ν extracts the hop rate and hence an "
+        "activation energy for muon diffusion in the fluoride. Assumes the equal-distance collinear geometry of "
+        "FmuF_Linear."
+    ),
+    "FmuF_Triangle": (
+        "Use for fluorides where the muon couples to the two nearest fluorines of an F-mu-F centre *and* a non-negligible "
+        "third fluorine — the situation identified in, e.g., second-neighbour analyses of ionic fluorides (cf. Wilkinson "
+        "and Blundell, Phys. Rev. Lett. 125, 087201 (2020); Muon Spectroscopy, OUP 2022, section 4.5). The collinear "
+        "F-mu-F pair sits at r_muF and the third fluorine at distance r₃, at angle φ₃ to the F-mu-F axis; the 16-dimensional "
+        "four-spin problem is solved exactly with all mu-F and F-F dipolar couplings and a full powder average. "
+        "As r₃ → ∞ it approaches FmuF_General's collinear limit (FmuF_Linear plus the F-F coupling). Unlike WiMDA's "
+        "'F-u-F-F' function it includes the F-F couplings and a proper powder average, so fitted distances are not "
+        "directly comparable with WiMDA results. Evaluation is cached per geometry; fits are slower than the analytic "
+        "F-mu-F components."
+    ),
+    "DipolarPairField": (
+        "Use for a muon dipolar-coupled to a single spin-1/2 nucleus when you want to fit the dipolar field at the muon "
+        "directly rather than assume a nucleus and distance. The zero-field polycrystalline polarization is the "
+        "two-spin form (1/6)[1 + e^(-λ_T·t)(2cos(ω_d t/2) + cos(ω_d t) + 2cos(3ω_d t/2))] with ω_d = γ_μB_dip "
+        "(Muon Spectroscopy, OUP 2022, eqn 4.80; Meier, Hyperfine Interact. 17-19, 427 (1984)). The transverse damping "
+        "λ_T applies only to the oscillating 5/6 part, modelling couplings to more distant nuclei; the non-oscillating "
+        "1/6 component is preserved. Use MuF (fluorine), ProtonDipole, or ElectronDipole to parameterize by distance "
+        "instead; B_dip relates to a distance via B_dip = μ₀ħγ_j/(4πr³)."
+    ),
+    "ProtonDipole": (
+        "Use for muon stopping sites adjacent to a single dominant proton — hydroxyl groups, hydrides, or water of "
+        "crystallization — where the zero-field signal shows the characteristic two-spin beat pattern. Identical physics "
+        "to MuF but with the proton gyromagnetic ratio: the fitted r_μH is the muon-proton distance from "
+        "ħω_d = μ₀ħ²γ_μγ_p/(4πr³) (Muon Spectroscopy, OUP 2022, eqns 4.76 and 4.80). The transverse damping λ_T acts "
+        "on the oscillating part only, absorbing weaker couplings to more distant nuclei. Note that proton moments are "
+        "~10x weaker than ¹⁹F at the same distance, so resolvable oscillations require a close, well-defined mu-H pair."
+    ),
+    "ElectronDipole": (
+        "Use for a muon coupled by dipolar interaction to a single *localized* electronic moment at distance r_μe in zero "
+        "field — for example a dilute paramagnetic defect or rare-earth ion adjacent to the muon site — when the moment "
+        "is static on the muon timescale. Same two-spin form as the nuclear pairs but with the electron gyromagnetic "
+        "ratio, so frequencies are ~3 orders of magnitude higher at the same distance and r_μe of several Å still gives "
+        "MHz-scale oscillations. Not appropriate for muonium (where the contact hyperfine dominates — use the Muonium "
+        "components) or for dense magnets (use Oscillatory/Bessel with an internal field)."
+    ),
+    "DipolarSpinJ": (
+        "Use for zero-field precession of a muon coupled to one nucleus of spin J > 1/2 with both dipolar and "
+        "quadrupolar interactions — e.g. mu-⁹³Nb (J=9/2) or mu-⁶³,⁶⁵Cu (J=3/2) pairs, where the electric-field gradient "
+        "produced by the muon itself quadrupole-splits the neighbouring nucleus (cf. the quadrupolar discussion around "
+        "eqn 4.87 of Muon Spectroscopy, OUP 2022). Implements the closed-form polycrystalline eigen-solution of Celio "
+        "and Meier, Hyperfine Interact. 17-19, 435 (1984): f_dip sets the dipolar coupling, f_quad the quadrupolar "
+        "splitting (sign-sensitive), and J the nuclear spin, which should be held fixed at the known value. For J = 1/2 "
+        "it reduces to the two-spin pair (quadrupole inactive). For more than one strongly coupled nucleus use the "
+        "F-mu-F family or a dedicated multi-spin model."
+    ),
 }
 
 

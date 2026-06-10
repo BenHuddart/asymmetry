@@ -1,7 +1,15 @@
 # WiMDA Time-Domain Fit Function Parity
 
-Status: **study** (implementation approach to be agreed before the implementation
-pass).
+Status: **implemented** (decisions agreed 2026-06-10; see the decision table in
+`implementation-options.md`; tests in `tests/test_wimda_parity_components.py`;
+user docs in `docs/user_guide/wimda_fit_functions.rst`).
+
+Components shipped: `RischKehr`, `Bessel`, `GaussianBroadenedKT`,
+`MuoniumHighTF`, `MuoniumHighTFAniso`, `MuoniumLFRelax`, `DynamicFmuF`,
+`FmuF_Triangle`, `DipolarPairField`, `ProtonDipole`, `ElectronDipole`,
+`DipolarSpinJ` (per-nucleus dipole family per Decision 3). The component
+picker was regrouped into Relaxation / Oscillation / Kubo-Toyabe / Muonium /
+Nuclear dipolar / Background submenus.
 
 ## Problem statement
 

@@ -51,6 +51,7 @@ material.
    lf_kubo_toyabe
    dynamic_relaxation
    muon_fluorine
+   wimda_fit_functions
 
 .. toctree::
    :maxdepth: 2

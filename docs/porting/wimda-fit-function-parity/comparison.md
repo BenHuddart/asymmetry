@@ -147,6 +147,21 @@ Parameters: δ_ex (MHz), τ_c (µs), B (G). WiMDA hard-codes A = 4463 MHz (vacuu
 muonium); we propose exposing A_hf as a fixed-by-default parameter for
 consistency with the other muonium components.
 
+**Implementation-pass resolution.** The correct citation is Kadono et al.,
+PRL **64**, 665 (1990), *"Delocalization of muonium in NaCl"* (companion to
+Kiefl et al., PRL **62**, 792 (1989), KCl). The recent JPSJ treatment
+(J. Phys. Soc. Jpn. **94**, 064601 (2025); arXiv:2410.23575) quotes the same
+BPP form 1/T₁ ≈ Δₙ²ν/(ω₁₂²+ν²) and *also* builds its approximate ω₁₂ from
+(γ_e−γ_µ)-type averages — so WiMDA's choice is a literature convention, not
+purely a bug, though WiMDA's expression additionally mixes MHz and rad/µs
+units in `x`. **Implemented:** λ(B) = (1−δ)·δ_ex²·τ_c/(1+(2πν₁₂τ_c)²) with
+ν₁₂ from the exact Breit–Rabi levels (`_tf_levels`), δ = x/√(1+x²), δ_ex in
+MHz (≡ µs⁻¹, no 2π — consistent with Δ/ν conventions elsewhere in the
+registry). The (1−δ) repolarization-quench prefactor is retained from WiMDA
+(it gives the physically required λ→0 at high LF) but is **not** present in
+the JPSJ Eq. 22 — flagged for reviewer sign-off. Fitted δ_ex/τ_c values are
+not directly comparable with WiMDA's.
+
 ## C. Dipolar DLL gaps
 
 ### C1. Gaussian-broadened Kubo–Toyabe (`GBKTB`, `KuboToyabe.pas:193-213`)
@@ -202,6 +217,21 @@ Note: WiMDA's (1/3)P_z + (2/3)P_x is a two-orientation proxy for the powder
 average, not a full angular average (contrast `FmuF_General`, which integrates
 over orientations). The port should do a proper powder average and record the
 difference in `comparison` results.
+
+**Implementation-pass findings (f3calc decode).** `matrices.pas:48-56`
+resolves to: muon at the origin; F1 = (0, r3, r1/2), F2 = (0, −r3, r1/2)
+(symmetric pair, both at distance √(r3²+r1²/4)); F3 = (0, r2−r3, 0). Only the
+three **µ–F** couplings are built (`dips11/21/31`) — the F–F dipolar couplings
+are omitted entirely — and the constant 180.4 kHz·Å³ matches the µ–F dipolar
+constant used elsewhere. The `Fequitriangle` wrapper's arguments
+`(2r, r√3/2, r/(2√3))` do **not** produce an equilateral fluorine triangle in
+this geometry, so the WiMDA wrapper appears internally inconsistent.
+**Decision (implemented):** Asymmetry's `FmuF_Triangle` uses an explicit,
+documented geometry (collinear F–µ–F at `r_muF` + third F at distance `r3`,
+angle `phi3` from the axis), includes **all six** pairwise couplings, and does
+a full powder average. Verified: it reproduces `FmuF_General(r, r, 180°)` to
+≤ 5×10⁻⁹ as r3 → ∞. Fitted distances are deliberately *not* comparable with
+WiMDA's `F-u-F-F`.
 
 ### C4. Single spin-J dipole + quadrupole (`ZFdipgen`, `dipolarfunctions.dpr:33-78`)
 

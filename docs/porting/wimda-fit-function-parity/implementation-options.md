@@ -35,7 +35,9 @@ starting point A = 25 % and rates of order 0.5–1 µs⁻¹.
 | 7 | `DynamicFmuF` | A (25), r_muF (1.17 Å) [>0], nu (1 MHz) [≥0] | strong-collision solver reused from dynamic KT; ν=0 → `FmuF_Linear` |
 | 8 | `FmuF_Triangle` | A (25), r1, r2, r3 (Å) [>0] | 16-dim eigen-solve, powder average, LRU cache; equilateral = r1=r2=r3 via link groups (no separate component) |
 | 9 | `DipolarSpinJ` | A (25), f_dip (MHz) [≥0], f_quad (0 MHz), J (3/2) [fixed by default; half-integer steps] | Celio–Meier closed form |
-| 10 | `DipolarPair` (generalizes `MuF`) | A (25), B_dip (G) [≥0] **or** r+nucleus, lambda_T (0 µs⁻¹) [≥0] | Meier spin-½ pair, e^{−λ_T t} on oscillating part only; see Decision 3 |
+| 10 | `DipolarPairField` | A (25), B_dip (G) [≥0], lambda_T (0 µs⁻¹) [≥0] | Meier spin-½ pair, ω_d = γ_µB_dip, e^{−λ_T t} on oscillating part only |
+| 11 | `ProtonDipole` | A (25), r (1.7 Å) [>0], lambda_T (0 µs⁻¹) [≥0] | same kernel, ω_d from proton moment at distance r (re-derive constant; WiMDA's `c = 5.05` is flagged in its own source) |
+| 12 | `ElectronDipole` | A (25), r (5 Å) [>0], lambda_T (0 µs⁻¹) [≥0] | same kernel, electron moment at distance r |
 
 Positivity policy: every rate, width, field, distance, and frequency above gets a
 hard `min = 0` (or strictly positive where 1/r³ appears); phases unbounded;
@@ -66,7 +68,18 @@ unwieldy. Proposed re-categorization (pure metadata, no architecture change):
 Existing saved projects only store component names, not categories, so renaming
 categories is serialization-safe.
 
-## Open decisions (for joint sign-off before implementation)
+## Decisions (agreed 2026-06-10)
+
+| # | Decision | Outcome |
+|---|---|---|
+| 1 | `ScaledFRotation`/`Fstr`/`rtGau2`/`rtSig2` | **Skip; document `expr`/link-group migration recipes** in the user guide |
+| 2 | Pressure-cell functions | **Skip both**; document `BeCu ZF` as a `StaticGKT_ZF + Exponential` composite recipe |
+| 3 | Single-dipole parameterization | **Per-nucleus components** mirroring WiMDA: `DipolarPairField` (B_dip, λ_T), `ProtonDipole` (r, λ_T), `ElectronDipole` (r, λ_T); `MuF` unchanged |
+| 4 | Gaussian variants | covered by Decision 1 (skip, document σ mapping) |
+| 5 | Bessel | **Include** (MS-Intro Eq. 6.47) |
+| 6 | Phasing | one branch/PR, components landed in grouped commits (default, not objected) |
+
+The option analysis below is retained for the record.
 
 ### Decision 1 — `ScaledFRotation` and `Fstr`: port vs. document recipe
 

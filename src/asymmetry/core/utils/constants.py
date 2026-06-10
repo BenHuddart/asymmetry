@@ -26,6 +26,9 @@ MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = 135.538817
 # Fluorine-19 gyromagnetic ratio  γ_F / (2π)  in MHz/T
 FLUORINE_19_GYROMAGNETIC_RATIO_MHZ_PER_T = 40.053
 
+# Proton (1H) gyromagnetic ratio  γ_p / (2π)  in MHz/T (CODATA)
+PROTON_GYROMAGNETIC_RATIO_MHZ_PER_T = 42.577478
+
 # Muon lifetime in microseconds
 MUON_LIFETIME_US = 2.1969811
 

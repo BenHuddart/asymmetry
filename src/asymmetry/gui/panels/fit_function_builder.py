@@ -26,6 +26,20 @@ _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _FRACTION_GROUP_COLORS = ["#005A9C", "#A44A00", "#0B6E4F", "#8A1C1C", "#6B4F00"]
 
 
+# Display order of the component-picker submenus; categories not listed here
+# (e.g. from future additions) are appended alphabetically.
+_CATEGORY_ORDER = [
+    "General",
+    "Relaxation",
+    "Oscillation",
+    "Kubo-Toyabe",
+    "Muonium",
+    "Nuclear dipolar",
+    "Background",
+    "Frequency Domain",
+]
+
+
 def _build_components_by_category() -> dict[str, list[str]]:
     grouped: dict[str, list[str]] = defaultdict(list)
     for name, definition in COMPONENTS.items():
@@ -34,7 +48,14 @@ def _build_components_by_category() -> dict[str, list[str]]:
 
     for names in grouped.values():
         names.sort()
-    return dict(sorted(grouped.items(), key=lambda item: item[0]))
+
+    def _order(item: tuple[str, list[str]]) -> tuple[int, str]:
+        try:
+            return (_CATEGORY_ORDER.index(item[0]), item[0])
+        except ValueError:
+            return (len(_CATEGORY_ORDER), item[0])
+
+    return dict(sorted(grouped.items(), key=_order))
 
 
 class FitFunctionBuilderDialog(FunctionExpressionBuilderDialog):

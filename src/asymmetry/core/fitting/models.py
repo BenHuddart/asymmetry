@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 from scipy import integrate
-from scipy.special import sici
+from scipy.special import erfcx, j0, sici
 
 from asymmetry.core.fitting.parameters import ParamInfo, param_info_map
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
@@ -471,6 +471,107 @@ def static_lorentzian_kt_lf(
         grid, gs_grid = _static_lorentzian_lf_grid(a, omega0, tmax)
         gs = np.interp(tt, grid, gs_grid)
     out = A0 * np.asarray(gs, dtype=float) + baseline
+    return float(out[0]) if scalar else out
+
+
+def risch_kehr(t: NDArray, Gamma: float) -> NDArray:
+    """Risch-Kehr relaxation for spin transport by 1D diffusion.
+
+    G(t) = e^{Gamma t} erfc(sqrt(Gamma t))
+
+    Relaxation of the muon (or muonium) polarisation when the depolarising
+    agent diffuses in one dimension (e.g. a polaron on a conducting-polymer
+    chain): the return probability of a 1D random walk gives a
+    ``(pi Gamma t)^{-1/2}`` long-time tail instead of an exponential.
+
+    Evaluated as ``erfcx(sqrt(Gamma t))`` (the scaled complementary error
+    function), which is numerically stable for all ``Gamma t`` — no asymptotic
+    branch switch is needed (WiMDA switches forms at ``Gamma t = 20``).
+    ``Gamma`` is used as ``|Gamma|``; WiMDA's mirrored ``2 - G`` branch for
+    negative rates is an unphysical fitting convenience and is not ported.
+
+    References
+    ----------
+    R. Risch and K. W. Kehr, Phys. Rev. B 46, 5246 (1992).
+    """
+    gt = np.abs(float(Gamma)) * np.abs(np.asarray(t, dtype=float))
+    return np.asarray(erfcx(np.sqrt(gt)), dtype=float)
+
+
+def bessel_oscillation(t: NDArray, frequency: float, phase: float = 0.0) -> NDArray:
+    """Zeroth-order Bessel oscillation J0(2 pi f t + phase).
+
+    The polarisation produced by an incommensurate (spin-density-wave) field
+    distribution: an Overhauser distribution of local fields between -B_1 and
+    +B_1 gives P(t) = J0(gamma_mu B_1 t) (Blundell, De Renzi, Lancaster &
+    Pratt, *Muon Spectroscopy*, OUP 2022, eqn 6.47), which at late times looks
+    like a damped cosine with a -45 degree phase shift (eqn 6.48).  Here the
+    field-distribution edge is parameterised as a frequency
+    ``f = gamma_mu B_1 / 2 pi`` in MHz.
+    """
+    t = np.asarray(t, dtype=float)
+    return np.asarray(j0(2.0 * np.pi * float(frequency) * t + float(phase)), dtype=float)
+
+
+# Cache of Gaussian-broadened-KT curves keyed by quantised (Delta, B_L, width, tmax).
+_GBKT_CACHE: dict[tuple, tuple[NDArray, NDArray]] = {}
+_GBKT_CACHE_MAX = 128
+_GBKT_NODES = 21
+
+
+def gaussian_broadened_kt(
+    t: NDArray,
+    Delta: float,
+    B_L: float,
+    w_rel: float,
+) -> NDArray:
+    """Static Gaussian Kubo-Toyabe averaged over a Gaussian distribution of Delta.
+
+    G(t) = integral dDelta' p(Delta') G_KT(t; Delta', B_L), with ``p`` a Gaussian
+    of mean ``Delta`` and standard deviation ``w_rel * Delta`` (``w_rel`` is the
+    *fractional* width).  Models disordered hosts where a single Kubo-Toyabe
+    width is too sharp — the distribution of static widths fills in the dip and
+    softens the 1/3-tail recovery (cf. the Gaussian-broadened Gaussian of
+    Noakes & Kalvius, Phys. Rev. B 56, 2352 (1997); WiMDA's ``Gau broad KT``).
+
+    Evaluated by Gauss-Hermite quadrature (21 nodes) over the Delta
+    distribution, with negative quadrature widths reflected to ``|Delta'|`` (as
+    in WiMDA).  ``w_rel = 0`` reduces exactly to the static (LF) Kubo-Toyabe.
+
+    Note: WiMDA's ``rel width`` parameter enters as weight ``exp(-(i/7)^2)`` over
+    ``Delta(1 + w i/7)``, i.e. a Gaussian of fractional standard deviation
+    ``w/sqrt(2)``; ``w_rel`` here *is* the fractional standard deviation
+    (``w_rel = w_WiMDA / sqrt(2)``).
+    """
+    t = np.asarray(t, dtype=float)
+    scalar = t.ndim == 0
+    tt = np.atleast_1d(np.abs(t))
+    delta = abs(float(Delta))
+    width = abs(float(w_rel))
+    if width <= 1e-9 or delta <= 0.0:
+        gz = longitudinal_field_kubo_toyabe(tt, 1.0, delta, B_L, 0.0)
+        out = np.asarray(gz, dtype=float)
+        return float(out[0]) if scalar else out
+
+    tmax = float(max(tt.max(), 1e-6))
+    key = (round(delta, 6), round(float(B_L), 4), round(width, 6), round(tmax, 5))
+    cached = _GBKT_CACHE.get(key)
+    if cached is None:
+        nodes, weights = np.polynomial.hermite.hermgauss(_GBKT_NODES)
+        grid = np.linspace(0.0, tmax, 800)
+        acc = np.zeros_like(grid)
+        for x, w in zip(nodes, weights, strict=True):
+            delta_i = abs(delta * (1.0 + np.sqrt(2.0) * width * float(x)))
+            acc += float(w) * np.asarray(
+                longitudinal_field_kubo_toyabe(grid, 1.0, delta_i, B_L, 0.0), dtype=float
+            )
+        acc /= np.sqrt(np.pi)
+        if len(_GBKT_CACHE) >= _GBKT_CACHE_MAX:
+            _GBKT_CACHE.pop(next(iter(_GBKT_CACHE)))
+        _GBKT_CACHE[key] = (grid, acc)
+        cached = (grid, acc)
+    grid, curve = cached
+    out = np.interp(tt, grid, curve)
     return float(out[0]) if scalar else out
 
 

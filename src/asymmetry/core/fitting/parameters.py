@@ -171,7 +171,34 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     ),
     "r1": ParamInfo("r1", "r1", "r₁", r"$r_1$", r"{\it r}_{1}", "Å", default_min=0.0),
     "r2": ParamInfo("r2", "r2", "r₂", r"$r_2$", r"{\it r}_{2}", "Å", default_min=0.0),
+    "r3": ParamInfo("r3", "r3", "r₃", r"$r_3$", r"{\it r}_{3}", "Å", default_min=0.0),
     "theta": ParamInfo("theta", "theta", "θ", r"$\theta$", r"\theta", "°", default_min=0.0),
+    "phi3": ParamInfo("phi3", "phi3", "φ₃", r"$\phi_3$", r"\phi_{3}", "°", default_min=0.0),
+    "Gamma": ParamInfo("Gamma", "Gamma", "Γ", r"$\Gamma$", r"\Gamma", "μs⁻¹", default_min=0.0),
+    "delta_ex": ParamInfo(
+        "delta_ex", "delta_ex", "δ_ex", r"$\delta_{ex}$", r"\delta_{ex}", "MHz", default_min=0.0
+    ),
+    "tau_c": ParamInfo("tau_c", "tau_c", "τ_c", r"$\tau_c$", r"\tau_{c}", "μs", default_min=0.0),
+    "w_rel": ParamInfo(
+        "w_rel", "w_rel", "w_Δ", r"$w_\Delta$", r"{\it w}_{\Delta}", default_min=0.0
+    ),
+    "B_dip": ParamInfo(
+        "B_dip", "B_dip", "B_dip", r"$B_{dip}$", r"{\it B}_{dip}", "G", default_min=0.0
+    ),
+    "lambda_T": ParamInfo(
+        "lambda_T", "lambda_T", "λ_T", r"$\lambda_T$", r"\lambda_{T}", "μs⁻¹", default_min=0.0
+    ),
+    "r_muH": ParamInfo(
+        "r_muH", "r_muH", "r_μH", r"$r_{\mu H}$", r"{\it r}_{\mu H}", "Å", default_min=0.0
+    ),
+    "r_mue": ParamInfo(
+        "r_mue", "r_mue", "r_μe", r"$r_{\mu e}$", r"{\it r}_{\mu e}", "Å", default_min=0.0
+    ),
+    "f_dip": ParamInfo(
+        "f_dip", "f_dip", "f_dip", r"$f_{dip}$", r"{\it f}_{dip}", "MHz", default_min=0.0
+    ),
+    "f_quad": ParamInfo("f_quad", "f_quad", "f_quad", r"$f_{quad}$", r"{\it f}_{quad}", "MHz"),
+    "J_spin": ParamInfo("J_spin", "J", "J", r"$J$", r"{\it J}", default_min=0.5),
     "baseline": ParamInfo("baseline", "baseline", "baseline", "baseline", "baseline", "%"),
     "a": ParamInfo("a", "a", "a", r"$a$", r"{\it a}"),
     "b": ParamInfo("b", "b", "b", r"$b$", r"{\it b}"),
@@ -321,7 +348,20 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "r_muF": "Muon-fluorine distance for two-spin or linear F-mu-F polarization functions.",
     "r1": "First muon-fluorine distance in the general F-mu-F geometry.",
     "r2": "Second muon-fluorine distance in the general F-mu-F geometry.",
+    "r3": "Distance from the muon to the third fluorine in the F-mu-F + F geometry.",
     "theta": "F-mu-F bond angle in degrees for the general three-spin geometry.",
+    "phi3": "Angle in degrees between the F-mu-F axis and the third fluorine direction.",
+    "Gamma": "Risch-Kehr relaxation rate set by the 1D diffusion of the depolarizing carrier.",
+    "delta_ex": "Amplitude of the fluctuating (nuclear-hyperfine or spin-exchange) coupling relaxing muonium.",
+    "tau_c": "Correlation time of the fluctuating coupling (inverse hop or collision rate).",
+    "w_rel": "Fractional standard deviation of the Gaussian distribution of the Kubo-Toyabe width Delta.",
+    "B_dip": "Dipolar field at the muon from the coupled nuclear spin (omega_d = gamma_mu B_dip).",
+    "lambda_T": "Transverse damping applied to the oscillating part of the dipole-pair polarization.",
+    "r_muH": "Muon-proton distance for the spin-1/2 dipole-pair polarization.",
+    "r_mue": "Muon-electron distance for the spin-1/2 dipole-pair polarization.",
+    "f_dip": "Dipolar coupling frequency between the muon and the spin-J nucleus.",
+    "f_quad": "Quadrupolar splitting frequency of the spin-J nucleus (sign-sensitive).",
+    "J_spin": "Nuclear spin quantum number J (half-integer); normally held fixed.",
     "baseline": "Additive constant baseline contribution.",
     "a": "Scale prefactor for the component term.",
     "b": "Additive intercept term.",

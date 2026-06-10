@@ -67,12 +67,11 @@ def test_general_fmuf_cache_hits_on_repeated_geometry() -> None:
 
 
 def test_muon_fluorine_components_registered() -> None:
-    expected = {"MuF", "FmuF_Linear", "FmuF_General"}
+    expected = {"MuF", "FmuF_Linear", "FmuF_General", "FmuF_Triangle", "DynamicFmuF"}
     assert expected.issubset(COMPONENTS)
 
-    assert COMPONENTS["MuF"].category == "Muon-Fluorine"
-    assert COMPONENTS["FmuF_Linear"].category == "Muon-Fluorine"
-    assert COMPONENTS["FmuF_General"].category == "Muon-Fluorine"
+    for name in expected:
+        assert COMPONENTS[name].category == "Nuclear dipolar"
 
 
 def test_muon_fluorine_components_return_finite_arrays() -> None:
