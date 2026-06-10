@@ -2760,6 +2760,11 @@ class MainWindow(QMainWindow):
                 run.grouping["forward_group"] = forward_gid
                 run.grouping["backward_group"] = backward_gid
             run.grouping["alpha"] = float(alpha if alpha > 0 else 1.0)
+            for key in ("alpha_method", "alpha_error", "alpha_reference_run"):
+                if key in grouping_result:
+                    run.grouping[key] = grouping_result.get(key)
+                else:
+                    run.grouping.pop(key, None)
             if axis_pairs:
                 run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run.grouping["alpha"]))
                 run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run.grouping["alpha"]))
@@ -3114,6 +3119,11 @@ class MainWindow(QMainWindow):
                 "period_mode": period_mode,
             }
         )
+        for key in ("alpha_method", "alpha_error", "alpha_reference_run"):
+            if key in grouping_result:
+                run.grouping[key] = grouping_result.get(key)
+            else:
+                run.grouping.pop(key, None)
         if axis_pairs:
             run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run_alpha))
             run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run_alpha))

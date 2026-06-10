@@ -94,14 +94,31 @@ Errors per bin are Poisson, propagated to A (§15.3–15.4).
 
 ### Design implications
 
-Port both objectives **verbatim as objectives** but replace the grid walk
-with bounded continuous optimisation (`scipy.optimize.minimize_scalar`,
-bounded method on ln α to make the bounds symmetric), and report an
-uncertainty (decision recorded in implementation-options.md). Operate on
-**raw grouped counts inside the good-bin window** (deterministic, independent
-of display bunching) rather than WiMDA's live-binned `groupd` — divergence
-D3 below. Keep ΣF/ΣB as a third labelled method ("Count ratio — TF
-calibration runs only").
+Port the diamagnetic objective **verbatim** but replace the grid walk with
+bounded continuous optimisation (`scipy.optimize.minimize_scalar` on ln α),
+and report an uncertainty (decision recorded in implementation-options.md).
+Operate on grouped counts inside the good-bin window, **internally packed
+into equal-statistics bins** (target ≈ 200 combined counts/bin, cumulative-
+count edges) — deterministic and independent of display bunching, unlike
+WiMDA's live-binned `groupd` (divergence D3); uniform-width packing was
+tried first and rejected because near-empty tail bins plus the positive-
+count mask select upward-fluctuating bins (E[N | N > 0] ≫ E[N]).
+
+**Implementation finding (D14):** WiMDA's General relative-scatter
+functional was transcribed and tested on synthetic relaxing LF data; it has
+**no interior minimum at realistic statistics** — the functional
+interpolates between the relative scatter of F alone (α → 0) and B alone
+(α → ∞), and the grid walk runs to its clamp (reproduced in
+`tests/test_alpha_estimation.py::test_general_survives_where_wimda_scatter_walk_collapses`).
+Asymmetry therefore solves the *same flatness condition* in closed form:
+equating the smoothly weighted (e^{−2t/τ}) mean lifetime-corrected count
+density between two equal-statistics windows gives
+α = (A₁ − A₂)/(B₂ − B₁), linear in the counts and hence unbiased; on data
+without polarisation contrast it reports failure instead of a number (a
+property WiMDA's version lacks — its walk silently returns the clamp). At
+high statistics, where WiMDA's functional does develop an interior minimum,
+the two agree (same test module). Keep ΣF/ΣB as a third labelled method
+("Count ratio — TF calibration runs only").
 
 ---
 
@@ -456,7 +473,7 @@ follow the umbrella's physics-correctness mandate.
 |---|---|---|---|---|
 | D1 | α optimiser | Coarse-to-fine grid walk (0.1/0.01/0.001), clamp [0.1, 10], abort if α > 4 | Bounded continuous minimisation on ln α; converges to machine precision; explicit failure status | improvement |
 | D2 | α uncertainty | Bare number | σ_α reported with the estimate (method per implementation-options.md) | improvement |
-| D3 | α input data | Live display bins (`groupd`): depends on bunching, BG and deadtime settings at click time | Raw grouped counts in the good-bin window with current corrections applied deterministically; documented contract | improvement (reproducibility) |
+| D3 | α input data | Live display bins (`groupd`): depends on bunching, BG and deadtime settings at click time | Grouped counts in the good-bin window, internally packed to equal-statistics bins (≈ 200 combined counts) — deterministic, independent of display settings | improvement (reproducibility) |
 | D4 | Tail-fit weighting | σ = √N, bins with ≤ 4 counts deleted via σ = 10¹⁰ | Poisson MLE (deviance), all bins retained | improvement (low-count correctness) |
 | D5 | Tail-fit window | Late half of current display bins, implicit | Explicit window on raw grouped counts; default late half of good-bin range, user-adjustable; uncertainty + consistent-with-zero flag | improvement |
 | D6 | BG-run deadtime | BG counts subtracted raw from deadtime-corrected sample counts | Both runs deadtime-corrected identically before subtraction | improvement (consistency) |
@@ -467,11 +484,13 @@ follow the umbrella's physics-correctness mandate.
 | D11 | G−R combination | Count-level `G·n_red/n_green − R`, integer error arithmetic | Asymmetry-level combination, quadrature errors (existing `combine_period_asymmetry` convention); subset *summation* is count-level (exact) | convention (documented since PR #29 era) |
 | D12 | Period slots | 8 fixed UI slots (`maxperiods`) | Arbitrary N (matrix rows generated per file) | improvement |
 | D13 | Estimator persistence | α method stored in binary `.mgp` grouping record | α method + estimate provenance in project grouping dict (schema-additive) | modernisation |
+| D14 | General-α estimator | Weighted relative-scatter functional of (F/√α + B√α)·e^{t/τ}, grid-walked; no interior minimum at realistic statistics — walk runs to the α-clamp and returns it silently | Same flatness principle solved in closed form between two equal-statistics windows (α = (A₁−A₂)/(B₂−B₁)); unbiased, and fails informatively without polarisation contrast; agrees with WiMDA's walk at high statistics | physics-correctness replacement (objective, not principle) |
 
-Non-divergences worth stating: the two α objectives, the bin-integrated
-tail-fit model C(t, w), the frame-ratio BG-run scale, the constant-error
-width law bin0·e^{λ_μ t}, the {Ignore, Red, Green} mapping semantics, and
-dwell-period (mode 2) forced-Ignore are all ported exactly.
+Non-divergences worth stating: the diamagnetic α objective (D14 applies to
+the General method only), the bin-integrated tail-fit model C(t, w), the
+frame-ratio BG-run scale, the constant-error width law bin0·e^{λ_μ t}, the
+{Ignore, Red, Green} mapping semantics, and dwell-period (mode 2)
+forced-Ignore are all ported exactly.
 
 ## Brief-verification notes (umbrella brief vs source)
 

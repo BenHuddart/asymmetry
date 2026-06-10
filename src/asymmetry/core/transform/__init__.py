@@ -1,9 +1,12 @@
 """Data transformations: asymmetry calculation, grouping, rebinning."""
 
 from asymmetry.core.transform.asymmetry import (
+    ALPHA_ESTIMATION_METHODS,
+    AlphaEstimate,
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
     estimate_alpha,
+    estimate_alpha_detailed,
 )
 from asymmetry.core.transform.background import (
     BackgroundCorrectionResult,
@@ -68,4 +71,7 @@ __all__ = [
     "FieldScan",
     "FieldScanPoint",
     "rebin",
+    "ALPHA_ESTIMATION_METHODS",
+    "AlphaEstimate",
+    "estimate_alpha_detailed",
 ]

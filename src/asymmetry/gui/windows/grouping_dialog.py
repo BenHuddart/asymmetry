@@ -45,9 +45,45 @@ from asymmetry.core.transform import (
     estimate_deadtime_from_histograms,
     supports_background_correction,
 )
-from asymmetry.core.transform.asymmetry import estimate_alpha
+from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_detailed
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles.widgets import apply_param_table_style
+
+#: Alpha estimation methods offered by the Estimate control: combo label,
+#: grouping-dict key, and a one-line explanation shown as the tooltip.
+_ALPHA_METHOD_ITEMS = (
+    (
+        "Diamagnetic (TF)",
+        "diamagnetic",
+        "Minimise the weighted asymmetry over a transverse-field calibration "
+        "run, so A(t) oscillates symmetrically about zero.",
+    ),
+    (
+        "General (LF/ZF)",
+        "general",
+        "Balance lifetime-corrected counts between early and late times; "
+        "works on relaxing LF/ZF data, but needs visible relaxation.",
+    ),
+    (
+        "Count ratio ΣF/ΣB",
+        "ratio",
+        "Plain count ratio (Mantid AlphaCalc). Transverse-field calibration "
+        "runs only — relaxing polarization biases it.",
+    ),
+)
+
+
+def _format_value_with_uncertainty(value: float, error: float | None) -> str:
+    """Format ``1.2345 ± 0.0067`` compactly as ``1.2345(67)``."""
+    if error is None or not np.isfinite(error) or error <= 0.0:
+        return f"{value:.4f}"
+    exponent = int(np.floor(np.log10(error)))
+    decimals = max(0, 1 - exponent)
+    scaled_error = int(round(error * 10**decimals))
+    if scaled_error >= 100:  # rounding pushed it to three digits, e.g. 0.0995
+        scaled_error = int(round(scaled_error / 10))
+        decimals -= 1
+    return f"{value:.{decimals}f}({scaled_error})"
 
 
 class GroupingDialog(QDialog):
@@ -107,6 +143,10 @@ class GroupingDialog(QDialog):
         self._vector_backward_labels: dict[str, QLabel] = {}
         self._vector_estimate_buttons: dict[str, QPushButton] = {}
         self._updating_deadtime_value_combo = False
+        # Last successful estimate per slot ("single" or axis name):
+        # (alpha, alpha_error, reference_run). Used to attach provenance to
+        # the payload only while the spin still holds the estimated value.
+        self._alpha_estimate_state: dict[str, tuple[float, float | None, int]] = {}
 
         root = QVBoxLayout(self)
         root.setSpacing(6)
@@ -358,6 +398,19 @@ class GroupingDialog(QDialog):
         estimate_btn.setDefault(False)
         estimate_btn.clicked.connect(self._estimate_alpha)
 
+        self._alpha_method_combo = QComboBox()
+        for label, key, explanation in _ALPHA_METHOD_ITEMS:
+            self._alpha_method_combo.addItem(label, key)
+            self._alpha_method_combo.setItemData(
+                self._alpha_method_combo.count() - 1,
+                explanation,
+                Qt.ItemDataRole.ToolTipRole,
+            )
+        self._set_alpha_method(str(grouping.get("alpha_method", "diamagnetic")))
+
+        self._alpha_result_label = QLabel("")
+        self._alpha_result_label.setWordWrap(True)
+
         self._forward_row_label = QLabel("Forward Group")
         self._backward_row_label = QLabel("Backward Group")
         self._alpha_row_label = QLabel("Alpha")
@@ -369,8 +422,10 @@ class GroupingDialog(QDialog):
         alpha_row = QHBoxLayout(self._single_alpha_widget)
         alpha_row.setContentsMargins(0, 0, 0, 0)
         alpha_row.addWidget(self._alpha_spin)
+        alpha_row.addWidget(self._alpha_method_combo)
         alpha_row.addWidget(estimate_btn)
         form.addRow(self._alpha_row_label, self._single_alpha_widget)
+        form.addRow("", self._alpha_result_label)
 
         # Vector alpha widget: one row per axis (P_z primary, then P_y, P_x)
         # Columns: axis label | Forward group | Backward group | α spin | Estimate button
@@ -675,6 +730,9 @@ class GroupingDialog(QDialog):
         )
         self._refresh_group_combo_items(forward_gid=forward_gid, backward_gid=backward_gid)
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
+        self._set_alpha_method(str(grouping.get("alpha_method", "diamagnetic")))
+        self._alpha_estimate_state.clear()
+        self._alpha_result_label.setText("")
         max_bin = self._max_bin_index_for_reference_dataset()
         index_base = self._bin_index_base(grouping)
         self._t0_spin.setRange(index_base, max_bin + index_base)
@@ -1458,6 +1516,40 @@ class GroupingDialog(QDialog):
         if idx >= 0:
             combo.setCurrentIndex(idx)
 
+    def _set_alpha_method(self, method_key: str) -> None:
+        """Select the alpha estimation method combo entry, defaulting to diamagnetic."""
+        idx = self._alpha_method_combo.findData(str(method_key))
+        self._alpha_method_combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _current_alpha_method(self) -> str:
+        """Return the grouping-dict key of the selected estimation method."""
+        return str(self._alpha_method_combo.currentData() or "diamagnetic")
+
+    def _reference_time_us(self, n_bins: int, t0_bin: int) -> np.ndarray:
+        """Bin-centre times (µs, relative to t0) for the reference run."""
+        bin_width = 0.016
+        if self._run is not None and self._run.histograms:
+            bin_width = float(self._run.histograms[0].bin_width)
+        return (np.arange(n_bins, dtype=np.float64) - float(t0_bin)) * bin_width
+
+    def _record_alpha_estimate(self, slot: str, estimate: AlphaEstimate) -> None:
+        """Remember a successful estimate and show it in the result label."""
+        self._alpha_estimate_state[slot] = (
+            float(estimate.alpha),
+            estimate.alpha_error,
+            int(self._reference_dataset.run_number),
+        )
+        method_label = next(
+            (label for label, key, _ in _ALPHA_METHOD_ITEMS if key == estimate.method),
+            estimate.method,
+        )
+        formatted = _format_value_with_uncertainty(estimate.alpha, estimate.alpha_error)
+        slot_prefix = "" if slot == "single" else f"{slot}: "
+        self._alpha_result_label.setText(
+            f"{slot_prefix}α = {formatted} — {method_label}, "
+            f"run {self._reference_dataset.run_number}"
+        )
+
     def _estimate_alpha(self) -> None:
         """Estimate alpha using only the current reference run.
 
@@ -1466,11 +1558,14 @@ class GroupingDialog(QDialog):
         """
         forward_gid = int(self._forward_combo.currentData())
         backward_gid = int(self._backward_combo.currentData())
-        alpha = self._estimate_alpha_for_group_ids(forward_gid, backward_gid)
-        if alpha is not None:
-            self._alpha_spin.setValue(float(alpha))
+        estimate = self._estimate_alpha_for_group_ids(forward_gid, backward_gid)
+        if estimate is not None:
+            self._alpha_spin.setValue(float(estimate.alpha))
+            self._record_alpha_estimate("single", estimate)
 
-    def _estimate_alpha_for_group_ids(self, forward_gid: int, backward_gid: int) -> float | None:
+    def _estimate_alpha_for_group_ids(
+        self, forward_gid: int, backward_gid: int
+    ) -> AlphaEstimate | None:
         """Estimate alpha for the provided group IDs using the reference run."""
         if forward_gid == backward_gid:
             QMessageBox.warning(
@@ -1502,17 +1597,25 @@ class GroupingDialog(QDialog):
         forward_counts = apply_grouping(self._run.histograms, forward_indices)
         backward_counts = apply_grouping(self._run.histograms, backward_indices)
 
-        _t0_bin, _t_good_offset, first_good_bin, last_good_bin = (
+        t0_bin, _t_good_offset, first_good_bin, last_good_bin = (
             self._resolve_good_bin_limits_from_controls()
         )
-        return float(
-            estimate_alpha(
-                forward_counts,
-                backward_counts,
-                first_good_bin=first_good_bin,
-                last_good_bin=last_good_bin,
-            )
+        method = self._current_alpha_method()
+        time_us = None
+        if method == "general":
+            time_us = self._reference_time_us(len(forward_counts), int(t0_bin))
+        estimate = estimate_alpha_detailed(
+            forward_counts,
+            backward_counts,
+            method=method,
+            time_us=time_us,
+            first_good_bin=first_good_bin,
+            last_good_bin=last_good_bin,
         )
+        if not estimate.ok:
+            QMessageBox.warning(self, "Estimate Failed", estimate.message)
+            return None
+        return estimate
 
     def _estimate_alpha_for_axis(self, axis: str) -> None:
         """Estimate alpha for one vector polarization axis pair."""
@@ -1522,11 +1625,12 @@ class GroupingDialog(QDialog):
                 self, "Estimate Failed", f"No vector grouping pair is available for {axis}."
             )
             return
-        alpha = self._estimate_alpha_for_group_ids(int(pair[0]), int(pair[1]))
-        if alpha is not None:
-            self._vector_alpha_spins[axis].setValue(alpha)
+        estimate = self._estimate_alpha_for_group_ids(int(pair[0]), int(pair[1]))
+        if estimate is not None:
+            self._vector_alpha_spins[axis].setValue(float(estimate.alpha))
+            self._record_alpha_estimate(axis, estimate)
             if axis == "P_z":
-                self._alpha_spin.setValue(alpha)
+                self._alpha_spin.setValue(float(estimate.alpha))
 
     def _estimate_all_alpha(self) -> None:
         """Estimate alpha for all vector polarization axes."""
@@ -1589,6 +1693,16 @@ class GroupingDialog(QDialog):
         if vector_mode:
             alpha_value = float(self._vector_alpha_spins["P_z"].value())
 
+        # Attach estimate provenance only while the spin still holds the
+        # value the estimator produced (a manual edit invalidates it).
+        alpha_provenance: dict[str, Any] = {"alpha_method": self._current_alpha_method()}
+        slot = "P_z" if vector_mode else "single"
+        recorded = self._alpha_estimate_state.get(slot)
+        if recorded is not None and abs(recorded[0] - alpha_value) < 1e-9:
+            if recorded[1] is not None:
+                alpha_provenance["alpha_error"] = float(recorded[1])
+            alpha_provenance["alpha_reference_run"] = int(recorded[2])
+
         return (
             {
                 "groups": {
@@ -1614,6 +1728,7 @@ class GroupingDialog(QDialog):
                 "period_mode": self._current_period_mode(),
                 "bin_index_base": self._bin_index_base(),
             }
+            | alpha_provenance
             | (
                 {
                     "alpha_x": float(self._vector_alpha_spins["P_x"].value()),

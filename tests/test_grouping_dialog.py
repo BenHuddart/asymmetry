@@ -1013,3 +1013,73 @@ def test_group_table_uses_scrollable_capped_height(qapp: QApplication) -> None:
 
     assert dialog._group_table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
     assert dialog._group_table.maximumHeight() > 0
+
+
+# ---------------------------------------------------------------------------
+# Alpha estimation method picker + provenance (data-reduction-parity Phase 1)
+# ---------------------------------------------------------------------------
+
+
+def test_alpha_method_combo_defaults_to_diamagnetic(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    assert dialog._current_alpha_method() == "diamagnetic"
+    result = dialog.get_grouping_result()
+    assert result["alpha_method"] == "diamagnetic"
+
+
+def test_alpha_method_round_trips_through_payload_and_reload(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    dialog = GroupingDialog([dataset])
+    dialog._set_alpha_method("ratio")
+    result = dialog.get_grouping_result()
+    assert result["alpha_method"] == "ratio"
+
+    dataset.run.grouping["alpha_method"] = "general"
+    dialog2 = GroupingDialog([dataset])
+    assert dialog2._current_alpha_method() == "general"
+
+
+def test_estimate_records_provenance_in_payload(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog._estimate_alpha()
+    assert dialog._alpha_spin.value() == pytest.approx(2.0)
+    assert dialog._alpha_result_label.text() != ""
+    result = dialog.get_grouping_result()
+    assert result["alpha_method"] == "diamagnetic"
+    assert result["alpha_reference_run"] == 4001
+    # Bootstrap error from flat 100/50 counts is small but present.
+    assert result.get("alpha_error") is None or result["alpha_error"] >= 0.0
+
+
+def test_manual_alpha_edit_invalidates_estimate_provenance(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog._estimate_alpha()
+    dialog._alpha_spin.setValue(dialog._alpha_spin.value() + 0.5)
+    result = dialog.get_grouping_result()
+    assert "alpha_error" not in result
+    assert "alpha_reference_run" not in result
+    assert result["alpha_method"] == "diamagnetic"
+
+
+def test_estimate_failure_warns_and_leaves_alpha(qapp: QApplication, monkeypatch) -> None:
+    dataset = _dataset_with_histograms()
+    dialog = GroupingDialog([dataset])
+    dialog._set_alpha_method("general")  # flat 4-bin data: no relaxation contrast
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        grouping_dialog_module.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: warnings.append(str(args[2]) if len(args) > 2 else ""),
+    )
+    before = dialog._alpha_spin.value()
+    dialog._estimate_alpha()
+    assert warnings, "expected a warning dialog for the failed estimate"
+    assert dialog._alpha_spin.value() == pytest.approx(before)
+
+
+def test_format_value_with_uncertainty() -> None:
+    fmt = grouping_dialog_module._format_value_with_uncertainty
+    assert fmt(1.2345, 0.0067) == "1.2345(67)"
+    assert fmt(1.37, None) == "1.3700"
+    assert fmt(0.9876, 0.05) == "0.988(50)"
+    assert fmt(1.3, 0.0995) == "1.30(10)"
