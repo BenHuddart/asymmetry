@@ -10,10 +10,27 @@ in their member set (Single → the active run; Batch → the selection).
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QComboBox,
+    QFormLayout,
+    QGroupBox,
+    QLabel,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.panels.fit_panel import GlobalFitTab
+
+#: Fit-target choices (label, mode key) shown in the count-domain selector.
+_FIT_TARGETS: tuple[tuple[str, str], ...] = (
+    ("All groups", "all"),
+    ("Forward + Backward (free α)", "fb"),
+    ("Single group", "single"),
+)
+_FIT_COSTS: tuple[tuple[str, str], ...] = (("Poisson", "poisson"), ("Gaussian √N", "gaussian"))
+_SINGLE_SIDES: tuple[tuple[str, str], ...] = (("Forward", "forward"), ("Backward", "backward"))
 
 
 class MultiGroupFitWindow(QWidget):
@@ -22,11 +39,14 @@ class MultiGroupFitWindow(QWidget):
     grouped_fit_completed = Signal(object, object)
     grouped_preview_requested = Signal(object, object)
     fit_range_edit_committed = Signal(float, float)
+    count_fit_completed = Signal(object, object)  # (dataset, count-fit result)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        layout.addWidget(self._build_target_controls())
 
         self._tabs = QTabWidget()
         # Single = the active run's multi-group fit; Batch = the multi-run series.
@@ -36,10 +56,53 @@ class MultiGroupFitWindow(QWidget):
             tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
             tab.grouped_preview_requested.connect(self.grouped_preview_requested.emit)
             tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
+            tab.count_fit_completed.connect(self.count_fit_completed.emit)
         self._tabs.addTab(self._single_fit_tab, "Single")
         self._tabs.addTab(self._batch_fit_tab, "Batch")
         layout.addWidget(self._tabs)
         self._run_label = ""
+        self._sync_count_fit_target()
+
+    def _build_target_controls(self) -> QWidget:
+        """Build the count-domain fit-target / cost / side selector row."""
+        box = QGroupBox("Fit target")
+        form = QFormLayout(box)
+        form.setContentsMargins(8, 4, 8, 4)
+
+        self._target_combo = QComboBox()
+        for label, _key in _FIT_TARGETS:
+            self._target_combo.addItem(label)
+        self._target_combo.currentIndexChanged.connect(self._sync_count_fit_target)
+
+        self._cost_combo = QComboBox()
+        for label, _key in _FIT_COSTS:
+            self._cost_combo.addItem(label)
+        self._cost_combo.currentIndexChanged.connect(self._sync_count_fit_target)
+
+        self._side_combo = QComboBox()
+        for label, _key in _SINGLE_SIDES:
+            self._side_combo.addItem(label)
+        self._side_combo.currentIndexChanged.connect(self._sync_count_fit_target)
+
+        form.addRow(QLabel("Target"), self._target_combo)
+        form.addRow(QLabel("Cost"), self._cost_combo)
+        self._side_label = QLabel("Single group")
+        form.addRow(self._side_label, self._side_combo)
+        return box
+
+    def _sync_count_fit_target(self, *_args) -> None:
+        """Push the selector state down to both grouped surfaces."""
+        mode = _FIT_TARGETS[self._target_combo.currentIndex()][1]
+        cost = _FIT_COSTS[self._cost_combo.currentIndex()][1]
+        side = _SINGLE_SIDES[self._side_combo.currentIndex()][1]
+        single = mode == "single"
+        self._side_combo.setEnabled(single)
+        self._side_label.setEnabled(single)
+        self._cost_combo.setEnabled(mode != "all")
+        for tab in (self._single_fit_tab, self._batch_fit_tab):
+            tab.set_count_fit_mode(mode)
+            tab.set_count_fit_cost(cost)
+            tab.set_count_single_side(side)
 
     def _grouped_tabs(self) -> tuple[GlobalFitTab, GlobalFitTab]:
         return (self._single_fit_tab, self._batch_fit_tab)

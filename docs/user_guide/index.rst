@@ -39,6 +39,7 @@ material.
    fit_wizard
    global_fit_wizard
    grouped_time_domain_fitting
+   count_domain_fitting
    alc_mode
 
 .. toctree::

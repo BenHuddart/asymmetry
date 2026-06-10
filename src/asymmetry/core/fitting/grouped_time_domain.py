@@ -137,9 +137,18 @@ def build_grouped_time_domain_datasets(
     *,
     t_min: float | None = None,
     t_max: float | None = None,
+    lifetime_corrected: bool = True,
 ) -> list[MuonDataset]:
-    """Return lifetime-corrected grouped-count datasets for one grouped run."""
-    groups = build_grouped_time_domain_groups(dataset, t_min=t_min, t_max=t_max)
+    """Return grouped-count datasets for one grouped run.
+
+    With ``lifetime_corrected=True`` (the default) the counts are scaled by
+    ``exp(t / tau_mu)``; with ``False`` the raw detector counts are returned, on
+    which Poisson statistics are exact.
+    """
+    groups = build_grouped_time_domain_groups(
+        dataset, t_min=t_min, t_max=t_max, lifetime_corrected=lifetime_corrected
+    )
+    y_label = "Lifetime-corrected counts" if lifetime_corrected else "Counts"
     grouped_datasets: list[MuonDataset] = []
     for index, group in enumerate(groups, start=1):
         synthetic_run_number = _group_dataset_run_number(group.source_run_number, index)
@@ -152,7 +161,7 @@ def build_grouped_time_domain_datasets(
             "source_run_number": group.source_run_number,
             "grouped_time_domain": True,
             "x_label": "Time (μs)",
-            "y_label": "Lifetime-corrected counts",
+            "y_label": y_label,
         }
         grouped_datasets.append(
             MuonDataset(
@@ -166,13 +175,28 @@ def build_grouped_time_domain_datasets(
     return grouped_datasets
 
 
-def build_grouped_time_domain_groups(
-    dataset: MuonDataset,
-    *,
-    t_min: float | None = None,
-    t_max: float | None = None,
-) -> list[GroupedTimeDomainGroup]:
-    """Build grouped lifetime-corrected count domains from one dataset."""
+@dataclass
+class _CountGroupContext:
+    """Shared per-run setup for building one or more count-domain group traces.
+
+    Computed once over a chosen set of detector groups so that single-group,
+    forward/backward, and full multi-group builders all share the same t0
+    alignment, good-bin window, deadtime preparation, and bunching.
+    """
+
+    run: Any
+    prepared_histograms: list[Any]
+    common_t0: int
+    first_good: int
+    last_good: int
+    bunch_factor: int
+    bin_width: float
+    axis_start: float
+    group_names: dict[Any, Any]
+
+
+def _count_group_setup(dataset: MuonDataset) -> tuple[Any, dict, dict, dict]:
+    """Validate a dataset and return ``(run, grouping, groups_raw, included_groups)``."""
     run = dataset.run
     if run is None:
         raise ValueError("Grouped time-domain fitting requires a dataset with a source run")
@@ -185,7 +209,13 @@ def build_grouped_time_domain_groups(
         raise ValueError("Grouped time-domain fitting requires grouping definitions")
     included_raw = grouping.get("included_groups")
     included_groups = included_raw if isinstance(included_raw, dict) else {}
+    return run, grouping, groups_raw, included_groups
 
+
+def _resolve_group_indices(
+    grouping: dict, groups_raw: dict, included_groups: dict
+) -> list[tuple[int, list[int]]]:
+    """Return ``(group_id, detector_indices)`` for every included, non-empty group."""
     groups: list[tuple[int, list[int]]] = []
     for raw_group_id in sorted(groups_raw, key=str):
         try:
@@ -197,18 +227,23 @@ def build_grouped_time_domain_groups(
         indices = effective_group_indices(grouping, group_id)
         if indices:
             groups.append((group_id, indices))
-    if len(groups) < 2:
-        raise ValueError(
-            "Grouped time-domain fitting requires at least two included detector groups"
-        )
+    return groups
 
+
+def _count_group_context(
+    dataset: MuonDataset,
+    grouping: dict,
+    run: Any,
+    group_specs: list[tuple[int, list[int]]],
+) -> _CountGroupContext:
+    """Prepare the shared count-build context over the given detector groups."""
     apply_deadtime = bool(grouping.get("deadtime_correction", False))
     prepared_histograms, _ = prepare_histograms_with_deadtime(
         list(run.histograms),
         grouping,
         apply_deadtime,
     )
-    common_t0 = common_t0_for_groups(prepared_histograms, *(indices for _, indices in groups))
+    common_t0 = common_t0_for_groups(prepared_histograms, *(indices for _, indices in group_specs))
 
     try:
         first_good = max(0, int(grouping.get("first_good_bin", 0)))
@@ -230,60 +265,149 @@ def build_grouped_time_domain_groups(
     group_names = (
         grouping.get("group_names") if isinstance(grouping.get("group_names"), dict) else {}
     )
+    return _CountGroupContext(
+        run=run,
+        prepared_histograms=prepared_histograms,
+        common_t0=common_t0,
+        first_good=first_good,
+        last_good=last_good,
+        bunch_factor=bunch_factor,
+        bin_width=bin_width,
+        axis_start=axis_start,
+        group_names=group_names,
+    )
+
+
+def _build_one_count_group(
+    ctx: _CountGroupContext,
+    group_id: int,
+    indices: list[int],
+    *,
+    t_min: float | None,
+    t_max: float | None,
+    lifetime_corrected: bool,
+) -> GroupedTimeDomainGroup | None:
+    """Build one count-domain group trace from a prepared context.
+
+    Returns ``None`` when the group yields no usable bins inside the fit window.
+    """
+    run = ctx.run
+    counts = apply_grouping_aligned(
+        ctx.prepared_histograms,
+        indices,
+        common_t0_bin=ctx.common_t0,
+    )
+    if counts.size == 0:
+        return None
+    trimmed_counts = np.asarray(counts[ctx.first_good : ctx.last_good + 1], dtype=np.float64)
+    time = (np.arange(trimmed_counts.size, dtype=float) + float(ctx.axis_start)) * ctx.bin_width
+    if ctx.bunch_factor > 1:
+        time, trimmed_counts = _rebin_group_counts(time, trimmed_counts, ctx.bunch_factor)
+
+    if lifetime_corrected:
+        scale = np.exp(time / float(MUON_LIFETIME_US))
+        out_counts = trimmed_counts * scale
+        errors = np.sqrt(np.clip(trimmed_counts, 1.0, None)) * scale
+    else:
+        out_counts = trimmed_counts
+        errors = np.sqrt(np.clip(trimmed_counts, 1.0, None))
+
+    mask = np.ones_like(time, dtype=bool)
+    if t_min is not None:
+        mask &= time >= float(t_min)
+    if t_max is not None:
+        mask &= time <= float(t_max)
+    if not np.any(mask):
+        return None
+
+    group_name = ctx.group_names.get(group_id, f"Group {group_id}")
+    metadata = dict(run.metadata)
+    metadata.update(
+        {
+            "group_id": int(group_id),
+            "group_name": str(group_name),
+            "grouped_time_domain": True,
+            "grouped_time_domain_bunch_factor": ctx.bunch_factor,
+            "grouped_time_domain_lifetime_corrected": bool(lifetime_corrected),
+        }
+    )
+    return GroupedTimeDomainGroup(
+        group_id=int(group_id),
+        group_name=str(group_name),
+        time=np.asarray(time[mask], dtype=float).copy(),
+        counts=np.asarray(out_counts[mask], dtype=float).copy(),
+        error=np.asarray(errors[mask], dtype=float).copy(),
+        source_run_number=int(run.run_number),
+        metadata=metadata,
+    )
+
+
+def build_grouped_time_domain_groups(
+    dataset: MuonDataset,
+    *,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    lifetime_corrected: bool = True,
+) -> list[GroupedTimeDomainGroup]:
+    """Build grouped count domains from one dataset (all included groups)."""
+    run, grouping, groups_raw, included_groups = _count_group_setup(dataset)
+    specs = _resolve_group_indices(grouping, groups_raw, included_groups)
+    if len(specs) < 2:
+        raise ValueError(
+            "Grouped time-domain fitting requires at least two included detector groups"
+        )
+    ctx = _count_group_context(dataset, grouping, run, specs)
 
     built_groups: list[GroupedTimeDomainGroup] = []
-    for group_id, indices in groups:
-        counts = apply_grouping_aligned(
-            prepared_histograms,
+    for group_id, indices in specs:
+        group = _build_one_count_group(
+            ctx,
+            group_id,
             indices,
-            common_t0_bin=common_t0,
+            t_min=t_min,
+            t_max=t_max,
+            lifetime_corrected=lifetime_corrected,
         )
-        if counts.size == 0:
-            continue
-        trimmed_counts = np.asarray(counts[first_good : last_good + 1], dtype=np.float64)
-        time = (np.arange(trimmed_counts.size, dtype=float) + float(axis_start)) * bin_width
-        if bunch_factor > 1:
-            time, trimmed_counts = _rebin_group_counts(time, trimmed_counts, bunch_factor)
-
-        scaled_counts = trimmed_counts * np.exp(time / float(MUON_LIFETIME_US))
-        errors = np.sqrt(np.clip(trimmed_counts, 1.0, None)) * np.exp(
-            time / float(MUON_LIFETIME_US)
-        )
-
-        mask = np.ones_like(time, dtype=bool)
-        if t_min is not None:
-            mask &= time >= float(t_min)
-        if t_max is not None:
-            mask &= time <= float(t_max)
-        if not np.any(mask):
-            continue
-
-        group_name = group_names.get(group_id, f"Group {group_id}")
-        metadata = dict(run.metadata)
-        metadata.update(
-            {
-                "group_id": int(group_id),
-                "group_name": str(group_name),
-                "grouped_time_domain": True,
-                "grouped_time_domain_bunch_factor": bunch_factor,
-                "grouped_time_domain_lifetime_corrected": True,
-            }
-        )
-        built_groups.append(
-            GroupedTimeDomainGroup(
-                group_id=int(group_id),
-                group_name=str(group_name),
-                time=np.asarray(time[mask], dtype=float).copy(),
-                counts=np.asarray(scaled_counts[mask], dtype=float).copy(),
-                error=np.asarray(errors[mask], dtype=float).copy(),
-                source_run_number=int(run.run_number),
-                metadata=metadata,
-            )
-        )
+        if group is not None:
+            built_groups.append(group)
 
     if len(built_groups) < 2:
         raise ValueError("Grouped time-domain fitting produced fewer than two usable groups")
     return built_groups
+
+
+def build_count_group(
+    dataset: MuonDataset,
+    group_id: int,
+    *,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    lifetime_corrected: bool = True,
+) -> GroupedTimeDomainGroup:
+    """Build one named detector group's count-domain trace.
+
+    Unlike :func:`build_grouped_time_domain_groups` this does not require two
+    included groups: it serves single-histogram and forward/backward count fits,
+    which select specific detector groups regardless of the ``included_groups``
+    map.
+    """
+    run, grouping, groups_raw, included_groups = _count_group_setup(dataset)
+    gid = int(group_id)
+    indices = effective_group_indices(grouping, gid)
+    if not indices:
+        raise ValueError(f"Count-domain fitting found no detectors for group {group_id!r}")
+    ctx = _count_group_context(dataset, grouping, run, [(gid, indices)])
+    group = _build_one_count_group(
+        ctx,
+        gid,
+        indices,
+        t_min=t_min,
+        t_max=t_max,
+        lifetime_corrected=lifetime_corrected,
+    )
+    if group is None:
+        raise ValueError(f"Count-domain group {group_id!r} produced no usable bins")
+    return group
 
 
 def fit_grouped_time_domain(
@@ -495,6 +619,49 @@ def build_grouped_count_model(polarization_model_fn):
         )
 
     return grouped_count_model
+
+
+#: Per-domain nuisance parameters of the forward/backward count model.
+FB_LOCAL_PARAMS: tuple[str, ...] = ("background",)
+#: Shared (global) nuisance parameters of the forward/backward count model.
+FB_GLOBAL_NUISANCE_PARAMS: tuple[str, ...] = ("alpha", "N0")
+
+
+def build_fb_count_model(polarization_model_fn):
+    """Forward/backward count model with the detector balance ``alpha`` free.
+
+    Mirrors WiMDA ``fgFB``: one shared ``N0`` is split as ``N0·√alpha`` for the
+    forward histogram and ``N0/√alpha`` for the backward one, the shared physics
+    polarization enters with a forward (``+``) / backward (``-``) sign, and each
+    side carries its own background. ``sign`` is supplied per dataset as a fixed
+    parameter (``+1`` forward, ``-1`` backward); ``alpha`` and ``N0`` are shared
+    (global) and the physics-model parameters are global too, so ``alpha`` and
+    its correlation with the amplitude fall straight out of the joint fit.
+
+    The returned signal is on the **lifetime-corrected** count scale (the
+    background carries ``exp(t / tau_mu)``); raw-count callers multiply the whole
+    model by ``exp(-t / tau_mu)``.
+    """
+
+    def fb_count_model(t, **kwargs):
+        time = np.asarray(t, dtype=float)
+        alpha = float(kwargs.pop("alpha"))
+        n0 = float(kwargs.pop("N0"))
+        background = float(kwargs.pop("background"))
+        sign = float(kwargs.pop("sign"))
+
+        ralp = np.sqrt(abs(alpha))
+        if sign >= 0.0:
+            scale = ralp
+        else:
+            scale = 1.0 / ralp if ralp > 0.0 else 0.0
+
+        polarization = np.asarray(polarization_model_fn(time, **kwargs), dtype=float)
+        return n0 * scale * (1.0 + sign * polarization) + background * np.exp(
+            time / float(MUON_LIFETIME_US)
+        )
+
+    return fb_count_model
 
 
 #: The three member relationships a grouped-series fit can use.
