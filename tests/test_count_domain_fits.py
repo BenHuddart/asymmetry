@@ -440,6 +440,97 @@ def test_deadtime_dt0_recovered():
     assert result.parameters["DT0"].value == pytest.approx(dt0_true, abs=0.0015)
 
 
+def _retau_forward_histogram(run, tau_inject):
+    """Rescale the forward detector's decay envelope to a chosen (non-physical) tau.
+
+    The run is generated at the physical lifetime with no flat background, so the
+    counts are ``N0·exp(-t/τ_phys)·(1+P)``; multiplying bin ``i ≥ t0`` by
+    ``exp(t_i·(1/τ_phys − 1/τ_inject))`` converts the envelope to ``τ_inject``
+    while leaving the polarization untouched.
+    """
+    tau_phys = float(MUON_LIFETIME_US)
+    hist = run.histograms[0]
+    bin_width = float(hist.bin_width)
+    t0 = max(0, int(hist.t0_bin))
+    counts = np.asarray(hist.counts, dtype=float).copy()
+    idx = np.arange(counts.size, dtype=float)
+    t = np.maximum(idx - t0, 0.0) * bin_width
+    counts *= np.exp(t * (1.0 / tau_phys - 1.0 / tau_inject))
+    hist.counts = counts
+
+
+def test_free_lifetime_recovers_injected_tau():
+    """A free tau recovers an injected non-physical muon lifetime (musrfit-style)."""
+    template = build_builtin_template("ideal_continuous_fb")
+    run = simulate_run(
+        template, _tf, {"A": 20.0, "f": 1.0, "phi": 0.0},
+        total_events=40e6, alpha=1.0, background_per_bin=0.0, seed=2,
+    )  # fmt: skip
+    tau_inject = 2.5  # μs, well away from the physical 2.197 μs
+    _retau_forward_histogram(run, tau_inject)
+    ds = MuonDataset(
+        time=np.array([]), asymmetry=np.array([]), error=np.array([]), metadata={}, run=run
+    )
+    params = ParameterSet(
+        [
+            Parameter("N0", 4.5e3, min=0.0),
+            Parameter("background", 0.0, fixed=True),  # no flat background in this run
+            Parameter("A", 19.0, min=0.0, max=50.0),
+            Parameter("f", 1.0, min=0.0),
+            Parameter("phi", 0.0),
+            Parameter("tau", float(MUON_LIFETIME_US), min=1.0, max=4.0),
+        ]
+    )
+    result = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+    assert result.success
+    assert result.parameters["tau"].value == pytest.approx(tau_inject, abs=0.03)
+    assert result.parameters["A"].value == pytest.approx(20.0, abs=0.6)
+
+
+def test_free_lifetime_off_state_equivalent_to_fixed_physical():
+    """tau fixed at the physical value reproduces the no-tau fit (raw-model branch)."""
+    ds = _continuous_run()
+    base = fit_single_histogram(ds, 1, _tf, _continuous_single(), cost="gaussian")
+    params = _continuous_single()
+    params.add(Parameter("tau", float(MUON_LIFETIME_US), fixed=True))
+    fixed_tau = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+    assert fixed_tau.parameters["A"].value == pytest.approx(base.parameters["A"].value, rel=1e-6)
+    assert fixed_tau.parameters["background"].value == pytest.approx(
+        base.parameters["background"].value, rel=1e-6
+    )
+
+
+def test_fb_free_lifetime_reported_and_recovered():
+    """The F+B fit accepts a free tau, recovers it, and reports it as shared."""
+    ds = _pulsed_tf_run(alpha=1.2, seed=11, background_per_bin=0.0)
+    params = ParameterSet(
+        [
+            Parameter("alpha", 1.0, min=0.1, max=5.0),
+            Parameter("N0", 1.5e5, min=0.0),
+            Parameter("background", 0.0, fixed=True),
+            Parameter("background_b", 0.0, fixed=True),
+            Parameter("A", 18.0, min=0.0, max=50.0),
+            Parameter("f", 1.5, min=0.0),
+            Parameter("phi", 0.2),
+            Parameter("tau", 2.0, min=1.0, max=4.0),
+        ]
+    )
+    result = fit_fb_alpha(ds, 1, 2, _tf, params, cost="gaussian")
+    assert result.success
+    # tau is a shared parameter (excluded from the per-side background slots).
+    assert result.shared_parameters["tau"].value == pytest.approx(float(MUON_LIFETIME_US), abs=0.02)
+    assert result.group_results[1].parameters["alpha"].value == pytest.approx(1.2, abs=0.03)
+
+
+def test_free_lifetime_rejected_with_double_pulse():
+    ds = _continuous_run()
+    params = _continuous_single()
+    params.add(Parameter("tau", float(MUON_LIFETIME_US), min=1.0, max=4.0))
+    params.add(Parameter("dpsep", 0.324, fixed=True))
+    with pytest.raises(ValueError, match="Free muon lifetime is not supported"):
+        fit_single_histogram(ds, 1, _tf, params)
+
+
 def test_deadtime_off_state_is_noop():
     ds = _continuous_run()
     base = fit_single_histogram(ds, 1, _tf, _continuous_single(), cost="gaussian")

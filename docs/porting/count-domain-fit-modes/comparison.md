@@ -121,6 +121,22 @@ Both costs share the identical model builder (raw model = e^(−t·λ_μ) × the
 existing lifetime-corrected builder), so this is a statistics choice, not a
 model fork — no model-building duplication.
 
+### Free muon lifetime (musrfit-style)
+
+| | WiMDA | musrfit | Asymmetry new modes |
+|---|---|---|---|
+| Muon lifetime τ_μ | fixed at the physical value | optionally a free fit parameter | **fixed by default; optionally free** via a `tau` parameter |
+
+WiMDA holds τ_μ at the physical value; musrfit can free it (a diagnostic for
+detector-time calibration or for fitting the bare decay of a single histogram).
+Asymmetry exposes the same option: a `tau` parameter frees the lifetime in the
+single-histogram and F+B modes (default fixed at the physical value, so the
+off-state is byte-identical to the fixed-τ fit). Because the flat raw-count
+background must not pick up the lifetime, a free τ evaluates the raw model
+directly (`N0·e^(−t/τ)·(1+sP) + bg`) rather than via the lifetime-corrected
+builder. Free τ is not combined with the double-pulse model (whose pulse weights
+are themselves defined by τ_μ).
+
 ## What is reused vs new (summary; full audit in implementation-options.md)
 
 - **Reused unchanged**: `build_grouped_count_model`, `FitResult` /

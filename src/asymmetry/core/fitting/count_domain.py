@@ -139,6 +139,16 @@ def _split_time_offset(kw: dict) -> float:
     return float(kw.pop("t0", 0.0))
 
 
+def _split_lifetime(kw: dict, default: float) -> float:
+    """Pop the optional free muon lifetime ``tau`` (μs); default = physical value.
+
+    Popping it keeps ``tau`` from reaching the model builders (which would pass it
+    to the physics model). When absent this returns ``default`` and leaves ``kw``
+    untouched, so the fixed-lifetime path is unchanged.
+    """
+    return float(kw.pop("tau", default))
+
+
 # --- count loss (deadtime) --------------------------------------------------
 
 
@@ -530,10 +540,14 @@ def fit_single_histogram(
     ``"polynomial"`` / ``"power"`` — see :func:`_apply_deadtime`); a ``dpsep``
     parameter switches on the ISIS double-pulse count model — fixed by default,
     or located by a coarse->fine grid scan when supplied free (the non-smooth
-    pulse-onset gate defeats gradient fitting).
+    pulse-onset gate defeats gradient fitting). A ``tau`` parameter frees the muon
+    lifetime (musrfit-style; default fixed at the physical value); it is not
+    supported together with the double-pulse model.
     """
     _validate_cost(cost)
     _validate_deadtime_model(deadtime_model)
+    if "tau" in params and "dpsep" in params:
+        raise ValueError("Free muon lifetime is not supported with the double-pulse model")
     if _has_free_dpsep(params):
         return _refine_free_dpsep(
             params["dpsep"],
@@ -561,6 +575,7 @@ def fit_single_histogram(
     base_decay = np.exp(-time / tau)  # hoisted: loop-invariant unless t0 is free
     fraction_fn = _with_baseline_drift(_percent_to_fraction(model_fn))
     double_pulse = "dpsep" in params
+    free_lifetime = "tau" in params  # fit (or fix at a non-physical value) the lifetime
     dp_model = _double_pulse_single_model(fraction_fn) if double_pulse else None
     corrected_model = None if double_pulse else build_grouped_count_model(fraction_fn)
     frame_norm = _deadtime_frame_norm(dataset, group_id)
@@ -584,14 +599,21 @@ def fit_single_histogram(
             kw[follower] = kw[main]
         t0 = _split_time_offset(kw)
         dt_terms = _pop_deadtime(kw)
-        if t0:
-            t_eval = time + t0
-            decay = np.exp(-t_eval / tau)
+        tau_eval = _split_lifetime(kw, tau)
+        if free_lifetime or t0:
+            t_eval = time + t0 if t0 else time
+            decay = np.exp(-t_eval / tau_eval)
         else:
             t_eval = time
             decay = base_decay
         if double_pulse:
             model = np.asarray(dp_model(t_eval, **kw), dtype=float)
+        elif free_lifetime:
+            # Evaluate the raw model directly so the flat background does not pick
+            # up the module lifetime: N_raw = exp(-t/tau)*N0*(1 + s*P) + bg.
+            bg = float(kw["background"])
+            n0_term = np.asarray(corrected_model(t_eval, **{**kw, "background": 0.0}), dtype=float)
+            model = decay * n0_term + bg
         else:
             # raw count = exp(-t/tau) * [lifetime-corrected model]; the cached
             # decay avoids re-exponentiating the invariant time axis each call.
@@ -649,12 +671,16 @@ def fit_fb_alpha(
     The same optional nuisances as :func:`fit_single_histogram` apply, all
     no-ops unless requested: ``exclude`` drops an interior window; a free ``t0``
     shifts the model time axis; free ``lambda_base`` / ``beta_base`` add a
-    baseline drift; ``DT0`` (+ ``C2``..``C4``) add a count-loss term; a ``dpsep``
-    parameter switches on the ISIS double-pulse model (the √α-tied model
-    evaluated at ``t ± dpsep/2``).
+    baseline drift; the deadtime parameters add a count-loss term (form set by
+    ``deadtime_model``); a ``dpsep`` parameter switches on the ISIS double-pulse
+    model (the √α-tied model evaluated at ``t ± dpsep/2``); a ``tau`` parameter
+    frees the shared muon lifetime (reported in ``shared_parameters``; not
+    supported with the double-pulse model).
     """
     _validate_cost(cost)
     _validate_deadtime_model(deadtime_model)
+    if "tau" in params and "dpsep" in params:
+        raise ValueError("Free muon lifetime is not supported with the double-pulse model")
     for required in ("alpha", "N0", "background", "background_b"):
         if required not in params:
             raise ValueError(f"Forward/backward count fit requires a {required!r} parameter")
@@ -702,6 +728,7 @@ def fit_fb_alpha(
     base_decay_b = np.exp(-time_b / tau)
     fraction_fn = _with_baseline_drift(_percent_to_fraction(model_fn))
     double_pulse = "dpsep" in params
+    free_lifetime = "tau" in params
     fb_dp_model = _double_pulse_fb_model(fraction_fn) if double_pulse else None
     fb_corrected = None if double_pulse else build_fb_count_model(fraction_fn)
 
@@ -715,9 +742,9 @@ def fit_fb_alpha(
     fixed_kw = {p.name: p.value for p in params if p.fixed}
     followers = params.link_followers()
     # Shared physics/scale params: everything except the two per-side backgrounds,
-    # the time offset (applied by shifting the model time axis) and the deadtime
-    # terms (applied as a post-multiply loss factor).
-    _per_eval = ("background", "background_b", "t0", *DEADTIME_PARAMS)
+    # the time offset, the deadtime terms and the lifetime (each applied per eval,
+    # not handed to the physics model).
+    _per_eval = ("background", "background_b", "t0", "tau", *DEADTIME_PARAMS)
     shared_keys = [n for n in free_names if n not in _per_eval]
     shared_fixed = {k: v for k, v in fixed_kw.items() if k not in _per_eval}  # hoisted
 
@@ -727,9 +754,10 @@ def fit_fb_alpha(
             kw[follower] = kw[main]
         t0 = _split_time_offset(kw)
         dt_terms = _pop_deadtime(kw)
-        if t0:
-            t_eval = time + t0
-            decay = np.exp(-t_eval / tau)
+        tau_eval = _split_lifetime(kw, tau)
+        if free_lifetime or t0:
+            t_eval = time + t0 if t0 else time
+            decay = np.exp(-t_eval / tau_eval)
         else:
             t_eval = time
             decay = base_decay
@@ -739,6 +767,14 @@ def fit_fb_alpha(
             model = np.asarray(
                 fb_dp_model(t_eval, sign=sign, background=kw[counts_key], **shared), dtype=float
             )
+        elif free_lifetime:
+            # Evaluate the raw model directly so the flat background does not pick
+            # up the module lifetime (the √α-tied N0 term carries the free tau).
+            bg = float(kw[counts_key])
+            n0_term = np.asarray(
+                fb_corrected(t_eval, sign=sign, background=0.0, **shared), dtype=float
+            )
+            model = decay * n0_term + bg
         else:
             model = decay * np.asarray(
                 fb_corrected(t_eval, sign=sign, background=kw[counts_key], **shared), dtype=float
@@ -796,12 +832,19 @@ def fit_fb_alpha(
     )
 
     shared_parameters = ParameterSet()
-    for name in shared_keys:
+    reported: set[str] = set()
+    # Free shared scale/physics params, plus the free per-eval nuisances that are
+    # genuinely shared across both banks (t0, tau, deadtime terms). The two
+    # backgrounds are per-side and reported on each group result instead.
+    for name in [*shared_keys, *free_names]:
+        if name in reported or name in ("background", "background_b"):
+            continue
         p = params[name]
         idx = free_names.index(name)
         shared_parameters.add(Parameter(name=name, value=m.values[idx], min=p.min, max=p.max))
+        reported.add(name)
     for p in params:
-        if p.fixed and p.name not in ("background", "background_b"):
+        if p.fixed and p.name not in ("background", "background_b") and p.name not in reported:
             shared_parameters.add(Parameter(name=p.name, value=p.value, fixed=True))
 
     group_results: dict[Hashable, FitResult] = {

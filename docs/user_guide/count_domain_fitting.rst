@@ -116,6 +116,12 @@ is off by default and, when off, leaves the fit numerically unchanged.
      component; Asymmetry has no single privileged offset parameter, so the
      drift multiplies the whole polarization. The term is off by default.
 
+* **Free muon lifetime** — the core API exposes an optional ``tau`` parameter
+  that frees the muon lifetime (musrfit-style), defaulting to the physical value
+  τ_μ = 2.197 μs. Free it to fit the bare decay of a single histogram or as a
+  detector-time diagnostic; with it fixed the fit is byte-identical to the
+  standard fixed-lifetime fit. It is not combined with the double-pulse model.
+
 Count loss and double pulse
 ---------------------------
 
