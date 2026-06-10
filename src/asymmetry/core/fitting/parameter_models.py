@@ -1452,6 +1452,9 @@ class ParameterModelFit:
     x_key: str
     ranges: list[ModelFitRange] = field(default_factory=list)
     active: bool = True
+    #: When the x-axis is a fitted parameter (``x_key == "param:<name>"``),
+    #: account for its per-point uncertainty via effective-variance weighting.
+    use_x_errors: bool = False
 
 
 @dataclass
@@ -1699,6 +1702,7 @@ def _run_parameter_model_minuit(
     parameters: ParameterSet,
     method: str,
     initial_values: dict[str, float] | None = None,
+    xerr_fit: NDArray[np.float64] | None = None,
 ) -> tuple[ParameterModelFitResult, float]:
     try:
         from iminuit import Minuit
@@ -1717,7 +1721,31 @@ def _run_parameter_model_minuit(
         kw = {**fixed_kw, **dict(zip(param_names, args, strict=False))}
         return model.function(x_local, **kw)
 
-    cost = LeastSquares(x_fit, y_fit, e_fit, model_wrapper)
+    if xerr_fit is None:
+        cost = LeastSquares(x_fit, y_fit, e_fit, model_wrapper)
+    else:
+        # Errors-in-variables (Orear/York effective variance): inflate each
+        # point's variance by the x-error propagated through the local slope,
+        # σ²_eff = σ_y² + (∂f/∂x)²·σ_x². The slope is a central finite
+        # difference, so no analytic derivative is needed; iminuit re-evaluates
+        # the cost every step, making the weighting self-consistent at the
+        # minimum with no outer iteration. With σ_x = 0 this reduces exactly to
+        # ordinary least squares (callers route the all-zero case to the
+        # LeastSquares branch above to stay byte-identical).
+        x_step = np.maximum(np.abs(x_fit), 1.0) * 1e-6
+        e2 = e_fit**2
+        xerr2 = np.asarray(xerr_fit, dtype=float) ** 2
+
+        def cost(*args: float) -> float:
+            pred = model_wrapper(x_fit, *args)
+            slope = (
+                model_wrapper(x_fit + x_step, *args) - model_wrapper(x_fit - x_step, *args)
+            ) / (2.0 * x_step)
+            sigma2 = e2 + (slope**2) * xerr2
+            resid = (y_fit - pred) / np.sqrt(sigma2)
+            return float(np.sum(resid**2))
+
+        cost.errordef = Minuit.LEAST_SQUARES
 
     if initial_values is None:
         initial_values = {}
@@ -1779,12 +1807,19 @@ def fit_parameter_model(
     error_mode: ErrorMode | str = ErrorMode.COLUMN,
     error_value: float | None = None,
     windows: Sequence[tuple[float, float]] | None = None,
+    xerr: NDArray | None = None,
 ) -> ParameterModelFitResult:
     """Fit a parameter-vs-x model using iminuit.
 
     ``error_mode``/``error_value`` select the per-point σ assignment (see
     :class:`ErrorMode`); ``windows`` optionally restricts the fit to a union
     of (min, max) intervals, overriding ``x_min``/``x_max``.
+
+    ``xerr`` optionally supplies per-point x-uncertainties for an
+    errors-in-variables (Orear/York effective-variance) fit — used for
+    parameter-vs-parameter trending where the abscissa is itself a fitted
+    quantity. When ``xerr`` is ``None`` or all zero/non-finite the fit is
+    ordinary least squares (the abscissa is treated as exact).
     """
     error_mode = ErrorMode(error_mode)
     xx = np.asarray(x, dtype=float)
@@ -1792,6 +1827,7 @@ def fit_parameter_model(
     ee = apply_error_mode(yy, yerr, error_mode, error_value)
     if ee is None:
         ee = np.ones_like(xx)
+    xe = None if xerr is None else np.asarray(xerr, dtype=float)
 
     try:
         window_selection = windows_mask(xx, windows, x_min, x_max)
@@ -1818,6 +1854,15 @@ def fit_parameter_model(
         # explicit Percent/Absolute/unit weights are honoured verbatim.
         e_fit = _stabilize_parameter_model_errors(e_fit)
 
+    # Effective-variance weighting only when x carries usable uncertainty;
+    # otherwise stay on the ordinary least-squares path (byte-identical).
+    xerr_fit: NDArray[np.float64] | None = None
+    if xe is not None:
+        xe_fit = xe[mask]
+        xe_fit = np.where(np.isfinite(xe_fit) & (xe_fit > 0.0), xe_fit, 0.0)
+        if np.any(xe_fit > 0.0):
+            xerr_fit = xe_fit
+
     initial_candidates: list[dict[str, float] | None] = [None]
     heuristic_seed = _transport_seed_initial_values(x_fit, y_fit, e_fit, model, parameters)
     if heuristic_seed is not None:
@@ -1835,6 +1880,7 @@ def fit_parameter_model(
             parameters=parameters,
             method=method,
             initial_values=initial_values,
+            xerr_fit=xerr_fit,
         )
         if best_result is None:
             best_result = result

@@ -346,6 +346,10 @@ class ModelFitDialog(QDialog):
     #: shown promising semantics the fit would silently ignore.
     _supports_error_modes: bool = True
     _supports_windows: bool = True
+    #: Subclasses whose fit backend does not honour x-uncertainty (e.g. the
+    #: cross-group fit) set this to False so the effective-variance toggle is
+    #: never shown.
+    _supports_x_errors: bool = True
 
     def __init__(
         self,
@@ -356,6 +360,7 @@ class ModelFitDialog(QDialog):
         y_errors: np.ndarray,
         existing_fit: ParameterModelFit | None = None,
         parent: QWidget | None = None,
+        x_errors: np.ndarray | None = None,
     ) -> None:
         super().__init__(parent)
 
@@ -368,6 +373,7 @@ class ModelFitDialog(QDialog):
         self._x = np.asarray(x_values, dtype=float)
         self._y = np.asarray(y_values, dtype=float)
         self._yerr = np.asarray(y_errors, dtype=float)
+        self._xerr = None if x_errors is None else np.asarray(x_errors, dtype=float)
         self._removed = False
         self._range_widgets: list[_RangeWidgets] = []
         self._active_range_idx: int | None = None
@@ -419,6 +425,26 @@ class ModelFitDialog(QDialog):
             error_row.addStretch()
             layout.addLayout(error_row)
             self._on_error_mode_changed(0)
+
+        # Effective-variance x-uncertainty toggle (item 1): only meaningful when
+        # the abscissa is itself a fitted parameter and carries usable errors.
+        self._x_error_check: QCheckBox | None = None
+        x_has_err = self._xerr is not None and bool(
+            np.any(np.isfinite(self._xerr) & (self._xerr > 0))
+        )
+        if self._supports_x_errors and x_key.startswith("param:") and x_has_err:
+            xerr_row = QHBoxLayout()
+            self._x_error_check = QCheckBox("Account for x uncertainty")
+            self._x_error_check.setToolTip(
+                "Weight the fit by the x-parameter's per-point uncertainty using "
+                "the Orear/York effective-variance method (errors-in-variables). "
+                "Unchecked = the x-axis is treated as exact (ordinary least "
+                "squares)."
+            )
+            self._x_error_check.setChecked(bool(getattr(self._fit, "use_x_errors", False)))
+            xerr_row.addWidget(self._x_error_check)
+            xerr_row.addStretch()
+            layout.addLayout(xerr_row)
 
         ranges_group = QGroupBox("Model ranges")
         ranges_layout = QVBoxLayout(ranges_group)
@@ -494,10 +520,14 @@ class ModelFitDialog(QDialog):
     def get_model_fit(self) -> ParameterModelFit | None:
         if self._removed:
             return None
+        self._fit.use_x_errors = self._use_x_errors()
         return self._fit
 
     def was_removed(self) -> bool:
         return self._removed
+
+    def _use_x_errors(self) -> bool:
+        return self._x_error_check is not None and self._x_error_check.isChecked()
 
     def _error_mode(self) -> ErrorMode:
         if self._error_mode_combo is None:
@@ -934,6 +964,11 @@ class ModelFitDialog(QDialog):
         windows = list(fit_range.windows) if fit_range.windows else None
         error_mode = self._error_mode()
         error_value = self._error_value()
+        x_errs = (
+            np.asarray(self._xerr, dtype=float).copy()
+            if self._use_x_errors() and self._xerr is not None
+            else None
+        )
 
         self._fit_progress_label.setText(f"Fit in progress for Range {idx + 1}...")
 
@@ -949,6 +984,7 @@ class ModelFitDialog(QDialog):
                 error_mode=error_mode,
                 error_value=error_value,
                 windows=windows,
+                xerr=x_errs,
             )
 
         def _on_done(result: object) -> None:
