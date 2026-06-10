@@ -69,7 +69,11 @@ def compute_asymmetry(
         den = denominator[informative]
         fi = f[informative]
         bi = b[informative]
-        err[informative] = 2.0 * abs(float(alpha)) * np.sqrt(fi * bi * (fi + bi)) / (den * den)
+        # np.maximum guards against negative radicands from out-of-contract
+        # (e.g. background-subtracted) counts, matching the clamp in
+        # compute_asymmetry_with_count_errors.
+        radicand = np.maximum(fi * bi * (fi + bi), 0.0)
+        err[informative] = 2.0 * abs(float(alpha)) * np.sqrt(radicand) / (den * den)
 
     return asym, err
 

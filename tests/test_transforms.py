@@ -79,6 +79,15 @@ class TestComputeAsymmetry:
         )
         np.testing.assert_allclose(err, err_counts)
 
+    def test_negative_counts_do_not_produce_nan_error(self):
+        # Out-of-contract negative (e.g. over-subtracted) counts must not yield
+        # a NaN error from sqrt of a negative radicand; the clamp returns 0.0.
+        f = np.array([-3.0])
+        b = np.array([-2.0])
+        _, err = compute_asymmetry(f, b, alpha=1.0)
+        assert np.isfinite(err[0])
+        assert err[0] == pytest.approx(0.0)
+
     def test_supplied_count_errors_use_musrfit_style_propagation(self):
         f = np.array([90.0])
         b = np.array([60.0])
