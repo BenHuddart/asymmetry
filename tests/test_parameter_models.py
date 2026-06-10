@@ -1013,3 +1013,91 @@ def test_order_parameter_applicability_text_describes_use() -> None:
     assert "order parameter" in text.lower()
     assert "Tc" in text
     assert "β" in text or "beta" in text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase A — quadrature combinator ⊕  (f ⊕ g = √(f² + g²), parameter grammar)
+# ---------------------------------------------------------------------------
+
+
+def test_quadrature_oracle_powerlaw_plus_constant_equals_powerlawquadbg() -> None:
+    """PowerLaw ⊕ Constant reproduces PowerLawQuadBG exactly.
+
+    Registry PowerLaw is a·|x|ⁿ + c (its own additive c), whereas
+    PowerLawQuadBG's inner term has no c — so the identity holds with PowerLaw's
+    c fixed at 0 and Constant's c = BG.
+    """
+    model = ParameterCompositeModel.from_expression("PowerLaw ⊕ Constant")
+    # dedup: PowerLaw.c -> c_1 (fixed 0), Constant.c -> c_2 (= BG).
+    assert model.param_names == ["a", "n", "c_1", "c_2"]
+    x = np.linspace(-5.0, 5.0, 41)
+    kw = {"a": 1.7, "n": 2.3, "c_1": 0.0, "c_2": 0.6}
+    got = model.function(x, **kw)
+    quad = PARAMETER_MODEL_COMPONENTS["PowerLawQuadBG"].function(x, a=1.7, n=2.3, BG=0.6)
+    np.testing.assert_allclose(got, quad, atol=1e-12, rtol=0.0)
+
+
+def test_quadrature_is_associative() -> None:
+    model = ParameterCompositeModel.from_expression("Constant ⊕ Constant ⊕ Constant")
+    val = model.function(np.zeros(1), c_1=3.0, c_2=4.0, c_3=12.0)[0]
+    assert val == pytest.approx(np.sqrt(9.0 + 16.0 + 144.0))  # = 13
+
+
+def test_quadrature_shares_precedence_with_plus() -> None:
+    # ⊕ is level 1 like + / -, left-associative: A ⊕ B + C = √(A²+B²) + C.
+    model = ParameterCompositeModel.from_expression("Constant ⊕ Constant + Constant")
+    val = model.function(np.zeros(1), c_1=3.0, c_2=4.0, c_3=1.0)[0]
+    assert val == pytest.approx(np.sqrt(9.0 + 16.0) + 1.0)  # 5 + 1 = 6
+
+
+def test_multiplication_binds_tighter_than_quadrature() -> None:
+    # A ⊕ B * C evaluates B*C first (precedence 2), then the quadrature.
+    model = ParameterCompositeModel.from_expression("Constant ⊕ Constant * Constant")
+    val = model.function(np.zeros(1), c_1=3.0, c_2=2.0, c_3=2.0)[0]
+    assert val == pytest.approx(np.sqrt(9.0 + 16.0))  # 3 ⊕ (2*2) = 5
+
+
+def test_quadrature_respects_parentheses() -> None:
+    # (A ⊕ B) + C and A ⊕ (B + C) differ.
+    grouped = ParameterCompositeModel.from_expression("(Constant ⊕ Constant) + Constant")
+    nested = ParameterCompositeModel.from_expression("Constant ⊕ (Constant + Constant)")
+    g = grouped.function(np.zeros(1), c_1=3.0, c_2=4.0, c_3=1.0)[0]
+    n = nested.function(np.zeros(1), c_1=3.0, c_2=4.0, c_3=1.0)[0]
+    assert g == pytest.approx(np.sqrt(9.0 + 16.0) + 1.0)  # 6
+    assert n == pytest.approx(np.sqrt(9.0 + (4.0 + 1.0) ** 2))  # √(9+25) ≈ 5.831
+    assert g != pytest.approx(n)
+
+
+def test_quadrature_roundtrips_through_to_dict_and_expression() -> None:
+    model = ParameterCompositeModel.from_expression("PowerLaw ⊕ Constant")
+    # Expression string preserves ⊕.
+    assert "⊕" in model.component_expression_string()
+    assert "⊕" in model.formula_string()  # GLE export path reads formula_string
+    # to_dict / from_dict preserves the operator and evaluates identically.
+    restored = ParameterCompositeModel.from_dict(model.to_dict())
+    assert restored.operators == ["⊕"]
+    x = np.linspace(-3.0, 3.0, 11)
+    kw = {"a": 1.2, "n": 1.5, "c_1": 0.0, "c_2": 0.4}
+    np.testing.assert_allclose(model.function(x, **kw), restored.function(x, **kw), atol=1e-12)
+
+
+def test_quadrature_constructor_rejects_unknown_operator() -> None:
+    with pytest.raises(ValueError, match="operators must be"):
+        ParameterCompositeModel(["Constant", "Constant"], ["%"])
+    # ⊕ is accepted.
+    ParameterCompositeModel(["Constant", "Constant"], ["⊕"])
+
+
+def test_quadrature_is_rejected_in_time_domain_grammar() -> None:
+    """⊕ is parameter-grammar only; the time-domain composite grammar rejects
+    it (the operator boundary)."""
+    from asymmetry.core.fitting.composite import CompositeModel
+
+    with pytest.raises(ValueError):
+        CompositeModel.from_expression("Exponential ⊕ Constant")
+
+
+def test_quadrature_operands_are_additive_components() -> None:
+    # Each ⊕ operand is a distinct curve worth plotting (like +).
+    model = ParameterCompositeModel.from_expression("PowerLaw ⊕ Constant")
+    assert model.additive_component_indices() == [0, 1]

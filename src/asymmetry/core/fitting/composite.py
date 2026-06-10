@@ -949,6 +949,14 @@ COMPONENTS: dict[str, ComponentDefinition] = {
 
 
 _ALLOWED_OPERATORS: frozenset[str] = frozenset({"+", "-", "*", "/"})
+#: Quadrature-sum operator ``f ⊕ g = √(f² + g²)``. It is *not* part of the
+#: time-domain composite grammar (only the parameter-vs-x grammar enables it via
+#: ``parse_component_expression(..., allowed_operators=...)``). The tokenizer
+#: recognises the glyph as a single token so a time-domain expression using it
+#: fails the parse cleanly (an "unexpected operator" where an operator is
+#: expected, or an unknown-component error where an operand is expected) rather
+#: than a confusing character-level tokenise failure.
+QUADRATURE_OPERATOR = "⊕"
 _UNIT_AMPLITUDE_SENTINEL = "__UNIT_AMPLITUDE__"
 _FRACTION_GROUP_DECORATOR = "frac"
 
@@ -959,7 +967,7 @@ def _tokenize_component_expression(expression: str) -> list[str]:
     if not stripped:
         raise ValueError("Expression is required")
 
-    token_pattern = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[(){}+\-*/]")
+    token_pattern = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|⊕|[(){}+\-*/]")
     tokens: list[str] = []
     position = 0
     for match in token_pattern.finditer(stripped):
@@ -991,8 +999,14 @@ def parse_component_expression(
     expression: str,
     *,
     allowed_components: set[str] | frozenset[str],
+    allowed_operators: set[str] | frozenset[str] = _ALLOWED_OPERATORS,
 ) -> tuple[list[str], list[str], list[int], list[int]]:
-    """Parse a component expression into constructor-ready parts."""
+    """Parse a component expression into constructor-ready parts.
+
+    ``allowed_operators`` defaults to ``+ - * /``; the parameter-vs-x grammar
+    passes an extended set including the quadrature operator ``⊕`` so it is
+    accepted there but rejected in the (default) time-domain grammar.
+    """
     tokens = _tokenize_component_expression(expression)
 
     component_names: list[str] = []
@@ -1010,7 +1024,7 @@ def parse_component_expression(
                 pending_open += 1
                 idx += 1
                 continue
-            if token in _ALLOWED_OPERATORS or token == ")":
+            if token in allowed_operators or token == ")":
                 raise ValueError(f"Expected component before '{token}'")
             if token not in allowed_components:
                 raise UnknownComponentError(token)
@@ -1023,7 +1037,7 @@ def parse_component_expression(
             idx += 1
             continue
 
-        if token in _ALLOWED_OPERATORS:
+        if token in allowed_operators:
             operators.append(token)
             expecting_operand = True
             idx += 1
