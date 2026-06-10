@@ -199,6 +199,34 @@ Arbitrary X column: extend the dialog's x-source to any trended parameter
 (param-vs-param), `component_names_for_x` degrading to `common` scope for
 non-field/temperature x. If not reached: stays follow-on #2.
 
+**Outcome (2026-06-10): not reached — stays follow-on #2.** Scoping showed
+the x-axis selection is woven through `fit_parameters_panel.py` (~4 kloc:
+x-combo, trend assembly, state save/restore, GLE labels), so param-vs-param
+is a panel-level feature, not a dialog tweak. The core is already x-agnostic
+(`fit_parameter_model` takes any x; `component_names_for_x` degrades to
+`common` for unknown keys), so the follow-on is GUI-only.
+
+## Verification outcomes (2026-06-10)
+
+- Phases 1 and 2 implemented as planned; full `validate` green after each
+  (1787 → 1810 passed); docs build clean.
+- All WiMDA-transcribed oracles pass to ≲1e-12 where forms are identical;
+  divergences D1–D10 asserted behaviourally (D11/D12 are design facts).
+- **EuO regression**: headless core pipeline (PSI runs 2928–2943,
+  `Oscillatory*Exponential + Constant` per run on t = 0–8 µs, trend fitted
+  with `OrderParameter`) gives Tc = 69.24(9) K, β = 0.409(7), α = 1.18(4) —
+  within combined uncertainties of the PR #15 GUI extraction
+  (Tc = 69.2(1) K, β = 0.417(7), α = 1.23(5)); the ν(T) trend is frozen as a
+  fixture in `tests/test_wimda_model_function_parity.py` so the regression
+  runs without the corpus.
+- Scatter-mode equivalence with WiMDA's Estimate iteration is *tested* by
+  explicitly iterating the WiMDA scheme
+  (`test_scatter_mode_is_fixed_point_of_wimda_estimate_iteration`).
+- MuRepolarisation recovers B₀ = A/(γₑ+γ_μ) (vacuum Mu 1585.0 G from
+  `constants.py`) and round-trips (a_Mu, A_hf, a_Dia) on exact synthetics;
+  no clean isotropic-Mu corpus B-scan exists (test-data.md §2), so the
+  synthetic oracle is the quantitative record.
+
 ## Follow-ons (recorded regardless of stretch outcome)
 
 1. **Send model-fit results to the results table** — model-fit outputs
