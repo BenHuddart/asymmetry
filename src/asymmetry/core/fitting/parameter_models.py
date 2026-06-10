@@ -14,6 +14,7 @@ from numpy.typing import NDArray
 
 from asymmetry.core.fitting.ballistic import lambda_total as ballistic_lambda_total
 from asymmetry.core.fitting.composite import (
+    QUADRATURE_OPERATOR,
     build_component_expression,
     parse_component_expression,
 )
@@ -920,6 +921,11 @@ def _register_superconducting_components() -> None:
 _register_superconducting_components()
 
 _ALLOWED_OPERATORS: frozenset[str] = frozenset({"+", "-", "*", "/"})
+#: The parameter-vs-x grammar additionally supports the quadrature combinator
+#: ``f ⊕ g = √(f² + g²)`` (binary, same precedence as ``+``/``-``, associative),
+#: so e.g. ``PowerLaw ⊕ Constant`` reproduces ``PowerLawQuadBG``. Time-domain
+#: composites keep the base operator set.
+_PARAMETER_ALLOWED_OPERATORS: frozenset[str] = _ALLOWED_OPERATORS | {QUADRATURE_OPERATOR}
 
 
 def component_names_for_x(x_key: str) -> list[str]:
@@ -961,8 +967,8 @@ class ParameterCompositeModel:
 
         if len(operators) != max(len(component_names) - 1, 0):
             raise ValueError("operators length must be len(component_names) - 1")
-        if any(op not in _ALLOWED_OPERATORS for op in operators):
-            raise ValueError("operators must be one of '+', '-', '*', '/'")
+        if any(op not in _PARAMETER_ALLOWED_OPERATORS for op in operators):
+            raise ValueError("operators must be one of '+', '-', '*', '/', '⊕'")
 
         if open_parentheses is None:
             open_parentheses = [0] * len(component_names)
@@ -1019,6 +1025,7 @@ class ParameterCompositeModel:
             parse_component_expression(
                 expression,
                 allowed_components=set(PARAMETER_MODEL_COMPONENTS),
+                allowed_operators=_PARAMETER_ALLOWED_OPERATORS,
             )
         )
         return cls(
@@ -1118,8 +1125,10 @@ class ParameterCompositeModel:
         for op, value in zip(reduced_ops, reduced_values[1:], strict=True):
             if op == "+":
                 result = result + value
-            else:
+            elif op == "-":
                 result = result - value
+            else:  # QUADRATURE_OPERATOR: f ⊕ g = √(f² + g²)
+                result = np.sqrt(result**2 + value**2)
 
         return result
 
@@ -1146,9 +1155,11 @@ class ParameterCompositeModel:
                 value_stack.append(lhs - rhs)
             elif op == "*":
                 value_stack.append(lhs * rhs)
-            else:
+            elif op == "/":
                 safe_rhs = np.where(np.abs(rhs) < 1e-12, np.nan, rhs)
                 value_stack.append(lhs / safe_rhs)
+            else:  # QUADRATURE_OPERATOR: f ⊕ g = √(f² + g²)
+                value_stack.append(np.sqrt(lhs**2 + rhs**2))
 
         for idx, value in enumerate(values):
             for _ in range(self.open_parentheses[idx]):
@@ -1197,12 +1208,17 @@ class ParameterCompositeModel:
         return local_kwargs
 
     def additive_component_indices(self) -> list[int]:
-        """Return indices for additive components (first term and '+' terms)."""
+        """Return indices for additive components (first term, '+' and '⊕' terms).
+
+        Quadrature (``⊕``) combines whole components like ``+`` does, so each
+        operand is a distinct curve worth plotting on its own; subtractive and
+        multiplicative terms are not standalone contributions.
+        """
         if not self.components:
             return []
         indices = [0]
         for idx, op in enumerate(self.operators, start=1):
-            if op == "+":
+            if op in ("+", QUADRATURE_OPERATOR):
                 indices.append(idx)
         return indices
 

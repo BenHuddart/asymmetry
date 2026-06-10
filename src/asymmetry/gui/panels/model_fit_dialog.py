@@ -300,7 +300,10 @@ class ParameterModelBuilderDialog(FunctionExpressionBuilderDialog):
             component_definitions=PARAMETER_MODEL_COMPONENTS,
             model_parser=ParameterCompositeModel.from_expression,
             initial_expression=initial_expression,
-            expression_placeholder="e.g. Linear + ( Arrhenius * Constant )",
+            expression_placeholder="e.g. Linear + ( Arrhenius * Constant ) or PowerLaw ⊕ Constant",
+            # Quadrature combinator √(f²+g²) — a parameter-grammar-only operator
+            # (e.g. PowerLaw ⊕ Constant == PowerLawQuadBG).
+            extra_token_buttons=[("⊕", " ⊕ ")],
             parent=parent,
         )
 
