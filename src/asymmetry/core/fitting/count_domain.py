@@ -579,6 +579,81 @@ def fit_fb_alpha(
     )
 
 
+# --- plot overlay -----------------------------------------------------------
+
+
+def _corrected_overlay(group, fit_result: FitResult) -> tuple[NDArray, NDArray]:
+    """Recover the fitted model on the displayed (lifetime-corrected) scale.
+
+    The count fit minimises a raw-count model; the Individual-Groups plot shows
+    lifetime-corrected counts. ``FitResult.residuals`` already holds
+    ``counts - model`` at the fit points, so the raw model is recovered exactly
+    as ``counts - residuals`` (no model re-evaluation) and scaled to the displayed
+    axis by ``exp(t / tau_mu)``. Returns ``(time, corrected_model)``.
+    """
+    time = np.asarray(group.time, dtype=float)
+    counts = np.asarray(group.counts, dtype=float)
+    residuals = np.asarray(fit_result.residuals, dtype=float)
+    if residuals.shape != counts.shape:
+        raise ValueError("Count-fit residuals do not match the rebuilt group trace")
+    model_raw = counts - residuals
+    return time, model_raw * np.exp(time / float(MUON_LIFETIME_US))
+
+
+def single_histogram_overlay(
+    dataset: MuonDataset,
+    group_id: int,
+    fit_result: FitResult,
+    *,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    exclude: tuple[float, float] | None = None,
+) -> dict[int, tuple[NDArray, NDArray]]:
+    """Overlay curve for a single-histogram count fit, keyed by group id.
+
+    Rebuilds the same raw-count trace the fit used and returns
+    ``{group_id: (time, corrected_model)}`` for plotting on the lifetime-corrected
+    Individual-Groups axis. The window arguments must match the fit call.
+    """
+    group = build_count_group(
+        dataset, group_id, t_min=t_min, t_max=t_max, lifetime_corrected=False, exclude=exclude
+    )
+    return {int(group_id): _corrected_overlay(group, fit_result)}
+
+
+def fb_overlay_curves(
+    dataset: MuonDataset,
+    forward_group: int,
+    backward_group: int,
+    grouped_result: GroupedTimeDomainFitResult,
+    *,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    exclude: tuple[float, float] | None = None,
+) -> dict[int, tuple[NDArray, NDArray]]:
+    """Overlay curves for a forward/backward count fit, keyed by group id.
+
+    Rebuilds both banks in ONE shared context (matching :func:`fit_fb_alpha`, so
+    the time axes line up with the residuals stored on each side's result) and
+    returns ``{forward_group: (t, y), backward_group: (t, y)}`` on the displayed
+    lifetime-corrected scale.
+    """
+    g_fwd, g_bwd = build_count_groups(
+        dataset,
+        [forward_group, backward_group],
+        t_min=t_min,
+        t_max=t_max,
+        lifetime_corrected=False,
+        exclude=exclude,
+    )
+    overlays: dict[int, tuple[NDArray, NDArray]] = {}
+    for gid, group in ((int(forward_group), g_fwd), (int(backward_group), g_bwd)):
+        side_result = grouped_result.group_results.get(gid)
+        if side_result is not None:
+            overlays[gid] = _corrected_overlay(group, side_result)
+    return overlays
+
+
 # --- helpers ----------------------------------------------------------------
 
 

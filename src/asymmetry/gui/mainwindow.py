@@ -1052,6 +1052,10 @@ class MainWindow(QMainWindow):
                 else None,
             )
         )
+        self._multi_group_fit_window.count_fit_overlay_ready.connect(self._on_count_fit_completed)
+        self._multi_group_fit_window.count_grouping_promoted.connect(
+            self._on_count_grouping_promoted
+        )
         # Bespoke ALC-mode build panel, swapped into the Fit dock when ALC mode
         # is on (see _sync_fit_dock_mode).
         self._alc_fit_panel = ALCFitPanel()
@@ -6517,6 +6521,58 @@ class MainWindow(QMainWindow):
         self._plot_panel.set_global_fits(fit_payloads)
         if hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
             self._plot_panel.plot_grouped_time_domain_subplots(grouped_datasets)
+
+    def _on_count_fit_completed(self, dataset, overlays) -> None:
+        """Overlay a finished count fit on the Individual-Groups plot.
+
+        ``overlays`` maps a fitted detector ``group_id`` to ``(time,
+        corrected_model)`` on the displayed lifetime-corrected scale. The
+        Individual-Groups subplots are keyed by a synthetic run number derived per
+        group, so each overlay is routed to its group's subplot by matching
+        ``group_id``; a fitted group with no displayed subplot (e.g. excluded from
+        the grouping) is silently skipped.
+        """
+        if dataset is None or not isinstance(overlays, dict) or not overlays:
+            return
+        grouped_datasets = self._grouped_time_domain_display_datasets(dataset)
+        if not grouped_datasets:
+            return
+        run_number_by_group: dict[int, int] = {}
+        for grouped in grouped_datasets:
+            group_id = grouped.metadata.get("group_id")
+            if group_id is not None:
+                try:
+                    run_number_by_group[int(group_id)] = int(grouped.run_number)
+                except (TypeError, ValueError):
+                    continue
+
+        fit_curves = {}
+        for group_id, curve in overlays.items():
+            try:
+                run_number = run_number_by_group[int(group_id)]
+            except (KeyError, TypeError, ValueError):
+                continue
+            t_fit, y_fit = curve
+            fit_curves[run_number] = (t_fit, y_fit, "Count Fit", [], None, None, None)
+        if not fit_curves:
+            return
+
+        self._plot_panel.set_global_fits(fit_curves)
+        if hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
+            self._plot_panel.plot_grouped_time_domain_subplots(grouped_datasets)
+        self._log_panel.log(f"Count-domain fit overlaid on {len(fit_curves)} group(s).")
+
+    def _on_count_grouping_promoted(self, dataset) -> None:
+        """React to a count calibration being promoted into the run's grouping.
+
+        The grouping deadtime (or balance) was rewritten; the reduced traces are
+        now stale until the run is re-reduced. Surface the hint; the explicit
+        re-reduce stays user-driven (the promote dialog already prompts for it).
+        """
+        if dataset is None:
+            return
+        self._log_panel.log("Count calibration promoted to grouping; re-reduce to apply.")
+        self.statusBar().showMessage("Count calibration promoted to grouping — re-reduce to apply.")
 
     def _on_cross_group_fit_completed(self, parameter_name, groups, output) -> None:
         """Display cross-group fit output in the Global Parameter Fit window."""

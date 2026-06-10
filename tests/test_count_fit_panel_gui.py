@@ -149,3 +149,58 @@ def test_promote_after_deadtime_fit_writes_grouping(qapp, fb_dataset):
     grouping = fb_dataset.run.grouping
     assert grouping.get("deadtime_correction") is True
     assert any(v != 0.0 for v in grouping.get("dead_time_us", []))
+
+
+def test_fb_fit_emits_overlay_for_both_banks(qapp, fb_dataset):
+    """A finished F+B fit emits overlay curves keyed by both bank group ids."""
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(1)  # fb
+
+    overlays = []
+    window.count_fit_overlay_ready.connect(lambda dataset, ov: overlays.append(ov))
+    window._single_fit_tab._run_count_domain_fit()
+
+    assert len(overlays) == 1
+    forward, backward = window._single_fit_tab._count_fb_groups(fb_dataset)
+    assert set(overlays[0]) == {forward, backward}
+    for _gid, (time, corrected) in overlays[0].items():
+        assert time.size == corrected.size and time.size > 0
+        assert np.all(np.isfinite(corrected))
+
+
+def test_single_fit_emits_overlay_for_target_group(qapp, fb_dataset):
+    """A finished single-histogram fit emits one overlay keyed by the target group."""
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(2)  # single
+    window._side_combo.setCurrentIndex(0)  # Forward
+
+    overlays = []
+    window.count_fit_overlay_ready.connect(lambda dataset, ov: overlays.append(ov))
+    window._single_fit_tab._run_count_domain_fit()
+
+    forward, _backward = window._single_fit_tab._count_fb_groups(fb_dataset)
+    assert len(overlays) == 1
+    assert set(overlays[0]) == {forward}
+
+
+def test_promote_uses_dedicated_signal_not_a_fit_none(qapp, fb_dataset):
+    """Promote emits count_grouping_promoted, never a fit-shaped None on the fit signal."""
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(2)  # single
+    window._deadtime_check.setChecked(True)
+    tab = window._single_fit_tab
+    tab._run_count_domain_fit()
+
+    fit_payloads = []
+    promoted = []
+    window.count_fit_completed.connect(lambda dataset, result: fit_payloads.append(result))
+    window.count_grouping_promoted.connect(lambda dataset: promoted.append(dataset))
+    window._on_promote_deadtime()
+
+    # The fit-result signal never fires for a promote (so no None sentinel leaks).
+    assert fit_payloads == []
+    assert len(promoted) == 1
+    assert promoted[0] is fb_dataset

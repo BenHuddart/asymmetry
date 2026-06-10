@@ -40,8 +40,10 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.count_domain import (
     COUNT_COSTS,
+    fb_overlay_curves,
     fit_fb_alpha,
     fit_single_histogram,
+    single_histogram_overlay,
 )
 from asymmetry.core.fitting.domain_library import coerce_domain
 from asymmetry.core.fitting.engine import FitEngine, FitResult
@@ -2014,6 +2016,10 @@ class GlobalFitTab(QWidget):
     grouped_preview_requested = Signal(object, object)  # (grouped_datasets, preview_curves)
     fit_range_edit_committed = Signal(float, float)  # (x_min, x_max) from spinbox commit
     count_fit_completed = Signal(object, object)  # (dataset, GroupedTimeDomainFitResult|FitResult)
+    # (dataset, {group_id: (time, corrected_model)}) — overlay curves for the
+    # Individual-Groups plot on the displayed lifetime-corrected scale.
+    count_fit_overlay_ready = Signal(object, object)
+    count_grouping_promoted = Signal(object)  # (dataset) — a count calibration hit the grouping
 
     def __init__(
         self,
@@ -3631,7 +3637,7 @@ class GlobalFitTab(QWidget):
                 ),
             )
         )
-        self.count_fit_completed.emit(dataset, None)
+        self.count_grouping_promoted.emit(dataset)
 
     def _count_fb_groups(self, dataset: MuonDataset) -> tuple[int, int]:
         grouping = (
@@ -3805,6 +3811,9 @@ class GlobalFitTab(QWidget):
             success_html(f"Forward/backward fit · groups {forward}/{backward}", detail=detail)
         )
         self.count_fit_completed.emit(dataset, result)
+        self.count_fit_overlay_ready.emit(
+            dataset, self._count_overlays_for_fb(dataset, result, forward, backward)
+        )
 
     def _render_count_single_result(self, dataset, result, group_id: int) -> None:
         if not result.success:
@@ -3825,6 +3834,40 @@ class GlobalFitTab(QWidget):
             )
         )
         self.count_fit_completed.emit(dataset, result)
+        self.count_fit_overlay_ready.emit(
+            dataset, self._count_overlays_for_single(dataset, result, group_id)
+        )
+
+    def _count_overlays_for_single(self, dataset, result, group_id: int) -> dict:
+        """Overlay curves for a single-histogram count fit (empty on failure)."""
+        t_min, t_max = self._count_fit_range()
+        try:
+            return single_histogram_overlay(
+                dataset,
+                group_id,
+                result,
+                t_min=t_min,
+                t_max=t_max,
+                exclude=self._count_exclude,
+            )
+        except ValueError:
+            return {}
+
+    def _count_overlays_for_fb(self, dataset, result, forward: int, backward: int) -> dict:
+        """Overlay curves for a forward/backward count fit (empty on failure)."""
+        t_min, t_max = self._count_fit_range()
+        try:
+            return fb_overlay_curves(
+                dataset,
+                forward,
+                backward,
+                result,
+                t_min=t_min,
+                t_max=t_max,
+                exclude=self._count_exclude,
+            )
+        except ValueError:
+            return {}
 
     def _store_count_deadtime(self, fit_result, group_id: int) -> None:
         """Remember a converged DT0 so it can be promoted to the grouping."""

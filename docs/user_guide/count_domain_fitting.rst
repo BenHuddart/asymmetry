@@ -85,6 +85,13 @@ example a recovered balance of α = 1.250(1) — together with the per-degree
 statistic. For the free-α fit, the forward result carries the full covariance,
 so the α–amplitude correlation is available for inspection.
 
+A successful fit also draws its model curve over the data in the
+**Individual groups** plot — the single-histogram fit over its one group, the
+free-α fit over both the forward and backward banks. The fit minimises a
+raw-count model, but the plot shows lifetime-corrected counts, so the overlay
+is scaled by exp(t/τ_μ) to land on the displayed data; a good fit traces the
+group exactly, and a poor one shows where it departs.
+
 Window and nuisance flexibility
 -------------------------------
 

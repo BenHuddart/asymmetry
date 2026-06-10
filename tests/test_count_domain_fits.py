@@ -17,8 +17,10 @@ from asymmetry.core.fitting.count_domain import (
     COUNT_COSTS,
     _percent_to_fraction,
     _raw_model,
+    fb_overlay_curves,
     fit_fb_alpha,
     fit_single_histogram,
+    single_histogram_overlay,
 )
 from asymmetry.core.fitting.grouped_time_domain import (
     build_count_group,
@@ -617,3 +619,81 @@ def test_amplitude_identified_by_percent_unit_not_rate():
     assert get_param_info("A_1").unit == "%"
     assert get_param_info("a_L").unit != "%"  # a Lorentzian rate, not an amplitude
     assert get_param_info("Lambda").unit != "%"
+
+
+# --- plot overlay -----------------------------------------------------------
+
+
+def _single_overlay_seed():
+    return ParameterSet(
+        [
+            Parameter("N0", 4.0e3, min=0.0),
+            Parameter("background", 9.0, min=0.0),
+            Parameter("A", 19.0, min=0.0, max=50.0),
+            Parameter("f", 1.0, min=0.0),
+            Parameter("phi", 0.0),
+        ]
+    )
+
+
+def test_single_overlay_is_corrected_model_at_fit_points():
+    """The overlay curve = raw model * exp(t/tau), recovered exactly from residuals."""
+    ds = _continuous_run()
+    result = fit_single_histogram(ds, 1, _tf, _single_overlay_seed(), side="forward")
+    assert result.success
+
+    overlay = single_histogram_overlay(ds, 1, result)
+    assert set(overlay) == {1}
+    time, corrected = overlay[1]
+
+    # Rebuild the same raw trace the fit used; model_raw = counts - residuals; the
+    # overlay must be that on the lifetime-corrected (displayed) scale.
+    group = build_count_group(ds, 1, lifetime_corrected=False)
+    np.testing.assert_allclose(time, group.time, rtol=1e-12)
+    model_raw = np.asarray(group.counts, float) - np.asarray(result.residuals, float)
+    expected = model_raw * np.exp(np.asarray(group.time, float) / MUON_LIFETIME_US)
+    np.testing.assert_allclose(corrected, expected, rtol=1e-12)
+    assert np.all(np.isfinite(corrected))
+
+
+def test_single_overlay_respects_fit_window():
+    """An overlay built with the fit's window matches the fit's point count."""
+    ds = _continuous_run()
+    t_min, t_max = 0.5, 6.0
+    result = fit_single_histogram(
+        ds, 1, _tf, _single_overlay_seed(), side="forward", t_min=t_min, t_max=t_max
+    )
+    overlay = single_histogram_overlay(ds, 1, result, t_min=t_min, t_max=t_max)
+    time, corrected = overlay[1]
+    assert time.size == np.asarray(result.residuals).size
+    assert float(np.min(time)) >= t_min - 1e-9
+    assert float(np.max(time)) <= t_max + 1e-9
+
+
+def test_fb_overlay_keys_both_banks():
+    """The F+B overlay returns one corrected curve per fitted bank, keyed by group."""
+    ds = _pulsed_tf_run(alpha=1.25, seed=11)
+    params = ParameterSet(
+        [
+            Parameter("alpha", 1.0, min=0.1, max=5.0),
+            Parameter("N0", 1.5e5, min=0.0),
+            Parameter("background", 0.0),
+            Parameter("background_b", 0.0),
+            Parameter("A", 18.0, min=0.0, max=50.0),
+            Parameter("f", 1.5, min=0.0),
+            Parameter("phi", 0.2),
+        ]
+    )
+    result = fit_fb_alpha(ds, 1, 2, _tf, params)
+    assert result.success
+
+    overlay = fb_overlay_curves(ds, 1, 2, result)
+    assert set(overlay) == {1, 2}
+    for gid in (1, 2):
+        time, corrected = overlay[gid]
+        side = result.group_results[gid]
+        # Rebuilt in one shared context, matching fit_fb_alpha's time axis exactly.
+        assert time.size == np.asarray(side.residuals).size
+        assert np.all(np.isfinite(corrected))
+        # Corrected counts are positive (raw counts modulated by the decay envelope).
+        assert np.all(corrected > 0.0)
