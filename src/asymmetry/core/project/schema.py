@@ -100,6 +100,7 @@ Current schema (version 8)
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 CURRENT_SCHEMA_VERSION: int = 8
@@ -598,7 +599,7 @@ def load_project(path: str | Path) -> dict:
     OSError
         If the file cannot be read.
     """
-    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    raw = _decode_non_finite(json.loads(Path(path).read_text(encoding="utf-8")))
     migrated = migrate_to_current(raw)
     validate(migrated)
     return migrated
@@ -615,9 +616,65 @@ def save_project(state: dict, path: str | Path) -> None:
         Destination ``.asymp`` file path.
     """
     Path(path).write_text(
-        json.dumps(state, indent=2, default=_json_default),
+        json.dumps(_encode_non_finite(state), indent=2, default=_json_default),
         encoding="utf-8",
     )
+
+
+#: Wrapper key used to round-trip non-finite floats through strict JSON.
+#: ``NaN``/``Infinity``/``-Infinity`` are not valid JSON tokens, so a bare
+#: ``json.dumps`` (allow_nan=True) writes them as non-standard barewords that
+#: external strict parsers reject. We encode them as a uniquely-keyed object
+#: ``{"__nonfinite__": "NaN"}`` on save and reconstruct the float on load, so
+#: the file is valid strict JSON while in-app load behaviour is byte-for-byte
+#: unchanged (every consumer still sees a real ``inf``/``-inf``/``nan`` float).
+_NONFINITE_KEY = "__nonfinite__"
+
+
+def _encode_non_finite(obj: object) -> object:
+    """Recursively replace non-finite floats with a strict-JSON wrapper.
+
+    Reversed by :func:`_decode_non_finite`. Also normalises numpy scalars/arrays
+    to plain Python so the result is fully JSON-serialisable.
+    """
+    if isinstance(obj, bool):
+        return obj
+    if isinstance(obj, float):
+        if math.isnan(obj):
+            return {_NONFINITE_KEY: "NaN"}
+        if math.isinf(obj):
+            return {_NONFINITE_KEY: "Infinity" if obj > 0 else "-Infinity"}
+        return obj
+    if isinstance(obj, dict):
+        return {k: _encode_non_finite(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_encode_non_finite(v) for v in obj]
+    try:
+        import numpy as np
+
+        if isinstance(obj, np.floating):
+            return _encode_non_finite(float(obj))
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.ndarray):
+            return _encode_non_finite(obj.tolist())
+    except ImportError:
+        pass
+    return obj
+
+
+def _decode_non_finite(obj: object) -> object:
+    """Recursively reconstruct non-finite floats from the save-time wrapper."""
+    if isinstance(obj, dict):
+        if len(obj) == 1 and _NONFINITE_KEY in obj:
+            try:
+                return float(obj[_NONFINITE_KEY])
+            except (TypeError, ValueError):
+                return obj
+        return {k: _decode_non_finite(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_decode_non_finite(v) for v in obj]
+    return obj
 
 
 def _json_default(obj: object) -> object:

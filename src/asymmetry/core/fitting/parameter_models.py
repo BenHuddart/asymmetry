@@ -1452,6 +1452,9 @@ class ParameterModelFit:
     x_key: str
     ranges: list[ModelFitRange] = field(default_factory=list)
     active: bool = True
+    #: When the x-axis is a fitted parameter (``x_key == "param:<name>"``),
+    #: account for its per-point uncertainty via effective-variance weighting.
+    use_x_errors: bool = False
 
 
 @dataclass
@@ -1489,6 +1492,11 @@ class CrossGroupFitResult:
     global_uncertainties: dict[str, float] = field(default_factory=dict)
     local_uncertainties: dict[str, dict[str, float]] = field(default_factory=dict)
     message: str = ""
+    #: Error mode the fit was run with (χ²ᵣ carries no goodness information for
+    #: ``"none"``/``"scatter"`` — quality verdicts should be suppressed).
+    error_mode: str = ErrorMode.COLUMN.value
+    #: Number of points that entered the fit across all groups (0 if unknown).
+    n_points: int = 0
 
 
 _TRANSPORT_RATE_SEED_GRID = (
@@ -1699,6 +1707,7 @@ def _run_parameter_model_minuit(
     parameters: ParameterSet,
     method: str,
     initial_values: dict[str, float] | None = None,
+    xerr_fit: NDArray[np.float64] | None = None,
 ) -> tuple[ParameterModelFitResult, float]:
     try:
         from iminuit import Minuit
@@ -1717,7 +1726,36 @@ def _run_parameter_model_minuit(
         kw = {**fixed_kw, **dict(zip(param_names, args, strict=False))}
         return model.function(x_local, **kw)
 
-    cost = LeastSquares(x_fit, y_fit, e_fit, model_wrapper)
+    if xerr_fit is None:
+        cost = LeastSquares(x_fit, y_fit, e_fit, model_wrapper)
+    else:
+        # Errors-in-variables (Orear/York effective variance): inflate each
+        # point's variance by the x-error propagated through the local slope,
+        # σ²_eff = σ_y² + (∂f/∂x)²·σ_x². The slope is a central finite
+        # difference, so no analytic derivative is needed; iminuit re-evaluates
+        # the cost every step, making the weighting self-consistent at the
+        # minimum with no outer iteration. With σ_x = 0 this reduces exactly to
+        # ordinary least squares (callers route the all-zero case to the
+        # LeastSquares branch above to stay byte-identical).
+        x_step = np.maximum(np.abs(x_fit), 1.0) * 1e-6
+        e2 = e_fit**2
+        xerr2 = np.asarray(xerr_fit, dtype=float) ** 2
+
+        def cost(*args: float) -> float:
+            pred = model_wrapper(x_fit, *args)
+            slope = (
+                model_wrapper(x_fit + x_step, *args) - model_wrapper(x_fit - x_step, *args)
+            ) / (2.0 * x_step)
+            # A model undefined just outside the data range would give a NaN
+            # probe; fall back to the y-only variance there rather than poisoning
+            # the whole cost (e2 > 0 is guaranteed by the validity mask, so the
+            # denominator stays positive).
+            slope = np.where(np.isfinite(slope), slope, 0.0)
+            sigma2 = e2 + (slope**2) * xerr2
+            resid = (y_fit - pred) / np.sqrt(sigma2)
+            return float(np.sum(resid**2))
+
+        cost.errordef = Minuit.LEAST_SQUARES
 
     if initial_values is None:
         initial_values = {}
@@ -1779,12 +1817,21 @@ def fit_parameter_model(
     error_mode: ErrorMode | str = ErrorMode.COLUMN,
     error_value: float | None = None,
     windows: Sequence[tuple[float, float]] | None = None,
+    xerr: NDArray | None = None,
 ) -> ParameterModelFitResult:
     """Fit a parameter-vs-x model using iminuit.
 
     ``error_mode``/``error_value`` select the per-point σ assignment (see
     :class:`ErrorMode`); ``windows`` optionally restricts the fit to a union
     of (min, max) intervals, overriding ``x_min``/``x_max``.
+
+    ``xerr`` optionally supplies per-point x-uncertainties for an
+    errors-in-variables (Orear/York effective-variance) fit — used for
+    parameter-vs-parameter trending where the abscissa is itself a fitted
+    quantity. When ``xerr`` is ``None`` or all zero/non-finite the fit is
+    ordinary least squares (the abscissa is treated as exact). It is ignored
+    under the ``NONE``/``SCATTER`` error modes, whose unit y-weights have no
+    physical scale to combine with the x-variance term.
     """
     error_mode = ErrorMode(error_mode)
     xx = np.asarray(x, dtype=float)
@@ -1792,6 +1839,14 @@ def fit_parameter_model(
     ee = apply_error_mode(yy, yerr, error_mode, error_value)
     if ee is None:
         ee = np.ones_like(xx)
+    # Effective variance combines σ_x with a real per-point σ_y; under unit
+    # weights (NONE) or scatter estimation (SCATTER) the "σ_y" is a placeholder
+    # of arbitrary scale, so the combination σ_y² + slope²·σ_x² would be
+    # scale-dependent — ignore x-errors in those modes.
+    if error_mode in (ErrorMode.NONE, ErrorMode.SCATTER):
+        xe = None
+    else:
+        xe = None if xerr is None else np.asarray(xerr, dtype=float)
 
     try:
         window_selection = windows_mask(xx, windows, x_min, x_max)
@@ -1818,6 +1873,15 @@ def fit_parameter_model(
         # explicit Percent/Absolute/unit weights are honoured verbatim.
         e_fit = _stabilize_parameter_model_errors(e_fit)
 
+    # Effective-variance weighting only when x carries usable uncertainty;
+    # otherwise stay on the ordinary least-squares path (byte-identical).
+    xerr_fit: NDArray[np.float64] | None = None
+    if xe is not None:
+        xe_fit = xe[mask]
+        xe_fit = np.where(np.isfinite(xe_fit) & (xe_fit > 0.0), xe_fit, 0.0)
+        if np.any(xe_fit > 0.0):
+            xerr_fit = xe_fit
+
     initial_candidates: list[dict[str, float] | None] = [None]
     heuristic_seed = _transport_seed_initial_values(x_fit, y_fit, e_fit, model, parameters)
     if heuristic_seed is not None:
@@ -1835,6 +1899,7 @@ def fit_parameter_model(
             parameters=parameters,
             method=method,
             initial_values=initial_values,
+            xerr_fit=xerr_fit,
         )
         if best_result is None:
             best_result = result
@@ -1887,6 +1952,9 @@ def global_fit_parameter_model(
     initial_params: dict[str, float] | None = None,
     parameter_bounds: dict[str, tuple[float, float]] | None = None,
     method: str = "migrad",
+    error_mode: ErrorMode | str = ErrorMode.COLUMN,
+    error_value: float | None = None,
+    windows: Sequence[tuple[float, float]] | None = None,
 ) -> CrossGroupFitResult:
     """Jointly fit a parameter model across multiple groups.
 
@@ -1894,7 +1962,14 @@ def global_fit_parameter_model(
     - global: one shared value across all groups
     - local: independent value per group
     - fixed: fixed constant
+
+    ``error_mode``/``error_value`` select the per-point σ assignment for every
+    group (see :class:`ErrorMode`); ``windows`` optionally restricts each
+    group to a union of (min, max) intervals (OR-combined, one model across the
+    union). ``SCATTER`` rescales *all* parameter errors (global and local) by
+    √(χ²/ν) after the fit — the fixed point of WiMDA's Estimate iteration.
     """
+    error_mode = ErrorMode(error_mode)
     if len(groups) < 2:
         return CrossGroupFitResult(
             success=False,
@@ -1998,19 +2073,39 @@ def global_fit_parameter_model(
             kwargs[pname] = float(arg_map[f"l__{gidx}__{pname}"])
         return kwargs
 
+    # Precompute per-group fit arrays once: the window mask, finite mask and the
+    # per-point σ under the chosen error mode are all data-only (independent of
+    # the fitted parameters), so they need not be rebuilt every cost call.
+    group_fit_arrays: list[
+        tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]
+    ] = []
+    total_points = 0
+    for group in groups:
+        x = np.asarray(group.x, dtype=float)
+        y = np.asarray(group.y, dtype=float)
+        sigma = apply_error_mode(y, group.yerr, error_mode, error_value)
+        if sigma is None:
+            sigma = np.ones_like(x)
+        try:
+            window_sel = windows_mask(x, windows)
+        except ValueError as exc:
+            return CrossGroupFitResult(
+                success=False,
+                chi_squared=0.0,
+                reduced_chi_squared=0.0,
+                message=str(exc),
+                error_mode=error_mode.value,
+            )
+        mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(sigma) & (sigma > 0) & window_sel
+        group_fit_arrays.append((x[mask], y[mask], sigma[mask]))
+        total_points += int(np.count_nonzero(mask))
+
     def cost_function(*args: float) -> float:
         arg_map = dict(zip(fit_param_names, args, strict=False))
         total = 0.0
-        for gidx, group in enumerate(groups):
-            x = np.asarray(group.x, dtype=float)
-            y = np.asarray(group.y, dtype=float)
-            e = np.asarray(group.yerr, dtype=float)
-            mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(e) & (e > 0)
-            if not np.any(mask):
+        for gidx, (xx, yy, ee) in enumerate(group_fit_arrays):
+            if xx.size == 0:
                 continue
-            xx = x[mask]
-            yy = y[mask]
-            ee = e[mask]
             kwargs = _build_kwargs(arg_map, gidx)
             pred = np.asarray(model.function(xx, **kwargs), dtype=float)
             resid = (yy - pred) / ee
@@ -2026,14 +2121,6 @@ def global_fit_parameter_model(
         m.simplex()
     else:
         m.migrad()
-
-    total_points = 0
-    for group in groups:
-        x = np.asarray(group.x, dtype=float)
-        y = np.asarray(group.y, dtype=float)
-        e = np.asarray(group.yerr, dtype=float)
-        mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(e) & (e > 0)
-        total_points += int(np.sum(mask))
 
     ndof = max(total_points - len(fit_param_names), 1)
 
@@ -2076,6 +2163,25 @@ def global_fit_parameter_model(
             Parameter(name=pname, value=fixed_values[pname], min=p_min, max=p_max, fixed=True)
         )
 
+    message = "Fit successful" if m.valid else "Fit failed"
+    if error_mode is ErrorMode.SCATTER and m.valid:
+        # Estimate errors from the scatter of the points: rescale *all* (global
+        # and local) parameter errors by √(χ²/ν), the fixed point of WiMDA's
+        # iterated Estimate mode. χ²ᵣ then carries no goodness information.
+        ndof_free = total_points - len(fit_param_names)
+        if ndof_free < 1:
+            global_unc = {}
+            local_unc = {gid: {} for gid in local_unc}
+            message += "; no degrees of freedom to estimate errors from scatter"
+        else:
+            scale = float(np.sqrt(float(m.fval) / ndof_free))
+            if np.isfinite(scale) and scale > 0.0:
+                global_unc = {name: err * scale for name, err in global_unc.items()}
+                local_unc = {
+                    gid: {name: err * scale for name, err in unc.items()}
+                    for gid, unc in local_unc.items()
+                }
+
     return CrossGroupFitResult(
         success=bool(m.valid),
         chi_squared=float(m.fval),
@@ -2085,7 +2191,9 @@ def global_fit_parameter_model(
         fixed_parameters=fixed_parameter_set,
         global_uncertainties=global_unc,
         local_uncertainties=local_unc,
-        message="Fit successful" if m.valid else "Fit failed",
+        message=message,
+        error_mode=error_mode.value,
+        n_points=int(total_points),
     )
 
 

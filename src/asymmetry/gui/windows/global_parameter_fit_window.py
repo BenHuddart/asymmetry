@@ -338,6 +338,7 @@ class GlobalParameterFitWindow(QMainWindow):
                 "parameter_name": model_fit.parameter_name,
                 "x_key": model_fit.x_key,
                 "active": model_fit.active,
+                "use_x_errors": bool(model_fit.use_x_errors),
                 "ranges": ranges_data,
             }
         return payload
@@ -439,6 +440,7 @@ class GlobalParameterFitWindow(QMainWindow):
                 parameter_name=str(entry.get("parameter_name", key)),
                 x_key=x_key,
                 active=bool(entry.get("active", True)),
+                use_x_errors=bool(entry.get("use_x_errors", False)),
                 ranges=ranges,
             )
 

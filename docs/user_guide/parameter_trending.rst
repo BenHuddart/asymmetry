@@ -66,6 +66,81 @@ selection; exporting to a Python script (the snippets below) is the right
 tool for reproducible, publication-grade analyses and for unusual
 parametric models that are not in the built-in registry.
 
+Trending One Parameter Against Another
+--------------------------------------
+
+The x-axis need not be a run-level quantity. Below the fixed ``Auto`` / ``B`` /
+``T`` / ``Run`` entries, the **X axis** selector lists every fitted parameter
+in the active series, so any parameter can be trended against any other — for
+example a relaxation rate :math:`\lambda` against a precession frequency
+:math:`\nu`, both extracted per run. Internally the choice is the key
+``param:<name>``; the core fit functions are x-agnostic, so no API change is
+needed — pass the chosen parameter's values as ``x``:
+
+.. code-block:: python
+
+   result = fit_parameter_model(nu_values, lambda_values, lambda_errors,
+                                model, params)
+
+When the x-axis is a fitted parameter the field/temperature *scope* no longer
+applies (the abscissa is no longer a sample condition), so the component picker
+degrades to the **common** basis set — the same components offered for a
+run-index x. Field- and temperature-specific forms (penetration-depth gap
+models, order parameters) are hidden, because they describe a dependence on a
+physical control variable, not on another fitted quantity.
+
+*When to use this.* Reach for parameter-vs-parameter trending when you suspect
+a *relationship* between two fitted quantities rather than a dependence on the
+external control — correlating a rate with an amplitude across a series, or
+plotting an internal field against a measured frequency to check a linear
+gyromagnetic relation. For the ordinary "property versus temperature or field"
+analysis, keep the ``B`` / ``T`` axes.
+
+Accounting for x Uncertainty
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When the abscissa is a fitted parameter it carries its own per-point
+uncertainty, which an ordinary least-squares fit (x exact) ignores. Tick
+**Account for x uncertainty** in the model-fit dialog — offered only for a
+parameter-vs-parameter x — to weight the fit by the *effective variance*
+
+.. math::
+
+   \sigma^2_{\mathrm{eff},i} = \sigma_{y,i}^2
+       + \left(\left.\frac{\partial f}{\partial x}\right|_{x_i}\right)^2
+         \sigma_{x,i}^2 ,
+
+the first-order errors-in-variables treatment of Orear and York. The slope is
+evaluated by a central finite difference, so it needs no analytic derivative,
+and because the minimiser re-evaluates the weighting at every step it is
+self-consistent at the minimum with no outer iteration. With
+:math:`\sigma_x = 0` it reduces exactly to ordinary least squares, so the
+toggle is off by default and never changes a field/temperature/run fit.
+Programmatically, pass ``xerr``:
+
+.. code-block:: python
+
+   result = fit_parameter_model(nu_values, lambda_values, lambda_errors,
+                                model, params, xerr=nu_errors)
+
+The trend plot draws horizontal error bars from :math:`\sigma_x` whenever the
+x-axis is a fitted parameter, independent of the toggle, so the spread is
+visible even when the fit treats x as exact.
+
+*When to use this.* Switch it on when the x-parameter's relative error is not
+small compared with the y-error divided by the local slope; otherwise the
+correction is negligible and the simpler exact-x fit suffices. The estimator is
+a first-order approximation: it inflates the parameter errors (correctly) and
+shifts the estimates slightly — the intended errors-in-variables behaviour.
+
+.. note::
+
+   WiMDA's Model layer treats the x-column as exact and has no x-error concept;
+   the effective-variance option is an Asymmetry addition for physical
+   correctness in parameter-vs-parameter fits. Total least squares (orthogonal
+   distance regression) was considered and rejected: it offers no box
+   constraints, and Asymmetry's parameter models rely on bounds.
+
 Available Basis Components
 --------------------------
 
@@ -254,6 +329,39 @@ For jointly fitting multiple groups with shared and local parameters, use
    )
    print(result.success)
 
+The cross-group fit honours the same **error modes** and **fit windows** as a
+single-series fit. The cross-group dialog now shows the **Errors** selector and
+**+ Window** controls, and ``global_fit_parameter_model`` accepts the matching
+``error_mode``, ``error_value``, and ``windows`` arguments; the chosen mode and
+window union apply to every group. In *Estimate from scatter* mode the
+:math:`\sqrt{\chi^2/\nu}` rescale is applied to **both** the shared global
+uncertainties and every group's local uncertainties.
+
+.. code-block:: python
+
+   result = global_fit_parameter_model(
+       groups=groups, model=model,
+       global_params=["m"], local_params=["b"], fixed_params={},
+       error_mode="scatter", windows=[(0.0, 40.0), (60.0, 100.0)],
+   )
+
+Recursive Trending (Model-Fit Results as a Series)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A successful cross-group fit is itself recorded as a new trend series, named
+**Model fit: <parameter> vs <x>**, alongside the original fit series in the Fit
+Parameters panel. Each selected group contributes one row carrying that group's
+*local* parameters (with the shared *global* parameters as constant columns),
+indexed by the group's orthogonal coordinate — temperature for a field fit, and
+vice versa; a final ``globals`` row carries the shared parameters and
+:math:`\chi^2_r`. Because this results series is an ordinary trend series, it
+can be trended *again* — fit the per-group local rate against temperature, for
+instance — so the analysis recurses naturally. This supersedes WiMDA's separate
+second-level *Model Fit Table*, which only stored the rows for inspection.
+
+Re-running the same cross-group fit (same parameter, x-axis, and group set)
+*replaces* its results series rather than accumulating duplicates.
+
 Magnetic Order Parameter
 ------------------------
 
@@ -412,6 +520,9 @@ References
 1. S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
    Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
 2. B. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
+3. J. Orear, Am. J. Phys. **50**, 912 (1982).
+4. D. York, N. M. Evensen, M. L. Martínez, and J. De Basabe Delgado, Am. J.
+   Phys. **72**, 367 (2004).
 
 Migrating WiMDA Model Functions
 -------------------------------

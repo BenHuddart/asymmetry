@@ -97,6 +97,9 @@ def _format_x_label_gle(x_key: str) -> str:
         return "{\\it{B}} (G)"
     if x_key == "temperature":
         return "{\\it{T}} (K)"
+    name = _x_param_name(x_key)
+    if name is not None:
+        return _format_gle_label(name)
     return "Run Number"
 
 
@@ -129,15 +132,25 @@ def _safe_data_name(value: object) -> str:
 
 
 def _normalize_x_key(value: object) -> str:
-    """Normalize persisted x-axis key to an internal identifier."""
+    """Normalize persisted x-axis key to an internal identifier.
+
+    Recognises the three reserved run-level axes (``field``/``temperature``/
+    ``run``) and the ``param:<name>`` namespace used for parameter-vs-parameter
+    trending (item 1). Anything else collapses to ``run``.
+    """
     text = str(value or "").strip()
-    if text == "field":
-        return "field"
-    if text == "temperature":
-        return "temperature"
-    if text == "run":
-        return "run"
+    if text in ("field", "temperature", "run"):
+        return text
+    if text.startswith("param:") and len(text) > len("param:"):
+        return text
     return "run"
+
+
+def _x_param_name(x_key: str) -> str | None:
+    """Return the fitted-parameter name for a ``param:<name>`` x-key, else None."""
+    if x_key.startswith("param:"):
+        return x_key[len("param:") :]
+    return None
 
 
 @dataclass
@@ -467,6 +480,7 @@ class FitParametersPanel(QWidget):
             ),
             "inferred_x_key": self._inferred_x_key,
             "x_axis": self._x_combo.currentText(),
+            "x_axis_key": self._effective_x_key(),
             "selected_y_params": selected_y,
             "log_x": bool(self._log_x_check.isChecked()),
             "log_y_params": log_y,
@@ -619,11 +633,21 @@ class FitParametersPanel(QWidget):
             self._apply_group_selection_to_view(sync_active=False)
         self._refresh_model_fit_button_labels()
 
-        x_axis = state.get("x_axis")
-        if isinstance(x_axis, str):
-            idx = self._x_combo.findText(x_axis)
+        # Prefer the resolved x-axis key so a param:<name> selection survives
+        # label collisions; fall back to the legacy combo-text match.
+        restored_x = False
+        x_axis_key = state.get("x_axis_key")
+        if isinstance(x_axis_key, str) and x_axis_key.startswith("param:"):
+            idx = self._x_combo.findData(x_axis_key)
             if idx >= 0:
                 self._x_combo.setCurrentIndex(idx)
+                restored_x = True
+        if not restored_x:
+            x_axis = state.get("x_axis")
+            if isinstance(x_axis, str):
+                idx = self._x_combo.findText(x_axis)
+                if idx >= 0:
+                    self._x_combo.setCurrentIndex(idx)
 
         self._log_x_check.setChecked(bool(state.get("log_x", False)))
 
@@ -1698,6 +1722,9 @@ class FitParametersPanel(QWidget):
         return "run"
 
     def _effective_x_key(self) -> str:
+        data = self._x_combo.currentData()
+        if isinstance(data, str) and data.startswith("param:"):
+            return data
         selected = self._x_combo.currentText()
         if selected in {"B (G)", "𝐵 (G)"}:
             return "field"
@@ -1870,6 +1897,34 @@ class FitParametersPanel(QWidget):
         inferred_label = {"field": "(B)", "temperature": "(T)", "run": "(Run)"}
         self._x_auto_hint.setText(inferred_label.get(self._inferred_x_key, "(Run)"))
 
+    def _rebuild_x_axis_combo(self) -> None:
+        """Re-populate the X-axis combo: the fixed run-level axes plus every
+        currently-trendable fitted parameter (param-vs-param trending, item 1).
+
+        Parameter entries carry ``param:<name>`` as their item data so the
+        selection survives label collisions; the current selection is preserved
+        across the rebuild by data (param) or text (run-level axis).
+        """
+        combo = self._x_combo
+        prev_data = combo.currentData()
+        prev_text = combo.currentText()
+        combo.blockSignals(True)
+        combo.clear()
+        for label in ("Auto", "𝐵 (G)", "𝑇 (K)", "Run"):
+            combo.addItem(label)
+        for name in self._display_y_parameters():
+            combo.addItem(_format_param_label(name), userData=f"param:{name}")
+        restored = False
+        if isinstance(prev_data, str) and prev_data.startswith("param:"):
+            idx = combo.findData(prev_data)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+                restored = True
+        if not restored:
+            idx = combo.findText(prev_text)
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+
     def _rebuild_y_controls(self, *, preferred_selected: list[str] | None = None) -> None:
         self._y_selector_table.blockSignals(True)
         self._y_selector_table.clearContents()
@@ -1878,6 +1933,10 @@ class FitParametersPanel(QWidget):
         self._y_controls = {}
 
         display_params = self._display_y_parameters()
+
+        # Keep the X-axis selector's parameter entries in sync with the
+        # trendable parameters (param-vs-param trending, item 1).
+        self._rebuild_x_axis_combo()
 
         if not display_params:
             self._set_y_table_visible_rows(3)
@@ -2202,6 +2261,10 @@ class FitParametersPanel(QWidget):
             y_err = y_err.copy()
             y_err[invalid_err] = fallback
 
+        # Per-point x-uncertainty for the effective-variance option — only
+        # meaningful when the abscissa is itself a fitted parameter.
+        x_err = self._x_error_array(rows, x_key)
+
         dialog = ModelFitDialog(
             parameter_name=param_name,
             x_key=x_key,
@@ -2210,6 +2273,7 @@ class FitParametersPanel(QWidget):
             y_errors=y_err,
             existing_fit=self._model_fits.get(param_name),
             parent=self,
+            x_errors=x_err,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -2352,7 +2416,8 @@ class FitParametersPanel(QWidget):
             finite_fb = fallback[np.isfinite(fallback)]
             return float(np.nanmedian(finite_fb)) if finite_fb.size else 0.0
 
-        # For run-index fits, prefer temperature if available, otherwise field.
+        # For run-index and parameter-vs-parameter fits, prefer temperature if
+        # available, otherwise field, as the orthogonal group coordinate.
         temps = np.asarray([row.temperature for row in rows], dtype=float)
         finite_t = temps[np.isfinite(temps)]
         if finite_t.size:
@@ -2479,6 +2544,17 @@ class FitParametersPanel(QWidget):
                     for row in config.get("parameter_rows", [])
                     if isinstance(row, dict)
                 ],
+                "error_mode": str(config.get("error_mode", "column")),
+                "error_value": float(config.get("error_value"))
+                if isinstance(config.get("error_value"), (int, float))
+                else None,
+                "windows": (
+                    [
+                        [float(lo), float(hi)]
+                        for lo, hi in (parse_fit_windows(config.get("windows")) or [])
+                    ]
+                    or None
+                ),
             }
         return out
 
@@ -2502,6 +2578,17 @@ class FitParametersPanel(QWidget):
                 "parameter_rows": [dict(row) for row in rows if isinstance(row, dict)]
                 if isinstance(rows, list)
                 else [],
+                "error_mode": str(config.get("error_mode", "column")),
+                "error_value": float(config.get("error_value"))
+                if isinstance(config.get("error_value"), (int, float))
+                else None,
+                "windows": (
+                    [
+                        [float(lo), float(hi)]
+                        for lo, hi in (parse_fit_windows(config.get("windows")) or [])
+                    ]
+                    or None
+                ),
             }
         return out
 
@@ -2864,7 +2951,8 @@ class FitParametersPanel(QWidget):
         x_key = self._effective_x_key()
         rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
         x_vals = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
-        x_label = {"field": "$B$ (G)", "temperature": "$T$ (K)", "run": "Run Number"}[x_key]
+        x_err = self._x_error_array(rows, x_key)
+        x_label = self._x_axis_label_mpl(x_key)
 
         self._figure.clear()
         plot_mode = self._plot_mode_combo.currentText()
@@ -2884,12 +2972,13 @@ class FitParametersPanel(QWidget):
                 self._draw_model_overlay_mpl(ax, y_name)
 
                 ax.scatter(x_vals, y_vals, s=16, zorder=6, color="C0")
-                finite_err = np.isfinite(y_err) & (y_err > 0)
-                if np.any(finite_err):
+                ye = y_err if np.any(np.isfinite(y_err) & (y_err > 0)) else None
+                if ye is not None or x_err is not None:
                     ax.errorbar(
                         x_vals,
                         y_vals,
-                        yerr=y_err,
+                        yerr=ye,
+                        xerr=x_err,
                         fmt="none",
                         ecolor="gray",
                         capsize=2,
@@ -2932,11 +3021,13 @@ class FitParametersPanel(QWidget):
                 self._draw_model_overlay_mpl(ax2, right_name, color=right_color)
 
                 ax.scatter(x_vals, left_vals, s=16, zorder=6, color=left_color)
-                if np.any(np.isfinite(left_err) & (left_err > 0)):
+                ye_left = left_err if np.any(np.isfinite(left_err) & (left_err > 0)) else None
+                if ye_left is not None or x_err is not None:
                     ax.errorbar(
                         x_vals,
                         left_vals,
-                        yerr=left_err,
+                        yerr=ye_left,
+                        xerr=x_err,
                         fmt="none",
                         ecolor=left_color,
                         capsize=2,
@@ -2945,11 +3036,13 @@ class FitParametersPanel(QWidget):
                     )
 
                 ax2.scatter(x_vals, right_vals, s=16, zorder=6, color=right_color)
-                if np.any(np.isfinite(right_err) & (right_err > 0)):
+                ye_right = right_err if np.any(np.isfinite(right_err) & (right_err > 0)) else None
+                if ye_right is not None or x_err is not None:
                     ax2.errorbar(
                         x_vals,
                         right_vals,
-                        yerr=right_err,
+                        yerr=ye_right,
+                        xerr=x_err,
                         fmt="none",
                         ecolor=right_color,
                         capsize=2,
@@ -2982,11 +3075,13 @@ class FitParametersPanel(QWidget):
                     self._draw_model_overlay_mpl(ax, y_name, color=color)
 
                     ax.scatter(x_vals, y_vals, s=16, zorder=6, label=label, color=color)
-                    if np.any(np.isfinite(y_err) & (y_err > 0)):
+                    ye = y_err if np.any(np.isfinite(y_err) & (y_err > 0)) else None
+                    if ye is not None or x_err is not None:
                         ax.errorbar(
                             x_vals,
                             y_vals,
-                            yerr=y_err,
+                            yerr=ye,
+                            xerr=x_err,
                             fmt="none",
                             ecolor=color,
                             capsize=2,
@@ -3028,12 +3123,43 @@ class FitParametersPanel(QWidget):
             self._figure.tight_layout(pad=1.2)
         self._canvas.draw()
 
+    def _x_axis_label_mpl(self, x_key: str) -> str:
+        name = _x_param_name(x_key)
+        if name is not None:
+            return _format_plot_label(name)
+        return {"field": "$B$ (G)", "temperature": "$T$ (K)", "run": "Run Number"}.get(
+            x_key, "Run Number"
+        )
+
     def _x_value(self, row: _FitRow, x_key: str) -> float:
+        name = _x_param_name(x_key)
+        if name is not None:
+            return float(row.values.get(name, float("nan")))
         if x_key == "field":
             return row.field
         if x_key == "temperature":
             return row.temperature
         return float(row.run_number)
+
+    def _x_error(self, row: _FitRow, x_key: str) -> float:
+        """Per-point x-uncertainty for a ``param:<name>`` x-key (NaN otherwise).
+
+        Run-level axes (field/temperature/run) carry no uncertainty, so the
+        fit treats them as exact and no horizontal error bars are drawn.
+        """
+        name = _x_param_name(x_key)
+        if name is not None:
+            return float(row.errors.get(name, float("nan")))
+        return float("nan")
+
+    def _x_error_array(self, rows: list[_FitRow], x_key: str) -> np.ndarray | None:
+        """Horizontal-error array for the plot, or None when x is exact."""
+        if _x_param_name(x_key) is None:
+            return None
+        errs = np.array([self._x_error(r, x_key) for r in rows], dtype=float)
+        if np.any(np.isfinite(errs) & (errs > 0)):
+            return errs
+        return None
 
     def _show_table_dialog(self) -> None:
         if self._table.rowCount() == 0 or self._table.columnCount() == 0:
@@ -3180,6 +3306,7 @@ class FitParametersPanel(QWidget):
                 "parameter_name": model_fit.parameter_name,
                 "x_key": model_fit.x_key,
                 "active": model_fit.active,
+                "use_x_errors": bool(model_fit.use_x_errors),
                 "ranges": ranges_data,
             }
         return payload
@@ -3294,6 +3421,7 @@ class FitParametersPanel(QWidget):
                 parameter_name=str(entry.get("parameter_name", key)),
                 x_key=x_key,
                 active=bool(entry.get("active", True)),
+                use_x_errors=bool(entry.get("use_x_errors", False)),
                 ranges=ranges,
             )
 
@@ -3540,6 +3668,12 @@ class FitParametersPanel(QWidget):
                 f.write(" ".join(f"{v:>16.8g}" for v in values) + "\n")
 
     def _gle_x_column(self, x_key: str) -> int:
+        name = _x_param_name(x_key)
+        if name is not None:
+            # Parameter-vs-parameter: x is the fitted parameter's value column,
+            # which the data file already emits (with its error column alongside).
+            cols = self._gle_columns_for_param(name)
+            return cols[0] if cols is not None else 1
         if x_key == "run":
             return 1
         if x_key == "field":
