@@ -10,9 +10,9 @@ into dedicated chapters: see :doc:`composite_models` for the expression
 grammar that drives the GUI builder, :doc:`fit_wizard` and
 :doc:`global_fit_wizard` for the guided model-selection workflows, and the
 per-function chapters for the depolarisation forms themselves
-(:doc:`exponential_relaxation`, :doc:`gaussian_relaxation`,
-:doc:`oscillatory`, :doc:`stretched_exponential`, :doc:`static_gkt_zf`,
-:doc:`lf_kubo_toyabe`, :doc:`muon_fluorine`, :doc:`diffusion_ballistic_lf`,
+(:doc:`fit_functions/relaxation`, :doc:`fit_functions/relaxation`,
+:doc:`fit_functions/oscillation`, :doc:`fit_functions/relaxation`, :doc:`fit_functions/kubo_toyabe`,
+:doc:`fit_functions/kubo_toyabe`, :doc:`fit_functions/nuclear_dipolar`, :doc:`diffusion_ballistic_lf`,
 :doc:`sc_penetration_depth`).
 
 When fitting through the GUI, the plot panel's current bunch factor is

@@ -26,6 +26,11 @@ parameters remain canonical: ``nu0`` and ``fwhm`` are MHz quantities.
 Available Components
 --------------------
 
+The fit-function builder is filtered by analysis domain: when fitting a
+spectrum it offers only the frequency-domain components below (as a flat
+list), and these components do not appear when fitting in the time domain.
+Typing a component name from the other domain gives an explanatory error.
+
 ``GaussianPeak``
     Peak height, centre ``nu0``, and full width at half maximum ``fwhm``.
 

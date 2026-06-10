@@ -29,43 +29,48 @@ _SY = 0.5 * _SIGMA_Y
 _SZ = 0.5 * _SIGMA_Z
 
 
-def _kron3(
-    a: NDArray[np.complex128], b: NDArray[np.complex128], c: NDArray[np.complex128]
-) -> NDArray[np.complex128]:
-    return np.kron(np.kron(a, b), c)
+def _kron_chain(mats: list[NDArray[np.complex128]]) -> NDArray[np.complex128]:
+    out = mats[0]
+    for m in mats[1:]:
+        out = np.kron(out, m)
+    return out
 
 
-_SPIN_OPS: dict[tuple[int, int], NDArray[np.complex128]] = {
-    (0, 0): _kron3(_SX, _ID2, _ID2),
-    (0, 1): _kron3(_SY, _ID2, _ID2),
-    (0, 2): _kron3(_SZ, _ID2, _ID2),
-    (1, 0): _kron3(_ID2, _SX, _ID2),
-    (1, 1): _kron3(_ID2, _SY, _ID2),
-    (1, 2): _kron3(_ID2, _SZ, _ID2),
-    (2, 0): _kron3(_ID2, _ID2, _SX),
-    (2, 1): _kron3(_ID2, _ID2, _SY),
-    (2, 2): _kron3(_ID2, _ID2, _SZ),
-}
+def _spin_half_operators(n_spins: int) -> dict[tuple[int, int], NDArray[np.complex128]]:
+    """Spin-1/2 operators S_x/S_y/S_z for each site of an n-spin product space."""
+    ops: dict[tuple[int, int], NDArray[np.complex128]] = {}
+    for site in range(n_spins):
+        for axis, mat in enumerate((_SX, _SY, _SZ)):
+            factors: list[NDArray[np.complex128]] = [_ID2] * n_spins
+            factors[site] = mat
+            ops[(site, axis)] = _kron_chain(factors)
+    return ops
 
 
-MUON_SIGMA_Z_THREE_SPIN = _kron3(_ID2, _SIGMA_Z, _ID2)
-
-
-def _build_pair_operators(
+def _pair_operators(
+    spin_ops: dict[tuple[int, int], NDArray[np.complex128]],
     pair: tuple[int, int],
+    dim: int,
 ) -> tuple[NDArray[np.complex128], NDArray[np.complex128]]:
-    tensor = np.empty((3, 3, 8, 8), dtype=complex)
+    """Isotropic S_i.S_j and the (3, 3, dim, dim) tensor S_i^a S_j^b for a pair."""
+    tensor = np.empty((3, 3, dim, dim), dtype=complex)
     for i in range(3):
         for j in range(3):
-            tensor[i, j] = _SPIN_OPS[(pair[0], i)] @ _SPIN_OPS[(pair[1], j)]
+            tensor[i, j] = spin_ops[(pair[0], i)] @ spin_ops[(pair[1], j)]
     isotropic = tensor[0, 0] + tensor[1, 1] + tensor[2, 2]
     return isotropic, tensor
 
 
+# --- three-spin (F-mu-F) operator tables -------------------------------------
+
+_SPIN_OPS = _spin_half_operators(3)
+
+MUON_SIGMA_Z_THREE_SPIN = _kron_chain([_ID2, _SIGMA_Z, _ID2])
+
 _PAIR_ISO: dict[tuple[int, int], NDArray[np.complex128]] = {}
 _PAIR_TENSOR: dict[tuple[int, int], NDArray[np.complex128]] = {}
 for _pair in (_PAIR_MU_F1, _PAIR_MU_F2, _PAIR_F1_F2):
-    _iso, _tensor = _build_pair_operators(_pair)
+    _iso, _tensor = _pair_operators(_SPIN_OPS, _pair, 8)
     _PAIR_ISO[_pair] = _iso
     _PAIR_TENSOR[_pair] = _tensor
 
@@ -146,8 +151,32 @@ def three_spin_hamiltonian_rad_per_us(
     )
 
 
+# --- four-spin (muon + three fluorines) operator tables ----------------------
+#
+# Spin index 0 is the muon; indices 1..3 are the fluorines.  The per-pair
+# (3, 3, 16, 16) tensors are consumed by the batched Hamiltonian build in
+# polarization._triangle_spectral_terms_cached.
+
+_N_FOUR = 4
+_DIM_FOUR = 2**_N_FOUR
+
+_SPIN_OPS_FOUR = _spin_half_operators(_N_FOUR)
+
+MUON_SIGMA_Z_FOUR_SPIN = _kron_chain([_SIGMA_Z, _ID2, _ID2, _ID2])
+
+_PAIRS_FOUR: list[tuple[int, int]] = [(i, j) for i in range(_N_FOUR) for j in range(i + 1, _N_FOUR)]
+
+_PAIR_ISO_FOUR: dict[tuple[int, int], NDArray[np.complex128]] = {}
+_PAIR_TENSOR_FOUR: dict[tuple[int, int], NDArray[np.complex128]] = {}
+for _pair4 in _PAIRS_FOUR:
+    _iso4, _tensor4 = _pair_operators(_SPIN_OPS_FOUR, _pair4, _DIM_FOUR)
+    _PAIR_ISO_FOUR[_pair4] = _iso4
+    _PAIR_TENSOR_FOUR[_pair4] = _tensor4
+
+
 __all__ = [
     "MUON_SIGMA_Z_THREE_SPIN",
+    "MUON_SIGMA_Z_FOUR_SPIN",
     "omega_d_mu_f_rad_per_us",
     "omega_d_f_f_rad_per_us",
     "omega_dipolar_rad_per_us",

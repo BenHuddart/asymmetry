@@ -18,27 +18,54 @@ from numpy.typing import NDArray
 from asymmetry.core.fitting.models import (
     ModelDefinition,
     abragam,
+    bessel_oscillation,
     dynamic_gaussian_kt,
     dynamic_lorentzian_kt,
     exponential_relaxation,
+    gaussian_broadened_kt,
     gaussian_relaxation,
     keren,
     longitudinal_field_kubo_toyabe,
+    risch_kehr,
     static_gkt_zf,
     stretched_exponential,
 )
 from asymmetry.core.fitting.muon_fluorine.polarization import (
+    dynamic_fmuf_polarization,
+    fmuf_triangle_polarization,
     general_fmuf_polarization,
     linear_fmuf_polarization,
     mu_f_polarization,
 )
 from asymmetry.core.fitting.muonium import (
+    VACUUM_MUONIUM_A_HF_MHZ,
+    high_tf_muonium,
+    high_tf_muonium_aniso,
     low_tf_muonium,
+    muonium_lf_relaxation,
     tf_muonium,
     zf_muonium,
 )
+from asymmetry.core.fitting.nuclear_dipole import (
+    dipolar_pair_field,
+    dipolar_spin_j,
+    electron_dipole,
+    proton_dipole,
+)
 from asymmetry.core.fitting.parameters import ParamInfo, get_param_info
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+
+
+class UnknownComponentError(ValueError):
+    """An expression referenced a component name that is not registered.
+
+    Carries the offending ``name`` so callers (e.g. the GUI builder) can
+    produce targeted guidance without parsing the message text.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"Unknown component '{name}'")
+        self.name = name
 
 
 @dataclass(frozen=True)
@@ -55,6 +82,10 @@ class ComponentDefinition:
     latex_equation: str = ""
     category: str = "General"
     domain: str = "time"
+    #: Parameters that should start *fixed* in a fit (e.g. a nuclear spin the
+    #: model is piecewise-constant in, or a hyperfine constant that is known).
+    #: The GUI pre-checks the fix box; the user can always free them.
+    fixed_params: tuple[str, ...] = ()
 
 
 def _exp_component(t: NDArray, A: float, Lambda: float) -> NDArray[np.float64]:
@@ -185,12 +216,106 @@ def _linear_background_component(t: NDArray, bg: float, slope: float) -> NDArray
     return float(bg) + float(slope) * x
 
 
+def _risch_kehr_component(t: NDArray, A: float, Gamma: float) -> NDArray[np.float64]:
+    return A * risch_kehr(t, Gamma)
+
+
+def _bessel_component(t: NDArray, A: float, frequency: float, phase: float) -> NDArray[np.float64]:
+    return A * bessel_oscillation(t, frequency, phase)
+
+
+def _gaussian_broadened_kt_component(
+    t: NDArray, A: float, Delta: float, B_L: float, w_rel: float
+) -> NDArray[np.float64]:
+    return A * gaussian_broadened_kt(t, Delta, B_L, w_rel)
+
+
+def _muonium_high_tf_component(
+    t: NDArray, A: float, field: float, A_hf: float, phase: float
+) -> NDArray[np.float64]:
+    return A * high_tf_muonium(t, field, A_hf, phase)
+
+
+def _muonium_high_tf_aniso_component(
+    t: NDArray, A: float, field: float, A_hf: float, D_mu: float, phase: float
+) -> NDArray[np.float64]:
+    return A * high_tf_muonium_aniso(t, field, A_hf, D_mu, phase)
+
+
+def _muonium_lf_relax_component(
+    t: NDArray, A: float, delta_ex: float, tau_c: float, B_L: float, A_hf: float
+) -> NDArray[np.float64]:
+    return A * muonium_lf_relaxation(t, delta_ex, tau_c, B_L, A_hf)
+
+
+def _dipolar_pair_field_component(
+    t: NDArray, A: float, B_dip: float, lambda_T: float
+) -> NDArray[np.float64]:
+    return A * dipolar_pair_field(t, B_dip, lambda_T)
+
+
+def _invalid_trial_penalty(t: NDArray) -> NDArray[np.float64]:
+    """Flat penalty curve returned for invalid trial geometries.
+
+    Keeps minimization alive when the optimiser probes an unphysical point
+    (e.g. a distance at its inclusive zero bound) instead of aborting the fit
+    with an exception.
+    """
+    return np.full_like(np.asarray(t, dtype=float), fill_value=1.0e3, dtype=float)
+
+
+def _proton_dipole_component(
+    t: NDArray, A: float, r_muH: float, lambda_T: float
+) -> NDArray[np.float64]:
+    try:
+        return A * proton_dipole(t, r_muH, lambda_T)
+    except ValueError:
+        return _invalid_trial_penalty(t)
+
+
+def _electron_dipole_component(
+    t: NDArray, A: float, r_mue: float, lambda_T: float
+) -> NDArray[np.float64]:
+    try:
+        return A * electron_dipole(t, r_mue, lambda_T)
+    except ValueError:
+        return _invalid_trial_penalty(t)
+
+
+def _dipolar_spin_j_component(
+    t: NDArray, A: float, f_dip: float, f_quad: float, J_spin: float
+) -> NDArray[np.float64]:
+    return A * dipolar_spin_j(t, f_dip, f_quad, J_spin)
+
+
+def _dynamic_fmuf_component(t: NDArray, A: float, r_muF: float, nu: float) -> NDArray[np.float64]:
+    try:
+        return A * dynamic_fmuf_polarization(t, r_muF, nu)
+    except ValueError:
+        return _invalid_trial_penalty(t)
+
+
+def _fmuf_triangle_component(
+    t: NDArray, A: float, r_muF: float, r3: float, phi3: float
+) -> NDArray[np.float64]:
+    try:
+        return A * fmuf_triangle_polarization(t, r_muF, r3, phi3)
+    except ValueError:
+        return _invalid_trial_penalty(t)
+
+
 def _muf_component(t: NDArray, A: float, r_muF: float) -> NDArray[np.float64]:
-    return A * mu_f_polarization(t, r_muF)
+    try:
+        return A * mu_f_polarization(t, r_muF)
+    except ValueError:
+        return _invalid_trial_penalty(t)
 
 
 def _linear_fmuf_component(t: NDArray, A: float, r_muF: float) -> NDArray[np.float64]:
-    return A * linear_fmuf_polarization(t, r_muF)
+    try:
+        return A * linear_fmuf_polarization(t, r_muF)
+    except ValueError:
+        return _invalid_trial_penalty(t)
 
 
 def _general_fmuf_component(
@@ -203,8 +328,26 @@ def _general_fmuf_component(
     try:
         return A * general_fmuf_polarization(t, r1, r2, theta)
     except ValueError:
-        # Keep minimization alive for transient invalid trial points.
-        return np.full_like(np.asarray(t, dtype=float), fill_value=1.0e3, dtype=float)
+        return _invalid_trial_penalty(t)
+
+
+#: Canonical component-picker categories in display order, mapped to the stem
+#: of their user-guide page under ``docs/user_guide/fit_functions/``.  This is
+#: the single source of truth consumed by the GUI picker (submenu order) and
+#: by the documentation-placement test — a new category must be registered
+#: here (with a docs page) before components can use it.  "General" is the
+#: default bucket and renders at the top level of the picker rather than as a
+#: submenu; it must stay empty for time-domain components.
+CATEGORY_REGISTRY: dict[str, str] = {
+    "General": "",
+    "Relaxation": "relaxation",
+    "Oscillation": "oscillation",
+    "Kubo-Toyabe": "kubo_toyabe",
+    "Muonium": "muonium",
+    "Nuclear dipolar": "nuclear_dipolar",
+    "Background": "background",
+    "Frequency Domain": "frequency_domain",
+}
 
 
 COMPONENTS: dict[str, ComponentDefinition] = {
@@ -217,6 +360,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_info={"A": get_param_info("A"), "Lambda": get_param_info("Lambda")},
         formula_template="{A}*exp(-{Lambda}*t)",
         latex_equation=r"A(t) = A e^{-\Lambda t}",
+        category="Relaxation",
     ),
     "Gaussian": ComponentDefinition(
         name="Gaussian",
@@ -227,6 +371,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_info={"A": get_param_info("A"), "sigma": get_param_info("sigma")},
         formula_template="{A}*exp(-({sigma}*t)^2)",
         latex_equation=r"A(t) = A e^{-(\sigma t)^2}",
+        category="Relaxation",
     ),
     "Oscillatory": ComponentDefinition(
         name="Oscillatory",
@@ -241,6 +386,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         },
         formula_template="{A}*cos(2*pi*{frequency}*t + {phase})",
         latex_equation=r"A(t) = A \cos(2\pi f t + \phi)",
+        category="Oscillation",
     ),
     "OscillatoryField": ComponentDefinition(
         name="OscillatoryField",
@@ -255,6 +401,22 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         },
         formula_template="{A}*cos(2*pi*gamma_mu*{field}*t + {phase})",
         latex_equation=r"A(t) = A \cos(2\pi \gamma_\mu B t + \phi)",
+        category="Oscillation",
+    ),
+    "Bessel": ComponentDefinition(
+        name="Bessel",
+        description="Zeroth-order Bessel oscillation for incommensurate (SDW) order",
+        function=_bessel_component,
+        param_names=["A", "frequency", "phase"],
+        param_defaults={"A": 25.0, "frequency": 1.0, "phase": 0.0},
+        param_info={
+            "A": get_param_info("A"),
+            "frequency": get_param_info("frequency"),
+            "phase": get_param_info("phase"),
+        },
+        formula_template="{A}*J0(2*pi*{frequency}*t + {phase})",
+        latex_equation=r"A(t) = A\,J_0(2\pi f t + \phi)",
+        category="Oscillation",
     ),
     "MuoniumTF": ComponentDefinition(
         name="MuoniumTF",
@@ -315,6 +477,85 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         ),
         category="Muonium",
     ),
+    "MuoniumHighTF": ComponentDefinition(
+        name="MuoniumHighTF",
+        description="High transverse-field muonium: the nu_12/nu_34 intratriplet pair",
+        function=_muonium_high_tf_component,
+        param_names=["A", "field", "A_hf", "phase"],
+        param_defaults={
+            "A": 25.0,
+            "field": 3000.0,
+            "A_hf": VACUUM_MUONIUM_A_HF_MHZ,
+            "phase": 0.0,
+        },
+        param_info={
+            "A": get_param_info("A"),
+            "field": get_param_info("field"),
+            "A_hf": get_param_info("A_hf"),
+            "phase": get_param_info("phase"),
+        },
+        formula_template="{A}*HighTFmuonium(t; {field}, {A_hf}, {phase})",
+        latex_equation=(
+            r"A(t) = \frac{A}{2}\left[\cos(2\pi\nu_{12}t+\phi)+\cos(2\pi\nu_{34}t+\phi)\right],"
+            r"\ \nu_{12}+\nu_{34}=A_\mu"
+        ),
+        category="Muonium",
+    ),
+    "MuoniumHighTFAniso": ComponentDefinition(
+        name="MuoniumHighTFAniso",
+        description="Powder-averaged anisotropic high-TF muonium pair (axial D)",
+        function=_muonium_high_tf_aniso_component,
+        param_names=["A", "field", "A_hf", "D_mu", "phase"],
+        param_defaults={
+            "A": 25.0,
+            "field": 3000.0,
+            "A_hf": VACUUM_MUONIUM_A_HF_MHZ,
+            "D_mu": 10.0,
+            "phase": 0.0,
+        },
+        param_info={
+            "A": get_param_info("A"),
+            "field": get_param_info("field"),
+            "A_hf": get_param_info("A_hf"),
+            "D_mu": get_param_info("D_mu"),
+            "phase": get_param_info("phase"),
+        },
+        formula_template="{A}*HighTFmuoniumAniso(t; {field}, {A_hf}, {D_mu}, {phase})",
+        latex_equation=(
+            r"A(t) = \frac{A}{2}\left\langle\cos\left(2\pi(\nu_{34}+\frac{d}{2})t+\phi\right)"
+            r"+\cos\left(2\pi(\nu_{12}-\frac{d}{2})t+\phi\right)\right\rangle_{\cos\theta},"
+            r"\ d=\frac{D}{2}(3\cos^2\theta-1)"
+        ),
+        category="Muonium",
+    ),
+    "MuoniumLFRelax": ComponentDefinition(
+        name="MuoniumLFRelax",
+        description="Muonium longitudinal-field T1 relaxation (BPP at the nu_12 transition)",
+        function=_muonium_lf_relax_component,
+        param_names=["A", "delta_ex", "tau_c", "B_L", "A_hf"],
+        param_defaults={
+            "A": 25.0,
+            "delta_ex": 0.5,
+            "tau_c": 0.1,
+            "B_L": 10.0,
+            "A_hf": VACUUM_MUONIUM_A_HF_MHZ,
+        },
+        param_info={
+            "A": get_param_info("A"),
+            "delta_ex": get_param_info("delta_ex"),
+            "tau_c": get_param_info("tau_c"),
+            "B_L": get_param_info("B_L"),
+            "A_hf": get_param_info("A_hf"),
+        },
+        formula_template="{A}*exp(-lambda({delta_ex},{tau_c},{B_L},{A_hf})*t)",
+        fixed_params=("A_hf",),
+        latex_equation=(
+            r"A(t) = A e^{-\lambda t},\ \ \lambda = "
+            r"\frac{(1-\delta)\,\delta_{ex}^2\,\tau_c}{1+(2\pi\nu_{12}\tau_c)^2},"
+            r"\ \delta=\frac{x}{\sqrt{1+x^2}}"
+        ),
+        category="Muonium",
+    ),
     "StretchedExponential": ComponentDefinition(
         name="StretchedExponential",
         description="A exp(-(|Lambda| t)^beta)",
@@ -328,6 +569,18 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         },
         formula_template="{A}*exp(-(abs({Lambda})*t)^({beta}))",
         latex_equation=r"A(t) = A \exp\left(-(|\Lambda| t)^\beta\right)",
+        category="Relaxation",
+    ),
+    "RischKehr": ComponentDefinition(
+        name="RischKehr",
+        description="Risch-Kehr relaxation from 1D diffusive spin transport",
+        function=_risch_kehr_component,
+        param_names=["A", "Gamma"],
+        param_defaults={"A": 25.0, "Gamma": 1.0},
+        param_info={"A": get_param_info("A"), "Gamma": get_param_info("Gamma")},
+        formula_template="{A}*exp({Gamma}*t)*erfc(sqrt({Gamma}*t))",
+        latex_equation=r"A(t) = A\, e^{\Gamma t}\,\mathrm{erfc}\!\left(\sqrt{\Gamma t}\right)",
+        category="Relaxation",
     ),
     "StaticGKT_ZF": ComponentDefinition(
         name="StaticGKT_ZF",
@@ -340,6 +593,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         latex_equation=(
             r"A(t) = A\left[\frac{1}{3} + \frac{2}{3}\left(1-(\Delta t)^2\right)e^{-(\Delta t)^2/2}\right]"
         ),
+        category="Kubo-Toyabe",
     ),
     "LongitudinalFieldKT": ComponentDefinition(
         name="LongitudinalFieldKT",
@@ -358,6 +612,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"+ \frac{2\Delta^4}{\omega_0^3}\int_0^t e^{-\Delta^2\tau^2/2}\sin(\omega_0\tau)\,d\tau\right] "
             r"\quad\text{where}\quad \omega_0 = \gamma_\mu B_L"
         ),
+        category="Kubo-Toyabe",
     ),
     "DynamicGaussianKT": ComponentDefinition(
         name="DynamicGaussianKT",
@@ -380,6 +635,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"G_d(t)=g(t)+\nu\!\int_0^t\! g(t-\tau)\,G_d(\tau)\,d\tau,\ "
             r"g(t)=e^{-\nu t}G^{\mathrm{stat}}_{\mathrm{GKT}}(t)"
         ),
+        category="Kubo-Toyabe",
     ),
     "DynamicLorentzianKT": ComponentDefinition(
         name="DynamicLorentzianKT",
@@ -401,6 +657,26 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"A(t)=A\,G^{\mathrm{dyn}}_{\mathrm{LKT}}(t;a_L,\nu,B_L),\quad "
             r"G^{\mathrm{stat}}_{\mathrm{LKT}}(t)=\frac{1}{3}+\frac{2}{3}(1-a_L t)e^{-a_L t}"
         ),
+        category="Kubo-Toyabe",
+    ),
+    "GaussianBroadenedKT": ComponentDefinition(
+        name="GaussianBroadenedKT",
+        description="Static (LF) Gaussian Kubo-Toyabe averaged over a Gaussian spread of Delta",
+        function=_gaussian_broadened_kt_component,
+        param_names=["A", "Delta", "B_L", "w_rel"],
+        param_defaults={"A": 25.0, "Delta": 0.5, "B_L": 0.0, "w_rel": 0.2},
+        param_info={
+            "A": get_param_info("A"),
+            "Delta": get_param_info("Delta"),
+            "B_L": get_param_info("B_L"),
+            "w_rel": get_param_info("w_rel"),
+        },
+        formula_template="{A}*<G_KT(t; Delta', {B_L})>_(Delta'~N({Delta},{w_rel}*{Delta}))",
+        latex_equation=(
+            r"A(t)=A\!\int\! d\Delta'\,p(\Delta')\,G_{\mathrm{KT}}(t;\Delta',B_L),\ "
+            r"p=\mathcal{N}(\Delta,(w_\Delta\Delta)^2)"
+        ),
+        category="Kubo-Toyabe",
     ),
     "Keren": ComponentDefinition(
         name="Keren",
@@ -423,6 +699,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             r"\left[(\omega_0^2+\nu^2)\nu t+(\omega_0^2-\nu^2)(1-e^{-\nu t}\cos\omega_0 t)"
             r"-2\nu\omega_0 e^{-\nu t}\sin\omega_0 t\right],\ \omega_0=\gamma_\mu B_L"
         ),
+        category="Relaxation",
     ),
     "Abragam": ComponentDefinition(
         name="Abragam",
@@ -442,6 +719,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         latex_equation=(
             r"A(t)=A\exp\!\left[-\frac{\Delta^2}{\nu^2}\left(e^{-\nu t}-1+\nu t\right)\right]"
         ),
+        category="Relaxation",
     ),
     "MuF": ComponentDefinition(
         name="MuF",
@@ -454,7 +732,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         latex_equation=(
             r"A(t)=A\frac{1}{6}\left[1+2\cos\left(\frac{\omega_d t}{2}\right)+\cos(\omega_d t)+2\cos\left(\frac{3\omega_d t}{2}\right)\right]"
         ),
-        category="Muon-Fluorine",
+        category="Nuclear dipolar",
     ),
     "FmuF_Linear": ComponentDefinition(
         name="FmuF_Linear",
@@ -465,7 +743,25 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_info={"A": get_param_info("A"), "r_muF": get_param_info("r_muF")},
         formula_template="{A}*G_FmuF_linear(t,{r_muF})",
         latex_equation=(r"A(t)=A\,G_{F\mu F}(t)"),
-        category="Muon-Fluorine",
+        category="Nuclear dipolar",
+    ),
+    "DynamicFmuF": ComponentDefinition(
+        name="DynamicFmuF",
+        description="Strong-collision dynamicized collinear F-mu-F polarization",
+        function=_dynamic_fmuf_component,
+        param_names=["A", "r_muF", "nu"],
+        param_defaults={"A": 25.0, "r_muF": 1.17, "nu": 0.5},
+        param_info={
+            "A": get_param_info("A"),
+            "r_muF": get_param_info("r_muF"),
+            "nu": get_param_info("nu"),
+        },
+        formula_template="{A}*G_FmuF_dyn(t; {r_muF}, {nu})",
+        latex_equation=(
+            r"A(t)=A\,G_d(t),\ G_d(t)=g(t)+\nu\!\int_0^t\! g(t-\tau)G_d(\tau)d\tau,\ "
+            r"g(t)=e^{-\nu t}G_{F\mu F}(t)"
+        ),
+        category="Nuclear dipolar",
     ),
     "FmuF_General": ComponentDefinition(
         name="FmuF_General",
@@ -481,7 +777,103 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         },
         formula_template="{A}*Dz_FmuF_general(t,{r1},{r2},{theta})",
         latex_equation=(r"A(t)=A\,D_z^{\mathrm{powder}}\!(t;r_1,r_2,\theta)"),
-        category="Muon-Fluorine",
+        category="Nuclear dipolar",
+    ),
+    "FmuF_Triangle": ComponentDefinition(
+        name="FmuF_Triangle",
+        description="Collinear F-mu-F plus a third fluorine (16-dim powder average)",
+        function=_fmuf_triangle_component,
+        param_names=["A", "r_muF", "r3", "phi3"],
+        param_defaults={"A": 25.0, "r_muF": 1.17, "r3": 2.5, "phi3": 90.0},
+        param_info={
+            "A": get_param_info("A"),
+            "r_muF": get_param_info("r_muF"),
+            "r3": get_param_info("r3"),
+            "phi3": get_param_info("phi3"),
+        },
+        formula_template="{A}*Dz_FmuF_F(t; {r_muF}, {r3}, {phi3})",
+        latex_equation=(r"A(t)=A\,D_z^{\mathrm{powder}}\!(t;r_{\mu F},r_3,\phi_3)"),
+        category="Nuclear dipolar",
+    ),
+    "DipolarPairField": ComponentDefinition(
+        name="DipolarPairField",
+        description="Spin-1/2 dipole pair parameterised by the dipolar field B_dip",
+        function=_dipolar_pair_field_component,
+        param_names=["A", "B_dip", "lambda_T"],
+        param_defaults={"A": 25.0, "B_dip": 10.0, "lambda_T": 0.0},
+        param_info={
+            "A": get_param_info("A"),
+            "B_dip": get_param_info("B_dip"),
+            "lambda_T": get_param_info("lambda_T"),
+        },
+        formula_template=(
+            "{A}/6*(1 + exp(-{lambda_T}*t)*(2*cos(w*t/2)+cos(w*t)+2*cos(3*w*t/2))),"
+            " w=gamma_mu*{B_dip}"
+        ),
+        latex_equation=(
+            r"A(t)=\frac{A}{6}\left[1+e^{-\lambda_T t}\left(2\cos\frac{\omega_d t}{2}"
+            r"+\cos\omega_d t+2\cos\frac{3\omega_d t}{2}\right)\right],\ "
+            r"\omega_d=\gamma_\mu B_{dip}"
+        ),
+        category="Nuclear dipolar",
+    ),
+    "ProtonDipole": ComponentDefinition(
+        name="ProtonDipole",
+        description="Spin-1/2 dipole pair: muon + proton at distance r",
+        function=_proton_dipole_component,
+        param_names=["A", "r_muH", "lambda_T"],
+        param_defaults={"A": 25.0, "r_muH": 1.7, "lambda_T": 0.0},
+        param_info={
+            "A": get_param_info("A"),
+            "r_muH": get_param_info("r_muH"),
+            "lambda_T": get_param_info("lambda_T"),
+        },
+        formula_template="{A}*Dz_pair(t; omega_d({r_muH}), {lambda_T})",
+        latex_equation=(
+            r"A(t)=\frac{A}{6}\left[1+e^{-\lambda_T t}\left(2\cos\frac{\omega_d t}{2}"
+            r"+\cos\omega_d t+2\cos\frac{3\omega_d t}{2}\right)\right],\ "
+            r"\hbar\omega_d=\frac{\mu_0\hbar^2\gamma_\mu\gamma_p}{4\pi r^3}"
+        ),
+        category="Nuclear dipolar",
+    ),
+    "ElectronDipole": ComponentDefinition(
+        name="ElectronDipole",
+        description="Spin-1/2 dipole pair: muon + localized electron moment at distance r",
+        function=_electron_dipole_component,
+        param_names=["A", "r_mue", "lambda_T"],
+        param_defaults={"A": 25.0, "r_mue": 5.0, "lambda_T": 0.0},
+        param_info={
+            "A": get_param_info("A"),
+            "r_mue": get_param_info("r_mue"),
+            "lambda_T": get_param_info("lambda_T"),
+        },
+        formula_template="{A}*Dz_pair(t; omega_d({r_mue}), {lambda_T})",
+        latex_equation=(
+            r"A(t)=\frac{A}{6}\left[1+e^{-\lambda_T t}\left(2\cos\frac{\omega_d t}{2}"
+            r"+\cos\omega_d t+2\cos\frac{3\omega_d t}{2}\right)\right],\ "
+            r"\hbar\omega_d=\frac{\mu_0\hbar^2\gamma_\mu\gamma_e}{4\pi r^3}"
+        ),
+        category="Nuclear dipolar",
+    ),
+    "DipolarSpinJ": ComponentDefinition(
+        name="DipolarSpinJ",
+        description="Muon coupled to one spin-J nucleus with dipolar + quadrupolar terms",
+        function=_dipolar_spin_j_component,
+        param_names=["A", "f_dip", "f_quad", "J_spin"],
+        param_defaults={"A": 25.0, "f_dip": 0.2, "f_quad": 0.0, "J_spin": 1.5},
+        param_info={
+            "A": get_param_info("A"),
+            "f_dip": get_param_info("f_dip"),
+            "f_quad": get_param_info("f_quad"),
+            "J_spin": get_param_info("J_spin"),
+        },
+        formula_template="{A}*Dz_spinJ(t; {f_dip}, {f_quad}, {J_spin})",
+        fixed_params=("J_spin",),
+        latex_equation=(
+            r"A(t)=A\,\frac{P_z(t)+2P_x(t)}{3},\ \ \text{Celio-Meier spin-}J"
+            r"\text{ eigen-solution}"
+        ),
+        category="Nuclear dipolar",
     ),
     "Constant": ComponentDefinition(
         name="Constant",
@@ -492,10 +884,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_info={"A_bg": get_param_info("A_bg")},
         formula_template="{A_bg}",
         latex_equation=r"A(t) = A_{bg}",
+        category="Background",
     ),
     "GaussianPeak": ComponentDefinition(
         name="GaussianPeak",
-        description="Frequency-domain Gaussian peak",
+        description="Gaussian spectral line, parameterised by its full width at half maximum",
         function=_gaussian_peak_component,
         param_names=["height", "nu0", "fwhm"],
         param_defaults={"height": 1.0, "nu0": 1.0, "fwhm": 0.1},
@@ -505,13 +898,16 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "fwhm": get_param_info("fwhm"),
         },
         formula_template="{height}*exp(-4*ln(2)*((nu-{nu0})/{fwhm})^2)",
-        latex_equation=r"S(\nu)=h\exp\left[-4\ln2\left((\nu-\nu_0)/w\right)^2\right]",
+        latex_equation=(
+            r"S(\nu)=h\exp\left[-4\ln 2\,\frac{(\nu-\nu_0)^2}{w^2}\right],"
+            r"\quad w \equiv \mathrm{FWHM}"
+        ),
         category="Frequency Domain",
         domain="frequency",
     ),
     "LorentzianPeak": ComponentDefinition(
         name="LorentzianPeak",
-        description="Frequency-domain Lorentzian peak",
+        description="Lorentzian spectral line, parameterised by its full width at half maximum",
         function=_lorentzian_peak_component,
         param_names=["height", "nu0", "fwhm"],
         param_defaults={"height": 1.0, "nu0": 1.0, "fwhm": 0.1},
@@ -521,7 +917,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "fwhm": get_param_info("fwhm"),
         },
         formula_template="{height}/(1+4*((nu-{nu0})/{fwhm})^2)",
-        latex_equation=r"S(\nu)=h/[1+4((\nu-\nu_0)/w)^2]",
+        latex_equation=(r"S(\nu)=\frac{h}{1+4\,(\nu-\nu_0)^2/w^2},\quad w \equiv \mathrm{FWHM}"),
         category="Frequency Domain",
         domain="frequency",
     ),
@@ -617,7 +1013,7 @@ def parse_component_expression(
             if token in _ALLOWED_OPERATORS or token == ")":
                 raise ValueError(f"Expected component before '{token}'")
             if token not in allowed_components:
-                raise ValueError(f"Unknown component '{token}'")
+                raise UnknownComponentError(token)
 
             component_names.append(token)
             open_parentheses.append(pending_open)
@@ -686,7 +1082,7 @@ def parse_composite_expression(
             if token in _ALLOWED_OPERATORS or token in {")", "{", "}"}:
                 raise ValueError(f"Expected component before '{token}'")
             if token not in COMPONENTS:
-                raise ValueError(f"Unknown component '{token}'")
+                raise UnknownComponentError(token)
 
             component_index = len(component_names)
             component_names.append(token)
@@ -1089,6 +1485,32 @@ class CompositeModel:
             close_parentheses=close_parentheses,
             fraction_groups=[*self.fraction_groups, (0, len(self.component_names) - 1)],
         )
+
+    def domains(self) -> set[str]:
+        """Return the set of analysis domains of the model's components.
+
+        A well-formed model has a single domain (``{"time"}`` or
+        ``{"frequency"}``); a mixed set indicates a model that combines
+        time- and frequency-domain components (e.g. restored from a project
+        saved before domain filtering existed) and should be surfaced to the
+        user rather than silently fitted.
+        """
+        return {component.domain for component in self.components}
+
+    def fixed_by_default_params(self) -> set[str]:
+        """Unique parameter names that should start fixed in a fit.
+
+        Collected from each component's :attr:`ComponentDefinition.fixed_params`
+        through the model's parameter mapping (so duplicated components yield
+        their indexed names, e.g. ``J_spin_2``).
+        """
+        fixed: set[str] = set()
+        for component, mapping in zip(self.components, self._param_mappings, strict=True):
+            for pname in component.fixed_params:
+                unique = mapping.get(pname)
+                if unique and unique != _UNIT_AMPLITUDE_SENTINEL:
+                    fixed.add(unique)
+        return fixed
 
     def _build_param_mapping(self) -> list[dict[str, str]]:
         name_counts = Counter(
