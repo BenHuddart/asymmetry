@@ -971,6 +971,10 @@ class SingleFitTab(QWidget):
         self._cached_wizard_signature: dict[str, object] | None = None
         self._cached_wizard_log_text = ""
         self._updating_fraction_values = False
+        self._last_fit_result: FitResult | None = None
+        self._last_fit_parameters: ParameterSet | None = None
+        self._pull_diagnostic_btn: QPushButton | None = None
+        self._pull_diagnostic_window: QWidget | None = None
 
         # Model selection
         model_group = QGroupBox("Model")
@@ -1102,9 +1106,17 @@ class SingleFitTab(QWidget):
         self._preview_btn = QPushButton("Preview")
         self._preview_btn.clicked.connect(self._on_preview)
         self._preview_btn.setEnabled(False)
+        self._pull_diagnostic_btn = QPushButton("Pull diagnostic…")
+        self._pull_diagnostic_btn.setToolTip(
+            "Re-simulate this fit at matched statistics, refit each copy, and "
+            "check that the parameter pulls are standard normal (honest errors)."
+        )
+        self._pull_diagnostic_btn.clicked.connect(self._on_pull_diagnostic)
+        self._pull_diagnostic_btn.setEnabled(False)
         btn_layout.addWidget(self._fit_btn, 0, 0)
         btn_layout.addWidget(self._reset_btn, 0, 1)
         btn_layout.addWidget(self._preview_btn, 0, 2)
+        btn_layout.addWidget(self._pull_diagnostic_btn, 1, 0, 1, 3)
         btn_layout.setColumnStretch(3, 1)
         layout.addLayout(btn_layout)
 
@@ -1157,11 +1169,60 @@ class SingleFitTab(QWidget):
     def set_dataset(self, dataset: MuonDataset | None) -> None:
         """Set the current dataset to fit."""
         self._current_dataset = dataset
+        # A fit result belongs to the dataset it was fit on; drop it on change.
+        self._last_fit_result = None
+        self._last_fit_parameters = None
+        if self._pull_diagnostic_btn is not None:
+            self._pull_diagnostic_btn.setEnabled(False)
         enabled = dataset is not None and (not self._fit_blocked)
         self._fit_btn.setEnabled(enabled)
         self._preview_btn.setEnabled(enabled)
         self._fit_wizard_btn.setEnabled(enabled and self._domain == "time")
         self._share_group_btn.setEnabled(dataset is not None and self._domain == "time")
+
+    def _can_run_pull_diagnostic(self) -> bool:
+        """A successful time-domain fit on a run with histograms is required."""
+        return (
+            self._domain == "time"
+            and self._last_fit_result is not None
+            and self._last_fit_result.success
+            and self._last_fit_parameters is not None
+            and self._current_dataset is not None
+            and self._current_dataset.run is not None
+            and bool(self._current_dataset.run.histograms)
+        )
+
+    def _on_pull_diagnostic(self) -> None:
+        """Open the pull-distribution diagnostic for the last converged fit."""
+        if not self._can_run_pull_diagnostic():
+            return
+        from asymmetry.gui.windows.pull_diagnostic_window import (
+            PullDiagnosticWindow,
+            make_engine_refit,
+            total_events_of,
+        )
+
+        dataset = self._current_dataset
+        run = dataset.run
+        parameters = self._last_fit_parameters
+        truth = {p.name: float(p.value) for p in parameters}
+        free = [p.name for p in parameters if not getattr(p, "fixed", False)]
+        time_range = (float(dataset.time.min()), float(dataset.time.max()))
+        refit = make_engine_refit(
+            self._composite_model, parameters, t_min=time_range[0], t_max=time_range[1]
+        )
+        window = PullDiagnosticWindow(
+            template=run,
+            model=self._composite_model,
+            parameters=truth,
+            refit=refit,
+            track=free or list(truth),
+            total_events=total_events_of(run),
+            time_range=time_range,
+            parent=self,
+        )
+        self._pull_diagnostic_window = window
+        window.show()
 
     def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
         """Enable/disable single-fit actions while preserving the active dataset."""
@@ -1601,6 +1662,56 @@ class SingleFitTab(QWidget):
         preview_result = object()
         self.preview_requested.emit(preview_result, (t_fit, y_fit), component_curves)
 
+    def _parameter_set_from_table(self) -> ParameterSet:
+        """Build a :class:`ParameterSet` from the parameter table.
+
+        Raises :class:`ValueError` with a user-facing message on a malformed
+        value (the only hard error; bad bounds fall back to ±inf). Shared by
+        the fit run and the pull-distribution diagnostic.
+        """
+        parameters = ParameterSet()
+        for i in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(i, 0)
+            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(param_name, str):
+                param_name = name_item.text() if name_item else f"param_{i}"
+
+            try:
+                value = float(self._param_table.item(i, 1).text())
+            except (ValueError, AttributeError) as exc:
+                raise ValueError(f"Invalid value for {_format_param_label(param_name)}") from exc
+
+            fix_widget = self._param_table.cellWidget(i, 2)
+            fix_checkbox = fix_widget.findChild(QCheckBox)
+            fixed = fix_checkbox.isChecked() if fix_checkbox else False
+
+            try:
+                min_text = self._param_table.item(i, 3).text()
+                min_val = float(min_text) if min_text and min_text != "-inf" else -float("inf")
+            except (ValueError, AttributeError):
+                min_val = -float("inf")
+
+            try:
+                max_text = self._param_table.item(i, 4).text()
+                max_val = float(max_text) if max_text and max_text != "inf" else float("inf")
+            except (ValueError, AttributeError):
+                max_val = float("inf")
+
+            link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
+            link_group = _link_group_combo_value(link_combo)
+
+            parameters.add(
+                Parameter(
+                    name=param_name,
+                    value=value,
+                    min=min_val,
+                    max=max_val,
+                    fixed=fixed,
+                    link_group=link_group,
+                )
+            )
+        return parameters
+
     def _run_fit(self) -> None:
         """Execute the fit."""
         if self._fit_blocked:
@@ -1617,52 +1728,11 @@ class SingleFitTab(QWidget):
             return
 
         # Build parameter set from table
-        parameters = ParameterSet()
-        for i in range(self._param_table.rowCount()):
-            name_item = self._param_table.item(i, 0)
-            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(param_name, str):
-                param_name = name_item.text() if name_item else f"param_{i}"
-
-            # Parse value
-            try:
-                value = float(self._param_table.item(i, 1).text())
-            except (ValueError, AttributeError):
-                self._result_label.setText(
-                    f"ERROR: Invalid value for {_format_param_label(param_name)}"
-                )
-                return
-
-            # Check if fixed
-            fix_widget = self._param_table.cellWidget(i, 2)
-            fix_checkbox = fix_widget.findChild(QCheckBox)
-            fixed = fix_checkbox.isChecked() if fix_checkbox else False
-
-            # Parse bounds
-            try:
-                min_text = self._param_table.item(i, 3).text()
-                min_val = float(min_text) if min_text and min_text != "-inf" else -float("inf")
-            except (ValueError, AttributeError):
-                min_val = -float("inf")
-
-            try:
-                max_text = self._param_table.item(i, 4).text()
-                max_val = float(max_text) if max_text and max_text != "inf" else float("inf")
-            except (ValueError, AttributeError):
-                max_val = float("inf")
-
-            link_combo = self._param_table.cellWidget(i, _SINGLE_PARAM_LINK_COLUMN)
-            link_group = _link_group_combo_value(link_combo)
-
-            param = Parameter(
-                name=param_name,
-                value=value,
-                min=min_val,
-                max=max_val,
-                fixed=fixed,
-                link_group=link_group,
-            )
-            parameters.add(param)
+        try:
+            parameters = self._parameter_set_from_table()
+        except ValueError as exc:
+            self._result_label.setText(f"ERROR: {exc}")
+            return
 
         # Run the fit
         self._results_group.setStyleSheet("")
@@ -1679,6 +1749,12 @@ class SingleFitTab(QWidget):
 
         # Update results display
         if result.success:
+            # Remember the converged fit so the pull-distribution diagnostic can
+            # re-simulate and refit it (model, generating values and run).
+            self._last_fit_result = result
+            self._last_fit_parameters = parameters
+            if self._pull_diagnostic_btn is not None:
+                self._pull_diagnostic_btn.setEnabled(self._can_run_pull_diagnostic())
             display_values = _normalized_model_param_values(
                 self._composite_model,
                 {parameter.name: parameter.value for parameter in result.parameters},
