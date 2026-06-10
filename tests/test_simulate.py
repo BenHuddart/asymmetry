@@ -13,11 +13,17 @@ import pytest
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.simulate import (
+    BUILTIN_TEMPLATES,
+    GroupSignalSpec,
+    build_builtin_template,
+    build_group_signals,
     build_run_from_detector_asymmetries,
     degrade_run,
     expected_counts,
+    group_specs_from_grouped_fit,
     poisson_asymmetry_errors,
     reduce_run_to_dataset,
+    simulate_multi_group_run,
     simulate_run,
     simulate_run_from_group_signals,
 )
@@ -637,3 +643,238 @@ class TestReduceRunToDataset:
         assert dataset.metadata["synthetic"] is True
         # Percent scale: early-time asymmetry near 20, not 0.2.
         assert 10.0 < float(dataset.asymmetry[:20].mean()) < 30.0
+
+
+class TestBuiltinTemplates:
+    """Built-in idealised instrument templates (no loaded run required)."""
+
+    def test_registry_has_pulsed_and_continuous(self) -> None:
+        assert "ideal_pulsed_fb" in BUILTIN_TEMPLATES
+        assert "ideal_continuous_fb" in BUILTIN_TEMPLATES
+
+    def test_pulsed_geometry(self) -> None:
+        run = build_builtin_template("ideal_pulsed_fb")
+        assert len(run.histograms) == 64
+        assert run.histograms[0].n_bins == 2000
+        assert np.isclose(run.histograms[0].bin_width, 0.016)
+        assert run.grouping["groups"][1] == list(range(1, 33))
+        assert run.grouping["groups"][2] == list(range(33, 65))
+        # Counts are unused structure carriers — they must be all-zero.
+        assert all(float(h.counts.sum()) == 0.0 for h in run.histograms)
+        # Deadtimes are zero and correction is off (synthetic counts are clean).
+        assert run.grouping["deadtime_correction"] is False
+        assert run.grouping["dead_time_us"] == [0.0] * 64
+
+    def test_continuous_geometry_and_window(self) -> None:
+        run = build_builtin_template("ideal_continuous_fb")
+        assert len(run.histograms) == 2
+        assert run.histograms[0].n_bins == 10000
+        assert np.isclose(run.histograms[0].bin_width, 0.001)
+        # 10 μs window at 1 ns binning.
+        assert np.isclose(run.histograms[0].n_bins * run.histograms[0].bin_width, 10.0)
+
+    def test_unknown_key_raises(self) -> None:
+        with pytest.raises(KeyError, match="Unknown built-in"):
+            build_builtin_template("no_such_instrument")
+
+    def test_simulate_from_builtin_round_trips_through_writer(self, tmp_path) -> None:
+        """A built-in template simulates, writes NeXus and reloads bit-exact."""
+        h5py = pytest.importorskip("h5py")  # noqa: F841
+        from asymmetry.core.io import load
+        from asymmetry.core.io.nexus_writer import write_nexus_v1
+
+        template = build_builtin_template("ideal_pulsed_fb")
+        run = simulate_run(
+            template,
+            _exp_model,
+            {"a0": 20.0, "rate": 0.4},
+            total_events=BUILTIN_TEMPLATES["ideal_pulsed_fb"].default_total_events,
+            seed=3,
+            run_number=90001,
+        )
+        path = tmp_path / "builtin.nxs"
+        write_nexus_v1(run, path)
+        reloaded = load(path).run
+        assert len(reloaded.histograms) == len(run.histograms)
+        for original, again in zip(run.histograms, reloaded.histograms, strict=True):
+            assert np.array_equal(again.counts, original.counts)
+
+    def test_builtin_refit_recovers_parameters(self) -> None:
+        """Simulate from the pulsed built-in and refit to the generating values."""
+        pytest.importorskip("iminuit")
+        from asymmetry.core.fitting.engine import FitEngine
+        from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+        template = build_builtin_template("ideal_pulsed_fb")
+        truth = {"a0": 22.0, "rate": 0.45}
+        run = simulate_run(
+            template,
+            _exp_model,
+            truth,
+            total_events=BUILTIN_TEMPLATES["ideal_pulsed_fb"].default_total_events,
+            seed=11,
+            run_number=90001,
+        )
+        dataset = reduce_run_to_dataset(run)
+        params = ParameterSet(
+            [
+                Parameter(name="a0", value=10.0, min=0.0, max=100.0),
+                Parameter(name="rate", value=1.5, min=0.0, max=10.0),
+            ]
+        )
+        # Window to the healthy-count region (early time), as a real fit would.
+        result = FitEngine().fit(dataset, _exp_model, params, t_max=8.0)
+        assert result.success
+        fitted = {p.name: p.value for p in result.parameters}
+        assert abs(fitted["a0"] - truth["a0"]) < 3.0 * result.uncertainties["a0"]
+        assert abs(fitted["rate"] - truth["rate"]) < 3.0 * result.uncertainties["rate"]
+
+    def test_continuous_background_seeds_flat_offset(self) -> None:
+        """The continuous template's flat background lands in the pre-t0 bins."""
+        spec = BUILTIN_TEMPLATES["ideal_continuous_fb"]
+        assert spec.default_background_per_bin > 0.0
+        template = spec.build()
+        expected = expected_counts(
+            template,
+            {1: _zero_model, 2: _zero_model},
+            total_events=spec.default_total_events,
+            background_per_bin=spec.default_background_per_bin,
+        )
+        # Pre-t0 bins carry the flat background only.
+        assert np.allclose(expected[0][: spec.t0_bin], spec.default_background_per_bin)
+
+
+def _ring_template(n_groups: int = 4) -> Run:
+    """A TF-ring template: one detector per group, all in one grouping."""
+    histograms = [
+        Histogram(
+            counts=np.zeros(N_BINS),
+            bin_width=BIN_WIDTH,
+            t0_bin=T0_BIN,
+            good_bin_start=T0_BIN,
+            good_bin_end=N_BINS - 1,
+        )
+        for _ in range(n_groups)
+    ]
+    grouping = {
+        "groups": {gid: [gid] for gid in range(1, n_groups + 1)},
+        "forward_group": 1,
+        "backward_group": 3,
+        "alpha": 1.0,
+        "t0_bin": T0_BIN,
+        "first_good_bin": T0_BIN,
+        "last_good_bin": N_BINS - 1,
+    }
+    return Run(run_number=7, histograms=histograms, grouping=grouping)
+
+
+def _poln(t: np.ndarray, frequency: float = 2.0, phase: float = 0.0) -> np.ndarray:
+    return np.cos(2 * np.pi * frequency * t + phase)
+
+
+class _FakeFitResult:
+    def __init__(self, params: dict[str, float]) -> None:
+        self.parameters = [type("P", (), {"name": k, "value": v}) for k, v in params.items()]
+
+
+class _FakeGroupedResult:
+    def __init__(self, group_results: dict) -> None:
+        self.group_results = group_results
+
+
+class TestMultiGroupSimulation:
+    def test_build_group_signals_bin_exact_per_group(self) -> None:
+        template = _ring_template(4)
+        specs = [
+            GroupSignalSpec(1, amplitude=0.20, relative_phase=0.0),
+            GroupSignalSpec(2, amplitude=0.18, relative_phase=np.pi / 2),
+            GroupSignalSpec(3, amplitude=0.22, relative_phase=np.pi),
+            GroupSignalSpec(4, amplitude=0.19, relative_phase=3 * np.pi / 2),
+        ]
+        base = {"frequency": 2.0, "phase": 0.0}
+        group_signals, group_weights = build_group_signals(_poln, specs, base_parameters=base)
+        expected = expected_counts(
+            template, group_signals, total_events=40e6, group_weights=group_weights
+        )
+
+        t = np.arange(N_BINS - T0_BIN) * BIN_WIDTH
+        for index, spec in enumerate(specs):
+            modulation = 1.0 + spec.amplitude * np.cos(2 * np.pi * 2.0 * t + spec.relative_phase)
+            envelope = expected[index][T0_BIN:] / modulation
+            decay = np.exp(-t / MUON_LIFETIME_US)
+            ratio = envelope / decay
+            # The de-modulated envelope is a clean lifetime exponential.
+            assert np.allclose(ratio, ratio[0], rtol=1e-9), spec.group_id
+
+    def test_non_zero_phase_without_phase_param_raises(self) -> None:
+        def no_phase(t, frequency=1.0):
+            return np.cos(2 * np.pi * frequency * t)
+
+        with pytest.raises(ValueError, match="phase-capable"):
+            build_group_signals(no_phase, [GroupSignalSpec(1, 0.2, relative_phase=0.5)])
+
+    def test_simulate_multi_group_provenance_and_determinism(self) -> None:
+        template = _ring_template(4)
+        specs = [
+            GroupSignalSpec(gid, amplitude=0.2, relative_phase=0.3 * gid) for gid in range(1, 5)
+        ]
+        base = {"frequency": 2.0, "phase": 0.0}
+        run_a = simulate_multi_group_run(
+            template, _poln, specs, total_events=20e6, seed=4, base_parameters=base
+        )
+        run_b = simulate_multi_group_run(
+            template, _poln, specs, total_events=20e6, seed=4, base_parameters=base
+        )
+        assert run_a.metadata["synthetic"] is True
+        assert run_a.metadata["simulation"]["multi_group"] is True
+        assert len(run_a.metadata["simulation"]["group_specs"]) == 4
+        for ha, hb in zip(run_a.histograms, run_b.histograms, strict=True):
+            assert np.array_equal(ha.counts, hb.counts)
+
+    def test_group_specs_from_grouped_fit(self) -> None:
+        grouped = _FakeGroupedResult(
+            {
+                1: _FakeFitResult({"amplitude": 0.21, "relative_phase": 0.0, "N0": 1.0}),
+                2: _FakeFitResult({"amplitude": 0.19, "relative_phase": 1.57, "N0": 1.2}),
+            }
+        )
+        specs = group_specs_from_grouped_fit(grouped)
+        assert {s.group_id for s in specs} == {1, 2}
+        spec2 = next(s for s in specs if s.group_id == 2)
+        assert spec2.amplitude == pytest.approx(0.19)
+        assert spec2.relative_phase == pytest.approx(1.57)
+        assert spec2.n0_weight == pytest.approx(1.2)
+
+
+class TestRunStatistics:
+    def test_total_events_of_sums_counts(self) -> None:
+        run = simulate_run(_template(), _exp_model, total_events=3.0e6, seed=1)
+        from asymmetry.core.simulate import total_events_of
+
+        assert total_events_of(run) == sum(float(h.counts.sum()) for h in run.histograms)
+
+    def test_pulsed_run_has_zero_background_estimate(self) -> None:
+        from asymmetry.core.simulate import estimate_background_per_bin
+
+        run = simulate_run(_template(), _exp_model, total_events=3.0e6, seed=1)
+        # No background injected and a pre-t0 region present → estimate ~0.
+        assert estimate_background_per_bin(run) == 0.0
+
+    def test_matched_statistics_splits_background_off_signal(self) -> None:
+        from asymmetry.core.simulate import (
+            build_builtin_template,
+            estimate_background_per_bin,
+            matched_statistics,
+            total_events_of,
+        )
+
+        template = build_builtin_template("ideal_continuous_fb")
+        run = simulate_run(
+            template, _zero_model, total_events=20.0e6, seed=2, background_per_bin=10.0
+        )
+        bg = estimate_background_per_bin(run)
+        assert bg > 5.0  # recovers the ~10 counts/bin background from pre-t0
+        signal_events, background_per_bin = matched_statistics(run)
+        assert background_per_bin == bg
+        # Signal budget excludes the background, so it is below the gross total.
+        assert signal_events < total_events_of(run)

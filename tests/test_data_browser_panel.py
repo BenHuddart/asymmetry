@@ -1448,3 +1448,30 @@ class TestSelectRuns:
         browser.select_runs({50})
         browser.select_runs(set())
         assert set(browser._get_selected_run_numbers()) == set()
+
+
+def test_release_derived_run_number_frees_unused_reservation(qapp):
+    panel = DataBrowserPanel()
+    first = panel.next_derived_run_number()
+    second = panel.next_derived_run_number()
+    assert second == first + 1
+    # Releasing the first reservation lets it be handed out again.
+    panel.release_derived_run_number(first)
+    assert panel.next_derived_run_number() == first
+
+
+def test_release_does_not_drop_a_used_run_number(qapp):
+    panel = DataBrowserPanel()
+    number = panel.next_derived_run_number()
+    t = np.linspace(0, 1, 10)
+    panel.add_dataset(
+        MuonDataset(
+            time=t,
+            asymmetry=np.zeros_like(t),
+            error=np.ones_like(t),
+            metadata={"run_number": number, "run_label": f"SIM {number}"},
+        )
+    )
+    # A number already claimed by a dataset must not be released back.
+    panel.release_derived_run_number(number)
+    assert panel.next_derived_run_number() != number

@@ -182,6 +182,9 @@ accurate but incomplete. Mechanics:
 - [implementation-options.md](implementation-options.md) — options analysis,
   chosen design, ordered implementation plan, file-by-file touch list, test
   plan, follow-ons.
+- [follow-ons.md](follow-ons.md) — addendum: built-in instrument templates,
+  the archetype gallery, the pull-distribution diagnostic, multi-group
+  simulation and the project-save warning, built on the implemented feature.
 - [test-data.md](test-data.md) — corpus runs and synthetic fixtures.
 - [verification-plan.md](verification-plan.md) — round-trip refit recovery,
   pull-distribution check, degrade error scaling, determinism.

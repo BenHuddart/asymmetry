@@ -529,6 +529,8 @@ class MainWindow(QMainWindow):
         file_menu = mb.addMenu("&File")
         file_menu.addAction("Open Data File(s)\u2026", self._on_open)
         file_menu.addAction("Generate Synthetic Run\u2026", self._on_generate_synthetic)
+        file_menu.addAction("Generate Multi-Group Run\u2026", self._on_generate_multi_group)
+        self._add_simulate_preset_menu(file_menu)
         file_menu.addSeparator()
         file_menu.addAction("&New Project", self._on_new_project)
         file_menu.addAction("Open Project\u2026", self._on_open_project)
@@ -1829,13 +1831,8 @@ class MainWindow(QMainWindow):
             for ds in self._data_browser.all_datasets()
             if ds.run is not None and ds.run.histograms
         ]
-        if not eligible:
-            QMessageBox.information(
-                self,
-                "Generate Synthetic Run",
-                "Load a run with detector histograms to act as the instrument template first.",
-            )
-            return
+        # No loaded run is required: the dialog always offers built-in
+        # idealised instrument templates (File-menu teaching path).
         preselected = (
             self._current_dataset.run_number if self._current_dataset is not None else None
         )
@@ -1845,6 +1842,7 @@ class MainWindow(QMainWindow):
             preselected_run=preselected,
             fit_state_provider=getattr(self._fit_panel, "get_single_state_for_run", None),
             run_number_allocator=self._data_browser.next_derived_run_number,
+            run_number_releaser=self._data_browser.release_derived_run_number,
         )
         dialog.run_generated.connect(self._on_synthetic_run_generated)
         dialog.exec()
@@ -1859,6 +1857,79 @@ class MainWindow(QMainWindow):
         self._log_panel.log(
             f"Generated synthetic run {dataset.run_label} from run "
             f"{sim.get('template_run_number', '?')} (seed {sim.get('seed', '?')}).",
+            tag="load",
+        )
+
+    def _on_generate_multi_group(self) -> None:
+        """Launch the multi-group synthetic-run dialog for the active run."""
+        from asymmetry.gui.windows.simulate_dialog import (
+            MultiGroupSimulateDialog,
+            _template_group_ids,
+        )
+
+        dataset = self._current_dataset
+        run = dataset.run if dataset is not None else None
+        if run is None or not run.histograms or len(_template_group_ids(run)) < 2:
+            QMessageBox.information(
+                self,
+                "Generate Multi-Group Run",
+                "Select a loaded run whose grouping defines at least two detector "
+                "groups to act as the multi-group template.",
+            )
+            return
+        seed = None
+        if self._multi_group_fit_window is not None:
+            seed = self._multi_group_fit_window.grouped_simulate_seed_for_run(run.run_number)
+        # Drop a stale seed whose groups no longer match the run's grouping
+        # (e.g. the run was re-grouped since the fit): its base parameters would
+        # describe a grouping that no longer exists. The dialog then falls back
+        # to template-default per-group specs.
+        if isinstance(seed, dict):
+            seed_gids = {int(s.get("group_id")) for s in seed.get("specs", [])}
+            if seed_gids != set(_template_group_ids(run)):
+                seed = None
+        dialog = MultiGroupSimulateDialog(
+            run,
+            parent=self,
+            seed=seed,
+            run_number_allocator=self._data_browser.next_derived_run_number,
+            run_number_releaser=self._data_browser.release_derived_run_number,
+        )
+        dialog.run_generated.connect(self._on_synthetic_run_generated)
+        dialog.exec()
+
+    def _add_simulate_preset_menu(self, file_menu) -> None:
+        """Add the archetype-gallery submenu (File → Simulate Preset)."""
+        from asymmetry.core.simulate_presets import ARCHETYPE_PRESETS
+
+        preset_menu = file_menu.addMenu("Simulate Preset")
+        for key, preset in ARCHETYPE_PRESETS.items():
+            action = preset_menu.addAction(
+                preset.label, lambda checked=False, k=key: self._on_generate_preset(k)
+            )
+            action.setToolTip(f"{preset.description} ({preset.chapter})")
+
+    def _on_generate_preset(self, key: str) -> None:
+        """Generate an archetype preset's synthetic run(s) into the browser."""
+        from asymmetry.core.simulate import reduce_run_to_dataset
+        from asymmetry.core.simulate_presets import ARCHETYPE_PRESETS, build_preset_runs
+
+        try:
+            runs = build_preset_runs(
+                key, run_number_allocator=self._data_browser.next_derived_run_number
+            )
+        except (KeyError, ValueError) as exc:
+            QMessageBox.warning(self, "Simulate Preset", str(exc))
+            return
+        labels = []
+        for run in runs:
+            dataset = reduce_run_to_dataset(run)
+            self._data_browser.add_dataset(dataset)
+            labels.append(dataset.run_label)
+        preset = ARCHETYPE_PRESETS[key]
+        self._log_panel.log(
+            f"Generated {len(runs)} synthetic run(s) for preset '{preset.label}' "
+            f"({', '.join(labels)}).",
             tag="load",
         )
 
@@ -6785,8 +6856,46 @@ class MainWindow(QMainWindow):
                 path += ".asymp"
             self._write_project(path)
 
+    def _unsaved_synthetic_run_labels(self) -> list[str]:
+        """Labels of synthetic/degraded runs with no backing file.
+
+        Synthetic and degraded runs live only in memory until saved as NeXus
+        (study decision 2: projects reference data files, not histograms), so a
+        project that references one cannot re-load it. These are the runs whose
+        ``run.source_file`` is empty.
+        """
+        labels: list[str] = []
+        for dataset in self._data_browser.all_datasets():
+            run = getattr(dataset, "run", None)
+            if run is None:
+                continue
+            is_derived = bool(run.metadata.get("synthetic")) or bool(run.metadata.get("degraded"))
+            if is_derived and not run.source_file:
+                labels.append(str(getattr(dataset, "run_label", run.run_number)))
+        return labels
+
+    def _confirm_save_with_unsaved_synthetic_runs(self) -> bool:
+        """Warn if the project references unsaved synthetic runs; return proceed."""
+        labels = self._unsaved_synthetic_run_labels()
+        if not labels:
+            return True
+        listed = ", ".join(labels)
+        answer = QMessageBox.warning(
+            self,
+            "Unsaved synthetic runs",
+            "This project contains synthetic or degraded runs that have not been "
+            f"saved to a file and will not reload with the project: {listed}.\n\n"
+            "Use Save as NeXus… on each from the Data Browser first to keep them. "
+            "Save the project anyway?",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        return answer == QMessageBox.StandardButton.Save
+
     def _write_project(self, path: str) -> None:
         """Collect state and write to *path*, updating recent projects."""
+        if not self._confirm_save_with_unsaved_synthetic_runs():
+            return
         try:
             state = self.collect_project_state()
             save_project(state, path)

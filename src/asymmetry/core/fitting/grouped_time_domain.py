@@ -85,6 +85,30 @@ def validate_grouped_model_contract(
         raise ValueError(" ".join(messages))
 
 
+def normalize_to_grouped_contract(
+    model_param_names: list[str] | tuple[str, ...],
+    base_values: dict[str, float] | None = None,
+) -> dict[str, float]:
+    """Force a model's parameters to the normalised-polarisation contract.
+
+    The grouped time-domain fit (and the multi-group *simulation* that mirrors
+    it) reserve the overall scale for the per-group amplitude and the constant
+    background for the per-group ``N0``, so the shared model must be a
+    unit-amplitude, zero-baseline polarisation: amplitude parameters fixed at
+    ``1`` and background parameters fixed at ``0``. Returns ``base_values`` (a
+    copy, defaulting to ``{}``) with those parameters overridden — the single
+    definition of the contract, used by both the fit seed cache and the
+    multi-group simulate dialog.
+    """
+    values = dict(base_values or {})
+    for name in model_param_names:
+        if is_amplitude_parameter(name):
+            values[name] = 1.0
+        elif is_background_parameter(name):
+            values[name] = 0.0
+    return values
+
+
 @dataclass
 class GroupedTimeDomainGroup:
     """One lifetime-corrected grouped-count domain for simultaneous fitting."""
