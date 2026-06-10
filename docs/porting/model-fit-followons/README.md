@@ -1,7 +1,10 @@
 # Model-fit follow-ons (WiMDA Model layer, second pass)
 
-Status: **implemented** (2026-06-10; items 1–3 shipped, validate green; item 4
-stretch state recorded below). Implements the Model-layer follow-ons recorded
+Status: **items 1–3 shipped** (2026-06-10, PR #38 merged to `main`); the four
+remaining follow-ons (quadrature `⊕`, single-fit-range export, cross-group
+x-uncertainty, cross-fit global accumulation) are designed and being landed in a
+**second pass** on `feat/model-fit-finish` — see
+[implementation-options.md §"Second pass — finishing follow-ons A–D"](implementation-options.md). Implements the Model-layer follow-ons recorded
 by the merged *model-function-parity* project (PR #32, `d64820c`), namely items
 1, 2, 4 and the relevant slice of item 5 of its
 [`implementation-options.md` §Follow-ons](../model-function-parity/implementation-options.md).
