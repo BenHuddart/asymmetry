@@ -328,6 +328,8 @@ class DataBrowserPanel(QWidget):
         self._updating_table = False
         #: Run numbers to tint as "series members" (set by the trend panel).
         self._highlighted_runs: set[int] = set()
+        #: Run numbers handed out for synthetic/degraded runs not yet added.
+        self._reserved_run_numbers: set[int] = set()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -385,6 +387,23 @@ class DataBrowserPanel(QWidget):
     # ------------------------------------------------------------------
     # Dataset and grouping CRUD
     # ------------------------------------------------------------------
+
+    def all_datasets(self) -> list[MuonDataset]:
+        """Return the browser's datasets in insertion order."""
+        return list(self._datasets.values())
+
+    def next_derived_run_number(self) -> int:
+        """Reserve a run number for a synthetic or degraded run.
+
+        Numbers start at 90001, clear of real ISIS/PSI run series, and skip
+        anything already in the browser or previously reserved this session.
+        """
+        number = 90001
+        existing = set(self._datasets) | self._reserved_run_numbers
+        while number in existing:
+            number += 1
+        self._reserved_run_numbers.add(number)
+        return number
 
     def add_dataset(self, dataset: MuonDataset) -> None:
         rn = int(dataset.run_number)
@@ -650,6 +669,25 @@ class DataBrowserPanel(QWidget):
             blank.setBackground(_GROUP_HEADER_BACKGROUND)
             self._table.setItem(row, col, blank)
 
+    @staticmethod
+    def _derived_run_tooltip(meta: dict) -> str:
+        """Provenance tooltip for synthetic/degraded entries, '' otherwise."""
+        sim = meta.get("simulation")
+        if meta.get("synthetic") and isinstance(sim, dict):
+            return (
+                "Synthetic run — model: "
+                f"{sim.get('model', '?')}; seed {sim.get('seed', '?')}; "
+                f"template run {sim.get('template_run_number', '?')}"
+            )
+        degraded = meta.get("degraded")
+        if isinstance(degraded, dict):
+            return (
+                f"Degraded ×{degraded.get('factor', '?')} from run "
+                f"{degraded.get('source_run_label', degraded.get('source_run_number', '?'))} "
+                f"(seed {degraded.get('seed', '?')})"
+            )
+        return ""
+
     def _add_dataset_row(self, dataset: MuonDataset, *, indent: bool) -> None:
         rn = int(dataset.run_number)
         meta = dataset.metadata
@@ -674,6 +712,12 @@ class DataBrowserPanel(QWidget):
         title_item = QTableWidgetItem(title)
         title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self._table.setItem(row, 1, title_item)
+
+        provenance_tip = self._derived_run_tooltip(meta)
+        if provenance_tip:
+            run_item.setForeground(QColor(tokens.ACCENT))
+            run_item.setToolTip(provenance_tip)
+            title_item.setToolTip(provenance_tip)
 
         temp = self._temperature_for_display(dataset)
         temp_item = NumericTableWidgetItem(f"{temp:.2f}")
@@ -1720,6 +1764,17 @@ class DataBrowserPanel(QWidget):
         if len(selected_runs) == 1 and not selected_group_ids:
             selected_run = selected_runs[0]
             menu.addAction("Get Info", lambda rn=selected_run: self.get_info_requested.emit(rn))
+            dataset = self._datasets.get(selected_run)
+            if (
+                dataset is not None
+                and dataset.run is not None
+                and dataset.run.histograms
+                and selected_run not in self._combined_datasets
+            ):
+                menu.addAction(
+                    "Degrade Statistics…",
+                    lambda rn=selected_run: self._on_degrade_statistics(rn),
+                )
 
         if combined_runs:
             menu.addAction("Separate Combined", self._separate_combined)
@@ -1769,6 +1824,44 @@ class DataBrowserPanel(QWidget):
         if not run_numbers:
             return
         self.remove_runs_from_group(run_numbers)
+
+    def _on_degrade_statistics(self, run_number: int) -> None:
+        """Prompt for a factor + seed and add the thinned run beside the source."""
+        from asymmetry.gui.windows.simulate_dialog import DegradeStatisticsDialog
+
+        dialog = DegradeStatisticsDialog(self)
+        if not dialog.exec():
+            return
+        self.apply_degrade_statistics(run_number, dialog.factor(), dialog.seed())
+
+    def apply_degrade_statistics(
+        self, run_number: int, factor: float, seed: int
+    ) -> MuonDataset | None:
+        """Resample *run_number*'s histograms by *factor*; add the derived run.
+
+        Returns the new browser dataset, or ``None`` when the source has no
+        detector histograms or the factor is invalid. The source run is never
+        modified (WiMDA degraded in place; see docs/porting/simulate-mode/).
+        """
+        from asymmetry.core.simulate import degrade_run, reduce_run_to_dataset
+
+        dataset = self._datasets.get(run_number)
+        run = dataset.run if dataset is not None else None
+        if run is None or not run.histograms:
+            QMessageBox.warning(
+                self,
+                "Degrade Statistics",
+                "This entry has no detector histograms to resample.",
+            )
+            return None
+        try:
+            derived = degrade_run(run, factor, seed=seed, run_number=self.next_derived_run_number())
+            reduced = reduce_run_to_dataset(derived)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Degrade Statistics", str(exc))
+            return None
+        self.add_dataset(reduced)
+        return reduced
 
     def _show_table_context_menu(self, position: QPoint) -> None:
         viewport_pos = position
