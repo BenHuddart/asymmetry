@@ -130,6 +130,23 @@ def test_phase3_controls_push_to_tabs(qapp, fb_dataset):
     assert tab._count_dpsep == pytest.approx(0.324)
 
 
+def test_dpsep_fit_toggle_routes_to_tab(qapp, fb_dataset):
+    """The dpsep 'fit' checkbox flips the tab into scan-refinement mode."""
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(2)  # single → count mode enables dpsep
+    window._dpsep_spin.setValue(0.324)
+    window._dpsep_fit_check.setChecked(True)
+    tab = window._single_fit_tab
+    assert window._dpsep_fit_check.isEnabled()
+    assert tab._count_dpsep_fit is True
+    # A scan-mode seed yields a FREE dpsep bracketing the instrument value.
+    params = tab._count_fit_seed_params(fb_dataset, tab._grouped_fit_model(), mode="single")
+    dpsep = params["dpsep"]
+    assert not dpsep.fixed
+    assert dpsep.min < 0.324 < dpsep.max
+
+
 def test_promote_button_without_fit_shows_hint(qapp, fb_dataset):
     window = MultiGroupFitWindow()
     window.set_dataset(fb_dataset)

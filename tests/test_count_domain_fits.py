@@ -522,6 +522,32 @@ def test_double_pulse_free_dpsep_refines_from_seed():
     assert result.parameters["dpsep"].value == pytest.approx(0.324, abs=0.01)
 
 
+@pytest.mark.parametrize("seed_start", [0.12, 0.30, 0.48])
+def test_double_pulse_free_dpsep_recovers_from_arbitrary_start(seed_start):
+    """The coarse->fine scan finds dpsep from any in-range start (gate is non-smooth)."""
+    ds = _double_pulse_dataset(dpsep_us=0.324)
+    params = _continuous_single()
+    # The seed is deliberately far from the truth; the scan spans [min, max] and
+    # does not rely on starting near the minimum.
+    params.add(Parameter("dpsep", seed_start, min=0.1, max=0.5))
+    result = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+    assert result.success
+    assert result.parameters["dpsep"].value == pytest.approx(0.324, abs=0.01)
+    assert result.reduced_chi_squared < 1.2
+
+
+def test_fb_double_pulse_free_dpsep_recovers_from_arbitrary_start():
+    """The F+B free-dpsep scan recovers both dpsep and α from a far start."""
+    ds = _fb_double_pulse_dataset(dpsep_us=0.324, alpha=1.25, seed=4)
+    params = _fb_double_pulse_params()
+    params.add(Parameter("dpsep", 0.46, min=0.1, max=0.5))  # far from truth
+    result = fit_fb_alpha(ds, 1, 2, _tf, params, cost="gaussian")
+    assert result.success
+    # dpsep is a shared (fixed-at-scan-value) parameter; α is per-side.
+    assert result.shared_parameters["dpsep"].value == pytest.approx(0.324, abs=0.01)
+    assert result.group_results[1].parameters["alpha"].value == pytest.approx(1.25, abs=0.03)
+
+
 def _fb_double_pulse_dataset(*, dpsep_us=0.324, alpha=1.25, seed=4):
     template = build_builtin_template("ideal_continuous_fb")
     run = simulate_double_pulse_run(

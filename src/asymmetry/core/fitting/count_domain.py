@@ -356,6 +356,86 @@ def _result_from_minuit(
     )
 
 
+# --- dpsep refinement -------------------------------------------------------
+
+#: Grid sizes for the coarse -> fine dpsep scan. The second-pulse onset gate is
+#: non-smooth in dpsep, so migrad cannot descend it; a grid scan locates the
+#: separation and migrad still refines the other parameters at each grid point.
+_DPSEP_SCAN_COARSE = 17
+_DPSEP_SCAN_FINE = 9
+
+
+def _with_fixed_dpsep(params: ParameterSet, value: float) -> ParameterSet:
+    """Return a copy of ``params`` with ``dpsep`` fixed at ``value``."""
+    out = ParameterSet()
+    for p in params:
+        if p.name == "dpsep":
+            out.add(Parameter(name="dpsep", value=float(value), fixed=True))
+        else:
+            out.add(p)
+    return out
+
+
+def _dpsep_scan_bounds(dpsep_param: Parameter) -> tuple[float, float]:
+    """Return the ``(lo, hi)`` scan window for a free dpsep.
+
+    Uses the parameter's finite bounds when present; otherwise falls back to a
+    half-to-three-halves window around the seed (a refinement around the
+    instrument value).
+    """
+    lo = float(dpsep_param.min) if np.isfinite(dpsep_param.min) else None
+    hi = float(dpsep_param.max) if np.isfinite(dpsep_param.max) else None
+    seed = max(float(dpsep_param.value), 1.0e-6)
+    if lo is None:
+        lo = max(0.0, 0.5 * seed)
+    if hi is None:
+        hi = 1.5 * seed
+    lo = max(0.0, lo)
+    if hi <= lo:
+        hi = lo + max(seed, 1.0e-3)
+    return lo, hi
+
+
+def _refine_free_dpsep(
+    dpsep_param: Parameter,
+    fit_fixed: Callable[[float], object],
+    cost_of: Callable[[object], float],
+):
+    """Locate a free dpsep by a coarse -> fine grid scan and return the best fit.
+
+    ``fit_fixed(value)`` runs the standard count fit with dpsep fixed at
+    ``value`` (migrad refines the remaining parameters); ``cost_of(result)``
+    extracts that fit's cost. The coarse pass spans the scan window; the fine
+    pass refines around the coarse minimum to roughly the fine-grid spacing.
+    """
+
+    def _cost(result) -> float:
+        try:
+            value = float(cost_of(result))
+        except (TypeError, ValueError):
+            return _INF
+        return value if np.isfinite(value) else _INF
+
+    def _evaluate(grid):
+        return [(g, result := fit_fixed(g), _cost(result)) for g in grid]
+
+    lo, hi = _dpsep_scan_bounds(dpsep_param)
+    coarse = _evaluate(np.linspace(lo, hi, _DPSEP_SCAN_COARSE))
+    best_g, best_result, best_cost = min(coarse, key=lambda item: item[2])
+
+    step = (hi - lo) / (_DPSEP_SCAN_COARSE - 1)
+    fine_lo = max(lo, best_g - step)
+    fine_hi = min(hi, best_g + step)
+    for _g, result, cost in _evaluate(np.linspace(fine_lo, fine_hi, _DPSEP_SCAN_FINE)):
+        if cost < best_cost:
+            best_result, best_cost = result, cost
+    return best_result
+
+
+def _has_free_dpsep(params: ParameterSet) -> bool:
+    return "dpsep" in params and not params["dpsep"].fixed
+
+
 # --- single histogram -------------------------------------------------------
 
 
@@ -387,9 +467,27 @@ def fit_single_histogram(
     parameter shifts the model time axis; free ``lambda_base`` / ``beta_base``
     parameters add a stretched-exponential baseline drift; ``DT0`` (+ ``C2``,
     ``C3``, ``C4``) add a count-loss/deadtime term; a ``dpsep`` parameter
-    switches on the ISIS double-pulse count model.
+    switches on the ISIS double-pulse count model — fixed by default, or located
+    by a coarse->fine grid scan when supplied free (the non-smooth pulse-onset
+    gate defeats gradient fitting).
     """
     _validate_cost(cost)
+    if _has_free_dpsep(params):
+        return _refine_free_dpsep(
+            params["dpsep"],
+            fit_fixed=lambda value: fit_single_histogram(
+                dataset,
+                group_id,
+                model_fn,
+                _with_fixed_dpsep(params, value),
+                side=side,
+                cost=cost,
+                t_min=t_min,
+                t_max=t_max,
+                exclude=exclude,
+            ),
+            cost_of=lambda result: result.chi_squared,
+        )
     group = build_count_group(
         dataset, group_id, t_min=t_min, t_max=t_max, lifetime_corrected=False, exclude=exclude
     )
@@ -497,6 +595,24 @@ def fit_fb_alpha(
     # alpha is physically positive and the model is sign-degenerate (sqrt(abs)),
     # so enforce a positive lower bound rather than report a negative balance.
     params = _clamp_alpha_positive(params)
+
+    # A free dpsep is located by a grid scan, not migrad (non-smooth pulse gate).
+    if _has_free_dpsep(params):
+        return _refine_free_dpsep(
+            params["dpsep"],
+            fit_fixed=lambda value: fit_fb_alpha(
+                dataset,
+                forward_group,
+                backward_group,
+                model_fn,
+                _with_fixed_dpsep(params, value),
+                cost=cost,
+                t_min=t_min,
+                t_max=t_max,
+                exclude=exclude,
+            ),
+            cost_of=lambda result: sum(gr.chi_squared for gr in result.group_results.values()),
+        )
 
     # Build both banks in ONE context so they share a common t0 alignment.
     g_fwd, g_bwd = build_count_groups(

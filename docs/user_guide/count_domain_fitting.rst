@@ -137,16 +137,18 @@ Count loss and double pulse
   polarization, evaluated at t ± dpsep/2 and weighted by exp(∓dpsep/2τ_μ). This
   applies to both the single-histogram and the free-α (F+B) targets — for the
   latter the two pulses ride the same √α-tied forward/backward model, so α and
-  the double-pulse structure are recovered together. The separation is taken as
-  a fixed instrument value rather than fitted.
+  the double-pulse structure are recovered together. The separation defaults to
+  a fixed instrument value; tick **fit** to refine it.
 
   .. note::
 
      The separation enters the model through a non-smooth pulse-onset gate, so
-     gradient-based fitting of dpsep is unreliable and is not offered in the
-     GUI; set it from the instrument. With the separation fixed at its true
-     value the model fits cleanly (χ²ᵣ ≈ 1); a wrong separation visibly
-     degrades the fit.
+     gradient (migrad) fitting of dpsep is unreliable. With **fit** ticked the
+     separation is instead located by a coarse→fine grid scan bracketing the
+     instrument value — at each grid point migrad refines the other parameters,
+     and the best χ² wins. This recovers dpsep robustly without depending on a
+     near-truth start. With the separation at its true value the model fits
+     cleanly (χ²ᵣ ≈ 1); a wrong separation visibly degrades the fit.
 
 Worked example — α from a TF calibration run
 --------------------------------------------

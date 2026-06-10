@@ -130,14 +130,25 @@ class MultiGroupFitWindow(QWidget):
         nuisance_layout.addWidget(self._deadtime_check)
         form.addRow(QLabel("Nuisances"), nuisance_row)
 
-        # Double-pulse separation (μs); 0 = single pulse. Fixed from the instrument.
+        # Double-pulse separation (μs); 0 = single pulse. Fixed from the
+        # instrument, or located by a coarse->fine scan when "fit" is ticked.
         self._dpsep_spin = QDoubleSpinBox()
         self._dpsep_spin.setDecimals(3)
         self._dpsep_spin.setRange(0.0, 5.0)
         self._dpsep_spin.setSingleStep(0.01)
         self._dpsep_spin.valueChanged.connect(self._sync_count_fit_target)
+        self._dpsep_fit_check = QCheckBox("fit")
+        self._dpsep_fit_check.setToolTip(
+            "Refine dpsep by a coarse→fine scan (the pulse-onset gate defeats gradient fitting)"
+        )
+        self._dpsep_fit_check.toggled.connect(self._sync_count_fit_target)
+        dpsep_row = QWidget()
+        dpsep_layout = QHBoxLayout(dpsep_row)
+        dpsep_layout.setContentsMargins(0, 0, 0, 0)
+        dpsep_layout.addWidget(self._dpsep_spin)
+        dpsep_layout.addWidget(self._dpsep_fit_check)
         self._dpsep_label = QLabel("Double pulse (μs)")
-        form.addRow(self._dpsep_label, self._dpsep_spin)
+        form.addRow(self._dpsep_label, dpsep_row)
 
         # Promote a fitted deadtime into the grouping correction (Send-to-Group).
         self._promote_btn = QPushButton("Promote DT₀ → grouping")
@@ -174,6 +185,7 @@ class MultiGroupFitWindow(QWidget):
             self._baseline_check,
             self._deadtime_check,
             self._dpsep_spin,
+            self._dpsep_fit_check,
             self._dpsep_label,
             self._promote_btn,
             self._promote_additive,
@@ -193,6 +205,7 @@ class MultiGroupFitWindow(QWidget):
             tab.set_count_baseline(self._baseline_check.isChecked())
             tab.set_count_deadtime(self._deadtime_check.isChecked())
             tab.set_count_dpsep(float(self._dpsep_spin.value()))
+            tab.set_count_dpsep_fit(self._dpsep_fit_check.isChecked())
 
     def _grouped_tabs(self) -> tuple[GlobalFitTab, GlobalFitTab]:
         return (self._single_fit_tab, self._batch_fit_tab)

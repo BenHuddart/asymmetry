@@ -2059,6 +2059,7 @@ class GlobalFitTab(QWidget):
         # Phase 3 count-loss + double pulse.
         self._count_deadtime = False
         self._count_dpsep = 0.0  # μs; > 0 switches on the double-pulse model
+        self._count_dpsep_fit = False  # locate dpsep by a coarse->fine scan
         self._last_count_dt0: float | None = None
         self._last_count_group: int | None = None
         self._fit_blocked = False
@@ -3603,6 +3604,10 @@ class GlobalFitTab(QWidget):
             value = 0.0
         self._count_dpsep = value if value > 0.0 else 0.0
 
+    def set_count_dpsep_fit(self, enabled: bool) -> None:
+        """Toggle locating dpsep by a coarse->fine scan rather than fixing it."""
+        self._count_dpsep_fit = bool(enabled)
+
     def promote_count_deadtime(self, *, additive: bool = False) -> None:
         """Promote the last fitted deadtime DT0 into the grouping (WiMDA Send-to-Group)."""
         from asymmetry.core.transform.deadtime import promote_deadtime_to_grouping
@@ -3722,9 +3727,16 @@ class GlobalFitTab(QWidget):
         if self._count_deadtime:
             params.add(Parameter(name="DT0", value=0.005, min=0.0, max=0.5))
         if self._count_dpsep > 0.0:
-            # dpsep comes from the instrument; held fixed (gradient-fitting the
-            # non-smooth pulse gate is unreliable).
-            params.add(Parameter(name="dpsep", value=self._count_dpsep, fixed=True))
+            if self._count_dpsep_fit:
+                # Free dpsep: a coarse->fine scan refines it around the instrument
+                # value (the non-smooth pulse gate defeats gradient fitting). The
+                # window brackets the seed so the scan refines, not blind-searches.
+                lo = max(0.0, 0.5 * self._count_dpsep)
+                hi = 1.5 * self._count_dpsep
+                params.add(Parameter(name="dpsep", value=self._count_dpsep, min=lo, max=hi))
+            else:
+                # dpsep comes from the instrument; held fixed.
+                params.add(Parameter(name="dpsep", value=self._count_dpsep, fixed=True))
         return params
 
     def _run_count_domain_fit(self) -> None:
