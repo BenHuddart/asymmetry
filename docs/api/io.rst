@@ -94,3 +94,16 @@ logs such as ``hSampleTemperature``.
    :members:
    :undoc-members:
    :show-inheritance:
+
+NeXus Writer
+------------
+
+Writes synthetic or derived runs (see :doc:`/user_guide/simulation`) as
+loadable ISIS muon NeXus V1 files. Built from the
+:class:`~asymmetry.core.data.dataset.Run` alone — any loaded run, PSI and
+ROOT formats included, can act as the instrument template — with the
+simulation provenance stored in a ``/run/simulation`` group.
+
+.. automodule:: asymmetry.core.io.nexus_writer
+   :members:
+   :undoc-members:

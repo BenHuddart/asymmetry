@@ -29,28 +29,33 @@ Material    Used by                            Textbook reference
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import numpy as np
 
-from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.models import MODELS
+from asymmetry.core.simulate import (
+    build_run_from_detector_asymmetries,
+    poisson_asymmetry_errors,
+)
 
+# Legacy rounded lifetime, kept so the documentation data stay byte-stable.
+# The promoted core builder (asymmetry.core.simulate) defaults to the
+# canonical MUON_LIFETIME_US; the wrapper below pins this value explicitly.
 MUON_LIFETIME_US = 2.197
 
 # Physical constants and material parameters --------------------------------
 
-GAMMA_MU_MHZ_PER_G = 0.01355   # γ_μ / (2π) in MHz/G ≈ 13.55 kHz/G
-GAMMA_MU_MHZ_PER_T = 135.5     # γ_μ / (2π) in MHz/T
+GAMMA_MU_MHZ_PER_G = 0.01355  # γ_μ / (2π) in MHz/G ≈ 13.55 kHz/G
+GAMMA_MU_MHZ_PER_T = 135.5  # γ_μ / (2π) in MHz/T
 
-TC_EUO_K = 69.0                # EuO Curie temperature
-DELTA_AG_PER_US = 0.39         # Ag nuclear dipolar Δ (μs⁻¹), Ch 5.2
-R_MUF_ANG = 1.17               # F-μ-F equilibrium distance (Å)
-TC_MGB2_K = 36.0               # MgB₂ critical temperature
-TC_YBCO_K = 90.0               # YBa₂Cu₃O₇₋δ critical temperature
-LAMBDA_YBCO_NM = 130.0         # YBCO ab-plane penetration depth
-XI_YBCO_NM = 2.0               # YBCO coherence length
+TC_EUO_K = 69.0  # EuO Curie temperature
+DELTA_AG_PER_US = 0.39  # Ag nuclear dipolar Δ (μs⁻¹), Ch 5.2
+R_MUF_ANG = 1.17  # F-μ-F equilibrium distance (Å)
+TC_MGB2_K = 36.0  # MgB₂ critical temperature
+TC_YBCO_K = 90.0  # YBa₂Cu₃O₇₋δ critical temperature
+LAMBDA_YBCO_NM = 130.0  # YBCO ab-plane penetration depth
+XI_YBCO_NM = 2.0  # YBCO coherence length
 
 _DEFAULT_NPOINTS = 480
 _DEFAULT_TMAX_US = 8.0
@@ -61,118 +66,26 @@ def _time_axis(n_points: int = _DEFAULT_NPOINTS, t_max: float = _DEFAULT_TMAX_US
 
 
 def _poisson_errors(asymmetry: np.ndarray, counts_per_bin: float = 5e4) -> np.ndarray:
-    """Per-bin uncertainty derived from a target counts-per-bin.
-
-    The asymmetry σ for a two-detector experiment scales as
-    ``sqrt((1 - A^2) / N)``. Picking a counts-per-bin gives a realistic noise
-    envelope without doing a histogram round-trip.
-    """
-    variance = np.clip(1.0 - (asymmetry / 100.0) ** 2, 1e-3, 1.0) / counts_per_bin
-    return np.sqrt(variance) * 100.0
+    """Per-bin uncertainty from a target counts-per-bin (promoted to core)."""
+    return poisson_asymmetry_errors(asymmetry, counts_per_bin)
 
 
 def _build_run_with_detector_asymmetries(
-    *,
-    run_number: int,
-    detector_asymmetries: list[dict],
-    title: str,
-    temperature_k: float,
-    field_g: float,
-    bin_width_us: float = 0.005,
-    n_bins: int = 2400,
-    t0_bin: int = 100,
-    n0_per_detector: float = 1.0e6,
-    rng: np.random.Generator | None = None,
+    **kwargs,
 ) -> tuple[Run, np.ndarray, np.ndarray, np.ndarray]:
     """Synthesise a full :class:`Run` from per-detector asymmetry signals.
 
-    Each detector histogram is built as
-
-        N_d(t) = N_{0,d} · exp(-t/τ_μ) · (1 + A_d(t))   for t > 0
-              = N_{0,d}                                  for t ≤ 0
-
-    with Poisson counting noise applied. The grouping payload puts one
-    detector per group so the GUI's *Individual Groups* domain view shows a
-    trace per detector. The function also returns the F–B asymmetry trace
-    (using the first two groups) and a per-bin error estimate so the wrapper
-    :class:`MuonDataset` carries a defensible time-domain view.
-
-    Parameters
-    ----------
-    detector_asymmetries
-        One dict per detector. Each dict must define ``"asymmetry"`` (a
-        ``(n_bins - t0_bin,)`` array giving A_d(t)) plus optional
-        ``"label"``, ``"amplitude_scale"``, and ``"n0"``.
+    Promoted to :func:`asymmetry.core.simulate.build_run_from_detector_asymmetries`;
+    this wrapper pins the legacy rounded lifetime so the screenshot datasets
+    remain byte-stable.
     """
-    rng = rng if rng is not None else np.random.default_rng()
-    bins = np.arange(n_bins)
-    time_full = (bins - t0_bin) * bin_width_us
-    decay = np.exp(-np.maximum(time_full, 0.0) / MUON_LIFETIME_US)
-
-    histograms: list[Histogram] = []
-    for det in detector_asymmetries:
-        amplitude = np.zeros(n_bins, dtype=float)
-        amplitude[t0_bin:] = det["asymmetry"][: n_bins - t0_bin]
-        n0 = float(det.get("n0", n0_per_detector))
-        # Pre-trigger flat counts come from the implantation rate alone.
-        clean = np.full(n_bins, n0, dtype=float)
-        clean[t0_bin:] = n0 * decay[t0_bin:] * (1.0 + amplitude[t0_bin:])
-        clean = np.clip(clean, 1e-3, None)
-        noisy = rng.poisson(clean).astype(float)
-        histograms.append(
-            Histogram(
-                counts=noisy,
-                bin_width=bin_width_us,
-                t0_bin=t0_bin,
-                good_bin_start=t0_bin,
-                good_bin_end=n_bins - 1,
-            )
-        )
-
-    n_groups = len(histograms)
-    groups = {gid: [gid - 1] for gid in range(1, n_groups + 1)}
-    group_names = {
-        gid: det.get("label", f"Group {gid}")
-        for gid, det in zip(range(1, n_groups + 1), detector_asymmetries, strict=True)
-    }
-    grouping = {
-        "groups": groups,
-        "group_names": group_names,
-        "forward_group": 1,
-        "backward_group": min(2, n_groups),
-        "alpha": 1.0,
-        "t0_bin": t0_bin,
-        "t_good_offset": 0,
-        "first_good_bin": t0_bin,
-        "last_good_bin": n_bins - 1,
-        "bin_index_base": 0,
-        "bunching_factor": 1,
-        "deadtime_correction": False,
-        "included_groups": {gid: True for gid in groups},
-    }
-
-    run = Run(
-        run_number=run_number,
-        histograms=histograms,
-        metadata={"title": title, "temperature": temperature_k, "field": field_g},
-        grouping=grouping,
-    )
-
-    # F-B asymmetry from the first two groups for the wrapper MuonDataset.
-    fwd = histograms[0].counts.astype(float)
-    bwd = histograms[min(1, n_groups - 1)].counts.astype(float)
-    fwd_post = fwd[t0_bin:]
-    bwd_post = bwd[t0_bin:]
-    denom = fwd_post + bwd_post
-    raw_asym = np.where(denom > 0, (fwd_post - bwd_post) / denom, 0.0) * 100.0
-    time_post = time_full[t0_bin:]
-    error_post = np.where(denom > 0, np.sqrt(2.0 / denom), 0.0) * 100.0
-    return run, time_post, raw_asym, error_post
+    return build_run_from_detector_asymmetries(lifetime_us=MUON_LIFETIME_US, **kwargs)
 
 
 # ---------------------------------------------------------------------------
 # Static-field thread: Ag polycrystal (nuclear dipolar Kubo–Toyabe)
 # ---------------------------------------------------------------------------
+
 
 def make_ag_zf_gkt(seed: int = 23) -> MuonDataset:
     """ZF Ag polycrystal — static Gaussian Kubo–Toyabe (Δ=0.39 μs⁻¹).
@@ -215,9 +128,7 @@ def make_ag_lf_decoupling(
     time = _time_axis()
     datasets: list[MuonDataset] = []
     for index, field_g in enumerate(fields_g):
-        clean = lfkt(
-            time, A0=24.0, Delta=DELTA_AG_PER_US, B_L=float(field_g), baseline=0.3
-        )
+        clean = lfkt(time, A0=24.0, Delta=DELTA_AG_PER_US, B_L=float(field_g), baseline=0.3)
         error = _poisson_errors(clean, counts_per_bin=1.0e5)
         asymmetry = clean + rng.normal(0.0, error)
         datasets.append(
@@ -240,6 +151,7 @@ def make_ag_lf_decoupling(
 # Magnetism thread: EuO ferromagnet through Tc (Ch 6, Fig 6.6)
 # ---------------------------------------------------------------------------
 
+
 def make_euo_tf_tscan(seed: int = 17) -> list[MuonDataset]:
     """EuO ZF temperature scan crossing the Curie point Tc=69 K.
 
@@ -255,11 +167,11 @@ def make_euo_tf_tscan(seed: int = 17) -> list[MuonDataset]:
     exp_fn = MODELS["ExponentialRelaxation"].function
     time = _time_axis(n_points=600, t_max=6.0)
 
-    nu_0_mhz = 28.0     # ν(T=0) extrapolated frequency (textbook Fig 6.6)
+    nu_0_mhz = 28.0  # ν(T=0) extrapolated frequency (textbook Fig 6.6)
     beta = 0.40
     damping_floor = 0.10
-    lambda_peak = 4.0   # critical damping near Tc
-    delta_t_k = 6.0     # critical-region width
+    lambda_peak = 4.0  # critical damping near Tc
+    delta_t_k = 6.0  # critical-region width
 
     temps_k = [30.0, 50.0, 65.0, 69.0, 73.0, 90.0]
     datasets: list[MuonDataset] = []
@@ -269,9 +181,7 @@ def make_euo_tf_tscan(seed: int = 17) -> list[MuonDataset]:
             frequency_mhz = nu_0_mhz * order
         else:
             frequency_mhz = 0.0
-        damping = damping_floor + lambda_peak * np.exp(
-            -((t - TC_EUO_K) / delta_t_k) ** 2
-        )
+        damping = damping_floor + lambda_peak * np.exp(-(((t - TC_EUO_K) / delta_t_k) ** 2))
 
         if frequency_mhz > 0.01:
             clean = osc(
@@ -338,6 +248,7 @@ def make_euo_composite(seed: int = 71) -> MuonDataset:
 # Superconductor thread: MgB₂ σ(T) two-gap (already in examples/)
 # ---------------------------------------------------------------------------
 
+
 def make_mgb2_sigma_t(seed: int = 105, n_points: int = 28) -> dict:
     """MgB₂ σ(T) data set produced by the SC_TwoGap_SS evaluator.
 
@@ -373,6 +284,7 @@ def make_mgb2_sigma_t(seed: int = 105, n_points: int = 28) -> dict:
 # ---------------------------------------------------------------------------
 # Cuprate thread: YBa₂Cu₃O₇₋δ above and below Tc
 # ---------------------------------------------------------------------------
+
 
 def make_ybco_knight_grouped(seed: int = 101) -> MuonDataset:
     """Normal-state YBa₂Cu₃O₇₋δ TF run with 4 detector groups for grouped fitting.
@@ -478,7 +390,7 @@ def make_ybco_vortex_lattice(seed: int = 103) -> MuonDataset:
     # to resolve in the time domain at this bin width. We synthesise the lab-
     # frame signal here so the GUI's FFT pipeline sees the full precession and
     # renders it correctly in the frequency domain.
-    b_app_g = 2000.0      # 200 mT in gauss
+    b_app_g = 2000.0  # 200 mT in gauss
     sigma_vl_per_us = 0.62
     # Asymmetric P(ΔB) construction (skewed Gaussian + exponential tail).
     delta_b = np.linspace(-1.5, 4.5, 4096) * sigma_vl_per_us
@@ -486,10 +398,10 @@ def make_ybco_vortex_lattice(seed: int = 103) -> MuonDataset:
     p_b = np.zeros_like(delta_b)
     rise = delta_b >= peak - 0.6 * sigma_vl_per_us
     tail = delta_b >= peak
-    p_b[rise] = np.exp(-((delta_b[rise] - peak) / (0.18 * sigma_vl_per_us)) ** 2)
+    p_b[rise] = np.exp(-(((delta_b[rise] - peak) / (0.18 * sigma_vl_per_us)) ** 2))
     p_b[tail] += 0.55 * np.exp(-(delta_b[tail] - peak) / (1.1 * sigma_vl_per_us))
     p_b = np.clip(p_b, 0.0, None)
-    kernel = np.exp(-np.linspace(-3, 3, 61) ** 2)
+    kernel = np.exp(-(np.linspace(-3, 3, 61) ** 2))
     kernel /= kernel.sum()
     p_b = np.convolve(p_b, kernel, mode="same")
     p_b /= np.trapezoid(p_b, delta_b)
@@ -540,6 +452,7 @@ def make_ybco_vortex_lattice(seed: int = 103) -> MuonDataset:
 # Muon-fluorine thread: PbF₂ F-μ-F entanglement
 # ---------------------------------------------------------------------------
 
+
 def make_pbf2_fmuf(seed: int = 89) -> MuonDataset:
     """PbF₂ F-μ-F entanglement signal at low T with r_μF=1.17 Å.
 
@@ -576,6 +489,7 @@ def make_pbf2_fmuf(seed: int = 89) -> MuonDataset:
 # Vector polarization thread: EMU 3-axis projections
 # ---------------------------------------------------------------------------
 
+
 def make_emu_vector(seed: int = 97) -> list[MuonDataset]:
     """Three EMU-style polarization projections P_x, P_y, P_z.
 
@@ -591,9 +505,7 @@ def make_emu_vector(seed: int = 97) -> list[MuonDataset]:
     time = _time_axis(n_points=480, t_max=8.0)
 
     p_z_clean = exp_fn(time, A0=18.0, Lambda=0.25, baseline=0.3)
-    p_x_clean = osc(
-        time, A0=8.0, frequency=0.6, phase=0.0, Lambda=0.4, baseline=0.0
-    )
+    p_x_clean = osc(time, A0=8.0, frequency=0.6, phase=0.0, Lambda=0.4, baseline=0.0)
     p_y_clean = np.full_like(time, 0.3)
 
     datasets: list[MuonDataset] = []
@@ -622,6 +534,7 @@ def make_emu_vector(seed: int = 97) -> list[MuonDataset]:
 # ---------------------------------------------------------------------------
 # Data processing thread: low-statistics TF for rebin demo
 # ---------------------------------------------------------------------------
+
 
 def make_generic_tf_for_processing(seed: int = 107) -> MuonDataset:
     """Low-statistics 100 G TF dataset for the data-processing rebin demo.

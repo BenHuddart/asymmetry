@@ -22,6 +22,7 @@ material.
    logbook
    data_processing
    detector_grouping
+   simulation
    gui_usage
    project_files
 
