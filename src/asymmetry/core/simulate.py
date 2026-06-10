@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -60,6 +61,157 @@ _PERIOD_KEYS = (
     "period_good_frames",
     "period_dead_time_us",
 )
+
+
+# ---------------------------------------------------------------------------
+# Built-in ideal-instrument templates (simulate with no run loaded)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class InstrumentTemplate:
+    """A built-in idealised instrument that can stand in for a loaded run.
+
+    :func:`simulate_run` only reads *structure* from its template — detector
+    count, bin width, per-detector t0, the good-bin window and the
+    forward/backward grouping — never the (zero) counts, so a built-in
+    template carries empty histograms and a complete grouping. The
+    :attr:`default_total_events` and :attr:`default_background_per_bin` are
+    teaching-sensible starting points the dialog seeds its spinners with; the
+    continuous instrument carries a non-zero flat background (the
+    time-independent uncorrelated background characteristic of continuous
+    sources — textbook Ch. 14), the pulsed one does not.
+    """
+
+    key: str
+    label: str
+    description: str
+    n_detectors: int
+    n_bins: int
+    bin_width_us: float
+    t0_bin: int
+    forward_detectors: tuple[int, ...]
+    backward_detectors: tuple[int, ...]
+    alpha: float = 1.0
+    good_frames: float = 1.0
+    good_bin_start: int | None = None
+    good_bin_end: int | None = None
+    default_total_events: float = 10.0e6
+    default_background_per_bin: float = 0.0
+    instrument_name: str = ""
+    field_state: str = "ZF"
+    detector_orientation: str = "Longitudinal"
+
+    def build(self) -> Run:
+        """Materialise an empty-histogram :class:`Run` with this geometry."""
+        first_good = self.t0_bin if self.good_bin_start is None else self.good_bin_start
+        last_good = self.n_bins - 1 if self.good_bin_end is None else self.good_bin_end
+        histograms = [
+            Histogram(
+                counts=np.zeros(self.n_bins, dtype=float),
+                bin_width=self.bin_width_us,
+                t0_bin=self.t0_bin,
+                good_bin_start=first_good,
+                good_bin_end=last_good,
+            )
+            for _ in range(self.n_detectors)
+        ]
+        groups = {
+            1: list(self.forward_detectors),
+            2: list(self.backward_detectors),
+        }
+        grouping = {
+            "groups": groups,
+            "group_names": {1: "Forward", 2: "Backward"},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": float(self.alpha),
+            "t0_bin": self.t0_bin,
+            "t_good_offset": 0,
+            "first_good_bin": first_good,
+            "last_good_bin": last_good,
+            "bin_index_base": 1,
+            "bunching_factor": 1,
+            "good_frames": float(self.good_frames),
+            "deadtime_correction": False,
+            "dead_time_us": [0.0] * self.n_detectors,
+            "included_groups": {1: True, 2: True},
+        }
+        return Run(
+            run_number=0,
+            histograms=histograms,
+            metadata={
+                "title": self.label,
+                "instrument": self.instrument_name,
+                "field_state": self.field_state,
+                "detector_orientation": self.detector_orientation,
+                "builtin_template": self.key,
+            },
+            grouping=grouping,
+            source_file="",
+        )
+
+
+#: Built-in idealised instruments, keyed for the dialog template combo. The
+#: pulsed F/B template mirrors an ISIS-style spectrometer (32 + 32 detectors,
+#: 16 ns bins, a 32 μs window); the continuous template a PSI-style F/B pair
+#: with fine 1 ns binning, a short 10 μs window and a flat background. The two
+#: are the source archetypes the textbook contrasts (Ch. 14).
+BUILTIN_TEMPLATES: dict[str, InstrumentTemplate] = {
+    "ideal_pulsed_fb": InstrumentTemplate(
+        key="ideal_pulsed_fb",
+        label="Ideal pulsed F/B (ISIS-style)",
+        description=(
+            "Pulsed-source spectrometer: 32 forward + 32 backward detectors, "
+            "16 ns bins over a 32 μs window, no uncorrelated background."
+        ),
+        n_detectors=64,
+        n_bins=2000,
+        bin_width_us=0.016,
+        t0_bin=100,
+        forward_detectors=tuple(range(1, 33)),
+        backward_detectors=tuple(range(33, 65)),
+        alpha=1.0,
+        good_frames=1.0,
+        default_total_events=40.0e6,
+        default_background_per_bin=0.0,
+        instrument_name="IDEAL-PULSED",
+    ),
+    "ideal_continuous_fb": InstrumentTemplate(
+        key="ideal_continuous_fb",
+        label="Ideal continuous F/B (PSI-style)",
+        description=(
+            "Continuous-source F/B pair: 1 ns bins over a 10 μs window with a "
+            "flat uncorrelated background (10 counts/bin/detector)."
+        ),
+        n_detectors=2,
+        n_bins=10000,
+        bin_width_us=0.001,
+        t0_bin=1000,
+        forward_detectors=(1,),
+        backward_detectors=(2,),
+        alpha=1.0,
+        good_frames=1.0,
+        default_total_events=20.0e6,
+        default_background_per_bin=10.0,
+        instrument_name="IDEAL-CONTINUOUS",
+    ),
+}
+
+
+def build_builtin_template(key: str) -> Run:
+    """Build an empty-histogram :class:`Run` for a named built-in instrument.
+
+    Raises :class:`KeyError` for an unknown key. See :data:`BUILTIN_TEMPLATES`
+    for the available instruments.
+    """
+    try:
+        template = BUILTIN_TEMPLATES[key]
+    except KeyError:
+        raise KeyError(
+            f"Unknown built-in instrument template {key!r}; available: {sorted(BUILTIN_TEMPLATES)}."
+        ) from None
+    return template.build()
 
 
 # ---------------------------------------------------------------------------
@@ -519,6 +671,197 @@ def simulate_run(
 
 
 # ---------------------------------------------------------------------------
+# Multi-group simulation (per-group amplitude / phase, from a grouped fit)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GroupSignalSpec:
+    """Per-group amplitude, relative phase and count-rate weight for a TF ring.
+
+    The simulation analogue of a grouped time-domain fit's per-group nuisance
+    block (``amplitude``, ``relative_phase``, ``N0`` in
+    :mod:`asymmetry.core.fitting.grouped_time_domain`): each detector group sees
+    the *shared* normalised polarisation scaled by its own ``amplitude`` and
+    phase-shifted by its own ``relative_phase``, with ``n0_weight`` setting its
+    relative count rate (detector efficiency).
+    """
+
+    group_id: int
+    amplitude: float
+    relative_phase: float = 0.0
+    n0_weight: float = 1.0
+    label: str = ""
+
+
+def _phase_parameter_names(parameter_names: list[str]) -> list[str]:
+    """Names of the model's phase parameter(s).
+
+    Uses the repo-wide :func:`~asymmetry.core.fitting.parameters.split_parameter_name`
+    convention (base name ``"phase"``, with or without a numeric component
+    suffix) so simulation and grouped fitting agree on which parameters carry a
+    phase — rather than a private string-prefix heuristic that would drift.
+    """
+    from asymmetry.core.fitting.parameters import split_parameter_name
+
+    return [name for name in parameter_names if split_parameter_name(str(name))[0] == "phase"]
+
+
+def build_group_signals(
+    model: Any,
+    specs: Mapping[int, GroupSignalSpec] | list[GroupSignalSpec],
+    *,
+    base_parameters: Mapping[str, float] | None = None,
+) -> tuple[dict[int, GroupSignal], dict[int, float]]:
+    """Build ``(group_signals, group_weights)`` for a multi-group simulation.
+
+    ``model`` is a *normalised* polarisation model (amplitude 1, background 0 —
+    the grouped-fit contract), so its output is the dimensionless polarisation
+    P(t) ≈ [−1, 1] directly (no percent conversion: the per-group ``amplitude``
+    owns the scale, exactly as in
+    :func:`~asymmetry.core.fitting.grouped_time_domain.build_grouped_count_model`).
+    Each spec forms ``a_g(t) = amplitude · P(t)`` and adds ``relative_phase``
+    (radians) to the model's phase parameter(s); ``base_parameters`` supplies
+    the shared model values. The returned weights are the per-group
+    ``n0_weight`` values, fed to :func:`simulate_run_from_group_signals` which
+    normalises them over the assigned detectors.
+
+    Raises :class:`ValueError` if a non-zero ``relative_phase`` is requested for
+    a model with no phase parameter.
+    """
+    spec_list = list(specs.values()) if isinstance(specs, Mapping) else list(specs)
+    base = dict(base_parameters or {})
+    if hasattr(model, "function") and callable(model.function):
+        model_fn = model.function
+        param_names = list(getattr(model, "param_names", []))
+    elif callable(model):
+        model_fn = model
+        import inspect
+
+        param_names = [
+            name
+            for name, parameter in inspect.signature(model).parameters.items()
+            if parameter.kind
+            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        ][1:]  # drop the time axis (first positional)
+    else:
+        raise TypeError("model must be a CompositeModel or a callable a(t) in percent.")
+    phase_names = _phase_parameter_names(param_names)
+
+    group_signals: dict[int, GroupSignal] = {}
+    group_weights: dict[int, float] = {}
+    for spec in spec_list:
+        params = dict(base)
+        if not np.isclose(spec.relative_phase, 0.0):
+            if not phase_names:
+                raise ValueError(
+                    "A non-zero relative_phase requires a phase-capable model "
+                    f"(group {spec.group_id} requested {spec.relative_phase})."
+                )
+            for phase_name in phase_names:
+                params[phase_name] = float(params.get(phase_name, 0.0)) + float(spec.relative_phase)
+
+        def signal(
+            t: NDArray[np.float64],
+            _amp: float = float(spec.amplitude),
+            _params: dict[str, float] = params,
+        ) -> NDArray[np.float64]:
+            return _amp * np.asarray(model_fn(t, **_params), dtype=float)
+
+        group_signals[int(spec.group_id)] = signal
+        group_weights[int(spec.group_id)] = float(spec.n0_weight)
+    return group_signals, group_weights
+
+
+def simulate_multi_group_run(
+    template: Run,
+    model: Any,
+    specs: Mapping[int, GroupSignalSpec] | list[GroupSignalSpec],
+    *,
+    total_events: float,
+    seed: int = 0,
+    base_parameters: Mapping[str, float] | None = None,
+    background_per_bin: float = 0.0,
+    run_number: int | None = None,
+    title: str | None = None,
+) -> Run:
+    """Simulate a run with a distinct amplitude/phase per detector group.
+
+    The multi-group counterpart of :func:`simulate_run`: instead of the F/B α
+    split it drives :func:`simulate_run_from_group_signals` with per-group
+    signals built by :func:`build_group_signals` from ``specs`` and the shared
+    normalised ``model``. Use it to synthesise a TF ring whose groups differ in
+    phase, seeded from a grouped time-domain fit's nuisance parameters.
+    """
+    group_signals, group_weights = build_group_signals(
+        model, specs, base_parameters=base_parameters
+    )
+    spec_list = list(specs.values()) if isinstance(specs, Mapping) else list(specs)
+    expression = (
+        model.formula_string()
+        if hasattr(model, "formula_string")
+        else getattr(model, "__name__", "custom callable")
+    )
+    return simulate_run_from_group_signals(
+        template,
+        group_signals,
+        total_events=total_events,
+        seed=seed,
+        group_weights=group_weights,
+        background_per_bin=background_per_bin,
+        run_number=run_number,
+        title=title if title is not None else f"Simulated multi-group: {expression}",
+        simulation_metadata={
+            "model": expression,
+            "parameters": {
+                name: float(value) for name, value in dict(base_parameters or {}).items()
+            },
+            "multi_group": True,
+            "group_specs": [
+                {
+                    "group_id": int(spec.group_id),
+                    "amplitude": float(spec.amplitude),
+                    "relative_phase": float(spec.relative_phase),
+                    "n0_weight": float(spec.n0_weight),
+                }
+                for spec in spec_list
+            ],
+        },
+    )
+
+
+def group_specs_from_grouped_fit(grouped_result: Any) -> list[GroupSignalSpec]:
+    """Extract per-group :class:`GroupSignalSpec`\\ s from a grouped fit result.
+
+    Reads the ``amplitude``/``relative_phase``/``N0`` nuisance values from each
+    group's :class:`~asymmetry.core.fitting.engine.FitResult` in a
+    :class:`~asymmetry.core.fitting.grouped_time_domain.GroupedTimeDomainFitResult`
+    (duck-typed: any object exposing ``group_results``). Groups with no fitted
+    amplitude fall back to a 0.2 default. The shared model values are *not*
+    captured here — pass them as ``base_parameters`` to
+    :func:`build_group_signals` / :func:`simulate_multi_group_run`.
+    """
+    specs: list[GroupSignalSpec] = []
+    group_results = getattr(grouped_result, "group_results", {})
+    for group_id, fit_result in group_results.items():
+        values = {p.name: float(p.value) for p in getattr(fit_result, "parameters", [])}
+        try:
+            gid = int(group_id)
+        except (TypeError, ValueError):
+            continue
+        specs.append(
+            GroupSignalSpec(
+                group_id=gid,
+                amplitude=values.get("amplitude", 0.2),
+                relative_phase=values.get("relative_phase", 0.0),
+                n0_weight=values.get("N0", 1.0),
+                label=str(group_id),
+            )
+        )
+    return specs
+
+
+# ---------------------------------------------------------------------------
 # Degrade statistics (WiMDA DegradeStats)
 # ---------------------------------------------------------------------------
 
@@ -745,3 +1088,54 @@ def reduce_run_to_dataset(run: Run) -> MuonDataset:
         metadata=metadata,
         run=run,
     )
+
+
+# ---------------------------------------------------------------------------
+# Run statistics helpers (matched-statistics re-simulation, dialog defaults)
+# ---------------------------------------------------------------------------
+
+
+def total_events_of(run: Run) -> float:
+    """Realised event total of a run: the sum of all histogram counts.
+
+    The gross count (signal + background). Use it as the event-budget default
+    for a re-simulation or a dialog spinner; for a *signal-only* budget that
+    excludes a run's flat background, subtract
+    ``estimate_background_per_bin(run) * total bins`` (see
+    :func:`matched_statistics`).
+    """
+    return float(sum(float(h.counts.sum()) for h in run.histograms))
+
+
+def estimate_background_per_bin(run: Run) -> float:
+    """Estimate a run's flat background from its pre-t0 bins (counts/bin).
+
+    The bins before t0 see no implanted-muon decay signal, so their mean count
+    is the time-independent background level (zero for an ideal pulsed source).
+    Returns the median across detectors for robustness, or ``0.0`` when no
+    detector has a pre-t0 region.
+    """
+    levels: list[float] = []
+    for hist in run.histograms:
+        t0 = max(0, int(hist.t0_bin))
+        if t0 > 0:
+            pre = np.asarray(hist.counts[:t0], dtype=float)
+            if pre.size:
+                levels.append(float(pre.mean()))
+    return float(np.median(levels)) if levels else 0.0
+
+
+def matched_statistics(run: Run) -> tuple[float, float]:
+    """Signal event budget and flat background for re-simulating a run.
+
+    Returns ``(total_signal_events, background_per_bin)`` such that feeding them
+    to :func:`simulate_run` reproduces the run's statistics: the flat background
+    (estimated from the pre-t0 bins) is split off the gross count so it is *not*
+    counted as decay signal. For an ideal pulsed run (no background) this is
+    just the gross total and zero.
+    """
+    background_per_bin = estimate_background_per_bin(run)
+    total_bins = sum(int(hist.n_bins) for hist in run.histograms)
+    background_total = background_per_bin * total_bins
+    signal_events = max(total_events_of(run) - background_total, 1.0)
+    return signal_events, background_per_bin

@@ -22,7 +22,11 @@ from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.io import load
 from asymmetry.core.simulate import reduce_run_to_dataset, simulate_run
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
-from asymmetry.gui.windows.simulate_dialog import DegradeStatisticsDialog, SimulateDialog
+from asymmetry.gui.windows.simulate_dialog import (
+    DegradeStatisticsDialog,
+    MultiGroupSimulateDialog,
+    SimulateDialog,
+)
 
 
 @pytest.fixture(scope="module")
@@ -168,6 +172,109 @@ class TestSimulateDialog:
             dialog._last_run.histograms, reloaded.run.histograms, strict=True
         ):
             assert np.array_equal(again.counts, original.counts)
+
+
+class TestBuiltinTemplateDialog:
+    """The dialog offers built-in instruments and works with no run loaded."""
+
+    def test_builtins_present_with_no_loaded_run(self, qapp) -> None:
+        from asymmetry.core.simulate import BUILTIN_TEMPLATES
+
+        dialog = SimulateDialog([])
+        # Every built-in is offered even though no run was loaded.
+        offered = {
+            dialog._template_combo.itemData(i) for i in range(dialog._template_combo.count())
+        }
+        for key in BUILTIN_TEMPLATES:
+            assert key in offered
+        # Generate is not blocked by the absence of a loaded run.
+        assert dialog._generate_button.isEnabled()
+
+    def test_generate_from_builtin(self, qapp) -> None:
+        dialog = SimulateDialog([], run_number_allocator=lambda: 90001)
+        index = dialog._template_combo.findData("ideal_pulsed_fb")
+        assert index >= 0
+        dialog._template_combo.setCurrentIndex(index)
+        generated: list[Run] = []
+        dialog.run_generated.connect(generated.append)
+        dialog._on_generate()
+
+        assert len(generated) == 1
+        run = generated[0]
+        assert run.metadata["synthetic"] is True
+        assert len(run.histograms) == 64
+
+    def test_continuous_seeds_background_default(self, qapp) -> None:
+        dialog = SimulateDialog([])
+        index = dialog._template_combo.findData("ideal_continuous_fb")
+        dialog._template_combo.setCurrentIndex(index)
+        # The continuous template seeds a non-zero flat background.
+        assert dialog._background_spin.value() > 0.0
+
+
+def _ring_template_run(n_groups: int = 4) -> Run:
+    histograms = [
+        Histogram(
+            counts=np.zeros(N_BINS),
+            bin_width=BIN_WIDTH,
+            t0_bin=T0_BIN,
+            good_bin_start=T0_BIN,
+            good_bin_end=N_BINS - 5,
+        )
+        for _ in range(n_groups)
+    ]
+    grouping = {
+        "groups": {gid: [gid] for gid in range(1, n_groups + 1)},
+        "forward_group": 1,
+        "backward_group": 3,
+        "alpha": 1.0,
+        "t0_bin": T0_BIN,
+        "first_good_bin": T0_BIN,
+        "last_good_bin": N_BINS - 5,
+    }
+    return Run(
+        run_number=2200,
+        histograms=histograms,
+        metadata={"title": "Ring", "field": 200.0},
+        grouping=grouping,
+    )
+
+
+class TestMultiGroupSimulateDialog:
+    def test_default_table_one_row_per_group(self, qapp) -> None:
+        dialog = MultiGroupSimulateDialog(_ring_template_run(4))
+        assert dialog._group_table.rowCount() == 4
+
+    def test_generate_emits_multi_group_run(self, qapp) -> None:
+        dialog = MultiGroupSimulateDialog(_ring_template_run(4), run_number_allocator=lambda: 90010)
+        generated: list[Run] = []
+        dialog.run_generated.connect(generated.append)
+        dialog._events_spin.setValue(5.0)
+        dialog._on_generate()
+        assert len(generated) == 1
+        run = generated[0]
+        assert run.run_number == 90010
+        assert len(run.histograms) == 4
+        assert run.metadata["simulation"]["multi_group"] is True
+
+    def test_seeded_from_grouped_fit(self, qapp) -> None:
+        model = CompositeModel(["Oscillatory"])
+        seed = {
+            "model": model.to_dict(),
+            "base_parameters": dict(model.param_defaults),
+            "specs": [
+                {"group_id": 1, "amplitude": 0.21, "relative_phase": 0.0, "n0_weight": 1.0},
+                {"group_id": 2, "amplitude": 0.19, "relative_phase": 1.57, "n0_weight": 1.2},
+                {"group_id": 3, "amplitude": 0.20, "relative_phase": 3.14, "n0_weight": 0.9},
+                {"group_id": 4, "amplitude": 0.18, "relative_phase": 4.71, "n0_weight": 1.0},
+            ],
+        }
+        dialog = MultiGroupSimulateDialog(_ring_template_run(4), seed=seed)
+        specs = dialog._specs_from_table()
+        by_id = {s.group_id: s for s in specs}
+        assert by_id[2].amplitude == pytest.approx(0.19)
+        assert by_id[2].relative_phase == pytest.approx(1.57)
+        assert by_id[2].n0_weight == pytest.approx(1.2)
 
 
 class TestDegradeAction:

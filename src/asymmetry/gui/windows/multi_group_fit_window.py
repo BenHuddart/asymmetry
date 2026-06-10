@@ -65,6 +65,18 @@ class MultiGroupFitWindow(QWidget):
         """Return the grouped-fit classification from the active surface."""
         return self._active_tab().get_grouped_state()
 
+    def grouped_simulate_seed_for_run(self, run_number: int) -> dict | None:
+        """Return a cached multi-group simulate seed for a run, if available.
+
+        Seeds the Generate Synthetic Run dialog's per-group amplitude/phase
+        table from this run's last converged grouped time-domain fit.
+        """
+        for tab in self._grouped_tabs():
+            seed = tab.grouped_simulate_seed_for_run(run_number)
+            if seed is not None:
+                return seed
+        return None
+
     def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
         """Update fit-range spinboxes on both surfaces to match the plot range."""
         for tab in self._grouped_tabs():

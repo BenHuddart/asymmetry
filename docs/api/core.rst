@@ -91,9 +91,30 @@ Simulation
 
 Synthetic-run generation and statistics degradation (see
 :doc:`/user_guide/simulation`): Poisson draws of expected per-detector
-counts from a loaded-run instrument template, exact binomial thinning of
-measured runs, and the promoted screenshot-archetype builders.
+counts from an instrument template — a loaded run or a built-in idealised
+instrument — exact binomial thinning of measured runs, per-group amplitude
+and phase simulation, and the promoted screenshot-archetype builders.
 
 .. automodule:: asymmetry.core.simulate
+   :members:
+   :undoc-members:
+
+Archetype presets
+~~~~~~~~~~~~~~~~~~
+
+One-click textbook archetypes (Ag Kubo–Toyabe, EuO T-scan, F-μ-F, YBCO)
+that generate badged synthetic runs through the simulate pipeline.
+
+.. automodule:: asymmetry.core.simulate_presets
+   :members:
+   :undoc-members:
+
+Pull-distribution diagnostic
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Re-simulate-and-refit a completed fit over many seeds to test that the
+analysis chain's error bars are calibrated (pulls ~ :math:`N(0, 1)`).
+
+.. automodule:: asymmetry.core.pull_diagnostic
    :members:
    :undoc-members:
