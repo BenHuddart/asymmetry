@@ -44,14 +44,15 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
-    supports_background_correction,
+    available_background_modes,
+    resolve_background_mode,
 )
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
     common_t0_for_groups,
     effective_group_indices,
 )
-from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -3186,6 +3187,21 @@ class PlotPanel(QWidget):
                 analysis_dataset=dataset,
             )
 
+        # The denominator-reliability reduction below sums RAW grouped counts at
+        # fixed binning. Under variable / constant-error binning the displayed
+        # asymmetry is summed onto wider edges, so a per-raw-bin denominator no
+        # longer maps to the plotted bins; the saturation check above (computed
+        # on the displayed asymmetry) already flags unreliable bins there. Skip
+        # the raw-bin reduction explicitly rather than letting it self-disable
+        # via a silent array-shape mismatch.
+        binning_mode, _, _ = resolve_binning_mode(grouping)
+        if binning_mode != "fixed":
+            return self._project_source_mask_to_analysis_dataset(
+                source_mask=saturated,
+                source_dataset=reference_dataset,
+                analysis_dataset=dataset,
+            )
+
         try:
             forward_gid = int(grouping.get("forward_group", 1))
             backward_gid = int(grouping.get("backward_group", 2))
@@ -3241,7 +3257,15 @@ class PlotPanel(QWidget):
             source_file = str(
                 getattr(run, "source_file", "") or reference_dataset.metadata.get("source_file", "")
             )
-            if supports_background_correction(metadata=metadata, source_file=source_file):
+            # Mode-aware gate (matches the real reduction): apply whichever
+            # background mode the grouping selects when it is available for this
+            # source, instead of the old PSI/LEM-only range gate. (reference_run
+            # needs externally resolved counts that this display-only mask does
+            # not load, so apply_grouped_background_correction no-ops it here —
+            # a minor difference in which bins render gray, never in the data.)
+            mode = resolve_background_mode(grouping)
+            available = available_background_modes(metadata=metadata, source_file=source_file)
+            if mode in available:
                 bin_width = float(run.histograms[0].bin_width) if run.histograms else 1.0
                 facility = str(
                     metadata.get(

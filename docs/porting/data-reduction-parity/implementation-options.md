@@ -377,6 +377,16 @@ named.
   primitives. `resolve_group_indices` is now reserved for non-reduction uses
   (synthetic-run generation, NeXus writing), so forgetting exclusion at a new
   reduction call site is no longer possible.
+- **DONE** — Plot-panel low-confidence mask modernised. The
+  saturation/denominator mini-reduction (`plot_panel._low_confidence_mask_for_
+  dataset`) gated its background step on the old binary
+  `supports_background_correction` (PSI/LEM-only); it now uses the mode-aware
+  `resolve_background_mode` ∈ `available_background_modes` gate, so tail-fit /
+  fixed backgrounds feed the reliability check on pulsed data too. It also
+  assumed fixed binning and self-disabled the raw-bin denominator check via a
+  silent array-shape mismatch under variable / constant-error binning; that is
+  now an explicit, documented early return to the saturation-only mask (same
+  output, no longer silent). Display-only; reduction unchanged.
 - Plot-side quick binning control — deferred to the dedicated UI-polish
   pass (O3).
 - Live WiMDA spot-check values for α/tail-fit on corpus runs — optional
