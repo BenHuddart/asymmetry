@@ -301,3 +301,154 @@ def test_model_fit_use_x_errors_round_trips_through_panel_state(qapp) -> None:
     restored.restore_state(state)
     assert restored._model_fits["lambda"].use_x_errors is True
     assert restored._model_fits["lambda"].x_key == "param:nu"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: cross-group error modes + fit windows
+# ---------------------------------------------------------------------------
+
+
+def _two_groups(rng_seed: int = 3):
+    from asymmetry.core.fitting.parameter_models import ParameterGroupData
+
+    rng = np.random.default_rng(rng_seed)
+    x = np.linspace(0, 100, 21)
+    groups = []
+    for i in range(2):
+        y = 2.0 * x + (1.0 + 2.0 * i) + rng.normal(0, 0.5, x.size)
+        groups.append(
+            ParameterGroupData(
+                group_id=f"g{i}",
+                group_name=f"g{i}",
+                x=x.copy(),
+                y=y,
+                yerr=np.full_like(x, 0.5),
+                group_variable_value=float(i),
+            )
+        )
+    return groups, x
+
+
+def test_cross_group_windows_change_point_count() -> None:
+    from asymmetry.core.fitting.parameter_models import global_fit_parameter_model
+
+    groups, _ = _two_groups()
+    model = ParameterCompositeModel(["Linear"], [])
+    full = global_fit_parameter_model(groups, model, ["m"], ["b"], {})
+    win = global_fit_parameter_model(groups, model, ["m"], ["b"], {}, windows=[(0, 40), (60, 100)])
+    # 9 points in [0,40] + 9 in [60,100] per group, two groups -> 36 of 42.
+    assert full.n_points == 42
+    assert win.n_points == 36
+    assert win.n_points < full.n_points
+
+
+def test_cross_group_error_mode_changes_weighting() -> None:
+    from asymmetry.core.fitting.parameter_models import global_fit_parameter_model
+
+    groups, _ = _two_groups()
+    model = ParameterCompositeModel(["Linear"], [])
+    col = global_fit_parameter_model(groups, model, ["m"], ["b"], {}, error_mode="column")
+    pct = global_fit_parameter_model(
+        groups, model, ["m"], ["b"], {}, error_mode="percent", error_value=5.0
+    )
+    assert col.reduced_chi_squared != pytest.approx(pct.reduced_chi_squared)
+    assert pct.error_mode == "percent"
+
+
+def test_cross_group_scatter_rescales_global_and_local_errors() -> None:
+    from asymmetry.core.fitting.parameter_models import global_fit_parameter_model
+
+    groups, _ = _two_groups()
+    model = ParameterCompositeModel(["Linear"], [])
+    col = global_fit_parameter_model(groups, model, ["m"], ["b"], {}, error_mode="column")
+    sc = global_fit_parameter_model(groups, model, ["m"], ["b"], {}, error_mode="scatter")
+    # ν = N − (1 global + 2 local) free params
+    ndof = col.n_points - 3
+    scale = np.sqrt(col.chi_squared / ndof)
+    assert sc.global_uncertainties["m"] == pytest.approx(
+        col.global_uncertainties["m"] * scale, rel=1e-3
+    )
+    for gid in sc.local_uncertainties:
+        assert sc.local_uncertainties[gid]["b"] == pytest.approx(
+            col.local_uncertainties[gid]["b"] * scale, rel=1e-3
+        )
+
+
+def test_cross_group_two_identical_groups_equals_single_series() -> None:
+    """Degenerate case: two identical all-global groups must reproduce the
+    single-series fit on one copy (proves the cross-group path reduces)."""
+    from asymmetry.core.fitting.parameter_models import (
+        ParameterGroupData,
+        global_fit_parameter_model,
+    )
+
+    rng = np.random.default_rng(5)
+    x = np.linspace(0, 100, 21)
+    y = 2.0 * x + 1.0 + rng.normal(0, 0.5, x.size)
+    yerr = np.full_like(x, 0.5)
+    groups = [
+        ParameterGroupData(
+            group_id=gid,
+            group_name=gid,
+            x=x.copy(),
+            y=y.copy(),
+            yerr=yerr.copy(),
+            group_variable_value=0.0,
+        )
+        for gid in ("a", "b")
+    ]
+    model = ParameterCompositeModel(["Linear"], [])
+    cg = global_fit_parameter_model(groups, model, ["m", "b"], [], {}, error_mode="none")
+
+    ps = ParameterSet([Parameter(name=n, value=0.0) for n in model.param_names])
+    ss = fit_parameter_model(x, y, yerr, model, ps, error_mode="none")
+    ss_vals = {p.name: p.value for p in ss.parameters}
+    assert cg.global_parameters["m"].value == pytest.approx(ss_vals["m"], abs=1e-5)
+    assert cg.global_parameters["b"].value == pytest.approx(ss_vals["b"], abs=1e-5)
+
+
+def test_cross_group_invalid_windows_returns_failed_result() -> None:
+    from asymmetry.core.fitting.parameter_models import global_fit_parameter_model
+
+    groups, _ = _two_groups()
+    model = ParameterCompositeModel(["Linear"], [])
+    result = global_fit_parameter_model(groups, model, ["m"], ["b"], {}, windows=[(50, 10)])
+    assert not result.success
+    assert "inverted" in result.message.lower()
+
+
+@gui
+def test_cross_group_dialog_config_round_trips_error_mode_and_windows(qapp) -> None:
+    from asymmetry.core.fitting.parameter_models import ParameterGroupData
+    from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
+
+    x = np.linspace(0, 100, 21)
+    groups = [
+        ParameterGroupData(
+            group_id=f"g{i}",
+            group_name=f"g{i}",
+            x=x.copy(),
+            y=2 * x + 1 + i,
+            yerr=np.full_like(x, 0.5),
+            group_variable_value=float(i),
+        )
+        for i in range(2)
+    ]
+    dlg = CrossGroupFitDialog(parameter_name="lambda", x_key="field", groups=groups)
+    assert dlg._error_mode_combo is not None
+    dlg._error_mode_combo.setCurrentIndex(dlg._error_mode_combo.findData("percent"))
+    dlg._error_value_spin.setValue(7.0)
+    dlg._add_window(0)
+    cfg = dlg._collect_config()
+    assert cfg["error_mode"] == "percent"
+    assert cfg["error_value"] == pytest.approx(7.0)
+    assert cfg["windows"] is not None
+
+    restored = CrossGroupFitDialog(
+        parameter_name="lambda", x_key="field", groups=groups, existing_config=cfg
+    )
+    from asymmetry.core.fitting.parameter_models import ErrorMode
+
+    assert restored._error_mode() is ErrorMode.PERCENT
+    assert restored._error_value() == pytest.approx(7.0)
+    assert restored._fit.ranges[0].windows is not None

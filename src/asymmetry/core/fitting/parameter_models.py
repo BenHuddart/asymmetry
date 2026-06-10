@@ -1492,6 +1492,11 @@ class CrossGroupFitResult:
     global_uncertainties: dict[str, float] = field(default_factory=dict)
     local_uncertainties: dict[str, dict[str, float]] = field(default_factory=dict)
     message: str = ""
+    #: Error mode the fit was run with (χ²ᵣ carries no goodness information for
+    #: ``"none"``/``"scatter"`` — quality verdicts should be suppressed).
+    error_mode: str = ErrorMode.COLUMN.value
+    #: Number of points that entered the fit across all groups (0 if unknown).
+    n_points: int = 0
 
 
 _TRANSPORT_RATE_SEED_GRID = (
@@ -1933,6 +1938,9 @@ def global_fit_parameter_model(
     initial_params: dict[str, float] | None = None,
     parameter_bounds: dict[str, tuple[float, float]] | None = None,
     method: str = "migrad",
+    error_mode: ErrorMode | str = ErrorMode.COLUMN,
+    error_value: float | None = None,
+    windows: Sequence[tuple[float, float]] | None = None,
 ) -> CrossGroupFitResult:
     """Jointly fit a parameter model across multiple groups.
 
@@ -1940,7 +1948,14 @@ def global_fit_parameter_model(
     - global: one shared value across all groups
     - local: independent value per group
     - fixed: fixed constant
+
+    ``error_mode``/``error_value`` select the per-point σ assignment for every
+    group (see :class:`ErrorMode`); ``windows`` optionally restricts each
+    group to a union of (min, max) intervals (OR-combined, one model across the
+    union). ``SCATTER`` rescales *all* parameter errors (global and local) by
+    √(χ²/ν) after the fit — the fixed point of WiMDA's Estimate iteration.
     """
+    error_mode = ErrorMode(error_mode)
     if len(groups) < 2:
         return CrossGroupFitResult(
             success=False,
@@ -2044,19 +2059,39 @@ def global_fit_parameter_model(
             kwargs[pname] = float(arg_map[f"l__{gidx}__{pname}"])
         return kwargs
 
+    # Precompute per-group fit arrays once: the window mask, finite mask and the
+    # per-point σ under the chosen error mode are all data-only (independent of
+    # the fitted parameters), so they need not be rebuilt every cost call.
+    group_fit_arrays: list[
+        tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]
+    ] = []
+    total_points = 0
+    for group in groups:
+        x = np.asarray(group.x, dtype=float)
+        y = np.asarray(group.y, dtype=float)
+        sigma = apply_error_mode(y, group.yerr, error_mode, error_value)
+        if sigma is None:
+            sigma = np.ones_like(x)
+        try:
+            window_sel = windows_mask(x, windows)
+        except ValueError as exc:
+            return CrossGroupFitResult(
+                success=False,
+                chi_squared=0.0,
+                reduced_chi_squared=0.0,
+                message=str(exc),
+                error_mode=error_mode.value,
+            )
+        mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(sigma) & (sigma > 0) & window_sel
+        group_fit_arrays.append((x[mask], y[mask], sigma[mask]))
+        total_points += int(np.count_nonzero(mask))
+
     def cost_function(*args: float) -> float:
         arg_map = dict(zip(fit_param_names, args, strict=False))
         total = 0.0
-        for gidx, group in enumerate(groups):
-            x = np.asarray(group.x, dtype=float)
-            y = np.asarray(group.y, dtype=float)
-            e = np.asarray(group.yerr, dtype=float)
-            mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(e) & (e > 0)
-            if not np.any(mask):
+        for gidx, (xx, yy, ee) in enumerate(group_fit_arrays):
+            if xx.size == 0:
                 continue
-            xx = x[mask]
-            yy = y[mask]
-            ee = e[mask]
             kwargs = _build_kwargs(arg_map, gidx)
             pred = np.asarray(model.function(xx, **kwargs), dtype=float)
             resid = (yy - pred) / ee
@@ -2072,14 +2107,6 @@ def global_fit_parameter_model(
         m.simplex()
     else:
         m.migrad()
-
-    total_points = 0
-    for group in groups:
-        x = np.asarray(group.x, dtype=float)
-        y = np.asarray(group.y, dtype=float)
-        e = np.asarray(group.yerr, dtype=float)
-        mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(e) & (e > 0)
-        total_points += int(np.sum(mask))
 
     ndof = max(total_points - len(fit_param_names), 1)
 
@@ -2122,6 +2149,25 @@ def global_fit_parameter_model(
             Parameter(name=pname, value=fixed_values[pname], min=p_min, max=p_max, fixed=True)
         )
 
+    message = "Fit successful" if m.valid else "Fit failed"
+    if error_mode is ErrorMode.SCATTER and m.valid:
+        # Estimate errors from the scatter of the points: rescale *all* (global
+        # and local) parameter errors by √(χ²/ν), the fixed point of WiMDA's
+        # iterated Estimate mode. χ²ᵣ then carries no goodness information.
+        ndof_free = total_points - len(fit_param_names)
+        if ndof_free < 1:
+            global_unc = {}
+            local_unc = {gid: {} for gid in local_unc}
+            message += "; no degrees of freedom to estimate errors from scatter"
+        else:
+            scale = float(np.sqrt(float(m.fval) / ndof_free))
+            if np.isfinite(scale) and scale > 0.0:
+                global_unc = {name: err * scale for name, err in global_unc.items()}
+                local_unc = {
+                    gid: {name: err * scale for name, err in unc.items()}
+                    for gid, unc in local_unc.items()
+                }
+
     return CrossGroupFitResult(
         success=bool(m.valid),
         chi_squared=float(m.fval),
@@ -2131,7 +2177,9 @@ def global_fit_parameter_model(
         fixed_parameters=fixed_parameter_set,
         global_uncertainties=global_unc,
         local_uncertainties=local_unc,
-        message="Fit successful" if m.valid else "Fit failed",
+        message=message,
+        error_mode=error_mode.value,
+        n_points=int(total_points),
     )
 
 

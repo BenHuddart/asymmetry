@@ -2544,6 +2544,17 @@ class FitParametersPanel(QWidget):
                     for row in config.get("parameter_rows", [])
                     if isinstance(row, dict)
                 ],
+                "error_mode": str(config.get("error_mode", "column")),
+                "error_value": float(config.get("error_value"))
+                if isinstance(config.get("error_value"), (int, float))
+                else None,
+                "windows": (
+                    [
+                        [float(lo), float(hi)]
+                        for lo, hi in (parse_fit_windows(config.get("windows")) or [])
+                    ]
+                    or None
+                ),
             }
         return out
 
@@ -2567,6 +2578,17 @@ class FitParametersPanel(QWidget):
                 "parameter_rows": [dict(row) for row in rows if isinstance(row, dict)]
                 if isinstance(rows, list)
                 else [],
+                "error_mode": str(config.get("error_mode", "column")),
+                "error_value": float(config.get("error_value"))
+                if isinstance(config.get("error_value"), (int, float))
+                else None,
+                "windows": (
+                    [
+                        [float(lo), float(hi)]
+                        for lo, hi in (parse_fit_windows(config.get("windows")) or [])
+                    ]
+                    or None
+                ),
             }
         return out
 

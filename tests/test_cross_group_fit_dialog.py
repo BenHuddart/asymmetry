@@ -232,9 +232,11 @@ def test_cross_group_run_fit_sets_in_progress_state(monkeypatch) -> None:
     assert app is not None
 
 
-def test_cross_group_dialog_hides_unsupported_controls() -> None:
-    """global_fit_parameter_model honours neither error modes nor windows, so
-    the inherited selector and '+ Window' button must not be shown."""
+def test_cross_group_dialog_exposes_error_modes_and_windows() -> None:
+    """global_fit_parameter_model now honours error modes and windows, so the
+    inherited selector and '+ Window' button are shown and wired. The
+    effective-variance x-uncertainty toggle stays hidden (cross-group backend
+    does not thread it through yet)."""
     QApplication.instance() or QApplication([])
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
@@ -243,20 +245,19 @@ def test_cross_group_dialog_hides_unsupported_controls() -> None:
         parent=None,
     )
 
-    assert dlg._error_mode_combo is None
-    assert dlg._error_value_spin is None
+    assert dlg._error_mode_combo is not None
+    assert dlg._error_value_spin is not None
     from asymmetry.core.fitting.parameter_models import ErrorMode
 
-    assert dlg._error_mode() is ErrorMode.COLUMN
-    assert dlg._error_value() is None
+    assert dlg._error_mode() is ErrorMode.COLUMN  # default
 
     from PySide6.QtWidgets import QPushButton
 
     buttons = [b.text() for b in dlg.findChildren(QPushButton)]
-    assert "+ Window" not in buttons
+    assert "+ Window" in buttons
 
-    # Range bounds stay editable (no windows can override them here).
-    assert dlg._range_widgets[0].x_min.isEnabled()
+    # Effective-variance toggle is not offered in cross-group mode.
+    assert dlg._x_error_check is None
 
     # The per-range 'active' checkboxes stay hidden across UI rebuilds, not
     # just after the constructor's one-time pass.
