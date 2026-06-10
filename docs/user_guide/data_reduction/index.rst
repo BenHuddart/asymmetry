@@ -15,6 +15,7 @@ it does not.
    :maxdepth: 2
 
    alpha_calibration
+   backgrounds
 
 All of the corrections described here are applied at reduction time and
 recorded in the grouping settings: raw histograms are never modified, and a

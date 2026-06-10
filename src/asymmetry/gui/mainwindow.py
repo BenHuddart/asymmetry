@@ -93,6 +93,7 @@ from asymmetry.core.transform import (
     apply_deadtime_correction,
     apply_grouped_background_correction,
     apply_grouping_aligned,
+    available_background_modes,
     build_field_scan,
     common_t0_for_groups,
     compute_asymmetry,
@@ -101,6 +102,7 @@ from asymmetry.core.transform import (
     has_file_deadtime,
     has_resolved_deadtime,
     prepare_histograms_with_deadtime,
+    resolve_background_mode,
     supports_background_correction,
 )
 from asymmetry.core.transform.rebin import rebin
@@ -2729,9 +2731,13 @@ class MainWindow(QMainWindow):
         )
         if deadtime_mode == "load":
             deadtime_mode = "manual"
+        background_mode = resolve_background_mode(
+            grouping_result if "background_mode" in grouping_result else existing_grouping
+        )
         use_background = bool(
             grouping_result.get("background_correction", False)
-            and self._dataset_supports_background_correction(dataset)
+            and background_mode != "none"
+            and self._dataset_allows_background_mode(dataset, background_mode)
         )
 
         if not run.histograms:
@@ -2802,6 +2808,11 @@ class MainWindow(QMainWindow):
                         grouping_result.get("deadtime_loaded_us", [])
                     )
             run.grouping["background_correction"] = use_background
+            for key in ("background_mode", "background_run"):
+                if key in grouping_result:
+                    run.grouping[key] = grouping_result.get(key)
+                else:
+                    run.grouping.pop(key, None)
             if not use_background:
                 run.grouping.pop("background_method", None)
                 run.grouping.pop("background_values", None)
@@ -2927,6 +2938,11 @@ class MainWindow(QMainWindow):
         ):
             if key in grouping_result:
                 run.grouping[key] = grouping_result.get(key)
+        for key in ("background_mode", "background_run"):
+            if key in grouping_result:
+                run.grouping[key] = grouping_result.get(key)
+            else:
+                run.grouping.pop(key, None)
 
         reduction_grouping = dict(run.grouping)
         reduction_grouping.update(
@@ -3080,9 +3096,17 @@ class MainWindow(QMainWindow):
                     [int(v) for v in ranges[0]],
                     [int(v) for v in ranges[1]],
                 ]
+            details = (
+                background_state.get("details") if isinstance(background_state, dict) else None
+            )
+            if isinstance(details, dict) and details:
+                run.grouping["background_details"] = dict(details)
+            else:
+                run.grouping.pop("background_details", None)
         else:
             run.grouping.pop("background_method", None)
             run.grouping.pop("background_values", None)
+            run.grouping.pop("background_details", None)
 
         lo = max(0, first_good)
         hi = min(len(asymmetry) - 1, last_good)
@@ -3219,6 +3243,32 @@ class MainWindow(QMainWindow):
                     dataset.metadata.get("facility", dataset.metadata.get("instrument", "")),
                 )
             )
+            reference_forward = None
+            reference_backward = None
+            reference_scale = None
+            if resolve_background_mode(grouping) == "reference_run":
+                resolved = self._resolve_background_reference(grouping, run)
+                if resolved is not None:
+                    reference_histograms, reference_scale = resolved
+                    reference_prepared, _ = self._prepare_grouping_histograms(
+                        reference_histograms,
+                        grouping,
+                        effective_use_deadtime,
+                    )
+                    reference_forward = apply_grouping_aligned(
+                        reference_prepared,
+                        forward_idx,
+                        common_t0_bin=common_t0,
+                    )
+                    reference_backward = apply_grouping_aligned(
+                        reference_prepared,
+                        backward_idx,
+                        common_t0_bin=common_t0,
+                    )
+            try:
+                last_good = int(grouping.get("last_good_bin", n_grouped - 1))
+            except (TypeError, ValueError):
+                last_good = n_grouped - 1
             bkg_result = apply_grouped_background_correction(
                 forward,
                 backward,
@@ -3226,6 +3276,10 @@ class MainWindow(QMainWindow):
                 t0_bin=common_t0,
                 bin_width_us=bin_width,
                 facility=facility,
+                last_good_bin=last_good,
+                reference_forward=reference_forward,
+                reference_backward=reference_backward,
+                reference_scale=reference_scale,
             )
             forward = bkg_result.forward
             backward = bkg_result.backward
@@ -3241,6 +3295,8 @@ class MainWindow(QMainWindow):
                         [int(v) for v in bkg_result.ranges[0]],
                         [int(v) for v in bkg_result.ranges[1]],
                     ]
+                if bkg_result.details is not None:
+                    background_state["details"] = dict(bkg_result.details)
 
         if (
             bkg_result is not None
@@ -3300,6 +3356,83 @@ class MainWindow(QMainWindow):
         if not source_file:
             source_file = str(metadata.get("source_file", ""))
         return supports_background_correction(metadata=metadata, source_file=source_file)
+
+    def _dataset_allows_background_mode(self, dataset, mode: str) -> bool:
+        """Return whether *mode* applies to this dataset (per-mode gating)."""
+        run = getattr(dataset, "run", None)
+        metadata = dict(getattr(dataset, "metadata", {}) or {})
+        if run is not None:
+            metadata.update(getattr(run, "metadata", {}) or {})
+        source_file = str(getattr(run, "source_file", "") if run is not None else "")
+        if not source_file:
+            source_file = str(metadata.get("source_file", ""))
+        return str(mode) in available_background_modes(metadata=metadata, source_file=source_file)
+
+    def _resolve_background_reference(
+        self, grouping: dict, sample_run
+    ) -> tuple[list, float] | None:
+        """Resolve a ``background_run`` payload to (histograms, scale).
+
+        Loaded project datasets are matched by run number first; otherwise
+        the file named in the payload is loaded (and cached per source
+        path). The scale is the good-frame ratio sample/reference, falling
+        back to the snapshot stored in the payload.
+        """
+        payload = grouping.get("background_run")
+        if not isinstance(payload, dict):
+            return None
+        reference_run = None
+        run_number = payload.get("run_number")
+        if run_number is not None:
+            for ds in self._data_browser.get_all_datasets():
+                if ds.run is not None and int(ds.run_number) == int(run_number):
+                    reference_run = ds.run
+                    break
+        if reference_run is None:
+            source_file = str(payload.get("source_file", "") or "")
+            if not source_file:
+                return None
+            cache = getattr(self, "_background_run_cache", None)
+            if cache is None:
+                cache = {}
+                self._background_run_cache = cache
+            if source_file in cache:
+                reference_run = cache[source_file]
+            else:
+                try:
+                    from asymmetry.core.io import load_background_run
+
+                    reference_run = load_background_run(payload).run
+                except (ValueError, OSError) as exc:
+                    self.statusBar().showMessage(f"Background run unavailable: {exc}", 8000)
+                    return None
+                cache[source_file] = reference_run
+        if reference_run is None or not reference_run.histograms:
+            return None
+
+        def _good_frames(source) -> float | None:
+            grouping_dict = getattr(source, "grouping", None)
+            if isinstance(grouping_dict, dict):
+                try:
+                    value = float(grouping_dict.get("good_frames", 0.0))
+                except (TypeError, ValueError):
+                    value = 0.0
+                if value > 0.0:
+                    return value
+            return None
+
+        sample_frames = _good_frames(sample_run) or payload.get("good_frames_sample")
+        reference_frames = _good_frames(reference_run) or payload.get("good_frames_reference")
+        try:
+            scale = float(sample_frames) / float(reference_frames)
+        except (TypeError, ValueError, ZeroDivisionError):
+            try:
+                scale = float(payload.get("scale", 1.0))
+            except (TypeError, ValueError):
+                scale = 1.0
+        if not np.isfinite(scale) or scale <= 0.0:
+            scale = 1.0
+        return list(reference_run.histograms), float(scale)
 
     def _apply_deadtime_correction(
         self,

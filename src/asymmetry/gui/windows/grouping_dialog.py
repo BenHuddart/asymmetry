@@ -41,9 +41,11 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.instrument import detect_instrument, get_instrument_layout
 from asymmetry.core.transform import (
     apply_grouping,
+    available_background_modes,
     calibrate_deadtime_from_histograms,
     estimate_deadtime_from_histograms,
-    supports_background_correction,
+    fit_tail_background,
+    resolve_background_mode,
 )
 from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_detailed
 from asymmetry.core.utils.constants import PeriodMode
@@ -366,9 +368,15 @@ class GroupingDialog(QDialog):
 
         self._set_deadtime_mode(self._default_deadtime_mode(grouping))
         self._update_deadtime_controls(grouping)
-        self._background_checkbox = QCheckBox("Enable Background Correction")
-        self._background_checkbox.setChecked(bool(grouping.get("background_correction", False)))
-        self._update_background_checkbox_state()
+        self._background_mode_combo = QComboBox()
+        payload = grouping.get("background_run")
+        self._background_run_payload: dict[str, Any] | None = (
+            dict(payload) if isinstance(payload, dict) else None
+        )
+        self._populate_background_modes(grouping)
+        self._background_mode_combo.currentIndexChanged.connect(self._on_background_mode_changed)
+        self._background_status_label = QLabel("")
+        self._background_status_label.setWordWrap(True)
 
         self._period_mode_label = QLabel("RG Mode")
         self._period_mode_group = QButtonGroup(self)
@@ -481,7 +489,9 @@ class GroupingDialog(QDialog):
         form.addRow("Bunching Factor", self._bunch_spin)
         form.addRow("Deadtime", self._deadtime_checkbox)
         form.addRow("Deadtime Mode", self._deadtime_mode_widget)
-        form.addRow("Background", self._background_checkbox)
+        form.addRow("Background", self._background_mode_combo)
+        form.addRow("", self._background_status_label)
+        self._update_background_status()
         form.addRow(self._period_mode_label, self._period_mode_widget)
 
         right_layout.addLayout(form)
@@ -755,8 +765,10 @@ class GroupingDialog(QDialog):
         self._deadtime_manual_method = self._initial_manual_deadtime_method(grouping)
         self._set_deadtime_mode(self._default_deadtime_mode(grouping))
         self._update_deadtime_controls(grouping)
-        self._background_checkbox.setChecked(bool(grouping.get("background_correction", False)))
-        self._update_background_checkbox_state()
+        payload = grouping.get("background_run")
+        self._background_run_payload = dict(payload) if isinstance(payload, dict) else None
+        self._populate_background_modes(grouping)
+        self._update_background_status()
         self._set_period_mode(str(grouping.get("period_mode", PeriodMode.RED)))
         self._update_vector_mode_controls(grouping)
         self._update_period_mode_visibility()
@@ -1121,25 +1133,182 @@ class GroupingDialog(QDialog):
             )
             return
 
-    def _update_background_checkbox_state(self) -> None:
-        """Enable background correction for PSI-style grouped raw data."""
+    _BACKGROUND_MODE_ITEMS = (
+        ("None", "none", "No background subtraction."),
+        (
+            "Range average (pre-t0)",
+            "range",
+            "Mean count over a pre-t0 bin window (musrfit convention) — "
+            "continuous-source data only; pulsed files have no pre-t0 region.",
+        ),
+        (
+            "Tail fit (late-time)",
+            "tail_fit",
+            "Fit muon exponential + flat rate to the late half of the good "
+            "window and subtract the flat part — the pulsed-source mode.",
+        ),
+        (
+            "Background run…",
+            "reference_run",
+            "Subtract a reference run (sample holder / silver / laser-off) "
+            "scaled by the good-frame ratio.",
+        ),
+        (
+            "Fixed values",
+            "fixed",
+            "Subtract stored per-group constants (from the loaded grouping).",
+        ),
+    )
+
+    def _available_background_modes(self) -> tuple[str, ...]:
         metadata: dict[str, Any] = {}
         if self._reference_dataset is not None:
             metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
         if self._run is not None:
             metadata.update(getattr(self._run, "metadata", {}) or {})
         source_file = str(getattr(self._run, "source_file", "") or metadata.get("source_file", ""))
-        enabled = supports_background_correction(metadata=metadata, source_file=source_file)
-        self._background_checkbox.setEnabled(enabled)
-        if not enabled:
-            self._background_checkbox.setChecked(False)
-            self._background_checkbox.setToolTip(
-                "Background correction is available for PSI BIN/MDU and PSI/LEM ROOT data."
-            )
-            return
-        self._background_checkbox.setToolTip(
-            "Apply grouped background subtraction before asymmetry."
+        return available_background_modes(metadata=metadata, source_file=source_file)
+
+    def _populate_background_modes(self, grouping: dict[str, Any]) -> None:
+        """Fill the background mode combo, gating entries per dataset type."""
+        available = set(self._available_background_modes())
+        has_fixed = any(
+            isinstance(grouping.get(key), (list, tuple))
+            for key in ("background_fixed_values", "background_fix", "bkg_fix")
         )
+        self._background_mode_combo.blockSignals(True)
+        self._background_mode_combo.clear()
+        for label, key, tooltip in self._BACKGROUND_MODE_ITEMS:
+            if key == "fixed" and not has_fixed:
+                continue
+            self._background_mode_combo.addItem(label, key)
+            index = self._background_mode_combo.count() - 1
+            self._background_mode_combo.setItemData(index, tooltip, Qt.ItemDataRole.ToolTipRole)
+            if key != "none" and key not in available:
+                item = self._background_mode_combo.model().item(index)
+                if item is not None:
+                    item.setEnabled(False)
+        initial = "none"
+        if bool(grouping.get("background_correction", False)):
+            initial = resolve_background_mode(grouping)
+        idx = self._background_mode_combo.findData(initial)
+        self._background_mode_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._background_mode_combo.blockSignals(False)
+
+    def _current_background_mode(self) -> str:
+        return str(self._background_mode_combo.currentData() or "none")
+
+    def _on_background_mode_changed(self) -> None:
+        if self._current_background_mode() == "reference_run" and not self._background_run_payload:
+            self._pick_background_run()
+        self._update_background_status()
+
+    def _pick_background_run(self) -> None:
+        """Choose the reference run for background subtraction."""
+        candidates = [
+            ds
+            for ds in self._datasets
+            if ds.run is not None
+            and ds.run.histograms
+            and int(ds.run_number) != int(self._reference_dataset.run_number)
+        ]
+        labels = [ds.run_label for ds in candidates] + ["Browse for file…"]
+        from PySide6.QtWidgets import QInputDialog
+
+        choice, accepted = QInputDialog.getItem(
+            self,
+            "Background Run",
+            "Reference run to subtract (scaled by the good-frame ratio):",
+            labels,
+            0,
+            False,
+        )
+        if not accepted:
+            self._set_background_mode_to_none()
+            return
+        if choice == "Browse for file…":
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Background Run File",
+                "",
+                "Muon data (*.nxs *.bin *.mdu *.root);;All files (*)",
+            )
+            if not path:
+                self._set_background_mode_to_none()
+                return
+            self._background_run_payload = {"run_number": None, "source_file": path}
+        else:
+            selected = candidates[labels.index(choice)]
+            grouping = selected.run.grouping if isinstance(selected.run.grouping, dict) else {}
+            self._background_run_payload = {
+                "run_number": int(selected.run_number),
+                "source_file": str(selected.run.source_file or ""),
+                "good_frames_reference": grouping.get("good_frames"),
+            }
+        reference_grouping = (
+            self._run.grouping
+            if self._run is not None and isinstance(self._run.grouping, dict)
+            else {}
+        )
+        self._background_run_payload["good_frames_sample"] = reference_grouping.get("good_frames")
+        self._update_background_status()
+
+    def _set_background_mode_to_none(self) -> None:
+        idx = self._background_mode_combo.findData("none")
+        if idx >= 0:
+            self._background_mode_combo.setCurrentIndex(idx)
+
+    def _update_background_status(self) -> None:
+        """Show the per-mode summary under the background combo."""
+        mode = self._current_background_mode()
+        if mode == "tail_fit":
+            self._background_status_label.setText(self._tail_fit_preview_text())
+            return
+        if mode == "reference_run":
+            payload = self._background_run_payload or {}
+            run_number = payload.get("run_number")
+            label = f"run {run_number}" if run_number else str(payload.get("source_file", ""))
+            sample = payload.get("good_frames_sample")
+            reference = payload.get("good_frames_reference")
+            try:
+                scale = float(sample) / float(reference)
+                self._background_status_label.setText(
+                    f"Subtract {label}, frame-ratio scale {scale:.4g}."
+                )
+            except (TypeError, ValueError, ZeroDivisionError):
+                self._background_status_label.setText(
+                    f"Subtract {label} (frame ratio resolved at reduction)."
+                )
+            return
+        self._background_status_label.setText("")
+
+    def _tail_fit_preview_text(self) -> str:
+        """Run the tail fit on the reference run's groups for display."""
+        if self._run is None or not self._run.histograms:
+            return ""
+        forward_gid = int(self._forward_combo.currentData())
+        backward_gid = int(self._backward_combo.currentData())
+        t0_bin, _offset, _first, last_good = self._resolve_good_bin_limits_from_controls()
+        bin_width = float(self._run.histograms[0].bin_width)
+        parts: list[str] = []
+        for name, gid in (("F", forward_gid), ("B", backward_gid)):
+            indices = self._groups.get(gid, [])
+            if not indices or max(indices) >= len(self._run.histograms):
+                continue
+            counts = apply_grouping(self._run.histograms, indices)
+            fit = fit_tail_background(
+                counts,
+                bin_width_us=bin_width,
+                t0_bin=int(t0_bin),
+                last_good_bin=int(last_good),
+            )
+            if not fit.ok:
+                parts.append(f"{name}: {fit.message}")
+                continue
+            value = _format_value_with_uncertainty(fit.rate_per_us, fit.rate_error_per_us)
+            note = " (consistent with zero)" if fit.consistent_with_zero else ""
+            parts.append(f"{name}: {value} counts/µs{note}")
+        return "Tail-fit background — " + "; ".join(parts) if parts else ""
 
     def _on_apply(self) -> None:
         """Validate form values before accepting the dialog."""
@@ -1722,12 +1891,17 @@ class GroupingDialog(QDialog):
                 "first_good_bin": int(first_good_bin),
                 "last_good_bin": int(last_good_bin),
                 "bunching_factor": int(self._bunch_spin.value()),
-                "background_correction": bool(
-                    self._background_checkbox.isEnabled() and self._background_checkbox.isChecked()
-                ),
+                "background_correction": self._current_background_mode() != "none",
+                "background_mode": self._current_background_mode(),
                 "period_mode": self._current_period_mode(),
                 "bin_index_base": self._bin_index_base(),
             }
+            | (
+                {"background_run": dict(self._background_run_payload)}
+                if self._current_background_mode() == "reference_run"
+                and self._background_run_payload
+                else {}
+            )
             | alpha_provenance
             | (
                 {
@@ -1855,8 +2029,8 @@ class GroupingDialog(QDialog):
         self._deadtime_manual_method = self._initial_manual_deadtime_method(payload)
         self._set_deadtime_mode(self._default_deadtime_mode(payload))
         self._update_deadtime_controls(payload)
-        self._background_checkbox.setChecked(bool(payload.get("background_correction", False)))
-        self._update_background_checkbox_state()
+        self._populate_background_modes(payload)
+        self._update_background_status()
         self._set_period_mode(str(payload.get("period_mode", PeriodMode.RED)))
         self._populate_group_table()
         self._update_vector_mode_controls(payload)

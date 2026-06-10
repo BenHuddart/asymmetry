@@ -9,8 +9,14 @@ from asymmetry.core.transform.asymmetry import (
     estimate_alpha_detailed,
 )
 from asymmetry.core.transform.background import (
+    BACKGROUND_MODES,
     BackgroundCorrectionResult,
+    TailFitResult,
     apply_grouped_background_correction,
+    available_background_modes,
+    fit_tail_background,
+    resolve_background_mode,
+    subtract_scaled_counts,
     supports_background_correction,
 )
 from asymmetry.core.transform.deadtime import (
@@ -74,4 +80,10 @@ __all__ = [
     "ALPHA_ESTIMATION_METHODS",
     "AlphaEstimate",
     "estimate_alpha_detailed",
+    "BACKGROUND_MODES",
+    "TailFitResult",
+    "available_background_modes",
+    "fit_tail_background",
+    "resolve_background_mode",
+    "subtract_scaled_counts",
 ]

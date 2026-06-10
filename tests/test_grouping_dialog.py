@@ -245,7 +245,8 @@ def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:
     dataset.run.grouping["dead_time_us"] = [0.01, 0.01]
     dialog = GroupingDialog([dataset])
     dialog._deadtime_checkbox.setChecked(True)
-    dialog._background_checkbox.setChecked(True)
+    idx = dialog._background_mode_combo.findData("range")
+    dialog._background_mode_combo.setCurrentIndex(idx)
     dialog._bunch_spin.setValue(1234)
     result = dialog.get_grouping_result()
     assert result is not None
@@ -256,6 +257,7 @@ def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:
     assert result["included_groups"] == {1: True, 2: True}
     assert result["deadtime_correction"] is True
     assert result["background_correction"] is True
+    assert result["background_mode"] == "range"
     assert result["bunching_factor"] == 1234
 
 
@@ -386,11 +388,18 @@ def test_calibrate_deadtime_populates_explicit_table(
     assert dialog._deadtime_value_combo.itemText(0) == "H1: 11.000 ns"
 
 
-def test_background_checkbox_disabled_for_non_psi_data(qapp: QApplication) -> None:
+def test_background_range_mode_disabled_for_non_psi_data(qapp: QApplication) -> None:
     dialog = GroupingDialog([_dataset_with_histograms()])
 
-    assert not dialog._background_checkbox.isEnabled()
+    idx = dialog._background_mode_combo.findData("range")
+    item = dialog._background_mode_combo.model().item(idx)
+    assert item is not None and not item.isEnabled()
+    # Tail fit and background-run modes stay available on pulsed data.
+    for mode in ("tail_fit", "reference_run"):
+        idx = dialog._background_mode_combo.findData(mode)
+        assert dialog._background_mode_combo.model().item(idx).isEnabled()
     assert dialog._current_grouping_payload()["background_correction"] is False
+    assert dialog._current_grouping_payload()["background_mode"] == "none"
 
 
 def test_vector_mode_shows_per_axis_alpha_controls(qapp: QApplication) -> None:
@@ -1083,3 +1092,34 @@ def test_format_value_with_uncertainty() -> None:
     assert fmt(1.37, None) == "1.3700"
     assert fmt(0.9876, 0.05) == "0.988(50)"
     assert fmt(1.3, 0.0995) == "1.30(10)"
+
+
+def test_tail_fit_mode_shows_preview_status(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    # Long histograms so the tail fit has a usable window.
+    rng = np.random.default_rng(0)
+    counts = rng.poisson(np.full(400, 50.0)).astype(float)
+    dataset.run.histograms = [
+        Histogram(counts=counts, bin_width=0.016),
+        Histogram(counts=counts * 0.8, bin_width=0.016),
+    ]
+    dataset.run.grouping["last_good_bin"] = 399
+    dialog = GroupingDialog([dataset])
+    idx = dialog._background_mode_combo.findData("tail_fit")
+    dialog._background_mode_combo.setCurrentIndex(idx)
+    assert "Tail-fit background" in dialog._background_status_label.text()
+    result = dialog.get_grouping_result()
+    assert result["background_mode"] == "tail_fit"
+    assert result["background_correction"] is True
+
+
+def test_background_run_payload_round_trips(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    dataset.run.grouping["background_correction"] = True
+    dataset.run.grouping["background_mode"] = "reference_run"
+    dataset.run.grouping["background_run"] = {"run_number": 9001, "source_file": "/tmp/x.nxs"}
+    dialog = GroupingDialog([dataset])
+    assert dialog._current_background_mode() == "reference_run"
+    result = dialog.get_grouping_result()
+    assert result["background_run"]["run_number"] == 9001
+    assert "9001" in dialog._background_status_label.text()
