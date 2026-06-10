@@ -14,7 +14,11 @@ import pytest
 pytest.importorskip("PySide6")
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.simulate import build_builtin_template, simulate_run
+from asymmetry.core.simulate import (
+    build_builtin_template,
+    simulate_double_pulse_run,
+    simulate_run,
+)
 from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
 
 
@@ -149,6 +153,32 @@ def test_promote_after_deadtime_fit_writes_grouping(qapp, fb_dataset):
     grouping = fb_dataset.run.grouping
     assert grouping.get("deadtime_correction") is True
     assert any(v != 0.0 for v in grouping.get("dead_time_us", []))
+
+
+def test_fb_double_pulse_target_runs_via_dpsep_control(qapp):
+    """The dpsep control routes to the F+B target and the fit recovers α."""
+    template = build_builtin_template("ideal_continuous_fb")
+    run = simulate_double_pulse_run(
+        template, _tf, {"A": 20.0, "f": 1.0, "phi": 0.0},
+        total_events=20e6, dpsep_us=0.324, alpha=1.2, seed=4,
+    )  # fmt: skip
+    ds = MuonDataset(
+        time=np.array([]), asymmetry=np.array([]), error=np.array([]), metadata={}, run=run
+    )
+    window = MultiGroupFitWindow()
+    window.set_dataset(ds)
+    window._target_combo.setCurrentIndex(1)  # fb
+    window._cost_combo.setCurrentIndex(1)  # Gaussian √N
+    window._dpsep_spin.setValue(0.324)
+    assert window._dpsep_spin.isEnabled()  # dpsep control active for the F+B target
+    assert window._single_fit_tab._count_dpsep == pytest.approx(0.324)
+
+    captured = []
+    window.count_fit_completed.connect(lambda dataset, result: captured.append(result))
+    window._single_fit_tab._run_count_domain_fit()
+
+    assert len(captured) == 1 and captured[0].success
+    assert captured[0].group_results[1].parameters["alpha"].value == pytest.approx(1.2, abs=0.05)
 
 
 def test_fb_fit_emits_overlay_for_both_banks(qapp, fb_dataset):

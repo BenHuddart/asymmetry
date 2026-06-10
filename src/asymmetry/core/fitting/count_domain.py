@@ -223,6 +223,41 @@ def _double_pulse_single_model(fraction_fn: Callable[..., NDArray]) -> Callable[
     return model
 
 
+def _double_pulse_fb_model(fraction_fn: Callable[..., NDArray]) -> Callable[..., NDArray]:
+    """Raw forward/backward count model for an ISIS double-pulse source.
+
+    The ``fgFB`` double-pulse analogue of :func:`_double_pulse_single_model`: the
+    two-pulse polarization (evaluated at ``t ± dpsep/2`` and weighted by
+    ``exp(∓dpsep/2τ_μ)``, second pulse gated to ``t > dpsep/2``) is carried with
+    the forward/backward ``sign``, and the shared ``N0`` is split by the detector
+    balance as ``N0·√alpha`` (forward) / ``N0/√alpha`` (backward) exactly as in
+    :func:`build_fb_count_model`. The single-pulse limit (``dpsep → 0``) recovers
+    that model. Each side keeps its own background.
+    """
+    tau = float(MUON_LIFETIME_US)
+
+    def model(t, *, alpha, N0, background, sign, dpsep, **physics):  # noqa: N803
+        time = np.asarray(t, dtype=float)
+        dpsep2 = float(dpsep) / 2.0
+        c1 = np.exp(-dpsep2 / tau)
+        c2 = np.exp(dpsep2 / tau)
+        gate = (time > dpsep2).astype(float)
+        # Clamp the gated-out times to >= 0 before evaluating, matching the
+        # single-histogram path: a model undefined for t < 0 must not poison the
+        # zero-weighted early bins.
+        a1 = np.asarray(fraction_fn(time + dpsep2, **physics), dtype=float)
+        a2 = np.asarray(fraction_fn(np.maximum(time - dpsep2, 0.0), **physics), dtype=float)
+        ralp = np.sqrt(abs(float(alpha)))
+        if sign >= 0.0:
+            scale = ralp
+        else:
+            scale = 1.0 / ralp if ralp > 0.0 else 0.0
+        factor = 0.5 * (c1 * (1.0 + sign * a1) + gate * c2 * (1.0 + sign * a2))
+        return float(N0) * scale * np.exp(-time / tau) * factor + float(background)
+
+    return model
+
+
 def _raw_model(lifetime_corrected_model: Callable[..., NDArray]) -> Callable[..., NDArray]:
     """Turn a lifetime-corrected count model into a raw-count model.
 
@@ -445,6 +480,13 @@ def fit_fb_alpha(
     keyed by ``forward_group`` / ``backward_group`` and whose
     ``shared_parameters`` hold the fitted ``alpha``/``N0``/physics. The (alpha,
     amplitude) covariance is available on either group result.
+
+    The same optional nuisances as :func:`fit_single_histogram` apply, all
+    no-ops unless requested: ``exclude`` drops an interior window; a free ``t0``
+    shifts the model time axis; free ``lambda_base`` / ``beta_base`` add a
+    baseline drift; ``DT0`` (+ ``C2``..``C4``) add a count-loss term; a ``dpsep``
+    parameter switches on the ISIS double-pulse model (the √α-tied model
+    evaluated at ``t ± dpsep/2``).
     """
     _validate_cost(cost)
     for required in ("alpha", "N0", "background", "background_b"):
@@ -473,7 +515,10 @@ def fit_fb_alpha(
     tau = float(MUON_LIFETIME_US)
     base_decay_f = np.exp(-time_f / tau)
     base_decay_b = np.exp(-time_b / tau)
-    fb_corrected = build_fb_count_model(_with_baseline_drift(_percent_to_fraction(model_fn)))
+    fraction_fn = _with_baseline_drift(_percent_to_fraction(model_fn))
+    double_pulse = "dpsep" in params
+    fb_dp_model = _double_pulse_fb_model(fraction_fn) if double_pulse else None
+    fb_corrected = None if double_pulse else build_fb_count_model(fraction_fn)
 
     frame_norm_f = _deadtime_frame_norm(dataset, forward_group)
     frame_norm_b = _deadtime_frame_norm(dataset, backward_group)
@@ -502,9 +547,15 @@ def fit_fb_alpha(
             t_eval = time
             decay = base_decay
         shared = {**shared_fixed, **{k: kw[k] for k in shared_keys if k in kw}}
-        model = decay * np.asarray(
-            fb_corrected(t_eval, sign=sign, background=kw[counts_key], **shared), dtype=float
-        )
+        if double_pulse:
+            # The double-pulse model carries its own decay envelope and background.
+            model = np.asarray(
+                fb_dp_model(t_eval, sign=sign, background=kw[counts_key], **shared), dtype=float
+            )
+        else:
+            model = decay * np.asarray(
+                fb_corrected(t_eval, sign=sign, background=kw[counts_key], **shared), dtype=float
+            )
         return _apply_deadtime(model, dt_terms, frame_norm)
 
     def predict_f(args):

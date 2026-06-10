@@ -522,6 +522,65 @@ def test_double_pulse_free_dpsep_refines_from_seed():
     assert result.parameters["dpsep"].value == pytest.approx(0.324, abs=0.01)
 
 
+def _fb_double_pulse_dataset(*, dpsep_us=0.324, alpha=1.25, seed=4):
+    template = build_builtin_template("ideal_continuous_fb")
+    run = simulate_double_pulse_run(
+        template,
+        _tf,
+        {"A": 20.0, "f": 1.0, "phi": 0.0},
+        total_events=20e6,
+        dpsep_us=dpsep_us,
+        alpha=alpha,
+        background_per_bin=10.0,
+        seed=seed,
+    )
+    return MuonDataset(
+        time=np.array([]), asymmetry=np.array([]), error=np.array([]), metadata={}, run=run
+    )
+
+
+def _fb_double_pulse_params(alpha_seed=1.0):
+    return ParameterSet(
+        [
+            Parameter("alpha", alpha_seed, min=0.1, max=5.0),
+            Parameter("N0", 4.0e3, min=0.0),
+            Parameter("background", 9.0, min=0.0),
+            Parameter("background_b", 9.0, min=0.0),
+            Parameter("A", 19.0, min=0.0, max=50.0),
+            Parameter("f", 1.0, min=0.0),
+            Parameter("phi", 0.0),
+        ]
+    )
+
+
+@pytest.mark.parametrize("alpha_true", [1.0, 1.25])
+def test_fb_double_pulse_recovers_alpha(alpha_true):
+    """F+B double-pulse round-trip: α recovered with dpsep fixed at the instrument value."""
+    ds = _fb_double_pulse_dataset(dpsep_us=0.324, alpha=alpha_true, seed=4)
+    params = _fb_double_pulse_params()
+    params.add(Parameter("dpsep", 0.324, fixed=True))
+    result = fit_fb_alpha(ds, 1, 2, _tf, params, cost="gaussian")
+    assert result.success
+    fwd = result.group_results[1]
+    assert fwd.parameters["alpha"].value == pytest.approx(alpha_true, abs=0.03)
+    assert fwd.parameters["A"].value == pytest.approx(20.0, abs=0.6)
+    assert fwd.reduced_chi_squared < 1.3
+
+
+def test_fb_double_pulse_single_pulse_limit():
+    """As dpsep → 0 the F+B double-pulse model reduces to the single-pulse fit."""
+    ds = _fb_double_pulse_dataset(dpsep_us=0.0, alpha=1.25, seed=6)
+    dp = _fb_double_pulse_params()
+    dp.add(Parameter("dpsep", 1e-9, fixed=True))
+    single = _fb_double_pulse_params()
+    r_dp = fit_fb_alpha(ds, 1, 2, _tf, dp, cost="gaussian")
+    r_single = fit_fb_alpha(ds, 1, 2, _tf, single, cost="gaussian")
+    assert r_dp.success and r_single.success
+    a_dp = r_dp.group_results[1].parameters["alpha"].value
+    a_single = r_single.group_results[1].parameters["alpha"].value
+    assert a_dp == pytest.approx(a_single, abs=1e-3)
+
+
 def test_double_pulse_tolerates_model_nonfinite_below_zero():
     """The gated second pulse must not poison early bins for a t<0-undefined model."""
 

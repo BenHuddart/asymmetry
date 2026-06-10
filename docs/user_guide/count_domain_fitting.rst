@@ -134,8 +134,11 @@ Count loss and double pulse
 
 * **Double pulse (μs)** — set the pulse separation for an ISIS double-pulse
   source; 0 leaves the single-pulse model. The two pulses each carry the
-  polarization, evaluated at t ± dpsep/2 and weighted by exp(∓dpsep/2τ_μ). The
-  separation is taken as a fixed instrument value rather than fitted.
+  polarization, evaluated at t ± dpsep/2 and weighted by exp(∓dpsep/2τ_μ). This
+  applies to both the single-histogram and the free-α (F+B) targets — for the
+  latter the two pulses ride the same √α-tied forward/backward model, so α and
+  the double-pulse structure are recovered together. The separation is taken as
+  a fixed instrument value rather than fitted.
 
   .. note::
 
