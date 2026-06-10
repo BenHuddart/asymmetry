@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from asymmetry.core.representation.base import FitSlot, Representation, RepresentationType
 from asymmetry.core.representation.frequency import FrequencyFFT, FrequencyMaxEnt
-from asymmetry.core.representation.time import TimeFBAsymmetry, TimeGroups
+from asymmetry.core.representation.time import (
+    TimeFBAsymmetry,
+    TimeGroups,
+    TimeMaxEntReconstruction,
+)
 
 #: The single declarative source of truth for representation construction.
 REPRESENTATION_REGISTRY: dict[RepresentationType, type[Representation]] = {
     RepresentationType.TIME_FB_ASYMMETRY: TimeFBAsymmetry,
     RepresentationType.TIME_GROUPS: TimeGroups,
+    RepresentationType.TIME_MAXENT_RECON: TimeMaxEntReconstruction,
     RepresentationType.FREQ_FFT: FrequencyFFT,
     RepresentationType.FREQ_MAXENT: FrequencyMaxEnt,
 }

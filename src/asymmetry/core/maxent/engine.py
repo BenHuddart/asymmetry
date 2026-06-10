@@ -22,15 +22,22 @@ from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
+from asymmetry.core.fourier.units import gauss_to_mhz
+from asymmetry.core.maxent.pulse import pulse_amplitude_phase
+from asymmetry.core.maxent.specbg import apply_maxent_specbg
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
-from asymmetry.core.utils.constants import (
-    GAUSS_TO_TESLA,
-    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
-)
 
 _MAX_SPECTRUM_POINTS = 1 << 20
 _MIN_POSITIVE = 1.0e-15
 _MAX_DESIGN_CHUNK_ELEMENTS = 2_000_000
+
+# Interior-exclusion σ-inflation factor: points inside the exclusion window keep
+# their place in the time grid but are de-weighted to ~zero (weight ∝ 1/σ²), so
+# the FFT/grid length is preserved.  Large but finite (WiMDA uses 1e15; 1e8
+# keeps σ² well clear of float overflow while contributing weight ~1e-16).
+_EXCLUSION_SIGMA_INFLATION = 1.0e8
+
+_PULSE_N_PULSES = {"ignore": 0, "single": 1, "double": 2}
 
 # Early-stop guard for forced cycle counts.  Past the χ² optimum the projected
 # gradient keeps minimising χ² by collapsing spectral weight onto a grid edge
@@ -115,8 +122,15 @@ def _parse_phase_table(value: object) -> dict[int, float]:
     return parsed
 
 
+def _parse_choice(value: object, choices: tuple[str, ...], default: str) -> str:
+    """Return *value* if it is one of *choices* (case-insensitive), else *default*."""
+    if isinstance(value, str) and value.strip().lower() in choices:
+        return value.strip().lower()
+    return default
+
+
 def _field_to_frequency_mhz(field_gauss: float) -> float:
-    return float(field_gauss) * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
+    return float(gauss_to_mhz(float(field_gauss)))
 
 
 @dataclass
@@ -142,6 +156,32 @@ class MaxEntConfig:
     t_min_us: float | None = None
     t_max_us: float | None = None
     time_binning_factor: int = 1
+    # ISIS pulse-shape response folded into the forward model (Phase 2).
+    # ``pulse_mode`` is one of "ignore" / "single" / "double"; the widths are in
+    # microseconds.  Defaults: off (continuous-source data needs no shaping).
+    pulse_mode: str = "ignore"
+    pulse_half_width_us: float = 0.05
+    pulse_separation_us: float = 0.324
+    # Interior exclusion window (µs): points inside are σ-inflated (de-weighted),
+    # not dropped, so the time grid length is preserved.  ``None`` disables it.
+    exclude_t_min_us: float | None = None
+    exclude_t_max_us: float | None = None
+    # Reconstruction mode: "general" (the joint multi-group fit) or "zf_lf"
+    # (zero/longitudinal field, exactly two forward/backward groups with phases
+    # pinned 0/180 and amplitudes tied through the run's α).
+    mode: str = "general"
+    # Display-only SpecBG: subtract a zero-centred pseudo-Voigt model of the
+    # static central peak from the displayed ZF/LF field-distribution spectrum.
+    # Widths in MHz; does not change the computation (absent from the signature).
+    specbg_enabled: bool = False
+    specbg_gaussian_width_mhz: float = 0.1
+    specbg_lorentzian_width_mhz: float = 0.1
+    specbg_lorentzian_fraction: float = 0.5
+    # Display-only: whether the time-domain reconstruction overlay is the active
+    # view (vs the spectrum).  It does not change the computation, so it is
+    # absent from ``_state_signature`` (toggling it must not invalidate a
+    # resumed run).  Defaults off — the spectrum is MaxEnt's primary output.
+    show_reconstruction: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable recipe block."""
@@ -167,6 +207,17 @@ class MaxEntConfig:
             "t_min_us": self.t_min_us,
             "t_max_us": self.t_max_us,
             "time_binning_factor": int(self.time_binning_factor),
+            "pulse_mode": str(self.pulse_mode),
+            "pulse_half_width_us": float(self.pulse_half_width_us),
+            "pulse_separation_us": float(self.pulse_separation_us),
+            "exclude_t_min_us": self.exclude_t_min_us,
+            "exclude_t_max_us": self.exclude_t_max_us,
+            "mode": str(self.mode),
+            "specbg_enabled": bool(self.specbg_enabled),
+            "specbg_gaussian_width_mhz": float(self.specbg_gaussian_width_mhz),
+            "specbg_lorentzian_width_mhz": float(self.specbg_lorentzian_width_mhz),
+            "specbg_lorentzian_fraction": float(self.specbg_lorentzian_fraction),
+            "show_reconstruction": bool(self.show_reconstruction),
         }
 
     @classmethod
@@ -204,6 +255,25 @@ class MaxEntConfig:
             t_min_us=_optional_float(data.get("t_min_us")),
             t_max_us=_optional_float(data.get("t_max_us")),
             time_binning_factor=_parse_positive_int(data.get("time_binning_factor", 1)),
+            pulse_mode=_parse_choice(
+                data.get("pulse_mode"), ("ignore", "single", "double"), "ignore"
+            ),
+            pulse_half_width_us=max(0.0, _float_or_default(data.get("pulse_half_width_us"), 0.05)),
+            pulse_separation_us=max(0.0, _float_or_default(data.get("pulse_separation_us"), 0.324)),
+            exclude_t_min_us=_optional_float(data.get("exclude_t_min_us")),
+            exclude_t_max_us=_optional_float(data.get("exclude_t_max_us")),
+            mode=_parse_choice(data.get("mode"), ("general", "zf_lf"), "general"),
+            specbg_enabled=bool(data.get("specbg_enabled", False)),
+            specbg_gaussian_width_mhz=max(
+                0.0, _float_or_default(data.get("specbg_gaussian_width_mhz"), 0.1)
+            ),
+            specbg_lorentzian_width_mhz=max(
+                0.0, _float_or_default(data.get("specbg_lorentzian_width_mhz"), 0.1)
+            ),
+            specbg_lorentzian_fraction=float(
+                np.clip(_float_or_default(data.get("specbg_lorentzian_fraction"), 0.5), 0.0, 1.0)
+            ),
+            show_reconstruction=bool(data.get("show_reconstruction", False)),
         )
 
 
@@ -233,6 +303,15 @@ class MaxEntInput:
     f_max_mhz: float
     default_level: float
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Pulse-shape response over ``frequencies_mhz`` as a per-frequency amplitude
+    # ``R(ν)`` and phase shift ``δ(ν)`` (radians): the forward kernel becomes
+    # ``R·cos(2πνt + φ − δ)``.  ``None`` means no pulse shaping (R = 1, δ = 0).
+    pulse_amp: NDArray[np.float64] | None = None
+    pulse_phase: NDArray[np.float64] | None = None
+    # ZF/LF mode: the reconstruction mode and the α used to tie the F/B group
+    # amplitudes/backgrounds.  ``mode == "general"`` leaves ``zf_lf_alpha`` None.
+    mode: str = "general"
+    zf_lf_alpha: float | None = None
 
     @cached_property
     def frequencies_mhz(self) -> NDArray[np.float64]:
@@ -369,22 +448,37 @@ class MaxEntResult:
     stop_reason: str = "max_cycles"
     converged: bool = False
     diverged: bool = False
+    # The prepared input the cycles iterated.  Carried so callers (the GUI
+    # reconstruction overlay) can reuse the exact grouped signals/kernel the
+    # engine fitted instead of rebuilding them — the reconstruction's χ² then
+    # equals the engine's by identity, not just by deterministic rebuild.  Not
+    # serialised (the project persists recipes, not prepared arrays).
+    maxent_input: MaxEntInput | None = None
 
     @property
     def early_stopped(self) -> bool:
         """Whether the run stopped before the requested cycle count."""
         return self.stop_reason != "max_cycles"
 
-    def as_dataset(self, run: Run | None = None) -> MuonDataset:
-        """Return the primary MaxEnt spectrum as a plottable dataset."""
+    def as_dataset(self, run: Run | None = None, config: MaxEntConfig | None = None) -> MuonDataset:
+        """Return the primary MaxEnt spectrum as a plottable dataset.
+
+        When *config* is supplied this is also the single point where the
+        display-only SpecBG zero-frequency subtraction is applied (a no-op unless
+        SpecBG is enabled in ZF/LF mode), so the on-demand and live render paths
+        cannot diverge on whether/how the central peak is removed.
+        """
         error = np.zeros_like(self.spectrum, dtype=float)
-        return MuonDataset(
+        dataset = MuonDataset(
             time=np.asarray(self.frequencies_mhz, dtype=float),
             asymmetry=np.asarray(self.spectrum, dtype=float),
             error=error,
             metadata=dict(self.metadata),
             run=run,
         )
+        if config is not None:
+            return apply_maxent_specbg(dataset, config)
+        return dataset
 
 
 def _group_names(run: Run) -> dict[int, str]:
@@ -559,6 +653,29 @@ def build_maxent_input(
     if not selected:
         raise ValueError("MaxEnt requires at least one selected group.")
 
+    # ZF/LF mode: exactly two forward/backward groups, phases pinned 0/180, and
+    # amplitudes/backgrounds tied through the run's α.
+    zf_lf_phase_map: dict[int, float] = {}
+    zf_lf_alpha: float | None = None
+    if resolved_config.mode == "zf_lf":
+        if len(selected) != 2:
+            raise ValueError("ZF/LF mode requires exactly two selected groups (forward/backward).")
+        grouping = run.grouping if isinstance(run.grouping, dict) else {}
+        # Order the pair by the run's forward/backward designation (not the
+        # sorted group id) so the forward group is pinned to 0° and the α tie
+        # enforces F = α·B on the right detectors even when backward has the
+        # lower id.  Fall back to selection order if neither matches.
+        forward_group = grouping.get("forward_group")
+        backward_group = grouping.get("backward_group")
+        if backward_group in selected and forward_group not in selected:
+            selected = [gid for gid in selected if gid != backward_group] + [int(backward_group)]
+        elif forward_group in selected:
+            selected = [int(forward_group)] + [gid for gid in selected if gid != forward_group]
+        zf_lf_phase_map = {int(selected[0]): 0.0, int(selected[1]): 180.0}
+        zf_lf_alpha = _float_or_default(grouping.get("alpha"), 1.0)
+        if not np.isfinite(zf_lf_alpha) or zf_lf_alpha <= 0.0:
+            zf_lf_alpha = 1.0
+
     groups: list[MaxEntGroupInput] = []
     max_points = 0
     # Shared across the sweep so a reference_run background loads + deadtime-
@@ -590,6 +707,16 @@ def build_maxent_input(
             baseline = 1.0
         normalized = (signal / baseline) - 1.0
         normalized_sigma = np.maximum(sigma / abs(baseline), _MIN_POSITIVE)
+        # Interior exclusion: keep the points in place (grid length preserved)
+        # but inflate σ so they carry ~zero weight, mirroring WiMDA's σ=1e15
+        # sentinel for excluded channels rather than dropping them.
+        ex_lo = resolved_config.exclude_t_min_us
+        ex_hi = resolved_config.exclude_t_max_us
+        if ex_lo is not None and ex_hi is not None and ex_hi > ex_lo:
+            in_window = (time >= float(ex_lo)) & (time <= float(ex_hi))
+            normalized_sigma = np.where(
+                in_window, normalized_sigma * _EXCLUSION_SIGMA_INFLATION, normalized_sigma
+            )
         max_points = max(max_points, int(np.count_nonzero(mask)))
         groups.append(
             MaxEntGroupInput(
@@ -598,7 +725,11 @@ def build_maxent_input(
                 time_us=time,
                 signal=normalized,
                 sigma=normalized_sigma,
-                phase_degrees=float(resolved_config.group_phase_degrees.get(group_id, 0.0)),
+                phase_degrees=float(
+                    zf_lf_phase_map.get(
+                        group_id, resolved_config.group_phase_degrees.get(group_id, 0.0)
+                    )
+                ),
                 amplitude=1.0,
                 background=0.0,
                 mask=mask,
@@ -607,22 +738,47 @@ def build_maxent_input(
 
     if not groups:
         raise ValueError("MaxEnt input contains no valid grouped signals.")
+    if resolved_config.mode == "zf_lf" and len(groups) != 2:
+        # A group can be dropped above if its mask is entirely empty (e.g. an
+        # exclusion/time window that removes all its points).  The α tie needs
+        # both groups, so fail loudly rather than silently degrade to an untied
+        # single-group fit.
+        raise ValueError(
+            "ZF/LF mode needs two groups with usable data; one group has no "
+            "points in the selected time/exclusion window."
+        )
 
     n_points = resolved_config.n_spectrum_points or default_n_spectrum_points(max_points)
     f_min, f_max = _resolve_frequency_window(run, resolved_config)
     if f_max <= f_min:
         f_max = f_min + 1.0
+    n_points = int(n_points)
+    frequencies = np.linspace(float(f_min), float(f_max), n_points)
+    n_pulses = _PULSE_N_PULSES.get(resolved_config.pulse_mode, 0)
+    pulse_amp, pulse_phase = pulse_amplitude_phase(
+        frequencies,
+        half_width_us=resolved_config.pulse_half_width_us,
+        separation_us=resolved_config.pulse_separation_us,
+        n_pulses=n_pulses,
+    )
     return MaxEntInput(
         run_number=int(run.run_number),
         groups=tuple(groups),
-        n_spectrum_points=int(n_points),
+        n_spectrum_points=n_points,
         f_min_mhz=float(f_min),
         f_max_mhz=float(f_max),
         default_level=float(resolved_config.default_level),
+        pulse_amp=pulse_amp,
+        pulse_phase=pulse_phase,
+        mode=str(resolved_config.mode),
+        zf_lf_alpha=zf_lf_alpha,
         metadata={
             "field": run.metadata.get("field") if isinstance(run.metadata, dict) else None,
             "group_ids": [group.group_id for group in groups],
             "time_binning_factor": int(resolved_config.time_binning_factor),
+            "pulse_mode": str(resolved_config.pulse_mode),
+            "maxent_mode": str(resolved_config.mode),
+            "zf_lf_alpha": zf_lf_alpha,
         },
     )
 
@@ -634,24 +790,60 @@ def _chunk_rows(n_time: int, n_frequency: int) -> int:
     return max(1, min(int(n_time), _MAX_DESIGN_CHUNK_ELEMENTS // max(1, int(n_frequency))))
 
 
+def _kernel_phase_offset(
+    phase: float,
+    pulse_phase: NDArray[np.float64] | None,
+) -> float | NDArray[np.float64]:
+    """Return the per-frequency kernel angle offset ``phase − δ(ν)``."""
+    return phase if pulse_phase is None else phase - pulse_phase[np.newaxis, :]
+
+
+def _apply_pulse_amp(
+    vector: NDArray[np.float64],
+    pulse_amp: NDArray[np.float64] | None,
+) -> NDArray[np.float64]:
+    """Scale a per-frequency vector by the pulse amplitude ``R(ν)`` (identity if None).
+
+    The pulse amplitude column-scales the kernel ``M·diag(R)``.  Rather than
+    materialise that scaled matrix per chunk, the forward map folds ``R`` into
+    the spectrum it multiplies (``M @ (R⊙f)``) and the adjoint folds it into the
+    accumulated result (``R ⊙ (Mᵀ@v)``).  Both equal the column-scaled operator
+    and its exact transpose, so the OPUS/TROPUS adjoint property is preserved
+    bit-for-bit in the matrix ``M`` — only the cheap O(n_freq) scaling moves out
+    of the hot ``n_time × n_freq`` block.
+    """
+    return vector if pulse_amp is None else vector * pulse_amp
+
+
 def _project_forward(
     time_us: NDArray[np.float64],
     frequencies_mhz: NDArray[np.float64],
     spectrum: NDArray[np.float64],
     *,
     phase_degrees: float,
+    pulse_amp: NDArray[np.float64] | None = None,
+    pulse_phase: NDArray[np.float64] | None = None,
 ) -> NDArray[np.float64]:
-    """Return dense-equivalent OPUS output without materialising all rows."""
+    """Return dense-equivalent OPUS output without materialising all rows.
+
+    The pulse-shape response enters as the per-frequency amplitude ``pulse_amp``
+    (R) and phase shift ``pulse_phase`` (δ): the kernel becomes
+    ``R(ν)·cos(2πνt + φ − δ(ν))``, which preserves the OPUS/TROPUS adjoint pair
+    because both maps build the identical matrix.
+    """
     time = np.asarray(time_us, dtype=np.float64)
     frequencies = np.asarray(frequencies_mhz, dtype=np.float64)
-    f = np.asarray(spectrum, dtype=np.float64)
+    # Fold the pulse amplitude R(ν) into the spectrum once: M @ (R⊙f) equals the
+    # column-scaled kernel (M·diag(R)) @ f without allocating the scaled block.
+    f = _apply_pulse_amp(np.asarray(spectrum, dtype=np.float64), pulse_amp)
     phase = np.deg2rad(float(phase_degrees))
+    offset = _kernel_phase_offset(phase, pulse_phase)
     output = np.empty(time.size, dtype=np.float64)
     chunk = _chunk_rows(time.size, frequencies.size)
     for start in range(0, time.size, chunk):
         stop = min(start + chunk, time.size)
         matrix = np.cos(
-            2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + phase
+            2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + offset
         )
         output[start:stop] = matrix @ f
     return output
@@ -661,22 +853,29 @@ def _project_forward_components(
     time_us: NDArray[np.float64],
     frequencies_mhz: NDArray[np.float64],
     spectrum: NDArray[np.float64],
+    *,
+    pulse_amp: NDArray[np.float64] | None = None,
+    pulse_phase: NDArray[np.float64] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Return ``(C @ f, S @ f)`` for the zero-phase cosine/sine kernels.
+    """Return ``(C @ f, S @ f)`` for the (pulse-shaped) cosine/sine kernels.
 
-    ``cos(2πft + φ) = cosφ·C − sinφ·S``, so one component pair prices any
-    number of phase candidates at vector cost instead of a kernel rebuild per
-    candidate.
+    With the pulse response the bare kernel ``cos(2πνt)`` / ``sin(2πνt)`` is
+    replaced by ``R(ν)·cos(2πνt − δ(ν))`` / ``R(ν)·sin(2πνt − δ(ν))`` so that the
+    model at phase φ is still ``cosφ·C − sinφ·S`` — the phase scan formula is
+    unchanged, the components simply carry the pulse shaping.
     """
     time = np.asarray(time_us, dtype=np.float64)
     frequencies = np.asarray(frequencies_mhz, dtype=np.float64)
-    f = np.asarray(spectrum, dtype=np.float64)
+    # Fold R(ν) into the spectrum once (see :func:`_apply_pulse_amp`); both the
+    # cosine and sine projections then carry the pulse shaping via this scaling.
+    f = _apply_pulse_amp(np.asarray(spectrum, dtype=np.float64), pulse_amp)
+    offset = _kernel_phase_offset(0.0, pulse_phase)
     cos_output = np.empty(time.size, dtype=np.float64)
     sin_output = np.empty(time.size, dtype=np.float64)
     chunk = _chunk_rows(time.size, frequencies.size)
     for start in range(0, time.size, chunk):
         stop = min(start + chunk, time.size)
-        angle = 2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :]
+        angle = 2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + offset
         cos_output[start:stop] = np.cos(angle) @ f
         sin_output[start:stop] = np.sin(angle) @ f
     return cos_output, sin_output
@@ -688,21 +887,30 @@ def _project_adjoint(
     values: NDArray[np.float64],
     *,
     phase_degrees: float,
+    pulse_amp: NDArray[np.float64] | None = None,
+    pulse_phase: NDArray[np.float64] | None = None,
 ) -> NDArray[np.float64]:
-    """Return dense-equivalent TROPUS output without materialising all rows."""
+    """Return dense-equivalent TROPUS output without materialising all rows.
+
+    Uses the same pulse-shaped kernel as :func:`_project_forward`, so it remains
+    its exact matrix transpose (the OPUS/TROPUS adjoint property is preserved).
+    """
     time = np.asarray(time_us, dtype=np.float64)
     frequencies = np.asarray(frequencies_mhz, dtype=np.float64)
     v = np.asarray(values, dtype=np.float64)
     phase = np.deg2rad(float(phase_degrees))
+    offset = _kernel_phase_offset(phase, pulse_phase)
     output = np.zeros(frequencies.size, dtype=np.float64)
     chunk = _chunk_rows(time.size, frequencies.size)
     for start in range(0, time.size, chunk):
         stop = min(start + chunk, time.size)
         matrix = np.cos(
-            2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + phase
+            2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + offset
         )
         output += matrix.T @ v[start:stop]
-    return output
+    # Weight the accumulated adjoint by R(ν) once: R ⊙ (Mᵀ@v) is the exact
+    # transpose of the column-scaled forward map M @ (R⊙f).
+    return _apply_pulse_amp(output, pulse_amp)
 
 
 def opus(
@@ -725,7 +933,15 @@ def opus(
         amplitude = float(amplitudes.get(group.group_id, group.amplitude))
         background = float(backgrounds.get(group.group_id, group.background))
         predictions[group.group_id] = (
-            amplitude * _project_forward(group.time_us, frequencies, f, phase_degrees=phase)
+            amplitude
+            * _project_forward(
+                group.time_us,
+                frequencies,
+                f,
+                phase_degrees=phase,
+                pulse_amp=maxent_input.pulse_amp,
+                pulse_phase=maxent_input.pulse_phase,
+            )
             + background
         )
     return predictions
@@ -754,8 +970,73 @@ def tropus(
             frequencies,
             np.asarray(values, dtype=np.float64),
             phase_degrees=phase,
+            pulse_amp=maxent_input.pulse_amp,
+            pulse_phase=maxent_input.pulse_phase,
         )
     return output
+
+
+@dataclass(frozen=True)
+class ReconstructedGroup:
+    """One group's time-domain reconstruction over its in-window points.
+
+    All arrays are masked to the group's good (finite, positive-σ, in-window)
+    points, in the engine's internal normalised signal space — the same space
+    the χ² is computed in, so ``chi2`` here equals this group's contribution to
+    the engine's reported χ² exactly.
+    """
+
+    group_id: int
+    group_name: str
+    time_us: NDArray[np.float64]
+    data: NDArray[np.float64]
+    model: NDArray[np.float64]
+    sigma: NDArray[np.float64]
+    residual: NDArray[np.float64]
+    chi2: float
+    n_obs: int
+
+
+def reconstruct_group_signals(
+    maxent_input: MaxEntInput,
+    state: MaxEntState,
+) -> dict[int, ReconstructedGroup]:
+    """Return the per-group time-domain reconstruction for a converged state.
+
+    The forward model (``opus``) of the shared spectrum is the reconstruction
+    that the engine fits to each group's data; this packages it alongside the
+    observed signal, σ, and the weighted residual ``(data − model)/σ`` for the
+    overlay.  Summing :attr:`ReconstructedGroup.chi2` over groups reproduces the
+    engine's reported χ² (same residual computation as ``_residual_payload``).
+    """
+    predictions = opus(
+        state.spectrum,
+        maxent_input,
+        phases=state.phases,
+        amplitudes=state.amplitudes,
+        backgrounds=state.backgrounds,
+    )
+    reconstructions: dict[int, ReconstructedGroup] = {}
+    for group in maxent_input.groups:
+        mask = group.mask if group.mask is not None else np.ones(group.time_us.size, dtype=bool)
+        time = np.asarray(group.time_us, dtype=np.float64)[mask]
+        data = np.asarray(group.signal, dtype=np.float64)[mask]
+        model = np.asarray(predictions[group.group_id], dtype=np.float64)[mask]
+        sigma = np.maximum(np.asarray(group.sigma, dtype=np.float64)[mask], _MIN_POSITIVE)
+        residual = (data - model) / sigma
+        chi2 = float(np.sum(residual**2))
+        reconstructions[group.group_id] = ReconstructedGroup(
+            group_id=int(group.group_id),
+            group_name=str(group.group_name),
+            time_us=time,
+            data=data,
+            model=model,
+            sigma=sigma,
+            residual=residual,
+            chi2=chi2,
+            n_obs=int(time.size),
+        )
+    return reconstructions
 
 
 def _state_signature(maxent_input: MaxEntInput, config: MaxEntConfig) -> tuple[Any, ...]:
@@ -777,6 +1058,17 @@ def _state_signature(maxent_input: MaxEntInput, config: MaxEntConfig) -> tuple[A
         None if config.t_min_us is None else round(float(config.t_min_us), 12),
         None if config.t_max_us is None else round(float(config.t_max_us), 12),
         int(config.time_binning_factor),
+        # Pulse-shape response and the interior exclusion window both reshape the
+        # forward model / the data weighting, so a resumed state with a changed
+        # setting would iterate a stale spectrum against an incompatible model.
+        str(config.pulse_mode),
+        round(float(config.pulse_half_width_us), 12),
+        round(float(config.pulse_separation_us), 12),
+        None if config.exclude_t_min_us is None else round(float(config.exclude_t_min_us), 12),
+        None if config.exclude_t_max_us is None else round(float(config.exclude_t_max_us), 12),
+        # ZF/LF mode ties group amplitudes/backgrounds and pins phases, so it
+        # reshapes the fit; a changed mode must invalidate a resumed state.
+        str(config.mode),
         # Effective phase seeds: ``state.phases`` is seeded from these at
         # initialisation and a resumed state never re-reads the config, so an
         # edited seed must force a restart or it would be silently ignored
@@ -800,6 +1092,8 @@ def _initial_spectrum(maxent_input: MaxEntInput) -> NDArray[np.float64]:
                 frequencies,
                 weighted,
                 phase_degrees=group.phase_degrees,
+                pulse_amp=maxent_input.pulse_amp,
+                pulse_phase=maxent_input.pulse_phase,
             )
         )
         if power.size and np.nanmax(power) > 0.0:
@@ -870,13 +1164,20 @@ def _residual_gradient_payload(
     seconds, and window-close waits on cooperative cancel with a timeout.
     """
     frequencies = maxent_input.frequencies_mhz
-    f = np.asarray(state.spectrum, dtype=np.float64)
+    pulse_amp = maxent_input.pulse_amp
+    pulse_phase = maxent_input.pulse_phase
+    # Fold R(ν) into the spectrum once for every group's forward projection; the
+    # adjoint gradient gets it back once at the end (R is common to all groups,
+    # so it factors straight out of the group sum).  Net: no scaled kernel block
+    # is materialised in the chunk loop.
+    f = _apply_pulse_amp(np.asarray(state.spectrum, dtype=np.float64), pulse_amp)
     grad = np.zeros(frequencies.size, dtype=np.float64)
     chi2 = 0.0
     n_obs = 0
     for group in maxent_input.groups:
         mask = group.mask if group.mask is not None else np.ones(group.time_us.size, dtype=bool)
         phase = np.deg2rad(float(state.phases.get(group.group_id, group.phase_degrees)))
+        offset = _kernel_phase_offset(phase, pulse_phase)
         amplitude = float(state.amplitudes.get(group.group_id, group.amplitude))
         background = float(state.backgrounds.get(group.group_id, group.background))
         time = np.asarray(group.time_us, dtype=np.float64)
@@ -891,14 +1192,14 @@ def _residual_gradient_payload(
                 continue
             matrix = np.cos(
                 2.0 * np.pi * time[start:stop][rows, np.newaxis] * frequencies[np.newaxis, :]
-                + phase
+                + offset
             )
             pred = amplitude * (matrix @ f) + background
             residual = (signal[start:stop][rows] - pred) / sigma[start:stop][rows]
             chi2 += float(np.dot(residual, residual))
             n_obs += int(np.count_nonzero(rows))
             grad += amplitude * (matrix.T @ (residual / sigma[start:stop][rows]))
-    return grad, chi2, n_obs
+    return _apply_pulse_amp(grad, pulse_amp), chi2, n_obs
 
 
 def _check_cancel(cancel_callback: MaxEntCancelCallback | None) -> None:
@@ -965,7 +1266,8 @@ def _fit_group_nuisance(
                     if config.fit_backgrounds or config.fit_constant_background:
                         state.backgrounds[group.group_id] = float(coeffs[idx])
 
-        if config.fit_phases:
+        # ZF/LF pins phases at 0/180; never refit them in that mode.
+        if config.fit_phases and config.mode != "zf_lf":
             current = float(state.phases.get(group.group_id, group.phase_degrees))
             candidates = current + np.linspace(-4.0, 4.0, 9)
             _check_cancel(cancel_callback)
@@ -975,6 +1277,8 @@ def _fit_group_nuisance(
                 np.asarray(group.time_us, dtype=float)[mask],
                 maxent_input.frequencies_mhz,
                 state.spectrum,
+                pulse_amp=maxent_input.pulse_amp,
+                pulse_phase=maxent_input.pulse_phase,
             )
             amplitude = float(state.amplitudes[group.group_id])
             background = float(state.backgrounds[group.group_id])
@@ -992,6 +1296,43 @@ def _fit_group_nuisance(
                     best_score = score
                     best_phase = float(candidate)
             state.phases[group.group_id] = best_phase
+
+    _apply_zf_lf_tie(state, maxent_input, config)
+
+
+def _apply_zf_lf_tie(
+    state: MaxEntState,
+    maxent_input: MaxEntInput,
+    config: MaxEntConfig,
+) -> None:
+    """Tie the two F/B group amplitudes and backgrounds through α (ZF/LF mode).
+
+    Mirrors WiMDA's per-cycle redistribution: the two independently fitted
+    values are summed and split in ratio α:1 (group1 = α·group2), enforcing the
+    F = α·B detector-efficiency balance after the least-squares step rather than
+    as a constraint inside it.
+    """
+    if config.mode != "zf_lf":
+        return
+    alpha = maxent_input.zf_lf_alpha
+    if alpha is None or not np.isfinite(alpha) or alpha <= 0.0 or len(maxent_input.groups) != 2:
+        return
+    forward_id = int(maxent_input.groups[0].group_id)
+    backward_id = int(maxent_input.groups[1].group_id)
+    # Only redistribute the quantities the user is actually fitting — a disabled
+    # amplitude/background fit must stay frozen (mirrors WiMDA, which ties inside
+    # MODAMP/MODBAK, i.e. only when those values are being refit).
+    tied: list[tuple[dict[int, float], float, float]] = []
+    if config.fit_amplitudes:
+        tied.append((state.amplitudes, 0.01, 100.0))
+    if config.fit_backgrounds or config.fit_constant_background:
+        tied.append((state.backgrounds, -np.inf, np.inf))
+    for table, lo, hi in tied:
+        x_forward = float(table.get(forward_id, 0.0))
+        x_backward = float(table.get(backward_id, 0.0))
+        tied_backward = (x_forward + x_backward) / (1.0 + alpha)
+        table[backward_id] = float(np.clip(tied_backward, lo, hi))
+        table[forward_id] = float(np.clip(alpha * table[backward_id], lo, hi))
 
 
 def _entropy(spectrum: NDArray[np.float64], default_level: float) -> float:
@@ -1162,6 +1503,7 @@ def run_cycles(
         stop_reason=stop_reason,
         converged=converged,
         diverged=diverged,
+        maxent_input=maxent_input,
     )
 
 

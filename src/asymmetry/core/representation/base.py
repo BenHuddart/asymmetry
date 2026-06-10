@@ -28,6 +28,7 @@ class RepresentationType(str, Enum):
 
     TIME_FB_ASYMMETRY = "time_fb_asymmetry"
     TIME_GROUPS = "time_groups"
+    TIME_MAXENT_RECON = "time_maxent_recon"
     FREQ_FFT = "freq_fft"
     FREQ_MAXENT = "freq_maxent"
 
@@ -41,6 +42,7 @@ class RepresentationType(str, Enum):
 DOMAIN_OF: dict[RepresentationType, str] = {
     RepresentationType.TIME_FB_ASYMMETRY: "time",
     RepresentationType.TIME_GROUPS: "time",
+    RepresentationType.TIME_MAXENT_RECON: "time",
     RepresentationType.FREQ_FFT: "frequency",
     RepresentationType.FREQ_MAXENT: "frequency",
 }
