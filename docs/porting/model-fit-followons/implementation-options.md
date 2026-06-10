@@ -565,3 +565,69 @@ Build clean with `python tools/harness.py docs`.
 | E5 | Quadrature operator | none (no composite-of-components grammar; QuadBG is a fixed model) | `⊕ = √(f²+g²)` as a first-class parameter-grammar operator; `PowerLaw ⊕ Constant ≡ PowerLawQuadBG` |
 | E6 | x-uncertainty in cross-group fits | x exact, no cross-group concept | optional effective variance (Orear/York), default off → identical to OLS; reuses the single-series estimator |
 | E7 | Global-parameter recursion | second-level Model Fit Table is a text log, not trendable | shared globals accumulate into a trendable `Global summary` series across successive fits |
+
+## Verification outcomes — second pass (2026-06-10, `feat/model-fit-finish`)
+
+All four follow-ons implemented in the agreed order **C → D → B → A**; full
+`python tools/harness.py validate` green after each (2109 → 2113 → 2117 → 2127
+passed, 1 xfailed), `docs` builds clean (only pre-existing missing-screenshot /
+`_static` warnings), milestone commit per phase.
+
+- **Phase C** (`55d70d1`): extracted `_effective_variance_residual` as the
+  single shared central-difference estimator and refactored the single-series
+  cost onto it (byte-identical); `global_fit_parameter_model` gained
+  `xerr: Mapping[gid, array]` composing with windows + error modes, ignored
+  under None/Scatter. `ParameterGroupData.xerr` added.
+  `CrossGroupFitDialog._supports_x_errors=True`, σ_x threaded through the
+  window-slice/snapshot, `use_x_errors` persisted (dialog config + panel
+  serialiser, legacy → off). Tests: σ_x=0 byte-identical to OLS; cross-group
+  eff-var **equals the single-series eff-var on identical groups** (the shared
+  estimator); σ_x inflates σ; None/Scatter ignore it; dialog exposes + gates +
+  round-trips the toggle.
+- **Phase D** (`eb7733b`): `_accumulate_global_summary_row` upserts one row per
+  *distinct* cross-group fit into a singleton `modelfit-globals-<rep>` series
+  (keyed by the per-fit logical key → re-run replaces), carrying that fit's
+  globals + χ²ᵣ + a monotonic first-seen `fit_index`; rows sit off both physical
+  axes and are trended vs `fit_index` or a global via arbitrary-X.
+  `_infer_x_key` now spans finite coordinates only (no all-NaN-slice warning for
+  an entirely-off-axis series). Tests: two fits → 2 members; trendable vs
+  `fit_index`; re-run replaces (index kept); JSON round-trip.
+- **Phase B** (`a4ef172`): new panel `model_fit_completed` signal →
+  `_record_single_model_fit_results_series`, one member per successful
+  `ModelFitRange`, x = window centre (`effective_range_bounds` midpoint), carried
+  as a `range_center` column and onto the physical axis slot for
+  field/temperature x-keys; deterministic `modelfit-single-<sha1(param::x_key)>`
+  id → re-run replaces. Extracted `_add_results_series` shared by the
+  cross-group, Global-summary, and single-fit recorders. Tests: two-range fit →
+  rows at the window centres; recursion succeeds; re-run replaces; JSON
+  round-trip.
+- **Phase A** (`76e4836`): `⊕` added to the parameter grammar only —
+  `parse_component_expression` parameterised by `allowed_operators` (time-domain
+  stays byte-identical and **rejects** `⊕`), tokenizer recognises the glyph,
+  `_PARAMETER_ALLOWED_OPERATORS`, precedence = `+`/`-`, evaluated as √(lhs²+rhs²)
+  in both the flat and parenthesised paths, additive-component aware, `⊕` keypad
+  button via `extra_token_buttons`. **Oracle exact** (max abs diff `0.0`):
+  `PowerLaw ⊕ Constant` (power-law `c`=0) == `PowerLawQuadBG`. Tests also cover
+  associativity, precedence vs `+`/`*`, parentheses, `to_dict`/expression
+  round-trip, operator validation, time-domain rejection, the keypad + build.
+
+### Divergences from the planned design (recorded)
+- **D's default-x ambition vs reality.** The plan hoped `fit_index` would be the
+  *literal default* x for the Global summary series; a computed `FitSeries`
+  carries no inferred-x hint, and forcing one would mean threading new state
+  through the schema. Implemented instead as: rows off both physical axes
+  (default x-inference returns `run`), with `fit_index` and every global exposed
+  as selectable arbitrary-X columns. The decision-D requirement (globals
+  *trendable across fits*) is met; the literal default is a deferred nicety.
+- **B/D member keys vs `fit_index` ordering.** Member keys must be deterministic
+  (sha1-derived) so re-running a fit replaces its row; that conflicts with using
+  the key itself as a monotonic axis, so `fit_index` is stored as a separate
+  values column rather than encoded in the key.
+
+### Follow-ons retired / newly recorded
+Retired (now shipped): single-fit-range export (#1 → B), cross-group
+x-uncertainty (#2 → C), cross-fit global accumulation (#3 → D), quadrature
+combinator (#4 → A). Still open: **single-fit accumulation across fits**,
+**`⊕` in the time-domain grammar**, **python-user-functions** (Wave B). A small
+UX nicety also recorded: a stale single-fit / cross-group results series is not
+auto-removed when its source fit is deleted (consistent across both paths).

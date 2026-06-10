@@ -391,6 +391,25 @@ uncertainties and every group's local uncertainties.
        error_mode="scatter", windows=[(0.0, 40.0), (60.0, 100.0)],
    )
 
+When the cross-group abscissa is itself a fitted parameter, the same
+**effective-variance** x-uncertainty treatment used for single-series fits
+(`Accounting for x Uncertainty`_) is available here too. Tick **Account for x
+uncertainty** in the cross-group dialog, or pass per-group :math:`\sigma_x`
+arrays as ``xerr`` (keyed by ``group_id``); each group's points are weighted by
+:math:`\sigma_{y}^2 + (\partial f/\partial x)^2\,\sigma_x^2` with the *same*
+estimator as the single-series path. It is off by default, reduces exactly to
+ordinary least squares when :math:`\sigma_x = 0`, and is ignored under the
+*None* / *Estimate from scatter* modes (whose unit weights carry no scale to
+combine with :math:`\sigma_x`).
+
+.. code-block:: python
+
+   result = global_fit_parameter_model(
+       groups=groups, model=model,
+       global_params=["m"], local_params=["b"], fixed_params={},
+       xerr={"g1": nu_errors_g1, "g2": nu_errors_g2},
+   )
+
 Recursive Trending (Model-Fit Results as a Series)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -407,6 +426,26 @@ second-level *Model Fit Table*, which only stored the rows for inspection.
 
 Re-running the same cross-group fit (same parameter, x-axis, and group set)
 *replaces* its results series rather than accumulating duplicates.
+
+**Single-fit ranges.** A single-series fit is recorded the same way: each fit
+*range* contributes one row to a **Model fit (single): <parameter> vs <x>**
+series, carrying that range's fitted parameters and :math:`\chi^2_r`, indexed by
+the centre of the range's fitted x-window (in the trend's own x-units, also kept
+as a ``range_center`` column). A multi-range fit — for example one model below a
+transition and another above — is therefore immediately trendable: plot a fitted
+coefficient against the window centre to see how it drifts across the data.
+
+**Trending shared globals across fits.** Every successful cross-group fit also
+appends one row to a persistent **Global summary** series, carrying that fit's
+shared *global* parameters, :math:`\chi^2_r`, and a monotonic ``fit_index``.
+Because the globals from successive fits accumulate in one series, they can be
+trended against each other or against ``fit_index`` — the natural way to follow a
+shared parameter as you sweep a model choice, a fixed value, or a group set
+across a sequence of joint fits. Re-running a given fit updates its row in place
+(keyed by the same parameter / x-axis / group set), so the series records one row
+per *distinct* fit. These rows sit off the physical field/temperature axes;
+select ``fit_index`` or a global parameter as the x-axis (see
+`Trending One Parameter Against Another`_) to trend them.
 
 Magnetic Order Parameter
 ------------------------
