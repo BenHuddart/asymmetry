@@ -207,6 +207,8 @@ class SimulateDialog(QDialog):
         template = self._current_template()
         if template is None:
             return
+        # Keep values the user typed but has not generated with yet.
+        self._param_values.update(self._table_parameters())
         # Default the event budget to the template's realised statistics.
         total_counts = sum(float(h.counts.sum()) for h in template.histograms)
         if total_counts > 0:
@@ -239,6 +241,9 @@ class SimulateDialog(QDialog):
         self._param_values = values
 
     def _on_edit_model(self) -> None:
+        # Capture in-table edits first — the table rebuild below would
+        # otherwise silently revert values typed since the last Generate.
+        self._param_values.update(self._table_parameters())
         dialog = FitFunctionBuilderDialog(self, initial_model=self._model, domain="time")
         if dialog.exec():
             model = dialog.get_composite_model()

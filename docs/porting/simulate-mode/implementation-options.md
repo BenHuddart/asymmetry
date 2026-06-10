@@ -293,6 +293,44 @@ and discoveries beyond the plan:
 - `tests/test_simulate_dialog.py` added to the E402 per-file-ignores in
   `pyproject.toml` (the established GUI-test convention).
 
+### Code-review fixes (same day, recall-level review)
+
+A seven-angle review surfaced ten findings, all fixed and tested:
+
+1. **α split**: the per-detector weighting gave group totals F/B = α·n_F/n_B;
+   now each side's budget share is divided by its detector count, so the
+   ratio is α for any group sizes (a 1F/3B template previously reduced a
+   zero signal to −50 %).
+2. **Promoted builder grouping**: `build_run_from_detector_asymmetries`
+   carried the archetypes' 0-based detector entries; converted to the
+   repo-wide 1-based convention (its grouping previously reduced to
+   identically zero through `resolve_group_indices`).
+3. **Degrade provenance**: `metadata["source_file"]` is now blanked on the
+   derived run (it previously masqueraded as the source file for project
+   save/reload and the file-overwrite prompt).
+4. **Two-period degrade**: the period payload is now thinned per period and
+   preserved (histograms, mode, scaled per-period frames, recomputed
+   `period_reduced`); previously the derived run was silently a thinned
+   red period regardless of the user's period mode.
+5. **`good_frames` scales with the factor** (thinning by f *is* an f-times
+   shorter measurement; keeps an inherited deadtime correction exact).
+6. **Dialog**: typed parameter values are captured before Edit Model… /
+   template changes instead of being silently reverted.
+7. **`reduce_run_to_dataset`**: now honours `period_mode` and
+   `bunching_factor`, so derived runs surface exactly like their source.
+8. **Badging survives reload**: the tooltip helper also reads the
+   `nexus_fields["simulation"]` group of a reloaded synthetic file.
+9. **Run-number allocator docstring** corrected (real ISIS runs can exceed
+   90001; collision behaviour documented, follow-on stands).
+10. **Promoted builder errors**: exact Poisson propagation
+    (1−A²)/(F+B) replaces the inflated √(2/(F+B)).
+
+Plus two efficiency fixes: period payloads are excluded before the grouping
+deepcopy, and group signals are evaluated once per group (not per detector —
+32× fewer CompositeModel evaluations on a 64-detector template). Stale
+`candidates/simulate-mode/` links in ROADMAP.md and the umbrella brief
+updated.
+
 ## Recorded follow-ons
 
 - **Built-in ideal-instrument template** (no loaded run required) — the

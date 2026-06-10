@@ -34,12 +34,17 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.io.periods import (
+    combine_period_asymmetry,
+    select_period_histograms,
+)
 from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.core.transform.grouping import (
     group_forward_backward,
     resolve_group_indices,
 )
-from asymmetry.core.utils.constants import MUON_LIFETIME_US
+from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.utils.constants import MUON_LIFETIME_US, PeriodMode
 
 #: A per-group asymmetry signal: a callable evaluated on the time axis in
 #: microseconds (returning the *fractional* asymmetry), or an array on the
@@ -147,7 +152,9 @@ def build_run_from_detector_asymmetries(
         )
 
     n_groups = len(histograms)
-    groups = {gid: [gid - 1] for gid in range(1, n_groups + 1)}
+    # Grouping entries are 1-based detector numbers (the repo-wide convention
+    # decoded by resolve_group_indices); group g holds detector g.
+    groups = {gid: [gid] for gid in range(1, n_groups + 1)}
     group_names = {
         gid: det.get("label", f"Group {gid}")
         for gid, det in zip(range(1, n_groups + 1), detector_asymmetries, strict=True)
@@ -183,7 +190,9 @@ def build_run_from_detector_asymmetries(
     denom = fwd_post + bwd_post
     raw_asym = np.where(denom > 0, (fwd_post - bwd_post) / denom, 0.0) * 100.0
     time_post = time_full[t0_bin:]
-    error_post = np.where(denom > 0, np.sqrt(2.0 / denom), 0.0) * 100.0
+    # Exact Poisson propagation of (F−B)/(F+B): var = 4FB/(F+B)³ = (1−A²)/N.
+    variance = np.clip(1.0 - (raw_asym / 100.0) ** 2, 1e-3, 1.0)
+    error_post = np.where(denom > 0, np.sqrt(variance / np.clip(denom, 1.0, None)), 0.0) * 100.0
     return run, time_post, raw_asym, error_post
 
 
@@ -278,6 +287,11 @@ def expected_counts(
     if total_weight <= 0:
         raise ValueError("group_weights must leave at least one detector with rate.")
 
+    # Detectors in the same group with the same post-t0 grid share one model
+    # evaluation — a CompositeModel on a 64-detector template is evaluated
+    # once per group, not once per detector.
+    signal_cache: dict[tuple[int | None, int, float], NDArray[np.float64]] = {}
+
     expected: list[NDArray[np.float64]] = []
     for det, hist in enumerate(histograms):
         n_bins = hist.n_bins
@@ -294,7 +308,12 @@ def expected_counts(
             # (WiMDA uses the first-order N_d·Δt/τ.)
             n_events_det = total_events * weights[det] / total_weight
             n0 = n_events_det * (1.0 - np.exp(-bin_width / MUON_LIFETIME_US))
-            signal = _signal_values(group_signals.get(det_group.get(det)), t_post)
+            gid = det_group.get(det)
+            cache_key = (gid, n_post, bin_width)
+            signal = signal_cache.get(cache_key)
+            if signal is None:
+                signal = _signal_values(group_signals.get(gid), t_post)
+                signal_cache[cache_key] = signal
             envelope = n0 * np.exp(-t_post / MUON_LIFETIME_US) * (1.0 + signal)
             clean[t0_bin:] += np.clip(envelope, 0.0, None)
         expected.append(clean)
@@ -348,9 +367,9 @@ def simulate_run_from_group_signals(
         for hist, clean in zip(template.histograms, expected, strict=True)
     ]
 
-    grouping = copy.deepcopy(template.grouping)
-    for key in _PERIOD_KEYS:
-        grouping.pop(key, None)
+    # Filter the period payload (which can hold full per-detector histogram
+    # arrays for combined two-period templates) BEFORE deep-copying.
+    grouping = copy.deepcopy({k: v for k, v in template.grouping.items() if k not in _PERIOD_KEYS})
     grouping["deadtime_correction"] = False
     grouping["dead_time_us"] = [0.0] * len(histograms)
 
@@ -414,8 +433,10 @@ def simulate_run(
     ``parameters``) or a plain callable returning the asymmetry **in percent**
     on a time axis in microseconds — the same convention the fit panel uses.
     Forward-group detectors see ``+a(t)``, backward-group detectors ``−a(t)``
-    (every non-backward group counts as forward, as in WiMDA), with the α
-    split applied as group weights 2α/(1+α) and 2/(1+α).
+    (every non-backward group counts as forward, as in WiMDA). The α split
+    fixes the forward/backward group *totals* at 2α/(1+α) : 2/(1+α) of the
+    event budget, divided equally among each side's detectors, so the
+    reduction recovers a(t) with α restored regardless of group sizes.
 
     α defaults to the template grouping's balance factor. See
     :func:`simulate_run_from_group_signals` for the sampling and provenance
@@ -461,15 +482,20 @@ def simulate_run(
 
     det_groups = _detector_group_map(grouping, len(template.histograms))
     group_ids = sorted(set(det_groups.values()))
+    # The α split fixes the GROUP TOTALS at F:B = α; each side's budget share
+    # is divided by its detector count so unequal group sizes cannot skew the
+    # ratio (a per-detector weight alone would give F/B = α·n_F/n_B).
+    n_backward = sum(1 for gid in det_groups.values() if gid == backward_gid)
+    n_forward = len(det_groups) - n_backward
     group_signals: dict[int, GroupSignal] = {}
     group_weights: dict[int, float] = {}
     for gid in group_ids:
         if gid == backward_gid:
             group_signals[gid] = backward_signal
-            group_weights[gid] = 2.0 / (1.0 + alpha)
+            group_weights[gid] = 2.0 / (1.0 + alpha) / max(1, n_backward)
         else:
             group_signals[gid] = forward_signal
-            group_weights[gid] = 2.0 * alpha / (1.0 + alpha)
+            group_weights[gid] = 2.0 * alpha / (1.0 + alpha) / max(1, n_forward)
     if forward_gid not in group_signals or backward_gid not in group_signals:
         raise ValueError(
             "Template grouping must assign detectors to both the forward and backward groups."
@@ -517,7 +543,13 @@ def degrade_run(
 
     Returns a **new** :class:`Run` (the source run is untouched) with
     ``metadata["degraded"]`` provenance. A fixed seed reproduces the
-    resampling bit-for-bit.
+    resampling bit-for-bit. ``grouping["good_frames"]`` (and the per-period
+    frame counts) are scaled by ``factor`` — thinning by f *is* a measurement
+    f times shorter, and an inherited deadtime correction only stays exact
+    when counts and frames scale together. Combined two-period runs keep
+    their period payload: each period's histograms are thinned with the same
+    generator and the stored per-period reductions are recomputed, so period
+    selection keeps working on the derived run.
     """
     if not np.isfinite(factor) or factor <= 0:
         raise ValueError("Degrade factor must be positive and finite.")
@@ -525,8 +557,8 @@ def degrade_run(
         raise ValueError("Degrade statistics requires a run with detector histograms.")
 
     rng = np.random.default_rng(seed)
-    histograms: list[Histogram] = []
-    for hist in run.histograms:
+
+    def thin(hist: Histogram) -> Histogram:
         counts = np.clip(np.rint(np.asarray(hist.counts, dtype=float)), 0, None)
         if factor < 1.0:
             new_counts = rng.binomial(counts.astype(np.int64), factor)
@@ -534,25 +566,70 @@ def degrade_run(
             new_counts = counts
         else:
             new_counts = rng.poisson(counts * factor)
-        histograms.append(
-            Histogram(
-                counts=np.asarray(new_counts, dtype=float),
-                bin_width=float(hist.bin_width),
-                t0_bin=int(hist.t0_bin),
-                good_bin_start=int(hist.good_bin_start),
-                good_bin_end=int(hist.good_bin_end),
-            )
+        return Histogram(
+            counts=np.asarray(new_counts, dtype=float),
+            bin_width=float(hist.bin_width),
+            t0_bin=int(hist.t0_bin),
+            good_bin_start=int(hist.good_bin_start),
+            good_bin_end=int(hist.good_bin_end),
         )
 
-    grouping = copy.deepcopy(run.grouping)
-    for key in _PERIOD_KEYS:
-        grouping.pop(key, None)
+    source_grouping = run.grouping if isinstance(run.grouping, dict) else {}
+    period_lists = source_grouping.get("period_histograms")
+    has_periods = (
+        isinstance(period_lists, list)
+        and len(period_lists) >= 2
+        and all(isinstance(period, list) and period for period in period_lists)
+    )
+
+    # The period payload holds full histogram arrays; exclude it from the
+    # deepcopy and rebuild it from the thinned periods below.
+    grouping = copy.deepcopy({k: v for k, v in source_grouping.items() if k not in _PERIOD_KEYS})
+
+    if has_periods:
+        # run.histograms on a combined two-period run are clones of period 0
+        # (the loader convention) — thin the periods, then mirror that.
+        thinned_periods = [[thin(hist) for hist in period] for period in period_lists]
+        histograms = [
+            Histogram(
+                counts=hist.counts.copy(),
+                bin_width=hist.bin_width,
+                t0_bin=hist.t0_bin,
+                good_bin_start=hist.good_bin_start,
+                good_bin_end=hist.good_bin_end,
+            )
+            for hist in thinned_periods[0]
+        ]
+        grouping["period_histograms"] = thinned_periods
+        if "period_mode" in source_grouping:
+            grouping["period_mode"] = source_grouping["period_mode"]
+        period_good_frames = source_grouping.get("period_good_frames")
+        if isinstance(period_good_frames, list):
+            grouping["period_good_frames"] = [float(value) * factor for value in period_good_frames]
+        if "period_dead_time_us" in source_grouping:
+            grouping["period_dead_time_us"] = copy.deepcopy(source_grouping["period_dead_time_us"])
+        # Recompute the stored per-period reductions (loader convention:
+        # default reduction at α = 1) from the thinned histograms.
+        grouping["period_reduced"] = [
+            _reduce_histograms(period, {**grouping, "alpha": 1.0}) for period in thinned_periods
+        ]
+    else:
+        histograms = [thin(hist) for hist in run.histograms]
+
+    try:
+        grouping["good_frames"] = float(grouping.get("good_frames", 1.0)) * factor
+    except (TypeError, ValueError):
+        pass
 
     number = run.run_number if run_number is None else int(run_number)
     metadata = dict(run.metadata)
     source_label = metadata.get("run_label") or str(run.run_number)
     metadata.pop("nexus_fields", None)
     metadata.pop("nexus_time_series", None)
+    # The derived run was not loaded from the source's file; leaving the path
+    # in place would make project save/reload and the file-overwrite prompt
+    # treat it as the original run.
+    metadata["source_file"] = ""
     metadata.update(
         {
             "run_number": number,
@@ -581,19 +658,12 @@ def degrade_run(
 # ---------------------------------------------------------------------------
 
 
-def reduce_run_to_dataset(run: Run) -> MuonDataset:
-    """Reduce a run to its F-B asymmetry :class:`MuonDataset` (percent).
-
-    Mirrors the loader reduction (``NexusLoader``): align and sum the
-    forward/backward groups, form the α-balanced asymmetry in percent, slice
-    to the good-bin window and build the time axis from the common t0. Used
-    to surface synthetic and degraded runs in the Data Browser exactly like
-    loaded ones.
-    """
-    if not run.histograms:
-        raise ValueError("Reduction requires a run with detector histograms.")
-    grouping = run.grouping if isinstance(run.grouping, dict) else {}
-    fb = group_forward_backward(run.histograms, grouping)
+def _reduce_histograms(
+    histograms: list[Histogram],
+    grouping: dict,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Loader-convention F-B reduction of one histogram set (percent)."""
+    fb = group_forward_backward(histograms, grouping)
 
     n = min(fb.forward.size, fb.backward.size)
     asymmetry, error = compute_asymmetry(fb.forward[:n], fb.backward[:n], fb.alpha)
@@ -614,8 +684,56 @@ def reduce_run_to_dataset(run: Run) -> MuonDataset:
 
     asymmetry = asymmetry[first_good : last_good + 1]
     error = error[first_good : last_good + 1]
-    bin_width = float(run.histograms[0].bin_width)
+    bin_width = float(histograms[0].bin_width) if histograms else 1.0
     time = (np.arange(asymmetry.size, dtype=float) + first_good - fb.common_t0) * bin_width
+    return time, asymmetry, error
+
+
+def reduce_run_to_dataset(run: Run) -> MuonDataset:
+    """Reduce a run to its F-B asymmetry :class:`MuonDataset` (percent).
+
+    Mirrors the loader reduction (``NexusLoader``): align and sum the
+    forward/backward groups, form the α-balanced asymmetry in percent, slice
+    to the good-bin window and build the time axis from the common t0. Runs
+    carrying a two-period payload are reduced according to their
+    ``period_mode`` (red, green, or the green∓red combinations), and a
+    ``bunching_factor`` above one is applied, so a derived run surfaces in
+    the Data Browser looking exactly like its source. Used for synthetic and
+    degraded runs.
+    """
+    if not run.histograms:
+        raise ValueError("Reduction requires a run with detector histograms.")
+    grouping = run.grouping if isinstance(run.grouping, dict) else {}
+
+    period_lists = grouping.get("period_histograms")
+    has_periods = (
+        isinstance(period_lists, list)
+        and len(period_lists) >= 2
+        and all(isinstance(period, list) and period for period in period_lists)
+    )
+    mode = str(grouping.get("period_mode", PeriodMode.RED))
+    if has_periods and mode in {
+        str(PeriodMode.GREEN_MINUS_RED),
+        str(PeriodMode.GREEN_PLUS_RED),
+    }:
+        red_hists, red_grouping = select_period_histograms(run.histograms, grouping, 0)
+        green_hists, green_grouping = select_period_histograms(run.histograms, grouping, 1)
+        red = _reduce_histograms(red_hists, red_grouping)
+        green = _reduce_histograms(green_hists, green_grouping)
+        time, asymmetry, error = combine_period_asymmetry(*red, *green, mode)
+    elif has_periods:
+        index = 1 if mode == str(PeriodMode.GREEN) else 0
+        hists, period_grouping = select_period_histograms(run.histograms, grouping, index)
+        time, asymmetry, error = _reduce_histograms(hists, period_grouping)
+    else:
+        time, asymmetry, error = _reduce_histograms(run.histograms, grouping)
+
+    try:
+        bunch_factor = max(1, int(grouping.get("bunching_factor", 1)))
+    except (TypeError, ValueError):
+        bunch_factor = 1
+    if bunch_factor > 1 and asymmetry.size > 0:
+        time, asymmetry, error = rebin(time, asymmetry, error, bunch_factor)
 
     metadata = dict(run.metadata)
     metadata.setdefault("run_number", run.run_number)

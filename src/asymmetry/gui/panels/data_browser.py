@@ -395,8 +395,12 @@ class DataBrowserPanel(QWidget):
     def next_derived_run_number(self) -> int:
         """Reserve a run number for a synthetic or degraded run.
 
-        Numbers start at 90001, clear of real ISIS/PSI run series, and skip
-        anything already in the browser or previously reserved this session.
+        Numbers start at 90001 and skip anything already loaded or reserved
+        this session. Real ISIS run numbers can exceed this (modern runs are
+        six digits), so a file loaded *later* could carry the same number —
+        ``add_dataset`` keys entries by run number and would replace the
+        derived run. Acceptable for session-scoped derived data; revisit if
+        derived runs gain a persistent identity.
         """
         number = 90001
         existing = set(self._datasets) | self._reserved_run_numbers
@@ -671,7 +675,19 @@ class DataBrowserPanel(QWidget):
 
     @staticmethod
     def _derived_run_tooltip(meta: dict) -> str:
-        """Provenance tooltip for synthetic/degraded entries, '' otherwise."""
+        """Provenance tooltip for synthetic/degraded entries, '' otherwise.
+
+        Reads the in-session metadata written by ``core.simulate`` and, for
+        runs reloaded from a saved synthetic NeXus file, the ``simulation``
+        group surfaced by the loader under ``metadata["nexus_fields"]`` — so
+        a saved-and-reopened synthetic run stays badged.
+        """
+
+        def text(value: object) -> str:
+            if isinstance(value, bytes):
+                return value.decode("utf-8", errors="replace")
+            return str(value)
+
         sim = meta.get("simulation")
         if meta.get("synthetic") and isinstance(sim, dict):
             return (
@@ -686,6 +702,29 @@ class DataBrowserPanel(QWidget):
                 f"{degraded.get('source_run_label', degraded.get('source_run_number', '?'))} "
                 f"(seed {degraded.get('seed', '?')})"
             )
+
+        nexus_fields = meta.get("nexus_fields")
+        file_sim = nexus_fields.get("simulation") if isinstance(nexus_fields, dict) else None
+        if isinstance(file_sim, dict):
+            factor = file_sim.get("degrade_factor")
+            if factor is not None:
+                return (
+                    f"Degraded ×{text(factor)} from run "
+                    f"{text(file_sim.get('degrade_source_run_label', file_sim.get('degrade_source_run_number', '?')))} "
+                    f"(seed {text(file_sim.get('degrade_seed', '?'))}; reloaded from file)"
+                )
+            try:
+                is_synthetic = int(np.asarray(file_sim.get("synthetic", 0)).flat[0])
+            except (TypeError, ValueError):
+                is_synthetic = 0
+            if is_synthetic:
+                return (
+                    "Synthetic run — model: "
+                    f"{text(file_sim.get('model', '?'))}; "
+                    f"seed {text(file_sim.get('seed', '?'))}; "
+                    f"template run {text(file_sim.get('template_run_number', '?'))} "
+                    "(reloaded from file)"
+                )
         return ""
 
     def _add_dataset_row(self, dataset: MuonDataset, *, indent: bool) -> None:

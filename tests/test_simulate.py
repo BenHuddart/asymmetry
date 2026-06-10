@@ -160,6 +160,38 @@ class TestAlphaSplit:
         sigma = float(1.0 / np.sqrt(np.sum(w)))
         assert abs(mean) < 4.0 * sigma
 
+    def test_unequal_group_sizes_keep_alpha_ratio(self) -> None:
+        """The α split fixes group TOTALS, so 1F vs 3B detectors still gives F/B = α."""
+        alpha = 1.3
+        n_bins = 1000
+        histograms = [
+            Histogram(counts=np.zeros(n_bins), bin_width=BIN_WIDTH, t0_bin=T0_BIN) for _ in range(4)
+        ]
+        template = Run(
+            run_number=77,
+            histograms=histograms,
+            metadata={"title": "uneven"},
+            grouping={
+                "groups": {1: [1], 2: [2, 3, 4]},
+                "forward_group": 1,
+                "backward_group": 2,
+                "alpha": alpha,
+                "first_good_bin": T0_BIN,
+                "last_good_bin": n_bins - 1,
+            },
+        )
+        run = simulate_run(template, _zero_model, total_events=8.0e6, seed=13)
+        fwd = float(run.histograms[0].counts.sum())
+        bwd = sum(float(run.histograms[i].counts.sum()) for i in (1, 2, 3))
+        assert np.isclose(fwd / bwd, alpha, rtol=1e-2)
+
+        # And therefore zero signal still reduces to zero asymmetry.
+        dataset = reduce_run_to_dataset(run)
+        w = 1.0 / dataset.error**2
+        mean = float(np.sum(w * dataset.asymmetry) / np.sum(w))
+        sigma = float(1.0 / np.sqrt(np.sum(w)))
+        assert abs(mean) < 4.0 * sigma
+
     def test_total_budget_independent_of_alpha(self) -> None:
         template_balanced = _template(alpha=1.0)
         template_skewed = _template(alpha=2.5)
@@ -426,6 +458,127 @@ class TestDegrade:
         with pytest.raises(ValueError, match="factor"):
             degrade_run(source, float("nan"))
 
+    def test_source_file_metadata_blanked(self) -> None:
+        """The derived run must not masquerade as loaded from the source's file."""
+        source = _flat_rate_run()
+        source.metadata["source_file"] = "/data/REAL00001.nxs"
+        derived = degrade_run(source, 0.5, seed=1)
+        assert derived.source_file == ""
+        assert derived.metadata["source_file"] == ""
+        # Source untouched.
+        assert source.metadata["source_file"] == "/data/REAL00001.nxs"
+
+    def test_good_frames_scaled_by_factor(self) -> None:
+        """Thinning by f is a measurement f times shorter — frames must scale."""
+        source = _flat_rate_run()
+        assert source.grouping["good_frames"] == 25000.0
+        derived = degrade_run(source, 0.25, seed=2)
+        assert derived.grouping["good_frames"] == pytest.approx(6250.0)
+        # Inherited deadtimes stay (the instrument's own values), with the
+        # correction now consistent: counts and frames scale together.
+        assert derived.grouping["dead_time_us"] == source.grouping["dead_time_us"]
+
+
+def _two_period_run() -> Run:
+    """A combined-style two-period run: A = +60 % in red, −60 % in green."""
+    n_bins = 400
+
+    def _hists(forward_rate: float, backward_rate: float) -> list[Histogram]:
+        rng = np.random.default_rng(101)
+        return [
+            Histogram(
+                counts=rng.poisson(rate, n_bins).astype(float),
+                bin_width=BIN_WIDTH,
+                t0_bin=0,
+                good_bin_start=0,
+                good_bin_end=n_bins - 1,
+            )
+            for rate in (forward_rate, backward_rate)
+        ]
+
+    red = _hists(800.0, 200.0)
+    green = _hists(200.0, 800.0)
+    grouping = {
+        "groups": {1: [1], 2: [2]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "alpha": 1.0,
+        "first_good_bin": 0,
+        "last_good_bin": n_bins - 1,
+        "good_frames": 1000.0,
+        "period_histograms": [red, green],
+        "period_mode": "green",
+        "period_good_frames": [1000.0, 1000.0],
+    }
+    histograms = [
+        Histogram(
+            counts=h.counts.copy(),
+            bin_width=h.bin_width,
+            t0_bin=h.t0_bin,
+            good_bin_start=h.good_bin_start,
+            good_bin_end=h.good_bin_end,
+        )
+        for h in red
+    ]
+    return Run(
+        run_number=555,
+        histograms=histograms,
+        metadata={"title": "two period"},
+        grouping=grouping,
+    )
+
+
+class TestTwoPeriodHandling:
+    def test_reduce_honours_period_mode(self) -> None:
+        run = _two_period_run()
+        green_view = reduce_run_to_dataset(run)
+        assert float(green_view.asymmetry.mean()) == pytest.approx(-60.0, abs=2.0)
+
+        run.grouping["period_mode"] = "red"
+        red_view = reduce_run_to_dataset(run)
+        assert float(red_view.asymmetry.mean()) == pytest.approx(60.0, abs=2.0)
+
+        run.grouping["period_mode"] = "green_minus_red"
+        diff_view = reduce_run_to_dataset(run)
+        assert float(diff_view.asymmetry.mean()) == pytest.approx(-120.0, abs=3.0)
+
+    def test_degrade_thins_all_periods_and_keeps_payload(self) -> None:
+        run = _two_period_run()
+        derived = degrade_run(run, 0.25, seed=4)
+
+        periods = derived.grouping["period_histograms"]
+        assert len(periods) == 2
+        # Both periods thinned to a quarter of their rates (800→200, 200→50).
+        assert float(periods[0][0].counts.mean()) == pytest.approx(200.0, rel=0.05)
+        assert float(periods[1][0].counts.mean()) == pytest.approx(50.0, rel=0.05)
+        # run.histograms mirrors thinned period 0 (the loader convention).
+        assert np.array_equal(derived.histograms[0].counts, periods[0][0].counts)
+        # Frames scaled everywhere; mode preserved; reductions recomputed.
+        assert derived.grouping["good_frames"] == pytest.approx(250.0)
+        assert derived.grouping["period_good_frames"] == [
+            pytest.approx(250.0),
+            pytest.approx(250.0),
+        ]
+        assert derived.grouping["period_mode"] == "green"
+        assert len(derived.grouping["period_reduced"]) == 2
+
+        # The derived run still reduces as the period the user was viewing.
+        green_view = reduce_run_to_dataset(derived)
+        assert float(green_view.asymmetry.mean()) == pytest.approx(-60.0, abs=3.0)
+
+
+class TestBunching:
+    def test_reduce_applies_bunching_factor(self) -> None:
+        template = _template()
+        run = simulate_run(template, _exp_model, total_events=1.0e7, seed=21)
+        plain = reduce_run_to_dataset(run)
+
+        run.grouping["bunching_factor"] = 4
+        bunched = reduce_run_to_dataset(run)
+        assert bunched.n_points == plain.n_points // 4
+        spacing = float(np.median(np.diff(bunched.time)))
+        assert spacing == pytest.approx(4.0 * BIN_WIDTH, rel=1e-6)
+
 
 # ---------------------------------------------------------------------------
 # Promoted archetype helpers
@@ -456,10 +609,15 @@ class TestPromotedHelpers:
         )
         assert isinstance(run, Run)
         assert len(run.histograms) == 2
-        assert run.grouping["groups"] == {1: [0], 2: [1]}
+        # 1-based detector numbers, the convention resolve_group_indices decodes.
+        assert run.grouping["groups"] == {1: [1], 2: [2]}
         assert time_axis.size == asym.size == err.size
         # Early-time asymmetry near the generating 20 %.
         assert abs(float(asym[:50].mean()) - 20.0) < 2.0
+        # The grouping must reduce to the same signal (guards the 1-based
+        # convention end-to-end through resolve_group_indices).
+        reduced = reduce_run_to_dataset(run)
+        assert abs(float(reduced.asymmetry[:50].mean()) - 20.0) < 2.0
 
 
 # ---------------------------------------------------------------------------

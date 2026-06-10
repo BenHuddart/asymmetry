@@ -128,6 +128,27 @@ class TestSimulateDialog:
         dialog._on_generate()
         assert generated[0].run_number == 90555
 
+    def test_edit_model_preserves_typed_values(self, qapp, monkeypatch) -> None:
+        """Values typed into the table survive Edit Model… (cancel and accept)."""
+        from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
+
+        dialog = SimulateDialog([_template_dataset()], preselected_run=1234)
+        name = dialog._param_table.item(0, 0).text()
+        dialog._param_table.item(0, 1).setText("33.5")
+
+        monkeypatch.setattr(FitFunctionBuilderDialog, "exec", lambda self: 0)
+        dialog._on_edit_model()  # cancelled builder
+        assert dialog._table_parameters()[name] == pytest.approx(33.5)
+
+        monkeypatch.setattr(FitFunctionBuilderDialog, "exec", lambda self: 1)
+        monkeypatch.setattr(
+            FitFunctionBuilderDialog,
+            "get_composite_model",
+            lambda self, _model=dialog._model: _model,
+        )
+        dialog._on_edit_model()  # accepted builder, same model
+        assert dialog._table_parameters()[name] == pytest.approx(33.5)
+
     def test_save_as_nexus_round_trips(self, qapp, tmp_path, monkeypatch) -> None:
         dialog = SimulateDialog([_template_dataset()], preselected_run=1234)
         dialog._events_spin.setValue(1.0)
@@ -211,6 +232,32 @@ class TestDegradeAction:
         sim_item = row_texts["SIM 90010"]
         assert "Synthetic run" in sim_item.toolTip()
         assert "seed 2" in sim_item.toolTip()
+        browser.deleteLater()
+
+    def test_reloaded_synthetic_nexus_stays_badged(self, qapp, tmp_path) -> None:
+        """A saved-and-reopened synthetic run keeps its provenance badge."""
+        from asymmetry.core.io.nexus_writer import write_nexus_v1
+
+        run = simulate_run(
+            _template_run(),
+            lambda t: np.zeros_like(t),
+            total_events=1.0e6,
+            seed=5,
+            run_number=90020,
+        )
+        path = tmp_path / "sim.nxs"
+        write_nexus_v1(run, path)
+        reloaded = load(path)
+
+        browser = DataBrowserPanel()
+        browser.add_dataset(reloaded)
+        item = next(
+            browser._table.item(row, 0)
+            for row in range(browser._table.rowCount())
+            if browser._table.item(row, 0).text().strip() == "90020"
+        )
+        assert "Synthetic run" in item.toolTip()
+        assert "reloaded from file" in item.toolTip()
         browser.deleteLater()
 
     def test_degrade_dialog_defaults(self, qapp) -> None:
