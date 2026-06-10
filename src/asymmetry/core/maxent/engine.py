@@ -561,6 +561,9 @@ def build_maxent_input(
 
     groups: list[MaxEntGroupInput] = []
     max_points = 0
+    # Shared across the sweep so a reference_run background loads + deadtime-
+    # prepares once, not once per group.
+    background_reference_cache: dict = {}
     for group_id in selected:
         dataset = build_group_signal_dataset(
             run,
@@ -570,6 +573,7 @@ def build_maxent_input(
             use_deadtime=resolved_config.use_deadtime_correction,
             reference_t0_bin=reference_t0_bin,
             prepared_histograms=prepared_histograms,
+            background_reference_cache=background_reference_cache,
         )
         time = np.asarray(dataset.time, dtype=np.float64)
         signal = np.asarray(dataset.asymmetry, dtype=np.float64)

@@ -13,6 +13,7 @@ import pytest
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.grouped_time_domain import build_grouped_time_domain_datasets
 from asymmetry.core.transform import (
+    effective_group_indices,
     estimate_alpha_detailed,
     excluded_detector_indices,
     filter_excluded_indices,
@@ -75,6 +76,35 @@ def test_filter_excluded_indices():
     grouping = {"excluded_detectors": [2]}
     assert filter_excluded_indices([0, 1, 2], grouping) == [0, 2]
     assert filter_excluded_indices([0, 1, 2], {}) == [0, 1, 2]
+
+
+def test_effective_group_indices_is_the_exclusion_aware_chokepoint():
+    """The single resolver every reduction path shares: it decodes a group id
+    to 0-based indices AND drops excluded detectors and absent detectors, so a
+    new call site cannot resolve a group while forgetting exclusion."""
+    grouping = _grouping(excluded_detectors=[2])
+    # group 1 = detectors [1, 2] (0-based [0, 1]); detector 2 excluded -> [0]
+    assert effective_group_indices(grouping, 1) == [0]
+    assert effective_group_indices(grouping, 2) == [2, 3]
+    # n_histograms drops indices a run does not contain
+    assert effective_group_indices(_grouping(), 2, n_histograms=3) == [2]
+    # absent / malformed grouping resolves to empty rather than raising
+    assert effective_group_indices({}, 1) == []
+    assert effective_group_indices(None, 1) == []
+
+
+def test_effective_group_indices_matches_manual_compose():
+    """It is exactly filter_excluded_indices ∘ resolve_group_indices so the
+    migrated call sites keep their previous behaviour."""
+    from asymmetry.core.transform.grouping import _present_indices, resolve_group_indices
+
+    grouping = _grouping(excluded_detectors=[3])
+    groups = grouping["groups"]
+    for gid in (1, 2):
+        manual = filter_excluded_indices(
+            _present_indices(resolve_group_indices(groups, gid), 4), grouping
+        )
+        assert effective_group_indices(grouping, gid, n_histograms=4) == manual
 
 
 def test_exclusion_equals_manual_group_membership_removal():

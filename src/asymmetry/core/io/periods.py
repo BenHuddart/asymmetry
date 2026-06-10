@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.utils.constants import PeriodMode
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -446,6 +447,48 @@ def sum_period_histograms(period_histograms: list[list[Histogram]]) -> list[Hist
     return summed
 
 
+def _periods_for_target(mapping: dict[int, str], target: str) -> list[int]:
+    """1-based period numbers mapped to *target*, in ascending order."""
+    return [p for p in sorted(mapping) if mapping[p] == target]
+
+
+def _sum_period_set(runs: list[Run], periods: list[int]) -> list[Histogram]:
+    """Detector-wise count sum over the given 1-based periods."""
+    return sum_period_histograms([runs[p - 1].histograms for p in periods])
+
+
+def _sum_period_good_frames(runs: list[Run], periods: list[int]) -> float:
+    """Total good frames across the given 1-based periods (summed exposure)."""
+    return float(sum(good_frames(runs[p - 1].grouping) for p in periods))
+
+
+def _combined_dead_times(runs: list[Run], periods: list[int]) -> list[float]:
+    """One deadtime table for the summed period set.
+
+    Equal per-period tables pass through verbatim; differing tables get a
+    frame-weighted mean (the best single table for the summed counts). Each
+    surviving table keeps ITS period's frame weight, so periods without a table
+    do not shift the others. Ragged tables (malformed metadata) reduce to their
+    common detector count rather than crashing.
+    """
+    tables: list[tuple[list[float], float]] = []
+    for p in periods:
+        grouping = runs[p - 1].grouping if isinstance(runs[p - 1].grouping, dict) else {}
+        values = grouping.get("dead_time_us")
+        if isinstance(values, list) and values:
+            tables.append(([float(v) for v in values], _sum_period_good_frames(runs, [p])))
+    if not tables:
+        return []
+    n_detectors = min(len(values) for values, _ in tables)
+    reference = tables[0][0][:n_detectors]
+    if all(np.allclose(values[:n_detectors], reference) for values, _ in tables[1:]):
+        return list(reference)
+    stacked = np.asarray([values[:n_detectors] for values, _ in tables], dtype=np.float64)
+    weights = [frames for _, frames in tables]
+    table = np.average(stacked, axis=0, weights=weights)
+    return [float(v) for v in table]
+
+
 def combine_mapped_periods(
     period_datasets: list[MuonDataset],
     mapping: dict,
@@ -476,57 +519,20 @@ def combine_mapped_periods(
     n_periods = len(period_datasets)
     normalised = normalise_period_mapping(mapping, n_periods)
 
-    def _collect(target: str) -> list[int]:
-        return [p for p in sorted(normalised) if normalised[p] == target]
+    red_periods = _periods_for_target(normalised, "red")
+    green_periods = _periods_for_target(normalised, "green")
 
-    red_periods = _collect("red")
-    green_periods = _collect("green")
-
-    def _histograms(periods: list[int]) -> list[Histogram]:
-        return sum_period_histograms([_clone_histograms(runs[p - 1].histograms) for p in periods])
-
-    def _good_frames(periods: list[int]) -> float:
-        total = 0.0
-        for p in periods:
-            grouping = runs[p - 1].grouping if isinstance(runs[p - 1].grouping, dict) else {}
-            try:
-                total += float(grouping.get("good_frames", 1.0))
-            except (TypeError, ValueError):
-                total += 1.0
-        return total
-
-    def _dead_times(periods: list[int]) -> list[float]:
-        # Keep each surviving table paired with ITS period's frame count —
-        # periods without a table must not shift the weights of the others.
-        tables: list[tuple[list[float], float]] = []
-        for p in periods:
-            grouping = runs[p - 1].grouping if isinstance(runs[p - 1].grouping, dict) else {}
-            values = grouping.get("dead_time_us")
-            if isinstance(values, list) and values:
-                tables.append(([float(v) for v in values], _good_frames([p])))
-        if not tables:
-            return []
-        # Tables of different lengths (malformed metadata) reduce to their
-        # common detector count rather than crashing the mapping.
-        n_detectors = min(len(values) for values, _ in tables)
-        reference = tables[0][0][:n_detectors]
-        if all(np.allclose(values[:n_detectors], reference) for values, _ in tables[1:]):
-            return list(reference)
-        # Differing per-period deadtimes: frame-weighted mean is the best
-        # single table for the summed counts.
-        stacked = np.asarray([values[:n_detectors] for values, _ in tables], dtype=np.float64)
-        weights = [frames for _, frames in tables]
-        table = np.average(stacked, axis=0, weights=weights)
-        return [float(v) for v in table]
-
-    red_histograms = _histograms(red_periods)
+    # Counts are summed fresh by sum_period_histograms (it never mutates its
+    # inputs), so there is no need to clone each period before summing — only
+    # the final Run gets an independent copy below.
+    red_histograms = _sum_period_set(runs, red_periods)
     sets: list[list[Histogram]] = [red_histograms]
-    good_frames = [_good_frames(red_periods)]
-    dead_times = [_dead_times(red_periods)]
+    frames = [_sum_period_good_frames(runs, red_periods)]
+    dead_times = [_combined_dead_times(runs, red_periods)]
     if green_periods:
-        sets.append(_histograms(green_periods))
-        good_frames.append(_good_frames(green_periods))
-        dead_times.append(_dead_times(green_periods))
+        sets.append(_sum_period_set(runs, green_periods))
+        frames.append(_sum_period_good_frames(runs, green_periods))
+        dead_times.append(_combined_dead_times(runs, green_periods))
 
     base_run = runs[red_periods[0] - 1]
     run_number = (
@@ -544,11 +550,11 @@ def combine_mapped_periods(
 
     grouping = dict(base_run.grouping) if isinstance(base_run.grouping, dict) else {}
     grouping["period_histograms"] = sets
-    grouping["period_good_frames"] = good_frames
+    grouping["period_good_frames"] = frames
     grouping["period_dead_time_us"] = dead_times
     grouping["period_mode"] = str(PeriodMode.RED)
     grouping["period_mapping"] = {str(k): v for k, v in sorted(normalised.items())}
-    grouping["good_frames"] = good_frames[0]
+    grouping["good_frames"] = frames[0]
     if dead_times[0]:
         grouping["dead_time_us"] = list(dead_times[0])
     grouping.pop("period_reduced", None)

@@ -64,6 +64,7 @@ from asymmetry.core.fourier import (
     fft_complex_asymmetry,
     fourier_mode_uses_phase_correction,
 )
+from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
     combine_mapped_periods,
     combine_period_asymmetry,
@@ -100,12 +101,12 @@ from asymmetry.core.transform import (
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
     differentiate_scan,
-    filter_excluded_indices,
+    effective_group_indices,
+    good_frames,
     has_file_deadtime,
     has_resolved_deadtime,
     prepare_histograms_with_deadtime,
     resolve_background_mode,
-    supports_background_correction,
 )
 from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
@@ -296,7 +297,18 @@ def _coerce_bool(value: object, default: bool = False) -> bool:
 #: present in the payload → copied, absent → removed. One list feeds the
 #: apply paths AND the project-persistence extractor, so a new reduction
 #: setting cannot be persisted on one path and silently erased on another.
-ALPHA_PROVENANCE_KEYS = ("alpha_method", "alpha_error", "alpha_reference_run")
+ALPHA_PROVENANCE_KEYS = (
+    "alpha_method",
+    "alpha_error",
+    "alpha_reference_run",
+    # Per-axis provenance for vector mode (mirrors the scalar keys per axis).
+    "alpha_x_error",
+    "alpha_x_reference_run",
+    "alpha_y_error",
+    "alpha_y_reference_run",
+    "alpha_z_error",
+    "alpha_z_reference_run",
+)
 REDUCTION_SETTING_KEYS = (
     "background_mode",
     "background_run",
@@ -2621,14 +2633,6 @@ class MainWindow(QMainWindow):
 
         return entries
 
-    def _group_detector_indices(self, values) -> list[int]:
-        """Return zero-based detector indices for one grouping entry list."""
-        indices: list[int] = []
-        for value in self._normalize_group_entries(values):
-            detector = value[0] if isinstance(value, tuple) else value
-            indices.append(max(0, int(detector) - 1))
-        return indices
-
     def _grouping_source_arrays(
         self,
         dataset,
@@ -2730,12 +2734,12 @@ class MainWindow(QMainWindow):
         exclusion_source = (
             grouping_result if "excluded_detectors" in grouping_result else existing_grouping
         )
-        forward_idx = filter_excluded_indices(
-            self._group_detector_indices(groups.get(forward_gid, [])), exclusion_source
-        )
-        backward_idx = filter_excluded_indices(
-            self._group_detector_indices(groups.get(backward_gid, [])), exclusion_source
-        )
+        resolution_grouping = {
+            "groups": groups,
+            "excluded_detectors": exclusion_source.get("excluded_detectors"),
+        }
+        forward_idx = effective_group_indices(resolution_grouping, forward_gid)
+        backward_idx = effective_group_indices(resolution_grouping, backward_gid)
 
         if run.histograms:
             max_bin = len(run.histograms[0].counts) - 1
@@ -3462,17 +3466,6 @@ class MainWindow(QMainWindow):
             return list(histograms), False
         return prepare_histograms_with_deadtime(histograms, grouping, use_deadtime)
 
-    def _dataset_supports_background_correction(self, dataset) -> bool:
-        """Return whether this dataset should expose PSI-style background correction."""
-        run = getattr(dataset, "run", None)
-        metadata = dict(getattr(dataset, "metadata", {}) or {})
-        if run is not None:
-            metadata.update(getattr(run, "metadata", {}) or {})
-        source_file = str(getattr(run, "source_file", "") if run is not None else "")
-        if not source_file:
-            source_file = str(metadata.get("source_file", ""))
-        return supports_background_correction(metadata=metadata, source_file=source_file)
-
     def _dataset_allows_background_mode(self, dataset, mode: str) -> bool:
         """Return whether *mode* applies to this dataset (per-mode gating)."""
         run = getattr(dataset, "run", None)
@@ -3520,79 +3513,31 @@ class MainWindow(QMainWindow):
     def _resolve_background_reference(
         self, grouping: dict, sample_run
     ) -> tuple[list, float] | None:
-        """Resolve a ``background_run`` payload to (histograms, scale).
+        """Delegate ``background_run`` resolution to the core resolver.
 
-        Loaded project datasets are matched by run number first; otherwise
-        the file named in the payload is loaded (and cached per source
-        path). The scale is the good-frame ratio sample/reference, falling
-        back to the snapshot stored in the payload.
+        The GUI supplies the loaded-dataset registry (reuse an already-open
+        reference run) and a per-window cache (load the reference once per apply
+        batch, not once per sample dataset); the core
+        :func:`resolve_background_reference` owns the matching, loader fallback
+        and frame-scale arithmetic. On failure we surface the message and skip
+        the subtraction.
         """
-        payload = grouping.get("background_run")
-        if not isinstance(payload, dict):
-            self.statusBar().showMessage(
-                "Background run unavailable: no reference is recorded.", 8000
-            )
-            return None
-        reference_run = None
-        run_number = payload.get("run_number")
-        if run_number is not None:
-            for ds in self._data_browser.get_all_datasets():
-                if ds.run is not None and int(ds.run_number) == int(run_number):
-                    reference_run = ds.run
-                    break
-        if reference_run is None:
-            source_file = str(payload.get("source_file", "") or "")
-            if not source_file:
-                self.statusBar().showMessage(
-                    "Background run unavailable: the reference is not loaded and "
-                    "no source file is recorded.",
-                    8000,
-                )
-                return None
-            cache = getattr(self, "_background_run_cache", None)
-            if cache is None:
-                cache = {}
-                self._background_run_cache = cache
-            if source_file in cache:
-                reference_run = cache[source_file]
-            else:
-                try:
-                    from asymmetry.core.io import load_background_run
-
-                    reference_run = load_background_run(payload).run
-                except (ValueError, OSError) as exc:
-                    self.statusBar().showMessage(f"Background run unavailable: {exc}", 8000)
-                    return None
-                cache[source_file] = reference_run
-        if reference_run is None or not reference_run.histograms:
-            self.statusBar().showMessage(
-                "Background run unavailable: the reference has no histograms.", 8000
-            )
-            return None
-
-        def _good_frames(source) -> float | None:
-            grouping_dict = getattr(source, "grouping", None)
-            if isinstance(grouping_dict, dict):
-                try:
-                    value = float(grouping_dict.get("good_frames", 0.0))
-                except (TypeError, ValueError):
-                    value = 0.0
-                if value > 0.0:
-                    return value
-            return None
-
-        sample_frames = _good_frames(sample_run) or payload.get("good_frames_sample")
-        reference_frames = _good_frames(reference_run) or payload.get("good_frames_reference")
+        cache = getattr(self, "_background_run_cache", None)
+        if cache is None:
+            cache = {}
+            self._background_run_cache = cache
+        sample_frames = good_frames(getattr(sample_run, "grouping", None), default=0.0) or None
         try:
-            scale = float(sample_frames) / float(reference_frames)
-        except (TypeError, ValueError, ZeroDivisionError):
-            try:
-                scale = float(payload.get("scale", 1.0))
-            except (TypeError, ValueError):
-                scale = 1.0
-        if not np.isfinite(scale) or scale <= 0.0:
-            scale = 1.0
-        return list(reference_run.histograms), float(scale)
+            reference = resolve_background_reference(
+                grouping.get("background_run"),
+                sample_good_frames=sample_frames,
+                datasets=self._data_browser.get_all_datasets(),
+                cache=cache,
+            )
+        except (ValueError, OSError) as exc:
+            self.statusBar().showMessage(f"Background run unavailable: {exc}", 8000)
+            return None
+        return reference.histograms, reference.scale
 
     def _apply_deadtime_correction(
         self,
@@ -4179,6 +4124,9 @@ class MainWindow(QMainWindow):
             return {}
         phases: dict[int, float] = {}
         prepared_histograms, reference_t0_bin = self._precompute_group_fourier_inputs(dataset)
+        # Shared so a reference_run background loads + deadtime-prepares once
+        # across the phase sweep, not once per group.
+        background_reference_cache: dict = {}
         for group_id in self._fourier_group_names_for_dataset(dataset):
             group_dataset = build_group_signal_dataset(
                 dataset.run,
@@ -4186,6 +4134,7 @@ class MainWindow(QMainWindow):
                 center_signal=False,
                 reference_t0_bin=reference_t0_bin,
                 prepared_histograms=prepared_histograms,
+                background_reference_cache=background_reference_cache,
             )
             phases[group_id] = self._estimate_dataset_fourier_phase(group_dataset, state)
         return phases
@@ -4215,6 +4164,9 @@ class MainWindow(QMainWindow):
         ):
             return {}
         resolved: dict[int, float] = {}
+        # Shared so a reference_run background loads + deadtime-prepares once
+        # across the phase-estimation sweep, not once per group.
+        background_reference_cache: dict = {}
         for group_id in selected_group_ids:
             if auto_phase and not use_phase_table:
                 group_dataset = build_group_signal_dataset(
@@ -4223,6 +4175,7 @@ class MainWindow(QMainWindow):
                     center_signal=False,
                     reference_t0_bin=reference_t0_bin,
                     prepared_histograms=prepared_histograms,
+                    background_reference_cache=background_reference_cache,
                 )
                 resolved[group_id] = self._estimate_dataset_fourier_phase(group_dataset, state)
             elif use_phase_table:
@@ -7242,6 +7195,33 @@ class MainWindow(QMainWindow):
                         continue
                 if dataset is None and len(candidates) == 1:
                     dataset = candidates[0]
+
+                # A period-mapped dataset is saved as {run_number: combined N,
+                # source_file: the multi-period file}, but a 3+-period file
+                # reloads as per-period siblings numbered by the loader's own
+                # scheme — none match N, so the entry was being silently
+                # dropped. Rebuild the combined dataset from the persisted
+                # period_mapping (combine_mapped_periods reproduces exactly what
+                # "Map periods…" built originally).
+                if dataset is None:
+                    overrides = ds_info.get("grouping_overrides")
+                    persisted_mapping = (
+                        overrides.get("period_mapping") if isinstance(overrides, dict) else None
+                    )
+                    period_candidates = [cand for cand in candidates if cand is not None]
+                    if persisted_mapping and len(period_candidates) >= 2:
+                        try:
+                            dataset = combine_mapped_periods(
+                                period_candidates,
+                                persisted_mapping,
+                                source_run_number=int(rn),
+                                source_file=resolved,
+                            )
+                        except (ValueError, TypeError) as exc:
+                            self._log_panel.log(
+                                f"WARNING: Run {rn} period mapping could not be rebuilt: {exc}"
+                            )
+
                 if dataset is None:
                     self._log_panel.log(
                         f"WARNING: Run {rn} not found in loaded file {source_file}; skipping."

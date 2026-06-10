@@ -357,8 +357,65 @@ migration, bump per the v4 precedent and record here).
 
 ### Recorded follow-ons
 
+Status note (2026-06-10, `feat/data-reduction-followups`): the completion pass
+resolved the exclusion chokepoint, core reference-run resolution, period-mapped
+project reload, the plot-panel mask, and the umbrella label fix; each is marked
+**DONE** inline below. Items still deferred (plot-side quick binning, live WiMDA
+spot-checks, α-as-fit-parameter, `run-arithmetic`, TF-phase t0, integral-path
+period mapping, Fourier tail-fit) remain open and are owned by the projects
+named.
+
+- **DONE** — Exclusion chokepoint. Detector exclusion now resolves through a
+  single exclusion-aware resolver, `effective_group_indices(grouping,
+  group_id, n_histograms=…)` in `core/transform/grouping.py`. Every reduction
+  path goes through it: `group_forward_backward`, `fitting/
+  grouped_time_domain`, `fourier/grouped` (its private
+  `_normalize_group_entries` removed), `mainwindow` F/B resolution, and the
+  `plot_panel` saturation mask (which now reduces F/B through
+  `group_forward_backward` rather than re-implementing the front-end).
+  `resolve_group_indices` is reserved for non-reduction uses (synthetic-run
+  generation, NeXus writing), so a new *core* reduction call site that resolves
+  a group through the chokepoint cannot forget exclusion. One layer is
+  deliberately outside the chokepoint: the grouping dialog works in its own
+  0-based `self._groups` representation (1-based only at the payload boundary),
+  so its estimate / Find-t0 / tail-fit-preview / accept paths cannot call
+  `effective_group_indices` directly — they apply exclusion through the shared
+  `filter_excluded_indices` / `excluded_detector_indices` primitives instead.
+  The exclusion *logic* is therefore single-sourced, but a future dialog path
+  reaching for `self._groups` must still route through `_filtered_group_indices`
+  by hand; collapsing the dialog onto the 1-based resolver is a possible later
+  tidy.
+- **DONE** — Plot-panel low-confidence mask modernised. The
+  saturation/denominator mini-reduction (`plot_panel._low_confidence_mask_for_
+  dataset`) gated its background step on the old binary
+  `supports_background_correction` (PSI/LEM-only); it now uses the mode-aware
+  `resolve_background_mode` ∈ `available_background_modes` gate, so tail-fit /
+  fixed backgrounds feed the reliability check on pulsed data too. It also
+  assumed fixed binning and self-disabled the raw-bin denominator check via a
+  silent array-shape mismatch under variable / constant-error binning; that is
+  now an explicit, documented early return to the saturation-only mask (same
+  output, no longer silent). The F/B grouping front-end (resolve indices →
+  align → sum → alpha) is no longer re-implemented inline: it now calls the
+  core `group_forward_backward` chokepoint, so the mask's grouping / exclusion /
+  alpha handling cannot drift from the engine's. Display-only; reduction
+  unchanged.
 - Plot-side quick binning control — deferred to the dedicated UI-polish
   pass (O3).
+- **DONE** — Small quality cleanups (single commit): shared
+  `good_frames(grouping, default)` accessor in `core/transform/grouping.py`
+  replaces the divergent reads in `deadtime.py`, `periods.py`,
+  `core/io.resolve_background_reference` and `mainwindow`; dead
+  `_dataset_supports_background_correction` removed (callers use
+  `_dataset_allows_background_mode(dataset, "range")`); diamagnetic bootstrap
+  replicas now minimise in a narrow ln window around the base estimate with a
+  relaxed `xatol` (≈1e-4) instead of a full bounded solve each; the dead
+  pre-sum histogram clones in `combine_mapped_periods` dropped and its nested
+  closures flattened into module-level helpers (`_periods_for_target`,
+  `_sum_period_set`, `_sum_period_good_frames`, `_combined_dead_times`); the
+  grouping dialog's bin0/bin10 labels are created beside their spins so
+  `_on_binning_mode_changed` no longer needs the `getattr`/ordering dance; and
+  vector mode now records per-axis alpha provenance (`alpha_x_error` /
+  `alpha_x_reference_run` …) alongside the per-axis values.
 - Live WiMDA spot-check values for α/tail-fit on corpus runs — optional
   later validation (oracle decision).
 - α as a free fit parameter (the WiMDA manual's "most accurate way") —
@@ -371,15 +428,34 @@ migration, bump per the v4 precedent and record here).
 - Period mapping in the time-integral/ALC scan path (Mantid
   `PlotAsymmetryByLogValue` red/green parity) — periods.py mapping makes
   it possible; wire into `integral.py` consumers on demand.
-- Umbrella docs correction: the "EMU LF series" in
-  `wimda-parity-gap/test-data.md` is HIFI 118222–118240 (fix the umbrella
-  table when this project merges).
-- (Phase 3 implementation note) For 3+-period files the loader still
+- **DONE** — Umbrella docs correction: the "EMU LF series" row in
+  `wimda-parity-gap/test-data.md` is corrected to HIFI runs 118222–118240
+  (corannulene, `Chemistry/Molecular dynamics of corannulene/data_hdf5/`).
+- **DONE** — (Phase 3 implementation note) For 3+-period files the loader
   returns one dataset per period; **Map periods…** builds a new combined
   dataset from those siblings via `combine_mapped_periods` and records
-  `period_mapping` in its grouping. Re-deriving the mapped dataset when a
-  project is reloaded is a follow-on (the mapping persists, the combined
-  dataset is rebuilt by re-running Map periods).
+  `period_mapping` in its grouping. Project reload now **rebuilds** the mapped
+  dataset automatically: `MainWindow.restore_project_state` detects a persisted
+  `period_mapping` on a multi-period source whose combined run number matches
+  no per-period sibling and rebuilds via `combine_mapped_periods` (previously
+  the entry was silently dropped). The duplicate combined-dataset assembly is
+  also unified — `nexus._combine_two_period_datasets` now delegates to
+  `combine_mapped_periods` with the trivial `{1: red, 2: green}` mapping (then
+  re-caches `period_reduced` for `select_period`), so the two- and N-period
+  combinations are one code path. The loader's two-period output gains only the
+  additive `period_mapping` provenance key; the bit-for-bit period tests +
+  photo-µSR corpus test confirm parity.
+- **DONE** — Reference-run resolution moved into core. The matching +
+  loader-fallback + frame-scale logic that lived only in
+  `MainWindow._resolve_background_reference` is now
+  `core/io.resolve_background_reference(payload, sample_good_frames=…,
+  datasets=…, cache=…) -> BackgroundReference`. `MainWindow` delegates (passing
+  its loaded-dataset registry and a per-window cache, so a batch apply loads
+  the reference once, not once per sample), and the grouped Fourier path now
+  satisfies `reference_run`: `build_group_signal_dataset` resolves + groups +
+  aligns the reference and subtracts it via `subtract_scaled_counts`, instead
+  of the previous silent no-op outside the GUI.
 - (Phase 2/3 implementation note) The grouped *Fourier* input path keeps
-  its legacy continuous-source-only background gate; offering tail-fit
-  there is a follow-on for `frequency-domain-finishers`.
+  its legacy continuous-source-only background gate for the *range/tail-fit*
+  modes; `reference_run` is now satisfied there (see above). Offering tail-fit
+  in the Fourier path remains a follow-on for `frequency-domain-finishers`.

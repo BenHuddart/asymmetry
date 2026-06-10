@@ -44,14 +44,11 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
-    supports_background_correction,
+    available_background_modes,
+    resolve_background_mode,
 )
-from asymmetry.core.transform.grouping import (
-    apply_grouping_aligned,
-    common_t0_for_groups,
-    filter_excluded_indices,
-)
-from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.transform.grouping import group_forward_backward
+from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -3186,63 +3183,45 @@ class PlotPanel(QWidget):
                 analysis_dataset=dataset,
             )
 
+        # The denominator-reliability reduction below sums RAW grouped counts at
+        # fixed binning. Under variable / constant-error binning the displayed
+        # asymmetry is summed onto wider edges, so a per-raw-bin denominator no
+        # longer maps to the plotted bins; the saturation check above (computed
+        # on the displayed asymmetry) already flags unreliable bins there. Skip
+        # the raw-bin reduction explicitly rather than letting it self-disable
+        # via a silent array-shape mismatch.
+        binning_mode, _, _ = resolve_binning_mode(grouping)
+        if binning_mode != "fixed":
+            return self._project_source_mask_to_analysis_dataset(
+                source_mask=saturated,
+                source_dataset=reference_dataset,
+                analysis_dataset=dataset,
+            )
+
+        # Reduce the forward/backward groups through the SAME core chokepoint the
+        # reduction uses (group_forward_backward: resolves groups via the
+        # exclusion-aware resolver, aligns to a common t0, sums, clamps alpha),
+        # so the mask cannot drift from the engine's grouping/exclusion/alpha
+        # handling. It raises when groups are undefined or empty after exclusion.
         try:
-            forward_gid = int(grouping.get("forward_group", 1))
-            backward_gid = int(grouping.get("backward_group", 2))
-        except (TypeError, ValueError):
+            fb = group_forward_backward(run.histograms, grouping)
+        except ValueError:
             return self._project_source_mask_to_analysis_dataset(
                 source_mask=saturated,
                 source_dataset=reference_dataset,
                 analysis_dataset=dataset,
             )
-
-        def _to_indices(values) -> list[int]:
-            out: list[int] = []
-            for val in values:
-                try:
-                    out.append(max(0, int(val) - 1))
-                except (TypeError, ValueError):
-                    continue
-            return out
-
-        forward_idx = filter_excluded_indices(_to_indices(groups.get(forward_gid, [])), grouping)
-        backward_idx = filter_excluded_indices(_to_indices(groups.get(backward_gid, [])), grouping)
-        if not forward_idx or not backward_idx:
-            return self._project_source_mask_to_analysis_dataset(
-                source_mask=saturated,
-                source_dataset=reference_dataset,
-                analysis_dataset=dataset,
-            )
-
-        if max(forward_idx, default=-1) >= len(run.histograms):
-            return self._project_source_mask_to_analysis_dataset(
-                source_mask=saturated,
-                source_dataset=reference_dataset,
-                analysis_dataset=dataset,
-            )
-        if max(backward_idx, default=-1) >= len(run.histograms):
-            return self._project_source_mask_to_analysis_dataset(
-                source_mask=saturated,
-                source_dataset=reference_dataset,
-                analysis_dataset=dataset,
-            )
-
-        common_t0 = common_t0_for_groups(run.histograms, forward_idx, backward_idx)
-        forward = apply_grouping_aligned(run.histograms, forward_idx, common_t0_bin=common_t0)
-        backward = apply_grouping_aligned(run.histograms, backward_idx, common_t0_bin=common_t0)
-        n_grouped = min(len(forward), len(backward))
-        forward = forward[:n_grouped]
-        backward = backward[:n_grouped]
+        n_grouped = min(len(fb.forward), len(fb.backward))
         if n_grouped == 0:
             return self._project_source_mask_to_analysis_dataset(
                 source_mask=saturated,
                 source_dataset=reference_dataset,
                 analysis_dataset=dataset,
             )
-        try:
-            alpha = float(grouping.get("alpha", 1.0))
-        except (TypeError, ValueError):
-            alpha = 1.0
+        forward = fb.forward[:n_grouped]
+        backward = fb.backward[:n_grouped]
+        alpha = fb.alpha
+        common_t0 = fb.common_t0
 
         if bool(grouping.get("background_correction", False)):
             run_metadata = getattr(run, "metadata", None)
@@ -3250,7 +3229,15 @@ class PlotPanel(QWidget):
             source_file = str(
                 getattr(run, "source_file", "") or reference_dataset.metadata.get("source_file", "")
             )
-            if supports_background_correction(metadata=metadata, source_file=source_file):
+            # Mode-aware gate (matches the real reduction): apply whichever
+            # background mode the grouping selects when it is available for this
+            # source, instead of the old PSI/LEM-only range gate. (reference_run
+            # needs externally resolved counts that this display-only mask does
+            # not load, so apply_grouped_background_correction no-ops it here —
+            # a minor difference in which bins render gray, never in the data.)
+            mode = resolve_background_mode(grouping)
+            available = available_background_modes(metadata=metadata, source_file=source_file)
+            if mode in available:
                 bin_width = float(run.histograms[0].bin_width) if run.histograms else 1.0
                 facility = str(
                     metadata.get(
