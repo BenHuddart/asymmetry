@@ -2,7 +2,8 @@
 
 Status: **implemented** (decisions agreed 2026-06-10; see the decision table in
 `implementation-options.md`; tests in `tests/test_wimda_parity_components.py`;
-user docs in `docs/user_guide/wimda_fit_functions.rst`).
+user docs in `docs/user_guide/fit_functions/`, with WiMDA migration recipes in
+`docs/user_guide/fit_functions/index.rst`).
 
 Components shipped: `RischKehr`, `Bessel`, `GaussianBroadenedKT`,
 `MuoniumHighTF`, `MuoniumHighTFAniso`, `MuoniumLFRelax`, `DynamicFmuF`,

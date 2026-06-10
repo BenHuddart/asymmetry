@@ -41,17 +41,9 @@ material.
 
 .. toctree::
    :maxdepth: 2
-   :caption: Depolarisation functions
+   :caption: Fit functions
 
-   exponential_relaxation
-   gaussian_relaxation
-   stretched_exponential
-   oscillatory
-   static_gkt_zf
-   lf_kubo_toyabe
-   dynamic_relaxation
-   muon_fluorine
-   wimda_fit_functions
+   fit_functions/index
 
 .. toctree::
    :maxdepth: 2

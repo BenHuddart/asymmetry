@@ -239,7 +239,7 @@ Further reading
 Cross-references
 ----------------
 
-- :doc:`/user_guide/lf_kubo_toyabe` — the LF-KT reference page.
+- :doc:`/user_guide/fit_functions/kubo_toyabe` — the LF-KT reference page.
 - :doc:`/user_guide/global_fit_wizard` — the Global Fit Wizard.
 - :doc:`/user_guide/composite_models` — for composite envelopes.
 - :doc:`/user_guide/fit_wizard` — for model recommendation.

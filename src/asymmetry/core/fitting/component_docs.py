@@ -288,8 +288,8 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "Gaussian, i.e. for dilute or randomly diluted moments (spin glasses, dilute-spin systems), with "
         "half-width aₗ fluctuating at rate ν. ν → 0 recovers the static Lorentzian Kubo–Toyabe. Zero field is "
         "exact (analytic); the longitudinal-field line shape is computed by an analytic angular average "
-        "(≈0.2% accurate for Bₗ ≳ 20 G). See the 'Dynamic and fluctuating-field relaxation functions' "
-        "user-guide page for the method and accuracy."
+        "(≈0.2% accurate for Bₗ ≳ 20 G). See the Kubo-Toyabe page of the fit-function user guide "
+        "for the method and accuracy."
     ),
     "Keren": (
         "Use as the analytic longitudinal-field dynamic Gaussian relaxation function: an accurate "

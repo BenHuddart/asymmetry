@@ -233,7 +233,7 @@ candidate in the roadmap (see below).
 **Dynamic Kubo–Toyabe (Mantid).**
   Strong-collision dynamic KT — the canonical model for muon
   dynamics through magnetic transitions — is in all three
-  reference programs. Asymmetry's :doc:`lf_kubo_toyabe` page
+  reference programs. Asymmetry's :doc:`fit_functions/kubo_toyabe` page
   currently stays in the static regime. Tracked as
   ``dynamic-kubo-toyabe``.
 

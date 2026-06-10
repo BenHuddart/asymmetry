@@ -72,7 +72,7 @@ of their fitted (or raw) asymmetries: the light-OFF period is the dark
 baseline, and the light-ON period adds the photo-excited muonium signal.
 Fit each period with the model appropriate to silicon muonium (e.g. an
 oscillatory or relaxing component; see
-:doc:`/user_guide/oscillatory`) and compare the fitted parameters, or
+:doc:`/user_guide/fit_functions/oscillation`) and compare the fitted parameters, or
 subtract the two asymmetry traces directly for a model-free view of the
 light-induced change.
 
