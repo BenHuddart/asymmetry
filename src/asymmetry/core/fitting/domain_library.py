@@ -45,6 +45,16 @@ def _normalise_domain(domain: str) -> str:
     return token
 
 
+def coerce_domain(domain: object) -> str:
+    """Coerce arbitrary input to a recognised domain, defaulting to ``"time"``.
+
+    The forgiving counterpart of :func:`_normalise_domain` for GUI paths that
+    must not raise on stale or missing state.
+    """
+    token = str(domain).strip().lower()
+    return token if token in DOMAINS else "time"
+
+
 def components_for_domain(domain: str) -> dict[str, ComponentDefinition]:
     """Return the registered composite components for *domain*.
 
@@ -84,6 +94,7 @@ def default_model_for_domain(domain: str) -> CompositeModel:
 
 __all__ = [
     "DOMAINS",
+    "coerce_domain",
     "components_for_domain",
     "default_model_for_domain",
     "models_for_domain",

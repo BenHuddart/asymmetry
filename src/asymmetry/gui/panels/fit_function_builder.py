@@ -9,13 +9,16 @@ from collections import defaultdict
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from asymmetry.core.fitting.composite import (
+    CATEGORY_REGISTRY,
     COMPONENTS,
     CompositeModel,
+    UnknownComponentError,
     build_component_expression,
     parse_component_expression,
     parse_composite_expression,
 )
 from asymmetry.core.fitting.domain_library import (
+    coerce_domain,
     components_for_domain,
     default_model_for_domain,
 )
@@ -30,18 +33,10 @@ _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _FRACTION_GROUP_COLORS = ["#005A9C", "#A44A00", "#0B6E4F", "#8A1C1C", "#6B4F00"]
 
 
-# Display order of the component-picker submenus; categories not listed here
-# (e.g. from future additions) are appended alphabetically.
-_CATEGORY_ORDER = [
-    "General",
-    "Relaxation",
-    "Oscillation",
-    "Kubo-Toyabe",
-    "Muonium",
-    "Nuclear dipolar",
-    "Background",
-    "Frequency Domain",
-]
+# Display order of the component-picker submenus comes from the canonical
+# category registry in core; categories not registered (e.g. from future
+# additions that bypass the registry) are appended alphabetically.
+_CATEGORY_ORDER = list(CATEGORY_REGISTRY)
 
 
 def _build_components_by_category(domain: str = "time") -> dict[str, list[str]]:
@@ -79,7 +74,7 @@ class FitFunctionBuilderDialog(FunctionExpressionBuilderDialog):
         initial_model: CompositeModel | None = None,
         domain: str = "time",
     ) -> None:
-        self._domain = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        self._domain = coerce_domain(domain)
         domain_components = components_for_domain(self._domain)
         self._allowed_components = set(domain_components)
         self._fraction_groups = (
@@ -149,15 +144,13 @@ class FitFunctionBuilderDialog(FunctionExpressionBuilderDialog):
                 expression,
                 allowed_components=self._allowed_components,
             )
-        except ValueError as exc:
-            match = re.search(r"Unknown component '([^']+)'", str(exc))
-            if match is not None:
-                definition = COMPONENTS.get(match.group(1))
-                if definition is not None and definition.domain != self._domain:
-                    raise ValueError(
-                        f"'{definition.name}' is a {definition.domain}-domain component "
-                        f"and is not available when fitting in the {self._domain} domain."
-                    ) from exc
+        except UnknownComponentError as exc:
+            definition = COMPONENTS.get(exc.name)
+            if definition is not None and definition.domain != self._domain:
+                raise ValueError(
+                    f"'{definition.name}' is a {definition.domain}-domain component "
+                    f"and is not available when fitting in the {self._domain} domain."
+                ) from exc
             raise
 
     @staticmethod

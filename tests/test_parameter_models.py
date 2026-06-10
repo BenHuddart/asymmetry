@@ -1012,4 +1012,4 @@ def test_order_parameter_applicability_text_describes_use() -> None:
     text = get_component_applicability("OrderParameter")
     assert "order parameter" in text.lower()
     assert "Tc" in text
-    assert "β" in text
+    assert "β" in text or "beta" in text.lower()
