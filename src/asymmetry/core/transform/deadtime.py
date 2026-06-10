@@ -228,6 +228,53 @@ def parse_deadtime_calibration_text(text: str, *, n_histograms: int | None = Non
     return [float(value) for value in values]
 
 
+def promote_deadtime_to_grouping(
+    grouping: dict,
+    dead_time_us_value: float,
+    *,
+    n_histograms: int,
+    detector_indices: list[int] | None = None,
+    additive: bool = False,
+) -> dict[str, dict[int, float]]:
+    """Write a fitted deadtime (μs) into the grouping correction (WiMDA Send-to-Group).
+
+    Mirrors WiMDA's ``SendToGroupClick``: a deadtime obtained from a count fit is
+    promoted into the grouping's per-detector ``dead_time_us`` so the next
+    reduction applies it. ``additive`` accumulates onto the existing value
+    (WiMDA's ``DTmodelChanges``) instead of replacing it; ``detector_indices``
+    restricts the write to the fitted group's detectors (default: all). The
+    correction is enabled and the method marked ``value``.
+
+    Returns ``{"before": {idx: value}, "after": {idx: value}}`` for the affected
+    detectors, so the GUI can show the change before/after.
+    """
+    n = max(0, int(n_histograms))
+    values = [0.0] * n
+    existing = grouping.get("dead_time_us")
+    if isinstance(existing, list):
+        for i in range(min(len(existing), n)):
+            try:
+                values[i] = float(existing[i])
+            except (TypeError, ValueError):
+                values[i] = 0.0
+
+    if detector_indices is None:
+        targets = list(range(n))
+    else:
+        targets = [int(i) for i in detector_indices if 0 <= int(i) < n]
+
+    dt = float(dead_time_us_value)
+    before = {i: values[i] for i in targets}
+    for i in targets:
+        values[i] = values[i] + dt if additive else dt
+    after = {i: values[i] for i in targets}
+
+    grouping["dead_time_us"] = values
+    grouping["deadtime_correction"] = True
+    grouping["deadtime_method"] = "value"
+    return {"before": before, "after": after}
+
+
 def has_file_deadtime(grouping: dict, n_histograms: int = 0) -> bool:
     """Return ``True`` when grouping metadata contains file deadtime values."""
     if not isinstance(grouping, dict):

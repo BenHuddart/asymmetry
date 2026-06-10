@@ -657,7 +657,7 @@
     {
       "slug": "count-domain-fit-modes",
       "feature_name": "Count-domain fit modes (α-free F+B, single-histogram, exclude range, fittable t0/baseline, count-loss in fit, double pulse)",
-      "status": "study",
+      "status": "implemented",
       "path": "docs/porting/count-domain-fit-modes",
       "references": [
         "WiMDA",
@@ -670,10 +670,10 @@
         "test_data": "docs/porting/count-domain-fit-modes/test-data.md",
         "verification_plan": "docs/porting/count-domain-fit-modes/verification-plan.md"
       },
-      "tests_path": null,
-      "src_path": "src/asymmetry/core/fitting/grouped_time_domain.py",
+      "tests_path": "tests/test_count_domain_fits.py",
+      "src_path": "src/asymmetry/core/fitting/count_domain.py",
       "updated": "2026-06-10",
-      "notes": "Wave A project 3 of wimda-parity-gap. Study+plan pass; NO src yet, paused for go-ahead. Scope answers (Ben): oracle=transcribe+synthetic+cross-check (no live WiMDA); F+B=two groups one F/one B; muon lifetime fixed (free-τ follow-on). Post-study: Poisson(Cash) default + Gaussian √N selectable on RAW counts; fit-target selector in Multi-Group Fit window; results in window + TimeGroups stored-fit mirror; promote-to-grouping = explicit button + before/after confirm. Reuse audit: fgAll unchanged; single-histogram = one-group degenerate case of build_grouped_count_model; F+B = new ~12-line build_fb_count_model with √α tie because engine evaluates NEITHER Parameter.expr NOR non-equality ties (only link_followers). Raw model = e^(-t/τ)×existing builder (no model dup). New core module fitting/count_domain.py drives iminuit with selectable cost; engine.py UNTOUCHED (next-wave fit-workflow-diagnostics owns it). 3 phases: (1) F+B+single, (2) exclude/t0/baseline, (3) deadtime+promote+double-pulse. Corpus: CdS EMU TF (α cross-check vs estimate_alpha), EuO GPS PSI .bin (single-histogram), synthetic for the rest."
+      "notes": "Wave A project 3 of wimda-parity-gap. IMPLEMENTED 2026-06-10, all 3 phases validate-green (P1 2126 / P2 2135 / P3 2145). Raw-count fits with selectable Poisson(Cash, default)/Gaussian cost. P1: build_fb_count_model (sqrt(alpha) F/B tie) + count_domain.py driver; single-histogram = one-group degenerate case of build_grouped_count_model; raw model = e^(-t/tau)x existing builder; engine.py untouched. P2: interior exclude window, fittable t0, baseline drift (all no-op-when-off). P3: count-loss DT0(+C2/C3/C4 polynomial) + promote_deadtime_to_grouping (Send-to-Group, additive/replace) + double-pulse single-histogram (simulate_double_pulse_run round-trips dpsep; dpsep FIXED from metadata - non-smooth gate defeats migrad). GUI: fit-target selector in MultiGroupFitWindow + minimal fit_panel.py routing. Follow-ons: unify fgAll onto Poisson, free tau, DT1/power-law deadtime, robust dpsep scan, FB double-pulse, plot overlay, MINOS-on-alpha. NOT pushed."
     }
   ]
 }

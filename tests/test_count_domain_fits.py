@@ -27,7 +27,12 @@ from asymmetry.core.fitting.grouped_time_domain import (
     build_grouped_time_domain_groups,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.simulate import build_builtin_template, simulate_run
+from asymmetry.core.simulate import (
+    build_builtin_template,
+    simulate_double_pulse_run,
+    simulate_run,
+)
+from asymmetry.core.transform.deadtime import promote_deadtime_to_grouping
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -385,3 +390,131 @@ def test_fb_alpha_accepts_exclude_and_t0():
     result = fit_fb_alpha(ds, 1, 2, _tf, params, cost="gaussian", exclude=(2.0, 3.0))
     assert result.success
     assert result.group_results[1].parameters["alpha"].value == pytest.approx(1.2, abs=0.02)
+
+
+# --- Phase 3: count loss (deadtime) + promote + double pulse -----------------
+
+
+def _continuous_single(*, seed=2, n0=4.5e3):
+    return ParameterSet(
+        [
+            Parameter("N0", n0, min=0.0),
+            Parameter("background", 10.0, min=0.0),
+            Parameter("A", 19.0, min=0.0, max=50.0),
+            Parameter("f", 1.0, min=0.0),
+            Parameter("phi", 0.0),
+        ]
+    )
+
+
+def test_deadtime_dt0_recovered():
+    """Inject a known non-paralyzable deadtime, recover DT0 from the fit."""
+    template = build_builtin_template("ideal_continuous_fb")
+    run = simulate_run(
+        template,
+        _tf,
+        {"A": 20.0, "f": 1.0, "phi": 0.0},
+        total_events=20e6,
+        alpha=1.0,
+        background_per_bin=10.0,
+        seed=2,
+    )
+    good_frames = 1.0e6
+    run.grouping["good_frames"] = good_frames
+    bin_width = float(run.histograms[0].bin_width)
+    dt0_true = 0.01
+    hist = run.histograms[0]
+    n_true = np.asarray(hist.counts, dtype=float)
+    # Single-detector group, so frame_norm = bin_width * good_frames.
+    hist.counts = n_true * (1.0 - n_true * dt0_true / (bin_width * good_frames))
+    ds = MuonDataset(
+        time=np.array([]), asymmetry=np.array([]), error=np.array([]), metadata={}, run=run
+    )
+    params = _continuous_single()
+    params.add(Parameter("DT0", 0.005, min=0.0, max=0.1))
+    result = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+    assert result.success
+    assert result.parameters["DT0"].value == pytest.approx(dt0_true, abs=0.0015)
+
+
+def test_deadtime_off_state_is_noop():
+    ds = _continuous_run()
+    base = fit_single_histogram(ds, 1, _tf, _continuous_single(), cost="gaussian")
+    params = _continuous_single()
+    params.add(Parameter("DT0", 0.0, fixed=True))
+    with_dt = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+    assert with_dt.parameters["A"].value == pytest.approx(base.parameters["A"].value, abs=1e-6)
+
+
+def test_promote_deadtime_replace_and_additive():
+    grouping = {"dead_time_us": [0.0, 0.0]}
+    out = promote_deadtime_to_grouping(
+        grouping, 0.012, n_histograms=2, detector_indices=[0], additive=False
+    )
+    assert out["before"] == {0: 0.0}
+    assert out["after"] == {0: 0.012}
+    assert grouping["dead_time_us"] == [0.012, 0.0]
+    assert grouping["deadtime_correction"] is True
+    assert grouping["deadtime_method"] == "value"
+
+    out2 = promote_deadtime_to_grouping(
+        grouping, 0.003, n_histograms=2, detector_indices=[0], additive=True
+    )
+    assert out2["after"][0] == pytest.approx(0.015)
+
+
+def test_promote_deadtime_defaults_to_all_detectors():
+    grouping = {}
+    out = promote_deadtime_to_grouping(grouping, 0.02, n_histograms=3)
+    assert out["after"] == {0: 0.02, 1: 0.02, 2: 0.02}
+    assert grouping["dead_time_us"] == [0.02, 0.02, 0.02]
+
+
+def _double_pulse_dataset(*, dpsep_us=0.324, seed=3):
+    template = build_builtin_template("ideal_continuous_fb")
+    run = simulate_double_pulse_run(
+        template,
+        _tf,
+        {"A": 20.0, "f": 1.0, "phi": 0.0},
+        total_events=20e6,
+        dpsep_us=dpsep_us,
+        alpha=1.0,
+        background_per_bin=10.0,
+        seed=seed,
+    )
+    return MuonDataset(
+        time=np.array([]), asymmetry=np.array([]), error=np.array([]), metadata={}, run=run
+    )
+
+
+def test_double_pulse_fixed_dpsep_matches():
+    """With dpsep fixed at the instrument value the two-pulse model fits cleanly."""
+    ds = _double_pulse_dataset(dpsep_us=0.324)
+    params = _continuous_single()
+    params.add(Parameter("dpsep", 0.324, fixed=True))
+    result = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+    assert result.success
+    assert result.reduced_chi_squared < 1.2
+    assert result.parameters["A"].value == pytest.approx(20.0, abs=0.5)
+
+
+def test_double_pulse_wrong_dpsep_is_worse():
+    """A mis-set dpsep degrades the fit — the pulse weighting genuinely matters."""
+    ds = _double_pulse_dataset(dpsep_us=0.324)
+    good = _continuous_single()
+    good.add(Parameter("dpsep", 0.324, fixed=True))
+    bad = _continuous_single()
+    bad.add(Parameter("dpsep", 0.20, fixed=True))
+    r_good = fit_single_histogram(ds, 1, _tf, good, cost="gaussian")
+    r_bad = fit_single_histogram(ds, 1, _tf, bad, cost="gaussian")
+    assert r_good.reduced_chi_squared < r_bad.reduced_chi_squared
+
+
+def test_double_pulse_free_dpsep_refines_from_seed():
+    """A free dpsep refines to the true separation from a near-truth seed."""
+    ds = _double_pulse_dataset(dpsep_us=0.324)
+    params = _continuous_single()
+    params.add(Parameter("dpsep", 0.33, min=0.1, max=0.5))
+    result = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+    assert result.success
+    assert result.parameters["dpsep"].value == pytest.approx(0.324, abs=0.01)

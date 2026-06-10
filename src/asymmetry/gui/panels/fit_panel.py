@@ -2050,6 +2050,11 @@ class GlobalFitTab(QWidget):
         self._count_exclude: tuple[float, float] | None = None
         self._count_fit_t0 = False
         self._count_baseline = False
+        # Phase 3 count-loss + double pulse.
+        self._count_deadtime = False
+        self._count_dpsep = 0.0  # μs; > 0 switches on the double-pulse model
+        self._last_count_dt0: float | None = None
+        self._last_count_group: int | None = None
         self._fit_blocked = False
         self._fit_block_reason = ""
         self._composite_model = self._default_composite_model()
@@ -3580,6 +3585,54 @@ class GlobalFitTab(QWidget):
         """Toggle a free stretched-exponential baseline-drift term for count fits."""
         self._count_baseline = bool(enabled)
 
+    def set_count_deadtime(self, enabled: bool) -> None:
+        """Toggle a free count-loss (deadtime DT0) term for count fits."""
+        self._count_deadtime = bool(enabled)
+
+    def set_count_dpsep(self, dpsep_us: float) -> None:
+        """Set the ISIS double-pulse separation (μs); 0 disables the double-pulse model."""
+        try:
+            value = float(dpsep_us)
+        except (TypeError, ValueError):
+            value = 0.0
+        self._count_dpsep = value if value > 0.0 else 0.0
+
+    def promote_count_deadtime(self, *, additive: bool = False) -> None:
+        """Promote the last fitted deadtime DT0 into the grouping (WiMDA Send-to-Group)."""
+        from asymmetry.core.transform.deadtime import promote_deadtime_to_grouping
+        from asymmetry.core.transform.grouping import effective_group_indices
+
+        dataset = self._current_dataset
+        if self._last_count_dt0 is None or self._last_count_group is None:
+            self._result_text.setText("Run a deadtime count fit first, then promote DT0.")
+            return
+        if dataset is None or dataset.run is None or not dataset.run.histograms:
+            self._result_text.setText("Promote needs the active run with detector histograms.")
+            return
+        grouping = dataset.run.grouping if isinstance(dataset.run.grouping, dict) else {}
+        indices = effective_group_indices(grouping, int(self._last_count_group))
+        change = promote_deadtime_to_grouping(
+            grouping,
+            float(self._last_count_dt0),
+            n_histograms=len(dataset.run.histograms),
+            detector_indices=indices or None,
+            additive=additive,
+        )
+        before = next(iter(change["before"].values()), 0.0)
+        after = next(iter(change["after"].values()), 0.0)
+        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._result_text.setHtml(
+            success_html(
+                "Deadtime promoted to grouping",
+                detail=(
+                    f"Group {self._last_count_group} detectors: "
+                    f"{before:.5g} → {after:.5g} μs ({'added' if additive else 'replaced'}). "
+                    "Re-reduce the run to apply."
+                ),
+            )
+        )
+        self.count_fit_completed.emit(dataset, None)
+
     def _count_fb_groups(self, dataset: MuonDataset) -> tuple[int, int]:
         grouping = (
             dataset.run.grouping if dataset.run and isinstance(dataset.run.grouping, dict) else {}
@@ -3656,6 +3709,12 @@ class GlobalFitTab(QWidget):
             params.add(Parameter(name="lambda_base", value=0.05, min=0.0, max=10.0))
             # beta held fixed at 1 (simple exponential); free beta is unstable.
             params.add(Parameter(name="beta_base", value=1.0, min=0.2, max=3.0, fixed=True))
+        if self._count_deadtime:
+            params.add(Parameter(name="DT0", value=0.005, min=0.0, max=0.5))
+        if self._count_dpsep > 0.0:
+            # dpsep comes from the instrument; held fixed (gradient-fitting the
+            # non-smooth pulse gate is unreliable).
+            params.add(Parameter(name="dpsep", value=self._count_dpsep, fixed=True))
         return params
 
     def _run_count_domain_fit(self) -> None:
@@ -3729,6 +3788,7 @@ class GlobalFitTab(QWidget):
             self._result_text.setHtml(error_html(result.message or "Forward/backward fit failed"))
             return
         fwd = result.group_results[forward]
+        self._store_count_deadtime(fwd, forward)
         alpha = fwd.parameters["alpha"].value
         alpha_err = fwd.uncertainties.get("alpha")
         rows = [self._count_param_row(fwd, name) for name in fwd.parameters.names]
@@ -3747,6 +3807,7 @@ class GlobalFitTab(QWidget):
             self._results_group.setStyleSheet("")
             self._result_text.setHtml(error_html(result.message or "Single-histogram fit failed"))
             return
+        self._store_count_deadtime(result, group_id)
         rows = [self._count_param_row(result, name) for name in result.parameters.names]
         detail = (
             f"χ²/ν = {result.reduced_chi_squared:.4f} (cost: {self._count_fit_cost})<br>"
@@ -3760,6 +3821,15 @@ class GlobalFitTab(QWidget):
             )
         )
         self.count_fit_completed.emit(dataset, result)
+
+    def _store_count_deadtime(self, fit_result, group_id: int) -> None:
+        """Remember a converged DT0 so it can be promoted to the grouping."""
+        if "DT0" in fit_result.parameters.names:
+            self._last_count_dt0 = float(fit_result.parameters["DT0"].value)
+            self._last_count_group = int(group_id)
+        else:
+            self._last_count_dt0 = None
+            self._last_count_group = None
 
     def _count_param_row(self, fit_result, name: str) -> str:
         value = fit_result.parameters[name].value

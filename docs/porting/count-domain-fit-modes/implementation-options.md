@@ -233,12 +233,36 @@ change append-only to avoid collisions with the other open PRs touching
    colliding with the next-wave `engine.py` owner.
 2. **Free muon lifetime** (musrfit-style) as an optional count-fit parameter.
 3. **Polynomial/power-law deadtime promotion** to the grouping (Phase 3 promotes
-   DT0 only).
-4. **MINOS errors on α** — `fit-workflow-diagnostics` (Wave B) adds MINOS; α is
+   DT0 only; the C2/C3/C4 polynomial deadtime fits but is not promoted).
+4. **DT1 (linear) and power-law deadtime in the fit** — Phase 3 ships Simple
+   (DT0) + polynomial (C2–C4); the linear-in-event-fraction (DT1) and power-law
+   forms need the ISIS frame-fraction/event-fraction metadata block and are
+   deferred.
+5. **Robust dpsep refinement** — the double-pulse separation is fixed by
+   default because the non-smooth pulse-onset gate defeats migrad; a coarse
+   1-D scan → migrad refinement would make dpsep fittable. (Finding recorded in
+   comparison.md.)
+6. **FB double-pulse** — Phase 3 ships double-pulse for the single-histogram
+   mode (the round-trip target); folding it into the F+B α model is deferred.
+7. **Plot overlay for count fits** — count-fit results are reported
+   numerically; overlaying the raw-count fit curve on the (lifetime-corrected)
+   Individual-Groups plot is a UI-polish follow-on.
+8. **MINOS errors on α** — `fit-workflow-diagnostics` (Wave B) adds MINOS; α is
    the prime beneficiary given its amplitude correlation. Synergy, not a
    dependency.
-5. **WiMDA fitted-baseline "Set BG" workflow** — out of scope; the Phase-2
+9. **WiMDA fitted-baseline "Set BG" workflow** — out of scope; the Phase-2
    baseline-drift term is independent and does not pre-empt it.
+
+## Implementation outcome (2026-06-10)
+
+All three phases shipped, each `validate`-green (Phase 1: 2126; Phase 2: 2135;
+Phase 3: 2145 passed). The architecture held: `engine.py` untouched; the new
+`count_domain.py` driver reuses `build_grouped_count_model` (single-histogram)
+and the one new `build_fb_count_model` (√α tie), with the raw model = the
+existing builder × e^(−t/τ). The GUI surfaced through `MultiGroupFitWindow`'s
+fit-target selector with minimal `fit_panel.py` plumbing (a routing branch in
+`GlobalFitTab._run_grouped_time_domain_fit` + free-amplitude seeding, since the
+count modes fit the model amplitude that the normalised fgAll path pins to 1).
 
 ## References
 

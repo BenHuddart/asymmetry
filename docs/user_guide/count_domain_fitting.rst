@@ -109,6 +109,35 @@ is off by default and, when off, leaves the fit numerically unchanged.
      component; Asymmetry has no single privileged offset parameter, so the
      drift multiplies the whole polarization. The term is off by default.
 
+Count loss and double pulse
+---------------------------
+
+* **Fit deadtime DT₀** — add a non-paralyzable count-loss term to the fit. The
+  observed counts are the true counts damped by 1 − DT₀·r, with r the
+  per-frame, per-detector count rate; DT₀ is the detector deadtime in
+  microseconds, the same quantity the Grouping dialog's deadtime correction
+  applies. A high-rate run is needed for DT₀ to be well determined.
+
+  Once a deadtime fit converges, **Promote DT₀ → grouping** writes the fitted
+  value into the grouping's per-detector deadtime (WiMDA's Send-to-Group),
+  reporting the before/after values; tick **accumulate** to add to the existing
+  value rather than replace it. Re-reduce the run to apply the promoted
+  correction. This closes the calibration loop: fit the deadtime, promote it,
+  and the reduced data is corrected.
+
+* **Double pulse (μs)** — set the pulse separation for an ISIS double-pulse
+  source; 0 leaves the single-pulse model. The two pulses each carry the
+  polarization, evaluated at t ± dpsep/2 and weighted by exp(∓dpsep/2τ_μ). The
+  separation is taken as a fixed instrument value rather than fitted.
+
+  .. note::
+
+     The separation enters the model through a non-smooth pulse-onset gate, so
+     gradient-based fitting of dpsep is unreliable and is not offered in the
+     GUI; set it from the instrument. With the separation fixed at its true
+     value the model fits cleanly (χ²ᵣ ≈ 1); a wrong separation visibly
+     degrades the fit.
+
 Worked example — α from a TF calibration run
 --------------------------------------------
 

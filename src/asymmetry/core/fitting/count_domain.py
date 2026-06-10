@@ -38,6 +38,7 @@ from asymmetry.core.fitting.grouped_time_domain import (
     build_grouped_count_model,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.transform.grouping import effective_group_indices
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 #: Selectable count-fit cost functions.
@@ -45,6 +46,9 @@ COUNT_COSTS: tuple[str, ...] = ("poisson", "gaussian")
 
 #: Single-histogram nuisance parameters (the rest are physics-model parameters).
 SINGLE_HISTOGRAM_NUISANCE: tuple[str, ...] = ("N0", "background")
+
+#: Optional count-loss (deadtime) parameters, applied when present in the fit set.
+DEADTIME_PARAMS: tuple[str, ...] = ("DT0", "C2", "C3", "C4")
 
 _INF = float("inf")
 
@@ -132,6 +136,88 @@ def _with_baseline_drift(fraction_fn: Callable[..., NDArray]) -> Callable[..., N
 def _split_time_offset(kw: dict) -> float:
     """Pop and return the fittable ``t0`` time offset (microseconds), default 0."""
     return float(kw.pop("t0", 0.0))
+
+
+# --- count loss (deadtime) --------------------------------------------------
+
+
+def _pop_deadtime(kw: dict) -> tuple[float, float, float, float]:
+    """Pop the optional deadtime parameters ``(DT0, C2, C3, C4)`` (all default 0)."""
+    return (
+        float(kw.pop("DT0", 0.0)),
+        float(kw.pop("C2", 0.0)),
+        float(kw.pop("C3", 0.0)),
+        float(kw.pop("C4", 0.0)),
+    )
+
+
+def _deadtime_frame_norm(dataset: MuonDataset, group_id: int) -> float:
+    """Per-frame, per-detector, per-bin count-rate normalization for deadtime.
+
+    Matches the convention of :func:`apply_deadtime_correction`
+    (``loss = N*tau/(bin_width*n_frames)`` per detector). The grouped count sums
+    ``n_det`` detectors, so the per-detector rate divides the group count by
+    ``n_det``. Returns ``n_det * bin_width_us * n_frames``; the loss term is then
+    ``DT0 * N_group / frame_norm``.
+    """
+    grouping = (
+        dataset.run.grouping if dataset.run and isinstance(dataset.run.grouping, dict) else {}
+    )
+    n_det = max(1, len(effective_group_indices(grouping, int(group_id))))
+    try:
+        n_frames = float(grouping.get("good_frames", 1.0)) or 1.0
+    except (TypeError, ValueError):
+        n_frames = 1.0
+    bin_width = float(dataset.run.histograms[0].bin_width) if dataset.run.histograms else 1.0
+    return max(n_det * bin_width * n_frames, 1e-30)
+
+
+def _apply_deadtime(
+    counts: NDArray[np.float64], dt_terms: tuple[float, float, float, float], frame_norm: float
+) -> NDArray[np.float64]:
+    """Multiply true counts by the non-paralyzable count-loss factor ``1 - L(qq)``.
+
+    With ``qq = counts / frame_norm`` the per-frame, per-detector rate,
+    ``L = DT0*qq + C2*qq^2 + C3*qq^3 + C4*qq^4`` (Simple = DT0 only; the higher
+    terms are the polynomial extension). An exact no-op when every coefficient is
+    zero. The factor is clipped at 0 so a runaway trial cannot make counts
+    negative.
+    """
+    dt0, c2, c3, c4 = dt_terms
+    if dt0 == 0.0 and c2 == 0.0 and c3 == 0.0 and c4 == 0.0:
+        return counts
+    qq = np.asarray(counts, dtype=float) / frame_norm
+    loss = dt0 * qq + c2 * qq**2 + c3 * qq**3 + c4 * qq**4
+    return counts * np.clip(1.0 - loss, 0.0, None)
+
+
+# --- double pulse -----------------------------------------------------------
+
+
+def _double_pulse_single_model(fraction_fn: Callable[..., NDArray]) -> Callable[..., NDArray]:
+    """Raw single-histogram count model for an ISIS double-pulse source.
+
+    Two muon pulses separated by ``dpsep`` (μs) each carry the polarization,
+    evaluated at ``t ± dpsep/2`` and weighted by ``exp(∓dpsep/2τ_μ)`` (WiMDA
+    ``ArrayMusrFunc``). The decay envelope and ``N0``/background stay at ``t``;
+    only the polarization is shifted. The 0.5 normalization recovers the
+    single-pulse limit as ``dpsep → 0``; the second pulse is gated to
+    ``t > dpsep/2``.
+    """
+    tau = float(MUON_LIFETIME_US)
+
+    def model(t, *, N0, background, amplitude, relative_phase, dpsep, **physics):  # noqa: N803
+        time = np.asarray(t, dtype=float)
+        dpsep2 = float(dpsep) / 2.0
+        c1 = np.exp(-dpsep2 / tau)
+        c2 = np.exp(dpsep2 / tau)
+        a1 = np.asarray(fraction_fn(time + dpsep2, **physics), dtype=float)
+        a2 = np.asarray(fraction_fn(time - dpsep2, **physics), dtype=float)
+        gate = (time > dpsep2).astype(float)
+        factor = 0.5 * (c1 * (1.0 + amplitude * a1) + gate * c2 * (1.0 + amplitude * a2))
+        return float(N0) * np.exp(-time / tau) * factor + float(background)
+
+    return model
 
 
 def _raw_model(lifetime_corrected_model: Callable[..., NDArray]) -> Callable[..., NDArray]:
@@ -252,8 +338,10 @@ def fit_single_histogram(
 
     Optional window/nuisance flexibility, all no-ops unless requested:
     ``exclude`` drops an interior time window from the fit; a free ``t0``
-    parameter in ``params`` shifts the model time axis; free ``lambda_base`` /
-    ``beta_base`` parameters add a stretched-exponential baseline drift.
+    parameter shifts the model time axis; free ``lambda_base`` / ``beta_base``
+    parameters add a stretched-exponential baseline drift; ``DT0`` (+ ``C2``,
+    ``C3``, ``C4``) add a count-loss/deadtime term; a ``dpsep`` parameter
+    switches on the ISIS double-pulse count model.
     """
     _validate_cost(cost)
     group = build_count_group(
@@ -262,9 +350,12 @@ def fit_single_histogram(
     time = np.asarray(group.time, dtype=float)
     counts = np.asarray(group.counts, dtype=float)
 
-    raw_model = _raw_model(
-        build_grouped_count_model(_with_baseline_drift(_percent_to_fraction(model_fn)))
-    )
+    fraction_fn = _with_baseline_drift(_percent_to_fraction(model_fn))
+    if "dpsep" in params:
+        base_model = _double_pulse_single_model(fraction_fn)
+    else:
+        base_model = _raw_model(build_grouped_count_model(fraction_fn))
+    frame_norm = _deadtime_frame_norm(dataset, group_id)
 
     # The per-group amplitude/phase are fixed nuisances here: the sign carries the
     # forward/backward orientation and the physics model owns the real amplitude.
@@ -283,7 +374,9 @@ def fit_single_histogram(
         for follower, main in followers.items():
             kw[follower] = kw[main]
         t0 = _split_time_offset(kw)
-        return np.asarray(raw_model(time + t0, **kw), dtype=float)
+        dt_terms = _pop_deadtime(kw)
+        model = np.asarray(base_model(time + t0, **kw), dtype=float)
+        return _apply_deadtime(model, dt_terms, frame_norm)
 
     def total_cost(*args) -> float:
         return _cost_value(counts, predict(args), cost)
@@ -350,32 +443,37 @@ def fit_fb_alpha(
         build_fb_count_model(_with_baseline_drift(_percent_to_fraction(model_fn)))
     )
 
+    frame_norm_f = _deadtime_frame_norm(dataset, forward_group)
+    frame_norm_b = _deadtime_frame_norm(dataset, backward_group)
+
     free = params.free_parameters
     free_names = [p.name for p in free]
     fixed_kw = {p.name: p.value for p in params if p.fixed}
     followers = params.link_followers()
-    # Shared physics/scale params: everything except the two per-side backgrounds
-    # and the time offset (applied by shifting the model time axis).
-    shared_keys = [n for n in free_names if n not in ("background", "background_b", "t0")]
+    # Shared physics/scale params: everything except the two per-side backgrounds,
+    # the time offset (applied by shifting the model time axis) and the deadtime
+    # terms (applied as a post-multiply loss factor).
+    _per_eval = ("background", "background_b", "t0", *DEADTIME_PARAMS)
+    shared_keys = [n for n in free_names if n not in _per_eval]
 
-    def _eval(args, time, counts_key: str, sign: float) -> NDArray[np.float64]:
+    def _eval(args, time, counts_key: str, sign: float, frame_norm: float) -> NDArray[np.float64]:
         kw = {**fixed_kw, **dict(zip(free_names, args, strict=False))}
         for follower, main in followers.items():
             kw[follower] = kw[main]
         t0 = _split_time_offset(kw)
+        dt_terms = _pop_deadtime(kw)
         shared = {k: kw[k] for k in shared_keys if k in kw}
-        shared.update(
-            {k: v for k, v in fixed_kw.items() if k not in ("background", "background_b", "t0")}
-        )
-        return np.asarray(
+        shared.update({k: v for k, v in fixed_kw.items() if k not in _per_eval})
+        model = np.asarray(
             raw_model(time + t0, sign=sign, background=kw[counts_key], **shared), dtype=float
         )
+        return _apply_deadtime(model, dt_terms, frame_norm)
 
     def predict_f(args):
-        return _eval(args, time_f, "background", +1.0)
+        return _eval(args, time_f, "background", +1.0, frame_norm_f)
 
     def predict_b(args):
-        return _eval(args, time_b, "background_b", -1.0)
+        return _eval(args, time_b, "background_b", -1.0, frame_norm_b)
 
     def total_cost(*args) -> float:
         return _cost_value(counts_f, predict_f(args), cost) + _cost_value(

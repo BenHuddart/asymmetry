@@ -97,6 +97,7 @@ weights c₁ = e^(−dpsep₂/τ_μ), c₂ = e^(+dpsep₂/τ_μ) (`DPsepEditChan
 | dpsep source | user entry (`DPsepEdit`, ns) | instrument metadata if present, else user entry; **optionally fittable** | None functionally; defaulting from metadata is an addition. |
 | Pulse weights | c₁,c₂ = e^(∓dpsep₂/τ_μ), fixed once dpsep is set | same, derived from dpsep + τ_μ | None. |
 | Second-pulse onset | second pulse contributes only for t > dpsep₂ | same gate | None. |
+| Fitting dpsep | user can fit dpsep | dpsep **fixed from metadata/user by default** | **Stated divergence (implementation finding).** The second-pulse onset gate `t > dpsep/2` is non-smooth in dpsep, so gradient (migrad) fitting of dpsep is unreliable — it converges only from a seed on the correct side of the true value. With dpsep fixed at the instrument value the model fits cleanly (χ²ᵣ ≈ 1); a wrong dpsep visibly degrades the fit. dpsep is therefore exposed as a fixed instrument value; a robust dpsep refinement (coarse scan → migrad) is a recorded follow-on. |
 
 ## Statistics — the central divergence
 

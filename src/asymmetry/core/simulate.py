@@ -670,6 +670,133 @@ def simulate_run(
     )
 
 
+def simulate_double_pulse_run(
+    template: Run,
+    model: Any,
+    parameters: Mapping[str, float] | None = None,
+    *,
+    total_events: float,
+    dpsep_us: float,
+    alpha: float | None = None,
+    background_per_bin: float = 0.0,
+    seed: int = 0,
+    run_number: int | None = None,
+    title: str | None = None,
+) -> Run:
+    """Simulate an ISIS double-pulse run (WiMDA double-pulse count model).
+
+    Two muon pulses separated by ``dpsep_us`` each carry the polarization,
+    evaluated at ``t ± dpsep/2`` and weighted by ``exp(∓dpsep/2τ_μ)``; the
+    envelope stays at ``t`` and the single-pulse limit is ``dpsep_us → 0``. Used
+    to round-trip the double-pulse single-histogram fit (the generating model
+    matches :func:`asymmetry.core.fitting.count_domain.fit_single_histogram`'s
+    ``dpsep`` model).
+    """
+    if not template.histograms:
+        raise ValueError("Simulation requires a template run with detector histograms.")
+    if not np.isfinite(dpsep_us) or dpsep_us < 0:
+        raise ValueError("dpsep_us must be non-negative and finite.")
+    if not np.isfinite(total_events) or total_events <= 0:
+        raise ValueError("total_events must be a positive, finite event budget.")
+
+    params = dict(parameters or {})
+    base_fn = model.function if hasattr(model, "function") and callable(model.function) else model
+    expression = model.formula_string() if hasattr(model, "formula_string") else repr(model)
+
+    def signal_fraction(t: NDArray[np.float64]) -> NDArray[np.float64]:
+        return np.asarray(base_fn(t, **params), dtype=float) / 100.0
+
+    grouping = template.grouping if isinstance(template.grouping, dict) else {}
+    backward_gid = int(grouping.get("backward_group", 2))
+    if alpha is None:
+        try:
+            alpha = float(grouping.get("alpha", 1.0))
+        except (TypeError, ValueError):
+            alpha = 1.0
+    if not np.isfinite(alpha) or alpha <= 0:
+        raise ValueError("alpha must be positive and finite.")
+
+    det_groups = _detector_group_map(grouping, len(template.histograms))
+    n_backward = sum(1 for gid in det_groups.values() if gid == backward_gid)
+    n_forward = len(det_groups) - n_backward
+
+    def _weight(gid: int | None) -> float:
+        if gid == backward_gid:
+            return 2.0 / (1.0 + alpha) / max(1, n_backward)
+        return 2.0 * alpha / (1.0 + alpha) / max(1, n_forward)
+
+    weights = np.array([_weight(det_groups.get(det)) for det in range(len(template.histograms))])
+    total_weight = float(weights.sum()) or 1.0
+
+    tau = float(MUON_LIFETIME_US)
+    dpsep2 = float(dpsep_us) / 2.0
+    c1, c2 = np.exp(-dpsep2 / tau), np.exp(dpsep2 / tau)
+
+    expected: list[NDArray[np.float64]] = []
+    for det, hist in enumerate(template.histograms):
+        n_bins = hist.n_bins
+        t0_bin = max(0, int(hist.t0_bin))
+        bin_width = float(hist.bin_width)
+        n_post = max(0, n_bins - t0_bin)
+        clean = np.full(n_bins, float(background_per_bin), dtype=float)
+        if n_post:
+            u = np.arange(n_post, dtype=float) * bin_width
+            sign = -1.0 if det_groups.get(det) == backward_gid else 1.0
+            a1 = signal_fraction(u + dpsep2)
+            a2 = signal_fraction(u - dpsep2)
+            gate = (u > dpsep2).astype(float)
+            factor = 0.5 * (c1 * (1.0 + sign * a1) + gate * c2 * (1.0 + sign * a2))
+            n_events_det = total_events * weights[det] / total_weight
+            n0 = n_events_det * (1.0 - np.exp(-bin_width / tau))
+            clean[t0_bin:] += np.clip(n0 * np.exp(-u / tau) * factor, 0.0, None)
+        expected.append(clean)
+
+    rng = np.random.default_rng(seed)
+    histograms = [
+        Histogram(
+            counts=rng.poisson(clean).astype(float),
+            bin_width=float(hist.bin_width),
+            t0_bin=int(hist.t0_bin),
+            good_bin_start=int(hist.good_bin_start),
+            good_bin_end=int(hist.good_bin_end),
+        )
+        for hist, clean in zip(template.histograms, expected, strict=True)
+    ]
+
+    out_grouping = copy.deepcopy({k: v for k, v in grouping.items() if k not in _PERIOD_KEYS})
+    out_grouping["deadtime_correction"] = False
+    out_grouping["dead_time_us"] = [0.0] * len(histograms)
+    number = template.run_number if run_number is None else int(run_number)
+    metadata = {
+        key: template.metadata[key]
+        for key in ("instrument", "temperature", "field", "field_state", "field_direction")
+        if key in template.metadata
+    }
+    metadata.update(
+        {
+            "run_number": number,
+            "run_label": f"SIM {number}",
+            "title": title if title is not None else f"Double-pulse: {expression}",
+            "synthetic": True,
+            "simulation": {
+                "seed": int(seed),
+                "total_events": float(total_events),
+                "dpsep_us": float(dpsep_us),
+                "alpha": float(alpha),
+                "model": expression,
+                "parameters": {name: float(value) for name, value in params.items()},
+            },
+        }
+    )
+    return Run(
+        run_number=number,
+        histograms=histograms,
+        metadata=metadata,
+        grouping=out_grouping,
+        source_file="",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Multi-group simulation (per-group amplitude / phase, from a grouped fit)
 # ---------------------------------------------------------------------------

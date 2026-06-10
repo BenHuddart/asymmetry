@@ -111,3 +111,41 @@ def test_count_controls_disabled_for_all_groups(qapp, fb_dataset):
     window._target_combo.setCurrentIndex(0)  # All groups
     assert not window._t0_check.isEnabled()
     assert not window._exclude_min.isEnabled()
+    assert not window._deadtime_check.isEnabled()
+    assert not window._promote_btn.isEnabled()
+
+
+def test_phase3_controls_push_to_tabs(qapp, fb_dataset):
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(2)  # single
+    window._deadtime_check.setChecked(True)
+    window._dpsep_spin.setValue(0.324)
+    tab = window._single_fit_tab
+    assert tab._count_deadtime is True
+    assert tab._count_dpsep == pytest.approx(0.324)
+
+
+def test_promote_button_without_fit_shows_hint(qapp, fb_dataset):
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(2)  # single
+    # No deadtime fit run yet → promoting reports a hint rather than mutating.
+    window._on_promote_deadtime()
+    grouping = fb_dataset.run.grouping
+    assert "Run a deadtime count fit" in window._single_fit_tab._result_text.toPlainText()
+    assert grouping.get("deadtime_correction") in (None, False)
+
+
+def test_promote_after_deadtime_fit_writes_grouping(qapp, fb_dataset):
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(2)  # single
+    window._deadtime_check.setChecked(True)
+    tab = window._single_fit_tab
+    tab._run_count_domain_fit()
+    assert tab._last_count_dt0 is not None
+    window._on_promote_deadtime()
+    grouping = fb_dataset.run.grouping
+    assert grouping.get("deadtime_correction") is True
+    assert any(v != 0.0 for v in grouping.get("dead_time_us", []))

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -113,13 +114,41 @@ class MultiGroupFitWindow(QWidget):
         self._t0_check.toggled.connect(self._sync_count_fit_target)
         self._baseline_check = QCheckBox("Fit baseline drift")
         self._baseline_check.toggled.connect(self._sync_count_fit_target)
+        self._deadtime_check = QCheckBox("Fit deadtime DT₀")
+        self._deadtime_check.toggled.connect(self._sync_count_fit_target)
         nuisance_row = QWidget()
         nuisance_layout = QHBoxLayout(nuisance_row)
         nuisance_layout.setContentsMargins(0, 0, 0, 0)
         nuisance_layout.addWidget(self._t0_check)
         nuisance_layout.addWidget(self._baseline_check)
+        nuisance_layout.addWidget(self._deadtime_check)
         form.addRow(QLabel("Nuisances"), nuisance_row)
+
+        # Double-pulse separation (μs); 0 = single pulse. Fixed from the instrument.
+        self._dpsep_spin = QDoubleSpinBox()
+        self._dpsep_spin.setDecimals(3)
+        self._dpsep_spin.setRange(0.0, 5.0)
+        self._dpsep_spin.setSingleStep(0.01)
+        self._dpsep_spin.valueChanged.connect(self._sync_count_fit_target)
+        self._dpsep_label = QLabel("Double pulse (μs)")
+        form.addRow(self._dpsep_label, self._dpsep_spin)
+
+        # Promote a fitted deadtime into the grouping correction (Send-to-Group).
+        self._promote_btn = QPushButton("Promote DT₀ → grouping")
+        self._promote_btn.clicked.connect(self._on_promote_deadtime)
+        self._promote_additive = QCheckBox("accumulate")
+        promote_row = QWidget()
+        promote_layout = QHBoxLayout(promote_row)
+        promote_layout.setContentsMargins(0, 0, 0, 0)
+        promote_layout.addWidget(self._promote_btn)
+        promote_layout.addWidget(self._promote_additive)
+        self._promote_label = QLabel("Calibrate")
+        form.addRow(self._promote_label, promote_row)
         return box
+
+    def _on_promote_deadtime(self) -> None:
+        """Promote the active surface's last fitted deadtime to the grouping."""
+        self._active_tab().promote_count_deadtime(additive=self._promote_additive.isChecked())
 
     def _sync_count_fit_target(self, *_args) -> None:
         """Push the selector state down to both grouped surfaces."""
@@ -137,6 +166,12 @@ class MultiGroupFitWindow(QWidget):
             self._exclude_label,
             self._t0_check,
             self._baseline_check,
+            self._deadtime_check,
+            self._dpsep_spin,
+            self._dpsep_label,
+            self._promote_btn,
+            self._promote_additive,
+            self._promote_label,
         ):
             widget.setEnabled(count_mode)
 
@@ -150,6 +185,8 @@ class MultiGroupFitWindow(QWidget):
             tab.set_count_exclude(exclude)
             tab.set_count_fit_t0(self._t0_check.isChecked())
             tab.set_count_baseline(self._baseline_check.isChecked())
+            tab.set_count_deadtime(self._deadtime_check.isChecked())
+            tab.set_count_dpsep(float(self._dpsep_spin.value()))
 
     def _grouped_tabs(self) -> tuple[GlobalFitTab, GlobalFitTab]:
         return (self._single_fit_tab, self._batch_fit_tab)
