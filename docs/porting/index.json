@@ -675,6 +675,28 @@
       "src_path": "src/asymmetry/core/maxent/engine.py",
       "updated": "2026-06-10",
       "notes": "Wave A project 6 of wimda-parity-gap umbrella; EXTENDS docs/porting/maxent/ (the implemented-engine study) without re-litigating it. Implements that study's deferred Phase1/2/follow-on items: (1) time-domain reconstruction overlay (opus already computes it); (2) ISIS pulse-shape response in the forward model (single+double, parabolic proton FT x pion Lorentzian); (3) ZF/LF 2-group F/B mode + SpecBG zero-freq pseudo-Voigt subtraction; (4) deadtime fitting (DEADFIT) + editable phase/amp/deadtime tables + fitted-phase exchange with grouped time-domain fits (absorbs phase-auto-calibration WiMDA slice). KEY FINDING: shipped engine is a projected-gradient V1 with REAL cosine/sine forward-adjoint, NOT WiMDA's complex-FFT Skilling-Bryan kernel -> all new physics folds into that contract via the existing cos/sin component split, no rewrite. Scope decisions with Ben 2026-06-10: synthetic-only pulse validation (single+double); suggest-only deadtime promotion; strict 2-group ZF/LF parity; overlay as plot-workspace view token; core/fourier/units.py simple converters (shared w/ frequency-domain-finishers, API recorded); ZF/LF mode selector hard-constrains group table; NO schema bump (from_dict defaults; signature-only). Looseness/phase-accel knobs verdict OUT (target WiMDA's SB kernel V1 doesn't run). Sconv deferred (numerical hazard). Mantid not importable; MaxentTools pure-numpy kernels = optional skipif oracle, copy nothing. IMPLEMENTED in 3 phases (validate green each): P1 reconstruction overlay (TIME_MAXENT_RECON rep + reconstruction view token + residuals renderer); P2 ISIS pulse-shape response folded into the real cos/sin kernel as R(nu)cos(theta-delta) + interior exclusion sigma-inflation + core/fourier/units.py MHz/Gauss/Tesla helper (shared w/ frequency-domain-finishers); P3 ZF/LF 2-group alpha-tie + SpecBG display subtraction + spectrum/log export + phase exchange (rad/deg by group id, via fit_panel grouped seed bridge) + deadtime fit reusing calibrate_deadtime_from_histograms (suggest-only promotion). Divergences in comparison.md."
+    },
+    {
+      "slug": "frequency-domain-finishers",
+      "feature_name": "Frequency-domain finishers: field-axis units, exclusion ranges, pulse-rolloff compensation, robust baseline, S/N readouts, real+imag, Burg pole scan, diamagnetic removal",
+      "status": "study",
+      "path": "docs/porting/frequency-domain-finishers",
+      "references": [
+        "WiMDA",
+        "musrfit",
+        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
+      ],
+      "docs": {
+        "readme": "docs/porting/frequency-domain-finishers/README.md",
+        "comparison": "docs/porting/frequency-domain-finishers/comparison.md",
+        "implementation_options": "docs/porting/frequency-domain-finishers/implementation-options.md",
+        "test_data": "docs/porting/frequency-domain-finishers/test-data.md",
+        "verification_plan": "docs/porting/frequency-domain-finishers/verification-plan.md"
+      },
+      "tests_path": null,
+      "src_path": null,
+      "updated": "2026-06-11",
+      "notes": "Wave A project 5 of wimda-parity-gap umbrella. Study + plan committed; awaiting go-ahead. Field-axis is VERIFY-ONLY (already built in plot_panel via FieldUnit). Reuses exclude_frequency_ranges (fft.py:422), pulse.py R(nu) for compensation, units.py, average_fourier_display_values. Divergences: pulse comp inverts parabola x Lorentzian R(nu) with cap-gain+node-cutoff guard (not WiMDA unbounded Gaussian); baseline iterative sigma-clip (WiMDA single-pass = 1 iteration). Burg = diagnostic display mode (Phase 2). Deferred: radical correlation spectrum, N0 single-histogram."
     }
   ]
 }
