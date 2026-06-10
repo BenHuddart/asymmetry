@@ -113,6 +113,10 @@ def test_maxent_panel_reconstruction_toggle_round_trips_and_signals(qapp: QAppli
         received.clear()
         panel.restore_state({"show_reconstruction": False})
         assert panel.show_reconstruction_enabled() is False
+        # A state dict missing the key must default OFF (matches init/to_dict),
+        # not silently flip the overlay on.
+        panel.restore_state({})
+        assert panel.show_reconstruction_enabled() is False
         panel.set_show_reconstruction(True)
         assert panel.show_reconstruction_enabled() is True
         assert received == []
@@ -216,12 +220,35 @@ def test_plot_workspace_exposes_reconstruction_as_time_view(qapp: QApplication) 
     workspace = PlotWorkspacePanel(time_panel=QWidget(), frequency_panel=QWidget())
     try:
         assert "reconstruction" in workspace._VIEW_TOKENS
-        workspace.set_available_views(["fb_asymmetry", "reconstruction", "maxent"])
+        workspace.set_available_views(["fb_asymmetry", "groups", "reconstruction", "maxent"])
         assert workspace.is_view_enabled("reconstruction")
+        workspace.set_active_view("groups")
         workspace.set_active_view("reconstruction")
         assert workspace.active_view() == "reconstruction"
         # It is a time-domain view (renders on the time panel), not a freq view.
         assert workspace.active_domain() == "time"
+        # The diagnostic overlay must NOT become the time-view fallback: a switch
+        # back to the time domain lands on real data (the last primary view).
+        workspace.set_active_view("frequency")
+        workspace.set_active_domain("time")
+        assert workspace.active_view() == "groups"
     finally:
         workspace.close()
         workspace.deleteLater()
+
+
+def test_multi_group_fit_window_exposes_phase_exchange_methods(qapp: QApplication) -> None:
+    # Regression: the MaxEnt phase-exchange handlers target
+    # self._multi_group_fit_window, so both methods must live there (they are
+    # defined on the grouped tabs, not on FitPanel).
+    from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
+
+    window = MultiGroupFitWindow(None)
+    try:
+        assert hasattr(window, "grouped_simulate_seed_for_run")
+        assert hasattr(window, "update_grouped_phase_seed")
+        # No grouped fit cached → update returns False, not an exception.
+        assert window.update_grouped_phase_seed(999, {1: 0.0}) is False
+    finally:
+        window.close()
+        window.deleteLater()

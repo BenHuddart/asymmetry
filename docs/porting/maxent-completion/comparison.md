@@ -377,6 +377,24 @@ field G / density + parameter header) and a run log (per-cycle χ²/entropy/test
 final phases/amps/backgrounds), on demand only — never WiMDA's binary `.max` or
 its auto-save-every-cycle side effect.
 
+**Post-implementation review fixes (high-effort review).** A recall-biased
+multi-angle review caught and fixed: (1) the phase-exchange handlers targeted
+`self._fit_panel` but the grouped-fit seed methods live on
+`self._multi_group_fit_window` (both buttons were inert); (2) the deadtime fit
+read `good_frames` from `run.metadata` (it lives in `grouping`) and passed the
+absolute `first_good_bin` as the t0-relative `t_good_offset` — both made the fit
+wrong; (3) the ZF/LF α-tie now respects the fit flags (a disabled amplitude/
+background fit stays frozen, matching WiMDA's tie-inside-MODAMP/MODBAK) and
+orders the F/B pair by the run's `forward_group`/`backward_group` designation,
+not the sorted group id; (4) ZF/LF now raises if a group is emptied by the
+time/exclusion window rather than silently degrading to an untied single-group
+fit; (5) SpecBG is a no-op when the window does not reach zero frequency (an LF
+window centred on the Larmor line), since it subtracts a zero-centred model; (6)
+the pulse `GW` transform uses a Taylor branch for small `x` to avoid catastrophic
+cancellation; (7) the reconstruction overlay no longer pollutes the workspace's
+time-view fallback. The `show_reconstruction` restore default was corrected to
+off.
+
 ## 10. Verification oracle status
 
 Mantid is **not importable** in this worktree (`import mantid` →

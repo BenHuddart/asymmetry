@@ -101,6 +101,15 @@ def test_pulse_response_rolls_off_with_frequency() -> None:
     assert amplitude[i7] < 0.3
 
 
+def test_pulse_response_is_accurate_at_small_nonzero_frequency() -> None:
+    # The closed-form GW suffers catastrophic cancellation as x→0; the Taylor
+    # branch must keep R≈1 for tiny nonzero frequencies (no ~6% dropout).
+    freqs = np.array([1.0e-7, 1.0e-6, 1.0e-5, 1.0e-4, 1.0e-3])
+    p_cos, p_sin = pulse_response(freqs, half_width_us=0.08, n_pulses=1)
+    magnitude = np.hypot(p_cos, p_sin)
+    np.testing.assert_allclose(magnitude, 1.0, atol=1.0e-6)
+
+
 # ── the response folds into the forward model, preserving the adjoint ────────
 
 

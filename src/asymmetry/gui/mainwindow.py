@@ -4938,8 +4938,8 @@ class MainWindow(QMainWindow):
             self._set_fourier_status("Select a run before exchanging phases.")
             return
         seed = None
-        if hasattr(self._fit_panel, "grouped_simulate_seed_for_run"):
-            seed = self._fit_panel.grouped_simulate_seed_for_run(run_number)
+        if hasattr(self._multi_group_fit_window, "grouped_simulate_seed_for_run"):
+            seed = self._multi_group_fit_window.grouped_simulate_seed_for_run(run_number)
         specs = seed.get("specs") if isinstance(seed, dict) else None
         if not specs:
             self._set_fourier_status(
@@ -4970,8 +4970,8 @@ class MainWindow(QMainWindow):
             int(gid): float(np.deg2rad(value))
             for gid, value in self._maxent_panel.group_phase_table().items()
         }
-        ok = hasattr(self._fit_panel, "update_grouped_phase_seed") and (
-            self._fit_panel.update_grouped_phase_seed(run_number, phases_rad)
+        ok = hasattr(self._multi_group_fit_window, "update_grouped_phase_seed") and (
+            self._multi_group_fit_window.update_grouped_phase_seed(run_number, phases_rad)
         )
         if not ok:
             self._set_fourier_status(
@@ -4992,9 +4992,13 @@ class MainWindow(QMainWindow):
         grouping = run.grouping if isinstance(run.grouping, dict) else {}
         deadtimes = calibrate_deadtime_from_histograms(
             list(run.histograms),
-            t_good_offset=int(grouping.get("first_good_bin", 0) or 0),
+            # t_good_offset is measured from t0 (the calibrator adds it to
+            # t0_bin); first_good_bin is absolute (= t0_bin + t_good_offset), so
+            # passing it would double-count t0.  good_frames lives in grouping,
+            # not metadata — the universal deadtime normaliser.
+            t_good_offset=int(grouping.get("t_good_offset", 0) or 0),
             last_good_bin=grouping.get("last_good_bin"),
-            num_good_frames=float(run.metadata.get("good_frames", 1.0) or 1.0),
+            num_good_frames=good_frames(grouping),
         )
         if not deadtimes:
             self._maxent_panel.set_deadtime_text("Deadtime fit failed.", can_apply=False)

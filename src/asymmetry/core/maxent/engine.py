@@ -644,8 +644,18 @@ def build_maxent_input(
     if resolved_config.mode == "zf_lf":
         if len(selected) != 2:
             raise ValueError("ZF/LF mode requires exactly two selected groups (forward/backward).")
-        zf_lf_phase_map = {int(selected[0]): 0.0, int(selected[1]): 180.0}
         grouping = run.grouping if isinstance(run.grouping, dict) else {}
+        # Order the pair by the run's forward/backward designation (not the
+        # sorted group id) so the forward group is pinned to 0° and the α tie
+        # enforces F = α·B on the right detectors even when backward has the
+        # lower id.  Fall back to selection order if neither matches.
+        forward_group = grouping.get("forward_group")
+        backward_group = grouping.get("backward_group")
+        if backward_group in selected and forward_group not in selected:
+            selected = [gid for gid in selected if gid != backward_group] + [int(backward_group)]
+        elif forward_group in selected:
+            selected = [int(forward_group)] + [gid for gid in selected if gid != forward_group]
+        zf_lf_phase_map = {int(selected[0]): 0.0, int(selected[1]): 180.0}
         zf_lf_alpha = _float_or_default(grouping.get("alpha"), 1.0)
         if not np.isfinite(zf_lf_alpha) or zf_lf_alpha <= 0.0:
             zf_lf_alpha = 1.0
@@ -712,6 +722,15 @@ def build_maxent_input(
 
     if not groups:
         raise ValueError("MaxEnt input contains no valid grouped signals.")
+    if resolved_config.mode == "zf_lf" and len(groups) != 2:
+        # A group can be dropped above if its mask is entirely empty (e.g. an
+        # exclusion/time window that removes all its points).  The α tie needs
+        # both groups, so fail loudly rather than silently degrade to an untied
+        # single-group fit.
+        raise ValueError(
+            "ZF/LF mode needs two groups with usable data; one group has no "
+            "points in the selected time/exclusion window."
+        )
 
     n_points = resolved_config.n_spectrum_points or default_n_spectrum_points(max_points)
     f_min, f_max = _resolve_frequency_window(run, resolved_config)
@@ -1268,10 +1287,15 @@ def _apply_zf_lf_tie(
         return
     forward_id = int(maxent_input.groups[0].group_id)
     backward_id = int(maxent_input.groups[1].group_id)
-    for table, lo, hi in (
-        (state.amplitudes, 0.01, 100.0),
-        (state.backgrounds, -np.inf, np.inf),
-    ):
+    # Only redistribute the quantities the user is actually fitting — a disabled
+    # amplitude/background fit must stay frozen (mirrors WiMDA, which ties inside
+    # MODAMP/MODBAK, i.e. only when those values are being refit).
+    tied: list[tuple[dict[int, float], float, float]] = []
+    if config.fit_amplitudes:
+        tied.append((state.amplitudes, 0.01, 100.0))
+    if config.fit_backgrounds or config.fit_constant_background:
+        tied.append((state.backgrounds, -np.inf, np.inf))
+    for table, lo, hi in tied:
         x_forward = float(table.get(forward_id, 0.0))
         x_backward = float(table.get(backward_id, 0.0))
         tied_backward = (x_forward + x_backward) / (1.0 + alpha)

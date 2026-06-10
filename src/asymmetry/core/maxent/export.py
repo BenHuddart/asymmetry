@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from asymmetry.core.fourier.units import gauss_to_mhz
+from asymmetry.core.fourier.units import mhz_to_gauss
 from asymmetry.core.maxent.engine import MaxEntConfig, MaxEntResult
 
 
@@ -33,7 +33,7 @@ def spectrum_to_text(result: MaxEntResult, config: MaxEntConfig) -> str:
     """
     freqs = np.asarray(result.frequencies_mhz, dtype=float)
     spectrum = np.asarray(result.spectrum, dtype=float)
-    field_gauss = freqs / float(gauss_to_mhz(1.0)) if freqs.size else freqs
+    field_gauss = mhz_to_gauss(freqs) if freqs.size else freqs
     lines = _header_lines(result, config)
     lines.append("# frequency_MHz\tfield_G\tdensity")
     for f_mhz, b_gauss, value in zip(freqs, field_gauss, spectrum):

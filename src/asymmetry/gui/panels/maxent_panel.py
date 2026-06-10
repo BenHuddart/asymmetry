@@ -625,7 +625,7 @@ class MaxEntPanel(QWidget):
         )
         self._use_deadtime_check.setChecked(bool(state.get("use_deadtime_correction", True)))
         blocker = self._show_reconstruction_check.blockSignals(True)
-        self._show_reconstruction_check.setChecked(bool(state.get("show_reconstruction", True)))
+        self._show_reconstruction_check.setChecked(bool(state.get("show_reconstruction", False)))
         self._show_reconstruction_check.blockSignals(blocker)
         enabled = state.get("group_enabled_table")
         phases = state.get("group_phase_degrees")

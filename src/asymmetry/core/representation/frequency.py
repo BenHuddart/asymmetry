@@ -35,9 +35,19 @@ def apply_maxent_specbg(dataset: MuonDataset, config: MaxEntConfig) -> MuonDatas
     """
     if not (config.specbg_enabled and config.mode == "zf_lf"):
         return dataset
+    frequencies = np.asarray(dataset.time, dtype=float)
+    if frequencies.size == 0:
+        return dataset
+    # SpecBG subtracts a *zero-centred* model of the static peak, so it only
+    # makes sense when the spectrum window actually reaches zero frequency
+    # (true ZF, window from 0).  For an LF window centred on the Larmor line the
+    # peak is not at zero, so skip rather than subtract a meaningless edge model.
+    width = max(config.specbg_gaussian_width_mhz, config.specbg_lorentzian_width_mhz, 1.0e-3)
+    if float(np.min(np.abs(frequencies))) > width:
+        return dataset
     dataset.asymmetry = np.asarray(
         subtract_zero_frequency(
-            dataset.time,
+            frequencies,
             dataset.asymmetry,
             gaussian_width=config.specbg_gaussian_width_mhz,
             lorentzian_width=config.specbg_lorentzian_width_mhz,

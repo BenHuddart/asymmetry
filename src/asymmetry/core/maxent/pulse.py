@@ -41,7 +41,9 @@ from asymmetry.core.utils.constants import MUON_LIFETIME_US, PION_LIFETIME_US
 #: Pulse-mode tokens accepted by :func:`pulse_response`.
 PULSE_MODES = ("ignore", "single", "double")
 
-_DC_TOL = 1.0e-8
+# Below this |x| the closed-form GW loses precision to cancellation; use the
+# Taylor series instead.  At x = 1e-2 both branches agree to ~1e-8.
+_SMALL_X = 1.0e-2
 
 
 def pulse_response(
@@ -67,10 +69,14 @@ def pulse_response(
     omega = 2.0 * np.pi * frequencies  # rad/µs
     width = float(half_width_us)
     x = omega * width
-    # Parabolic proton-pulse cosine transform, with the x→0 limit G(0)=1.
+    # Parabolic proton-pulse cosine transform 3·(sin x/x³ − cos x/x²).  The
+    # closed form suffers catastrophic cancellation as x→0 (the two large 1/x²
+    # terms nearly cancel), so below a small-x threshold use the Taylor series
+    # G(x) = 1 − x²/10 + O(x⁴), which is exact to machine precision there.
     with np.errstate(divide="ignore", invalid="ignore"):
-        gw = 3.0 * (np.sin(x) / x**3 - np.cos(x) / x**2)
-    gw = np.where(np.abs(x) < _DC_TOL, 1.0, gw)
+        gw_exact = 3.0 * (np.sin(x) / x**3 - np.cos(x) / x**2)
+    gw_series = 1.0 - x**2 / 10.0
+    gw = np.where(np.abs(x) < _SMALL_X, gw_series, gw_exact)
 
     tpion = PION_LIFETIME_US
     amplitude = gw / (1.0 + (omega * tpion) ** 2)

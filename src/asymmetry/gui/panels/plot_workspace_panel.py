@@ -20,6 +20,9 @@ class PlotWorkspacePanel(QWidget):
     _VIEW_TOKENS = ("fb_asymmetry", "groups", "reconstruction", "frequency", "maxent")
     #: View tokens that resolve to the frequency-domain plot panel.
     _FREQUENCY_VIEWS = frozenset({"frequency", "maxent"})
+    #: Primary time-domain data views eligible to be the time-view fallback
+    #: (the reconstruction overlay is a diagnostic, deliberately excluded).
+    _PRIMARY_TIME_VIEWS = frozenset({"fb_asymmetry", "groups"})
 
     def __init__(
         self,
@@ -129,7 +132,10 @@ class PlotWorkspacePanel(QWidget):
 
         prev_domain = self.active_domain()
         self._active_view = token
-        if token not in self._FREQUENCY_VIEWS:
+        # Only the primary time views (fb_asymmetry / groups) are remembered as
+        # the fallback; the MaxEnt reconstruction overlay is a diagnostic, not a
+        # data view, so a later switch-to-time lands on real data, not it.
+        if token in self._PRIMARY_TIME_VIEWS:
             self._last_time_view = token
         self._panel_stack.setCurrentWidget(
             self._frequency_panel if token in self._FREQUENCY_VIEWS else self._time_panel

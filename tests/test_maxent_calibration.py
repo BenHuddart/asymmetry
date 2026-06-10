@@ -90,6 +90,65 @@ def test_zf_lf_mode_requires_exactly_two_groups() -> None:
         build_maxent_input(run, MaxEntConfig(mode="zf_lf", selected_group_ids=[1]))
 
 
+def test_zf_lf_mode_raises_when_a_group_has_no_in_window_data() -> None:
+    # An exclusion/time window that empties one group must fail loudly rather
+    # than silently degrade to an untied single-group fit.
+    run = _kubo_toyabe_fb_run()
+    config = MaxEntConfig(
+        mode="zf_lf",
+        selected_group_ids=[1, 2],
+        f_min_mhz=0.0,
+        f_max_mhz=3.0,
+        auto_window=False,
+        t_min_us=1000.0,  # past the end of the data → empties both groups
+        t_max_us=2000.0,
+    )
+    with pytest.raises(ValueError, match="usable data|no valid grouped"):
+        build_maxent_input(run, config)
+
+
+def test_zf_lf_orders_pair_by_forward_backward_designation() -> None:
+    # Backward group has the LOWER id: ordering by sorted id would pin the wrong
+    # group at 0°.  The forward/backward designation must win.
+    run = _kubo_toyabe_fb_run()
+    run.grouping["forward_group"] = 2
+    run.grouping["backward_group"] = 1
+    config = MaxEntConfig(
+        mode="zf_lf",
+        selected_group_ids=[1, 2],
+        f_min_mhz=0.0,
+        f_max_mhz=3.0,
+        auto_window=False,
+    )
+    maxent_input = build_maxent_input(run, config)
+    # groups[0] is forward (group 2, pinned 0°); groups[1] is backward (group 1, 180°).
+    assert maxent_input.groups[0].group_id == 2
+    assert maxent_input.groups[0].phase_degrees == 0.0
+    assert maxent_input.groups[1].group_id == 1
+    assert maxent_input.groups[1].phase_degrees == 180.0
+
+
+def test_zf_lf_tie_respects_disabled_amplitude_fit() -> None:
+    run = _kubo_toyabe_fb_run(alpha=1.5)
+    config = MaxEntConfig(
+        n_spectrum_points=64,
+        f_min_mhz=0.0,
+        f_max_mhz=3.0,
+        auto_window=False,
+        outer_cycles=3,
+        inner_iterations=3,
+        mode="zf_lf",
+        selected_group_ids=[1, 2],
+        fit_amplitudes=False,
+        fit_backgrounds=False,
+        fit_constant_background=False,
+    )
+    result = run_cycles(build_maxent_input(run, config), config)
+    # With amplitude fitting off, the α tie must not rewrite the frozen defaults.
+    assert result.state.amplitudes[1] == pytest.approx(1.0)
+    assert result.state.amplitudes[2] == pytest.approx(1.0)
+
+
 def test_mode_round_trips_and_change_forces_restart() -> None:
     assert MaxEntConfig().mode == "general"
     assert MaxEntConfig.from_dict({"mode": "zf_lf"}).mode == "zf_lf"
@@ -137,6 +196,29 @@ def test_specbg_subtracts_central_peak_on_a_copy() -> None:
     assert result[satellite_idx] == pytest.approx(spectrum[satellite_idx], abs=0.02)
     # Display-only: the input array is untouched.
     assert spectrum[0] == pytest.approx(central[0] + satellite[0])
+
+
+def test_apply_maxent_specbg_skips_when_window_excludes_zero() -> None:
+    # SpecBG subtracts a zero-centred peak, so it must be a no-op for an LF-style
+    # window that does not reach zero frequency (peak is at the Larmor line).
+    import numpy as np
+
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.representation.frequency import apply_maxent_specbg
+
+    freqs = np.linspace(20.0, 24.0, 128)  # window far from zero
+    values = 1.0 + 0.1 * np.exp(-(((freqs - 22.0) / 0.2) ** 2))
+    dataset = MuonDataset(
+        time=freqs, asymmetry=values.copy(), error=np.zeros_like(freqs), metadata={}
+    )
+    config = MaxEntConfig(
+        mode="zf_lf",
+        specbg_enabled=True,
+        specbg_gaussian_width_mhz=0.2,
+        specbg_lorentzian_width_mhz=0.2,
+    )
+    result = apply_maxent_specbg(dataset, config)
+    np.testing.assert_allclose(result.asymmetry, values)
 
 
 def test_spectrum_and_log_export_are_well_formed() -> None:

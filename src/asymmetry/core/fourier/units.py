@@ -26,9 +26,6 @@ from asymmetry.core.utils.constants import (
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
 )
 
-#: γ_μ/2π in MHz per Gauss (the constant that maps a precession line to a field).
-_MHZ_PER_GAUSS = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
-
 
 class FieldUnit(str, Enum):
     """A spectrum display axis unit."""
