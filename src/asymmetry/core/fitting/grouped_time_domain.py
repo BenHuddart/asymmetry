@@ -27,7 +27,7 @@ from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
     common_t0_for_groups,
-    filter_excluded_indices,
+    effective_group_indices,
 )
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
@@ -163,14 +163,14 @@ def build_grouped_time_domain_groups(
     included_groups = included_raw if isinstance(included_raw, dict) else {}
 
     groups: list[tuple[int, list[int]]] = []
-    for raw_group_id, raw_entries in sorted(groups_raw.items(), key=lambda item: str(item[0])):
+    for raw_group_id in sorted(groups_raw, key=str):
         try:
             group_id = int(raw_group_id)
         except (TypeError, ValueError):
             continue
         if not bool(included_groups.get(group_id, True)):
             continue
-        indices = filter_excluded_indices(_normalize_group_entries(raw_entries), grouping)
+        indices = effective_group_indices(grouping, group_id)
         if indices:
             groups.append((group_id, indices))
     if len(groups) < 2:
@@ -407,20 +407,6 @@ def _supports_phase_parameter(model_fn) -> bool:
         if param.kind == inspect.Parameter.VAR_KEYWORD:
             return True
     return any(split_parameter_name(str(name))[0] == "phase" for name in signature.parameters)
-
-
-def _normalize_group_entries(values) -> list[int]:
-    """Return zero-based detector indices for one grouping entry list."""
-    indices: list[int] = []
-    if not isinstance(values, list):
-        return indices
-    for value in values:
-        detector = value[0] if isinstance(value, (list, tuple)) and value else value
-        try:
-            indices.append(max(0, int(detector) - 1))
-        except (TypeError, ValueError):
-            continue
-    return indices
 
 
 def _rebin_group_counts(

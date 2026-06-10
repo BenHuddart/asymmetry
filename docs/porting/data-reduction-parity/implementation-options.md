@@ -357,6 +357,26 @@ migration, bump per the v4 precedent and record here).
 
 ### Recorded follow-ons
 
+Status note (2026-06-10, `feat/data-reduction-followups`): the completion pass
+resolved the exclusion chokepoint, core reference-run resolution, period-mapped
+project reload, the plot-panel mask, and the umbrella label fix; each is marked
+**DONE** inline below. Items still deferred (plot-side quick binning, live WiMDA
+spot-checks, α-as-fit-parameter, `run-arithmetic`, TF-phase t0, integral-path
+period mapping, Fourier tail-fit) remain open and are owned by the projects
+named.
+
+- **DONE** — Exclusion chokepoint. Detector exclusion now resolves through a
+  single exclusion-aware resolver, `effective_group_indices(grouping,
+  group_id, n_histograms=…)` in `core/transform/grouping.py`. Every reduction
+  path goes through it: `group_forward_backward`, `fitting/
+  grouped_time_domain`, `fourier/grouped` (its private
+  `_normalize_group_entries` removed), `mainwindow` F/B resolution, and the
+  `plot_panel` saturation mask. The grouping dialog's estimate / Find-t0 /
+  tail-fit-preview / accept paths route their 0-based group filtering through
+  the shared `filter_excluded_indices` / `excluded_detector_indices`
+  primitives. `resolve_group_indices` is now reserved for non-reduction uses
+  (synthetic-run generation, NeXus writing), so forgetting exclusion at a new
+  reduction call site is no longer possible.
 - Plot-side quick binning control — deferred to the dedicated UI-polish
   pass (O3).
 - Live WiMDA spot-check values for α/tail-fit on corpus runs — optional

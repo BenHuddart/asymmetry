@@ -100,7 +100,7 @@ from asymmetry.core.transform import (
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
     differentiate_scan,
-    filter_excluded_indices,
+    effective_group_indices,
     has_file_deadtime,
     has_resolved_deadtime,
     prepare_histograms_with_deadtime,
@@ -2621,14 +2621,6 @@ class MainWindow(QMainWindow):
 
         return entries
 
-    def _group_detector_indices(self, values) -> list[int]:
-        """Return zero-based detector indices for one grouping entry list."""
-        indices: list[int] = []
-        for value in self._normalize_group_entries(values):
-            detector = value[0] if isinstance(value, tuple) else value
-            indices.append(max(0, int(detector) - 1))
-        return indices
-
     def _grouping_source_arrays(
         self,
         dataset,
@@ -2730,12 +2722,12 @@ class MainWindow(QMainWindow):
         exclusion_source = (
             grouping_result if "excluded_detectors" in grouping_result else existing_grouping
         )
-        forward_idx = filter_excluded_indices(
-            self._group_detector_indices(groups.get(forward_gid, [])), exclusion_source
-        )
-        backward_idx = filter_excluded_indices(
-            self._group_detector_indices(groups.get(backward_gid, [])), exclusion_source
-        )
+        resolution_grouping = {
+            "groups": groups,
+            "excluded_detectors": exclusion_source.get("excluded_detectors"),
+        }
+        forward_idx = effective_group_indices(resolution_grouping, forward_gid)
+        backward_idx = effective_group_indices(resolution_grouping, backward_gid)
 
         if run.histograms:
             max_bin = len(run.histograms[0].counts) - 1

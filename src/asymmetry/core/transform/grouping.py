@@ -211,6 +211,44 @@ def resolve_group_indices(groups: dict, group_id: int) -> list[int]:
     return indices
 
 
+def effective_group_indices(
+    grouping: dict | None,
+    group_id: int,
+    *,
+    n_histograms: int | None = None,
+) -> list[int]:
+    """Resolve a group's detector indices for **reduction**, exclusion applied.
+
+    This is the single exclusion-aware chokepoint: every reduction path that
+    turns a ``grouping`` + ``group_id`` into the 0-based detector indices it will
+    sum MUST go through here, so detector exclusion (the ``excluded_detectors``
+    grouping key) can never be silently skipped at a new call site.
+
+    The raw decoder :func:`resolve_group_indices` is reserved for non-reduction
+    uses that legitimately want every named detector regardless of exclusion
+    (synthetic-run generation, NeXus writing); reduction code should not call it
+    directly.
+
+    Parameters
+    ----------
+    grouping
+        An effective grouping dict (must carry ``groups``; may carry
+        ``excluded_detectors``).
+    group_id
+        The forward/backward (or custom) group id to resolve.
+    n_histograms
+        When given, indices outside ``[0, n_histograms)`` are dropped too — a
+        grouping or preset may name detectors a particular run does not contain.
+    """
+    groups = grouping.get("groups") if isinstance(grouping, dict) else None
+    if not isinstance(groups, dict):
+        return []
+    indices = resolve_group_indices(groups, group_id)
+    if n_histograms is not None:
+        indices = _present_indices(indices, n_histograms)
+    return filter_excluded_indices(indices, grouping)
+
+
 def effective_grouping(run: Run, grouping_ref: dict | None = None) -> dict:
     """Merge a run's grouping with an optional override (override wins).
 
@@ -262,12 +300,8 @@ def group_forward_backward(
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
     n = len(histograms)
-    forward_indices = filter_excluded_indices(
-        _present_indices(resolve_group_indices(groups, forward_gid), n), grouping
-    )
-    backward_indices = filter_excluded_indices(
-        _present_indices(resolve_group_indices(groups, backward_gid), n), grouping
-    )
+    forward_indices = effective_group_indices(grouping, forward_gid, n_histograms=n)
+    backward_indices = effective_group_indices(grouping, backward_gid, n_histograms=n)
     if not forward_indices or not backward_indices:
         raise ValueError(
             "Forward/backward groups do not reference any detectors present in this run "

@@ -14,23 +14,10 @@ from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
     common_t0_for_groups,
-    filter_excluded_indices,
+    effective_group_indices,
+    resolve_group_indices,
 )
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
-
-
-def _normalize_group_entries(values) -> list[int]:
-    """Return zero-based detector indices for one grouping entry list."""
-    indices: list[int] = []
-    if not isinstance(values, list):
-        return indices
-    for value in values:
-        detector = value[0] if isinstance(value, (list, tuple)) and value else value
-        try:
-            indices.append(max(0, int(detector) - 1))
-        except (TypeError, ValueError):
-            continue
-    return indices
 
 
 def _rebin_group_counts(
@@ -237,7 +224,7 @@ def build_group_signal_dataset(
     if group_id not in groups:
         raise ValueError(f"Unknown detector group {group_id!r}.")
 
-    indices = filter_excluded_indices(_normalize_group_entries(groups[group_id]), grouping)
+    indices = effective_group_indices(grouping, group_id)
     if not indices:
         raise ValueError(
             f"Detector group {group_id!r} does not contain any detectors "
@@ -261,10 +248,11 @@ def build_group_signal_dataset(
             raise ValueError("Prepared histograms are empty for Fourier analysis.")
 
     if reference_t0_bin is None:
+        # t0 reference spans every named detector (exclusion is irrelevant to
+        # alignment), so use the raw decoder here rather than the reduction
+        # chokepoint.
         all_group_indices = [
-            normalized
-            for normalized in (_normalize_group_entries(values) for values in groups.values())
-            if normalized
+            decoded for decoded in (resolve_group_indices(groups, gid) for gid in groups) if decoded
         ]
         reference_t0_bin = common_t0_for_groups(prepared_histograms, *all_group_indices)
     common_t0 = max(0, int(reference_t0_bin))

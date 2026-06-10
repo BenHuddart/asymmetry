@@ -45,6 +45,8 @@ from asymmetry.core.transform import (
     available_background_modes,
     calibrate_deadtime_from_histograms,
     estimate_deadtime_from_histograms,
+    excluded_detector_indices,
+    filter_excluded_indices,
     find_t0_for_run,
     fit_tail_background,
     format_detector_list,
@@ -1393,9 +1395,8 @@ class GroupingDialog(QDialog):
         t0_bin, _offset, _first, last_good = self._resolve_good_bin_limits_from_controls()
         bin_width = float(self._run.histograms[0].bin_width)
         parts: list[str] = []
-        excluded = self._excluded_index_set()
         for name, gid in (("F", forward_gid), ("B", backward_gid)):
-            indices = [i for i in self._groups.get(gid, []) if i not in excluded]
+            indices = self._filtered_group_indices(gid)
             if not indices or max(indices) >= len(self._run.histograms):
                 continue
             counts = apply_grouping(self._run.histograms, indices)
@@ -1442,11 +1443,10 @@ class GroupingDialog(QDialog):
         if excluded is None:
             return  # parse error already shown
         if excluded:
-            excluded_indices = {detector - 1 for detector in excluded}
             forward_gid = int(self._forward_combo.currentData())
             backward_gid = int(self._backward_combo.currentData())
             for label, gid in (("Forward", forward_gid), ("Backward", backward_gid)):
-                remaining = [i for i in self._groups.get(gid, []) if i not in excluded_indices]
+                remaining = self._filtered_group_indices(gid)
                 if not remaining:
                     QMessageBox.warning(
                         self,
@@ -1872,7 +1872,19 @@ class GroupingDialog(QDialog):
     def _excluded_index_set(self) -> set[int]:
         """0-based indices of currently excluded detectors (empty on parse error)."""
         ids = self._current_excluded_detectors() or []
-        return {int(v) - 1 for v in ids}
+        return set(excluded_detector_indices({"excluded_detectors": ids}))
+
+    def _filtered_group_indices(self, gid: int) -> list[int]:
+        """0-based indices of group *gid* with excluded detectors removed.
+
+        Routes the dialog's 0-based ``self._groups`` through the same core
+        exclusion primitive the reduction paths use, so the dialog cannot apply
+        exclusion differently from the engine.
+        """
+        return filter_excluded_indices(
+            list(self._groups.get(gid, [])),
+            {"excluded_detectors": self._current_excluded_detectors() or []},
+        )
 
     def _current_excluded_detectors(self) -> list[int] | None:
         """Parse the exclusion field; warn and return None on bad input."""
@@ -1986,9 +1998,8 @@ class GroupingDialog(QDialog):
             )
             return None
 
-        excluded = self._excluded_index_set()
-        forward_indices = [i for i in self._groups.get(forward_gid, []) if i not in excluded]
-        backward_indices = [i for i in self._groups.get(backward_gid, []) if i not in excluded]
+        forward_indices = self._filtered_group_indices(forward_gid)
+        backward_indices = self._filtered_group_indices(backward_gid)
         if not forward_indices or not backward_indices:
             QMessageBox.warning(
                 self,

@@ -49,7 +49,7 @@ from asymmetry.core.transform.background import (
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
     common_t0_for_groups,
-    filter_excluded_indices,
+    effective_group_indices,
 )
 from asymmetry.core.transform.rebin import rebin
 from asymmetry.core.utils.constants import (
@@ -3196,17 +3196,8 @@ class PlotPanel(QWidget):
                 analysis_dataset=dataset,
             )
 
-        def _to_indices(values) -> list[int]:
-            out: list[int] = []
-            for val in values:
-                try:
-                    out.append(max(0, int(val) - 1))
-                except (TypeError, ValueError):
-                    continue
-            return out
-
-        forward_idx = filter_excluded_indices(_to_indices(groups.get(forward_gid, [])), grouping)
-        backward_idx = filter_excluded_indices(_to_indices(groups.get(backward_gid, [])), grouping)
+        forward_idx = effective_group_indices(grouping, forward_gid)
+        backward_idx = effective_group_indices(grouping, backward_gid)
         if not forward_idx or not backward_idx:
             return self._project_source_mask_to_analysis_dataset(
                 source_mask=saturated,
