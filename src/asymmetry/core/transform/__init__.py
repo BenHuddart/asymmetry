@@ -1,13 +1,22 @@
 """Data transformations: asymmetry calculation, grouping, rebinning."""
 
 from asymmetry.core.transform.asymmetry import (
+    ALPHA_ESTIMATION_METHODS,
+    AlphaEstimate,
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
     estimate_alpha,
+    estimate_alpha_detailed,
 )
 from asymmetry.core.transform.background import (
+    BACKGROUND_MODES,
     BackgroundCorrectionResult,
+    TailFitResult,
     apply_grouped_background_correction,
+    available_background_modes,
+    fit_tail_background,
+    resolve_background_mode,
+    subtract_scaled_counts,
     supports_background_correction,
 )
 from asymmetry.core.transform.deadtime import (
@@ -25,7 +34,11 @@ from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
     common_t0_for_groups,
     effective_grouping,
+    excluded_detector_indices,
+    filter_excluded_indices,
+    format_detector_list,
     group_forward_backward,
+    parse_detector_list,
     resolve_group_indices,
 )
 from asymmetry.core.transform.integral import (
@@ -37,7 +50,20 @@ from asymmetry.core.transform.integral import (
     integrate_curve,
     integrate_run,
 )
-from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.transform.rebin import (
+    BINNING_MODES,
+    binned_fb_asymmetry,
+    binning_slice_edges,
+    rebin,
+    resolve_binning_mode,
+)
+from asymmetry.core.transform.t0 import (
+    RunT0Search,
+    T0Estimate,
+    find_t0,
+    find_t0_for_run,
+    source_is_pulsed,
+)
 
 __all__ = [
     "compute_asymmetry",
@@ -68,4 +94,26 @@ __all__ = [
     "FieldScan",
     "FieldScanPoint",
     "rebin",
+    "ALPHA_ESTIMATION_METHODS",
+    "AlphaEstimate",
+    "estimate_alpha_detailed",
+    "BACKGROUND_MODES",
+    "TailFitResult",
+    "available_background_modes",
+    "fit_tail_background",
+    "resolve_background_mode",
+    "subtract_scaled_counts",
+    "BINNING_MODES",
+    "binned_fb_asymmetry",
+    "binning_slice_edges",
+    "resolve_binning_mode",
+    "RunT0Search",
+    "T0Estimate",
+    "find_t0",
+    "find_t0_for_run",
+    "source_is_pulsed",
+    "excluded_detector_indices",
+    "filter_excluded_indices",
+    "format_detector_list",
+    "parse_detector_list",
 ]

@@ -7,10 +7,15 @@ import numpy as np
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
-    supports_background_correction,
+    available_background_modes,
+    resolve_background_mode,
 )
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
-from asymmetry.core.transform.grouping import apply_grouping_aligned, common_t0_for_groups
+from asymmetry.core.transform.grouping import (
+    apply_grouping_aligned,
+    common_t0_for_groups,
+    filter_excluded_indices,
+)
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -165,17 +170,31 @@ def _apply_group_background_correction(
     if not bool(grouping.get("background_correction", False)):
         return counts, False, None
 
-    if not supports_background_correction(metadata=metadata, source_file=source_file):
+    mode = resolve_background_mode(grouping)
+    if mode == "reference_run":
+        # Reference resolution lives at the caller layer (loaders/GUI); the
+        # Fourier source cannot satisfy it here, so leave counts untouched.
+        return counts, False, None
+    if mode not in available_background_modes(metadata=metadata, source_file=source_file):
         return counts, False, None
 
     payload = dict(grouping)
     selected_value = _group_background_value_for_group(grouping, group_id)
     selected_range = _group_background_range_for_group(grouping, group_id)
     if selected_value is not None:
+        # Per-group values come from the time-domain reduction; subtract them
+        # verbatim regardless of how that reduction estimated them.
         payload["background_fixed_values"] = [selected_value, selected_value]
+        payload["background_mode"] = "fixed"
     elif selected_range is not None:
         payload["background_ranges"] = [list(selected_range), list(selected_range)]
+        payload["background_mode"] = "range"
 
+    last_good_bin = payload.get("last_good_bin")
+    try:
+        last_good_bin = int(last_good_bin) if last_good_bin is not None else None
+    except (TypeError, ValueError):
+        last_good_bin = None
     correction = apply_grouped_background_correction(
         np.asarray(counts, dtype=np.float64),
         np.asarray(counts, dtype=np.float64),
@@ -183,6 +202,7 @@ def _apply_group_background_correction(
         t0_bin=int(t0_bin),
         bin_width_us=float(bin_width),
         facility=str(metadata.get("facility", "")),
+        last_good_bin=last_good_bin,
     )
     background_value = correction.values[0] if correction.values is not None else None
     return correction.forward, bool(correction.applied), background_value
@@ -217,9 +237,12 @@ def build_group_signal_dataset(
     if group_id not in groups:
         raise ValueError(f"Unknown detector group {group_id!r}.")
 
-    indices = _normalize_group_entries(groups[group_id])
+    indices = filter_excluded_indices(_normalize_group_entries(groups[group_id]), grouping)
     if not indices:
-        raise ValueError(f"Detector group {group_id!r} does not contain any detectors.")
+        raise ValueError(
+            f"Detector group {group_id!r} does not contain any detectors "
+            "(after detector exclusion)."
+        )
 
     histograms = list(run.histograms)
     if not histograms:

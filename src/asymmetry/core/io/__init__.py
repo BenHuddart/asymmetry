@@ -58,6 +58,28 @@ def load(
     return select_period(result, period)
 
 
+def load_background_run(payload: dict) -> MuonDataset:
+    """Load the reference run named by a ``background_run`` grouping payload.
+
+    The payload (written by the grouping dialog and persisted with the
+    grouping) carries ``source_file`` and ``run_number``. Multi-period files
+    resolve to their first period, matching the red-period default of the
+    reduction path. Raises ``ValueError`` when the payload is unusable so
+    callers can surface the problem instead of silently skipping the
+    subtraction.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("background_run payload must be a dict")
+    source_file = str(payload.get("source_file", "") or "")
+    if not source_file:
+        raise ValueError("background_run payload has no source_file")
+    result = load(source_file)
+    dataset = result[0] if isinstance(result, list) else result
+    if dataset.run is None or not dataset.run.histograms:
+        raise ValueError(f"Background run {source_file!r} has no histograms")
+    return dataset
+
+
 __all__ = [
     "BaseLoader",
     "LoadResult",
@@ -71,4 +93,5 @@ __all__ = [
     "period_count",
     "period_labels",
     "select_period",
+    "load_background_run",
 ]

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -41,13 +42,57 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.instrument import detect_instrument, get_instrument_layout
 from asymmetry.core.transform import (
     apply_grouping,
+    available_background_modes,
     calibrate_deadtime_from_histograms,
     estimate_deadtime_from_histograms,
-    supports_background_correction,
+    find_t0_for_run,
+    fit_tail_background,
+    format_detector_list,
+    parse_detector_list,
+    resolve_background_mode,
+    resolve_binning_mode,
 )
-from asymmetry.core.transform.asymmetry import estimate_alpha
+from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_detailed
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles.widgets import apply_param_table_style
+
+#: Alpha estimation methods offered by the Estimate control: combo label,
+#: grouping-dict key, and a one-line explanation shown as the tooltip.
+_ALPHA_METHOD_ITEMS = (
+    (
+        "Diamagnetic (TF)",
+        "diamagnetic",
+        "Minimise the weighted asymmetry over a transverse-field calibration "
+        "run, so A(t) oscillates symmetrically about zero.",
+    ),
+    (
+        "General (LF/ZF)",
+        "general",
+        "Balance lifetime-corrected counts between early and late times; "
+        "works on relaxing LF/ZF data, but needs visible relaxation.",
+    ),
+    (
+        "Count ratio ΣF/ΣB",
+        "ratio",
+        "Plain count ratio (Mantid AlphaCalc). Transverse-field calibration "
+        "runs only — relaxing polarization biases it.",
+    ),
+)
+
+
+def _format_value_with_uncertainty(value: float, error: float | None) -> str:
+    """Format ``1.2345 ± 0.0067`` compactly as ``1.2345(67)``."""
+    if error is None or not np.isfinite(error) or error <= 0.0:
+        return f"{value:.4f}"
+    exponent = int(np.floor(np.log10(error)))
+    decimals = max(0, 1 - exponent)
+    scaled_error = int(round(error * 10**decimals))
+    if scaled_error >= 100:  # rounding pushed it to three digits, e.g. 0.0995
+        scaled_error = int(round(scaled_error / 10))
+        decimals -= 1
+    if decimals < 0:  # uncertainty >= ~100: integer digits on both sides
+        return f"{value:.0f}({int(round(error))})"
+    return f"{value:.{decimals}f}({scaled_error})"
 
 
 class GroupingDialog(QDialog):
@@ -107,6 +152,10 @@ class GroupingDialog(QDialog):
         self._vector_backward_labels: dict[str, QLabel] = {}
         self._vector_estimate_buttons: dict[str, QPushButton] = {}
         self._updating_deadtime_value_combo = False
+        # Last successful estimate per slot ("single" or axis name):
+        # (alpha, alpha_error, reference_run). Used to attach provenance to
+        # the payload only while the spin still holds the estimated value.
+        self._alpha_estimate_state: dict[str, tuple[float, float | None, int]] = {}
 
         root = QVBoxLayout(self)
         root.setSpacing(6)
@@ -264,6 +313,59 @@ class GroupingDialog(QDialog):
         self._bunch_spin.setMaximumWidth(100)
         self._bunch_spin.setToolTip("Set any bunching factor >= 1.")
 
+        self._binning_mode_combo = QComboBox()
+        for label, key, tooltip in (
+            ("Fixed", "fixed", "Merge a fixed number of raw bins (bunching factor)."),
+            (
+                "Variable",
+                "variable",
+                "Bin width grows exponentially from the initial width at t = 0 "
+                "to the late width at 10 µs.",
+            ),
+            (
+                "Constant error",
+                "constant_error",
+                "Bin width grows as exp(t/τ_µ) so every output bin holds "
+                "roughly equal counts and the error per bin stays flat.",
+            ),
+        ):
+            self._binning_mode_combo.addItem(label, key)
+            self._binning_mode_combo.setItemData(
+                self._binning_mode_combo.count() - 1, tooltip, Qt.ItemDataRole.ToolTipRole
+            )
+        self._bin0_spin = QDoubleSpinBox()
+        self._bin0_spin.setDecimals(4)
+        self._bin0_spin.setRange(0.0001, 100.0)
+        self._bin0_spin.setSuffix(" µs")
+        self._bin10_spin = QDoubleSpinBox()
+        self._bin10_spin.setDecimals(4)
+        self._bin10_spin.setRange(0.0001, 100.0)
+        self._bin10_spin.setSuffix(" µs")
+        initial_mode, initial_bin0, initial_bin10 = resolve_binning_mode(grouping)
+        self._bin0_spin.setValue(initial_bin0)
+        self._bin10_spin.setValue(initial_bin10)
+        self._set_binning_mode(initial_mode)
+        self._binning_mode_combo.currentIndexChanged.connect(self._on_binning_mode_changed)
+        self._on_binning_mode_changed()
+
+        self._exclude_edit = QLineEdit()
+        self._exclude_edit.setPlaceholderText("e.g. 1,5,10-15 (1-based detector ids)")
+        self._exclude_edit.setToolTip(
+            "Detectors to exclude from every group sum (dead or hot detectors). "
+            "Raw histograms are kept; exclusion applies at grouping time."
+        )
+        self._set_excluded_detectors_text(grouping)
+
+        self._find_t0_btn = QPushButton("Find t0")
+        self._find_t0_btn.setAutoDefault(False)
+        self._find_t0_btn.setDefault(False)
+        self._find_t0_btn.setToolTip(
+            "Estimate t0 from the reference run (prompt peak at continuous "
+            "sources, pulse-edge midpoint at pulsed sources) and fill the "
+            "override — nothing is applied until you press Apply."
+        )
+        self._find_t0_btn.clicked.connect(self._on_find_t0)
+
         self._deadtime_checkbox = QCheckBox("Enable Deadtime Correction")
         self._deadtime_checkbox.setChecked(bool(grouping.get("deadtime_correction", False)))
         self._deadtime_checkbox.toggled.connect(self._update_deadtime_controls)
@@ -326,9 +428,15 @@ class GroupingDialog(QDialog):
 
         self._set_deadtime_mode(self._default_deadtime_mode(grouping))
         self._update_deadtime_controls(grouping)
-        self._background_checkbox = QCheckBox("Enable Background Correction")
-        self._background_checkbox.setChecked(bool(grouping.get("background_correction", False)))
-        self._update_background_checkbox_state()
+        self._background_mode_combo = QComboBox()
+        payload = grouping.get("background_run")
+        self._background_run_payload: dict[str, Any] | None = (
+            dict(payload) if isinstance(payload, dict) else None
+        )
+        self._populate_background_modes(grouping)
+        self._background_mode_combo.currentIndexChanged.connect(self._on_background_mode_changed)
+        self._background_status_label = QLabel("")
+        self._background_status_label.setWordWrap(True)
 
         self._period_mode_label = QLabel("RG Mode")
         self._period_mode_group = QButtonGroup(self)
@@ -358,6 +466,19 @@ class GroupingDialog(QDialog):
         estimate_btn.setDefault(False)
         estimate_btn.clicked.connect(self._estimate_alpha)
 
+        self._alpha_method_combo = QComboBox()
+        for label, key, explanation in _ALPHA_METHOD_ITEMS:
+            self._alpha_method_combo.addItem(label, key)
+            self._alpha_method_combo.setItemData(
+                self._alpha_method_combo.count() - 1,
+                explanation,
+                Qt.ItemDataRole.ToolTipRole,
+            )
+        self._set_alpha_method(str(grouping.get("alpha_method", "diamagnetic")))
+
+        self._alpha_result_label = QLabel("")
+        self._alpha_result_label.setWordWrap(True)
+
         self._forward_row_label = QLabel("Forward Group")
         self._backward_row_label = QLabel("Backward Group")
         self._alpha_row_label = QLabel("Alpha")
@@ -369,8 +490,10 @@ class GroupingDialog(QDialog):
         alpha_row = QHBoxLayout(self._single_alpha_widget)
         alpha_row.setContentsMargins(0, 0, 0, 0)
         alpha_row.addWidget(self._alpha_spin)
+        alpha_row.addWidget(self._alpha_method_combo)
         alpha_row.addWidget(estimate_btn)
         form.addRow(self._alpha_row_label, self._single_alpha_widget)
+        form.addRow("", self._alpha_result_label)
 
         # Vector alpha widget: one row per axis (P_z primary, then P_y, P_x)
         # Columns: axis label | Forward group | Backward group | α spin | Estimate button
@@ -420,14 +543,49 @@ class GroupingDialog(QDialog):
 
         form.addRow(self._vector_alpha_widget)
 
-        form.addRow("t0 Bin", self._t0_spin)
+        t0_row_widget = QWidget()
+        t0_row = QHBoxLayout(t0_row_widget)
+        t0_row.setContentsMargins(0, 0, 0, 0)
+        t0_row.addWidget(self._t0_spin)
+        t0_row.addWidget(self._find_t0_btn)
+        form.addRow("t0 Bin", t0_row_widget)
         form.addRow("t_good Offset", self._t_good_offset_spin)
         form.addRow("Last Good Bin", self._last_good_spin)
-        form.addRow("Bunching Factor", self._bunch_spin)
+        binning_row_widget = QWidget()
+        binning_row = QHBoxLayout(binning_row_widget)
+        binning_row.setContentsMargins(0, 0, 0, 0)
+        binning_row.addWidget(self._binning_mode_combo)
+        binning_row.addWidget(self._bunch_spin)
+        self._bin0_label = QLabel("Initial bin")
+        self._bin10_label = QLabel("Bin at 10 µs")
+        binning_row.addWidget(self._bin0_label)
+        binning_row.addWidget(self._bin0_spin)
+        binning_row.addWidget(self._bin10_label)
+        binning_row.addWidget(self._bin10_spin)
+        form.addRow("Binning", binning_row_widget)
+        self._on_binning_mode_changed()
+        form.addRow("Exclude Detectors", self._exclude_edit)
         form.addRow("Deadtime", self._deadtime_checkbox)
         form.addRow("Deadtime Mode", self._deadtime_mode_widget)
-        form.addRow("Background", self._background_checkbox)
-        form.addRow(self._period_mode_label, self._period_mode_widget)
+        form.addRow("Background", self._background_mode_combo)
+        form.addRow("", self._background_status_label)
+        self._update_background_status()
+        self._map_periods_btn = QPushButton("Map periods…")
+        self._map_periods_btn.setAutoDefault(False)
+        self._map_periods_btn.setDefault(False)
+        self._map_periods_btn.setToolTip(
+            "Sum arbitrary subsets of this run's periods into the red and "
+            "green sets (multi-period runs)."
+        )
+        self._map_periods_btn.clicked.connect(self._on_map_periods)
+        self.period_mapping_request: dict[str, Any] | None = None
+        period_row_widget = QWidget()
+        period_row_box = QHBoxLayout(period_row_widget)
+        period_row_box.setContentsMargins(0, 0, 0, 0)
+        period_row_box.addWidget(self._period_mode_widget)
+        period_row_box.addWidget(self._map_periods_btn)
+        form.addRow(self._period_mode_label, period_row_widget)
+        self._update_map_periods_visibility()
 
         right_layout.addLayout(form)
         right_layout.addStretch()
@@ -675,6 +833,9 @@ class GroupingDialog(QDialog):
         )
         self._refresh_group_combo_items(forward_gid=forward_gid, backward_gid=backward_gid)
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
+        self._set_alpha_method(str(grouping.get("alpha_method", "diamagnetic")))
+        self._alpha_estimate_state.clear()
+        self._alpha_result_label.setText("")
         max_bin = self._max_bin_index_for_reference_dataset()
         index_base = self._bin_index_base(grouping)
         self._t0_spin.setRange(index_base, max_bin + index_base)
@@ -697,11 +858,20 @@ class GroupingDialog(QDialog):
         self._deadtime_manual_method = self._initial_manual_deadtime_method(grouping)
         self._set_deadtime_mode(self._default_deadtime_mode(grouping))
         self._update_deadtime_controls(grouping)
-        self._background_checkbox.setChecked(bool(grouping.get("background_correction", False)))
-        self._update_background_checkbox_state()
+        payload = grouping.get("background_run")
+        self._background_run_payload = dict(payload) if isinstance(payload, dict) else None
+        self._populate_background_modes(grouping)
+        self._update_background_status()
+        mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
+        self._bin0_spin.setValue(bin0_us)
+        self._bin10_spin.setValue(bin10_us)
+        self._set_binning_mode(mode)
+        self._on_binning_mode_changed()
+        self._set_excluded_detectors_text(grouping)
         self._set_period_mode(str(grouping.get("period_mode", PeriodMode.RED)))
         self._update_vector_mode_controls(grouping)
         self._update_period_mode_visibility()
+        self._update_map_periods_visibility()
 
     def _reference_has_file_deadtime(self, grouping: dict[str, Any]) -> bool:
         """Return whether the reference run provides file deadtime values."""
@@ -1063,25 +1233,185 @@ class GroupingDialog(QDialog):
             )
             return
 
-    def _update_background_checkbox_state(self) -> None:
-        """Enable background correction for PSI-style grouped raw data."""
+    _BACKGROUND_MODE_ITEMS = (
+        ("None", "none", "No background subtraction."),
+        (
+            "Range average (pre-t0)",
+            "range",
+            "Mean count over a pre-t0 bin window (musrfit convention) — "
+            "continuous-source data only; pulsed files have no pre-t0 region.",
+        ),
+        (
+            "Tail fit (late-time)",
+            "tail_fit",
+            "Fit muon exponential + flat rate to the late half of the good "
+            "window and subtract the flat part — the pulsed-source mode.",
+        ),
+        (
+            "Background run…",
+            "reference_run",
+            "Subtract a reference run (sample holder / silver / laser-off) "
+            "scaled by the good-frame ratio.",
+        ),
+        (
+            "Fixed values",
+            "fixed",
+            "Subtract stored per-group constants (from the loaded grouping).",
+        ),
+    )
+
+    def _available_background_modes(self) -> tuple[str, ...]:
         metadata: dict[str, Any] = {}
         if self._reference_dataset is not None:
             metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
         if self._run is not None:
             metadata.update(getattr(self._run, "metadata", {}) or {})
         source_file = str(getattr(self._run, "source_file", "") or metadata.get("source_file", ""))
-        enabled = supports_background_correction(metadata=metadata, source_file=source_file)
-        self._background_checkbox.setEnabled(enabled)
-        if not enabled:
-            self._background_checkbox.setChecked(False)
-            self._background_checkbox.setToolTip(
-                "Background correction is available for PSI BIN/MDU and PSI/LEM ROOT data."
-            )
-            return
-        self._background_checkbox.setToolTip(
-            "Apply grouped background subtraction before asymmetry."
+        return available_background_modes(metadata=metadata, source_file=source_file)
+
+    def _populate_background_modes(self, grouping: dict[str, Any]) -> None:
+        """Fill the background mode combo, gating entries per dataset type."""
+        available = set(self._available_background_modes())
+        has_fixed = any(
+            isinstance(grouping.get(key), (list, tuple))
+            for key in ("background_fixed_values", "background_fix", "bkg_fix")
         )
+        self._background_mode_combo.blockSignals(True)
+        self._background_mode_combo.clear()
+        for label, key, tooltip in self._BACKGROUND_MODE_ITEMS:
+            if key == "fixed" and not has_fixed:
+                continue
+            self._background_mode_combo.addItem(label, key)
+            index = self._background_mode_combo.count() - 1
+            self._background_mode_combo.setItemData(index, tooltip, Qt.ItemDataRole.ToolTipRole)
+            if key != "none" and key not in available:
+                item = self._background_mode_combo.model().item(index)
+                if item is not None:
+                    item.setEnabled(False)
+        initial = "none"
+        if bool(grouping.get("background_correction", False)):
+            initial = resolve_background_mode(grouping)
+        idx = self._background_mode_combo.findData(initial)
+        self._background_mode_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._background_mode_combo.blockSignals(False)
+
+    def _current_background_mode(self) -> str:
+        return str(self._background_mode_combo.currentData() or "none")
+
+    def _on_background_mode_changed(self) -> None:
+        if self._current_background_mode() == "reference_run" and not self._background_run_payload:
+            self._pick_background_run()
+        self._update_background_status()
+
+    def _pick_background_run(self) -> None:
+        """Choose the reference run for background subtraction."""
+        candidates = [
+            ds
+            for ds in self._datasets
+            if ds.run is not None
+            and ds.run.histograms
+            and int(ds.run_number) != int(self._reference_dataset.run_number)
+        ]
+        labels = [f"{ds.run_label} (run {ds.run_number})" for ds in candidates] + [
+            "Browse for file…"
+        ]
+        from PySide6.QtWidgets import QInputDialog
+
+        choice, accepted = QInputDialog.getItem(
+            self,
+            "Background Run",
+            "Reference run to subtract (scaled by the good-frame ratio):",
+            labels,
+            0,
+            False,
+        )
+        if not accepted:
+            self._set_background_mode_to_none()
+            return
+        if choice == "Browse for file…":
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Background Run File",
+                "",
+                "Muon data (*.nxs *.bin *.mdu *.root);;All files (*)",
+            )
+            if not path:
+                self._set_background_mode_to_none()
+                return
+            self._background_run_payload = {"run_number": None, "source_file": path}
+        else:
+            selected = candidates[labels.index(choice)]
+            grouping = selected.run.grouping if isinstance(selected.run.grouping, dict) else {}
+            self._background_run_payload = {
+                "run_number": int(selected.run_number),
+                "source_file": str(selected.run.source_file or ""),
+                "good_frames_reference": grouping.get("good_frames"),
+            }
+        reference_grouping = (
+            self._run.grouping
+            if self._run is not None and isinstance(self._run.grouping, dict)
+            else {}
+        )
+        self._background_run_payload["good_frames_sample"] = reference_grouping.get("good_frames")
+        self._update_background_status()
+
+    def _set_background_mode_to_none(self) -> None:
+        idx = self._background_mode_combo.findData("none")
+        if idx >= 0:
+            self._background_mode_combo.setCurrentIndex(idx)
+
+    def _update_background_status(self) -> None:
+        """Show the per-mode summary under the background combo."""
+        mode = self._current_background_mode()
+        if mode == "tail_fit":
+            self._background_status_label.setText(self._tail_fit_preview_text())
+            return
+        if mode == "reference_run":
+            payload = self._background_run_payload or {}
+            run_number = payload.get("run_number")
+            label = f"run {run_number}" if run_number else str(payload.get("source_file", ""))
+            sample = payload.get("good_frames_sample")
+            reference = payload.get("good_frames_reference")
+            try:
+                scale = float(sample) / float(reference)
+                self._background_status_label.setText(
+                    f"Subtract {label}, frame-ratio scale {scale:.4g}."
+                )
+            except (TypeError, ValueError, ZeroDivisionError):
+                self._background_status_label.setText(
+                    f"Subtract {label} (frame ratio resolved at reduction)."
+                )
+            return
+        self._background_status_label.setText("")
+
+    def _tail_fit_preview_text(self) -> str:
+        """Run the tail fit on the reference run's groups for display."""
+        if self._run is None or not self._run.histograms:
+            return ""
+        forward_gid = int(self._forward_combo.currentData())
+        backward_gid = int(self._backward_combo.currentData())
+        t0_bin, _offset, _first, last_good = self._resolve_good_bin_limits_from_controls()
+        bin_width = float(self._run.histograms[0].bin_width)
+        parts: list[str] = []
+        excluded = self._excluded_index_set()
+        for name, gid in (("F", forward_gid), ("B", backward_gid)):
+            indices = [i for i in self._groups.get(gid, []) if i not in excluded]
+            if not indices or max(indices) >= len(self._run.histograms):
+                continue
+            counts = apply_grouping(self._run.histograms, indices)
+            fit = fit_tail_background(
+                counts,
+                bin_width_us=bin_width,
+                t0_bin=int(t0_bin),
+                last_good_bin=int(last_good),
+            )
+            if not fit.ok:
+                parts.append(f"{name}: {fit.message}")
+                continue
+            value = _format_value_with_uncertainty(fit.rate_per_us, fit.rate_error_per_us)
+            note = " (consistent with zero)" if fit.consistent_with_zero else ""
+            parts.append(f"{name}: {value} counts/µs{note}")
+        return "Tail-fit background — " + "; ".join(parts) if parts else ""
 
     def _on_apply(self) -> None:
         """Validate form values before accepting the dialog."""
@@ -1108,6 +1438,22 @@ class GroupingDialog(QDialog):
             and self._resolve_deadtime_payload(show_warnings=True) is None
         ):
             return
+        excluded = self._current_excluded_detectors()
+        if excluded is None:
+            return  # parse error already shown
+        if excluded:
+            excluded_indices = {detector - 1 for detector in excluded}
+            forward_gid = int(self._forward_combo.currentData())
+            backward_gid = int(self._backward_combo.currentData())
+            for label, gid in (("Forward", forward_gid), ("Backward", backward_gid)):
+                remaining = [i for i in self._groups.get(gid, []) if i not in excluded_indices]
+                if not remaining:
+                    QMessageBox.warning(
+                        self,
+                        "Detector Exclusion",
+                        f"{label} group would have no detectors left after exclusion.",
+                    )
+                    return
         self.accept()
 
     def _checked_run_numbers(self) -> list[int]:
@@ -1411,6 +1757,7 @@ class GroupingDialog(QDialog):
         # Convert internal 0-based indices to 1-based for the layout editor
         groups_1based = {gid: [idx + 1 for idx in idxs] for gid, idxs in self._groups.items()}
 
+        current_exclusion = self._current_excluded_detectors() or []
         dlg = DetectorLayoutDialog(
             instrument=instrument,
             groups=groups_1based,
@@ -1418,12 +1765,14 @@ class GroupingDialog(QDialog):
             initial_preset_name=self._grouping_preset_name,
             forward_group=forward_gid,
             backward_group=backward_gid,
+            excluded_detectors=current_exclusion,
             parent=self,
         )
         if dlg.exec() != DetectorLayoutDialog.DialogCode.Accepted:
             return
 
         result = dlg.get_result()
+        self._exclude_edit.setText(format_detector_list(result.get("excluded_detectors", [])))
 
         # Write back: convert 1-based IDs back to 0-based internal indices
         new_groups_0based: dict[int, list[int]] = {}
@@ -1458,6 +1807,162 @@ class GroupingDialog(QDialog):
         if idx >= 0:
             combo.setCurrentIndex(idx)
 
+    def _set_alpha_method(self, method_key: str) -> None:
+        """Select the alpha estimation method combo entry, defaulting to diamagnetic."""
+        idx = self._alpha_method_combo.findData(str(method_key))
+        self._alpha_method_combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _current_alpha_method(self) -> str:
+        """Return the grouping-dict key of the selected estimation method."""
+        return str(self._alpha_method_combo.currentData() or "diamagnetic")
+
+    def _reference_time_us(self, n_bins: int, t0_bin: int) -> np.ndarray:
+        """Bin-centre times (µs, relative to t0) for the reference run."""
+        bin_width = 0.016
+        if self._run is not None and self._run.histograms:
+            bin_width = float(self._run.histograms[0].bin_width)
+        return (np.arange(n_bins, dtype=np.float64) - float(t0_bin)) * bin_width
+
+    def _record_alpha_estimate(self, slot: str, estimate: AlphaEstimate) -> None:
+        """Remember a successful estimate and show it in the result label."""
+        self._alpha_estimate_state[slot] = (
+            float(estimate.alpha),
+            estimate.alpha_error,
+            int(self._reference_dataset.run_number),
+        )
+        method_label = next(
+            (label for label, key, _ in _ALPHA_METHOD_ITEMS if key == estimate.method),
+            estimate.method,
+        )
+        formatted = _format_value_with_uncertainty(estimate.alpha, estimate.alpha_error)
+        slot_prefix = "" if slot == "single" else f"{slot}: "
+        self._alpha_result_label.setText(
+            f"{slot_prefix}α = {formatted} — {method_label}, "
+            f"run {self._reference_dataset.run_number}"
+        )
+
+    def _set_binning_mode(self, mode_key: str) -> None:
+        """Select the binning-mode combo entry, defaulting to fixed."""
+        idx = self._binning_mode_combo.findData(str(mode_key))
+        self._binning_mode_combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _current_binning_mode(self) -> str:
+        return str(self._binning_mode_combo.currentData() or "fixed")
+
+    def _on_binning_mode_changed(self) -> None:
+        """Enable the controls for the active binning mode (WiMDA pattern)."""
+        mode = self._current_binning_mode()
+        self._bunch_spin.setEnabled(mode == "fixed")
+        for widget in (self._bin0_spin, getattr(self, "_bin0_label", None)):
+            if widget is not None:
+                widget.setEnabled(mode != "fixed")
+                if hasattr(widget, "setVisible"):
+                    widget.setVisible(mode != "fixed")
+        for widget in (self._bin10_spin, getattr(self, "_bin10_label", None)):
+            if widget is not None:
+                enabled = mode == "variable"
+                widget.setEnabled(enabled)
+                widget.setVisible(enabled)
+
+    def _set_excluded_detectors_text(self, grouping: dict[str, Any]) -> None:
+        raw = grouping.get("excluded_detectors")
+        ids = [int(v) for v in raw] if isinstance(raw, (list, tuple)) else []
+        self._exclude_edit.setText(format_detector_list(ids))
+
+    def _excluded_index_set(self) -> set[int]:
+        """0-based indices of currently excluded detectors (empty on parse error)."""
+        ids = self._current_excluded_detectors() or []
+        return {int(v) - 1 for v in ids}
+
+    def _current_excluded_detectors(self) -> list[int] | None:
+        """Parse the exclusion field; warn and return None on bad input."""
+        text = self._exclude_edit.text().strip()
+        if not text:
+            return []
+        try:
+            return parse_detector_list(text)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Detector Exclusion", str(exc))
+            return None
+
+    def _on_find_t0(self) -> None:
+        """Estimate t0 from the reference run and fill the override spinner."""
+        if self._run is None or not self._run.histograms:
+            QMessageBox.warning(self, "Find t0", "Reference run has no histograms.")
+            return
+        metadata = dict(getattr(self._reference_dataset, "metadata", {}) or {})
+        metadata.update(self._run.metadata or {})
+        excluded = self._excluded_index_set()
+        histograms = [hist for i, hist in enumerate(self._run.histograms) if i not in excluded]
+        if not histograms:
+            QMessageBox.warning(self, "Find t0", "All detectors are excluded.")
+            return
+        search = find_t0_for_run(histograms, metadata)
+        if not search.ok:
+            QMessageBox.warning(self, "Find t0", search.message)
+            return
+        index_base = self._bin_index_base()
+        self._t0_spin.setValue(int(search.consensus_t0_bin) + index_base)
+        strategy = "pulse-edge midpoint" if search.strategy == "pulse_edge" else "prompt peak"
+        self._alpha_result_label.setText(
+            f"t0 = bin {search.consensus_t0_bin + index_base} ({strategy}, "
+            f"detector spread {search.spread_bins} bins) — press Apply to use it."
+        )
+
+    def _update_map_periods_visibility(self) -> None:
+        """Show Map periods… only when the reference run has 3+ periods."""
+        visible = len(self._sibling_period_datasets()) > 2
+        self._map_periods_btn.setVisible(visible)
+
+    def _sibling_period_datasets(self) -> list[MuonDataset]:
+        """Per-period sibling datasets of the reference run, in period order."""
+        if self._reference_dataset is None:
+            return []
+        metadata = getattr(self._reference_dataset, "metadata", {}) or {}
+        try:
+            count = int(metadata.get("period_count", 1))
+        except (TypeError, ValueError):
+            count = 1
+        if count <= 2:
+            return []
+        source = metadata.get("source_run_number", metadata.get("run_number"))
+        siblings = [
+            ds
+            for ds in self._datasets
+            if ds.run is not None
+            and (ds.metadata or {}).get("source_run_number") == source
+            and (ds.metadata or {}).get("period_number") is not None
+        ]
+        siblings.sort(key=lambda ds: int((ds.metadata or {}).get("period_number", 0)))
+        return siblings if len(siblings) == count else []
+
+    def _on_map_periods(self) -> None:
+        """Collect a period → red/green/ignore mapping for the reference run."""
+        from asymmetry.gui.windows.period_mapping_dialog import PeriodMappingDialog
+
+        siblings = self._sibling_period_datasets()
+        if len(siblings) < 3:
+            QMessageBox.warning(
+                self,
+                "Map Periods",
+                "Period mapping needs the per-period datasets of a 3+ period "
+                "run loaded in the project.",
+            )
+            return
+        dialog = PeriodMappingDialog(siblings, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.mapping is None:
+            return
+        metadata = getattr(self._reference_dataset, "metadata", {}) or {}
+        self.period_mapping_request = {
+            "mapping": dialog.mapping,
+            "source_run_number": metadata.get("source_run_number", metadata.get("run_number")),
+            "period_run_numbers": [int(ds.run_number) for ds in siblings],
+        }
+        self._alpha_result_label.setText(
+            "Period mapping recorded — a combined red/green dataset is created "
+            "when you press Apply."
+        )
+
     def _estimate_alpha(self) -> None:
         """Estimate alpha using only the current reference run.
 
@@ -1466,11 +1971,14 @@ class GroupingDialog(QDialog):
         """
         forward_gid = int(self._forward_combo.currentData())
         backward_gid = int(self._backward_combo.currentData())
-        alpha = self._estimate_alpha_for_group_ids(forward_gid, backward_gid)
-        if alpha is not None:
-            self._alpha_spin.setValue(float(alpha))
+        estimate = self._estimate_alpha_for_group_ids(forward_gid, backward_gid)
+        if estimate is not None:
+            self._alpha_spin.setValue(float(estimate.alpha))
+            self._record_alpha_estimate("single", estimate)
 
-    def _estimate_alpha_for_group_ids(self, forward_gid: int, backward_gid: int) -> float | None:
+    def _estimate_alpha_for_group_ids(
+        self, forward_gid: int, backward_gid: int
+    ) -> AlphaEstimate | None:
         """Estimate alpha for the provided group IDs using the reference run."""
         if forward_gid == backward_gid:
             QMessageBox.warning(
@@ -1478,10 +1986,15 @@ class GroupingDialog(QDialog):
             )
             return None
 
-        forward_indices = self._groups.get(forward_gid, [])
-        backward_indices = self._groups.get(backward_gid, [])
+        excluded = self._excluded_index_set()
+        forward_indices = [i for i in self._groups.get(forward_gid, []) if i not in excluded]
+        backward_indices = [i for i in self._groups.get(backward_gid, []) if i not in excluded]
         if not forward_indices or not backward_indices:
-            QMessageBox.warning(self, "Invalid Grouping", "Selected groups are empty.")
+            QMessageBox.warning(
+                self,
+                "Invalid Grouping",
+                "Selected groups are empty (after detector exclusion).",
+            )
             return None
 
         if self._run is None or not self._run.histograms:
@@ -1502,17 +2015,25 @@ class GroupingDialog(QDialog):
         forward_counts = apply_grouping(self._run.histograms, forward_indices)
         backward_counts = apply_grouping(self._run.histograms, backward_indices)
 
-        _t0_bin, _t_good_offset, first_good_bin, last_good_bin = (
+        t0_bin, _t_good_offset, first_good_bin, last_good_bin = (
             self._resolve_good_bin_limits_from_controls()
         )
-        return float(
-            estimate_alpha(
-                forward_counts,
-                backward_counts,
-                first_good_bin=first_good_bin,
-                last_good_bin=last_good_bin,
-            )
+        method = self._current_alpha_method()
+        time_us = None
+        if method == "general":
+            time_us = self._reference_time_us(len(forward_counts), int(t0_bin))
+        estimate = estimate_alpha_detailed(
+            forward_counts,
+            backward_counts,
+            method=method,
+            time_us=time_us,
+            first_good_bin=first_good_bin,
+            last_good_bin=last_good_bin,
         )
+        if not estimate.ok:
+            QMessageBox.warning(self, "Estimate Failed", estimate.message)
+            return None
+        return estimate
 
     def _estimate_alpha_for_axis(self, axis: str) -> None:
         """Estimate alpha for one vector polarization axis pair."""
@@ -1522,11 +2043,12 @@ class GroupingDialog(QDialog):
                 self, "Estimate Failed", f"No vector grouping pair is available for {axis}."
             )
             return
-        alpha = self._estimate_alpha_for_group_ids(int(pair[0]), int(pair[1]))
-        if alpha is not None:
-            self._vector_alpha_spins[axis].setValue(alpha)
+        estimate = self._estimate_alpha_for_group_ids(int(pair[0]), int(pair[1]))
+        if estimate is not None:
+            self._vector_alpha_spins[axis].setValue(float(estimate.alpha))
+            self._record_alpha_estimate(axis, estimate)
             if axis == "P_z":
-                self._alpha_spin.setValue(alpha)
+                self._alpha_spin.setValue(float(estimate.alpha))
 
     def _estimate_all_alpha(self) -> None:
         """Estimate alpha for all vector polarization axes."""
@@ -1589,6 +2111,16 @@ class GroupingDialog(QDialog):
         if vector_mode:
             alpha_value = float(self._vector_alpha_spins["P_z"].value())
 
+        # Attach estimate provenance only while the spin still holds the
+        # value the estimator produced (a manual edit invalidates it).
+        alpha_provenance: dict[str, Any] = {"alpha_method": self._current_alpha_method()}
+        slot = "P_z" if vector_mode else "single"
+        recorded = self._alpha_estimate_state.get(slot)
+        if recorded is not None and abs(recorded[0] - alpha_value) < 1e-9:
+            if recorded[1] is not None:
+                alpha_provenance["alpha_error"] = float(recorded[1])
+            alpha_provenance["alpha_reference_run"] = int(recorded[2])
+
         return (
             {
                 "groups": {
@@ -1608,12 +2140,20 @@ class GroupingDialog(QDialog):
                 "first_good_bin": int(first_good_bin),
                 "last_good_bin": int(last_good_bin),
                 "bunching_factor": int(self._bunch_spin.value()),
-                "background_correction": bool(
-                    self._background_checkbox.isEnabled() and self._background_checkbox.isChecked()
-                ),
+                "background_correction": self._current_background_mode() != "none",
+                "background_mode": self._current_background_mode(),
                 "period_mode": self._current_period_mode(),
                 "bin_index_base": self._bin_index_base(),
             }
+            | self._binning_payload()
+            | self._exclusion_payload()
+            | (
+                {"background_run": dict(self._background_run_payload)}
+                if self._current_background_mode() == "reference_run"
+                and self._background_run_payload
+                else {}
+            )
+            | alpha_provenance
             | (
                 {
                     "alpha_x": float(self._vector_alpha_spins["P_x"].value()),
@@ -1625,6 +2165,25 @@ class GroupingDialog(QDialog):
             )
             | deadtime_payload
         )
+
+    def _binning_payload(self) -> dict[str, Any]:
+        """Binning-mode keys: only non-fixed modes carry the width knobs."""
+        mode = self._current_binning_mode()
+        if mode == "fixed":
+            return {}
+        payload: dict[str, Any] = {
+            "binning_mode": mode,
+            "bin0_us": float(self._bin0_spin.value()),
+        }
+        if mode == "variable":
+            payload["bin10_us"] = float(self._bin10_spin.value())
+        return payload
+
+    def _exclusion_payload(self) -> dict[str, Any]:
+        # Always present: an empty list explicitly clears exclusions, so the
+        # apply path never has to guess between "cleared" and "unspecified".
+        ids = self._current_excluded_detectors() or []
+        return {"excluded_detectors": [int(v) for v in ids]}
 
     def _save_grp_file(self) -> None:
         """Save current grouping configuration to a ``.grp`` file."""
@@ -1740,8 +2299,8 @@ class GroupingDialog(QDialog):
         self._deadtime_manual_method = self._initial_manual_deadtime_method(payload)
         self._set_deadtime_mode(self._default_deadtime_mode(payload))
         self._update_deadtime_controls(payload)
-        self._background_checkbox.setChecked(bool(payload.get("background_correction", False)))
-        self._update_background_checkbox_state()
+        self._populate_background_modes(payload)
+        self._update_background_status()
         self._set_period_mode(str(payload.get("period_mode", PeriodMode.RED)))
         self._populate_group_table()
         self._update_vector_mode_controls(payload)

@@ -3806,3 +3806,183 @@ class TestPlotWorkspaceDomainPhase7:
             )
             dummy_workspace.restore_state(state)
             assert dummy_workspace.active_view() == view
+
+
+class TestBackgroundModesReduction:
+    """data-reduction-parity Phase 2: tail-fit and reference-run modes."""
+
+    @staticmethod
+    def _long_run_dataset(run_number: int, *, scale: float = 1.0) -> MuonDataset:
+        rng = np.random.default_rng(run_number)
+        n, t0, width = 600, 5, 0.016
+        t = (np.arange(n) - t0) * width
+        intensity = 4000.0 * np.exp(-np.clip(t, 0.0, None) / 2.1969811) * (t >= 0) + 2.0
+        counts_f = rng.poisson(np.clip(intensity * width * scale, 0.0, None)).astype(float)
+        counts_b = rng.poisson(np.clip(intensity * width * scale * 0.8, 0.0, None)).astype(float)
+        run = Run(
+            run_number=run_number,
+            histograms=[
+                Histogram(counts=counts_f, bin_width=width, t0_bin=t0),
+                Histogram(counts=counts_b, bin_width=width, t0_bin=t0),
+            ],
+            metadata={"run_number": run_number, "facility": "ISIS"},
+            grouping={"good_frames": 1000.0 * scale},
+        )
+        time = (np.arange(n) - t0) * width
+        return MuonDataset(
+            time=time,
+            asymmetry=np.zeros(n),
+            error=np.full(n, 0.01),
+            metadata={"run_number": run_number, "facility": "ISIS"},
+            run=run,
+        )
+
+    def _payload(self, **extra) -> dict:
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "t0_bin": 5,
+            "first_good_bin": 8,
+            "last_good_bin": 599,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+            "background_correction": True,
+        }
+        payload.update(extra)
+        return payload
+
+    def test_tail_fit_mode_applies_on_pulsed_data(self, mainwindow: MainWindow) -> None:
+        dataset = self._long_run_dataset(8101)
+        payload = self._payload(background_mode="tail_fit")
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert dataset.run.grouping["background_correction"] is True
+        assert dataset.run.grouping["background_mode"] == "tail_fit"
+        assert dataset.run.grouping["background_method"] == "tail_fit"
+        details = dataset.run.grouping["background_details"]
+        # True flat rate is 2.0 counts/us in each group's source intensity.
+        assert details["forward_rate_per_us"] == pytest.approx(
+            2.0, abs=4 * (details["forward_rate_error_per_us"] or 1.0)
+        )
+        assert np.all(np.isfinite(dataset.asymmetry))
+
+    def test_reference_run_mode_subtracts_loaded_dataset(self, mainwindow: MainWindow) -> None:
+        sample = self._long_run_dataset(8102)
+        reference = MuonDataset(
+            time=sample.time.copy(),
+            asymmetry=np.zeros_like(sample.time),
+            error=np.full_like(sample.time, 0.01),
+            metadata={"run_number": 8103, "facility": "ISIS"},
+            run=Run(
+                run_number=8103,
+                histograms=[
+                    Histogram(counts=h.counts.copy(), bin_width=h.bin_width, t0_bin=h.t0_bin)
+                    for h in sample.run.histograms
+                ],
+                metadata={"run_number": 8103, "facility": "ISIS"},
+                grouping={"good_frames": 1000.0},
+            ),
+        )
+        mainwindow._data_browser.add_dataset(reference)
+        payload = self._payload(
+            background_mode="reference_run",
+            background_run={"run_number": 8103, "source_file": ""},
+        )
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(sample, payload)
+
+        assert applied is True
+        assert sample.run.grouping["background_method"] == "reference_run"
+        assert sample.run.grouping["background_details"]["scale"] == pytest.approx(1.0)
+        assert sample.run.grouping["background_run"]["run_number"] == 8103
+        # Identical reference at scale 1 means full self-subtraction: the
+        # corrected counts are zero, so the asymmetry collapses to zero.
+        good = slice(8, 600)
+        np.testing.assert_allclose(sample.asymmetry[good], 0.0)
+
+    def test_reference_run_mode_without_resolvable_reference_skips(
+        self, mainwindow: MainWindow
+    ) -> None:
+        dataset = self._long_run_dataset(8104)
+        payload = self._payload(
+            background_mode="reference_run",
+            background_run={"run_number": 999999, "source_file": ""},
+        )
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        # Reduction proceeds without subtraction; method records the miss.
+        assert dataset.run.grouping.get("background_method") == "missing_reference"
+
+
+class TestReductionSettingsPersistence:
+    """Review fix: the new grouping keys survive non-dialog apply flows and
+    round-trip through the project extractor."""
+
+    NEW_KEYS = {
+        "background_mode": "tail_fit",
+        "excluded_detectors": [2],
+        "binning_mode": "variable",
+        "bin0_us": 0.1,
+        "bin10_us": 0.5,
+        "alpha_method": "diamagnetic",
+        "alpha_error": 0.01,
+        "alpha_reference_run": 9001,
+    }
+
+    def _configured_dataset(self) -> MuonDataset:
+        dataset = _make_dataset(9001, with_grouping=True)
+        counts = dataset.run.histograms[0].counts
+        dataset.run.histograms = [Histogram(counts=counts.copy(), bin_width=0.01) for _ in range(4)]
+        dataset.run.grouping["groups"] = {1: [1, 2], 2: [3, 4]}
+        dataset.run.grouping.update(self.NEW_KEYS)
+        dataset.run.grouping["background_correction"] = True
+        dataset.run.grouping["background_run"] = {"run_number": 9002, "source_file": "/x.nxs"}
+        dataset.run.grouping["period_mapping"] = {"1": "red", "2": "green"}
+        return dataset
+
+    def test_extractor_emits_the_new_keys(self, mainwindow: MainWindow) -> None:
+        dataset = self._configured_dataset()
+        payload = mainwindow._extract_grouping_overrides(dataset)
+        for key, value in self.NEW_KEYS.items():
+            assert payload[key] == value, key
+        assert payload["background_run"]["run_number"] == 9002
+        assert payload["period_mapping"] == {"1": "red", "2": "green"}
+
+    def test_extracted_payload_reapplies_without_erasing_settings(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """The toolbar/vector/project flows apply extracted payloads; the
+        settings must survive the round trip."""
+        dataset = self._configured_dataset()
+        payload = mainwindow._extract_grouping_overrides(dataset)
+        payload["bunching_factor"] = 7  # what the toolbar flow changes
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        grouping = dataset.run.grouping
+        assert grouping["excluded_detectors"] == [2]
+        assert grouping["binning_mode"] == "variable"
+        assert grouping["bin0_us"] == pytest.approx(0.1)
+        assert grouping["background_mode"] == "tail_fit"
+        assert grouping["background_run"]["run_number"] == 9002
+        assert grouping["alpha_method"] == "diamagnetic"
+        assert grouping["bunching_factor"] == 7
+
+    def test_dialog_payload_without_keys_still_clears_them(self, mainwindow: MainWindow) -> None:
+        """The pop-when-absent contract stays for dialog payloads, which
+        always carry the keys they own — absence means 'cleared'."""
+        dataset = self._configured_dataset()
+        payload = mainwindow._extract_grouping_overrides(dataset)
+        for key in ("binning_mode", "bin0_us", "bin10_us"):
+            payload.pop(key)
+
+        mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert "binning_mode" not in dataset.run.grouping

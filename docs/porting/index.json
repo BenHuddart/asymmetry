@@ -221,7 +221,7 @@
         "verification_plan": "docs/porting/simulate-mode/verification-plan.md"
       },
       "updated": "2026-06-10",
-      "notes": "Promoted from candidate (tier now, score 16) under the wimda-parity-gap umbrella, Wave A project 8. Candidate docs preserved at docs/porting/simulate-mode/candidate/ (same-slug promotion: the structural harness requires unique slugs, so the candidates/ entry is replaced rather than kept, unlike maxent-spectrum->maxent). Study pass done 2026-06-10 against WiMDA Simulate.pas + DegradeStats.pas (Pascal read directly; brief verified). Decisions (Ben, 2026-06-10): loaded-run template required; persistence via saved NeXus file (no schema change); degrade -> new derived run (not in-place); minimal standalone NeXus V1 writer (not template-copy; works for PSI .bin templates); dialog seeds model+params from current fit else builder; core takes per-group signal specs, v1 dialog is F/B alpha-split; deadtimes written as zeros + optional flat background (default 0). Key divergences from WiMDA (all documented in comparison.md): Poisson draws of expected counts with numpy PCG64 + first-class seed (WiMDA: unseeded Delphi RNG); pre-t0 bins = background only (WiMDA: unphysical growing exponential); degrade = exact binomial thinning for f<1 (WiMDA: Poisson(k*f), over-dispersed); exact time_zero (WiMDA: quantised to whole microseconds). Double-pulse halving, count-mode simulation, two-period output deferred to count-domain-fit-modes. IMPLEMENTED 2026-06-10 (4 phases, validate green, 53 new tests): core/simulate.py (simulate_run, simulate_run_from_group_signals, degrade_run, expected_counts, reduce_run_to_dataset, promoted archetype builders), core/io/nexus_writer.py (write_nexus_v1, works for PSI .bin templates), SimulateDialog + Data Browser Degrade Statistics action + provenance badging, docs/user_guide/simulation.rst. Verified: round-trip refit recovery, 100-seed pull distribution ~ N(0,1), degrade 1/sqrt(f) error scaling, corpus round trips (nickel HDF5 + EuO PSI .bin). FINDING for follow-up: compute_asymmetry's error formula treats F+-aB as independent ((1+A^2) form), over-estimating sigma_A by (1+A^2)/(1-A^2) vs exact Poisson propagation — chi2_r centres below 1 against known truth; affects all fits; recorded as follow-on in implementation-options.md."
+      "notes": "Promoted from candidate (tier now, score 16) under the wimda-parity-gap umbrella, Wave A project 8. Candidate docs preserved at docs/porting/simulate-mode/candidate/ (same-slug promotion: the structural harness requires unique slugs, so the candidates/ entry is replaced rather than kept, unlike maxent-spectrum->maxent). Study pass done 2026-06-10 against WiMDA Simulate.pas + DegradeStats.pas (Pascal read directly; brief verified). Decisions (Ben, 2026-06-10): loaded-run template required; persistence via saved NeXus file (no schema change); degrade -> new derived run (not in-place); minimal standalone NeXus V1 writer (not template-copy; works for PSI .bin templates); dialog seeds model+params from current fit else builder; core takes per-group signal specs, v1 dialog is F/B alpha-split; deadtimes written as zeros + optional flat background (default 0). Key divergences from WiMDA (all documented in comparison.md): Poisson draws of expected counts with numpy PCG64 + first-class seed (WiMDA: unseeded Delphi RNG); pre-t0 bins = background only (WiMDA: unphysical growing exponential); degrade = exact binomial thinning for f<1 (WiMDA: Poisson(k*f), over-dispersed); exact time_zero (WiMDA: quantised to whole microseconds). Double-pulse halving, count-mode simulation, two-period output deferred to count-domain-fit-modes. IMPLEMENTED 2026-06-10 (4 phases, validate green, 53 new tests): core/simulate.py (simulate_run, simulate_run_from_group_signals, degrade_run, expected_counts, reduce_run_to_dataset, promoted archetype builders), core/io/nexus_writer.py (write_nexus_v1, works for PSI .bin templates), SimulateDialog + Data Browser Degrade Statistics action + provenance badging, docs/user_guide/simulation.rst. Verified: round-trip refit recovery, 100-seed pull distribution ~ N(0,1), degrade 1/sqrt(f) error scaling, corpus round trips (nickel HDF5 + EuO PSI .bin). FINDING for follow-up: compute_asymmetry's error formula treats F+-aB as independent ((1+A^2) form), over-estimating sigma_A by (1+A^2)/(1-A^2) vs exact Poisson propagation \u2014 chi2_r centres below 1 against known truth; affects all fits; recorded as follow-on in implementation-options.md."
     },
     {
       "slug": "maxent-spectrum",
@@ -586,6 +586,30 @@
       "src_path": null,
       "updated": "2026-06-10",
       "notes": "Parameter-trending model functions + Model-layer machinery (umbrella wimda-parity-gap, Wave A). All 8 fitfunctions.pas functions and the Model.pas machinery verified against the Pascal source. Phase 1: Polynomial, PowerLawQuadBG, MuRepolarisation (A_hf-parameterised, B0=A/(gamma_e+gamma_mu) from constants.py) + documented composite recipes (Arrhenius+Arrhenius eV->meV delta 0.089%; OrderParameter+Constant; 2xLorentzianLCR+Polynomial with coefficient non-transfer warning). Phase 2: error-mode selector (Column/Percent/Absolute/None + estimate-from-scatter as the one-pass fixed point of WiMDA's Estimate iteration), union multi-range windows on ModelFitRange, shared chi2-quality helper (core/fitting/fit_quality.py, reused by fit-workflow-diagnostics). Session-only (no .asymp changes); GUI in ModelFitDialog only. OUT: x2 second variable (requirements recorded; cross-group fitting covers it), *fit.dll (-> python-user-functions), .mfit ReloadFit, GLE. IMPLEMENTED 2026-06-10: Phases 1+2 shipped (validate green, 1810 passed); EuO regression Tc=69.24(9)/beta=0.409(7)/alpha=1.18(4) matches PR #15 within combined sigma; arbitrary-X stretch not reached (follow-on; GUI-only, core is x-agnostic)."
+    },
+    {
+      "slug": "data-reduction-parity",
+      "feature_name": "Data-reduction parity (alpha estimation, backgrounds, binning modes, t0 search, detector exclusion, period mapping)",
+      "status": "implemented",
+      "path": "docs/porting/data-reduction-parity",
+      "references": [
+        "WiMDA",
+        "Mantid",
+        "musrfit",
+        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
+      ],
+      "docs": {
+        "readme": "docs/porting/data-reduction-parity/README.md",
+        "comparison": "docs/porting/data-reduction-parity/comparison.md",
+        "implementation_options": "docs/porting/data-reduction-parity/implementation-options.md",
+        "test_data": "docs/porting/data-reduction-parity/test-data.md",
+        "verification_plan": "docs/porting/data-reduction-parity/verification-plan.md"
+      },
+      "tests_path": "tests/test_alpha_estimation.py",
+      "src_path": "src/asymmetry/core/transform/asymmetry.py",
+      "supersedes_candidate": "period-arithmetic",
+      "updated": "2026-06-10",
+      "notes": "Wave A project 1 of the wimda-parity-gap umbrella. Three phases: (1) diamagnetic + General alpha estimators with uncertainties; (2) tail-fit background for pulsed sources + frame-ratio background-run subtraction; (3) variable/constant-error binning, automatic t0 search, per-detector exclusion, multi-period subset->red/green mapping. Phase 3 period mapping realises the REMAINDER of the period-arithmetic candidate (period-selection shipped the red/green selection slice; this adds arbitrary subset summation with Ignore). WiMDA arithmetic transcribed as test oracles; divergences recorded in comparison.md."
     }
   ]
 }

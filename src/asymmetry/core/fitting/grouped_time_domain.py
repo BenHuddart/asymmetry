@@ -24,7 +24,11 @@ from asymmetry.core.fitting.global_search.heuristics import (
 )
 from asymmetry.core.fitting.parameters import ParameterSet, split_parameter_name
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
-from asymmetry.core.transform.grouping import apply_grouping_aligned, common_t0_for_groups
+from asymmetry.core.transform.grouping import (
+    apply_grouping_aligned,
+    common_t0_for_groups,
+    filter_excluded_indices,
+)
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 GROUP_NUISANCE_PARAMS: tuple[str, ...] = (
@@ -166,7 +170,7 @@ def build_grouped_time_domain_groups(
             continue
         if not bool(included_groups.get(group_id, True)):
             continue
-        indices = _normalize_group_entries(raw_entries)
+        indices = filter_excluded_indices(_normalize_group_entries(raw_entries), grouping)
         if indices:
             groups.append((group_id, indices))
     if len(groups) < 2:
