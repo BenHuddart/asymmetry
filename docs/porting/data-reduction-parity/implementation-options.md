@@ -389,6 +389,21 @@ named.
   output, no longer silent). Display-only; reduction unchanged.
 - Plot-side quick binning control — deferred to the dedicated UI-polish
   pass (O3).
+- **DONE** — Small quality cleanups (single commit): shared
+  `good_frames(grouping, default)` accessor in `core/transform/grouping.py`
+  replaces the divergent reads in `deadtime.py`, `periods.py`,
+  `core/io.resolve_background_reference` and `mainwindow`; dead
+  `_dataset_supports_background_correction` removed (callers use
+  `_dataset_allows_background_mode(dataset, "range")`); diamagnetic bootstrap
+  replicas now minimise in a narrow ln window around the base estimate with a
+  relaxed `xatol` (≈1e-4) instead of a full bounded solve each; the dead
+  pre-sum histogram clones in `combine_mapped_periods` dropped and its nested
+  closures flattened into module-level helpers (`_periods_for_target`,
+  `_sum_period_set`, `_sum_period_good_frames`, `_combined_dead_times`); the
+  grouping dialog's bin0/bin10 labels are created beside their spins so
+  `_on_binning_mode_changed` no longer needs the `getattr`/ordering dance; and
+  vector mode now records per-axis alpha provenance (`alpha_x_error` /
+  `alpha_x_reference_run` …) alongside the per-axis values.
 - Live WiMDA spot-check values for α/tail-fit on corpus runs — optional
   later validation (oracle decision).
 - α as a free fit parameter (the WiMDA manual's "most accurate way") —

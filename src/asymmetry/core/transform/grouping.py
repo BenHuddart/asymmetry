@@ -105,6 +105,23 @@ def common_t0_for_groups(
     return max(0, max(int(histograms[idx].t0_bin) for idx in indices))
 
 
+def good_frames(grouping: dict | None, default: float = 1.0) -> float:
+    """Positive ``good_frames`` from a grouping, falling back to *default*.
+
+    ``good_frames`` is the universal dead-time normaliser (rate = counts /
+    (dt · good_frames)); a missing, unparseable or non-positive value collapses
+    to *default* so it can never zero the correction. Pass ``default=0.0`` (and
+    treat a falsy result as "unknown", e.g. ``good_frames(g, 0.0) or None``)
+    when the caller wants to fall back to a snapshot instead.
+    """
+    grouping = grouping if isinstance(grouping, dict) else {}
+    try:
+        value = float(grouping.get("good_frames", default))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0.0 else default
+
+
 def excluded_detector_indices(grouping: dict | None) -> frozenset[int]:
     """0-based indices of detectors excluded by the grouping.
 

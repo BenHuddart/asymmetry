@@ -38,6 +38,7 @@ from asymmetry.core.transform.grouping import (
     excluded_detector_indices,
     filter_excluded_indices,
     format_detector_list,
+    good_frames,
     group_forward_backward,
     parse_detector_list,
     resolve_group_indices,
@@ -116,6 +117,7 @@ __all__ = [
     "source_is_pulsed",
     "excluded_detector_indices",
     "filter_excluded_indices",
+    "good_frames",
     "format_detector_list",
     "parse_detector_list",
 ]

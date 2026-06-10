@@ -343,6 +343,11 @@ class GroupingDialog(QDialog):
         self._bin10_spin.setDecimals(4)
         self._bin10_spin.setRange(0.0001, 100.0)
         self._bin10_spin.setSuffix(" µs")
+        # Create the labels beside their spins so _on_binning_mode_changed can
+        # show/hide both without a getattr/ordering dance (it runs during this
+        # setup, before the layout row that positions them is built).
+        self._bin0_label = QLabel("Initial bin")
+        self._bin10_label = QLabel("Bin at 10 µs")
         initial_mode, initial_bin0, initial_bin10 = resolve_binning_mode(grouping)
         self._bin0_spin.setValue(initial_bin0)
         self._bin10_spin.setValue(initial_bin10)
@@ -558,8 +563,6 @@ class GroupingDialog(QDialog):
         binning_row.setContentsMargins(0, 0, 0, 0)
         binning_row.addWidget(self._binning_mode_combo)
         binning_row.addWidget(self._bunch_spin)
-        self._bin0_label = QLabel("Initial bin")
-        self._bin10_label = QLabel("Bin at 10 µs")
         binning_row.addWidget(self._bin0_label)
         binning_row.addWidget(self._bin0_spin)
         binning_row.addWidget(self._bin10_label)
@@ -1853,16 +1856,13 @@ class GroupingDialog(QDialog):
         """Enable the controls for the active binning mode (WiMDA pattern)."""
         mode = self._current_binning_mode()
         self._bunch_spin.setEnabled(mode == "fixed")
-        for widget in (self._bin0_spin, getattr(self, "_bin0_label", None)):
-            if widget is not None:
-                widget.setEnabled(mode != "fixed")
-                if hasattr(widget, "setVisible"):
-                    widget.setVisible(mode != "fixed")
-        for widget in (self._bin10_spin, getattr(self, "_bin10_label", None)):
-            if widget is not None:
-                enabled = mode == "variable"
-                widget.setEnabled(enabled)
-                widget.setVisible(enabled)
+        # bin0 applies to both non-fixed modes; bin10 only to variable.
+        for widget in (self._bin0_spin, self._bin0_label):
+            widget.setEnabled(mode != "fixed")
+            widget.setVisible(mode != "fixed")
+        for widget in (self._bin10_spin, self._bin10_label):
+            widget.setEnabled(mode == "variable")
+            widget.setVisible(mode == "variable")
 
     def _set_excluded_detectors_text(self, grouping: dict[str, Any]) -> None:
         raw = grouping.get("excluded_detectors")
@@ -2165,17 +2165,29 @@ class GroupingDialog(QDialog):
                 else {}
             )
             | alpha_provenance
-            | (
-                {
-                    "alpha_x": float(self._vector_alpha_spins["P_x"].value()),
-                    "alpha_y": float(self._vector_alpha_spins["P_y"].value()),
-                    "alpha_z": float(self._vector_alpha_spins["P_z"].value()),
-                }
-                if vector_mode
-                else {}
-            )
+            | (self._vector_alpha_payload() if vector_mode else {})
             | deadtime_payload
         )
+
+    def _vector_alpha_payload(self) -> dict[str, Any]:
+        """Per-axis alpha values plus estimate provenance for vector mode.
+
+        Mirrors the single-axis provenance (error + reference run) for each
+        canonical axis — ``alpha_x_error`` / ``alpha_x_reference_run`` … — which
+        Phase 1 recorded only for the scalar ``P_z`` slot. Provenance is
+        attached only while the spin still holds the estimator's value (a manual
+        edit invalidates it), matching the scalar path.
+        """
+        payload: dict[str, Any] = {}
+        for axis, key in (("P_x", "alpha_x"), ("P_y", "alpha_y"), ("P_z", "alpha_z")):
+            value = float(self._vector_alpha_spins[axis].value())
+            payload[key] = value
+            recorded = self._alpha_estimate_state.get(axis)
+            if recorded is not None and abs(recorded[0] - value) < 1e-9:
+                if recorded[1] is not None:
+                    payload[f"{key}_error"] = float(recorded[1])
+                payload[f"{key}_reference_run"] = int(recorded[2])
+        return payload
 
     def _binning_payload(self) -> dict[str, Any]:
         """Binning-mode keys: only non-fixed modes carry the width knobs."""

@@ -22,6 +22,7 @@ from asymmetry.core.io.periods import (
 )
 from asymmetry.core.io.psi import PsiLoader
 from asymmetry.core.io.root import RootLoader
+from asymmetry.core.transform.grouping import good_frames
 
 # Register built-in loaders
 LoaderRegistry.register(NexusLoader)
@@ -87,15 +88,7 @@ def load_background_run(payload: dict) -> MuonDataset:
 
 def _grouping_good_frames(source: object) -> float | None:
     """Positive ``good_frames`` from a run/dataset grouping, else ``None``."""
-    grouping = getattr(source, "grouping", None)
-    if isinstance(grouping, dict):
-        try:
-            value = float(grouping.get("good_frames", 0.0))
-        except (TypeError, ValueError):
-            value = 0.0
-        if value > 0.0:
-            return value
-    return None
+    return good_frames(getattr(source, "grouping", None), default=0.0) or None
 
 
 @dataclass

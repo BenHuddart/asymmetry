@@ -102,11 +102,11 @@ from asymmetry.core.transform import (
     compute_asymmetry_with_count_errors,
     differentiate_scan,
     effective_group_indices,
+    good_frames,
     has_file_deadtime,
     has_resolved_deadtime,
     prepare_histograms_with_deadtime,
     resolve_background_mode,
-    supports_background_correction,
 )
 from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
@@ -297,7 +297,18 @@ def _coerce_bool(value: object, default: bool = False) -> bool:
 #: present in the payload → copied, absent → removed. One list feeds the
 #: apply paths AND the project-persistence extractor, so a new reduction
 #: setting cannot be persisted on one path and silently erased on another.
-ALPHA_PROVENANCE_KEYS = ("alpha_method", "alpha_error", "alpha_reference_run")
+ALPHA_PROVENANCE_KEYS = (
+    "alpha_method",
+    "alpha_error",
+    "alpha_reference_run",
+    # Per-axis provenance for vector mode (mirrors the scalar keys per axis).
+    "alpha_x_error",
+    "alpha_x_reference_run",
+    "alpha_y_error",
+    "alpha_y_reference_run",
+    "alpha_z_error",
+    "alpha_z_reference_run",
+)
 REDUCTION_SETTING_KEYS = (
     "background_mode",
     "background_run",
@@ -3455,17 +3466,6 @@ class MainWindow(QMainWindow):
             return list(histograms), False
         return prepare_histograms_with_deadtime(histograms, grouping, use_deadtime)
 
-    def _dataset_supports_background_correction(self, dataset) -> bool:
-        """Return whether this dataset should expose PSI-style background correction."""
-        run = getattr(dataset, "run", None)
-        metadata = dict(getattr(dataset, "metadata", {}) or {})
-        if run is not None:
-            metadata.update(getattr(run, "metadata", {}) or {})
-        source_file = str(getattr(run, "source_file", "") if run is not None else "")
-        if not source_file:
-            source_file = str(metadata.get("source_file", ""))
-        return supports_background_correction(metadata=metadata, source_file=source_file)
-
     def _dataset_allows_background_mode(self, dataset, mode: str) -> bool:
         """Return whether *mode* applies to this dataset (per-mode gating)."""
         run = getattr(dataset, "run", None)
@@ -3526,13 +3526,7 @@ class MainWindow(QMainWindow):
         if cache is None:
             cache = {}
             self._background_run_cache = cache
-        sample_grouping = getattr(sample_run, "grouping", None)
-        sample_frames = None
-        if isinstance(sample_grouping, dict):
-            try:
-                sample_frames = float(sample_grouping.get("good_frames", 0.0)) or None
-            except (TypeError, ValueError):
-                sample_frames = None
+        sample_frames = good_frames(getattr(sample_run, "grouping", None), default=0.0) or None
         try:
             reference = resolve_background_reference(
                 grouping.get("background_run"),
