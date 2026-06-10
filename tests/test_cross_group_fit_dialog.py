@@ -18,6 +18,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
     ParameterGroupData,
 )
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 
 
@@ -263,3 +264,47 @@ def test_cross_group_dialog_exposes_error_modes_and_windows() -> None:
     # just after the constructor's one-time pass.
     dlg._rebuild_ranges_ui()
     assert all(w.active.isHidden() for w in dlg._range_widgets)
+
+
+def test_local_param_error_cell_shows_per_group_values_not_just_group0() -> None:
+    """Regression: a Local parameter has a distinct value/error per group, so
+    the Error column must not silently report only the first group's number.
+    It shows 'varies' with every group's value ± error in the tooltip."""
+    QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    result = CrossGroupFitResult(
+        success=True,
+        chi_squared=2.0,
+        reduced_chi_squared=1.0,
+        global_parameters=ParameterSet([Parameter(name="m", value=0.5)]),
+        local_parameters={
+            "g0": ParameterSet([Parameter(name="b", value=1.0)]),
+            "g1": ParameterSet([Parameter(name="b", value=3.0)]),
+        },
+        global_uncertainties={"m": 0.05},
+        local_uncertainties={"g0": {"b": 0.1}, "g1": {"b": 0.2}},
+    )
+
+    # Global parameter: single shared uncertainty.
+    global_cell = dlg._build_error_cell("m", "Global", result)
+    assert global_cell.text() == f"{0.05:.4g}"
+
+    # Local parameter: 'varies' + per-group breakdown covering BOTH groups,
+    # not just g0 (the bug showed only group 0's 0.1).
+    local_cell = dlg._build_error_cell("b", "Local", result)
+    assert local_cell.text() == "varies"
+    tip = local_cell.toolTip()
+    assert "G0" in tip and "G1" in tip
+    assert "1" in tip and "3" in tip  # both fitted values present
+    assert "0.1" in tip and "0.2" in tip  # both per-group errors present
+
+    # Fixed parameter: no uncertainty shown.
+    assert dlg._build_error_cell("b", "Fixed", result).text() == ""
+    # No result yet: blank.
+    assert dlg._build_error_cell("b", "Local", None).text() == ""

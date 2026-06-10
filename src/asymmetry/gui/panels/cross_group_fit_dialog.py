@@ -401,17 +401,8 @@ class CrossGroupFitDialog(ModelFitDialog):
             type_combo.currentTextChanged.connect(self._on_param_table_edited)
             self._param_table.setCellWidget(row, 4, type_combo)
 
-            err = np.nan
-            if result is not None:
-                err_map = (
-                    result.global_uncertainties
-                    if type_combo.currentText() == "Global"
-                    else result.local_uncertainties.get(self._groups[0].group_id, {})
-                )
-                err = err_map.get(param.name, np.nan) if isinstance(err_map, dict) else np.nan
-            self._param_table.setItem(
-                row, 5, QTableWidgetItem(f"{err:.4g}" if np.isfinite(err) else "")
-            )
+            err_item = self._build_error_cell(param.name, type_combo.currentText(), result)
+            self._param_table.setItem(row, 5, err_item)
 
         self._param_table.blockSignals(False)
         self._param_table.resizeColumnsToContents()
@@ -425,6 +416,45 @@ class CrossGroupFitDialog(ModelFitDialog):
             if widget is not None and not isinstance(widget, QComboBox):
                 self._param_table.removeCellWidget(row, 4)
                 widget.deleteLater()
+
+    def _build_error_cell(
+        self, param_name: str, role: str, result: CrossGroupFitResult | None
+    ) -> QTableWidgetItem:
+        """Error-column cell for one parameter row.
+
+        A *Global* parameter has one shared uncertainty. A *Local* parameter has
+        a distinct fitted value and uncertainty *per group*, which a single
+        number cannot represent — show "varies" and list every group's
+        value ± error in the tooltip rather than silently reporting only the
+        first group's. *Fixed* parameters carry no uncertainty.
+        """
+        if result is None:
+            return QTableWidgetItem("")
+
+        if role == "Global":
+            err = result.global_uncertainties.get(param_name, np.nan)
+            return QTableWidgetItem(f"{err:.4g}" if np.isfinite(err) else "")
+
+        if role == "Local":
+            lines: list[str] = []
+            for group in self._groups:
+                pset = result.local_parameters.get(group.group_id)
+                if pset is None or param_name not in pset:
+                    continue
+                value = float(pset[param_name].value)
+                gerr = result.local_uncertainties.get(group.group_id, {}).get(param_name)
+                if gerr is not None and np.isfinite(gerr):
+                    lines.append(f"{group.group_name}: {value:.6g} ± {gerr:.4g}")
+                else:
+                    lines.append(f"{group.group_name}: {value:.6g}")
+            if not lines:
+                return QTableWidgetItem("")
+            item = QTableWidgetItem("varies")
+            item.setToolTip("Per-group fitted value ± error:\n" + "\n".join(lines))
+            return item
+
+        # Fixed parameters have no uncertainty.
+        return QTableWidgetItem("")
 
     def _commit_param_table(self, *, notify_adjustments: bool = False) -> None:
         super()._commit_param_table(notify_adjustments=notify_adjustments)
