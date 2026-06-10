@@ -400,6 +400,17 @@ named.
   `period_mapping` in its grouping. Re-deriving the mapped dataset when a
   project is reloaded is a follow-on (the mapping persists, the combined
   dataset is rebuilt by re-running Map periods).
+- **DONE** — Reference-run resolution moved into core. The matching +
+  loader-fallback + frame-scale logic that lived only in
+  `MainWindow._resolve_background_reference` is now
+  `core/io.resolve_background_reference(payload, sample_good_frames=…,
+  datasets=…, cache=…) -> BackgroundReference`. `MainWindow` delegates (passing
+  its loaded-dataset registry and a per-window cache, so a batch apply loads
+  the reference once, not once per sample), and the grouped Fourier path now
+  satisfies `reference_run`: `build_group_signal_dataset` resolves + groups +
+  aligns the reference and subtracts it via `subtract_scaled_counts`, instead
+  of the previous silent no-op outside the GUI.
 - (Phase 2/3 implementation note) The grouped *Fourier* input path keeps
-  its legacy continuous-source-only background gate; offering tail-fit
-  there is a follow-on for `frequency-domain-finishers`.
+  its legacy continuous-source-only background gate for the *range/tail-fit*
+  modes; `reference_run` is now satisfied there (see above). Offering tail-fit
+  in the Fourier path remains a follow-on for `frequency-domain-finishers`.

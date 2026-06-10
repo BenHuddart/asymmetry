@@ -64,6 +64,7 @@ from asymmetry.core.fourier import (
     fft_complex_asymmetry,
     fourier_mode_uses_phase_correction,
 )
+from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
     combine_mapped_periods,
     combine_period_asymmetry,
@@ -3512,79 +3513,37 @@ class MainWindow(QMainWindow):
     def _resolve_background_reference(
         self, grouping: dict, sample_run
     ) -> tuple[list, float] | None:
-        """Resolve a ``background_run`` payload to (histograms, scale).
+        """Delegate ``background_run`` resolution to the core resolver.
 
-        Loaded project datasets are matched by run number first; otherwise
-        the file named in the payload is loaded (and cached per source
-        path). The scale is the good-frame ratio sample/reference, falling
-        back to the snapshot stored in the payload.
+        The GUI supplies the loaded-dataset registry (reuse an already-open
+        reference run) and a per-window cache (load the reference once per apply
+        batch, not once per sample dataset); the core
+        :func:`resolve_background_reference` owns the matching, loader fallback
+        and frame-scale arithmetic. On failure we surface the message and skip
+        the subtraction.
         """
-        payload = grouping.get("background_run")
-        if not isinstance(payload, dict):
-            self.statusBar().showMessage(
-                "Background run unavailable: no reference is recorded.", 8000
-            )
-            return None
-        reference_run = None
-        run_number = payload.get("run_number")
-        if run_number is not None:
-            for ds in self._data_browser.get_all_datasets():
-                if ds.run is not None and int(ds.run_number) == int(run_number):
-                    reference_run = ds.run
-                    break
-        if reference_run is None:
-            source_file = str(payload.get("source_file", "") or "")
-            if not source_file:
-                self.statusBar().showMessage(
-                    "Background run unavailable: the reference is not loaded and "
-                    "no source file is recorded.",
-                    8000,
-                )
-                return None
-            cache = getattr(self, "_background_run_cache", None)
-            if cache is None:
-                cache = {}
-                self._background_run_cache = cache
-            if source_file in cache:
-                reference_run = cache[source_file]
-            else:
-                try:
-                    from asymmetry.core.io import load_background_run
-
-                    reference_run = load_background_run(payload).run
-                except (ValueError, OSError) as exc:
-                    self.statusBar().showMessage(f"Background run unavailable: {exc}", 8000)
-                    return None
-                cache[source_file] = reference_run
-        if reference_run is None or not reference_run.histograms:
-            self.statusBar().showMessage(
-                "Background run unavailable: the reference has no histograms.", 8000
-            )
-            return None
-
-        def _good_frames(source) -> float | None:
-            grouping_dict = getattr(source, "grouping", None)
-            if isinstance(grouping_dict, dict):
-                try:
-                    value = float(grouping_dict.get("good_frames", 0.0))
-                except (TypeError, ValueError):
-                    value = 0.0
-                if value > 0.0:
-                    return value
-            return None
-
-        sample_frames = _good_frames(sample_run) or payload.get("good_frames_sample")
-        reference_frames = _good_frames(reference_run) or payload.get("good_frames_reference")
-        try:
-            scale = float(sample_frames) / float(reference_frames)
-        except (TypeError, ValueError, ZeroDivisionError):
+        cache = getattr(self, "_background_run_cache", None)
+        if cache is None:
+            cache = {}
+            self._background_run_cache = cache
+        sample_grouping = getattr(sample_run, "grouping", None)
+        sample_frames = None
+        if isinstance(sample_grouping, dict):
             try:
-                scale = float(payload.get("scale", 1.0))
+                sample_frames = float(sample_grouping.get("good_frames", 0.0)) or None
             except (TypeError, ValueError):
-                scale = 1.0
-        if not np.isfinite(scale) or scale <= 0.0:
-            scale = 1.0
-        return list(reference_run.histograms), float(scale)
+                sample_frames = None
+        try:
+            reference = resolve_background_reference(
+                grouping.get("background_run"),
+                sample_good_frames=sample_frames,
+                datasets=self._data_browser.get_all_datasets(),
+                cache=cache,
+            )
+        except (ValueError, OSError) as exc:
+            self.statusBar().showMessage(f"Background run unavailable: {exc}", 8000)
+            return None
+        return reference.histograms, reference.scale
 
     def _apply_deadtime_correction(
         self,

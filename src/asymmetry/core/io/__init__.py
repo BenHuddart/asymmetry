@@ -6,6 +6,11 @@ Use the :func:`load` convenience function to auto-detect the format::
     dataset = load("run12345.nxs")
 """
 
+from collections.abc import Iterable
+from dataclasses import dataclass
+
+import numpy as np
+
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.io.base import BaseLoader, LoaderRegistry, LoadResult
 from asymmetry.core.io.nexus import NexusLoader
@@ -80,6 +85,111 @@ def load_background_run(payload: dict) -> MuonDataset:
     return dataset
 
 
+def _grouping_good_frames(source: object) -> float | None:
+    """Positive ``good_frames`` from a run/dataset grouping, else ``None``."""
+    grouping = getattr(source, "grouping", None)
+    if isinstance(grouping, dict):
+        try:
+            value = float(grouping.get("good_frames", 0.0))
+        except (TypeError, ValueError):
+            value = 0.0
+        if value > 0.0:
+            return value
+    return None
+
+
+@dataclass
+class BackgroundReference:
+    """A resolved ``background_run`` reference: source histograms + frame scale.
+
+    ``histograms`` are the reference run's raw (pre-deadtime) histograms — the
+    caller applies the *same* deadtime treatment as the sample and groups/aligns
+    them before :func:`subtract_scaled_counts` (study divergence D6). ``scale``
+    is the good-frame ratio sample/reference (WiMDA's exposure scale).
+    """
+
+    histograms: list
+    scale: float
+    run_number: int | None = None
+
+
+def resolve_background_reference(
+    payload: dict | None,
+    *,
+    sample_good_frames: float | None = None,
+    datasets: Iterable[MuonDataset] = (),
+    cache: dict[str, object] | None = None,
+) -> BackgroundReference:
+    """Resolve a ``background_run`` grouping payload to a :class:`BackgroundReference`.
+
+    This is the single home for reference-run resolution so the same logic
+    serves the GUI, scripted core reductions, and the grouped Fourier path
+    (previously it lived only in ``MainWindow`` and ``reference_run`` silently
+    no-op'd everywhere else).
+
+    Resolution order: match the reference run number against the already-loaded
+    ``datasets`` (reuse an open run); otherwise load the payload's
+    ``source_file`` (cached per source path in ``cache`` when provided, so a
+    batch apply loads the reference **once**, not once per sample dataset). The
+    scale is sample/reference good frames, falling back to the payload snapshots
+    and finally ``1.0``.
+
+    Raises
+    ------
+    ValueError
+        With a human-readable message when the reference cannot be resolved, so
+        callers can surface it. (Loader I/O failures propagate as ``OSError``.)
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("no reference is recorded")
+
+    reference_run = None
+    run_number = payload.get("run_number")
+    if run_number is not None:
+        for dataset in datasets:
+            run = getattr(dataset, "run", None)
+            try:
+                matches = run is not None and int(dataset.run_number) == int(run_number)
+            except (TypeError, ValueError, AttributeError):
+                matches = False
+            if matches:
+                reference_run = run
+                break
+
+    if reference_run is None:
+        source_file = str(payload.get("source_file", "") or "")
+        if not source_file:
+            raise ValueError("the reference is not loaded and no source file is recorded")
+        if cache is not None and source_file in cache:
+            reference_run = cache[source_file]
+        else:
+            reference_run = load_background_run(payload).run
+            if cache is not None:
+                cache[source_file] = reference_run
+
+    if reference_run is None or not reference_run.histograms:
+        raise ValueError("the reference has no histograms")
+
+    if sample_good_frames is None or float(sample_good_frames) <= 0.0:
+        sample_good_frames = payload.get("good_frames_sample")
+    reference_frames = _grouping_good_frames(reference_run) or payload.get("good_frames_reference")
+    try:
+        scale = float(sample_good_frames) / float(reference_frames)
+    except (TypeError, ValueError, ZeroDivisionError):
+        try:
+            scale = float(payload.get("scale", 1.0))
+        except (TypeError, ValueError):
+            scale = 1.0
+    if not np.isfinite(scale) or scale <= 0.0:
+        scale = 1.0
+
+    return BackgroundReference(
+        histograms=list(reference_run.histograms),
+        scale=float(scale),
+        run_number=None if run_number is None else int(run_number),
+    )
+
+
 __all__ = [
     "BaseLoader",
     "LoadResult",
@@ -94,4 +204,6 @@ __all__ = [
     "period_labels",
     "select_period",
     "load_background_run",
+    "resolve_background_reference",
+    "BackgroundReference",
 ]

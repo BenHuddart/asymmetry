@@ -9,6 +9,7 @@ from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     available_background_modes,
     resolve_background_mode,
+    subtract_scaled_counts,
 )
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
@@ -143,6 +144,52 @@ def _group_background_range_for_group(
     return None
 
 
+def _resolve_group_reference_counts(
+    grouping: dict,
+    *,
+    group_indices: list[int],
+    common_t0: int,
+    apply_deadtime: bool,
+) -> tuple[np.ndarray | None, float | None]:
+    """Resolve+group a ``reference_run`` background for one detector group.
+
+    Returns the reference run's counts summed over the *same* group indices and
+    aligned to the sample's ``common_t0`` (with the same deadtime treatment —
+    study divergence D6), plus the frame scale. Returns ``(None, None)`` when
+    the mode is not ``reference_run`` or the reference cannot be resolved, so
+    the scripted/core Fourier path satisfies ``reference_run`` exactly like the
+    time-domain reduction instead of silently skipping it.
+    """
+    if not bool(grouping.get("background_correction", False)):
+        return None, None
+    if resolve_background_mode(grouping) != "reference_run":
+        return None, None
+
+    # Lazy import: core.io is a heavier sibling and only needed for this mode.
+    from asymmetry.core.io import resolve_background_reference
+
+    try:
+        sample_frames = float(grouping.get("good_frames", 0.0)) or None
+    except (TypeError, ValueError):
+        sample_frames = None
+    try:
+        reference = resolve_background_reference(
+            grouping.get("background_run"), sample_good_frames=sample_frames
+        )
+    except (ValueError, OSError):
+        return None, None
+
+    reference_prepared, _ = prepare_histograms_with_deadtime(
+        reference.histograms, grouping, apply_deadtime
+    )
+    reference_counts = apply_grouping_aligned(
+        reference_prepared, group_indices, common_t0_bin=common_t0
+    )
+    if reference_counts.size == 0:
+        return None, None
+    return reference_counts, reference.scale
+
+
 def _apply_group_background_correction(
     counts: np.ndarray,
     *,
@@ -152,6 +199,8 @@ def _apply_group_background_correction(
     bin_width: float,
     metadata: dict,
     source_file: str,
+    reference_counts: np.ndarray | None = None,
+    reference_scale: float | None = None,
 ) -> tuple[np.ndarray, bool, float | None]:
     """Apply optional grouped background subtraction for one detector group."""
     if not bool(grouping.get("background_correction", False)):
@@ -159,9 +208,15 @@ def _apply_group_background_correction(
 
     mode = resolve_background_mode(grouping)
     if mode == "reference_run":
-        # Reference resolution lives at the caller layer (loaders/GUI); the
-        # Fourier source cannot satisfy it here, so leave counts untouched.
-        return counts, False, None
+        # Reference-run subtraction is always available (no source-type gate);
+        # the reference is resolved+grouped by the caller and subtracted at the
+        # count level, matching the time-domain reduction.
+        if reference_counts is None or reference_scale is None:
+            return counts, False, None
+        corrected, _errors = subtract_scaled_counts(
+            np.asarray(counts, dtype=np.float64), reference_counts, float(reference_scale)
+        )
+        return corrected, True, None
     if mode not in available_background_modes(metadata=metadata, source_file=source_file):
         return counts, False, None
 
@@ -235,10 +290,10 @@ def build_group_signal_dataset(
     if not histograms:
         raise ValueError("Run does not contain any histograms.")
 
+    apply_deadtime = bool(grouping.get("deadtime_correction", False))
+    if use_deadtime is not None:
+        apply_deadtime = bool(use_deadtime)
     if prepared_histograms is None:
-        apply_deadtime = bool(grouping.get("deadtime_correction", False))
-        if use_deadtime is not None:
-            apply_deadtime = bool(use_deadtime)
         prepared_histograms, _ = prepare_histograms_with_deadtime(
             histograms, grouping, apply_deadtime
         )
@@ -265,6 +320,12 @@ def build_group_signal_dataset(
         raise ValueError(f"Detector group {group_id!r} produced an empty signal.")
 
     source_file = str(getattr(run, "source_file", "") or "")
+    reference_counts, reference_scale = _resolve_group_reference_counts(
+        grouping,
+        group_indices=indices,
+        common_t0=common_t0,
+        apply_deadtime=apply_deadtime,
+    )
     counts, background_applied, background_value = _apply_group_background_correction(
         counts,
         grouping=grouping,
@@ -273,6 +334,8 @@ def build_group_signal_dataset(
         bin_width=float(prepared_histograms[0].bin_width),
         metadata=run.metadata,
         source_file=source_file,
+        reference_counts=reference_counts,
+        reference_scale=reference_scale,
     )
 
     try:
