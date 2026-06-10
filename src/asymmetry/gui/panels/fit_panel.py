@@ -1196,10 +1196,10 @@ class SingleFitTab(QWidget):
         """Open the pull-distribution diagnostic for the last converged fit."""
         if not self._can_run_pull_diagnostic():
             return
+        from asymmetry.core.simulate import matched_statistics
         from asymmetry.gui.windows.pull_diagnostic_window import (
             PullDiagnosticWindow,
             make_engine_refit,
-            total_events_of,
         )
 
         dataset = self._current_dataset
@@ -1220,13 +1220,17 @@ class SingleFitTab(QWidget):
         refit = make_engine_refit(
             self._composite_model, refit_template, t_min=time_range[0], t_max=time_range[1]
         )
+        # Matched statistics: split the run's flat background off the gross
+        # count so background is regenerated as background, not as extra signal.
+        signal_events, background_per_bin = matched_statistics(run)
         window = PullDiagnosticWindow(
             template=run,
             model=self._composite_model,
             parameters=truth,
             refit=refit,
             track=free or list(truth),
-            total_events=total_events_of(run),
+            total_events=signal_events,
+            background_per_bin=background_per_bin,
             time_range=time_range,
             parent=self,
         )
@@ -4044,6 +4048,7 @@ class GlobalFitTab(QWidget):
             run_number = int(self._current_dataset.run_number)
         except (TypeError, ValueError):
             return
+        from asymmetry.core.fitting.grouped_time_domain import normalize_to_grouped_contract
         from asymmetry.core.simulate import group_specs_from_grouped_fit
 
         model = self._grouped_fit_model()
@@ -4051,14 +4056,11 @@ class GlobalFitTab(QWidget):
             parameter.name: float(parameter.value)
             for parameter in getattr(grouped_result, "shared_parameters", [])
         }
-        base: dict[str, float] = {}
-        for name in model.param_names:
-            if is_amplitude_parameter(name):
-                base[name] = 1.0
-            elif is_background_parameter(name):
-                base[name] = 0.0
-            else:
-                base[name] = shared_values.get(name, float(model.param_defaults.get(name, 0.0)))
+        # Start from the shared model's defaults updated with the fitted shared
+        # values, then apply the grouped contract (amplitude→1, background→0).
+        base = {name: float(model.param_defaults.get(name, 0.0)) for name in model.param_names}
+        base.update({k: v for k, v in shared_values.items() if k in base})
+        base = normalize_to_grouped_contract(model.param_names, base)
         specs = group_specs_from_grouped_fit(grouped_result)
         if not specs:
             return

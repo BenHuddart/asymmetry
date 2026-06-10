@@ -409,6 +409,20 @@ class DataBrowserPanel(QWidget):
         self._reserved_run_numbers.add(number)
         return number
 
+    def release_derived_run_number(self, number: int) -> None:
+        """Return a reserved derived run number that was never used.
+
+        Lets a dialog hand back the number it reserved when generation fails,
+        so a failed Generate does not leave a permanent gap in the SIM series.
+        A number already claimed by a loaded dataset is left untouched.
+        """
+        try:
+            value = int(number)
+        except (TypeError, ValueError):
+            return
+        if value not in self._datasets:
+            self._reserved_run_numbers.discard(value)
+
     def add_dataset(self, dataset: MuonDataset) -> None:
         rn = int(dataset.run_number)
         self._datasets[rn] = dataset

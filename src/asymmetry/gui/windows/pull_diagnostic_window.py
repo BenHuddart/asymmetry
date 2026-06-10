@@ -42,6 +42,7 @@ class PullDiagnosticWindow(QDialog):
         refit: Refit,
         track: Sequence[str],
         total_events: float,
+        background_per_bin: float = 0.0,
         time_range: tuple[float | None, float | None] | None = None,
         parent=None,
     ) -> None:
@@ -55,8 +56,11 @@ class PullDiagnosticWindow(QDialog):
         self._refit = refit
         self._track = list(track)
         self._total_events = float(total_events)
+        self._background_per_bin = float(background_per_bin)
         self._time_range = time_range
         self._last_result: PullDistribution | None = None
+        self._cancelled = False
+        self._running = False
 
         layout = QVBoxLayout(self)
 
@@ -79,6 +83,10 @@ class PullDiagnosticWindow(QDialog):
         self._run_button = QPushButton("Run")
         self._run_button.clicked.connect(self._on_run)
         controls.addWidget(self._run_button)
+        self._cancel_button = QPushButton("Cancel")
+        self._cancel_button.clicked.connect(self._on_cancel)
+        self._cancel_button.setEnabled(False)
+        controls.addWidget(self._cancel_button)
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
@@ -101,15 +109,20 @@ class PullDiagnosticWindow(QDialog):
         self._verdict_label.setWordWrap(True)
         layout.addWidget(self._verdict_label)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
-        buttons.accepted.connect(self.accept)
-        layout.addWidget(buttons)
+        self._button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        self._button_box.rejected.connect(self.reject)
+        self._button_box.accepted.connect(self.accept)
+        layout.addWidget(self._button_box)
 
     # ------------------------------------------------------------------
 
     def run_diagnostic(self, n_seeds: int) -> PullDistribution:
-        """Run the pull distribution for ``n_seeds`` and store/return it."""
+        """Run the pull distribution for ``n_seeds`` and store/return it.
+
+        Polls a cancel flag before each seed (set by the Cancel button or by
+        closing the window mid-run), so the loop can stop early instead of
+        freezing the UI until all seeds finish.
+        """
 
         def progress(done: int, total: int) -> None:
             self._progress.setValue(int(round(100 * done / total)))
@@ -123,19 +136,39 @@ class PullDiagnosticWindow(QDialog):
             total_events=self._total_events,
             n_seeds=n_seeds,
             track=self._track,
+            background_per_bin=self._background_per_bin,
             time_range=self._time_range,
             progress=progress,
+            should_continue=lambda: not self._cancelled,
         )
         self._last_result = result
         return result
 
+    def _on_cancel(self) -> None:
+        self._cancelled = True
+
+    def reject(self) -> None:
+        # Closing mid-run aborts the loop instead of leaving it running against
+        # a dismissed window.
+        self._cancelled = True
+        super().reject()
+
     def _on_run(self) -> None:
+        self._cancelled = False
+        self._running = True
         self._run_button.setEnabled(False)
+        self._cancel_button.setEnabled(True)
+        # The Close button must not dismiss the window mid-loop (processEvents
+        # would deliver the reject while the run is still touching widgets).
+        self._button_box.setEnabled(False)
         self._progress.setValue(0)
         try:
             result = self.run_diagnostic(self._seeds_spin.value())
         finally:
+            self._running = False
             self._run_button.setEnabled(True)
+            self._cancel_button.setEnabled(False)
+            self._button_box.setEnabled(True)
         self._plot(result)
         self._verdict_label.setText(result.verdict())
 
@@ -201,8 +234,3 @@ def make_engine_refit(
         return values, dict(result.uncertainties)
 
     return refit
-
-
-def total_events_of(run: Run) -> float:
-    """Realised event total of a run (sum of all histogram counts)."""
-    return float(sum(float(h.counts.sum()) for h in run.histograms))

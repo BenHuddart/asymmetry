@@ -129,3 +129,24 @@ class TestRunPullDistribution:
         assert result.n_converged == 0
         assert result.parameters["a0"].n == 0
         assert "too few" in result.verdict()
+
+
+class TestEarlyStop:
+    def test_should_continue_false_stops_after_one_seed(self) -> None:
+        calls = {"n": 0}
+
+        def stop_after_one() -> bool:
+            calls["n"] += 1
+            return calls["n"] <= 1  # allow seed 0, stop before seed 1
+
+        result = run_pull_distribution(
+            _template(),
+            _exp_model,
+            {"a0": 21.0, "rate": 0.6},
+            lambda dataset: None,
+            total_events=1.0e6,
+            n_seeds=50,
+            should_continue=stop_after_one,
+        )
+        # Reported n_seeds is the number attempted, not the 50 requested.
+        assert result.n_seeds == 1

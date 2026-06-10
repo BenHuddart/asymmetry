@@ -1830,6 +1830,7 @@ class MainWindow(QMainWindow):
             preselected_run=preselected,
             fit_state_provider=getattr(self._fit_panel, "get_single_state_for_run", None),
             run_number_allocator=self._data_browser.next_derived_run_number,
+            run_number_releaser=self._data_browser.release_derived_run_number,
         )
         dialog.run_generated.connect(self._on_synthetic_run_generated)
         dialog.exec()
@@ -1867,11 +1868,20 @@ class MainWindow(QMainWindow):
         seed = None
         if self._multi_group_fit_window is not None:
             seed = self._multi_group_fit_window.grouped_simulate_seed_for_run(run.run_number)
+        # Drop a stale seed whose groups no longer match the run's grouping
+        # (e.g. the run was re-grouped since the fit): its base parameters would
+        # describe a grouping that no longer exists. The dialog then falls back
+        # to template-default per-group specs.
+        if isinstance(seed, dict):
+            seed_gids = {int(s.get("group_id")) for s in seed.get("specs", [])}
+            if seed_gids != set(_template_group_ids(run)):
+                seed = None
         dialog = MultiGroupSimulateDialog(
             run,
             parent=self,
             seed=seed,
             run_number_allocator=self._data_browser.next_derived_run_number,
+            run_number_releaser=self._data_browser.release_derived_run_number,
         )
         dialog.run_generated.connect(self._on_synthetic_run_generated)
         dialog.exec()

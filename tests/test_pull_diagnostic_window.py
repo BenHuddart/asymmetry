@@ -17,12 +17,13 @@ from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.simulate import build_builtin_template, reduce_run_to_dataset, simulate_run
-from asymmetry.gui.windows.pull_diagnostic_window import (
-    PullDiagnosticWindow,
-    make_engine_refit,
+from asymmetry.core.simulate import (
+    build_builtin_template,
+    reduce_run_to_dataset,
+    simulate_run,
     total_events_of,
 )
+from asymmetry.gui.windows.pull_diagnostic_window import PullDiagnosticWindow, make_engine_refit
 
 
 @pytest.fixture(scope="module")

@@ -695,8 +695,16 @@ class GroupSignalSpec:
 
 
 def _phase_parameter_names(parameter_names: list[str]) -> list[str]:
-    """Names of the model's phase parameter(s) (``phase`` / ``phase_<n>``)."""
-    return [name for name in parameter_names if name == "phase" or name.startswith("phase_")]
+    """Names of the model's phase parameter(s).
+
+    Uses the repo-wide :func:`~asymmetry.core.fitting.parameters.split_parameter_name`
+    convention (base name ``"phase"``, with or without a numeric component
+    suffix) so simulation and grouped fitting agree on which parameters carry a
+    phase — rather than a private string-prefix heuristic that would drift.
+    """
+    from asymmetry.core.fitting.parameters import split_parameter_name
+
+    return [name for name in parameter_names if split_parameter_name(str(name))[0] == "phase"]
 
 
 def build_group_signals(
@@ -1080,3 +1088,54 @@ def reduce_run_to_dataset(run: Run) -> MuonDataset:
         metadata=metadata,
         run=run,
     )
+
+
+# ---------------------------------------------------------------------------
+# Run statistics helpers (matched-statistics re-simulation, dialog defaults)
+# ---------------------------------------------------------------------------
+
+
+def total_events_of(run: Run) -> float:
+    """Realised event total of a run: the sum of all histogram counts.
+
+    The gross count (signal + background). Use it as the event-budget default
+    for a re-simulation or a dialog spinner; for a *signal-only* budget that
+    excludes a run's flat background, subtract
+    ``estimate_background_per_bin(run) * total bins`` (see
+    :func:`matched_statistics`).
+    """
+    return float(sum(float(h.counts.sum()) for h in run.histograms))
+
+
+def estimate_background_per_bin(run: Run) -> float:
+    """Estimate a run's flat background from its pre-t0 bins (counts/bin).
+
+    The bins before t0 see no implanted-muon decay signal, so their mean count
+    is the time-independent background level (zero for an ideal pulsed source).
+    Returns the median across detectors for robustness, or ``0.0`` when no
+    detector has a pre-t0 region.
+    """
+    levels: list[float] = []
+    for hist in run.histograms:
+        t0 = max(0, int(hist.t0_bin))
+        if t0 > 0:
+            pre = np.asarray(hist.counts[:t0], dtype=float)
+            if pre.size:
+                levels.append(float(pre.mean()))
+    return float(np.median(levels)) if levels else 0.0
+
+
+def matched_statistics(run: Run) -> tuple[float, float]:
+    """Signal event budget and flat background for re-simulating a run.
+
+    Returns ``(total_signal_events, background_per_bin)`` such that feeding them
+    to :func:`simulate_run` reproduces the run's statistics: the flat background
+    (estimated from the pre-t0 bins) is split off the gross count so it is *not*
+    counted as decay signal. For an ideal pulsed run (no background) this is
+    just the gross total and zero.
+    """
+    background_per_bin = estimate_background_per_bin(run)
+    total_bins = sum(int(hist.n_bins) for hist in run.histograms)
+    background_total = background_per_bin * total_bins
+    signal_events = max(total_events_of(run) - background_total, 1.0)
+    return signal_events, background_per_bin

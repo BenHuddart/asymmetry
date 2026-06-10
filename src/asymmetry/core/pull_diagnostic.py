@@ -120,6 +120,7 @@ def run_pull_distribution(
     background_per_bin: float = 0.0,
     time_range: tuple[float | None, float | None] | None = None,
     progress: Callable[[int, int], None] | None = None,
+    should_continue: Callable[[], bool] | None = None,
 ) -> PullDistribution:
     """Re-simulate, refit and histogram parameter pulls over ``n_seeds`` seeds.
 
@@ -133,6 +134,9 @@ def run_pull_distribution(
     tracked parameter — are dropped and counted in ``n_converged``.
 
     ``progress(done, total)`` is called after each seed when supplied.
+    ``should_continue()`` is polled before each seed; returning ``False`` stops
+    the run early (a cancel button), and the reported ``n_seeds`` is then the
+    number actually attempted, so the converged fraction stays meaningful.
     """
     if n_seeds < 1:
         raise ValueError("n_seeds must be at least 1.")
@@ -142,7 +146,11 @@ def run_pull_distribution(
 
     collected: dict[str, list[float]] = {name: [] for name in tracked}
     n_converged = 0
+    attempted = 0
     for index in range(n_seeds):
+        if should_continue is not None and not should_continue():
+            break
+        attempted += 1
         run = simulate_run(
             template,
             model,
@@ -185,7 +193,7 @@ def run_pull_distribution(
             for name, values in collected.items()
         },
         truth={name: float(parameters[name]) for name in tracked},
-        n_seeds=n_seeds,
+        n_seeds=attempted,
         n_converged=n_converged,
         total_events=float(total_events),
     )

@@ -844,3 +844,37 @@ class TestMultiGroupSimulation:
         assert spec2.amplitude == pytest.approx(0.19)
         assert spec2.relative_phase == pytest.approx(1.57)
         assert spec2.n0_weight == pytest.approx(1.2)
+
+
+class TestRunStatistics:
+    def test_total_events_of_sums_counts(self) -> None:
+        run = simulate_run(_template(), _exp_model, total_events=3.0e6, seed=1)
+        from asymmetry.core.simulate import total_events_of
+
+        assert total_events_of(run) == sum(float(h.counts.sum()) for h in run.histograms)
+
+    def test_pulsed_run_has_zero_background_estimate(self) -> None:
+        from asymmetry.core.simulate import estimate_background_per_bin
+
+        run = simulate_run(_template(), _exp_model, total_events=3.0e6, seed=1)
+        # No background injected and a pre-t0 region present → estimate ~0.
+        assert estimate_background_per_bin(run) == 0.0
+
+    def test_matched_statistics_splits_background_off_signal(self) -> None:
+        from asymmetry.core.simulate import (
+            build_builtin_template,
+            estimate_background_per_bin,
+            matched_statistics,
+            total_events_of,
+        )
+
+        template = build_builtin_template("ideal_continuous_fb")
+        run = simulate_run(
+            template, _zero_model, total_events=20.0e6, seed=2, background_per_bin=10.0
+        )
+        bg = estimate_background_per_bin(run)
+        assert bg > 5.0  # recovers the ~10 counts/bin background from pre-t0
+        signal_events, background_per_bin = matched_statistics(run)
+        assert background_per_bin == bg
+        # Signal budget excludes the background, so it is below the gross total.
+        assert signal_events < total_events_of(run)
