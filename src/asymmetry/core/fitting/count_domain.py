@@ -30,10 +30,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.engine import FitResult, _minuit_status_message
 from asymmetry.core.fitting.grouped_time_domain import (
     GroupedTimeDomainFitResult,
     build_count_group,
+    build_count_groups,
     build_fb_count_model,
     build_grouped_count_model,
 )
@@ -43,9 +44,6 @@ from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 #: Selectable count-fit cost functions.
 COUNT_COSTS: tuple[str, ...] = ("poisson", "gaussian")
-
-#: Single-histogram nuisance parameters (the rest are physics-model parameters).
-SINGLE_HISTOGRAM_NUISANCE: tuple[str, ...] = ("N0", "background")
 
 #: Optional count-loss (deadtime) parameters, applied when present in the fit set.
 DEADTIME_PARAMS: tuple[str, ...] = ("DT0", "C2", "C3", "C4")
@@ -211,9 +209,14 @@ def _double_pulse_single_model(fraction_fn: Callable[..., NDArray]) -> Callable[
         dpsep2 = float(dpsep) / 2.0
         c1 = np.exp(-dpsep2 / tau)
         c2 = np.exp(dpsep2 / tau)
-        a1 = np.asarray(fraction_fn(time + dpsep2, **physics), dtype=float)
-        a2 = np.asarray(fraction_fn(time - dpsep2, **physics), dtype=float)
         gate = (time > dpsep2).astype(float)
+        # The second pulse only contributes for t > dpsep/2. Clamp the gated-out
+        # times to >= 0 before evaluating the model, so a model that raises or
+        # returns non-finite values for t < 0 cannot poison the (zero-weighted)
+        # early bins. Where the gate is active, time - dpsep2 > 0 already, so the
+        # clamp is a no-op there.
+        a1 = np.asarray(fraction_fn(time + dpsep2, **physics), dtype=float)
+        a2 = np.asarray(fraction_fn(np.maximum(time - dpsep2, 0.0), **physics), dtype=float)
         factor = 0.5 * (c1 * (1.0 + amplitude * a1) + gate * c2 * (1.0 + amplitude * a2))
         return float(N0) * np.exp(-time / tau) * factor + float(background)
 
@@ -264,10 +267,16 @@ def _result_from_minuit(
     counts: NDArray[np.float64],
     model_values: NDArray[np.float64],
     keep_params: list[str] | None = None,
+    chi_squared: float | None = None,
     success_message: str = "Count fit successful",
     failure_prefix: str = "Count fit failed",
 ) -> FitResult:
-    """Pack a :class:`FitResult` for one count-domain (or one F/B side)."""
+    """Pack a :class:`FitResult` for one count-domain (or one F/B side).
+
+    ``chi_squared`` overrides the reported cost; pass the per-side cost for a
+    joint forward/backward fit (``m.fval`` is the combined cost). Defaults to
+    ``m.fval`` (correct for a single-domain fit).
+    """
     keep = set(keep_params) if keep_params is not None else None
     result_params = ParameterSet()
     uncertainties: dict[str, float] = {}
@@ -295,7 +304,7 @@ def _result_from_minuit(
     ndata = int(np.size(counts))
     nfree = len(free_names if keep is None else covariance_order)
     residuals = np.asarray(counts, dtype=float) - np.asarray(model_values, dtype=float)
-    chi2 = float(m.fval)
+    chi2 = float(m.fval) if chi_squared is None else float(chi_squared)
     return FitResult(
         success=bool(m.valid),
         chi_squared=chi2,
@@ -305,7 +314,9 @@ def _result_from_minuit(
         covariance=covariance,
         covariance_parameters=covariance_order,
         residuals=residuals,
-        message=success_message if m.valid else failure_prefix,
+        message=_minuit_status_message(
+            m, success_message=success_message, failure_prefix=failure_prefix
+        ),
         function_calls=int(getattr(m, "nfcn", 0) or 0),
     )
 
@@ -350,11 +361,12 @@ def fit_single_histogram(
     time = np.asarray(group.time, dtype=float)
     counts = np.asarray(group.counts, dtype=float)
 
+    tau = float(MUON_LIFETIME_US)
+    base_decay = np.exp(-time / tau)  # hoisted: loop-invariant unless t0 is free
     fraction_fn = _with_baseline_drift(_percent_to_fraction(model_fn))
-    if "dpsep" in params:
-        base_model = _double_pulse_single_model(fraction_fn)
-    else:
-        base_model = _raw_model(build_grouped_count_model(fraction_fn))
+    double_pulse = "dpsep" in params
+    dp_model = _double_pulse_single_model(fraction_fn) if double_pulse else None
+    corrected_model = None if double_pulse else build_grouped_count_model(fraction_fn)
     frame_norm = _deadtime_frame_norm(dataset, group_id)
 
     # The per-group amplitude/phase are fixed nuisances here: the sign carries the
@@ -375,7 +387,18 @@ def fit_single_histogram(
             kw[follower] = kw[main]
         t0 = _split_time_offset(kw)
         dt_terms = _pop_deadtime(kw)
-        model = np.asarray(base_model(time + t0, **kw), dtype=float)
+        if t0:
+            t_eval = time + t0
+            decay = np.exp(-t_eval / tau)
+        else:
+            t_eval = time
+            decay = base_decay
+        if double_pulse:
+            model = np.asarray(dp_model(t_eval, **kw), dtype=float)
+        else:
+            # raw count = exp(-t/tau) * [lifetime-corrected model]; the cached
+            # decay avoids re-exponentiating the invariant time axis each call.
+            model = decay * np.asarray(corrected_model(t_eval, **kw), dtype=float)
         return _apply_deadtime(model, dt_terms, frame_norm)
 
     def total_cost(*args) -> float:
@@ -427,21 +450,30 @@ def fit_fb_alpha(
     for required in ("alpha", "N0", "background", "background_b"):
         if required not in params:
             raise ValueError(f"Forward/backward count fit requires a {required!r} parameter")
+    if int(forward_group) == int(backward_group):
+        raise ValueError("Forward/backward count fit needs two distinct groups")
+    # alpha is physically positive and the model is sign-degenerate (sqrt(abs)),
+    # so enforce a positive lower bound rather than report a negative balance.
+    params = _clamp_alpha_positive(params)
 
-    g_fwd = build_count_group(
-        dataset, forward_group, t_min=t_min, t_max=t_max, lifetime_corrected=False, exclude=exclude
-    )
-    g_bwd = build_count_group(
-        dataset, backward_group, t_min=t_min, t_max=t_max, lifetime_corrected=False, exclude=exclude
+    # Build both banks in ONE context so they share a common t0 alignment.
+    g_fwd, g_bwd = build_count_groups(
+        dataset,
+        [forward_group, backward_group],
+        t_min=t_min,
+        t_max=t_max,
+        lifetime_corrected=False,
+        exclude=exclude,
     )
     time_f = np.asarray(g_fwd.time, dtype=float)
     counts_f = np.asarray(g_fwd.counts, dtype=float)
     time_b = np.asarray(g_bwd.time, dtype=float)
     counts_b = np.asarray(g_bwd.counts, dtype=float)
 
-    raw_model = _raw_model(
-        build_fb_count_model(_with_baseline_drift(_percent_to_fraction(model_fn)))
-    )
+    tau = float(MUON_LIFETIME_US)
+    base_decay_f = np.exp(-time_f / tau)
+    base_decay_b = np.exp(-time_b / tau)
+    fb_corrected = build_fb_count_model(_with_baseline_drift(_percent_to_fraction(model_fn)))
 
     frame_norm_f = _deadtime_frame_norm(dataset, forward_group)
     frame_norm_b = _deadtime_frame_norm(dataset, backward_group)
@@ -455,25 +487,31 @@ def fit_fb_alpha(
     # terms (applied as a post-multiply loss factor).
     _per_eval = ("background", "background_b", "t0", *DEADTIME_PARAMS)
     shared_keys = [n for n in free_names if n not in _per_eval]
+    shared_fixed = {k: v for k, v in fixed_kw.items() if k not in _per_eval}  # hoisted
 
-    def _eval(args, time, counts_key: str, sign: float, frame_norm: float) -> NDArray[np.float64]:
+    def _eval(args, time, base_decay, counts_key, sign, frame_norm) -> NDArray[np.float64]:
         kw = {**fixed_kw, **dict(zip(free_names, args, strict=False))}
         for follower, main in followers.items():
             kw[follower] = kw[main]
         t0 = _split_time_offset(kw)
         dt_terms = _pop_deadtime(kw)
-        shared = {k: kw[k] for k in shared_keys if k in kw}
-        shared.update({k: v for k, v in fixed_kw.items() if k not in _per_eval})
-        model = np.asarray(
-            raw_model(time + t0, sign=sign, background=kw[counts_key], **shared), dtype=float
+        if t0:
+            t_eval = time + t0
+            decay = np.exp(-t_eval / tau)
+        else:
+            t_eval = time
+            decay = base_decay
+        shared = {**shared_fixed, **{k: kw[k] for k in shared_keys if k in kw}}
+        model = decay * np.asarray(
+            fb_corrected(t_eval, sign=sign, background=kw[counts_key], **shared), dtype=float
         )
         return _apply_deadtime(model, dt_terms, frame_norm)
 
     def predict_f(args):
-        return _eval(args, time_f, "background", +1.0, frame_norm_f)
+        return _eval(args, time_f, base_decay_f, "background", +1.0, frame_norm_f)
 
     def predict_b(args):
-        return _eval(args, time_b, "background_b", -1.0, frame_norm_b)
+        return _eval(args, time_b, base_decay_b, "background_b", -1.0, frame_norm_b)
 
     def total_cost(*args) -> float:
         return _cost_value(counts_f, predict_f(args), cost) + _cost_value(
@@ -482,6 +520,11 @@ def fit_fb_alpha(
 
     m = _solve(free, total_cost)
     fitted = [m.values[i] for i in range(len(free_names))]
+    model_f = predict_f(fitted)
+    model_b = predict_b(fitted)
+    # Each side reports its OWN cost, not the joint m.fval (which is cost_f + cost_b).
+    chi2_f = _cost_value(counts_f, model_f, cost)
+    chi2_b = _cost_value(counts_b, model_b, cost)
 
     # Forward result keeps the shared params + the forward background; backward
     # keeps the shared params + its own background. alpha (shared) appears in both.
@@ -493,8 +536,9 @@ def fit_fb_alpha(
         free_names,
         time=time_f,
         counts=counts_f,
-        model_values=predict_f(fitted),
+        model_values=model_f,
         keep_params=fwd_keep,
+        chi_squared=chi2_f,
         success_message="Forward/backward count fit successful",
         failure_prefix="Forward/backward count fit failed",
     )
@@ -504,8 +548,9 @@ def fit_fb_alpha(
         free_names,
         time=time_b,
         counts=counts_b,
-        model_values=predict_b(fitted),
+        model_values=model_b,
         keep_params=bwd_keep,
+        chi_squared=chi2_b,
         success_message="Forward/backward count fit successful",
         failure_prefix="Forward/backward count fit failed",
     )
@@ -535,6 +580,38 @@ def fit_fb_alpha(
 
 
 # --- helpers ----------------------------------------------------------------
+
+
+def _clamp_alpha_positive(params: ParameterSet) -> ParameterSet:
+    """Return a copy of ``params`` with a positive lower bound on a free ``alpha``.
+
+    ``build_fb_count_model`` uses ``sqrt(abs(alpha))``, so the model is degenerate
+    under ``alpha → -alpha``; without a positive floor the fit can settle on a
+    physically meaningless negative balance. A no-op if alpha is fixed or already
+    bounded above zero.
+    """
+    alpha = params["alpha"]
+    if alpha.fixed or alpha.min > 0.0:
+        return params
+    floor = 1.0e-6
+    out = ParameterSet()
+    for p in params:
+        if p.name == "alpha":
+            # The model is sign-degenerate, so |seed| is the physically equivalent
+            # start — and a far better one than the floor for a negative seed.
+            out.add(
+                Parameter(
+                    name=p.name,
+                    value=max(abs(float(p.value)), floor),
+                    min=floor,
+                    max=p.max,
+                    fixed=p.fixed,
+                    link_group=p.link_group,
+                )
+            )
+        else:
+            out.add(p)
+    return out
 
 
 def _with_fixed(params: ParameterSet, **fixed_values: float) -> ParameterSet:

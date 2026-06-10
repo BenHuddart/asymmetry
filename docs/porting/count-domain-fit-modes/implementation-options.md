@@ -264,6 +264,32 @@ fit-target selector with minimal `fit_panel.py` plumbing (a routing branch in
 `GlobalFitTab._run_grouped_time_domain_fit` + free-amplitude seeding, since the
 count modes fit the model amplitude that the normalised fgAll path pins to 1).
 
+A high-effort multi-agent review (recall-biased, 7 angles) then surfaced and
+fixed ten issues, the sharpest five being correctness bugs:
+
+1. **F+B per-side χ² double-counted** — each side reported the *joint* `m.fval`
+   over one side's dof (~2× inflated). Now each side reports its own cost via a
+   `chi_squared` override on `_result_from_minuit`.
+2. **F/B built with independent `common_t0`** — fitting the two banks via
+   separate `build_count_group` calls lost the shared t0 alignment, biasing α on
+   instruments where F/B detectors carry different `t0_bin` (PSI loaders do). Now
+   a new `build_count_groups` builds both banks in one shared context.
+3. **Double-pulse `0×nan` gate** — the gated-out second pulse evaluated the model
+   at `t < dpsep/2 < 0`; a model that raises/returns non-finite there (e.g. the
+   diffusion family) poisoned the cost / crashed `simulate`. Now the gated time
+   is clamped to ≥ 0 before evaluation (count model and simulate).
+4. **Amplitude seeding misclassified `a_L`** — `is_amplitude_parameter` matched
+   the Lorentzian *rate* `a_L` and missed `A0`; the GUI seeder now identifies the
+   asymmetry amplitude by its `%` unit.
+5. **Negative α accepted** — `sqrt(abs(alpha))` is sign-degenerate; `fit_fb_alpha`
+   now clamps α to a positive floor (seeded at `|seed|`) and rejects F == B.
+
+Plus cleanups: hoisted the loop-invariant `exp(±t/τ)` out of the migrad hot
+path; reused engine.py's `_minuit_status_message` for failure diagnostics;
+extracted `simulate._sample_and_build_run` (fixing dropped provenance keys);
+removed dead constants; switched the GUI combos to `currentData()`. Regression
+tests cover each. validate green (2150 passed).
+
 ## References
 
 - *Muon spectroscopy* (muon-spectroscopy textbook).

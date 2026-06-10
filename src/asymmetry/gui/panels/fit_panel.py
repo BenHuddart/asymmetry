@@ -3677,7 +3677,11 @@ class GlobalFitTab(QWidget):
         params = ParameterSet()
         for name in model.param_names:
             lo, hi = bounds.get(name, (-float("inf"), float("inf")))
-            if is_amplitude_parameter(name):
+            # The asymmetry amplitude (unit "%") is what count modes recover, so
+            # leave it free and seed it near a calibration value. Identify it by
+            # its unit, not is_amplitude_parameter, which also matches rate
+            # parameters like ``a_L`` and misses the standard ``A0``.
+            if get_param_info(name).unit == "%":
                 seed = float(model_values.get(name, 0.0))
                 if abs(seed) <= 1e-6 or seed == 1.0:
                     seed = 20.0  # percent; typical transverse-field calibration amplitude

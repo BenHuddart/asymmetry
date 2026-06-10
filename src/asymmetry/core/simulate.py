@@ -507,6 +507,38 @@ def simulate_run_from_group_signals(
         background_per_bin=background_per_bin,
     )
 
+    return _sample_and_build_run(
+        template,
+        expected,
+        seed=seed,
+        total_events=total_events,
+        background_per_bin=background_per_bin,
+        run_number=run_number,
+        title=title,
+        default_title="Simulated run",
+        simulation_metadata=simulation_metadata,
+    )
+
+
+def _sample_and_build_run(
+    template: Run,
+    expected: list[NDArray[np.float64]],
+    *,
+    seed: int,
+    total_events: float,
+    background_per_bin: float,
+    run_number: int | None,
+    title: str | None,
+    default_title: str,
+    simulation_metadata: Mapping[str, Any] | None,
+) -> Run:
+    """Poisson-sample expected per-detector counts and assemble a synthetic Run.
+
+    Shared by :func:`simulate_run_from_group_signals` and
+    :func:`simulate_double_pulse_run` so both carry the same provenance and
+    metadata (template run/source, detector orientation, deadtime zeroing). The
+    seeded sampling draws ``poisson(expected)`` per detector in detector order.
+    """
     rng = np.random.default_rng(seed)
     histograms = [
         Histogram(
@@ -552,7 +584,7 @@ def simulate_run_from_group_signals(
         {
             "run_number": number,
             "run_label": f"SIM {number}",
-            "title": title if title is not None else "Simulated run",
+            "title": title if title is not None else default_title,
             "synthetic": True,
             "simulation": provenance,
         }
@@ -743,7 +775,11 @@ def simulate_double_pulse_run(
             u = np.arange(n_post, dtype=float) * bin_width
             sign = -1.0 if det_groups.get(det) == backward_gid else 1.0
             a1 = signal_fraction(u + dpsep2)
-            a2 = signal_fraction(u - dpsep2)
+            # Clamp the gated-out times (u <= dpsep2) to >= 0 before evaluating
+            # the model so a model that raises / returns non-finite for t < 0
+            # cannot poison the zero-weighted early bins (see the matching guard
+            # in count_domain._double_pulse_single_model).
+            a2 = signal_fraction(np.maximum(u - dpsep2, 0.0))
             gate = (u > dpsep2).astype(float)
             factor = 0.5 * (c1 * (1.0 + sign * a1) + gate * c2 * (1.0 + sign * a2))
             n_events_det = total_events * weights[det] / total_weight
@@ -751,49 +787,21 @@ def simulate_double_pulse_run(
             clean[t0_bin:] += np.clip(n0 * np.exp(-u / tau) * factor, 0.0, None)
         expected.append(clean)
 
-    rng = np.random.default_rng(seed)
-    histograms = [
-        Histogram(
-            counts=rng.poisson(clean).astype(float),
-            bin_width=float(hist.bin_width),
-            t0_bin=int(hist.t0_bin),
-            good_bin_start=int(hist.good_bin_start),
-            good_bin_end=int(hist.good_bin_end),
-        )
-        for hist, clean in zip(template.histograms, expected, strict=True)
-    ]
-
-    out_grouping = copy.deepcopy({k: v for k, v in grouping.items() if k not in _PERIOD_KEYS})
-    out_grouping["deadtime_correction"] = False
-    out_grouping["dead_time_us"] = [0.0] * len(histograms)
-    number = template.run_number if run_number is None else int(run_number)
-    metadata = {
-        key: template.metadata[key]
-        for key in ("instrument", "temperature", "field", "field_state", "field_direction")
-        if key in template.metadata
-    }
-    metadata.update(
-        {
-            "run_number": number,
-            "run_label": f"SIM {number}",
-            "title": title if title is not None else f"Double-pulse: {expression}",
-            "synthetic": True,
-            "simulation": {
-                "seed": int(seed),
-                "total_events": float(total_events),
-                "dpsep_us": float(dpsep_us),
-                "alpha": float(alpha),
-                "model": expression,
-                "parameters": {name: float(value) for name, value in params.items()},
-            },
-        }
-    )
-    return Run(
-        run_number=number,
-        histograms=histograms,
-        metadata=metadata,
-        grouping=out_grouping,
-        source_file="",
+    return _sample_and_build_run(
+        template,
+        expected,
+        seed=seed,
+        total_events=total_events,
+        background_per_bin=background_per_bin,
+        run_number=run_number,
+        title=title,
+        default_title=f"Double-pulse: {expression}",
+        simulation_metadata={
+            "dpsep_us": float(dpsep_us),
+            "alpha": float(alpha),
+            "model": expression,
+            "parameters": {name: float(value) for name, value in params.items()},
+        },
     )
 
 

@@ -73,19 +73,21 @@ class MultiGroupFitWindow(QWidget):
         form = QFormLayout(box)
         form.setContentsMargins(8, 4, 8, 4)
 
+        # Store the mode key as item data so reordering the dropdowns can't remap
+        # a selection to the wrong key.
         self._target_combo = QComboBox()
-        for label, _key in _FIT_TARGETS:
-            self._target_combo.addItem(label)
+        for label, key in _FIT_TARGETS:
+            self._target_combo.addItem(label, key)
         self._target_combo.currentIndexChanged.connect(self._sync_count_fit_target)
 
         self._cost_combo = QComboBox()
-        for label, _key in _FIT_COSTS:
-            self._cost_combo.addItem(label)
+        for label, key in _FIT_COSTS:
+            self._cost_combo.addItem(label, key)
         self._cost_combo.currentIndexChanged.connect(self._sync_count_fit_target)
 
         self._side_combo = QComboBox()
-        for label, _key in _SINGLE_SIDES:
-            self._side_combo.addItem(label)
+        for label, key in _SINGLE_SIDES:
+            self._side_combo.addItem(label, key)
         self._side_combo.currentIndexChanged.connect(self._sync_count_fit_target)
 
         form.addRow(QLabel("Target"), self._target_combo)
@@ -152,9 +154,9 @@ class MultiGroupFitWindow(QWidget):
 
     def _sync_count_fit_target(self, *_args) -> None:
         """Push the selector state down to both grouped surfaces."""
-        mode = _FIT_TARGETS[self._target_combo.currentIndex()][1]
-        cost = _FIT_COSTS[self._cost_combo.currentIndex()][1]
-        side = _SINGLE_SIDES[self._side_combo.currentIndex()][1]
+        mode = self._target_combo.currentData()
+        cost = self._cost_combo.currentData()
+        side = self._side_combo.currentData()
         single = mode == "single"
         count_mode = mode != "all"
         self._side_combo.setEnabled(single)

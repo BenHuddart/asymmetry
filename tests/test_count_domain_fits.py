@@ -518,3 +518,102 @@ def test_double_pulse_free_dpsep_refines_from_seed():
     result = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
     assert result.success
     assert result.parameters["dpsep"].value == pytest.approx(0.324, abs=0.01)
+
+
+def test_double_pulse_tolerates_model_nonfinite_below_zero():
+    """The gated second pulse must not poison early bins for a t<0-undefined model."""
+
+    def _nan_below_zero(t, A=20.0, f=1.0, phi=0.0):  # noqa: N803
+        t = np.asarray(t, dtype=float)
+        out = A * np.cos(2.0 * np.pi * f * t + phi)
+        return np.where(t >= 0.0, out, np.nan)
+
+    template = build_builtin_template("ideal_continuous_fb")
+    run = simulate_double_pulse_run(
+        template,
+        _tf,
+        {"A": 20.0, "f": 1.0, "phi": 0.0},
+        total_events=20e6,
+        dpsep_us=0.324,
+        alpha=1.0,
+        background_per_bin=10.0,
+        seed=3,
+    )
+    ds = MuonDataset(
+        time=np.array([]), asymmetry=np.array([]), error=np.array([]), metadata={}, run=run
+    )
+    params = _continuous_single()
+    params.add(Parameter("dpsep", 0.324, fixed=True))
+    result = fit_single_histogram(ds, 1, _nan_below_zero, params, cost="gaussian")
+    assert result.success
+    assert np.all(np.isfinite(result.residuals))
+
+
+# --- review fixes: F/B chi2, distinct groups, alpha sign, amplitude unit -----
+
+
+def test_fb_per_side_reduced_chi2_not_doubled():
+    """Each F/B side reports its OWN reduced chi2 (~1), not the joint cost over one side."""
+    ds = _pulsed_tf_run(alpha=1.0, seed=11)
+    params = ParameterSet(
+        [
+            Parameter("alpha", 1.0, min=0.1, max=5.0),
+            Parameter("N0", 1.5e5, min=0.0),
+            Parameter("background", 0.0),
+            Parameter("background_b", 0.0),
+            Parameter("A", 18.0, min=0.0, max=50.0),
+            Parameter("f", 1.5, min=0.0),
+            Parameter("phi", 0.2),
+        ]
+    )
+    result = fit_fb_alpha(ds, 1, 2, _tf, params, cost="gaussian")
+    fwd = result.group_results[1]
+    bwd = result.group_results[2]
+    assert fwd.reduced_chi_squared == pytest.approx(1.0, abs=0.2)
+    assert bwd.reduced_chi_squared == pytest.approx(1.0, abs=0.2)
+    # Per-side cost, so the two chi2 values differ (joint would make them identical).
+    assert fwd.chi_squared != bwd.chi_squared
+
+
+def test_fb_requires_distinct_groups():
+    ds = _pulsed_tf_run()
+    params = ParameterSet(
+        [
+            Parameter("alpha", 1.0, min=0.1),
+            Parameter("N0", 1.0e5),
+            Parameter("background", 0.0),
+            Parameter("background_b", 0.0),
+        ]
+    )
+    with pytest.raises(ValueError, match="two distinct groups"):
+        fit_fb_alpha(ds, 1, 1, _tf, params)
+
+
+def test_fb_negative_alpha_seed_is_clamped_positive():
+    """A negative/unbounded alpha is floored to a positive balance, not reported negative."""
+    ds = _pulsed_tf_run(alpha=1.25, seed=11)
+    params = ParameterSet(
+        [
+            Parameter("alpha", -1.0),  # negative seed, default min=-inf
+            Parameter("N0", 1.5e5, min=0.0),
+            Parameter("background", 0.0),
+            Parameter("background_b", 0.0),
+            Parameter("A", 18.0, min=0.0, max=50.0),
+            Parameter("f", 1.5, min=0.0),
+            Parameter("phi", 0.2),
+        ]
+    )
+    result = fit_fb_alpha(ds, 1, 2, _tf, params, cost="gaussian")
+    alpha_fit = result.group_results[1].parameters["alpha"].value
+    assert alpha_fit > 0.0
+    assert alpha_fit == pytest.approx(1.25, abs=0.02)
+
+
+def test_amplitude_identified_by_percent_unit_not_rate():
+    """The seeding contract: the asymmetry amplitude carries unit '%'; rates do not."""
+    from asymmetry.core.fitting.parameters import get_param_info
+
+    assert get_param_info("A0").unit == "%"
+    assert get_param_info("A_1").unit == "%"
+    assert get_param_info("a_L").unit != "%"  # a Lorentzian rate, not an amplitude
+    assert get_param_info("Lambda").unit != "%"

@@ -386,6 +386,55 @@ def build_grouped_time_domain_groups(
     return built_groups
 
 
+def build_count_groups(
+    dataset: MuonDataset,
+    group_ids: list[int],
+    *,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    lifetime_corrected: bool = True,
+    exclude: tuple[float, float] | None = None,
+) -> list[GroupedTimeDomainGroup]:
+    """Build several named detector groups sharing ONE t0 alignment.
+
+    All requested groups go through a single context, so the common t0 (and
+    good-bin window, bunching, deadtime preparation) is computed over the union
+    of their detectors and every trace lands on one time axis. The
+    forward/backward count fit needs this: building the two banks separately
+    would give them independent ``common_t0`` values and misalign the shared
+    physics whenever the F and B detectors carry different ``t0_bin``.
+
+    Unlike :func:`build_grouped_time_domain_groups` this does not require the
+    groups to be in the ``included_groups`` map. Returns one group per id, in the
+    requested order.
+    """
+    run, grouping, _groups_raw, _included = _count_group_setup(dataset)
+    specs: list[tuple[int, list[int]]] = []
+    for raw_gid in group_ids:
+        gid = int(raw_gid)
+        indices = effective_group_indices(grouping, gid)
+        if not indices:
+            raise ValueError(f"Count-domain fitting found no detectors for group {raw_gid!r}")
+        specs.append((gid, indices))
+    ctx = _count_group_context(dataset, grouping, run, specs)
+
+    built: list[GroupedTimeDomainGroup] = []
+    for gid, indices in specs:
+        group = _build_one_count_group(
+            ctx,
+            gid,
+            indices,
+            t_min=t_min,
+            t_max=t_max,
+            lifetime_corrected=lifetime_corrected,
+            exclude=exclude,
+        )
+        if group is None:
+            raise ValueError(f"Count-domain group {gid!r} produced no usable bins")
+        built.append(group)
+    return built
+
+
 def build_count_group(
     dataset: MuonDataset,
     group_id: int,
@@ -398,28 +447,18 @@ def build_count_group(
     """Build one named detector group's count-domain trace.
 
     Unlike :func:`build_grouped_time_domain_groups` this does not require two
-    included groups: it serves single-histogram and forward/backward count fits,
-    which select specific detector groups regardless of the ``included_groups``
-    map. ``exclude`` drops an interior time window of bins.
+    included groups: it serves single-histogram count fits, which select a
+    specific detector group regardless of the ``included_groups`` map.
+    ``exclude`` drops an interior time window of bins.
     """
-    run, grouping, groups_raw, included_groups = _count_group_setup(dataset)
-    gid = int(group_id)
-    indices = effective_group_indices(grouping, gid)
-    if not indices:
-        raise ValueError(f"Count-domain fitting found no detectors for group {group_id!r}")
-    ctx = _count_group_context(dataset, grouping, run, [(gid, indices)])
-    group = _build_one_count_group(
-        ctx,
-        gid,
-        indices,
+    return build_count_groups(
+        dataset,
+        [group_id],
         t_min=t_min,
         t_max=t_max,
         lifetime_corrected=lifetime_corrected,
         exclude=exclude,
-    )
-    if group is None:
-        raise ValueError(f"Count-domain group {group_id!r} produced no usable bins")
-    return group
+    )[0]
 
 
 def fit_grouped_time_domain(
@@ -631,12 +670,6 @@ def build_grouped_count_model(polarization_model_fn):
         )
 
     return grouped_count_model
-
-
-#: Per-domain nuisance parameters of the forward/backward count model.
-FB_LOCAL_PARAMS: tuple[str, ...] = ("background",)
-#: Shared (global) nuisance parameters of the forward/backward count model.
-FB_GLOBAL_NUISANCE_PARAMS: tuple[str, ...] = ("alpha", "N0")
 
 
 def build_fb_count_model(polarization_model_fn):
