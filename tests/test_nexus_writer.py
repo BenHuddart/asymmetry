@@ -237,17 +237,15 @@ class TestRefitRecovery:
         assert abs(fitted["a0"] - 21.0) < 3.0 * errors["a0"]
         assert abs(fitted["rate"] - 0.6) < 3.0 * errors["rate"]
 
-        # The shipped asymmetry error model propagates numerator and
-        # denominator as independent, over-estimating σ_A by
-        # (1+A²)/(1−A²) relative to exact Poisson propagation; against a
-        # known truth this centres χ²ᵣ on E[(1−A²)/(1+A²)] < 1 rather
-        # than 1. Centre the acceptance band on that expectation.
+        # compute_asymmetry uses exact Poisson propagation
+        # (var(A) = (1−A²)/(F+B) at α=1), so against a known truth χ²ᵣ
+        # centres on 1. (The older Mantid-style independent num/den
+        # propagation over-estimated σ_A and biased χ²ᵣ low; see
+        # docs/porting/asymmetry-error-propagation/.)
         window = dataset.time_range(t_max=8.0)
-        a_frac = _exp_model(window.time) / 100.0
-        expected_chi2r = float(np.mean((1.0 - a_frac**2) / (1.0 + a_frac**2)))
         dof = window.n_points - 2
         band = 3.0 * np.sqrt(2.0 / dof)
-        assert abs(result.reduced_chi_squared - expected_chi2r) < band
+        assert abs(result.reduced_chi_squared - 1.0) < band
 
     def test_pull_distribution_over_seeds(self) -> None:
         """Pulls of refitted parameters over many seeds are ~ N(0, 1).

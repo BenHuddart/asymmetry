@@ -2,6 +2,29 @@
   "version": 1,
   "studies": [
     {
+      "slug": "asymmetry-error-propagation",
+      "feature_name": "Asymmetry statistical error: exact Poisson vs Mantid independent-propagation",
+      "status": "implemented",
+      "path": "docs/porting/asymmetry-error-propagation",
+      "references": [
+        "Mantid",
+        "WiMDA",
+        "musrfit",
+        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
+      ],
+      "docs": {
+        "readme": "docs/porting/asymmetry-error-propagation/README.md",
+        "comparison": "docs/porting/asymmetry-error-propagation/comparison.md",
+        "implementation_options": "docs/porting/asymmetry-error-propagation/implementation-options.md",
+        "test_data": "docs/porting/asymmetry-error-propagation/test-data.md",
+        "verification_plan": "docs/porting/asymmetry-error-propagation/verification-plan.md"
+      },
+      "tests_path": "tests/test_transforms.py",
+      "src_path": "src/asymmetry/core/transform/asymmetry.py",
+      "updated": "2026-06-10",
+      "notes": "Follow-on from the simulate-mode verification suite (verification §2). compute_asymmetry shipped Mantid AsymmetryCalc's independent-N/D error (1+A²)/(F+B), which over-estimates σ_A by (1+A²)/(1-A²) vs exact Poisson 4α²FB(F+B)/(F+αB)⁴ = (1-A²)/(F+B). Derivation verified analytically + Monte Carlo; oracle: Mantid is the outlier, WiMDA/musrfit/textbook use 1-A². Measured fit impact: amplitude σ +3.2%, χ²ᵣ biased low. IMPLEMENTED (Option A): compute_asymmetry now uses 2|α|√(FB(F+B))/(F+αB)² with one-sided F·B=0 bins kept at the 1.0 no-information sentinel. Tests updated: test_transforms √2->1.0 pin (renamed) + 3 new exact-form unit tests; TestRefitRecovery chi2r re-centred on 1.0. Other 'recompute' tests derive expected error by calling compute_asymmetry and stayed green. validate green (2000 passed). compute_asymmetry_with_count_errors and the simulate builder already used the exact form."
+    },
+    {
       "slug": "muonium-triplet",
       "feature_name": "Muonium triplet model component",
       "status": "study",
