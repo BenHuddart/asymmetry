@@ -21,6 +21,8 @@ _DISPLAY_ALIASES = {
     "phaseoptreal": "phase_opt_real",
     "power": "power",
     "real": "real",
+    "real+imag": "real_imag",
+    "real_imag": "real_imag",
     "sin": "sin",
 }
 _DISPLAY_MODES = frozenset(_DISPLAY_ALIASES.values())
@@ -404,7 +406,7 @@ def fourier_display_values(
     """
     values = np.asarray(spectrum, dtype=np.complex128)
     mode = canonical_fourier_display_mode(display)
-    if mode in {"real", "cos", "phase_corrected", "phase_opt_real"}:
+    if mode in {"real", "cos", "phase_corrected", "phase_opt_real", "real_imag"}:
         return values.real.astype(np.float64, copy=False)
     if mode in {"imaginary", "sin"}:
         return values.imag.astype(np.float64, copy=False)

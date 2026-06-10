@@ -19,9 +19,11 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.fourier.conditioning import apply_spectrum_conditioning
 from asymmetry.core.fourier.fft import (
     average_fourier_display_values,
     canonical_fourier_display_mode,
+    exclude_frequency_ranges,
     fft_complex_asymmetry,
     fourier_display_values,
     fourier_mode_uses_entropy_optimizer,
@@ -29,6 +31,7 @@ from asymmetry.core.fourier.fft import (
     optimize_phase_entropy,
 )
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
+from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import common_t0_for_groups
 
@@ -42,6 +45,7 @@ _YLABELS: dict[str, str] = {
     "power": "FFT Power (a.u.)",
     "power_sqrt": "FFT (Power)^1/2 (a.u.)",
     "real": "FFT Real (a.u.)",
+    "real_imag": "FFT Real + Imag (a.u.)",
     "sin": "FFT Sin (a.u.)",
 }
 
@@ -70,6 +74,23 @@ class GroupSpectrumConfig:
     #: Resolved per-group phase correction in degrees (used only for
     #: phase-correcting display modes).  Missing groups default to 0.
     group_phase_degrees: dict[int, float] = field(default_factory=dict)
+    # ── post-FFT conditioning (frequency-domain finishers) ──────────────
+    #: Pulse frequency-response compensation (divide by R(ν) from pulse.py).
+    pulse_compensation: bool = False
+    #: Pulse half-width in µs; ``0`` resolves from instrument metadata.
+    pulse_half_width_us: float = 0.0
+    pulse_separation_us: float = 0.0
+    pulse_n_pulses: int = 1
+    pulse_max_gain: float = 25.0
+    #: Robust baseline offset mode: ``"none" | "sigma_clip" | "wimda"``.
+    baseline_mode: str = "none"
+    baseline_kappa: float = 2.0
+    #: Frequency-range exclusions as ``(centre_mhz, half_width_mhz)`` pairs.
+    exclude_enabled: bool = False
+    exclusion_ranges: list[tuple[float, float]] = field(default_factory=list)
+    #: When set, prepend a diamagnetic exclusion centred on the reference field.
+    diamag_exclusion: bool = False
+    diamag_half_width_mhz: float = 0.3
 
     def to_dict(self) -> dict:
         """Return a JSON-serialisable ``fourier_config`` recipe block."""
@@ -88,6 +109,17 @@ class GroupSpectrumConfig:
                 None if self.selected_group_ids is None else list(self.selected_group_ids)
             ),
             "group_phase_degrees": {int(k): float(v) for k, v in self.group_phase_degrees.items()},
+            "pulse_compensation": self.pulse_compensation,
+            "pulse_half_width_us": self.pulse_half_width_us,
+            "pulse_separation_us": self.pulse_separation_us,
+            "pulse_n_pulses": self.pulse_n_pulses,
+            "pulse_max_gain": self.pulse_max_gain,
+            "baseline_mode": self.baseline_mode,
+            "baseline_kappa": self.baseline_kappa,
+            "exclude_enabled": self.exclude_enabled,
+            "exclusion_ranges": [[float(c), float(w)] for c, w in self.exclusion_ranges],
+            "diamag_exclusion": self.diamag_exclusion,
+            "diamag_half_width_mhz": self.diamag_half_width_mhz,
         }
 
     @classmethod
@@ -114,6 +146,17 @@ class GroupSpectrumConfig:
             t_max_us=_optional_float(data.get("t_max_us")),
             selected_group_ids=[int(g) for g in selected] if isinstance(selected, list) else None,
             group_phase_degrees=group_phase_degrees,
+            pulse_compensation=bool(data.get("pulse_compensation", False)),
+            pulse_half_width_us=float(data.get("pulse_half_width_us", 0.0)),
+            pulse_separation_us=float(data.get("pulse_separation_us", 0.0)),
+            pulse_n_pulses=int(data.get("pulse_n_pulses", 1)),
+            pulse_max_gain=float(data.get("pulse_max_gain", 25.0)),
+            baseline_mode=str(data.get("baseline_mode", "none")),
+            baseline_kappa=float(data.get("baseline_kappa", 2.0)),
+            exclude_enabled=bool(data.get("exclude_enabled", False)),
+            exclusion_ranges=_coerce_exclusion_ranges(data.get("exclusion_ranges")),
+            diamag_exclusion=bool(data.get("diamag_exclusion", False)),
+            diamag_half_width_mhz=float(data.get("diamag_half_width_mhz", 0.3)),
         )
 
 
@@ -124,6 +167,20 @@ def _optional_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _coerce_exclusion_ranges(value: object) -> list[tuple[float, float]]:
+    """Parse serialised ``[[centre, half_width], ...]`` exclusion ranges."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    ranges: list[tuple[float, float]] = []
+    for item in value:
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            try:
+                ranges.append((float(item[0]), float(item[1])))
+            except (TypeError, ValueError):
+                continue
+    return ranges
 
 
 def precompute_group_fourier_inputs(
@@ -181,6 +238,63 @@ def _group_names(run: Run) -> dict[int, str]:
     return resolved
 
 
+def _reference_field_gauss(run: Run, dataset: MuonDataset | None) -> float | None:
+    """Return the run's applied field in Gauss, or ``None``."""
+    sources: list[dict] = []
+    if dataset is not None and isinstance(dataset.metadata, dict):
+        sources.append(dataset.metadata)
+    run_metadata = getattr(run, "metadata", None)
+    if isinstance(run_metadata, dict):
+        sources.append(run_metadata)
+    for metadata in sources:
+        try:
+            return float(metadata["field"])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return None
+
+
+def _reference_frequency_mhz(run: Run, dataset: MuonDataset | None) -> float | None:
+    """Return the muon Larmor frequency (MHz) at the applied field, or ``None``."""
+    field_gauss = _reference_field_gauss(run, dataset)
+    if field_gauss is None:
+        return None
+    return float(gauss_to_mhz(field_gauss))
+
+
+def _resolve_exclusion_ranges(
+    config: GroupSpectrumConfig, reference_mhz: float | None
+) -> list[tuple[float, float]]:
+    """Return the active exclusion ranges, prepending the diamag slot if asked."""
+    if not config.exclude_enabled:
+        return []
+    ranges: list[tuple[float, float]] = []
+    if config.diamag_exclusion and reference_mhz is not None:
+        ranges.append((float(reference_mhz), float(config.diamag_half_width_mhz)))
+    ranges.extend((float(c), float(w)) for c, w in config.exclusion_ranges)
+    return ranges
+
+
+def _metadata_pulse_half_width_us(run: Run, dataset: MuonDataset | None) -> float:
+    """Resolve a pulse half-width (µs) from instrument metadata, else 0."""
+    sources: list[dict] = []
+    if dataset is not None and isinstance(dataset.metadata, dict):
+        sources.append(dataset.metadata)
+    run_metadata = getattr(run, "metadata", None)
+    if isinstance(run_metadata, dict):
+        sources.append(run_metadata)
+    for metadata in sources:
+        for key in ("pulse_half_width_us", "pulse_width_us", "pulse_fwhm_us"):
+            try:
+                value = float(metadata[key])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if value > 0.0:
+                # FWHM keys are stored as a full width; halve to a half-width.
+                return value / 2.0 if key == "pulse_fwhm_us" else value
+    return 0.0
+
+
 def compute_average_group_spectrum(
     run: Run,
     config: GroupSpectrumConfig,
@@ -211,11 +325,13 @@ def compute_average_group_spectrum(
     display = config.display
     apply_phase = fourier_mode_uses_phase_correction(display)
     is_entropy = fourier_mode_uses_entropy_optimizer(display)
+    is_real_imag = canonical_fourier_display_mode(display) == "real_imag"
 
     if prepared_histograms is None or reference_t0_bin is None:
         prepared_histograms, reference_t0_bin = precompute_group_fourier_inputs(run)
 
     averaged_values: list[np.ndarray] = []
+    imag_values: list[np.ndarray] = []
     complex_spectra: list[np.ndarray] = []
     average_freqs: np.ndarray | None = None
     first_group_dataset: MuonDataset | None = None
@@ -259,12 +375,16 @@ def compute_average_group_spectrum(
             average_freqs = freqs
         if is_entropy:
             complex_spectra.append(spectrum)
+        elif is_real_imag:
+            averaged_values.append(fourier_display_values(spectrum, display="Cos"))
+            imag_values.append(fourier_display_values(spectrum, display="Sin"))
         else:
             averaged_values.append(fourier_display_values(spectrum, display=display))
 
     if average_freqs is None:
         return None
 
+    averaged_imag: np.ndarray | None = None
     if is_entropy and complex_spectra:
         avg_complex = np.mean(np.vstack([s[np.newaxis, :] for s in complex_spectra]), axis=0)
         averaged_display, _c0, _c1 = optimize_phase_entropy(avg_complex)
@@ -274,8 +394,43 @@ def compute_average_group_spectrum(
             averaged_values,
             estimate_error=config.estimate_average_error,
         )
+        if is_real_imag and imag_values:
+            averaged_imag, _ = average_fourier_display_values(imag_values, estimate_error=False)
     else:
         return None
+
+    # ── post-FFT conditioning (compensation → baseline → exclusions) ────
+    # Operates on the canonical MHz axis; the plot panel converts to the
+    # display unit.  Entropy mode keeps its optimiser output untouched.
+    conditioning = None
+    if not is_entropy:
+        reference_mhz = _reference_frequency_mhz(run, first_group_dataset)
+        exclusion_ranges = _resolve_exclusion_ranges(config, reference_mhz)
+        pulse_half_width_us = config.pulse_half_width_us
+        if config.pulse_compensation and pulse_half_width_us <= 0.0:
+            pulse_half_width_us = _metadata_pulse_half_width_us(run, first_group_dataset)
+        conditioning = apply_spectrum_conditioning(
+            average_freqs,
+            averaged_display,
+            averaged_error,
+            pulse_compensation=config.pulse_compensation,
+            pulse_half_width_us=pulse_half_width_us,
+            pulse_separation_us=config.pulse_separation_us,
+            pulse_n_pulses=config.pulse_n_pulses,
+            pulse_max_gain=config.pulse_max_gain,
+            baseline_mode=config.baseline_mode,
+            baseline_kappa=config.baseline_kappa,
+            exclusion_ranges=exclusion_ranges,
+        )
+        averaged_display = conditioning.display
+        averaged_error = conditioning.error
+        if averaged_imag is not None:
+            if conditioning.gain is not None:
+                averaged_imag = averaged_imag * conditioning.gain
+            if exclusion_ranges:
+                averaged_imag = exclude_frequency_ranges(
+                    average_freqs, averaged_imag, exclusion_ranges
+                )
 
     if len(selected) == len(all_ids):
         run_label = f"{run.run_number} Average"
@@ -296,6 +451,14 @@ def compute_average_group_spectrum(
             "group_ids": list(selected),
         }
     )
+    if averaged_imag is not None:
+        metadata["fourier_imag"] = np.asarray(averaged_imag, dtype=float).tolist()
+    if conditioning is not None:
+        if conditioning.cutoff_frequency_mhz is not None:
+            metadata["fourier_compensation_cutoff_mhz"] = conditioning.cutoff_frequency_mhz
+        if config.baseline_mode in {"sigma_clip", "wimda"}:
+            metadata["fourier_baseline"] = conditioning.baseline
+            metadata["fourier_baseline_noise"] = conditioning.noise_sigma
     return MuonDataset(
         time=np.asarray(average_freqs, dtype=float),
         asymmetry=np.asarray(averaged_display, dtype=float),

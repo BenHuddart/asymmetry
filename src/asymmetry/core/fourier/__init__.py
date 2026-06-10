@@ -1,5 +1,10 @@
 """Frequency-domain analysis: FFT, grouped inputs, and apodization."""
 
+from asymmetry.core.fourier.conditioning import (
+    apply_spectrum_conditioning,
+    pulse_compensation_gain,
+    sigma_clip_baseline,
+)
 from asymmetry.core.fourier.fft import (
     average_fourier_display_values,
     canonical_fourier_display_mode,
@@ -55,6 +60,9 @@ __all__ = [
     "fourier_mode_uses_phase_correction",
     "optimize_phase_entropy",
     "build_group_signal_dataset",
+    "apply_spectrum_conditioning",
+    "pulse_compensation_gain",
+    "sigma_clip_baseline",
     "GroupSpectrumConfig",
     "compute_average_group_spectrum",
     "fourier_display_ylabel",

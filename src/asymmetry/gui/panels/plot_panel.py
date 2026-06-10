@@ -2820,6 +2820,33 @@ class PlotPanel(QWidget):
         self._update_export_enabled()
         self._connect_axis_limit_callbacks([self._ax])
 
+    def _overlay_fourier_imag(self, dataset: MuonDataset, time: np.ndarray) -> None:
+        """Overlay the imaginary quadrature for the Real+Imag display mode.
+
+        The averaged spectrum carries the imag channel in
+        ``metadata["fourier_imag"]``; the primary trace is the real part.
+        """
+        if not self._has_mpl or not isinstance(dataset.metadata, dict):
+            return
+        imag = dataset.metadata.get("fourier_imag")
+        if imag is None:
+            return
+        imag_arr = np.asarray(imag, dtype=float)
+        if imag_arr.size != np.asarray(time).size:
+            return
+        finite = np.isfinite(time) & np.isfinite(imag_arr)
+        if not np.any(finite):
+            return
+        self._ax.plot(
+            np.asarray(time)[finite],
+            imag_arr[finite],
+            "-",
+            color="C1",
+            linewidth=1.2,
+            alpha=0.85,
+            label="Imag",
+        )
+
     def plot_dataset(self, dataset: MuonDataset) -> None:
         """Plot a dataset, optionally rebinned according to the bunch factor.
 
@@ -2893,6 +2920,7 @@ class PlotPanel(QWidget):
             ecolor=point_color,
             label=self._dataset_label_for(dataset),
         )
+        self._overlay_fourier_imag(dataset, time)
         x_label, y_label = self._axis_labels_for_dataset(dataset, self._current_polarization_axis)
         self._apply_axis_labels(x_label, y_label)
         self._set_alpha_label(self._single_dataset_alpha_label_text(dataset))

@@ -119,6 +119,16 @@ _FOURIER_RECIPE_KEYS: tuple[str, ...] = (
     "filter_time_constant_us",
     "subtract_average_signal",
     "group_enabled_table",
+    # Frequency-domain finishers (post-FFT conditioning); additive, defaulted.
+    "pulse_compensation",
+    "pulse_half_width_us",
+    "pulse_max_gain",
+    "baseline_mode",
+    "baseline_kappa",
+    "exclude_enabled",
+    "diamag_exclusion",
+    "diamag_half_width_mhz",
+    "exclusion_ranges",
 )
 
 

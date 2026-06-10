@@ -4716,6 +4716,19 @@ class MainWindow(QMainWindow):
                 t_max_us=fourier_t_max_us,
                 selected_group_ids=list(selected_group_ids),
                 group_phase_degrees=group_phase_degrees,
+                pulse_compensation=bool(state.get("pulse_compensation", False)),
+                pulse_half_width_us=float(state.get("pulse_half_width_us", 0.0)),
+                pulse_max_gain=float(state.get("pulse_max_gain", 25.0)),
+                baseline_mode=str(state.get("baseline_mode", "none")),
+                baseline_kappa=float(state.get("baseline_kappa", 2.0)),
+                exclude_enabled=bool(state.get("exclude_enabled", False)),
+                exclusion_ranges=[
+                    (float(pair[0]), float(pair[1]))
+                    for pair in state.get("exclusion_ranges", [])
+                    if isinstance(pair, (list, tuple)) and len(pair) == 2
+                ],
+                diamag_exclusion=bool(state.get("diamag_exclusion", False)),
+                diamag_half_width_mhz=float(state.get("diamag_half_width_mhz", 0.3)),
             )
             average_dataset = compute_average_group_spectrum(
                 self._current_dataset.run,
@@ -4734,7 +4747,12 @@ class MainWindow(QMainWindow):
                         out=np.zeros_like(averaged_display),
                         where=averaged_error > 0.0,
                     )
-                    peak_signal_to_noise = float(np.nanmax(sn)) if sn.size else 0.0
+                    # Exclude the DC bin from the peak search: the average-signal
+                    # subtraction leaves a near-zero error there that can spike S/N.
+                    if sn.size > 1:
+                        sn = sn[1:]
+                    finite_sn = sn[np.isfinite(sn)]
+                    peak_signal_to_noise = float(np.max(finite_sn)) if finite_sn.size else 0.0
                     self._fourier_panel.set_average_summary(
                         mean_error=float(np.nanmean(averaged_error))
                         if averaged_error.size
