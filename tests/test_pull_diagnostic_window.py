@@ -101,25 +101,38 @@ class TestFitPanelHook:
         assert not tab._pull_diagnostic_btn.isEnabled()
         assert not tab._can_run_pull_diagnostic()
 
-        # Simulate a converged fit having run on this dataset.
+        # Simulate a converged fit having run on this dataset. The fit engine
+        # does NOT mutate the input set, so _last_fit_parameters holds the
+        # pre-fit START guesses while _last_fit_result.parameters holds the
+        # converged values — they must differ here to catch the truth-source bug.
         tab._composite_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
         tab._last_fit_parameters = ParameterSet(
             [
-                Parameter(name="A_1", value=20.0, min=0.0, max=100.0),
-                Parameter(name="Lambda", value=0.4, min=0.0, max=10.0),
+                Parameter(name="A_1", value=10.0, min=0.0, max=100.0),  # start guess
+                Parameter(name="Lambda", value=1.5, min=0.0, max=10.0),  # start guess
                 Parameter(name="A_bg", value=0.0, min=-10.0, max=10.0, fixed=True),
             ]
         )
 
         class _Result:
             success = True
+            parameters = ParameterSet(
+                [
+                    Parameter(name="A_1", value=20.0),  # converged
+                    Parameter(name="Lambda", value=0.4),  # converged
+                    Parameter(name="A_bg", value=0.0),
+                ]
+            )
 
         tab._last_fit_result = _Result()
         assert tab._can_run_pull_diagnostic()
 
         tab._on_pull_diagnostic()
-        assert tab._pull_diagnostic_window is not None
-        assert isinstance(tab._pull_diagnostic_window, PullDiagnosticWindow)
+        window = tab._pull_diagnostic_window
+        assert isinstance(window, PullDiagnosticWindow)
+        # Truth must be the CONVERGED values, not the start guesses.
+        assert window._parameters["Lambda"] == pytest.approx(0.4)
+        assert window._parameters["A_1"] == pytest.approx(20.0)
 
     def test_changing_dataset_clears_fit_result(self, qapp) -> None:
         from asymmetry.gui.panels.fit_panel import SingleFitTab

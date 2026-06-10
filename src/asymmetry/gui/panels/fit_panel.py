@@ -1204,12 +1204,21 @@ class SingleFitTab(QWidget):
 
         dataset = self._current_dataset
         run = dataset.run
-        parameters = self._last_fit_parameters
-        truth = {p.name: float(p.value) for p in parameters}
-        free = [p.name for p in parameters if not getattr(p, "fixed", False)]
+        # The generating "truth" is the CONVERGED fit, not the pre-fit guesses:
+        # FitEngine.fit does not mutate its input ParameterSet, so
+        # _last_fit_parameters still holds the start values. Seed the refit
+        # template from result.parameters while keeping the fit's
+        # bounds/fixed/link metadata.
+        fitted_values = {p.name: float(p.value) for p in self._last_fit_result.parameters}
+        refit_template = copy.deepcopy(self._last_fit_parameters)
+        for parameter in refit_template:
+            if parameter.name in fitted_values:
+                parameter.value = fitted_values[parameter.name]
+        truth = {p.name: float(p.value) for p in refit_template}
+        free = [p.name for p in refit_template if not getattr(p, "fixed", False)]
         time_range = (float(dataset.time.min()), float(dataset.time.max()))
         refit = make_engine_refit(
-            self._composite_model, parameters, t_min=time_range[0], t_max=time_range[1]
+            self._composite_model, refit_template, t_min=time_range[0], t_max=time_range[1]
         )
         window = PullDiagnosticWindow(
             template=run,
