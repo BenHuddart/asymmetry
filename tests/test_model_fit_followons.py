@@ -279,6 +279,30 @@ def test_dialog_x_error_toggle_present_and_persists(qapp) -> None:
 
 
 @gui
+def test_x_error_toggle_ignored_when_disabled_by_scatter_mode(qapp) -> None:
+    """A box checked under Column then disabled by switching to Scatter must not
+    feed x-errors into the fit (gated on isEnabled, not just isChecked)."""
+    from asymmetry.core.fitting.parameter_models import ErrorMode
+    from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
+
+    nu = np.array([1.0 + 0.2 * i for i in range(6)])
+    lam = np.array([0.1 + 0.01 * i for i in range(6)])
+    lam_err = np.full_like(lam, 0.005)
+    nu_err = np.full_like(nu, 0.02)
+
+    dlg = ModelFitDialog("lambda", "param:nu", nu, lam, lam_err, x_errors=nu_err)
+    assert dlg._x_error_check is not None
+    dlg._x_error_check.setChecked(True)
+    assert dlg._use_x_errors() is True  # Column default
+
+    # Switch to Scatter → toggle disabled (stays checked) → reported as off.
+    idx = dlg._error_mode_combo.findData(ErrorMode.SCATTER.value)
+    dlg._error_mode_combo.setCurrentIndex(idx)
+    assert dlg._x_error_check.isEnabled() is False
+    assert dlg._use_x_errors() is False
+
+
+@gui
 def test_dialog_x_error_toggle_hidden_for_run_axis(qapp) -> None:
     """A run-level x-axis (no per-point uncertainty) hides the toggle."""
     from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog

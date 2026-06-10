@@ -527,7 +527,16 @@ class ModelFitDialog(QDialog):
         return self._removed
 
     def _use_x_errors(self) -> bool:
-        return self._x_error_check is not None and self._x_error_check.isChecked()
+        # Gate on enabled as well as checked: the toggle is disabled under the
+        # None/Scatter error modes (whose unit y-weights have no scale to combine
+        # with σ_x), so a box left checked from a prior mode must not feed
+        # x-errors into the fit — keeps the GUI honest independently of the core
+        # guard rather than relying on the two staying in lockstep.
+        return (
+            self._x_error_check is not None
+            and self._x_error_check.isEnabled()
+            and self._x_error_check.isChecked()
+        )
 
     def _error_mode(self) -> ErrorMode:
         if self._error_mode_combo is None:
