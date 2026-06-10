@@ -106,6 +106,94 @@ def test_resolve_raises_human_readable(payload, match):
         resolve_background_reference(payload, datasets=[])
 
 
+def test_resolve_does_not_mix_live_reference_with_stale_sample_snapshot():
+    """When the sample's live good_frames is unknown, the scale must come from
+    the payload snapshot ratio (same epoch), not a live reference over a stale
+    sample snapshot."""
+    reference = _run(42, good_frames=1000.0, level=3.0)  # live reference frames
+    registry = [_dataset(reference)]
+    result = resolve_background_reference(
+        {
+            "run_number": 42,
+            "good_frames_sample": 800.0,
+            "good_frames_reference": 400.0,  # snapshot ratio 2.0
+        },
+        sample_good_frames=None,  # sample live frames unknown
+        datasets=registry,
+    )
+    # Snapshot ratio 800/400 = 2.0 — NOT 800/1000 (mixed) or any live/stale mix.
+    assert result.scale == pytest.approx(2.0)
+
+
+def test_resolve_cache_short_circuits_registry_scan(monkeypatch):
+    """A cached reference (per source path) is reused without scanning the
+    registry or re-loading, even when a run_number is present."""
+    reference = _run(7, good_frames=100.0, level=2.0)
+    cache: dict[str, object] = {"/some/ref.nxs": reference}
+
+    def _fail_load(payload):
+        raise AssertionError("loader must not run on a cache hit")
+
+    monkeypatch.setattr("asymmetry.core.io.load_background_run", _fail_load)
+
+    class _ExplodingRegistry:
+        def __iter__(self):
+            raise AssertionError("registry must not be scanned on a cache hit")
+
+    result = resolve_background_reference(
+        {"run_number": 7, "source_file": "/some/ref.nxs"},
+        sample_good_frames=200.0,
+        datasets=_ExplodingRegistry(),
+        cache=cache,
+    )
+    assert result.scale == pytest.approx(2.0)
+
+
+def test_fourier_reference_run_does_not_truncate_signal(monkeypatch):
+    """A reference run shorter than the sample must not shorten the Fourier
+    signal — the missing tail keeps its raw value rather than dropping out."""
+    from asymmetry.core.fourier.grouped import build_group_signal_dataset
+
+    sample = _run(100, good_frames=1000.0, level=10.0)
+    sample.histograms = [
+        Histogram(counts=np.full(64, 10.0), bin_width=0.016, t0_bin=8) for _ in range(4)
+    ]
+    # Reference histograms are SHORTER than the sample (40 vs 64 bins).
+    short_reference = [
+        Histogram(counts=np.full(40, 4.0), bin_width=0.016, t0_bin=8) for _ in range(4)
+    ]
+    grouping = {
+        "groups": {1: [1, 2], 2: [3, 4]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "alpha": 1.0,
+        "t0_bin": 8,
+        "first_good_bin": 8,
+        "background_correction": True,
+        "background_mode": "reference_run",
+        "background_run": {"run_number": 200, "source_file": "/ref.nxs"},
+        "good_frames": 1000.0,
+    }
+    sample.grouping = grouping
+    monkeypatch.setattr(
+        "asymmetry.core.io.resolve_background_reference",
+        lambda *a, **k: BackgroundReference(histograms=short_reference, scale=1.0),
+    )
+
+    no_bkg = dict(grouping)
+    no_bkg["background_correction"] = False
+    sample.grouping = no_bkg
+    baseline = build_group_signal_dataset(
+        sample, 1, center_signal=False, apply_lifetime_correction=False
+    )
+    sample.grouping = grouping
+    corrected = build_group_signal_dataset(
+        sample, 1, center_signal=False, apply_lifetime_correction=False
+    )
+    # Same length as the un-subtracted signal (no truncation to the reference).
+    assert corrected.asymmetry.size == baseline.asymmetry.size
+
+
 def test_fourier_grouped_path_satisfies_reference_run(monkeypatch):
     """The grouped Fourier input subtracts a resolved reference (previously a
     silent no-op outside the GUI)."""

@@ -16,6 +16,7 @@ from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
     common_t0_for_groups,
     effective_group_indices,
+    good_frames,
     resolve_group_indices,
 )
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
@@ -150,6 +151,7 @@ def _resolve_group_reference_counts(
     group_indices: list[int],
     common_t0: int,
     apply_deadtime: bool,
+    cache: dict | None = None,
 ) -> tuple[np.ndarray | None, float | None]:
     """Resolve+group a ``reference_run`` background for one detector group.
 
@@ -159,6 +161,12 @@ def _resolve_group_reference_counts(
     the mode is not ``reference_run`` or the reference cannot be resolved, so
     the scripted/core Fourier path satisfies ``reference_run`` exactly like the
     time-domain reduction instead of silently skipping it.
+
+    ``cache`` (shared across a grouped sweep) is threaded into
+    ``resolve_background_reference`` so the reference run is loaded once, not
+    once per group, and also memoises the deadtime-prepared reference
+    histograms (identical across every group of one run) — only the per-group
+    ``apply_grouping_aligned`` re-runs.
     """
     if not bool(grouping.get("background_correction", False)):
         return None, None
@@ -168,20 +176,24 @@ def _resolve_group_reference_counts(
     # Lazy import: core.io is a heavier sibling and only needed for this mode.
     from asymmetry.core.io import resolve_background_reference
 
-    try:
-        sample_frames = float(grouping.get("good_frames", 0.0)) or None
-    except (TypeError, ValueError):
-        sample_frames = None
+    cache = cache if cache is not None else {}
+    sample_frames = good_frames(grouping, default=0.0) or None
     try:
         reference = resolve_background_reference(
-            grouping.get("background_run"), sample_good_frames=sample_frames
+            grouping.get("background_run"), sample_good_frames=sample_frames, cache=cache
         )
     except (ValueError, OSError):
         return None, None
 
-    reference_prepared, _ = prepare_histograms_with_deadtime(
-        reference.histograms, grouping, apply_deadtime
-    )
+    # Prepared reference histograms are identical for every group of this run
+    # (same grouping + deadtime flag), so prepare once per sweep.
+    prepared_key = ("_prepared_reference", bool(apply_deadtime))
+    reference_prepared = cache.get(prepared_key)
+    if reference_prepared is None:
+        reference_prepared, _ = prepare_histograms_with_deadtime(
+            reference.histograms, grouping, apply_deadtime
+        )
+        cache[prepared_key] = reference_prepared
     reference_counts = apply_grouping_aligned(
         reference_prepared, group_indices, common_t0_bin=common_t0
     )
@@ -213,9 +225,17 @@ def _apply_group_background_correction(
         # count level, matching the time-domain reduction.
         if reference_counts is None or reference_scale is None:
             return counts, False, None
-        corrected, _errors = subtract_scaled_counts(
-            np.asarray(counts, dtype=np.float64), reference_counts, float(reference_scale)
-        )
+        sample = np.asarray(counts, dtype=np.float64)
+        reference = np.asarray(reference_counts, dtype=np.float64)
+        # Pad a shorter reference with zeros so subtract_scaled_counts (which
+        # truncates to the common length) cannot silently shorten the sample
+        # signal — bins the reference does not cover keep their raw value rather
+        # than dropping out of the spectrum and collapsing last_good_bin.
+        if reference.size < sample.size:
+            reference = np.concatenate(
+                [reference, np.zeros(sample.size - reference.size, dtype=np.float64)]
+            )
+        corrected, _errors = subtract_scaled_counts(sample, reference, float(reference_scale))
         return corrected, True, None
     if mode not in available_background_modes(metadata=metadata, source_file=source_file):
         return counts, False, None
@@ -259,6 +279,7 @@ def build_group_signal_dataset(
     use_deadtime: bool | None = None,
     reference_t0_bin: int | None = None,
     prepared_histograms: list[Histogram] | None = None,
+    background_reference_cache: dict | None = None,
 ) -> MuonDataset:
     """Build a time-domain grouped detector signal for Fourier analysis.
 
@@ -325,6 +346,7 @@ def build_group_signal_dataset(
         group_indices=indices,
         common_t0=common_t0,
         apply_deadtime=apply_deadtime,
+        cache=background_reference_cache,
     )
     counts, background_applied, background_value = _apply_group_background_correction(
         counts,

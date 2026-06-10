@@ -220,6 +220,9 @@ def compute_average_group_spectrum(
     average_freqs: np.ndarray | None = None
     first_group_dataset: MuonDataset | None = None
     selected_names: list[str] = []
+    # Shared across the sweep so a reference_run background loads + deadtime-
+    # prepares once, not once per group.
+    background_reference_cache: dict = {}
 
     for group_id in selected:
         group_dataset = build_group_signal_dataset(
@@ -228,6 +231,7 @@ def compute_average_group_spectrum(
             center_signal=False,
             reference_t0_bin=reference_t0_bin,
             prepared_histograms=prepared_histograms,
+            background_reference_cache=background_reference_cache,
         )
         if first_group_dataset is None:
             first_group_dataset = group_dataset

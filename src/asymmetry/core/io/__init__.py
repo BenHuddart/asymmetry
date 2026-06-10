@@ -91,6 +91,42 @@ def _grouping_good_frames(source: object) -> float | None:
     return good_frames(getattr(source, "grouping", None), default=0.0) or None
 
 
+def _reference_frame_scale(
+    reference_run: object,
+    sample_good_frames: float | None,
+    payload: dict,
+) -> float:
+    """Sample/reference good-frame ratio, without mixing measurement epochs.
+
+    A *live* ratio is used only when BOTH the sample and reference live frame
+    counts are available; otherwise the payload's snapshot ratio (both counts
+    recorded together at project-save time), then the explicit payload ``scale``
+    snapshot, then ``1.0`` — never a live count divided by a stale snapshot from
+    a different exposure, which would silently skew the subtraction.
+    """
+    live_reference = _grouping_good_frames(reference_run)
+    live_sample = (
+        float(sample_good_frames)
+        if sample_good_frames is not None and float(sample_good_frames) > 0.0
+        else None
+    )
+    if live_sample is not None and live_reference:
+        scale = live_sample / float(live_reference)
+    else:
+        try:
+            scale = float(payload.get("good_frames_sample")) / float(
+                payload.get("good_frames_reference")
+            )
+        except (TypeError, ValueError, ZeroDivisionError):
+            try:
+                scale = float(payload.get("scale", 1.0))
+            except (TypeError, ValueError):
+                scale = 1.0
+    if not np.isfinite(scale) or scale <= 0.0:
+        scale = 1.0
+    return scale
+
+
 @dataclass
 class BackgroundReference:
     """A resolved ``background_run`` reference: source histograms + frame scale.
@@ -136,9 +172,17 @@ def resolve_background_reference(
     if not isinstance(payload, dict):
         raise ValueError("no reference is recorded")
 
-    reference_run = None
+    source_file = str(payload.get("source_file", "") or "")
     run_number = payload.get("run_number")
-    if run_number is not None:
+
+    reference_run = None
+    # A cache hit (per source path) short-circuits BOTH the registry scan and
+    # the loader, so a batch apply sharing one reference resolves it once
+    # instead of re-scanning the registry for every sample dataset.
+    if cache is not None and source_file and source_file in cache:
+        reference_run = cache[source_file]
+
+    if reference_run is None and run_number is not None:
         for dataset in datasets:
             run = getattr(dataset, "run", None)
             try:
@@ -150,31 +194,18 @@ def resolve_background_reference(
                 break
 
     if reference_run is None:
-        source_file = str(payload.get("source_file", "") or "")
         if not source_file:
             raise ValueError("the reference is not loaded and no source file is recorded")
-        if cache is not None and source_file in cache:
-            reference_run = cache[source_file]
-        else:
-            reference_run = load_background_run(payload).run
-            if cache is not None:
-                cache[source_file] = reference_run
+        # Cache only loader-loaded references (an in-registry run is reused live
+        # each call so it tracks in-memory edits to that run).
+        reference_run = load_background_run(payload).run
+        if cache is not None and source_file:
+            cache[source_file] = reference_run
 
     if reference_run is None or not reference_run.histograms:
         raise ValueError("the reference has no histograms")
 
-    if sample_good_frames is None or float(sample_good_frames) <= 0.0:
-        sample_good_frames = payload.get("good_frames_sample")
-    reference_frames = _grouping_good_frames(reference_run) or payload.get("good_frames_reference")
-    try:
-        scale = float(sample_good_frames) / float(reference_frames)
-    except (TypeError, ValueError, ZeroDivisionError):
-        try:
-            scale = float(payload.get("scale", 1.0))
-        except (TypeError, ValueError):
-            scale = 1.0
-    if not np.isfinite(scale) or scale <= 0.0:
-        scale = 1.0
+    scale = _reference_frame_scale(reference_run, sample_good_frames, payload)
 
     return BackgroundReference(
         histograms=list(reference_run.histograms),

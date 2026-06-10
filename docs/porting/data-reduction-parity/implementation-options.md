@@ -371,12 +371,20 @@ named.
   path goes through it: `group_forward_backward`, `fitting/
   grouped_time_domain`, `fourier/grouped` (its private
   `_normalize_group_entries` removed), `mainwindow` F/B resolution, and the
-  `plot_panel` saturation mask. The grouping dialog's estimate / Find-t0 /
-  tail-fit-preview / accept paths route their 0-based group filtering through
-  the shared `filter_excluded_indices` / `excluded_detector_indices`
-  primitives. `resolve_group_indices` is now reserved for non-reduction uses
-  (synthetic-run generation, NeXus writing), so forgetting exclusion at a new
-  reduction call site is no longer possible.
+  `plot_panel` saturation mask (which now reduces F/B through
+  `group_forward_backward` rather than re-implementing the front-end).
+  `resolve_group_indices` is reserved for non-reduction uses (synthetic-run
+  generation, NeXus writing), so a new *core* reduction call site that resolves
+  a group through the chokepoint cannot forget exclusion. One layer is
+  deliberately outside the chokepoint: the grouping dialog works in its own
+  0-based `self._groups` representation (1-based only at the payload boundary),
+  so its estimate / Find-t0 / tail-fit-preview / accept paths cannot call
+  `effective_group_indices` directly — they apply exclusion through the shared
+  `filter_excluded_indices` / `excluded_detector_indices` primitives instead.
+  The exclusion *logic* is therefore single-sourced, but a future dialog path
+  reaching for `self._groups` must still route through `_filtered_group_indices`
+  by hand; collapsing the dialog onto the 1-based resolver is a possible later
+  tidy.
 - **DONE** — Plot-panel low-confidence mask modernised. The
   saturation/denominator mini-reduction (`plot_panel._low_confidence_mask_for_
   dataset`) gated its background step on the old binary
@@ -386,7 +394,11 @@ named.
   assumed fixed binning and self-disabled the raw-bin denominator check via a
   silent array-shape mismatch under variable / constant-error binning; that is
   now an explicit, documented early return to the saturation-only mask (same
-  output, no longer silent). Display-only; reduction unchanged.
+  output, no longer silent). The F/B grouping front-end (resolve indices →
+  align → sum → alpha) is no longer re-implemented inline: it now calls the
+  core `group_forward_backward` chokepoint, so the mask's grouping / exclusion /
+  alpha handling cannot drift from the engine's. Display-only; reduction
+  unchanged.
 - Plot-side quick binning control — deferred to the dedicated UI-polish
   pass (O3).
 - **DONE** — Small quality cleanups (single commit): shared

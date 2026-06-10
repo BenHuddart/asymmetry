@@ -4124,6 +4124,9 @@ class MainWindow(QMainWindow):
             return {}
         phases: dict[int, float] = {}
         prepared_histograms, reference_t0_bin = self._precompute_group_fourier_inputs(dataset)
+        # Shared so a reference_run background loads + deadtime-prepares once
+        # across the phase sweep, not once per group.
+        background_reference_cache: dict = {}
         for group_id in self._fourier_group_names_for_dataset(dataset):
             group_dataset = build_group_signal_dataset(
                 dataset.run,
@@ -4131,6 +4134,7 @@ class MainWindow(QMainWindow):
                 center_signal=False,
                 reference_t0_bin=reference_t0_bin,
                 prepared_histograms=prepared_histograms,
+                background_reference_cache=background_reference_cache,
             )
             phases[group_id] = self._estimate_dataset_fourier_phase(group_dataset, state)
         return phases
@@ -4160,6 +4164,9 @@ class MainWindow(QMainWindow):
         ):
             return {}
         resolved: dict[int, float] = {}
+        # Shared so a reference_run background loads + deadtime-prepares once
+        # across the phase-estimation sweep, not once per group.
+        background_reference_cache: dict = {}
         for group_id in selected_group_ids:
             if auto_phase and not use_phase_table:
                 group_dataset = build_group_signal_dataset(
@@ -4168,6 +4175,7 @@ class MainWindow(QMainWindow):
                     center_signal=False,
                     reference_t0_bin=reference_t0_bin,
                     prepared_histograms=prepared_histograms,
+                    background_reference_cache=background_reference_cache,
                 )
                 resolved[group_id] = self._estimate_dataset_fourier_phase(group_dataset, state)
             elif use_phase_table:

@@ -47,11 +47,7 @@ from asymmetry.core.transform.background import (
     available_background_modes,
     resolve_background_mode,
 )
-from asymmetry.core.transform.grouping import (
-    apply_grouping_aligned,
-    common_t0_for_groups,
-    effective_group_indices,
-)
+from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
@@ -3202,54 +3198,30 @@ class PlotPanel(QWidget):
                 analysis_dataset=dataset,
             )
 
+        # Reduce the forward/backward groups through the SAME core chokepoint the
+        # reduction uses (group_forward_backward: resolves groups via the
+        # exclusion-aware resolver, aligns to a common t0, sums, clamps alpha),
+        # so the mask cannot drift from the engine's grouping/exclusion/alpha
+        # handling. It raises when groups are undefined or empty after exclusion.
         try:
-            forward_gid = int(grouping.get("forward_group", 1))
-            backward_gid = int(grouping.get("backward_group", 2))
-        except (TypeError, ValueError):
+            fb = group_forward_backward(run.histograms, grouping)
+        except ValueError:
             return self._project_source_mask_to_analysis_dataset(
                 source_mask=saturated,
                 source_dataset=reference_dataset,
                 analysis_dataset=dataset,
             )
-
-        forward_idx = effective_group_indices(grouping, forward_gid)
-        backward_idx = effective_group_indices(grouping, backward_gid)
-        if not forward_idx or not backward_idx:
-            return self._project_source_mask_to_analysis_dataset(
-                source_mask=saturated,
-                source_dataset=reference_dataset,
-                analysis_dataset=dataset,
-            )
-
-        if max(forward_idx, default=-1) >= len(run.histograms):
-            return self._project_source_mask_to_analysis_dataset(
-                source_mask=saturated,
-                source_dataset=reference_dataset,
-                analysis_dataset=dataset,
-            )
-        if max(backward_idx, default=-1) >= len(run.histograms):
-            return self._project_source_mask_to_analysis_dataset(
-                source_mask=saturated,
-                source_dataset=reference_dataset,
-                analysis_dataset=dataset,
-            )
-
-        common_t0 = common_t0_for_groups(run.histograms, forward_idx, backward_idx)
-        forward = apply_grouping_aligned(run.histograms, forward_idx, common_t0_bin=common_t0)
-        backward = apply_grouping_aligned(run.histograms, backward_idx, common_t0_bin=common_t0)
-        n_grouped = min(len(forward), len(backward))
-        forward = forward[:n_grouped]
-        backward = backward[:n_grouped]
+        n_grouped = min(len(fb.forward), len(fb.backward))
         if n_grouped == 0:
             return self._project_source_mask_to_analysis_dataset(
                 source_mask=saturated,
                 source_dataset=reference_dataset,
                 analysis_dataset=dataset,
             )
-        try:
-            alpha = float(grouping.get("alpha", 1.0))
-        except (TypeError, ValueError):
-            alpha = 1.0
+        forward = fb.forward[:n_grouped]
+        backward = fb.backward[:n_grouped]
+        alpha = fb.alpha
+        common_t0 = fb.common_t0
 
         if bool(grouping.get("background_correction", False)):
             run_metadata = getattr(run, "metadata", None)
