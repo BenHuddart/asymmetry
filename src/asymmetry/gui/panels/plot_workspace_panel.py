@@ -17,7 +17,7 @@ class PlotWorkspacePanel(QWidget):
     active_domain_changed = Signal(str)
     active_view_changed = Signal(str)
 
-    _VIEW_TOKENS = ("fb_asymmetry", "groups", "frequency", "maxent")
+    _VIEW_TOKENS = ("fb_asymmetry", "groups", "reconstruction", "frequency", "maxent")
     #: View tokens that resolve to the frequency-domain plot panel.
     _FREQUENCY_VIEWS = frozenset({"frequency", "maxent"})
 

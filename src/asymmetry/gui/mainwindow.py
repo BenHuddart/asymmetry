@@ -77,8 +77,10 @@ from asymmetry.core.maxent import (
     MaxEntCancelledError,
     MaxEntConfig,
     MaxEntState,
+    build_maxent_input,
     estimate_maxent_workload,
     maxent,
+    reconstruct_group_signals,
 )
 from asymmetry.core.project import (
     CURRENT_SCHEMA_VERSION,
@@ -90,6 +92,7 @@ from asymmetry.core.representation import (
     FitSeries,
     FitSlot,
     RepresentationType,
+    build_maxent_reconstruction_datasets,
     canonical_model_matches,
 )
 from asymmetry.core.representation.project_model import ProjectModel
@@ -1228,6 +1231,8 @@ class MainWindow(QMainWindow):
             self._maxent_panel._apply_to_selection_btn.clicked.connect(
                 self._on_apply_maxent_to_selection
             )
+        if hasattr(self._maxent_panel, "reconstruction_toggled"):
+            self._maxent_panel.reconstruction_toggled.connect(self._on_show_reconstruction_toggled)
 
         # Update selected datasets for global fitting whenever selection changes
         self._update_selected_datasets()
@@ -3866,7 +3871,9 @@ class MainWindow(QMainWindow):
         token = view
         if token is None and hasattr(self, "_plot_workspace"):
             token = self._plot_workspace.active_view()
-        is_maxent = str(token).strip().lower() == "maxent"
+        # The time-domain reconstruction is a MaxEnt output, so it keeps the
+        # MaxEnt controls (and dock title) visible rather than the FFT page.
+        is_maxent = str(token).strip().lower() in {"maxent", "reconstruction"}
         if hasattr(self, "_spectrum_stack"):
             self._spectrum_stack.setCurrentWidget(
                 self._maxent_panel if is_maxent else self._fourier_panel
@@ -4833,6 +4840,73 @@ class MainWindow(QMainWindow):
         # unconditional write would clobber edits the user made (and stored
         # via a dataset switch) while the worker was running.
 
+    def _record_maxent_reconstruction(
+        self,
+        run_number: int,
+        config: MaxEntConfig,
+        result,
+    ) -> None:
+        """Compute and cache the per-group time-domain reconstruction overlay.
+
+        The forward model is rebuilt from the same run+config the worker used,
+        so the reconstruction is self-consistent with the displayed spectrum and
+        its summed χ² equals the engine's.  Failures here never block the run —
+        the overlay is a diagnostic, not the result.
+        """
+        run = self._maxent_active_run
+        if run is None:
+            return
+        try:
+            maxent_input = build_maxent_input(run, config)
+            reconstructions = reconstruct_group_signals(maxent_input, result.state)
+            datasets = build_maxent_reconstruction_datasets(reconstructions, run)
+        except Exception:  # noqa: BLE001 — overlay is best-effort, never fatal
+            return
+        representation = self._project_model.ensure_dataset(int(run_number)).ensure(
+            RepresentationType.TIME_MAXENT_RECON
+        )
+        representation.recipe = {"maxent_config": config.to_dict()}
+        total_chi2 = result.metadata.get("maxent_chi2")
+        representation.result_metadata = {
+            "cycles": int(result.state.cycle),
+            "maxent_chi2": float(total_chi2) if total_chi2 is not None else None,
+        }
+        representation.cache_datasets(datasets)
+
+    def _maxent_reconstruction_datasets(self, run_number: int) -> list[MuonDataset]:
+        """Return the cached reconstruction overlay datasets for *run_number*."""
+        representation = self._project_model.representation(
+            int(run_number), RepresentationType.TIME_MAXENT_RECON
+        )
+        return representation.datasets() if representation is not None else []
+
+    def _render_maxent_reconstruction_plot(self) -> None:
+        """Draw the cached MaxEnt reconstruction overlay for the active run."""
+        if self._current_dataset is None:
+            return
+        run_number = int(self._current_dataset.run_number)
+        datasets = self._maxent_reconstruction_datasets(run_number)
+        if datasets and hasattr(self._plot_panel, "plot_maxent_reconstruction"):
+            self._plot_panel.plot_maxent_reconstruction(datasets)
+        else:
+            self._set_fourier_status(
+                "Run MaxEnt for this run to see the time-domain reconstruction."
+            )
+
+    def _on_show_reconstruction_toggled(self, enabled: bool) -> None:
+        """Switch the workspace between the MaxEnt spectrum and its overlay."""
+        if not hasattr(self._plot_workspace, "set_active_view"):
+            return
+        if enabled:
+            if self._plot_workspace.is_view_enabled("reconstruction"):
+                self._plot_workspace.set_active_view("reconstruction")
+            else:
+                self._set_fourier_status(
+                    "Run MaxEnt for this run to see the time-domain reconstruction."
+                )
+        elif self._plot_workspace.active_view() == "reconstruction":
+            self._plot_workspace.set_active_view("maxent")
+
     def _on_restart_maxent(self) -> None:
         """Drop resumable MaxEnt state for the active run."""
         if self._maxent_thread is not None:
@@ -4849,6 +4923,19 @@ class MainWindow(QMainWindow):
         if representation is not None:
             representation.invalidate()
             representation.result_metadata = {}
+        recon_rep = self._project_model.representation(
+            run_number, RepresentationType.TIME_MAXENT_RECON
+        )
+        if recon_rep is not None:
+            recon_rep.invalidate()
+            recon_rep.result_metadata = {}
+        # The reconstruction overlay is no longer valid; if it is the active
+        # view, fall back to the spectrum.
+        if (
+            hasattr(self._plot_workspace, "active_view")
+            and self._plot_workspace.active_view() == "reconstruction"
+        ):
+            self._plot_workspace.set_active_view("maxent")
         self._maxent_panel.set_diagnostics(None)
         self._set_fourier_status(f"Restarted MaxEnt state for run {run_number}.", success=True)
 
@@ -4963,9 +5050,11 @@ class MainWindow(QMainWindow):
             rep_type=RepresentationType.FREQ_MAXENT,
         )
         self._maxent_panel.set_diagnostics(diagnostics)
+        self._record_maxent_reconstruction(int(run_number), config, result)
         if hasattr(self._plot_workspace, "set_available_views"):
             enabled = set(self._plot_workspace.enabled_views())
             enabled.add("maxent")
+            enabled.add("reconstruction")
             self._plot_workspace.set_available_views(sorted(enabled))
         # Jump to the result only while the computed run is still the browser
         # selection; if the user navigated elsewhere mid-compute, leave both
@@ -4974,10 +5063,21 @@ class MainWindow(QMainWindow):
             None if self._current_dataset is None else int(self._current_dataset.run_number)
         )
         if current_run == int(run_number):
-            already_maxent = self._plot_workspace.active_view() == "maxent"
-            self._plot_workspace.set_active_view("maxent")
-            if already_maxent:
+            # The spectrum is MaxEnt's primary output, so land there after a
+            # run — unless the user is already viewing the reconstruction
+            # overlay, in which case stay and refresh it.  set_active_view is a
+            # no-op on the already-active view and skips its render signal, so
+            # re-render explicitly in that case.
+            staying_on_recon = self._plot_workspace.active_view() == "reconstruction" and bool(
+                self._maxent_reconstruction_datasets(int(run_number))
+            )
+            target_view = "reconstruction" if staying_on_recon else "maxent"
+            already_active = self._plot_workspace.active_view() == target_view
+            self._plot_workspace.set_active_view(target_view)
+            if already_active and target_view == "maxent":
                 self._sync_frequency_plot_for_run(int(run_number), preserve_x_limits=True)
+            elif already_active and target_view == "reconstruction":
+                self._render_maxent_reconstruction_plot()
             self._show_panel("fourier")
         # Surface the engine's early-stop verdict.  Drive it off the result's
         # own flags rather than the requested cycle count: state.cycle is
@@ -5294,7 +5394,15 @@ class MainWindow(QMainWindow):
         # FFT controls (and the "Fourier" title), or FFT status messages land
         # on the hidden page while stale MaxEnt controls stay visible.
         self._sync_spectrum_panel_for_view(view)
-        if view not in {"frequency", "maxent"}:
+        # Keep the MaxEnt panel's reconstruction toggle in step with the active
+        # view, however the view was reached (toggle, domain button, restore).
+        if hasattr(self._maxent_panel, "set_show_reconstruction"):
+            self._maxent_panel.set_show_reconstruction(view == "reconstruction")
+        if view == "reconstruction":
+            # A MaxEnt output rendered on the time panel; bypass the time-view
+            # combo machinery (fb/groups) and draw the cached reconstruction.
+            self._render_maxent_reconstruction_plot()
+        elif view not in {"frequency", "maxent"}:
             if hasattr(self._plot_panel, "set_current_time_view_mode"):
                 self._plot_panel.set_current_time_view_mode(view, emit_signal=False)
             self._on_plot_time_view_changed(view)

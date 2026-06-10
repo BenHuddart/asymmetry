@@ -2325,6 +2325,93 @@ class PlotPanel(QWidget):
         self._apply_limits(schedule_viewport_refresh=True)
         self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
 
+    def plot_maxent_reconstruction(self, datasets: list[MuonDataset]) -> None:
+        """Overlay each group's MaxEnt time-domain reconstruction on its data.
+
+        Each dataset carries the observed signal in ``asymmetry`` and the
+        forward-model reconstruction + weighted residual in
+        ``metadata['maxent_model']`` / ``['maxent_residual']``.  Per group we
+        draw a main axis (data points + model line) above a residuals strip,
+        stacked vertically and sharing the time axis.  The displayed χ² is the
+        engine's by construction (the residuals are ``(data − model)/σ``).
+        """
+        if not self._has_mpl or not datasets:
+            return
+        self._set_canvas_minimum_height_for_axes(len(datasets))
+        self._set_alpha_label(None)
+        self._disconnect_axis_limit_callbacks()
+        self._figure.clf()
+        self._subplot_axes_by_polarization = {}
+        self._vector_subplot_datasets = {}
+        self._grouped_time_subplot_datasets = []
+        self._current_datasets = list(datasets)
+        self._current_dataset = datasets[-1]
+        self._update_plot_header()
+        self._current_polarization_axis = None
+        for label in ("_polarization_label", "_polarization_combo"):
+            if hasattr(self, label):
+                getattr(self, label).hide()
+
+        n = len(datasets)
+        gridspec = self._figure.add_gridspec(2 * n, 1, height_ratios=[3, 1] * n, hspace=0.45)
+        shared_ax = None
+        total_chi2 = 0.0
+        total_obs = 0
+        last_time = None
+        for idx, dataset in enumerate(datasets):
+            time = np.asarray(dataset.time, dtype=float)
+            data = np.asarray(dataset.asymmetry, dtype=float)
+            model = np.asarray(dataset.metadata.get("maxent_model", data), dtype=float)
+            residual = np.asarray(
+                dataset.metadata.get("maxent_residual", data - model), dtype=float
+            )
+            total_chi2 += float(
+                dataset.metadata.get("maxent_group_chi2", float(np.sum(residual**2)))
+            )
+            total_obs += int(dataset.metadata.get("maxent_group_n_obs", residual.size))
+
+            ax_main = self._figure.add_subplot(gridspec[2 * idx], sharex=shared_ax)
+            ax_res = self._figure.add_subplot(gridspec[2 * idx + 1], sharex=ax_main)
+            if shared_ax is None:
+                shared_ax = ax_main
+            if idx == 0:
+                self._ax = ax_main
+            style_axes(ax_main)
+            style_axes(ax_res)
+            axis_key = f"recon:{dataset.run_number}:{idx}"
+            self._subplot_axes_by_polarization[axis_key] = ax_main
+
+            ax_main.plot(
+                time, data, ".", markersize=3, color=tokens.PLOT_DATA, label="Data", alpha=0.7
+            )
+            ax_main.plot(
+                time, model, "-", linewidth=1.4, color=tokens.PLOT_FIT, label="Reconstruction"
+            )
+            ax_main.set_title(str(dataset.run_label), loc="left", fontsize=10)
+            ax_main.set_ylabel("Recon. (a.u.)")
+            ax_main.tick_params(labelbottom=False)
+            style_legend(ax_main.legend(loc="upper right"))
+
+            ax_res.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=0.8)
+            ax_res.plot(time, residual, "-", linewidth=0.9, color=tokens.PLOT_DATA)
+            ax_res.set_ylabel("(d−m)/σ")
+            if idx == n - 1:
+                ax_res.set_xlabel("Time (μs)")
+            else:
+                ax_res.tick_params(labelbottom=False)
+            last_time = time
+
+        self._current_polarization_axis = next(iter(self._subplot_axes_by_polarization), None)
+        if total_obs:
+            chi2_per_n = total_chi2 / float(total_obs)
+            self._figure.suptitle(
+                f"MaxEnt reconstruction — χ² = {total_chi2:.1f} ({chi2_per_n:.2f} per point)",
+                fontsize=10,
+            )
+        if last_time is not None and last_time.size:
+            self._last_plot_time = last_time
+        self._figure.canvas.draw_idle()
+
     def _alpha_value_for_dataset(self, dataset: MuonDataset) -> float | None:
         """Return the asymmetry alpha value used for *dataset*, if available."""
         run = dataset.run

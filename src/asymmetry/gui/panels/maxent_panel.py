@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import html
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -32,6 +32,9 @@ from asymmetry.gui.styles.widgets import apply_param_table_style
 
 class MaxEntPanel(QWidget):
     """Controls for Maximum Entropy spectra."""
+
+    #: Emitted when the "Show time-domain reconstruction" toggle changes.
+    reconstruction_toggled = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -176,6 +179,15 @@ class MaxEntPanel(QWidget):
         buttons.addWidget(self._restart_btn, 1, 2)
         buttons.addWidget(self._cancel_btn, 2, 0, 1, 3)
         content_layout.addLayout(buttons)
+
+        self._show_reconstruction_check = QCheckBox("Show time-domain reconstruction")
+        self._show_reconstruction_check.setChecked(False)
+        self._show_reconstruction_check.setToolTip(
+            "Overlay the per-group MaxEnt reconstruction on the measured data "
+            "(time domain), with residuals. Available after a run."
+        )
+        self._show_reconstruction_check.toggled.connect(self.reconstruction_toggled.emit)
+        content_layout.addWidget(self._show_reconstruction_check)
 
         self._apply_to_selection_btn = QPushButton("Apply settings to selected runs")
         content_layout.addWidget(self._apply_to_selection_btn)
@@ -326,10 +338,25 @@ class MaxEntPanel(QWidget):
             "fit_backgrounds": bool(self._fit_backgrounds_check.isChecked()),
             "fit_constant_background": bool(self._fit_constant_background_check.isChecked()),
             "use_deadtime_correction": bool(self._use_deadtime_check.isChecked()),
+            "show_reconstruction": bool(self._show_reconstruction_check.isChecked()),
             "selected_group_ids": self.selected_group_ids(),
             "group_enabled_table": self.group_enabled_table(),
             "group_phase_degrees": self.group_phase_table(),
         }
+
+    def show_reconstruction_enabled(self) -> bool:
+        """Return whether the reconstruction overlay toggle is checked."""
+        return bool(self._show_reconstruction_check.isChecked())
+
+    def set_show_reconstruction(self, checked: bool) -> None:
+        """Set the reconstruction toggle without emitting ``reconstruction_toggled``.
+
+        Used to keep the checkbox in step with the active workspace view when
+        the view changes by some other route (e.g. the MaxEnt domain button).
+        """
+        blocker = self._show_reconstruction_check.blockSignals(True)
+        self._show_reconstruction_check.setChecked(bool(checked))
+        self._show_reconstruction_check.blockSignals(blocker)
 
     def maxent_config(self, *, cycles: int) -> MaxEntConfig:
         """Return a concrete core MaxEnt config for a cycle request."""
@@ -378,6 +405,9 @@ class MaxEntPanel(QWidget):
             bool(state.get("fit_constant_background", True))
         )
         self._use_deadtime_check.setChecked(bool(state.get("use_deadtime_correction", True)))
+        blocker = self._show_reconstruction_check.blockSignals(True)
+        self._show_reconstruction_check.setChecked(bool(state.get("show_reconstruction", True)))
+        self._show_reconstruction_check.blockSignals(blocker)
         enabled = state.get("group_enabled_table")
         phases = state.get("group_phase_degrees")
         if self._table_group_ids and (isinstance(enabled, dict) or isinstance(phases, dict)):

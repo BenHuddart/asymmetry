@@ -276,6 +276,40 @@ the 1.38 MHz Mu\ :sup:`+` line — :math:`\gamma_\mu \cdot 100\,\text{G}` — wi
 frequency window capped a little above 1.38 MHz, a good time window, and a
 modest number of cycles and spectrum points.
 
+Reading the reconstruction overlay
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The spectrum is what MaxEnt is *for*, but the **time-domain reconstruction** is
+how you check it. MaxEnt works by forward-modelling the raw counts: it asks what
+each detector group's signal would look like if the data really came from the
+current spectrum, and adjusts the spectrum until those model signals match the
+measurements. The reconstruction overlay shows that comparison directly — the
+measured signal and the model the spectrum predicts, group by group, in time.
+
+After a run, tick **Show time-domain reconstruction** in the MaxEnt panel. The
+plot workspace switches to a stacked view: one panel per detector group with the
+data and the reconstructed model on the same axes, and a residuals strip beneath
+showing the weighted residual :math:`(d-m)/\sigma`. The χ² printed above the
+plot is the same number the Diagnostics line reports — it is computed from these
+very residuals, so the overlay and the convergence figure can never disagree.
+
+This is the strongest single check of fit quality:
+
+* **A good fit** sits on the data with residuals scattered evenly around zero
+  and no left-over oscillation — the model has captured the precession.
+* **Left-over structure in the residuals** (a coherent wiggle, a slow drift)
+  means the spectrum is missing a line, has put it at the wrong frequency, or
+  has the wrong phase for that group. Widen or re-centre the frequency window,
+  re-seed the phases, and run again.
+* **Residuals that blow up at early or late times** point at the time window or
+  an instrumental artefact (deadtime at short times on a pulsed source; noise at
+  long times) rather than at the spectrum itself.
+
+The reconstruction is recomputed from the converged spectrum each run and is not
+stored in the project file; re-open the spectrum and run a cycle to regenerate
+it. Untick the box (or click the **MaxEnt** domain button) to return to the
+spectrum.
+
 Choosing FFT vs MaxEnt
 -----------------------
 

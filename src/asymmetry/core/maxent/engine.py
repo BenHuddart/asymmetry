@@ -142,6 +142,11 @@ class MaxEntConfig:
     t_min_us: float | None = None
     t_max_us: float | None = None
     time_binning_factor: int = 1
+    # Display-only: whether the time-domain reconstruction overlay is the active
+    # view (vs the spectrum).  It does not change the computation, so it is
+    # absent from ``_state_signature`` (toggling it must not invalidate a
+    # resumed run).  Defaults off — the spectrum is MaxEnt's primary output.
+    show_reconstruction: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable recipe block."""
@@ -167,6 +172,7 @@ class MaxEntConfig:
             "t_min_us": self.t_min_us,
             "t_max_us": self.t_max_us,
             "time_binning_factor": int(self.time_binning_factor),
+            "show_reconstruction": bool(self.show_reconstruction),
         }
 
     @classmethod
@@ -204,6 +210,7 @@ class MaxEntConfig:
             t_min_us=_optional_float(data.get("t_min_us")),
             t_max_us=_optional_float(data.get("t_max_us")),
             time_binning_factor=_parse_positive_int(data.get("time_binning_factor", 1)),
+            show_reconstruction=bool(data.get("show_reconstruction", False)),
         )
 
 
@@ -756,6 +763,69 @@ def tropus(
             phase_degrees=phase,
         )
     return output
+
+
+@dataclass(frozen=True)
+class ReconstructedGroup:
+    """One group's time-domain reconstruction over its in-window points.
+
+    All arrays are masked to the group's good (finite, positive-σ, in-window)
+    points, in the engine's internal normalised signal space — the same space
+    the χ² is computed in, so ``chi2`` here equals this group's contribution to
+    the engine's reported χ² exactly.
+    """
+
+    group_id: int
+    group_name: str
+    time_us: NDArray[np.float64]
+    data: NDArray[np.float64]
+    model: NDArray[np.float64]
+    sigma: NDArray[np.float64]
+    residual: NDArray[np.float64]
+    chi2: float
+    n_obs: int
+
+
+def reconstruct_group_signals(
+    maxent_input: MaxEntInput,
+    state: MaxEntState,
+) -> dict[int, ReconstructedGroup]:
+    """Return the per-group time-domain reconstruction for a converged state.
+
+    The forward model (``opus``) of the shared spectrum is the reconstruction
+    that the engine fits to each group's data; this packages it alongside the
+    observed signal, σ, and the weighted residual ``(data − model)/σ`` for the
+    overlay.  Summing :attr:`ReconstructedGroup.chi2` over groups reproduces the
+    engine's reported χ² (same residual computation as ``_residual_payload``).
+    """
+    predictions = opus(
+        state.spectrum,
+        maxent_input,
+        phases=state.phases,
+        amplitudes=state.amplitudes,
+        backgrounds=state.backgrounds,
+    )
+    reconstructions: dict[int, ReconstructedGroup] = {}
+    for group in maxent_input.groups:
+        mask = group.mask if group.mask is not None else np.ones(group.time_us.size, dtype=bool)
+        time = np.asarray(group.time_us, dtype=np.float64)[mask]
+        data = np.asarray(group.signal, dtype=np.float64)[mask]
+        model = np.asarray(predictions[group.group_id], dtype=np.float64)[mask]
+        sigma = np.maximum(np.asarray(group.sigma, dtype=np.float64)[mask], _MIN_POSITIVE)
+        residual = (data - model) / sigma
+        chi2 = float(np.sum(residual**2))
+        reconstructions[group.group_id] = ReconstructedGroup(
+            group_id=int(group.group_id),
+            group_name=str(group.group_name),
+            time_us=time,
+            data=data,
+            model=model,
+            sigma=sigma,
+            residual=residual,
+            chi2=chi2,
+            n_obs=int(time.size),
+        )
+    return reconstructions
 
 
 def _state_signature(maxent_input: MaxEntInput, config: MaxEntConfig) -> tuple[Any, ...]:
