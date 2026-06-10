@@ -655,6 +655,27 @@
       "notes": "Second-pass Model-layer follow-ons from model-function-parity (PR #32). Item 1 arbitrary X: any fitted parameter as x (param:<name> encoding), common-scope components (core component_names_for_x already degrades), opt-in effective-variance (Orear/York) x-uncertainty toggle default-off + horizontal x-bars (ODR rejected: no box bounds). Item 2 cross-group error modes + windows: global_fit_parameter_model gains error_mode/error_value/windows (reuse apply_error_mode/windows_mask; SCATTER rescales global+local sigma) FIRST, then un-hide CrossGroupFitDialog controls + config persistence. Item 3 results-table recursion: cross-group local+global outputs become a new trendable _GroupFitData series in FitParametersPanel (single-fit-range export deferred). Item 4 STRETCH: quadrature combinator. Decisions A/B/C agreed 2026-06-10. WiMDA columnscan/column-spinners verified directly against Model.pas. Study pass only; implementation paused for go-ahead. IMPLEMENTED 2026-06-10: items 1-3 shipped, validate green. Phase 3 landed as a first-class computed FitSeries in ProjectModel (MainWindow._record_model_fit_results_series) rather than panel-injected rows (load_representation_series rebuilds from ProjectModel, so a panel-only series would be wiped); no _FitRow.origin needed. Item 4 (quadrature combinator) remains a follow-on."
     },
     {
+      "slug": "count-domain-fit-modes",
+      "feature_name": "Count-domain fit modes (α-free F+B, single-histogram, exclude range, fittable t0/baseline, count-loss in fit, double pulse)",
+      "status": "implemented",
+      "path": "docs/porting/count-domain-fit-modes",
+      "references": [
+        "WiMDA",
+        "musrfit"
+      ],
+      "docs": {
+        "readme": "docs/porting/count-domain-fit-modes/README.md",
+        "comparison": "docs/porting/count-domain-fit-modes/comparison.md",
+        "implementation_options": "docs/porting/count-domain-fit-modes/implementation-options.md",
+        "test_data": "docs/porting/count-domain-fit-modes/test-data.md",
+        "verification_plan": "docs/porting/count-domain-fit-modes/verification-plan.md"
+      },
+      "tests_path": "tests/test_count_domain_fits.py",
+      "src_path": "src/asymmetry/core/fitting/count_domain.py",
+      "updated": "2026-06-10",
+      "notes": "Wave A project 3 of wimda-parity-gap. IMPLEMENTED 2026-06-10, all 3 phases validate-green (P1 2126 / P2 2135 / P3 2145). Raw-count fits with selectable Poisson(Cash, default)/Gaussian cost. P1: build_fb_count_model (sqrt(alpha) F/B tie) + count_domain.py driver; single-histogram = one-group degenerate case of build_grouped_count_model; raw model = e^(-t/tau)x existing builder; engine.py untouched. P2: interior exclude window, fittable t0, baseline drift (all no-op-when-off). P3: count-loss DT0(+C2/C3/C4 polynomial) + promote_deadtime_to_grouping (Send-to-Group, additive/replace) + double-pulse single-histogram (simulate_double_pulse_run round-trips dpsep; dpsep FIXED from metadata - non-smooth gate defeats migrad). GUI: fit-target selector in MultiGroupFitWindow + minimal fit_panel.py routing. Follow-ons: unify fgAll onto Poisson, free tau, DT1/power-law deadtime, robust dpsep scan, FB double-pulse, plot overlay, MINOS-on-alpha. NOT pushed."
+    },
+    {
       "slug": "maxent-completion",
       "feature_name": "MaxEnt completion: reconstruction overlay, ISIS pulse shape, ZF/LF+SpecBG, deadtime/phase calibration",
       "status": "implemented",

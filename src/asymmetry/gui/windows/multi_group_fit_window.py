@@ -10,10 +10,31 @@ in their member set (Single → the active run; Batch → the selection).
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.panels.fit_panel import GlobalFitTab
+
+#: Fit-target choices (label, mode key) shown in the count-domain selector.
+_FIT_TARGETS: tuple[tuple[str, str], ...] = (
+    ("All groups", "all"),
+    ("Forward + Backward (free α)", "fb"),
+    ("Single group", "single"),
+)
+_FIT_COSTS: tuple[tuple[str, str], ...] = (("Poisson", "poisson"), ("Gaussian √N", "gaussian"))
+_SINGLE_SIDES: tuple[tuple[str, str], ...] = (("Forward", "forward"), ("Backward", "backward"))
 
 
 class MultiGroupFitWindow(QWidget):
@@ -22,11 +43,15 @@ class MultiGroupFitWindow(QWidget):
     grouped_fit_completed = Signal(object, object)
     grouped_preview_requested = Signal(object, object)
     fit_range_edit_committed = Signal(float, float)
+    count_fit_completed = Signal(object, object)  # (dataset, {"result", "overlays"})
+    count_grouping_promoted = Signal(object)  # (dataset) — a count calibration hit the grouping
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        layout.addWidget(self._build_target_controls())
 
         self._tabs = QTabWidget()
         # Single = the active run's multi-group fit; Batch = the multi-run series.
@@ -36,10 +61,149 @@ class MultiGroupFitWindow(QWidget):
             tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
             tab.grouped_preview_requested.connect(self.grouped_preview_requested.emit)
             tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
+            tab.count_fit_completed.connect(self.count_fit_completed.emit)
+            tab.count_grouping_promoted.connect(self.count_grouping_promoted.emit)
         self._tabs.addTab(self._single_fit_tab, "Single")
         self._tabs.addTab(self._batch_fit_tab, "Batch")
         layout.addWidget(self._tabs)
         self._run_label = ""
+        self._sync_count_fit_target()
+
+    def _build_target_controls(self) -> QWidget:
+        """Build the count-domain fit-target / cost / side selector row."""
+        box = QGroupBox("Fit target")
+        form = QFormLayout(box)
+        form.setContentsMargins(8, 4, 8, 4)
+
+        # Store the mode key as item data so reordering the dropdowns can't remap
+        # a selection to the wrong key.
+        self._target_combo = QComboBox()
+        for label, key in _FIT_TARGETS:
+            self._target_combo.addItem(label, key)
+        self._target_combo.currentIndexChanged.connect(self._sync_count_fit_target)
+
+        self._cost_combo = QComboBox()
+        for label, key in _FIT_COSTS:
+            self._cost_combo.addItem(label, key)
+        self._cost_combo.currentIndexChanged.connect(self._sync_count_fit_target)
+
+        self._side_combo = QComboBox()
+        for label, key in _SINGLE_SIDES:
+            self._side_combo.addItem(label, key)
+        self._side_combo.currentIndexChanged.connect(self._sync_count_fit_target)
+
+        form.addRow(QLabel("Target"), self._target_combo)
+        form.addRow(QLabel("Cost"), self._cost_combo)
+        self._side_label = QLabel("Single group")
+        form.addRow(self._side_label, self._side_combo)
+
+        # Interior exclude window (μs): inactive while max ≤ min.
+        self._exclude_min = QDoubleSpinBox()
+        self._exclude_max = QDoubleSpinBox()
+        for spin in (self._exclude_min, self._exclude_max):
+            spin.setDecimals(3)
+            spin.setRange(0.0, 1000.0)
+            spin.setSingleStep(0.1)
+            spin.valueChanged.connect(self._sync_count_fit_target)
+        exclude_row = QWidget()
+        exclude_layout = QHBoxLayout(exclude_row)
+        exclude_layout.setContentsMargins(0, 0, 0, 0)
+        exclude_layout.addWidget(self._exclude_min)
+        exclude_layout.addWidget(QLabel("–"))
+        exclude_layout.addWidget(self._exclude_max)
+        self._exclude_label = QLabel("Exclude (μs)")
+        form.addRow(self._exclude_label, exclude_row)
+
+        self._t0_check = QCheckBox("Fit t₀ offset")
+        self._t0_check.toggled.connect(self._sync_count_fit_target)
+        self._baseline_check = QCheckBox("Fit baseline drift")
+        self._baseline_check.toggled.connect(self._sync_count_fit_target)
+        self._deadtime_check = QCheckBox("Fit deadtime DT₀")
+        self._deadtime_check.toggled.connect(self._sync_count_fit_target)
+        nuisance_row = QWidget()
+        nuisance_layout = QHBoxLayout(nuisance_row)
+        nuisance_layout.setContentsMargins(0, 0, 0, 0)
+        nuisance_layout.addWidget(self._t0_check)
+        nuisance_layout.addWidget(self._baseline_check)
+        nuisance_layout.addWidget(self._deadtime_check)
+        form.addRow(QLabel("Nuisances"), nuisance_row)
+
+        # Double-pulse separation (μs); 0 = single pulse. Fixed from the
+        # instrument, or located by a coarse->fine scan when "fit" is ticked.
+        self._dpsep_spin = QDoubleSpinBox()
+        self._dpsep_spin.setDecimals(3)
+        self._dpsep_spin.setRange(0.0, 5.0)
+        self._dpsep_spin.setSingleStep(0.01)
+        self._dpsep_spin.valueChanged.connect(self._sync_count_fit_target)
+        self._dpsep_fit_check = QCheckBox("fit")
+        self._dpsep_fit_check.setToolTip(
+            "Refine dpsep by a coarse→fine scan (the pulse-onset gate defeats gradient fitting)"
+        )
+        self._dpsep_fit_check.toggled.connect(self._sync_count_fit_target)
+        dpsep_row = QWidget()
+        dpsep_layout = QHBoxLayout(dpsep_row)
+        dpsep_layout.setContentsMargins(0, 0, 0, 0)
+        dpsep_layout.addWidget(self._dpsep_spin)
+        dpsep_layout.addWidget(self._dpsep_fit_check)
+        self._dpsep_label = QLabel("Double pulse (μs)")
+        form.addRow(self._dpsep_label, dpsep_row)
+
+        # Promote a fitted deadtime into the grouping correction (Send-to-Group).
+        self._promote_btn = QPushButton("Promote DT₀ → grouping")
+        self._promote_btn.clicked.connect(self._on_promote_deadtime)
+        self._promote_additive = QCheckBox("accumulate")
+        promote_row = QWidget()
+        promote_layout = QHBoxLayout(promote_row)
+        promote_layout.setContentsMargins(0, 0, 0, 0)
+        promote_layout.addWidget(self._promote_btn)
+        promote_layout.addWidget(self._promote_additive)
+        self._promote_label = QLabel("Calibrate")
+        form.addRow(self._promote_label, promote_row)
+        return box
+
+    def _on_promote_deadtime(self) -> None:
+        """Promote the active surface's last fitted deadtime to the grouping."""
+        self._active_tab().promote_count_deadtime(additive=self._promote_additive.isChecked())
+
+    def _sync_count_fit_target(self, *_args) -> None:
+        """Push the selector state down to both grouped surfaces."""
+        mode = self._target_combo.currentData()
+        cost = self._cost_combo.currentData()
+        side = self._side_combo.currentData()
+        single = mode == "single"
+        count_mode = mode != "all"
+        self._side_combo.setEnabled(single)
+        self._side_label.setEnabled(single)
+        self._cost_combo.setEnabled(count_mode)
+        for widget in (
+            self._exclude_min,
+            self._exclude_max,
+            self._exclude_label,
+            self._t0_check,
+            self._baseline_check,
+            self._deadtime_check,
+            self._dpsep_spin,
+            self._dpsep_fit_check,
+            self._dpsep_label,
+            self._promote_btn,
+            self._promote_additive,
+            self._promote_label,
+        ):
+            widget.setEnabled(count_mode)
+
+        ex_lo = float(self._exclude_min.value())
+        ex_hi = float(self._exclude_max.value())
+        exclude = (ex_lo, ex_hi) if ex_hi > ex_lo else None
+        for tab in (self._single_fit_tab, self._batch_fit_tab):
+            tab.set_count_fit_mode(mode)
+            tab.set_count_fit_cost(cost)
+            tab.set_count_single_side(side)
+            tab.set_count_exclude(exclude)
+            tab.set_count_fit_t0(self._t0_check.isChecked())
+            tab.set_count_baseline(self._baseline_check.isChecked())
+            tab.set_count_deadtime(self._deadtime_check.isChecked())
+            tab.set_count_dpsep(float(self._dpsep_spin.value()))
+            tab.set_count_dpsep_fit(self._dpsep_fit_check.isChecked())
 
     def _grouped_tabs(self) -> tuple[GlobalFitTab, GlobalFitTab]:
         return (self._single_fit_tab, self._batch_fit_tab)
