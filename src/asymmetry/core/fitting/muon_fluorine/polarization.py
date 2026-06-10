@@ -7,11 +7,12 @@ from functools import lru_cache
 import numpy as np
 from numpy.typing import NDArray
 
-from asymmetry.core.fitting.models import _strong_collision_solve
+from asymmetry.core.fitting.models import _bounded_cache_get, _strong_collision_solve
 from asymmetry.core.fitting.muon_fluorine.dipolar import (
+    _PAIR_ISO_FOUR,
+    _PAIR_TENSOR_FOUR,
     MUON_SIGMA_Z_FOUR_SPIN,
     MUON_SIGMA_Z_THREE_SPIN,
-    four_spin_hamiltonian_rad_per_us,
     omega_d_f_f_rad_per_us,
     omega_d_mu_f_rad_per_us,
     three_spin_hamiltonian_rad_per_us,
@@ -54,11 +55,21 @@ def linear_fmuf_polarization(t: NDArray[np.float64], r_muF: float) -> NDArray[np
 _DYN_FMUF_CACHE: dict[tuple, tuple[NDArray[np.float64], NDArray[np.float64]]] = {}
 _DYN_FMUF_CACHE_MAX = 128
 
-# Above this fluctuation rate (µs⁻¹) the trapezoidal strong-collision solver
-# would need a prohibitively fine grid (same crossover as the dynamic KT); the
-# motional-narrowing limit exp(-2 omega_d^2 t / nu) is used instead.  The static
-# F-mu-F second moment is M2 = 2 omega_d^2, so the narrowed rate is M2/nu.
-_DYN_FMUF_NU_SWITCH = 12.0
+# Branch selection between the trapezoidal strong-collision solver and the
+# Abragam-form interpolation exp[-(M2/nu^2)(e^{-nu t}-1+nu t)] (second moment
+# M2 = 2*omega_d^2).  The two have complementary accuracy: the capped-grid
+# solver degrades at large nu when the relaxation is *slow* (errors accumulate
+# over many steps while G stays near 1), which is precisely the regime
+# nu >> omega_d where the Abragam interpolation is excellent; conversely for
+# nu <~ 10*omega_d the interpolation errs at the percent level while the
+# solver is accurate.  Crossing over at nu = 12*omega_d (with a floor at the
+# legacy 12 us^-1 and a hard solver stability ceiling from the grid cap) keeps
+# the branch seam below ~1 % everywhere — measured in the test suite, versus
+# the 2.5-30 % step of a fixed-rate switch.
+_DYN_FMUF_SWITCH_RATIO = 12.0
+_DYN_FMUF_SWITCH_MIN = 12.0
+_DYN_FMUF_NU_H_STABILITY = 0.2
+_DYN_FMUF_GRID_CAP = 20001
 
 
 def dynamic_fmuf_polarization(
@@ -75,9 +86,12 @@ def dynamic_fmuf_polarization(
     modelling muon hopping away from the F-mu-F site (or fluctuation of the
     coupling) at rate ``nu`` (µs⁻¹).  ``nu = 0`` reduces exactly to the static
     :func:`linear_fmuf_polarization`; large ``nu`` gives motional narrowing
-    ``exp(-2 omega_d^2 t / nu)``.  Unlike WiMDA, the integration horizon is
-    derived from the requested time range rather than a user-visible ``tmax``
-    parameter, and the solution is cached per ``(r_muF, nu, tmax)``.
+    toward ``exp(-2 omega_d^2 t / nu)``.  Unlike WiMDA, the integration horizon
+    is derived from the requested time range rather than a user-visible
+    ``tmax`` parameter, the solution is cached per ``(r_muF, nu, tmax)``, and
+    the solver is used over its full accuracy range with an Abragam-form
+    interpolation beyond it (WiMDA jumps to the bare narrowing exponential at
+    a fixed rate, leaving a discontinuity in the model).
     """
     t_arr = np.asarray(t, dtype=float)
     scalar = t_arr.ndim == 0
@@ -88,27 +102,33 @@ def dynamic_fmuf_polarization(
         return float(gd[0]) if scalar else gd
 
     omega_d = omega_d_mu_f_rad_per_us(r_muF)
-    if nu > _DYN_FMUF_NU_SWITCH:
-        gd = np.exp(np.clip(-2.0 * omega_d * omega_d * tt / nu, -700.0, 0.0))
+    tmax = float(max(tt.max(), 1e-6))
+    nu_switch = max(_DYN_FMUF_SWITCH_MIN, _DYN_FMUF_SWITCH_RATIO * omega_d)
+    nu_stability = _DYN_FMUF_NU_H_STABILITY * (_DYN_FMUF_GRID_CAP - 1) / tmax
+    if nu > min(nu_switch, nu_stability):
+        # Abragam-form strong-collision interpolation with the static F-mu-F
+        # second moment M2 = 2*omega_d^2; equals the motional-narrowing
+        # exponential for nu*t >> 1 with correct quadratic short-time form.
+        x = nu * tt
+        exponent = -(2.0 * omega_d * omega_d / (nu * nu)) * (
+            np.exp(np.clip(-x, -700.0, 0.0)) - 1.0 + x
+        )
+        gd = np.exp(np.clip(exponent, -700.0, 0.0))
         return float(gd[0]) if scalar else gd
 
-    tmax = float(max(tt.max(), 1e-6))
     key = (round(float(r_muF), 9), round(nu, 6), round(tmax, 5))
-    cached = _DYN_FMUF_CACHE.get(key)
-    if cached is None:
+
+    def _compute() -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         # Step resolves both the collision rate and the fastest static
         # oscillation, (3+sqrt(3))/2 * omega_d.
         h_des = min(0.02, 0.02 / max(nu, 1e-3), 0.1 / max(omega_d, 1e-3))
-        n = int(min(max(round(tmax / h_des) + 1, 64), 20001))
+        n = int(min(max(round(tmax / h_des) + 1, 64), _DYN_FMUF_GRID_CAP))
         grid = np.linspace(0.0, tmax, n)
         h = grid[1] - grid[0] if n > 1 else tmax
         gs = np.asarray(linear_fmuf_polarization(grid, r_muF), dtype=float)
-        gd_grid = _strong_collision_solve(gs, nu, h)
-        if len(_DYN_FMUF_CACHE) >= _DYN_FMUF_CACHE_MAX:
-            _DYN_FMUF_CACHE.pop(next(iter(_DYN_FMUF_CACHE)))
-        _DYN_FMUF_CACHE[key] = (grid, gd_grid)
-        cached = (grid, gd_grid)
-    grid, gd_grid = cached
+        return grid, _strong_collision_solve(gs, nu, h)
+
+    grid, gd_grid = _bounded_cache_get(_DYN_FMUF_CACHE, _DYN_FMUF_CACHE_MAX, key, _compute)
     gd = np.interp(tt, grid, gd_grid)
     return float(gd[0]) if scalar else gd
 
@@ -273,11 +293,17 @@ def general_fmuf_polarization(
     return np.asarray(amps @ cos_terms, dtype=float)
 
 
-def _validate_triangle_geometry(r_muF: float, r3: float, phi3_deg: float) -> None:
+def _validate_triangle_geometry(r_muF: float, r3: float) -> None:
+    """Reject only genuinely unphysical trial geometries.
+
+    Any ``phi3`` is geometrically valid (the powder average makes the angle
+    periodic and mirror-symmetric, with [0, 180] the canonical range), so no
+    angular range is enforced — a range rejection would hand the minimiser a
+    flat penalty plateau just past the boundary.  Coincident nuclei are caught
+    separately via the pair-separation guard.
+    """
     if r_muF <= 0.0 or r3 <= 0.0:
         raise ValueError("r_muF and r3 must be positive")
-    if phi3_deg <= 0.0 or phi3_deg > 180.0:
-        raise ValueError("phi3 must be in the range (0, 180] degrees")
 
 
 @lru_cache(maxsize=256)
@@ -292,7 +318,7 @@ def _triangle_spectral_terms_cached(
     r_muF = float(r_key)
     r3 = float(r3_key)
     phi3_deg = float(phi3_key)
-    _validate_triangle_geometry(r_muF, r3, phi3_deg)
+    _validate_triangle_geometry(r_muF, r3)
 
     phi3 = np.deg2rad(phi3_deg)
     # Muon at the origin; collinear F-mu-F pair along z; third fluorine in the
@@ -331,28 +357,31 @@ def _triangle_spectral_terms_cached(
     couplings = dict(mu_pairs + ff_pairs)
 
     rotations, orientation_weights = _powder_rotations(num_beta, num_alpha, num_gamma)
-
-    frequencies_list: list[NDArray[np.float64]] = []
-    amplitudes_list: list[NDArray[np.float64]] = []
     dim = MUON_SIGMA_Z_FOUR_SPIN.shape[0]
 
-    for idx, orient_weight in enumerate(orientation_weights):
-        rot = rotations[idx]
-        pair_terms = [
-            (pair, couplings[pair], rot @ direction) for pair, direction in directions.items()
-        ]
-        hamiltonian = four_spin_hamiltonian_rad_per_us(pair_terms)
-        evals, evecs = np.linalg.eigh(hamiltonian)
+    # Build all orientations' Hamiltonians in one shot: for each pair the
+    # coupling term is c * [iso - 3 (n.S_i)(n.S_j)] with n the rotated
+    # direction, so stacking the outer products n n^T over orientations turns
+    # the per-orientation Python loop into a single einsum against the
+    # precomputed (3, 3, 16, 16) pair tensors, followed by one batched eigh —
+    # ~4x faster per cache miss than the loop (this is the hot path of a fit,
+    # since every minimizer step changes the geometry and misses the cache).
+    n_orient = rotations.shape[0]
+    hamiltonians = np.zeros((n_orient, dim, dim), dtype=complex)
+    for pair, direction in directions.items():
+        coupling = couplings[pair]
+        n_vecs = rotations @ (np.asarray(direction, dtype=float) / np.linalg.norm(direction))
+        outer = (n_vecs[:, :, None] * n_vecs[:, None, :]).reshape(n_orient, 9)
+        aniso = (outer @ _PAIR_TENSOR_FOUR[pair].reshape(9, dim * dim)).reshape(n_orient, dim, dim)
+        hamiltonians += coupling * (_PAIR_ISO_FOUR[pair][None, :, :] - 3.0 * aniso)
 
-        sigma_mu_z_eigenbasis = evecs.conj().T @ MUON_SIGMA_Z_FOUR_SPIN @ evecs
-        transition_weights = (np.abs(sigma_mu_z_eigenbasis) ** 2) / float(dim)
+    evals, evecs = np.linalg.eigh(hamiltonians)  # (n, 16), (n, 16, 16)
+    sigma_eig = evecs.conj().transpose(0, 2, 1) @ MUON_SIGMA_Z_FOUR_SPIN @ evecs
+    transition_weights = (np.abs(sigma_eig) ** 2) / float(dim)  # (n, 16, 16)
+    omega_mn = (evals[:, :, None] - evals[:, None, :]).real
 
-        omega_mn = (evals[:, None] - evals[None, :]).real
-        frequencies_list.append(omega_mn.ravel())
-        amplitudes_list.append((float(orient_weight) * transition_weights).ravel().real)
-
-    frequencies = np.concatenate(frequencies_list)
-    amplitudes = np.concatenate(amplitudes_list)
+    frequencies = omega_mn.reshape(-1)
+    amplitudes = (orientation_weights[:, None, None] * transition_weights).reshape(-1).real
 
     binned_frequencies = np.round(frequencies, decimals=_SPECTRUM_BIN_DECIMALS)
     unique_freq, inverse = np.unique(binned_frequencies, return_inverse=True)

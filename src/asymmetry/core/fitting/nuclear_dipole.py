@@ -113,16 +113,27 @@ def dipolar_spin_j(
 
     Closed-form eigen-solution of the muon + spin-``J`` system with dipolar
     coupling ``f_dip`` (MHz) and quadrupolar splitting ``f_quad`` (MHz),
-    averaged as ``(P_z + 2 P_x)/3`` for a polycrystal — the Celio-Meier result
+    averaged as ``(P_z + 2 P_x)/3`` for a polycrystal (exact for this axially
+    symmetric Hamiltonian, since ``P_x = P_y``), after Celio and Meier
     (Hyperfine Interact. 18, 435 (1984)); WiMDA's ``Dip gen ZF PCR``.
+
+    The per-block mixing angle is **signed**: ``cos 2α = −q1/W_m``.  WiMDA's
+    ``ZFdipgen`` instead uses ``|cos 2α|`` (it reconstructs the angle from
+    ``cos² 2α``), which is wrong for every ``J > 1/2`` — deviations of up to
+    ~0.5 in the normalised polarization, verified against exact
+    diagonalization of ``H = ω_d (S·I − 3 S_z I_z) + ω_q I_z²``.  This
+    implementation deliberately diverges from WiMDA there (see
+    ``docs/porting/wimda-fit-function-parity/comparison.md``); the regression
+    test pins it to the exact-diagonalization reference.
 
     For ``J = 1/2`` the quadrupole interaction is inactive (a spin-1/2 nucleus
     has no quadrupole moment) and the function reduces to the Meier pair
-    (:func:`dipolar_pair_kernel` with ``lambda_T = 0``).
+    (:func:`dipolar_pair_kernel` with ``lambda_T = 0``); this case is
+    insensitive to the mixing-angle sign and so agrees with WiMDA.
 
     ``J`` must be a positive half-integer; non-half-integer values are rounded
-    to the nearest half-integer (as WiMDA's ``round(2 p3)``).  ``J`` is intended
-    to be held fixed during fits.
+    to the nearest half-integer (as WiMDA's ``round(2 p3)``).  ``J`` is
+    fixed by default in fits (the model is piecewise-constant in ``J``).
     """
     t_arr = np.asarray(t, dtype=float)
     wd = _TWO_PI * float(f_dip)
@@ -133,7 +144,7 @@ def dipolar_spin_j(
     n_lev = j2 + 2  # index i = 0 .. 2J+1
     lam_p = np.empty(n_lev)
     lam_m = np.empty(n_lev)
-    csq2a = np.empty(n_lev)
+    c2a = np.empty(n_lev)  # signed cos(2 alpha) per block
     for i in range(n_lev):
         m = -jval + i
         q1 = (wq + wd) * (2.0 * m - 1.0)
@@ -144,9 +155,10 @@ def dipolar_spin_j(
         wm = np.sqrt(qq)
         lam_p[i] = 0.5 * (q3 + wm) if i < j2 + 1 else wq * jval * jval - wd * jval
         lam_m[i] = 0.5 * (q3 - wm) if i > 0 else wq * jval * jval - wd * jval
-        csq2a[i] = (q1 * q1 / qq) if qq > 0.0 else 0.0
+        c2a[i] = (-q1 / wm) if qq > 0.0 else 0.0
+    csq2a = c2a * c2a
     ssq2a = 1.0 - csq2a
-    csqa = 0.5 * (1.0 + np.sqrt(csq2a))
+    csqa = 0.5 * (1.0 + c2a)
     ssqa = 1.0 - csqa
 
     pz = np.ones_like(t_arr)

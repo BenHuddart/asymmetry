@@ -143,21 +143,28 @@ MuoniumHighTFAniso
 .. math::
 
    A(t) = \frac{A}{2}\left\langle
-   \cos\!\left[2\pi\left(\nu_{34}+\tfrac{d}{2}\right)t+\phi\right]
-   + \cos\!\left[2\pi\left(\nu_{12}-\tfrac{d}{2}\right)t+\phi\right]
+   \cos\!\left[2\pi\nu_{12}(\theta)\,t+\phi\right]
+   + \cos\!\left[2\pi\nu_{34}(\theta)\,t+\phi\right]
    \right\rangle_{\cos\theta},
-   \qquad d = \tfrac{D}{2}\left(3\cos^2\theta - 1\right)
+   \qquad \nu_{12}(\theta) + \nu_{34}(\theta) \simeq
+   A_{\mathrm{hf}} + \tfrac{D}{2}\left(3\cos^2\theta - 1\right)
 
 The high-TF pair with an axially anisotropic hyperfine interaction, powder
 averaged: writing the hyperfine tensor as an isotropic part
-:math:`A_{\mathrm{hf}}` plus an axial (traceless) part :math:`D`, each
-crystallite shifts the two lines by :math:`\pm d/2` depending on the angle
-:math:`\theta` between its symmetry axis and the field, and the average over
-:math:`\cos\theta` produces the characteristic asymmetric (Pake-like)
-broadening of the pair. Use for bond-centred muonium in semiconductors or
-muoniated radicals in powders; :math:`D = 0` reduces exactly to
+:math:`A_{\mathrm{hf}}` plus an axial (traceless) part :math:`D`, the two
+muon-spin-flip frequencies are obtained for each crystallite orientation by
+**exact diagonalization of the 4-level Hamiltonian**
+:math:`H = \gamma_e B S_z^e - \gamma_\mu B S_z^\mu + S^e\!\cdot\!A(\theta)\!\cdot\!S^\mu`,
+batched over a 32-node Gauss–Legendre :math:`\cos\theta` grid. Both lines
+co-shift so that each orientation's pair sum tracks the secular effective
+coupling :math:`A_{\mathrm{eff}}(\theta) = A_{\mathrm{hf}} +
+\tfrac{D}{2}(3\cos^2\theta - 1)`, producing the characteristic asymmetric
+(Pake-like) powder broadening. Use for bond-centred muonium in semiconductors
+or muoniated radicals in powders; :math:`D = 0` reduces exactly to
 ``MuoniumHighTF``, and for single crystals fit the orientation-dependent
-lines directly. The angular average uses a 32-node Gauss–Legendre grid.
+lines directly. (WiMDA's ``AnisMuoniumPairRot`` instead splits its two signed
+line frequencies by a symmetric :math:`\pm d/2`, which is only approximate —
+fitted :math:`D` values are not directly comparable.)
 
 ==========  =======================  =====  ====================================
 Name        Symbol                   Unit   Description

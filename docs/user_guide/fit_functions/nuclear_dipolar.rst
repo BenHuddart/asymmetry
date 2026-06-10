@@ -173,10 +173,14 @@ Name          Symbol                      Unit   Description
 ``J_spin``    :math:`J`                   —      Nuclear spin (hold fixed).
 ============  ==========================  =====  ===============================
 
-Hold :math:`J` fixed at the known nuclear spin. For :math:`J = 1/2` the
-quadrupole is inactive and the function reduces exactly to the spin-½ pair.
-For more than one strongly coupled nucleus use the F–μ–F family or a
-dedicated multi-spin model.
+:math:`J` is fixed by default (the model is piecewise-constant in it); set
+it to the known nuclear spin. For :math:`J = 1/2` the quadrupole is inactive
+and the function reduces exactly to the spin-½ pair. For more than one
+strongly coupled nucleus use the F–μ–F family or a dedicated multi-spin
+model. Note that the implementation uses the **signed** block mixing angle,
+verified against exact diagonalization; WiMDA's ``Dip gen ZF PCR`` drops the
+sign and is wrong for every :math:`J > 1/2`, so fitted parameters are not
+comparable with WiMDA for those spins.
 
 **References**
 
@@ -299,7 +303,9 @@ Use when an F–μ–F signal that is clear at low temperature progressively dam
 and loses its oscillations on warming because the muon hops away from the
 site (or the coupling fluctuates). :math:`\nu = 0` recovers ``FmuF_Linear``
 exactly; large :math:`\nu` gives motional narrowing toward
-:math:`\exp(-2\omega_d^2 t/\nu)`. Fitting a temperature series with shared
+:math:`\exp(-2\omega_d^2 t/\nu)` via an Abragam-form interpolation that
+keeps the model smooth in :math:`\nu` across the solver crossover (seam
+below ~1 % at physical distances). Fitting a temperature series with shared
 :math:`r_{\mu F}` and free :math:`\nu` yields the hop rate and hence an
 activation energy for muon diffusion in the fluoride. Assumes the
 equal-distance collinear geometry of ``FmuF_Linear``; the solver and caching

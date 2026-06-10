@@ -131,10 +131,72 @@ def high_tf_muonium(
     return 0.5 * (np.cos(_TWO_PI * w12 * t + phase) + np.cos(_TWO_PI * w34 * t + phase))
 
 
-#: Gauss-Legendre node count for the anisotropic powder average; 32 nodes keep
-#: the average converged to ~1e-10 for any D/A_hf the fit will visit (WiMDA uses
-#: a 15-point midpoint rule).
+#: Gauss-Legendre nodes for the anisotropic powder average, computed once at
+#: import (WiMDA uses a 15-point midpoint rule; 32-node Gauss-Legendre keeps
+#: the average converged for any D/A_hf the fit will visit).
 _ANISO_POWDER_NODES = 32
+_ANISO_NODES, _ANISO_WEIGHTS = np.polynomial.legendre.leggauss(_ANISO_POWDER_NODES)
+#: cos(theta) grid on (0, 1) and weights normalised to 1.
+_ANISO_COS_THETA = 0.5 * (_ANISO_NODES + 1.0)
+_ANISO_WT = 0.5 * _ANISO_WEIGHTS
+
+
+# Spin-1/2 operator matrices used by the exact anisotropic-muonium solver.
+_SPIN_HALF = (
+    0.5 * np.array([[0, 1], [1, 0]], dtype=complex),  # S_x
+    0.5 * np.array([[0, -1j], [1j, 0]], dtype=complex),  # S_y
+    0.5 * np.array([[1, 0], [0, -1]], dtype=complex),  # S_z
+)
+_ID2 = np.eye(2, dtype=complex)
+#: sigma_x of the muon in the (electron ⊗ muon) product basis.
+_SIGMA_X_MU = np.kron(_ID2, 2.0 * _SPIN_HALF[0])
+
+
+def _aniso_pair_frequencies(
+    field: float, A_hf: float, D: float, cos_theta: NDArray[np.float64]
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Exact muon-spin-flip pair frequencies for axial muonium at each angle.
+
+    Diagonalizes the full 4-level Hamiltonian
+    ``H = γ_e B S_z^e − γ_µ B S_z^µ + S^e·A(θ)·S^µ`` (frequency units, MHz)
+    for every ``cos θ`` on the powder grid (batched ``eigh``), and selects per
+    orientation the two transitions with the largest ``|⟨m|σ_x^µ|n⟩|²``
+    amplitude — the muon-spin-flip pair that survives at high field.
+    """
+    ct = np.asarray(cos_theta, dtype=float)
+    st = np.sqrt(np.clip(1.0 - ct * ct, 0.0, None))
+    n = ct.shape[0]
+
+    # Axial hyperfine tensor per orientation: A = (A_iso − D/2)·1 + (3D/2)·n̂n̂ᵀ.
+    axes = np.stack([st, np.zeros_like(ct), ct], axis=1)  # (n, 3)
+    a_tensor = (A_hf - 0.5 * D) * np.eye(3)[None, :, :] + 1.5 * D * np.einsum(
+        "ki,kj->kij", axes, axes
+    )
+
+    zeeman = G_E_MHZ_PER_G * field * np.kron(_SPIN_HALF[2], _ID2) - G_MU_MHZ_PER_G * (
+        field
+    ) * np.kron(_ID2, _SPIN_HALF[2])
+    pair_ops = np.array(
+        [[np.kron(_SPIN_HALF[i], _SPIN_HALF[j]) for j in range(3)] for i in range(3)]
+    )  # (3, 3, 4, 4)
+    h = zeeman[None, :, :] + np.einsum("kij,ijab->kab", a_tensor, pair_ops)
+
+    evals, evecs = np.linalg.eigh(h)  # (n, 4), (n, 4, 4)
+    sig = np.einsum("kam,ab,kbn->kmn", evecs.conj(), _SIGMA_X_MU, evecs)
+    weights = np.abs(sig) ** 2  # (n, 4, 4)
+    omega = np.abs(evals[:, :, None] - evals[:, None, :])  # (n, 4, 4)
+
+    # Per orientation, take the two strongest distinct transitions (m < n).
+    iu = np.triu_indices(4, k=1)
+    w_flat = weights[:, iu[0], iu[1]]  # (n, 6)
+    f_flat = omega[:, iu[0], iu[1]]
+    order = np.argsort(w_flat, axis=1)
+    top2 = order[:, -2:]
+    f_pair = np.take_along_axis(f_flat, top2, axis=1)  # (n, 2)
+    f_lo = f_pair.min(axis=1)
+    f_hi = f_pair.max(axis=1)
+    assert f_lo.shape == (n,)
+    return f_lo, f_hi
 
 
 def high_tf_muonium_aniso(
@@ -142,32 +204,35 @@ def high_tf_muonium_aniso(
 ) -> NDArray[np.float64]:
     """Powder-averaged anisotropic high-field TF muonium pair (WiMDA ``PCR Hi TF Mu``).
 
-    As :func:`high_tf_muonium`, with an axially anisotropic hyperfine component
-    ``D``: for symmetry-axis angle ``theta`` to the field the two lines shift by
-    ``±d/2`` with ``d = (D/2)(3 cos^2 theta - 1)`` (first-order anisotropy), and
-    the polycrystalline (PCR) average is taken over ``cos theta``.  In the
-    isotropic-part/traceless-part decomposition of the axial hyperfine tensor
-    (MS-Intro eqn 4.68) ``A_hf`` is the isotropic coupling ``A_iso`` and ``D``
-    the axial (traceless) component.  ``D = 0`` reduces exactly to
-    :func:`high_tf_muonium`.
+    As :func:`high_tf_muonium`, with an **axially anisotropic** hyperfine
+    interaction: the hyperfine tensor is written as an isotropic part
+    ``A_hf`` plus a traceless axial part ``D``, and for each crystallite
+    orientation ``θ`` on the powder grid the two muon-spin-flip transition
+    frequencies are obtained by **exact diagonalization of the 4-level
+    Hamiltonian** ``H = γ_e B S_z^e − γ_µ B S_z^µ + S^e·A(θ)·S^µ`` (batched
+    over the 32-node Gauss-Legendre ``cos θ`` grid).  Both lines co-shift so
+    that the orientation's pair sum tracks the secular effective coupling
+    ``A_eff(θ) = A_hf + (D/2)(3cos²θ − 1)``, producing the characteristic
+    asymmetric (Pake-like) powder broadening; each line keeps equal weight
+    ``1/2`` (the high-field limit, as in :func:`high_tf_muonium`).
 
-    WiMDA's parameter slot for the phase is occupied by ``D`` in this function;
-    here the phase is kept as an explicit parameter.
+    This deliberately diverges from a literal port of WiMDA's
+    ``AnisMuoniumPairRot``, which shifts its two (signed) line frequencies by
+    a symmetric ``±d/2``: in our positive-frequency convention that moves
+    ``ν_12`` in the wrong direction, and the symmetric split is in any case
+    only approximate (see
+    ``docs/porting/wimda-fit-function-parity/comparison.md``).  ``D = 0``
+    reduces exactly to :func:`high_tf_muonium`.
+
+    WiMDA's parameter slot for the phase is occupied by ``D`` in this
+    function; here the phase is kept as an explicit parameter.
     """
     t = np.asarray(t, dtype=float)
-    _delta, e1, e2, e3, e4 = _tf_levels(field, A_hf)
-    w12, w34 = abs(e1 - e2), abs(e3 - e4)
-    nodes, weights = np.polynomial.legendre.leggauss(_ANISO_POWDER_NODES)
-    # Map nodes from (-1, 1) to cos(theta) in (0, 1); weights normalised to 1.
-    ct = 0.5 * (nodes + 1.0)
-    wt = 0.5 * weights
-    d_shift = 0.5 * D * (3.0 * ct * ct - 1.0)
-    f_hi = w34 + 0.5 * d_shift  # (n_theta,)
-    f_lo = w12 - 0.5 * d_shift
+    f_lo, f_hi = _aniso_pair_frequencies(field, A_hf, D, _ANISO_COS_THETA)
     cos_sum = 0.5 * (
         np.cos(_TWO_PI * np.outer(f_hi, t) + phase) + np.cos(_TWO_PI * np.outer(f_lo, t) + phase)
     )
-    return np.asarray(wt @ cos_sum, dtype=float)
+    return np.asarray(_ANISO_WT @ cos_sum, dtype=float)
 
 
 #: Vacuum-muonium hyperfine constant in MHz (WiMDA hard-codes 4464).
@@ -181,7 +246,7 @@ def muonium_lf_relaxation(
 
     Spin-lattice relaxation of muonium polarization by a fluctuating coupling
     (nuclear-hyperfine modulation from muonium hopping, or electron spin
-    exchange) of amplitude ``delta_ex`` (µs⁻¹) and correlation time ``tau_c``
+    exchange) of amplitude ``delta_ex`` (MHz ≡ µs⁻¹, no 2π) and correlation time ``tau_c``
     (µs), sampled at the intratriplet ``nu_12`` transition (BPP/Redfield form):
 
         lambda(B) = (1 - delta) delta_ex^2 tau_c / (1 + (omega_12 tau_c)^2),

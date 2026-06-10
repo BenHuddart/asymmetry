@@ -56,6 +56,18 @@ from asymmetry.core.fitting.parameters import ParamInfo, get_param_info
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
 
+class UnknownComponentError(ValueError):
+    """An expression referenced a component name that is not registered.
+
+    Carries the offending ``name`` so callers (e.g. the GUI builder) can
+    produce targeted guidance without parsing the message text.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"Unknown component '{name}'")
+        self.name = name
+
+
 @dataclass(frozen=True)
 class ComponentDefinition:
     """Descriptor for a baseline-free component function."""
@@ -70,6 +82,10 @@ class ComponentDefinition:
     latex_equation: str = ""
     category: str = "General"
     domain: str = "time"
+    #: Parameters that should start *fixed* in a fit (e.g. a nuclear spin the
+    #: model is piecewise-constant in, or a hyperfine constant that is known).
+    #: The GUI pre-checks the fix box; the user can always free them.
+    fixed_params: tuple[str, ...] = ()
 
 
 def _exp_component(t: NDArray, A: float, Lambda: float) -> NDArray[np.float64]:
@@ -238,16 +254,32 @@ def _dipolar_pair_field_component(
     return A * dipolar_pair_field(t, B_dip, lambda_T)
 
 
+def _invalid_trial_penalty(t: NDArray) -> NDArray[np.float64]:
+    """Flat penalty curve returned for invalid trial geometries.
+
+    Keeps minimization alive when the optimiser probes an unphysical point
+    (e.g. a distance at its inclusive zero bound) instead of aborting the fit
+    with an exception.
+    """
+    return np.full_like(np.asarray(t, dtype=float), fill_value=1.0e3, dtype=float)
+
+
 def _proton_dipole_component(
     t: NDArray, A: float, r_muH: float, lambda_T: float
 ) -> NDArray[np.float64]:
-    return A * proton_dipole(t, r_muH, lambda_T)
+    try:
+        return A * proton_dipole(t, r_muH, lambda_T)
+    except ValueError:
+        return _invalid_trial_penalty(t)
 
 
 def _electron_dipole_component(
     t: NDArray, A: float, r_mue: float, lambda_T: float
 ) -> NDArray[np.float64]:
-    return A * electron_dipole(t, r_mue, lambda_T)
+    try:
+        return A * electron_dipole(t, r_mue, lambda_T)
+    except ValueError:
+        return _invalid_trial_penalty(t)
 
 
 def _dipolar_spin_j_component(
@@ -257,7 +289,10 @@ def _dipolar_spin_j_component(
 
 
 def _dynamic_fmuf_component(t: NDArray, A: float, r_muF: float, nu: float) -> NDArray[np.float64]:
-    return A * dynamic_fmuf_polarization(t, r_muF, nu)
+    try:
+        return A * dynamic_fmuf_polarization(t, r_muF, nu)
+    except ValueError:
+        return _invalid_trial_penalty(t)
 
 
 def _fmuf_triangle_component(
@@ -266,16 +301,21 @@ def _fmuf_triangle_component(
     try:
         return A * fmuf_triangle_polarization(t, r_muF, r3, phi3)
     except ValueError:
-        # Keep minimization alive for transient invalid trial points.
-        return np.full_like(np.asarray(t, dtype=float), fill_value=1.0e3, dtype=float)
+        return _invalid_trial_penalty(t)
 
 
 def _muf_component(t: NDArray, A: float, r_muF: float) -> NDArray[np.float64]:
-    return A * mu_f_polarization(t, r_muF)
+    try:
+        return A * mu_f_polarization(t, r_muF)
+    except ValueError:
+        return _invalid_trial_penalty(t)
 
 
 def _linear_fmuf_component(t: NDArray, A: float, r_muF: float) -> NDArray[np.float64]:
-    return A * linear_fmuf_polarization(t, r_muF)
+    try:
+        return A * linear_fmuf_polarization(t, r_muF)
+    except ValueError:
+        return _invalid_trial_penalty(t)
 
 
 def _general_fmuf_component(
@@ -288,8 +328,26 @@ def _general_fmuf_component(
     try:
         return A * general_fmuf_polarization(t, r1, r2, theta)
     except ValueError:
-        # Keep minimization alive for transient invalid trial points.
-        return np.full_like(np.asarray(t, dtype=float), fill_value=1.0e3, dtype=float)
+        return _invalid_trial_penalty(t)
+
+
+#: Canonical component-picker categories in display order, mapped to the stem
+#: of their user-guide page under ``docs/user_guide/fit_functions/``.  This is
+#: the single source of truth consumed by the GUI picker (submenu order) and
+#: by the documentation-placement test — a new category must be registered
+#: here (with a docs page) before components can use it.  "General" is the
+#: default bucket and renders at the top level of the picker rather than as a
+#: submenu; it must stay empty for time-domain components.
+CATEGORY_REGISTRY: dict[str, str] = {
+    "General": "",
+    "Relaxation": "relaxation",
+    "Oscillation": "oscillation",
+    "Kubo-Toyabe": "kubo_toyabe",
+    "Muonium": "muonium",
+    "Nuclear dipolar": "nuclear_dipolar",
+    "Background": "background",
+    "Frequency Domain": "frequency_domain",
+}
 
 
 COMPONENTS: dict[str, ComponentDefinition] = {
@@ -490,6 +548,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "A_hf": get_param_info("A_hf"),
         },
         formula_template="{A}*exp(-lambda({delta_ex},{tau_c},{B_L},{A_hf})*t)",
+        fixed_params=("A_hf",),
         latex_equation=(
             r"A(t) = A e^{-\lambda t},\ \ \lambda = "
             r"\frac{(1-\delta)\,\delta_{ex}^2\,\tau_c}{1+(2\pi\nu_{12}\tau_c)^2},"
@@ -809,6 +868,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "J_spin": get_param_info("J_spin"),
         },
         formula_template="{A}*Dz_spinJ(t; {f_dip}, {f_quad}, {J_spin})",
+        fixed_params=("J_spin",),
         latex_equation=(
             r"A(t)=A\,\frac{P_z(t)+2P_x(t)}{3},\ \ \text{Celio-Meier spin-}J"
             r"\text{ eigen-solution}"
@@ -953,7 +1013,7 @@ def parse_component_expression(
             if token in _ALLOWED_OPERATORS or token == ")":
                 raise ValueError(f"Expected component before '{token}'")
             if token not in allowed_components:
-                raise ValueError(f"Unknown component '{token}'")
+                raise UnknownComponentError(token)
 
             component_names.append(token)
             open_parentheses.append(pending_open)
@@ -1022,7 +1082,7 @@ def parse_composite_expression(
             if token in _ALLOWED_OPERATORS or token in {")", "{", "}"}:
                 raise ValueError(f"Expected component before '{token}'")
             if token not in COMPONENTS:
-                raise ValueError(f"Unknown component '{token}'")
+                raise UnknownComponentError(token)
 
             component_index = len(component_names)
             component_names.append(token)
@@ -1425,6 +1485,32 @@ class CompositeModel:
             close_parentheses=close_parentheses,
             fraction_groups=[*self.fraction_groups, (0, len(self.component_names) - 1)],
         )
+
+    def domains(self) -> set[str]:
+        """Return the set of analysis domains of the model's components.
+
+        A well-formed model has a single domain (``{"time"}`` or
+        ``{"frequency"}``); a mixed set indicates a model that combines
+        time- and frequency-domain components (e.g. restored from a project
+        saved before domain filtering existed) and should be surfaced to the
+        user rather than silently fitted.
+        """
+        return {component.domain for component in self.components}
+
+    def fixed_by_default_params(self) -> set[str]:
+        """Unique parameter names that should start fixed in a fit.
+
+        Collected from each component's :attr:`ComponentDefinition.fixed_params`
+        through the model's parameter mapping (so duplicated components yield
+        their indexed names, e.g. ``J_spin_2``).
+        """
+        fixed: set[str] = set()
+        for component, mapping in zip(self.components, self._param_mappings, strict=True):
+            for pname in component.fixed_params:
+                unique = mapping.get(pname)
+                if unique and unique != _UNIT_AMPLITUDE_SENTINEL:
+                    fixed.add(unique)
+        return fixed
 
     def _build_param_mapping(self) -> list[dict[str, str]]:
         name_counts = Counter(

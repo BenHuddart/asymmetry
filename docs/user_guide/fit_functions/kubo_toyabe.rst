@@ -232,9 +232,10 @@ single-width KT fit is qualitatively right but the dip is too sharp and the
 :math:`1/3`-tail recovery too pronounced: structurally disordered systems,
 dilute magnetic alloys, or several inequivalent muon sites. The fractional
 standard deviation :math:`w_\Delta` is the broadening parameter
-(:math:`w_\Delta = 0` reduces exactly to ``LongitudinalFieldKT``); the
-average is evaluated by Gauss–Hermite quadrature and cached. WiMDA's
-``Gau broad KT`` "rel width" equals :math:`w_\Delta\sqrt{2}`.
+(:math:`w_\Delta = 0` reduces exactly and continuously to
+``LongitudinalFieldKT``); the average is evaluated by Gauss–Hermite
+quadrature directly at the requested times, vectorised over the nodes.
+WiMDA's ``Gau broad KT`` "rel width" equals :math:`w_\Delta\sqrt{2}`.
 
 =========  =================  =====  =========================================
 Name       Symbol             Unit   Description

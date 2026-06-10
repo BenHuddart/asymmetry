@@ -123,6 +123,20 @@ Port notes: keep a phase parameter (Asymmetry components are not slot-limited);
 make the angular grid size an implementation detail (fixed 32–64 point
 Gauss–Legendre rather than WiMDA's 15 midpoints — verify convergence in tests).
 
+**Implementation-pass finding (review-confirmed).** WiMDA's `f2 := f2 − d/2`
+acts on the *signed* (negative) `f2`, so the observed line |f2| shifts **up**
+by d/2 — both lines co-shift and the pair sum tracks the orientation's
+effective coupling A(θ) = A_hf + d. A literal `−d/2` applied to the positive
+ν₁₂ of our positive-frequency convention flips that shift (an early version
+of this port did exactly that). Furthermore the symmetric ±d/2 split is only
+approximate: the exact 4-level Hamiltonian distributes the shift unevenly
+(∂ν₁₂/∂A = 0.27, ∂ν₃₄/∂A = 0.73 at 3 kG) and the line *splitting* also
+depends on A_⊥ at O(D·A/B). **Implemented:** exact batched diagonalization of
+`H = γ_e B S_z^e − γ_µ B S_z^µ + S^e·A(θ)·S^µ` per powder orientation,
+selecting the two strongest σ_x^µ transitions; D = 0 reduces exactly to the
+isotropic pair. Fitted D is therefore not directly comparable with WiMDA's
+`PCR Hi TF Mu`.
+
 ### B3. Muonium LF relaxation (`MuLFrel`, `muoniumfunctions.dpr:118-132`)
 
 ```pascal
@@ -194,6 +208,16 @@ F–µ–F kernel; drop the user-visible t_max parameter (derive the grid from t
 data range, as the dynamic KT port already does). Parameterize by r(µ–F) for
 consistency with `FmuF_Linear`, or ω_d — decision in options doc.
 
+**Implementation-pass refinement (review-driven).** WiMDA's fixed switch to
+the bare motional-narrowing exponential at ν > 10ω_d (and ours initially at a
+fixed ν = 12 µs⁻¹) leaves a discontinuity in the model — measured 2.5 % at
+r = 1.17 Å up to ~30 % at short trial distances. Implemented instead: the
+Volterra solver runs to the crossover ν = 12·ω_d (with a stability ceiling
+from the grid cap), beyond which an **Abragam-form interpolation**
+exp[−(2ω_d²/ν²)(e^{−νt} − 1 + νt)] takes over (same ν→∞ limit, correct
+quadratic short-time form). Branch seam measured at 0.24 %/0.56 %/2.5 % for
+r = 1.17/0.8/0.6 Å, regression-tested.
+
 ### C3. F–µ–F–F triangle (`Ftriangle`/`Fequitriangle` → `polarize.pas`, `matrices.pas`)
 
 Full quantum solution for muon + three ¹⁹F spins (16-dimensional Hilbert space):
@@ -244,6 +268,21 @@ polycrystalline recipe. Source: M. Celio and P. F. Meier, Hyperfine Interact.
 
 Use case: ZF precession from muon–quadrupolar-nucleus pairs (e.g. µ⁺–⁹³Nb,
 µ⁺–⁶³Cu) where the F–µ–F spin-½ formalism does not apply.
+
+**Implementation-pass finding (review-confirmed): WiMDA's `ZFdipgen` is wrong
+for every J > 1/2.** Its per-block mixing angle is reconstructed from
+`cos² 2α` (`csqa := 0.5*(1+sqrt(csq2a))`), discarding the sign of
+`cos 2α = −q1/W_m`. Verified against exact diagonalization of
+`H = ω_d(S·I − 3 S_z I_z) + ω_q I_z²` (which reproduces the closed form's
+eigenvalues to machine precision): the |·| variant deviates by up to ~0.56 of
+the normalised polarization for J ∈ {1, 3/2, 5/2, 9/2}; J = 1/2 is the unique
+case where the sign cannot matter. Asymmetry's `dipolar_spin_j` uses the
+signed mixing angle, which matches exact diagonalization to < 3×10⁻¹⁴
+(regression-tested via an independent exact-diagonalization reference in
+`tests/test_wimda_parity_components.py`). The amplitude–frequency pairing of
+the P_x sum and the (P_z + 2P_x)/3 polycrystalline average were verified
+correct as coded. **Fitted parameters are not comparable with WiMDA for
+J > 1/2.**
 
 ### C5. Single spin-½ dipole family (`ZFdipole`, `ZFprotondipole`, `ZFelectrondipole`, `dipolarfunctions.dpr:81-100,184-192`)
 

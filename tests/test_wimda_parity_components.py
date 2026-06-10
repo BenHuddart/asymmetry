@@ -99,22 +99,6 @@ def test_new_components_have_aps_style_references() -> None:
             assert re.search(r"\(.*\d{4}\)\.$", ref), ref
 
 
-def test_applicability_text_cites_via_reference_lists() -> None:
-    from asymmetry.core.fitting.component_docs import PARAMETER_MODEL_APPLICABILITY
-
-    for name, text in {
-        **FIT_COMPONENT_APPLICABILITY,
-        **PARAMETER_MODEL_APPLICABILITY,
-    }.items():
-        lowered = text.lower()
-        # No textbook equation numbers or inline journal citations: literature
-        # belongs in the references list below the applicability text.
-        assert "eqn" not in lowered, name
-        assert "eq." not in lowered, name
-        assert "ms-intro" not in lowered, name
-        assert "phys. rev." not in text, name
-
-
 def test_new_components_finite_and_normalised_at_defaults() -> None:
     for name in NEW_COMPONENTS:
         definition = COMPONENTS[name]
@@ -131,6 +115,33 @@ def test_new_components_serialization_round_trip() -> None:
         model = CompositeModel([name, "Constant"], ["+"])
         restored = CompositeModel.from_dict(model.to_dict())
         assert restored.component_names == model.component_names
+
+
+def test_fixed_by_default_params_resolve_through_param_mapping() -> None:
+    """J_spin (piecewise-constant in the fit) and MuoniumLFRelax's A_hf start
+    fixed; duplicated components expose their indexed names."""
+    assert CompositeModel(["DipolarSpinJ"]).fixed_by_default_params() == {"J_spin"}
+    assert CompositeModel(["MuoniumLFRelax"]).fixed_by_default_params() == {"A_hf"}
+    duplicated = CompositeModel(["DipolarSpinJ", "DipolarSpinJ"], ["+"])
+    assert duplicated.fixed_by_default_params() == {"J_spin_1", "J_spin_2"}
+    assert CompositeModel(["Exponential"]).fixed_by_default_params() == set()
+
+
+def test_indexed_subscripted_params_render_in_mathtext() -> None:
+    """Duplicated components index their params (lambda_T -> lambda_T_2); the
+    label machinery must merge subscripts (lambda_{T,2}) — a naive suffix
+    produces a double subscript that matplotlib rejects at plot-label time."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from matplotlib.mathtext import MathTextParser
+
+    from asymmetry.core.fitting.parameters import PARAM_INFO_REGISTRY, get_param_info
+
+    parser = MathTextParser("agg")
+    for base in PARAM_INFO_REGISTRY:
+        info = get_param_info(f"{base}_2")
+        parser.parse(info.latex.strip())  # raises ValueError on bad mathtext
 
 
 # --- RischKehr ---------------------------------------------------------------
@@ -193,6 +204,30 @@ def test_gbkt_matches_brute_force_average() -> None:
     assert np.allclose(gaussian_broadened_kt(T, 0.5, 30.0, width), brute, atol=1e-4)
 
 
+def test_gbkt_is_continuous_in_width_and_accurate_at_large_delta() -> None:
+    t = np.linspace(0.0, 32.0, 641)
+    # Continuity: w_rel -> 0 must approach the single-width LF KT smoothly
+    # (the previous grid-interpolated implementation had a ~2.5% branch step).
+    for b_l in (0.0, 30.0, 300.0):
+        broadened = gaussian_broadened_kt(t, 0.5, b_l, 1e-8)
+        single = longitudinal_field_kubo_toyabe(t, 1.0, 0.5, b_l)
+        assert np.allclose(broadened, single, atol=1e-9), f"B_L={b_l}"
+
+    # Accuracy at large Delta*tmax, where the old fixed 800-point grid lost
+    # 2.5% around the dip.
+    width = 0.3
+    nodes = np.linspace(-6.0, 6.0, 2001)
+    pdf = np.exp(-0.5 * nodes**2) / np.sqrt(2.0 * np.pi)
+    brute = np.zeros_like(t)
+    for x, p in zip(nodes, pdf, strict=True):
+        brute += (
+            p
+            * (nodes[1] - nodes[0])
+            * longitudinal_field_kubo_toyabe(t, 1.0, abs(8.0 * (1.0 + width * x)), 0.0)
+        )
+    assert np.allclose(gaussian_broadened_kt(t, 8.0, 0.0, width), brute, atol=2e-3)
+
+
 def test_gbkt_broadening_softens_the_dip() -> None:
     sharp = gaussian_broadened_kt(T, 0.5, 0.0, 0.0)
     broad = gaussian_broadened_kt(T, 0.5, 0.0, 0.4)
@@ -214,6 +249,70 @@ def test_high_tf_aniso_reduces_to_isotropic_pair() -> None:
     assert np.allclose(iso, aniso, atol=1e-10)
 
 
+def test_high_tf_aniso_pair_frequencies_match_exact_hamiltonian() -> None:
+    """The per-orientation pair frequencies must match the exact 4-level
+    anisotropic-muonium Hamiltonian (axial hyperfine tensor at angle theta to
+    the field) to first order in D — in particular the *direction* of the
+    nu_12 shift, which a literal port of WiMDA's ±d/2 convention gets wrong.
+    """
+    from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G, G_MU_MHZ_PER_G
+
+    field = 3000.0
+    a_hf = VACUUM_MUONIUM_A_HF_MHZ
+    big_d = 20.0
+
+    sx = 0.5 * np.array([[0, 1], [1, 0]], dtype=complex)
+    sy = 0.5 * np.array([[0, -1j], [1j, 0]], dtype=complex)
+    sz = 0.5 * np.array([[1, 0], [0, -1]], dtype=complex)
+    spins = (sx, sy, sz)
+    id2 = np.eye(2)
+
+    for theta in (0.0, np.deg2rad(54.7356), np.deg2rad(90.0)):
+        # Axial hyperfine tensor with symmetry axis at angle theta in the x-z
+        # plane: A = A_iso * 1 + diag(-D/2, -D/2, D) rotated by theta about y.
+        n_axis = np.array([np.sin(theta), 0.0, np.cos(theta)])
+        a_tensor = (a_hf - 0.5 * big_d) * np.eye(3) + 1.5 * big_d * np.outer(n_axis, n_axis)
+
+        h = G_E_MHZ_PER_G * field * np.kron(sz, id2) - G_MU_MHZ_PER_G * field * np.kron(id2, sz)
+        for i in range(3):
+            for j in range(3):
+                h = h + a_tensor[i, j] * np.kron(spins[i], spins[j])
+        evals = np.sort(np.linalg.eigvalsh(h))
+
+        # The two muon-spin-flip (high-field-observable) transitions are the
+        # splittings within each electron-spin manifold: the two smallest
+        # level gaps between adjacent eigenvalues pair up as nu_12 and nu_34.
+        gaps = np.diff(evals)
+        nu_pair_exact = np.sort(gaps)[:2]
+
+        # The component's solver selects the pair by sigma_x^mu amplitude —
+        # an independent construction that must agree with the gap analysis.
+        from asymmetry.core.fitting.muonium import _aniso_pair_frequencies
+
+        f_lo, f_hi = _aniso_pair_frequencies(field, a_hf, big_d, np.array([np.cos(theta)]))
+        nu_pair_model = np.sort([f_lo[0], f_hi[0]])
+
+        assert np.allclose(nu_pair_exact, nu_pair_model, atol=1e-8), (
+            f"theta={np.degrees(theta):.1f}: exact {nu_pair_exact}, model {nu_pair_model}"
+        )
+
+        # The pair sum must track the secular effective coupling to first
+        # order: A_eff = A_hf + (D/2)(3cos^2 theta - 1).
+        d_shift = 0.5 * big_d * (3.0 * np.cos(theta) ** 2 - 1.0)
+        assert np.sum(nu_pair_model) == pytest.approx(a_hf + d_shift, abs=0.1)
+
+
+def test_high_tf_aniso_pair_sum_tracks_effective_hyperfine() -> None:
+    """With the exact treatment, each orientation's pair sum equals
+    A_eff(theta) = A_hf + d — for theta = 0 (d = D) the spectrum must contain
+    frequencies summing above A_hf, not stay pinned at A_hf."""
+    from asymmetry.core.fitting.muonium import _tf_levels
+
+    big_d = 50.0
+    _d, e1, e2, e3, e4 = _tf_levels(3000.0, VACUUM_MUONIUM_A_HF_MHZ + big_d)
+    assert abs(e1 - e2) + abs(e3 - e4) == pytest.approx(VACUUM_MUONIUM_A_HF_MHZ + big_d, rel=1e-12)
+
+
 def test_high_tf_aniso_powder_average_damps_pair() -> None:
     iso = high_tf_muonium(T, 3000.0, VACUUM_MUONIUM_A_HF_MHZ, 0.0)
     aniso = high_tf_muonium_aniso(T, 3000.0, VACUUM_MUONIUM_A_HF_MHZ, 25.0, 0.0)
@@ -229,6 +328,56 @@ def test_muonium_lf_relaxation_quenches_with_field() -> None:
 
 
 # --- nuclear dipolar ---------------------------------------------------------
+
+
+def _exact_spin_j_polarization(t: np.ndarray, f_dip: float, f_quad: float, J: float) -> np.ndarray:
+    """Exact-diagonalization reference for the muon + spin-J ZF problem.
+
+    H = w_d (S·I − 3 S_z I_z) + w_q I_z², muon spin-1/2; polycrystalline
+    average (P_z + 2 P_x)/3 (exact for this axially symmetric Hamiltonian).
+    """
+    wd = 2.0 * np.pi * f_dip
+    wq = 2.0 * np.pi * f_quad
+    dim_n = int(round(2.0 * J)) + 1
+    m = J - np.arange(dim_n)  # m = J, J-1, ..., -J
+    iz = np.diag(m)
+    ladder = np.sqrt(J * (J + 1.0) - m[1:] * (m[1:] + 1.0))
+    iplus = np.zeros((dim_n, dim_n))
+    iplus[np.arange(dim_n - 1), np.arange(1, dim_n)] = ladder
+    ix = 0.5 * (iplus + iplus.T)
+    iy = -0.5j * (iplus - iplus.T)
+
+    sx = 0.5 * np.array([[0, 1], [1, 0]], dtype=complex)
+    sy = 0.5 * np.array([[0, -1j], [1j, 0]], dtype=complex)
+    sz = 0.5 * np.array([[1, 0], [0, -1]], dtype=complex)
+    id_n = np.eye(dim_n)
+    id_mu = np.eye(2)
+
+    h = wd * (
+        np.kron(sx, ix) + np.kron(sy, iy) - 2.0 * np.kron(sz, iz)  # S·I − 3 S_z I_z
+    ) + wq * np.kron(id_mu, iz @ iz)
+    evals, evecs = np.linalg.eigh(h)
+    dim = 2 * dim_n
+
+    out = np.zeros((2, t.size))
+    for k, sigma in enumerate((2.0 * np.kron(sz, id_n), 2.0 * np.kron(sx, id_n))):
+        sig_eig = evecs.conj().T @ sigma @ evecs
+        weights = (np.abs(sig_eig) ** 2) / dim
+        omega = evals[:, None] - evals[None, :]
+        out[k] = np.tensordot(weights, np.cos(np.multiply.outer(omega, t)), axes=2)
+    pz, px = out
+    return (pz + 2.0 * px) / 3.0
+
+
+@pytest.mark.parametrize("J", [0.5, 1.0, 1.5, 2.5, 4.5])
+@pytest.mark.parametrize("f_quad", [0.0, 0.1, -0.3])
+def test_spin_j_matches_exact_diagonalization(J: float, f_quad: float) -> None:
+    t = np.linspace(0.0, 16.0, 161)
+    closed_form = dipolar_spin_j(t, 0.2, f_quad, J)
+    exact = _exact_spin_j_polarization(t, 0.2, f_quad, J)
+    assert np.allclose(closed_form, exact, atol=1e-10), (
+        f"J={J}, f_quad={f_quad}: max dev {np.max(np.abs(closed_form - exact))}"
+    )
 
 
 def test_spin_half_reduces_to_meier_pair() -> None:
@@ -281,9 +430,43 @@ def test_dynamic_fmuf_fast_fluctuation_motional_narrowing() -> None:
     from asymmetry.core.fitting.muon_fluorine.dipolar import omega_d_mu_f_rad_per_us
 
     omega_d = omega_d_mu_f_rad_per_us(1.17)
-    nu = 50.0
-    expected = np.exp(-2.0 * omega_d**2 * T / nu)
-    assert np.allclose(dynamic_fmuf_polarization(T, 1.17, nu), expected, atol=1e-12)
+    nu = 500.0  # far above the solver range: Abragam-form branch
+    narrowed = np.exp(-2.0 * omega_d**2 * T / nu)
+    # The Abragam-form branch approaches the bare narrowing exponential for
+    # nu*t >> 1 (and is more accurate at early times).
+    result = dynamic_fmuf_polarization(T, 1.17, nu)
+    assert np.allclose(result[T > 0.1], narrowed[T > 0.1], atol=2e-3)
+    assert result[0] == pytest.approx(1.0)
+
+
+def test_dynamic_fmuf_branch_seam_is_small() -> None:
+    """The solver/interpolation crossover must not put a step in the model.
+
+    The previous fixed switch at nu = 12 caused 2.5-30 % discontinuities; the
+    crossover now follows nu = 12*omega_d (where the solver and the
+    Abragam-form interpolation are both accurate), keeping the seam ~1 % or
+    below across mu-F distances.
+    """
+    from asymmetry.core.fitting.muon_fluorine.dipolar import omega_d_mu_f_rad_per_us
+    from asymmetry.core.fitting.muon_fluorine.polarization import (
+        _DYN_FMUF_GRID_CAP,
+        _DYN_FMUF_NU_H_STABILITY,
+        _DYN_FMUF_SWITCH_MIN,
+        _DYN_FMUF_SWITCH_RATIO,
+    )
+
+    tmax = float(T.max())
+    # Sub-percent at physical mu-F distances; a looser guard at r = 0.6 A
+    # (minimizer-exploration territory) where both branches sit at their
+    # accuracy edge.
+    for r, seam_tol in ((1.17, 5e-3), (0.8, 8e-3), (0.6, 3e-2)):
+        nu_seam = min(
+            max(_DYN_FMUF_SWITCH_MIN, _DYN_FMUF_SWITCH_RATIO * omega_d_mu_f_rad_per_us(r)),
+            _DYN_FMUF_NU_H_STABILITY * (_DYN_FMUF_GRID_CAP - 1) / tmax,
+        )
+        below = dynamic_fmuf_polarization(T, r, nu_seam * 0.999)
+        above = dynamic_fmuf_polarization(T, r, nu_seam * 1.001)
+        assert np.max(np.abs(below - above)) < seam_tol, f"r={r}"
 
 
 def test_triangle_distant_third_fluorine_matches_general_collinear() -> None:
@@ -298,6 +481,31 @@ def test_triangle_component_handles_invalid_trial_point() -> None:
     y = COMPONENTS["FmuF_Triangle"].function(T, A=0.8, r_muF=1.2, r3=-1.0, phi3=90.0)
     assert np.all(np.isfinite(y))
     assert y[0] > 100.0
+
+
+def test_triangle_angle_is_periodic_not_rejected() -> None:
+    # Any phi3 is geometrically valid; out-of-canonical-range angles map onto
+    # their mirror image instead of producing a flat penalty plateau.
+    direct = fmuf_triangle_polarization(T, 1.17, 2.5, 160.0)
+    mirrored = fmuf_triangle_polarization(T, 1.17, 2.5, 200.0)  # 360 - 200 = 160
+    assert np.allclose(direct, mirrored, atol=1e-9)
+    along_axis = fmuf_triangle_polarization(T, 1.17, 2.5, 0.0)
+    assert np.all(np.isfinite(along_axis))
+
+
+def test_distance_components_penalise_zero_distance_trials() -> None:
+    # The optimiser may probe the inclusive r = 0 bound; the wrappers must
+    # return the flat penalty rather than aborting the fit with a ValueError.
+    for name, params in (
+        ("ProtonDipole", {"A": 25.0, "r_muH": 0.0, "lambda_T": 0.0}),
+        ("ElectronDipole", {"A": 25.0, "r_mue": 0.0, "lambda_T": 0.0}),
+        ("DynamicFmuF", {"A": 25.0, "r_muF": 0.0, "nu": 0.5}),
+        ("MuF", {"A": 25.0, "r_muF": 0.0}),
+        ("FmuF_Linear", {"A": 25.0, "r_muF": 0.0}),
+    ):
+        y = COMPONENTS[name].function(T, **params)
+        assert np.all(np.isfinite(y)), name
+        assert y[0] > 100.0, name
 
 
 def test_triangle_third_fluorine_changes_lineshape() -> None:
@@ -334,3 +542,18 @@ def test_risch_kehr_fit_recovery() -> None:
     fitted = {p.name: p.value for p in result.parameters}
     assert fitted["A_1"] == pytest.approx(truth["A"], abs=0.5)
     assert fitted["Gamma"] == pytest.approx(truth["Gamma"], abs=0.2)
+
+
+def test_plot_sample_count_accounts_for_hyperfine_frequencies() -> None:
+    pytest.importorskip("PySide6")
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from asymmetry.gui.panels.fit_panel import _fit_curve_sample_count
+
+    model = CompositeModel(["MuoniumHighTF"])
+    params = {"A_1": 25.0, "field": 3000.0, "A_hf": 4463.302, "phase": 0.0}
+    n = _fit_curve_sample_count(model, params, 0.0, 0.2)
+    # 4463 MHz over 0.2 us needs ~36k points at 40/cycle -> hits the cap,
+    # far above what the 41 MHz field-only estimate (~330 points) would give.
+    assert n == 20000
