@@ -228,30 +228,48 @@ change append-only to avoid collisions with the other open PRs touching
 
 ## Recorded follow-ons
 
+Status reflects the second implementation session (2026-06-10), which landed
+follow-ons 2–7 below. Items 1, 8, 9 remain genuinely deferred / out of scope.
+
 1. **Unify `fgAll` onto the raw-count Poisson driver** (give `FitEngine` a
-   cost-factory; route grouped fits through Poisson). Deferred to avoid
-   colliding with the next-wave `engine.py` owner.
+   cost-factory; route grouped fits through Poisson). **Deferred** — touches
+   `engine.py`, owned by the next-wave `fit-workflow-diagnostics` project; revisit
+   only if asked and that project hasn't started.
 2. **Free muon lifetime** (musrfit-style) as an optional count-fit parameter.
-3. **Polynomial/power-law deadtime promotion** to the grouping (Phase 3 promotes
-   DT0 only; the C2/C3/C4 polynomial deadtime fits but is not promoted).
-4. **DT1 (linear) and power-law deadtime in the fit** — Phase 3 ships Simple
-   (DT0) + polynomial (C2–C4); the linear-in-event-fraction (DT1) and power-law
-   forms need the ISIS frame-fraction/event-fraction metadata block and are
-   deferred.
-5. **Robust dpsep refinement** — the double-pulse separation is fixed by
-   default because the non-smooth pulse-onset gate defeats migrad; a coarse
-   1-D scan → migrad refinement would make dpsep fittable. (Finding recorded in
-   comparison.md.)
-6. **FB double-pulse** — Phase 3 ships double-pulse for the single-histogram
-   mode (the round-trip target); folding it into the F+B α model is deferred.
-7. **Plot overlay for count fits** — count-fit results are reported
-   numerically; overlaying the raw-count fit curve on the (lifetime-corrected)
-   Individual-Groups plot is a UI-polish follow-on.
+   **Done** (this session) — a `tau` parameter frees τ_μ in the single-histogram
+   and F+B modes (default fixed; off-state byte-identical; rejected with
+   double-pulse). See the statistics section of comparison.md.
+3. **Polynomial/power-law deadtime promotion** to the grouping. **Done** —
+   `promote_deadtime_to_grouping` carries the model name + higher-order
+   `DT1`/`C2`/`C3`/`C4` terms in `deadtime_model`/`deadtime_model_terms`; DT0
+   still drives the reduction's per-detector deadtime.
+4. **DT1 (linear) and power-law deadtime in the fit**. **Done** — all four WiMDA
+   loss forms (`deadtime_model` = simple/linear/polynomial/power), polynomial with
+   the `C2·10³`/`C3·10⁶`/`C4·10⁹` decade scalings; `evfr` from optional grouping
+   metadata, fallback 1.0 (the loaders carry no ISIS event-fraction block).
+5. **Robust dpsep refinement**. **Done** — a free `dpsep` is located by a
+   coarse→fine 1-D grid scan (migrad refines the other params at each grid point),
+   exposed by a "fit" toggle beside the double-pulse control; recovers dpsep from
+   an arbitrary in-range start. comparison.md dpsep note updated (resolved).
+6. **FB double-pulse**. **Done** — the √α-tied forward/backward model folded into
+   `fit_fb_alpha` (`_double_pulse_fb_model`); α and the double-pulse structure
+   recovered together.
+7. **Plot overlay for count fits**. **Done** — a successful single/F+B count fit
+   overlays its model curve (raw → displayed scale via e^(t/τ)) on the
+   Individual-Groups plot; the promote action moved to its own
+   `count_grouping_promoted` signal (no more fit-shaped `None`).
 8. **MINOS errors on α** — `fit-workflow-diagnostics` (Wave B) adds MINOS; α is
-   the prime beneficiary given its amplitude correlation. Synergy, not a
-   dependency.
-9. **WiMDA fitted-baseline "Set BG" workflow** — out of scope; the Phase-2
-   baseline-drift term is independent and does not pre-empt it.
+   the prime beneficiary given its amplitude correlation. **Deferred** (synergy,
+   not a dependency).
+9. **WiMDA fitted-baseline "Set BG" workflow** — **out of scope** by decision; the
+   Phase-2 baseline-drift term is independent and does not pre-empt it.
+
+### Second-session hardening (review altitude findings, this session)
+
+- The optional nuisances are dispatched by parameter name, so a physics-model
+  parameter named like a reserved slot (`t0`/`DT0`/`dpsep`/`tau`/`N0`/`background`/
+  `alpha`/…) would be silently swallowed. Now rejected loudly via
+  `RESERVED_COUNT_PARAMS` — a core signature guard plus a GUI `param_names` guard.
 
 ## Implementation outcome (2026-06-10)
 
@@ -289,6 +307,31 @@ path; reused engine.py's `_minuit_status_message` for failure diagnostics;
 extracted `simulate._sample_and_build_run` (fixing dropped provenance keys);
 removed dead constants; switched the GUI combos to `currentData()`. Regression
 tests cover each. validate green (2150 passed).
+
+## Second implementation outcome (2026-06-10, session 2)
+
+The recorded follow-ons 2–7 plus the name-collision hardening landed as six
+validate-green milestone commits (see the Recorded follow-ons list above for the
+per-item status). Highlights:
+
+- **Plot overlay** recovers the fitted curve exactly from `FitResult.residuals`
+  (`counts − residuals`, no model re-evaluation) and scales it by e^(t/τ) onto
+  the lifetime-corrected Individual-Groups plot; promote split onto its own
+  signal.
+- **F+B double-pulse** and **robust dpsep refinement** share the existing driver:
+  the dpsep scan delegates back to the fit with dpsep fixed at each grid point, so
+  no model code is duplicated.
+- **All four count-loss forms** transcribed from `AsymFitFunction.pas` with the
+  WiMDA decade scalings; promotion carries the higher-order terms.
+- **Free τ** evaluates the raw model directly so the flat background does not pick
+  up the lifetime; the fixed path is byte-identical.
+- **Reserved-name guard** closes the silent-swallow gap in the name-based
+  dispatch.
+
+The architecture held: `engine.py` untouched; `fit_panel.py` contact stayed thin
+(routing + seeding + the overlay/collision guards). A post-implementation
+`/code-review high` over the whole branch diff followed; its confirmed findings
+were fixed with regression tests as a final milestone.
 
 ## References
 
