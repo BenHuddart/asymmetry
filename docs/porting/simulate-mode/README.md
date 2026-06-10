@@ -1,8 +1,11 @@
 # Simulate mode — study
 
-Date: 2026-06-10. Branch: `feat/simulate-mode`. Status: **study complete,
-implementation plan agreed** (see
-[implementation-options.md](implementation-options.md)).
+Date: 2026-06-10. Branch: `feat/simulate-mode`. Status: **implemented**
+(same day; four phases, each validate-green — see the as-implemented notes
+in [implementation-options.md](implementation-options.md)). Shipped:
+`core/simulate.py`, `core/io/nexus_writer.py`,
+`gui/windows/simulate_dialog.py`, the Data Browser degrade action and
+provenance badging, 53 new tests, and `docs/user_guide/simulation.rst`.
 
 Promotes the `simulate-mode` candidate (tier "now", score 16) under the
 `wimda-parity-gap` umbrella (Wave A, project 8). The original candidate docs

@@ -85,3 +85,15 @@ Instrument Geometry
 .. autofunction:: asymmetry.core.instrument.get_instrument_layout
 
 .. autofunction:: asymmetry.core.instrument.detect_instrument
+
+Simulation
+----------
+
+Synthetic-run generation and statistics degradation (see
+:doc:`/user_guide/simulation`): Poisson draws of expected per-detector
+counts from a loaded-run instrument template, exact binomial thinning of
+measured runs, and the promoted screenshot-archetype builders.
+
+.. automodule:: asymmetry.core.simulate
+   :members:
+   :undoc-members:

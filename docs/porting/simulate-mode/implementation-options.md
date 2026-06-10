@@ -261,6 +261,38 @@ project venv) and a local commit. No pushes.
 Not touched: `core/project/schema.py` (decision 2 — NeXus-file persistence
 needs no schema change), loaders, fitting engine, plot panels.
 
+## As implemented (2026-06-10)
+
+All four phases landed as planned, each with full validate green. Deviations
+and discoveries beyond the plan:
+
+- **Envelope normalisation refined**: the per-bin rate at t = 0 uses the
+  exact telescoping form `n0 = N_d·(1 − exp(−Δt/τ_μ))` rather than WiMDA's
+  first-order `N_d·Δt/τ_μ`, so the zero-signal window total equals
+  `total_events·(1 − exp(−T/τ_μ))` to machine precision (tested at
+  rtol 1e-12).
+- **α as group weights, budget-normalised**: weights are normalised over the
+  assigned detectors, so the event budget is independent of α and of group
+  imbalance (WiMDA's per-histogram allocation drifts for unequal groups).
+- **Error-model finding (verification §2)**: against a known truth, χ²ᵣ
+  centres on E[(1−A²)/(1+A²)] < 1, not 1 — the shipped
+  `compute_asymmetry` error formula propagates F ± αB as *independent*,
+  over-estimating σ_A by (1+A²)/(1−A²) relative to exact Poisson
+  propagation (4α²FB(F+B)/(F+αB)⁴). Exact at A = 0; ≈ 9 % in variance at
+  A = 0.21. Affects all fits, not just synthetic data; the refit test
+  documents and centres on the analytic expectation. Recorded as a
+  follow-on investigation below.
+- **Run-number allocation**: synthetic/degraded runs draw from a 90001+
+  series reserved through `DataBrowserPanel.next_derived_run_number()`
+  (the dialog accepts an allocator so browser-side degrades and dialog
+  generates cannot collide).
+- **Project-file note**: a synthetic run has `source_file = ""`, so saving
+  a project containing one records a dataset that cannot be re-loaded
+  (decision 2: persistence is via Save-as-NeXus). The user guide says so;
+  a save-time warning is a possible refinement.
+- `tests/test_simulate_dialog.py` added to the E402 per-file-ignores in
+  `pyproject.toml` (the established GUI-test convention).
+
 ## Recorded follow-ons
 
 - **Built-in ideal-instrument template** (no loaded run required) — the
@@ -277,3 +309,12 @@ needs no schema change), loaders, fitting engine, plot panels.
   still attractive for teaching once the dialog exists.
 - **Pull-distribution diagnostic in the GUI** (re-simulate-and-refit from a
   fit result) — natural extension of the verification machinery.
+- **Asymmetry error-formula investigation**: decide whether
+  `compute_asymmetry` should move to exact Poisson propagation
+  (1−A²)/(F+αB)-style instead of the independent-numerator/denominator
+  (1+A²) form — a correctness question for *all* fits surfaced by the
+  simulate verification suite; needs its own study (changes every fitted
+  uncertainty slightly and must be cross-checked against Mantid's actual
+  AsymmetryCalc behaviour).
+- **Project save warning for unsaved synthetic runs** (see as-implemented
+  notes).

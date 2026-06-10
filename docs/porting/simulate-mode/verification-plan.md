@@ -6,6 +6,18 @@ claimed statistics. Every check below lands as a pytest (corpus checks
 skip-if-missing), strictly stronger than anything WiMDA had (WiMDA's
 simulation is unseeded and was never statistically verified).
 
+**Outcome (2026-06-10): all sections implemented and green** —
+`tests/test_simulate.py` (§1, §4), `tests/test_nexus_writer.py` (§2–3 +
+corpus), `tests/test_simulate_dialog.py` (§5); 53 tests, full validate
+1817 passed. One refinement against §2 as written: the refit χ²ᵣ band is
+centred on the analytic expectation E[(1−A²)/(1+A²)] rather than 1,
+because the shipped asymmetry error formula propagates F ± αB as
+independent and so over-estimates σ_A at |A| > 0 — a chain-wide property
+this suite exposed (recorded as a follow-on in
+implementation-options.md), not a simulation defect. Fits are also
+windowed to the healthy-count region (t ≤ 8 μs), since √n errors from
+observed counts bias χ² in the ≲ 1 count/bin tail.
+
 ## 1. Forward-model correctness (unit level)
 
 - **Envelope normalisation**: with the signal off (a ≡ 0, b = 0), the
