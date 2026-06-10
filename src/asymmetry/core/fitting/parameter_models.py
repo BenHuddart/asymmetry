@@ -17,6 +17,11 @@ from asymmetry.core.fitting.composite import (
     parse_component_expression,
 )
 from asymmetry.core.fitting.diffusion import lambda_total as diffusion_lambda_total
+from asymmetry.core.fitting.muonium import (
+    G_E_MHZ_PER_G,
+    G_MU_MHZ_PER_G,
+    VACUUM_MUONIUM_A_HF_MHZ,
+)
 from asymmetry.core.fitting.parameters import (
     Parameter,
     ParameterSet,
@@ -174,10 +179,9 @@ def _redfield(
 
 #: (γₑ + γ_μ)/2π in MHz/G — converts a muonium hyperfine constant A_hf (MHz)
 #: into the characteristic repolarisation field B₀ = A_hf / this (in G).
-_ISOTROPIC_MU_B0_DENOM_MHZ_PER_G = (
-    ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G / (2.0 * np.pi)
-    + MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
-)
+#: Shares the per-ratio constants with the Breit-Rabi muonium components so a
+#: repolarisation-fitted A_hf stays consistent with a TF-muonium-fitted one.
+_ISOTROPIC_MU_B0_DENOM_MHZ_PER_G = G_E_MHZ_PER_G + G_MU_MHZ_PER_G
 
 
 def isotropic_mu_b0_gauss(A_hf_mhz: float) -> float:
@@ -457,7 +461,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         description="a_Mu*(1/2 + (B/B0)^2)/(1 + (B/B0)^2) + a_Dia, B0 = A_hf/(γₑ+γµ)",
         function=_mu_repolarisation,
         param_names=["a_Mu", "A_hf", "a_Dia"],
-        param_defaults={"a_Mu": 15.0, "A_hf": 4463.0, "a_Dia": 5.0},
+        param_defaults={"a_Mu": 15.0, "A_hf": VACUUM_MUONIUM_A_HF_MHZ, "a_Dia": 5.0},
         param_info={
             "a_Mu": get_param_info("a_Mu"),
             "A_hf": get_param_info("A_hf"),
@@ -1298,11 +1302,12 @@ def apply_error_mode(
     """Return the σ array a fit should weight with under ``mode``.
 
     ``value`` is the percentage for ``PERCENT`` and the constant σ for
-    ``ABSOLUTE`` (a missing/invalid value falls back to σ = 1, matching
-    WiMDA). Returns ``None`` for ``COLUMN`` with no error column, which
-    callers treat as unit weights. Percent-mode points with y = 0 get σ = 0
-    and are excluded by the standard validity mask — they carry no error
-    information.
+    ``ABSOLUTE``. A missing, non-finite, or non-positive value falls back to
+    σ = 1 for ``ABSOLUTE`` (matching WiMDA) and to 1 % for ``PERCENT`` (so a
+    zero percentage cannot zero out every error and mask the whole fit).
+    Returns ``None`` for ``COLUMN`` with no error column, which callers treat
+    as unit weights. Percent-mode points with y = 0 get σ = 0 and are
+    excluded by the standard validity mask — they carry no error information.
     """
     mode = ErrorMode(mode)
     yy = np.asarray(y, dtype=float)
@@ -1310,6 +1315,8 @@ def apply_error_mode(
         return None if yerr is None else np.asarray(yerr, dtype=float)
     if mode is ErrorMode.PERCENT:
         pct = abs(float(value)) if value is not None and np.isfinite(value) else 1.0
+        if pct <= 0.0:
+            pct = 1.0
         return (pct / 100.0) * np.abs(yy)
     if mode is ErrorMode.ABSOLUTE:
         const = abs(float(value)) if value is not None and np.isfinite(value) else 1.0
@@ -1373,6 +1380,25 @@ def validate_fit_windows(
     return normalised
 
 
+def parse_fit_windows(state: object) -> list[tuple[float, float]] | None:
+    """Leniently parse a serialized window list (sequence of [lo, hi] pairs).
+
+    Malformed entries are dropped rather than raising — saved state must
+    never prevent a project from opening. Returns ``None`` when nothing
+    usable remains.
+    """
+    if not isinstance(state, (list, tuple)):
+        return None
+    windows: list[tuple[float, float]] = []
+    for entry in state:
+        if isinstance(entry, (list, tuple)) and len(entry) == 2:
+            try:
+                windows.append((float(entry[0]), float(entry[1])))
+            except (TypeError, ValueError):
+                continue
+    return windows or None
+
+
 def windows_mask(
     x: NDArray,
     windows: Sequence[tuple[float, float]] | None,
@@ -1403,6 +1429,19 @@ def windows_mask(
 def range_mask(x: NDArray, fit_range: ModelFitRange) -> NDArray[np.bool_]:
     """Window-union (or min/max) mask for a :class:`ModelFitRange`."""
     return windows_mask(x, fit_range.windows, fit_range.x_min, fit_range.x_max)
+
+
+def effective_range_bounds(fit_range: ModelFitRange) -> tuple[float | None, float | None]:
+    """The x-extent a range's fitted curve should span.
+
+    With windows present this is the union envelope (so the curve is drawn
+    continuously through excluded gaps); otherwise the plain bounds. Raises
+    ``ValueError`` for invalid windows, like :func:`validate_fit_windows`.
+    """
+    windows = validate_fit_windows(fit_range.windows)
+    if windows is not None:
+        return min(lo for lo, _ in windows), max(hi for _, hi in windows)
+    return fit_range.x_min, fit_range.x_max
 
 
 @dataclass
@@ -1754,8 +1793,15 @@ def fit_parameter_model(
     if ee is None:
         ee = np.ones_like(xx)
 
+    try:
+        window_selection = windows_mask(xx, windows, x_min, x_max)
+    except ValueError as exc:
+        # Keep the documented failure contract: bad range inputs yield a
+        # failed result, never an exception.
+        return ParameterModelFitResult(success=False, message=str(exc), error_mode=error_mode.value)
+
     mask = np.isfinite(xx) & np.isfinite(yy) & np.isfinite(ee) & (ee > 0)
-    mask &= windows_mask(xx, windows, x_min, x_max)
+    mask &= window_selection
 
     if not np.any(mask):
         return ParameterModelFitResult(
@@ -1814,12 +1860,21 @@ def fit_parameter_model(
         # location is independent of a uniform σ rescale, so multiplying the
         # parameter errors by √(χ²/ν) is exactly the fixed point of WiMDA's
         # iterated Estimate mode (σ ← σ·√χ²ᵣ until χ²ᵣ = 1).
-        ndof = max(len(x_fit) - len(parameters.free_parameters), 1)
-        scale = float(np.sqrt(best_result.chi_squared / ndof))
-        if np.isfinite(scale) and scale > 0.0:
-            best_result.uncertainties = {
-                name: err * scale for name, err in best_result.uncertainties.items()
-            }
+        ndof = len(x_fit) - len(parameters.free_parameters)
+        if ndof < 1:
+            # An (over)determined interpolation has no residual scatter to
+            # estimate errors from — χ² ≈ 0 would collapse the rescaled
+            # errors to ~0, reporting an indeterminate fit as exact.
+            best_result.uncertainties = {}
+            best_result.message = (
+                f"{best_result.message}; no degrees of freedom to estimate errors from scatter"
+            )
+        else:
+            scale = float(np.sqrt(best_result.chi_squared / ndof))
+            if np.isfinite(scale) and scale > 0.0:
+                best_result.uncertainties = {
+                    name: err * scale for name, err in best_result.uncertainties.items()
+                }
     return best_result
 
 
@@ -2045,15 +2100,14 @@ def evaluate_parameter_model_fit(
         if fit_range.result is None or not fit_range.result.success:
             continue
 
-        windows = validate_fit_windows(fit_range.windows)
-        if windows is not None:
+        try:
             # One model across the window union: sample the full envelope so
             # the curve is drawn continuously through the excluded gaps.
-            x_min: float | None = min(lo for lo, _ in windows)
-            x_max: float | None = max(hi for _, hi in windows)
-        else:
-            x_min = fit_range.x_min
-            x_max = fit_range.x_max
+            x_min, x_max = effective_range_bounds(fit_range)
+        except ValueError:
+            # Invalid windows (e.g. inverted mid-edit): skip the curve rather
+            # than raising inside a plotting path.
+            continue
         if x_min is None or x_max is None:
             continue
         if x_max <= x_min:

@@ -390,3 +390,22 @@ def test_new_components_evaluate_finite_on_scope_grid(name: str) -> None:
     y = comp.function(x, **comp.param_defaults)
     assert y.shape == x.shape
     assert np.isfinite(y).all()
+
+
+def test_mu_repolarisation_shares_breit_rabi_constants() -> None:
+    """B0 must come from the same per-ratio constants as the Breit-Rabi
+    muonium components, and the default A_hf from the shared vacuum value —
+    otherwise a repolarisation-fitted A_hf can drift from a TF-fitted one."""
+    from asymmetry.core.fitting.muonium import (
+        G_E_MHZ_PER_G,
+        G_MU_MHZ_PER_G,
+        VACUUM_MUONIUM_A_HF_MHZ,
+    )
+
+    assert (
+        PARAMETER_MODEL_COMPONENTS["MuRepolarisation"].param_defaults["A_hf"]
+        == VACUUM_MUONIUM_A_HF_MHZ
+    )
+    np.testing.assert_allclose(
+        isotropic_mu_b0_gauss(1.0), 1.0 / (G_E_MHZ_PER_G + G_MU_MHZ_PER_G), rtol=0
+    )

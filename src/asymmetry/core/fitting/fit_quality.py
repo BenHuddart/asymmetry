@@ -26,6 +26,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+# Module-level import: scipy.stats is not pulled in by any other eagerly
+# imported module, and a lazy in-function import would pay its ~1 s cold load
+# on the GUI thread the first time a verdict is rendered.
+from scipy.stats import chi2 as _chi2_dist
+
 _CONFIDENCE_MIN = 0.5
 _CONFIDENCE_MAX = 0.999
 
@@ -62,8 +67,6 @@ def assess_fit_quality(
     confidence
         Two-sided confidence level R; clamped to [0.5, 0.999].
     """
-    from scipy.stats import chi2 as chi2_dist
-
     confidence = min(max(float(confidence), _CONFIDENCE_MIN), _CONFIDENCE_MAX)
     alpha = 1.0 - confidence
 
@@ -79,7 +82,7 @@ def assess_fit_quality(
             dof=nu,
         )
 
-    cdf = float(chi2_dist.cdf(chi2_value, nu))
+    cdf = float(_chi2_dist.cdf(chi2_value, nu))
     if cdf < alpha / 2.0:
         verdict: FitVerdict = "overdone"
     elif cdf > 1.0 - alpha / 2.0:
@@ -90,8 +93,8 @@ def assess_fit_quality(
     return FitQuality(
         verdict=verdict,
         chi2_reduced=chi2_value / nu,
-        band_low=float(chi2_dist.ppf(alpha / 2.0, nu)) / nu,
-        band_high=float(chi2_dist.ppf(1.0 - alpha / 2.0, nu)) / nu,
+        band_low=float(_chi2_dist.ppf(alpha / 2.0, nu)) / nu,
+        band_high=float(_chi2_dist.ppf(1.0 - alpha / 2.0, nu)) / nu,
         confidence=confidence,
         dof=nu,
     )

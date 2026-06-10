@@ -345,3 +345,108 @@ def test_fit_quality_importable_without_qt() -> None:
     source = open(module.__file__).read()
     assert "PySide6" not in source
     assert "asymmetry.gui" not in source
+
+
+# ---------------------------------------------------------------------------
+# Review fixes: edge-case and contract regressions
+# ---------------------------------------------------------------------------
+
+
+def test_percent_mode_zero_value_falls_back_instead_of_masking_all() -> None:
+    # A zero/negative percentage is invalid input, not "zero error everywhere":
+    # it falls back to 1 % so the fit cannot fail with a misleading
+    # "No valid points" message.
+    sigma = apply_error_mode(np.array([2.0, -4.0]), None, "percent", 0.0)
+    np.testing.assert_allclose(sigma, [0.02, 0.04])
+
+    x = np.array([1.0, 2.0, 3.0, 4.0])
+    y = 2.0 * x
+    model = ParameterCompositeModel(["Linear"])
+    params = ParameterSet([Parameter("m", value=1.0), Parameter("b", value=0.0)])
+    result = fit_parameter_model(x, y, None, model, params, error_mode="percent", error_value=0.0)
+    assert result.success
+    assert result.n_points == 4
+
+
+def test_fit_parameter_model_returns_failed_result_for_invalid_windows() -> None:
+    # Bad range inputs keep the documented failure contract: a failed result,
+    # never an exception (scripted callers check result.success).
+    x = np.array([1.0, 2.0, 3.0, 4.0])
+    y = 2.0 * x
+    model = ParameterCompositeModel(["Linear"])
+    params = ParameterSet([Parameter("m", value=1.0), Parameter("b", value=0.0)])
+    result = fit_parameter_model(x, y, None, model, params, windows=[(5.0, 1.0)])
+    assert not result.success
+    assert "inverted" in result.message
+
+
+def test_scatter_mode_zero_dof_reports_indeterminate_errors() -> None:
+    # An exact interpolation has no scatter to estimate errors from; the
+    # rescale must not collapse the uncertainties toward zero.
+    x = np.array([1.0, 2.0, 4.0])
+    y = np.array([1.0, 3.0, 2.0])
+    model = ParameterCompositeModel(["Polynomial"])
+    params = ParameterSet(
+        [
+            Parameter("c0", value=0.1),
+            Parameter("c1", value=0.1),
+            Parameter("c2", value=0.1),
+            Parameter("c3", value=0.0, fixed=True),
+            Parameter("c4", value=0.0, fixed=True),
+            Parameter("c5", value=0.0, fixed=True),
+        ]
+    )
+    result = fit_parameter_model(x, y, None, model, params, error_mode="scatter")
+    assert result.success
+    assert result.uncertainties == {}
+    assert "no degrees of freedom" in result.message
+
+
+def test_evaluate_skips_ranges_with_invalid_windows() -> None:
+    # Inverted windows (e.g. mid-edit state committed from the dialog) must
+    # not raise inside plotting paths — the curve is skipped instead.
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    model = ParameterCompositeModel(["Linear"])
+    params = ParameterSet([Parameter("m", value=2.0), Parameter("b", value=1.0)])
+    fit_range = ModelFitRange(
+        x_min=0.0,
+        x_max=10.0,
+        model=model,
+        parameters=params,
+        result=ParameterModelFitResult(success=True, parameters=params),
+        windows=[(5.0, 1.0)],
+    )
+    fit = ParameterModelFit(parameter_name="Lambda", x_key="temperature", ranges=[fit_range])
+    assert evaluate_parameter_model_fit(fit) == []
+
+
+def test_parse_fit_windows_is_lenient() -> None:
+    from asymmetry.core.fitting.parameter_models import parse_fit_windows
+
+    assert parse_fit_windows(None) is None
+    assert parse_fit_windows("nonsense") is None
+    assert parse_fit_windows([]) is None
+    assert parse_fit_windows([[1, 4], [7, 10]]) == [(1.0, 4.0), (7.0, 10.0)]
+    # Malformed entries are dropped, not fatal (saved state must always load).
+    assert parse_fit_windows([[1, 4], ["bad", 2], [3]]) == [(1.0, 4.0)]
+    assert parse_fit_windows([["bad", "worse"]]) is None
+
+
+def test_effective_range_bounds_envelope_and_fallback() -> None:
+    from asymmetry.core.fitting.parameter_models import effective_range_bounds
+
+    model = ParameterCompositeModel(["Linear"])
+    params = ParameterSet([Parameter("m", value=1.0), Parameter("b", value=0.0)])
+    plain = ModelFitRange(x_min=2.0, x_max=8.0, model=model, parameters=params)
+    assert effective_range_bounds(plain) == (2.0, 8.0)
+    windowed = ModelFitRange(
+        x_min=2.0, x_max=8.0, model=model, parameters=params, windows=[(1.0, 3.0), (7.0, 12.0)]
+    )
+    assert effective_range_bounds(windowed) == (1.0, 12.0)
+    with pytest.raises(ValueError, match="inverted"):
+        effective_range_bounds(
+            ModelFitRange(
+                x_min=None, x_max=None, model=model, parameters=params, windows=[(5.0, 1.0)]
+            )
+        )

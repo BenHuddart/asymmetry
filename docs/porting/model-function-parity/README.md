@@ -82,9 +82,14 @@ All eight `fitfunctions.pas` functions were read and transcribed
 
 ## Scope decisions (agreed 2026-06-10)
 
-- **Session-only state**: model fits are not persisted in `.asymp` today; the
-  new machinery stays session-only. "Persist model fits in projects" recorded
-  as a follow-on.
+- **Session-only state**: originally decided on the premise that model fits
+  are not persisted in `.asymp`. **Corrected during the post-implementation
+  review (2026-06-10):** model fits *do* reach `.asymp` via the
+  fit-parameters panel state (`_serialize_model_fits` →
+  `mainwindow` project save), so the new fields (`windows`,
+  `error_mode`, `n_points`) are serialized there too — no schema.py change
+  was needed, the panel-state dict is extensible. The "persist model fits"
+  follow-on is therefore moot.
 - **GUI exposure in `ModelFitDialog` only**: core helpers are written
   generically, but the cross-group fit dialog keeps its current UI; exposure
   there is a follow-on.

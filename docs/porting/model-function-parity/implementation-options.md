@@ -227,6 +227,40 @@ is a panel-level feature, not a dialog tweak. The core is already x-agnostic
   no clean isotropic-Mu corpus B-scan exists (test-data.md §2), so the
   synthetic oracle is the quantitative record.
 
+## Post-implementation review fixes (2026-06-10)
+
+A 7-angle recall-biased review surfaced 10 confirmed findings, all fixed:
+
+1. **Persistence (premise correction)**: model fits DO reach `.asymp` via the
+   fit-parameters panel state — `windows`, `error_mode`, `n_points` are now
+   serialized in both `fit_parameters_panel._serialize_model_fits` and the
+   global-parameter-fit-window serializer (lenient `parse_fit_windows`
+   reader; legacy state loads with defaults).
+2. Cross-group dialog: inherited error-mode combo and "+ Window" controls are
+   suppressed via `_supports_error_modes`/`_supports_windows` class flags
+   (the cross-group backend honours neither); hidden "active" checkboxes now
+   stay hidden across UI rebuilds (`_post_rebuild_ranges_ui` hook).
+3. Window/bounds edits invalidate the stored result (status + χ²/verdict
+   labels reset); `fit_parameter_model` returns a failed result (never
+   raises) for invalid windows, and `evaluate_parameter_model_fit` skips
+   them, so plotting paths cannot crash on mid-edit state.
+4. Panel overlay/GLE sampler spans the window-union envelope via the shared
+   `effective_range_bounds` helper; `.fit` sidecars record `fit_windows`.
+5. Scatter mode with ν < 1 reports indeterminate errors (empty
+   uncertainties + message) instead of collapsing them via the ndof clamp.
+6. Quality verdict is silent for results with unknown `n_points` (legacy /
+   cross-group bridge) instead of claiming "no degrees of freedom"; ν now
+   uses `ParameterSet.free_parameters`.
+7. Percent error mode: zero/negative value falls back to 1 % instead of
+   masking every point.
+8. `scipy.stats` imported at `fit_quality` module level (lazy in-function
+   import cost a measured ~0.9 s freeze on the UI thread at first verdict).
+9. Stale quality label cleared on parameter edits.
+10. MuRepolarisation reuses `G_E_MHZ_PER_G + G_MU_PER_G`-style constants and
+    `VACUUM_MUONIUM_A_HF_MHZ` from `core/fitting/muonium.py` (B₀ now
+    bit-identical to the Breit-Rabi components; default A_hf 4463.302, was a
+    stale 4463.0).
+
 ## Follow-ons (recorded regardless of stretch outcome)
 
 1. **Send model-fit results to the results table** — model-fit outputs

@@ -569,3 +569,81 @@ def test_quality_verdict_suppressed_for_scatter_mode(qapp: QApplication) -> None
     fit_range.result = None
     dlg._select_range(0)
     assert dlg._quality_label.text() == ""
+
+
+def test_window_bounds_edit_invalidates_stale_result(qapp: QApplication) -> None:
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    fit_range = dlg._fit.ranges[0]
+    fit_range.windows = [(1.0, 5.0)]
+    fit_range.result = ParameterModelFitResult(
+        success=True,
+        chi_squared=9.0,
+        reduced_chi_squared=0.9,
+        parameters=fit_range.parameters,
+        error_mode="column",
+        n_points=12,
+    )
+    dlg._rebuild_ranges_ui()
+    dlg._select_range(0)
+    assert "Quality of fit" in dlg._quality_label.text()
+
+    dlg._on_window_bounds_changed(0, 0, 1, 4.0)
+
+    assert fit_range.result is None
+    assert fit_range.windows == [(1.0, 4.0)]
+    assert dlg._quality_label.text() == ""
+    assert "not yet run" in dlg._chi2_label.text().lower()
+    assert "Not run" in dlg._range_widgets[0].status_label.text()
+
+
+def test_range_bounds_edit_invalidates_stale_result(qapp: QApplication) -> None:
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    fit_range = dlg._fit.ranges[0]
+    fit_range.result = ParameterModelFitResult(
+        success=True, reduced_chi_squared=1.0, parameters=fit_range.parameters
+    )
+    dlg._range_widgets[0].x_max.setValue(8.0)
+    assert fit_range.result is None
+
+
+def test_param_edit_clears_quality_label(qapp: QApplication) -> None:
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    fit_range = dlg._fit.ranges[0]
+    fit_range.result = ParameterModelFitResult(
+        success=True,
+        chi_squared=9.0,
+        reduced_chi_squared=0.9,
+        parameters=fit_range.parameters,
+        error_mode="column",
+        n_points=12,
+    )
+    dlg._select_range(0)
+    assert dlg._quality_label.text()
+
+    dlg._on_param_table_edited()
+
+    assert dlg._quality_label.text() == ""
+    assert fit_range.result is None
+
+
+def test_quality_verdict_silent_for_unknown_point_count(qapp: QApplication) -> None:
+    """Results built outside fit_parameter_model (cross-group bridge, legacy
+    saved state) have n_points=0 — say nothing rather than implying the fit
+    had no degrees of freedom."""
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    fit_range = dlg._fit.ranges[0]
+    fit_range.result = ParameterModelFitResult(
+        success=True,
+        chi_squared=9.0,
+        reduced_chi_squared=0.9,
+        parameters=fit_range.parameters,
+    )
+    assert dlg._quality_text_for_range(fit_range) == ""
