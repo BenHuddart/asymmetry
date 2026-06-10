@@ -213,6 +213,75 @@ def test_recompute_all_skips_missing_runs():
     assert fb.primary is None
 
 
+def test_maxent_recipe_and_reconstruction_survive_project_round_trip():
+    """A MaxEnt recipe carrying every new field, plus the TIME_MAXENT_RECON
+    representation, must survive a full project round-trip unchanged — the
+    schema is additive (``MaxEntConfig.from_dict`` defaults absent keys), so no
+    migration is needed and ``recompute_on_load`` stays off for both."""
+    from asymmetry.core.maxent import MaxEntConfig
+
+    config = MaxEntConfig(
+        n_spectrum_points=512,
+        mode="zf_lf",
+        selected_group_ids=[1, 2],
+        pulse_mode="double",
+        pulse_half_width_us=0.08,
+        pulse_separation_us=0.324,
+        exclude_t_min_us=1.5,
+        exclude_t_max_us=2.5,
+        specbg_enabled=True,
+        specbg_gaussian_width_mhz=0.2,
+        specbg_lorentzian_width_mhz=0.15,
+        specbg_lorentzian_fraction=0.3,
+        show_reconstruction=True,
+    )
+    recipe = {"maxent_config": config.to_dict()}
+
+    model = ProjectModel()
+    container = model.ensure_dataset(7)
+    spectrum_rep = container.ensure(RepresentationType.FREQ_MAXENT)
+    spectrum_rep.recipe = dict(recipe)
+    spectrum_rep.result_metadata = {"cycles": 25}
+    recon_rep = container.ensure(RepresentationType.TIME_MAXENT_RECON)
+    recon_rep.recipe = dict(recipe)
+
+    # Both expensive representations opt out of load-time recomputation.
+    assert spectrum_rep.recompute_on_load is False
+    assert recon_rep.recompute_on_load is False
+
+    # Standalone and project-state round-trips must both preserve the pair.
+    for restored in (
+        ProjectModel.from_dict(model.to_dict()),
+        ProjectModel.from_project_state(
+            _project_state_with(ProjectModel.from_dict(model.to_dict()))
+        ),
+    ):
+        restored_spectrum = restored.representation(7, RepresentationType.FREQ_MAXENT)
+        restored_recon = restored.representation(7, RepresentationType.TIME_MAXENT_RECON)
+        assert restored_spectrum is not None
+        assert restored_recon is not None
+        # The recipe block survives verbatim, and rebuilding the config recovers
+        # every new field (no schema migration, defaults untouched).
+        assert restored_spectrum.recipe == recipe
+        assert restored_recon.recipe == recipe
+        rebuilt = MaxEntConfig.from_dict(restored_spectrum.recipe["maxent_config"])
+        assert rebuilt.mode == "zf_lf"
+        assert rebuilt.pulse_mode == "double"
+        assert rebuilt.exclude_t_min_us == 1.5
+        assert rebuilt.specbg_enabled is True
+        assert rebuilt.show_reconstruction is True
+        assert restored_spectrum.recompute_on_load is False
+        assert restored_recon.recompute_on_load is False
+        assert restored_spectrum.result_metadata["cycles"] == 25
+
+
+def _project_state_with(model: ProjectModel) -> dict:
+    """Write *model* into a fresh project-state dict (its datasets registered)."""
+    project = {"datasets": [{"run_number": 7, "source_file": "/tmp/a.nxs"}]}
+    model.write_to_project_state(project)
+    return project
+
+
 def test_fitseries_extra_round_trips():
     # The freeform `extra` dict (carries the ALC scan's analysis) survives
     # to_dict/from_dict; ordinary series default to an empty dict.

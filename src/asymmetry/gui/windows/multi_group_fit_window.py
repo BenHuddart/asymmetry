@@ -77,6 +77,20 @@ class MultiGroupFitWindow(QWidget):
                 return seed
         return None
 
+    def update_grouped_phase_seed(self, run_number: int, phases_rad: dict[int, float]) -> bool:
+        """Write per-group phases (radians) into the cached grouped fit seed.
+
+        Used by the MaxEnt "Send phases to fit" exchange; returns ``True`` when a
+        grouped fit seed on either surface received the phases.
+        """
+        updated = False
+        for tab in self._grouped_tabs():
+            if hasattr(tab, "update_grouped_phase_seed") and tab.update_grouped_phase_seed(
+                run_number, phases_rad
+            ):
+                updated = True
+        return updated
+
     def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
         """Update fit-range spinboxes on both surfaces to match the plot range."""
         for tab in self._grouped_tabs():

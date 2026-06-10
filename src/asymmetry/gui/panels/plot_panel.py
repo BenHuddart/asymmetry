@@ -42,6 +42,8 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fourier.units import convert as convert_field_unit
+from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     available_background_modes,
@@ -50,8 +52,6 @@ from asymmetry.core.transform.background import (
 from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
-    GAUSS_TO_TESLA,
-    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     PeriodMode,
 )
 from asymmetry.gui.export_paths import (
@@ -78,6 +78,13 @@ _TIME_VIEW_FIELDS: list[tuple[str, str]] = [
     ("FB Asymmetry", "fb_asymmetry"),
     ("Individual Groups", "groups"),
 ]
+
+#: Map the frequency plot panel's x-unit tokens to ``core.fourier.units`` units.
+_FREQUENCY_X_UNIT_FIELD = {
+    "frequency_mhz": "mhz",
+    "field_gauss": "gauss",
+    "field_tesla": "tesla",
+}
 
 
 class _FloatLimitField(QLineEdit):
@@ -430,6 +437,7 @@ class PlotPanel(QWidget):
             self._frequency_x_unit_combo = QComboBox()
             self._frequency_x_unit_combo.addItem("Frequency (MHz)", userData="frequency_mhz")
             self._frequency_x_unit_combo.addItem("Field (G)", userData="field_gauss")
+            self._frequency_x_unit_combo.addItem("Field (T)", userData="field_tesla")
             self._frequency_x_unit_combo.currentIndexChanged.connect(
                 self._on_frequency_x_unit_changed
             )
@@ -620,8 +628,12 @@ class PlotPanel(QWidget):
         return "Time (μs)", "Asymmetry (%)"
 
     def _mhz_per_gauss(self) -> float:
-        """Return the frequency equivalent of one Gauss in MHz."""
-        return MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
+        """Return the frequency equivalent of one Gauss in MHz.
+
+        Routed through the shared ``core.fourier.units`` converter so the
+        Gauss↔MHz constant lives in exactly one place.
+        """
+        return float(gauss_to_mhz(1.0))
 
     def _frequency_limit_mode_key(
         self,
@@ -658,23 +670,26 @@ class PlotPanel(QWidget):
         if reference_mhz is None:
             return 0.0
         resolved_unit = self._current_frequency_x_unit if unit is None else str(unit)
-        if resolved_unit == "field_gauss":
-            return reference_mhz / self._mhz_per_gauss()
-        return reference_mhz
+        field_unit = _FREQUENCY_X_UNIT_FIELD.get(resolved_unit, "mhz")
+        return float(convert_field_unit(reference_mhz, "mhz", field_unit))
 
     def _display_x_label(self) -> str:
         """Return the x-axis label for the current display unit."""
         if not self._is_frequency_plot_panel():
             return "Time (μs)"
-        if self._current_frequency_x_unit == "field_gauss":
-            return "Field (G)"
-        return "Frequency (MHz)"
+        return {
+            "field_gauss": "Field (G)",
+            "field_tesla": "Field (T)",
+        }.get(self._current_frequency_x_unit, "Frequency (MHz)")
 
     def _display_x_unit_suffix(self) -> str:
         """Return the compact unit suffix for the x-limit controls."""
         if not self._is_frequency_plot_panel():
             return "μs"
-        return "G" if self._current_frequency_x_unit == "field_gauss" else "MHz"
+        return {
+            "field_gauss": "G",
+            "field_tesla": "T",
+        }.get(self._current_frequency_x_unit, "MHz")
 
     def _display_y_unit_suffix(self, y_label: str | None = None) -> str:
         """Return the compact unit suffix for the y-limit controls."""
@@ -688,9 +703,10 @@ class PlotPanel(QWidget):
         arr = np.asarray(x_values, dtype=float)
         if not self._is_frequency_plot_panel():
             return arr
-        if self._current_frequency_x_unit != "field_gauss":
+        field_unit = _FREQUENCY_X_UNIT_FIELD.get(self._current_frequency_x_unit, "mhz")
+        if field_unit == "mhz":
             return arr
-        return arr / self._mhz_per_gauss()
+        return np.asarray(convert_field_unit(arr, "mhz", field_unit), dtype=float)
 
     def _convert_frequency_axis_limit_to_control_value(self, value: float) -> float:
         """Convert one absolute axis x-limit into the toolbar control value."""
@@ -720,11 +736,11 @@ class PlotPanel(QWidget):
         """Convert one x-limit value between frequency-view display units."""
         if from_unit == to_unit:
             return float(value)
-        if from_unit == "frequency_mhz" and to_unit == "field_gauss":
-            return float(value) / self._mhz_per_gauss()
-        if from_unit == "field_gauss" and to_unit == "frequency_mhz":
-            return float(value) * self._mhz_per_gauss()
-        return float(value)
+        source = _FREQUENCY_X_UNIT_FIELD.get(from_unit)
+        target = _FREQUENCY_X_UNIT_FIELD.get(to_unit)
+        if source is None or target is None:
+            return float(value)
+        return float(convert_field_unit(value, source, target))
 
     def _convert_display_limit_to_canonical_mhz(
         self,
@@ -2324,6 +2340,180 @@ class PlotPanel(QWidget):
         self._update_y_limit_controls_for_axis(self._current_polarization_axis)
         self._apply_limits(schedule_viewport_refresh=True)
         self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
+
+    def plot_maxent_reconstruction(
+        self, datasets: list[MuonDataset], *, combined: bool = False
+    ) -> None:
+        """Overlay the MaxEnt time-domain reconstruction on the measured data.
+
+        Each dataset carries the observed signal in ``asymmetry`` and the
+        forward-model reconstruction + weighted residual in
+        ``metadata['maxent_model']`` / ``['maxent_residual']``.  Two layouts
+        share the same data and χ²:
+
+        - *per-group* (default): one main axis (data points + model line) above
+          a residuals strip per group, stacked vertically;
+        - *combined* (``combined=True``): every group's data+model overlaid on a
+          single colour-coded axis above one shared residuals strip.
+
+        The displayed χ² is the engine's by construction (the residuals are
+        ``(data − model)/σ``), so both layouts report the same total.
+        """
+        if not self._has_mpl or not datasets:
+            return
+        if combined:
+            self._plot_maxent_reconstruction_combined(datasets)
+        else:
+            self._plot_maxent_reconstruction_per_group(datasets)
+
+    def _plot_maxent_reconstruction_per_group(self, datasets: list[MuonDataset]) -> None:
+        """Stacked per-group data+model axes, each above its own residuals strip."""
+        self._set_canvas_minimum_height_for_axes(len(datasets))
+        self._set_alpha_label(None)
+        self._disconnect_axis_limit_callbacks()
+        self._figure.clf()
+        self._subplot_axes_by_polarization = {}
+        self._vector_subplot_datasets = {}
+        self._grouped_time_subplot_datasets = []
+        self._current_datasets = list(datasets)
+        self._current_dataset = datasets[-1]
+        self._update_plot_header()
+        self._current_polarization_axis = None
+        for label in ("_polarization_label", "_polarization_combo"):
+            if hasattr(self, label):
+                getattr(self, label).hide()
+
+        n = len(datasets)
+        gridspec = self._figure.add_gridspec(2 * n, 1, height_ratios=[3, 1] * n, hspace=0.45)
+        shared_ax = None
+        total_chi2 = 0.0
+        total_obs = 0
+        last_time = None
+        for idx, dataset in enumerate(datasets):
+            time = np.asarray(dataset.time, dtype=float)
+            data = np.asarray(dataset.asymmetry, dtype=float)
+            model = np.asarray(dataset.metadata.get("maxent_model", data), dtype=float)
+            residual = np.asarray(
+                dataset.metadata.get("maxent_residual", data - model), dtype=float
+            )
+            total_chi2 += float(
+                dataset.metadata.get("maxent_group_chi2", float(np.sum(residual**2)))
+            )
+            total_obs += int(dataset.metadata.get("maxent_group_n_obs", residual.size))
+
+            ax_main = self._figure.add_subplot(gridspec[2 * idx], sharex=shared_ax)
+            ax_res = self._figure.add_subplot(gridspec[2 * idx + 1], sharex=ax_main)
+            if shared_ax is None:
+                shared_ax = ax_main
+            if idx == 0:
+                self._ax = ax_main
+            style_axes(ax_main)
+            style_axes(ax_res)
+            axis_key = f"recon:{dataset.run_number}:{idx}"
+            self._subplot_axes_by_polarization[axis_key] = ax_main
+
+            ax_main.plot(
+                time, data, ".", markersize=3, color=tokens.PLOT_DATA, label="Data", alpha=0.7
+            )
+            ax_main.plot(
+                time, model, "-", linewidth=1.4, color=tokens.PLOT_FIT, label="Reconstruction"
+            )
+            ax_main.set_title(str(dataset.run_label), loc="left", fontsize=10)
+            ax_main.set_ylabel("Recon. (a.u.)")
+            ax_main.tick_params(labelbottom=False)
+            style_legend(ax_main.legend(loc="upper right"))
+
+            ax_res.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=0.8)
+            ax_res.plot(time, residual, "-", linewidth=0.9, color=tokens.PLOT_DATA)
+            ax_res.set_ylabel("(d−m)/σ")
+            if idx == n - 1:
+                ax_res.set_xlabel("Time (μs)")
+            else:
+                ax_res.tick_params(labelbottom=False)
+            last_time = time
+
+        self._current_polarization_axis = next(iter(self._subplot_axes_by_polarization), None)
+        if total_obs:
+            chi2_per_n = total_chi2 / float(total_obs)
+            self._figure.suptitle(
+                f"MaxEnt reconstruction — χ² = {total_chi2:.1f} ({chi2_per_n:.2f} per point)",
+                fontsize=10,
+            )
+        if last_time is not None and last_time.size:
+            self._last_plot_time = last_time
+        self._figure.canvas.draw_idle()
+
+    def _plot_maxent_reconstruction_combined(self, datasets: list[MuonDataset]) -> None:
+        """All groups' data+model on one colour-coded axis + a shared residuals strip.
+
+        Each group keeps a distinct colour (matplotlib's default cycle) shared
+        between its data points, model line and residual trace, so the combined
+        fit quality is legible at a glance.  The total χ² equals the per-group
+        layout's by construction.
+        """
+        self._set_canvas_minimum_height_for_axes(2)
+        self._set_alpha_label(None)
+        self._disconnect_axis_limit_callbacks()
+        self._figure.clf()
+        self._subplot_axes_by_polarization = {}
+        self._vector_subplot_datasets = {}
+        self._grouped_time_subplot_datasets = []
+        self._current_datasets = list(datasets)
+        self._current_dataset = datasets[-1]
+        self._update_plot_header()
+        self._current_polarization_axis = None
+        for label in ("_polarization_label", "_polarization_combo"):
+            if hasattr(self, label):
+                getattr(self, label).hide()
+
+        gridspec = self._figure.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.3)
+        ax_main = self._figure.add_subplot(gridspec[0])
+        ax_res = self._figure.add_subplot(gridspec[1], sharex=ax_main)
+        style_axes(ax_main)
+        style_axes(ax_res)
+        self._ax = ax_main
+        axis_key = f"recon:combined:{datasets[0].run_number}"
+        self._subplot_axes_by_polarization[axis_key] = ax_main
+        self._current_polarization_axis = axis_key
+
+        total_chi2 = 0.0
+        total_obs = 0
+        last_time = None
+        for idx, dataset in enumerate(datasets):
+            time = np.asarray(dataset.time, dtype=float)
+            data = np.asarray(dataset.asymmetry, dtype=float)
+            model = np.asarray(dataset.metadata.get("maxent_model", data), dtype=float)
+            residual = np.asarray(
+                dataset.metadata.get("maxent_residual", data - model), dtype=float
+            )
+            total_chi2 += float(
+                dataset.metadata.get("maxent_group_chi2", float(np.sum(residual**2)))
+            )
+            total_obs += int(dataset.metadata.get("maxent_group_n_obs", residual.size))
+            label = str(dataset.metadata.get("group_name", dataset.run_label))
+            color = f"C{idx % 10}"
+            ax_main.plot(time, data, ".", markersize=3, color=color, alpha=0.55)
+            ax_main.plot(time, model, "-", linewidth=1.4, color=color, label=label)
+            ax_res.plot(time, residual, "-", linewidth=0.8, color=color, alpha=0.85)
+            last_time = time
+
+        ax_main.set_ylabel("Recon. (a.u.)")
+        ax_main.tick_params(labelbottom=False)
+        style_legend(ax_main.legend(loc="upper right", title="Group"))
+        ax_res.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=0.8)
+        ax_res.set_ylabel("(d−m)/σ")
+        ax_res.set_xlabel("Time (μs)")
+
+        if total_obs:
+            chi2_per_n = total_chi2 / float(total_obs)
+            self._figure.suptitle(
+                f"MaxEnt reconstruction (combined) — χ² = {total_chi2:.1f} "
+                f"({chi2_per_n:.2f} per point)",
+                fontsize=10,
+            )
+        if last_time is not None and last_time.size:
+            self._last_plot_time = last_time
+        self._figure.canvas.draw_idle()
 
     def _alpha_value_for_dataset(self, dataset: MuonDataset) -> float | None:
         """Return the asymmetry alpha value used for *dataset*, if available."""
@@ -4909,10 +5099,13 @@ class PlotPanel(QWidget):
                         not in {
                             "frequency_mhz",
                             "field_gauss",
+                            "field_tesla",
                             "frequency_mhz:absolute",
                             "frequency_mhz:relative",
                             "field_gauss:absolute",
                             "field_gauss:relative",
+                            "field_tesla:absolute",
+                            "field_tesla:relative",
                         }
                         or not isinstance(raw_limits, (list, tuple))
                         or len(raw_limits) != 2
@@ -4926,7 +5119,7 @@ class PlotPanel(QWidget):
                     self._frequency_x_limits_by_unit[str(raw_unit)] = (lo, hi)
 
             restored_unit = str(state.get("frequency_x_unit", "frequency_mhz"))
-            if restored_unit not in {"frequency_mhz", "field_gauss"}:
+            if restored_unit not in {"frequency_mhz", "field_gauss", "field_tesla"}:
                 restored_unit = "frequency_mhz"
             self._current_frequency_x_unit = restored_unit
             self._frequency_axis_relative_to_reference = bool(

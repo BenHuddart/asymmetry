@@ -18,6 +18,13 @@ import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.grouped_time_domain import build_grouped_time_domain_datasets
+from asymmetry.core.maxent import (
+    MaxEntConfig,
+    ReconstructedGroup,
+    build_maxent_input,
+    reconstruct_group_signals,
+    run_cycles,
+)
 from asymmetry.core.representation.base import Representation, RepresentationType
 from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.core.transform.grouping import effective_grouping, group_forward_backward
@@ -146,3 +153,88 @@ class TimeGroups(Representation):
             dataset.metadata.setdefault("plot_domain", "time")
             dataset.run = run
         return datasets
+
+
+def build_maxent_reconstruction_datasets(
+    reconstructions: dict[int, ReconstructedGroup],
+    run: Run,
+) -> list[MuonDataset]:
+    """Package per-group MaxEnt reconstructions as plottable overlay datasets.
+
+    Each group becomes one :class:`MuonDataset` whose ``asymmetry`` is the
+    observed (normalised) signal and whose ``error`` is σ; the forward-model
+    reconstruction and the weighted residual ride along in ``metadata`` under
+    ``maxent_model`` / ``maxent_residual`` for the overlay renderer.  The arrays
+    are transient display state (representations persist recipes, not arrays).
+    """
+    datasets: list[MuonDataset] = []
+    for group_id in sorted(reconstructions):
+        recon = reconstructions[group_id]
+        metadata = {
+            "run_number": run.run_number,
+            "run_label": f"{run.run_number} · {recon.group_name}",
+            "plot_domain": "time",
+            "x_label": "Time (μs)",
+            "y_label": "Reconstruction (a.u.)",
+            "group_id": int(recon.group_id),
+            "group_name": str(recon.group_name),
+            "maxent_reconstruction": True,
+            "maxent_model": np.asarray(recon.model, dtype=float),
+            "maxent_residual": np.asarray(recon.residual, dtype=float),
+            "maxent_group_chi2": float(recon.chi2),
+            "maxent_group_n_obs": int(recon.n_obs),
+        }
+        datasets.append(
+            MuonDataset(
+                time=np.asarray(recon.time_us, dtype=float),
+                asymmetry=np.asarray(recon.data, dtype=float),
+                error=np.asarray(recon.sigma, dtype=float),
+                metadata=metadata,
+                run=run,
+            )
+        )
+    return datasets
+
+
+class TimeMaxEntReconstruction(Representation):
+    """Per-group MaxEnt time-domain reconstruction overlay for a run.
+
+    Shares the MaxEnt recipe with :class:`FrequencyMaxEnt` (the same
+    ``maxent_config`` block).  Like that representation it is expensive and is
+    **not** recomputed on project load; the GUI caches the reconstruction
+    directly from a completed run, and this ``compute`` is the on-demand
+    fallback that re-runs MaxEnt from the recorded recipe.
+
+    Recipe::
+
+        {"maxent_config": {...same block as FrequencyMaxEnt...}}
+    """
+
+    rep_type = RepresentationType.TIME_MAXENT_RECON
+    recompute_on_load = False
+
+    def maxent_config(self) -> dict[str, Any]:
+        """Return the raw ``maxent_config`` recipe block (possibly empty)."""
+        config = self.recipe.get("maxent_config")
+        return dict(config) if isinstance(config, dict) else {}
+
+    def compute(self, run: Run, *, context: Any = None) -> list[MuonDataset]:
+        # Imported here to avoid a module-level import cycle (frequency imports
+        # base/spectrum/maxent; this keeps time independent of frequency at
+        # import time while reusing its group-id resolver).
+        from asymmetry.core.representation.frequency import _resolve_selected_group_ids
+
+        if not run.histograms:
+            raise ValueError("MaxEnt reconstruction requires detector histograms.")
+        config_dict = self.maxent_config()
+        config = MaxEntConfig.from_dict(config_dict)
+        if config.selected_group_ids is None:
+            config.selected_group_ids = _resolve_selected_group_ids(run, config_dict)
+        maxent_input = build_maxent_input(run, config)
+        result = run_cycles(maxent_input, config)
+        reconstructions = reconstruct_group_signals(maxent_input, result.state)
+        self.result_metadata = {
+            "cycles": int(result.state.cycle),
+            "maxent_chi2": result.metadata.get("maxent_chi2"),
+        }
+        return build_maxent_reconstruction_datasets(reconstructions, run)

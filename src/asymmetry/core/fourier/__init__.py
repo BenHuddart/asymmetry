@@ -19,9 +19,31 @@ from asymmetry.core.fourier.spectrum import (
     fourier_display_ylabel,
     precompute_group_fourier_inputs,
 )
+from asymmetry.core.fourier.units import (
+    FieldUnit,
+    axis_label,
+    convert,
+    frequency_resolution_mhz,
+    gauss_to_mhz,
+    gauss_to_tesla,
+    mhz_to_gauss,
+    mhz_to_tesla,
+    tesla_to_gauss,
+    tesla_to_mhz,
+)
 from asymmetry.core.fourier.window import apply_window
 
 __all__ = [
+    "FieldUnit",
+    "axis_label",
+    "convert",
+    "frequency_resolution_mhz",
+    "gauss_to_mhz",
+    "gauss_to_tesla",
+    "mhz_to_gauss",
+    "mhz_to_tesla",
+    "tesla_to_gauss",
+    "tesla_to_mhz",
     "fft_asymmetry",
     "fft_complex_asymmetry",
     "exclude_frequency_ranges",

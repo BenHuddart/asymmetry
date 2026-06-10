@@ -276,6 +276,131 @@ the 1.38 MHz Mu\ :sup:`+` line — :math:`\gamma_\mu \cdot 100\,\text{G}` — wi
 frequency window capped a little above 1.38 MHz, a good time window, and a
 modest number of cycles and spectrum points.
 
+Reading the reconstruction overlay
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The spectrum is what MaxEnt is *for*, but the **time-domain reconstruction** is
+how you check it. MaxEnt works by forward-modelling the raw counts: it asks what
+each detector group's signal would look like if the data really came from the
+current spectrum, and adjusts the spectrum until those model signals match the
+measurements. The reconstruction overlay shows that comparison directly — the
+measured signal and the model the spectrum predicts, group by group, in time.
+
+After a run, tick **Show time-domain reconstruction** in the MaxEnt panel. The
+plot workspace switches to a stacked view: one panel per detector group with the
+data and the reconstructed model on the same axes, and a residuals strip beneath
+showing the weighted residual :math:`(d-m)/\sigma`. The χ² printed above the
+plot is the same number the Diagnostics line reports — it is computed from these
+very residuals, so the overlay and the convergence figure can never disagree.
+
+Tick **Combine groups on one axis** to overlay every group's data and model on a
+single colour-coded panel above one shared residuals strip, instead of the
+per-group stack. The combined view is the quicker read when you only want to see
+whether the whole fit holds together; the per-group stack is better for tracing
+left-over structure to a particular detector. Both report the same total χ².
+
+This is the strongest single check of fit quality:
+
+* **A good fit** sits on the data with residuals scattered evenly around zero
+  and no left-over oscillation — the model has captured the precession.
+* **Left-over structure in the residuals** (a coherent wiggle, a slow drift)
+  means the spectrum is missing a line, has put it at the wrong frequency, or
+  has the wrong phase for that group. Widen or re-centre the frequency window,
+  re-seed the phases, and run again.
+* **Residuals that blow up at early or late times** point at the time window or
+  an instrumental artefact (deadtime at short times on a pulsed source; noise at
+  long times) rather than at the spectrum itself.
+
+The reconstruction is recomputed from the converged spectrum each run and is not
+stored in the project file; re-open the spectrum and run a cycle to regenerate
+it. Untick the box (or click the **MaxEnt** domain button) to return to the
+spectrum.
+
+Pulsed sources: the pulse-shape response
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+At a pulsed source (ISIS) the muons arrive spread over a finite pulse of order
+tens of nanoseconds, so a precession signal that oscillates fast compared with
+the pulse is averaged across the spread of arrival times and its amplitude is
+suppressed. Above roughly 5 MHz this distorts the recovered spectrum: a real
+line at high frequency comes out with too little weight. Continuous sources
+(PSI, TRIUMF) do not have this limit, so the correction is off by default.
+
+The **Pulse shape** controls fold the instrument response into the forward
+model, where it belongs — MaxEnt then reconstructs the *true* spectral weight
+rather than the attenuated one. Choose:
+
+* **Ignore** — no pulse shaping (continuous-source data).
+* **Single pulse** — one proton pulse of the given **Half-width** (µs).
+* **Double pulse** — the ISIS double-pulse structure, with the **Separation**
+  (µs) between the two pulses.
+
+The response is a parabolic proton-pulse transform rolled off by the pion
+lifetime; the half-width and separation default to the ISIS values (about 50 ns
+and 0.324 µs) because the loaders do not yet record them per run. The effect is
+dramatic: on synthetic pulsed data with equal-amplitude lines at 1 and 7 MHz,
+the recovered 7 MHz weight is suppressed by a factor of ~4 with the response off
+and restored to roughly the 1 MHz weight with it on.
+
+Excluding a time window
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A laser flash, an RF burst, or a detector glitch can corrupt an interior stretch
+of the histogram. Set **Exclude from / to** (µs) to drop that window from the
+fit. The points are *de-weighted* (their error bars are inflated so they carry
+essentially no weight), not removed, so the time grid — and any frequency
+resolution derived from it — is unchanged. Leave the fields blank to disable.
+
+Field axis
+~~~~~~~~~~~
+
+A precession line at frequency ν corresponds to a local field B through
+ν = γ_μ B / 2π, with γ_μ/2π = 135.5 MHz/T. The spectrum's **X Units** selector
+(above the plot) switches the axis between frequency (MHz) and field (Gauss or
+Tesla) without recomputing — handy when the science is a field distribution
+(a vortex lattice, an internal-field spread) rather than a frequency.
+
+Calibration: phases, deadtime, and ZF/LF mode
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+MaxEnt needs one phase per detector group, and a good spectrum needs good
+phases. The **Calibration** controls connect MaxEnt to the rest of the analysis.
+
+**Phase exchange.** If you have already fitted the run with a grouped
+time-domain fit, click **Use fitted phases** to seed the MaxEnt group phases
+from that fit (converted from radians to degrees). After MaxEnt has refined the
+phases, **Send phases to fit** writes them back to the grouped fit. A provenance
+line records which direction the exchange went and when. (Phases are matched by
+group id, so the forward/backward mapping never gets crossed.)
+
+**Deadtime.** At a pulsed source the detectors lose counts at early times where
+the rate is highest, distorting the signal that carries the high-frequency
+information. **Fit deadtime** estimates a per-detector deadtime from the
+early-time count decay; **Apply to grouping** then promotes it to the run's
+deadtime correction. The fit never changes the grouping on its own — you apply
+it explicitly, so the provenance is clear.
+
+**ZF/LF mode.** In zero or longitudinal field the two detectors (forward and
+backward) measure the same relaxation with opposite phase. Select **ZF / LF
+(two-group)** as the mode: include exactly two groups, and MaxEnt pins their
+phases to 0° and 180° and ties their amplitudes through the run's α (the
+detector-efficiency balance). The resulting spectrum is the **field
+distribution** p(B) — for a static Gaussian Kubo–Toyabe relaxation it is broad
+and centred near zero field rather than a sharp line. (The MaxEnt method is
+tuned more for transverse-field rotation than for zero-field precession, so read
+ZF spectra as distributions, not as resolved frequencies.)
+
+**Zero-frequency background (SpecBG).** A ZF field distribution is dominated by
+its strong central peak, which can bury weak satellite structure. Enable
+**Zero-frequency background** (ZF/LF mode only) to subtract a zero-centred
+pseudo-Voigt model of that central peak from the *displayed* spectrum — the
+Gaussian and Lorentzian widths and the Lorentzian fraction shape the model. It
+is display-only and never alters the reconstructed spectrum.
+
+**Export.** **Export spectrum…** writes the spectrum as text (frequency MHz,
+field G, density, with a parameter header); **Export log…** writes the per-cycle
+convergence trace and the final per-group phases, amplitudes, and backgrounds.
+
 Choosing FFT vs MaxEnt
 -----------------------
 

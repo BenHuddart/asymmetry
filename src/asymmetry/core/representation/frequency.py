@@ -21,8 +21,13 @@ from asymmetry.core.fourier.spectrum import (
     GroupSpectrumConfig,
     compute_average_group_spectrum,
 )
-from asymmetry.core.maxent import MaxEntConfig, maxent
+from asymmetry.core.maxent import MaxEntConfig, apply_maxent_specbg, maxent
 from asymmetry.core.representation.base import Representation, RepresentationType
+
+# Re-exported for callers that historically imported it from this module; the
+# single implementation now lives beside the SpecBG model in core.maxent.specbg
+# and is applied through MaxEntResult.as_dataset (one application point).
+__all__ = ["FrequencyFFT", "FrequencyMaxEnt", "apply_maxent_specbg"]
 
 
 def _resolve_selected_group_ids(run: Run, config: dict) -> list[int] | None:
@@ -119,4 +124,4 @@ class FrequencyMaxEnt(Representation):
             "f_min_mhz": float(result.frequencies_mhz[0]) if result.frequencies_mhz.size else None,
             "f_max_mhz": float(result.frequencies_mhz[-1]) if result.frequencies_mhz.size else None,
         }
-        return [result.as_dataset(run)]
+        return [result.as_dataset(run, config)]

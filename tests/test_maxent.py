@@ -12,10 +12,15 @@ from asymmetry.core.maxent import (
     initialize_state,
     maxent,
     opus,
+    reconstruct_group_signals,
     run_cycles,
     tropus,
 )
-from asymmetry.core.representation import FrequencyMaxEnt, representation_from_dict
+from asymmetry.core.representation import (
+    FrequencyMaxEnt,
+    TimeMaxEntReconstruction,
+    representation_from_dict,
+)
 
 
 def _synthetic_run(*, frequency_mhz: float = 1.5) -> Run:
@@ -493,3 +498,179 @@ def test_maxent_config_from_dict_tolerates_malformed_recipe_entries() -> None:
     assert config.selected_group_ids == [1, 2]
     assert config.group_phase_degrees == {1: 10.0}
     assert config.time_binning_factor == 1
+
+
+def test_reconstruct_group_signals_chi2_equals_engine_chi2() -> None:
+    """The overlay χ² is the engine χ² by construction (same residual path)."""
+    run = _synthetic_run(frequency_mhz=1.5)
+    config = MaxEntConfig(
+        n_spectrum_points=128,
+        f_min_mhz=0.2,
+        f_max_mhz=3.0,
+        auto_window=False,
+        outer_cycles=5,
+        inner_iterations=4,
+    )
+    maxent_input = build_maxent_input(run, config)
+    result = run_cycles(maxent_input, config)
+
+    recon = reconstruct_group_signals(maxent_input, result.state)
+
+    # One reconstruction per selected group.
+    assert sorted(recon) == [group.group_id for group in maxent_input.groups]
+    total_chi2 = sum(rg.chi2 for rg in recon.values())
+    assert total_chi2 == pytest.approx(result.metadata["maxent_chi2"], rel=1e-9, abs=1e-9)
+
+    # The model is exactly opus of the converged spectrum, masked to good points.
+    predictions = opus(
+        result.state.spectrum,
+        maxent_input,
+        phases=result.state.phases,
+        amplitudes=result.state.amplitudes,
+        backgrounds=result.state.backgrounds,
+    )
+    for group in maxent_input.groups:
+        rg = recon[group.group_id]
+        mask = group.mask
+        np.testing.assert_allclose(rg.model, predictions[group.group_id][mask])
+        np.testing.assert_allclose(rg.data, np.asarray(group.signal)[mask])
+        np.testing.assert_allclose(rg.residual, (rg.data - rg.model) / rg.sigma)
+        assert rg.n_obs == int(np.count_nonzero(mask))
+
+
+def test_result_carries_prepared_input_for_zero_rebuild_reconstruction() -> None:
+    """The result threads the exact prepared input the cycles iterated, so the
+    GUI overlay can reconstruct without rebuilding it — and the χ² it gets is the
+    engine's by identity (same object), not merely by deterministic rebuild."""
+    run = _synthetic_run(frequency_mhz=1.5)
+    config = MaxEntConfig(
+        n_spectrum_points=128,
+        f_min_mhz=0.2,
+        f_max_mhz=3.0,
+        auto_window=False,
+        outer_cycles=4,
+        inner_iterations=4,
+    )
+    maxent_input = build_maxent_input(run, config)
+    result = run_cycles(maxent_input, config)
+    # run_cycles threads the very object it iterated through onto the result.
+    assert result.maxent_input is maxent_input
+    # Reconstructing from that carried input reproduces the engine χ² exactly.
+    recon = reconstruct_group_signals(result.maxent_input, result.state)
+    total_chi2 = sum(rg.chi2 for rg in recon.values())
+    assert total_chi2 == pytest.approx(result.metadata["maxent_chi2"], rel=1e-12, abs=1e-12)
+
+    # The maxent() convenience wrapper (build + run) attaches it too, and its
+    # reconstruction matches the same-config rebuild path the GUI falls back to.
+    wrapped = maxent(run, config)
+    assert wrapped.maxent_input is not None
+    carried = sum(
+        rg.chi2 for rg in reconstruct_group_signals(wrapped.maxent_input, wrapped.state).values()
+    )
+    rebuilt = sum(
+        rg.chi2
+        for rg in reconstruct_group_signals(build_maxent_input(run, config), wrapped.state).values()
+    )
+    assert carried == pytest.approx(rebuilt, rel=1e-12, abs=1e-12)
+
+
+def _fb_single_line_run(*, frequency_mhz: float = 1.5) -> Run:
+    """Two opposed F/B groups carrying one clean TF line at known phase."""
+    rng = np.random.default_rng(7)
+    bin_width = 0.04
+    n = 256
+    time = np.arange(n, dtype=float) * bin_width
+    histograms: list[Histogram] = []
+    for phase in (0.0, 180.0):
+        signal = 1.0 + 0.20 * np.cos(2.0 * np.pi * frequency_mhz * time + np.deg2rad(phase))
+        counts = 3000.0 * np.exp(-time / 2.1969811) * signal
+        histograms.append(
+            Histogram(
+                counts=rng.poisson(np.clip(counts, 1.0, None)).astype(float),
+                bin_width=bin_width,
+                t0_bin=0,
+            )
+        )
+    return Run(
+        run_number=1,
+        histograms=histograms,
+        metadata={"field": 110.0},
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "group_names": {1: "F", 2: "B"},
+            "first_good_bin": 0,
+            "last_good_bin": n - 1,
+            "deadtime_correction": False,
+        },
+    )
+
+
+def test_reconstruct_matches_input_single_line() -> None:
+    """Reconstruction of a clean single line tracks the input data and the
+    spectrum peaks at the true frequency.
+
+    The model positively reconstructs each group's oscillation (the overlay's
+    purpose); the V1 engine clamps the joint amplitude to its floor, so the
+    correct test of "matches the input" is that the reconstruction tracks the
+    data shape and frequency, not an absolute weighted-residual bound (that
+    would test the V1's convergence, deliberately out of scope here)."""
+    run = _fb_single_line_run(frequency_mhz=1.5)
+    config = MaxEntConfig(
+        n_spectrum_points=256,
+        f_min_mhz=0.5,
+        f_max_mhz=3.0,
+        auto_window=False,
+        outer_cycles=10,
+        inner_iterations=8,
+        fit_phases=False,
+        group_phase_degrees={1: 0.0, 2: 180.0},
+    )
+    maxent_input = build_maxent_input(run, config)
+    result = run_cycles(maxent_input, config)
+
+    peak = result.frequencies_mhz[int(np.argmax(result.spectrum))]
+    assert peak == pytest.approx(1.5, abs=0.1)
+
+    recon = reconstruct_group_signals(maxent_input, result.state)
+    for rg in recon.values():
+        correlation = float(np.corrcoef(rg.data, rg.model)[0, 1])
+        assert correlation > 0.5
+
+
+def test_maxent_reconstruction_representation_builds_overlay_datasets() -> None:
+    run = _synthetic_run()
+    rep = TimeMaxEntReconstruction(
+        recipe={
+            "maxent_config": MaxEntConfig(
+                n_spectrum_points=64,
+                f_min_mhz=0.2,
+                f_max_mhz=3.0,
+                auto_window=False,
+                outer_cycles=3,
+                inner_iterations=3,
+            ).to_dict()
+        }
+    )
+
+    datasets = rep.compute(run)
+
+    # One overlay dataset per group, each carrying the model + residual arrays.
+    assert len(datasets) == len(run.grouping["groups"])
+    for dataset in datasets:
+        assert dataset.metadata["maxent_reconstruction"] is True
+        model = dataset.metadata["maxent_model"]
+        residual = dataset.metadata["maxent_residual"]
+        assert model.shape == dataset.asymmetry.shape
+        assert residual.shape == dataset.asymmetry.shape
+    # Recipe-only persistence: no arrays leak into the serialised payload.
+    payload = rep.to_dict()
+    assert payload["rep_type"] == "time_maxent_recon"
+    assert "_datasets" not in payload
+    assert "maxent_model" not in str(payload["result_metadata"])
+
+
+def test_maxent_config_show_reconstruction_round_trips() -> None:
+    assert MaxEntConfig().show_reconstruction is False
+    assert MaxEntConfig.from_dict({}).show_reconstruction is False
+    on = MaxEntConfig(show_reconstruction=True)
+    assert MaxEntConfig.from_dict(on.to_dict()).show_reconstruction is True
