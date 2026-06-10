@@ -71,11 +71,13 @@ where `qq = c·e^(−t·λ_μ)/(frames·frame_fraction·dataBunch·nhis)/(PlotTr
 is the instantaneous per-frame, per-bin count rate, and `evfr` is the group's
 event fraction. Parameters: DT0=`DT_base`, DT1=`DT_base+1`, C2..C4=`DT_base+2..4`.
 
-| Aspect | WiMDA | Asymmetry plan | Divergence |
+| Aspect | WiMDA | Asymmetry | Divergence |
 |---|---|---|---|
 | Loss factor | applied to the model count `c` | same — post-multiply the count model | None. |
-| Frame normalization (`qq`) | from `TotalMuonFrames`, `GroupFrameFraction`, `grpnhis`, `PlotTres`, `dataBunch` | read from run metadata; fall back to bin width + total events when absent | Documented fallback when metadata is incomplete (PSI/synthetic runs lack the ISIS frame block). |
-| Promote to grouping | `SendToGroup` writes DT0..C4 into `cgrp`, optionally additive (`DTmodelChanges`), zeroing the fit value (`Analyse.pas:6114`) | `promote_deadtime_to_grouping()` writes the fitted DT0 into the grouping deadtime field, additive option, before/after display | Asymmetry's grouping currently stores a single non-paralyzable deadtime τ_dead per histogram (`transform/deadtime.py`), not the DT0..C4 polynomial. We promote DT0 (the dominant term) into τ_dead; polynomial/power-law promotion is recorded as a follow-on. |
+| Loss forms | Simple / Linear / Polynomial / Power-law, selected in the `CountLossModelling` box | all four implemented (`deadtime_model` = `simple`/`linear`/`polynomial`/`power`); polynomial carries WiMDA's `C2·10³`, `C3·10⁶`, `C4·10⁹` decade scalings; linear is `(DT0 + DT1·evfr)·qq`; power-law is `(evfr·DT0)^C2·e^(−(C4·λ_μ·t)^C3)` | None functionally (faithful transcription of `AsymFitFunction.pas:280–314`). |
+| Frame normalization (`qq`) | from `TotalMuonFrames`, `GroupFrameFraction`, `grpnhis`, `PlotTres`, `dataBunch` | `n_det · bin_width · good_frames`, falling back to bin width when frame metadata is absent | Documented fallback when metadata is incomplete (PSI/synthetic runs lack the ISIS frame block); the `frame_fraction`/`dataBunch` factors are folded into the single `good_frames` normalization. |
+| Event fraction (`evfr`) | per-group event fraction from the ISIS event block | optional `event_fractions`/`event_fraction` grouping metadata, **fallback `evfr = 1.0`** | The loaders carry no ISIS event-fraction block, so the linear/power forms default to `evfr = 1` (the whole event budget) unless the grouping supplies it. Stated fallback. |
+| Promote to grouping | `SendToGroup` writes DT0..C4 into `cgrp`, optionally additive (`DTmodelChanges`), zeroing the fit value (`Analyse.pas:6114`) | `promote_deadtime_to_grouping()` writes the fitted DT0 into the per-detector deadtime (the term the reduction applies); the model name + higher-order terms (`DT1`/`C2`/`C3`/`C4`) are recorded in `deadtime_model`/`deadtime_model_terms`, additive option, before/after display | Asymmetry's grouping stores a single non-paralyzable deadtime τ_dead per histogram (`transform/deadtime.py`), not the DT0..C4 polynomial, so only DT0 drives the reduction; the higher-order terms round-trip as provenance for the full calibration. |
 
 The non-paralyzable correction Asymmetry already applies
 (`N_corr = N/(1 − N·τ/(Δt·n_frames))`) is the first-order expansion of the same

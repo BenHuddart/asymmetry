@@ -15,6 +15,7 @@ import pytest
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.count_domain import (
     COUNT_COSTS,
+    _apply_deadtime,
     _percent_to_fraction,
     _raw_model,
     fb_overlay_curves,
@@ -448,6 +449,109 @@ def test_deadtime_off_state_is_noop():
     assert with_dt.parameters["A"].value == pytest.approx(base.parameters["A"].value, abs=1e-6)
 
 
+# --- deadtime loss-form transcription (AsymFitFunction.pas:280-314) ----------
+
+
+def test_deadtime_simple_form_transcription():
+    counts = np.array([1.0e4, 5.0e3, 2.0e3])
+    frame_norm, dt0 = 1.0e5, 0.02
+    qq = counts / frame_norm
+    expected = counts * (1.0 - dt0 * qq)
+    terms = (dt0, 0.0, 0.0, 0.0, 0.0)
+    out = _apply_deadtime(
+        counts, terms, frame_norm=frame_norm, time=counts, evfr=1.0, model="simple"
+    )
+    np.testing.assert_allclose(out, expected, rtol=1e-12)
+
+
+def test_deadtime_linear_form_uses_event_fraction():
+    counts = np.array([1.0e4, 5.0e3, 2.0e3])
+    frame_norm, dt0, dt1, evfr = 1.0e5, 0.02, 0.5, 0.4
+    qq = counts / frame_norm
+    expected = counts * (1.0 - (dt0 + dt1 * evfr) * qq)
+    terms = (dt0, dt1, 0.0, 0.0, 0.0)
+    out = _apply_deadtime(
+        counts, terms, frame_norm=frame_norm, time=counts, evfr=evfr, model="linear"
+    )
+    np.testing.assert_allclose(out, expected, rtol=1e-12)
+
+
+def test_deadtime_polynomial_form_carries_wimda_decade_scalings():
+    counts = np.array([1.0e4, 5.0e3, 2.0e3])
+    frame_norm = 1.0e6  # keeps qq small so every loss term stays < 1 (no clip)
+    dt0, c2, c3, c4 = 0.02, 0.003, 0.001, 0.0005
+    qq = counts / frame_norm
+    loss = dt0 * qq + c2 * 1e3 * qq**2 + c3 * 1e6 * qq**3 + c4 * 1e9 * qq**4
+    assert np.all(loss < 1.0)
+    expected = counts * (1.0 - loss)
+    terms = (dt0, 0.0, c2, c3, c4)
+    out = _apply_deadtime(
+        counts, terms, frame_norm=frame_norm, time=counts, evfr=1.0, model="polynomial"
+    )
+    np.testing.assert_allclose(out, expected, rtol=1e-12)
+
+
+def test_deadtime_power_form_transcription():
+    counts = np.array([1.0e4, 5.0e3, 2.0e3])
+    time = np.array([0.1, 1.0, 5.0])
+    dt0, c2, c3, c4, evfr = 0.02, 1.5, 2.0, 0.3, 0.4
+    tau = float(MUON_LIFETIME_US)
+    loss = (evfr * dt0) ** c2 * np.exp(-((c4 * time / tau) ** c3))
+    expected = counts * (1.0 - loss)
+    terms = (dt0, 0.0, c2, c3, c4)
+    out = _apply_deadtime(counts, terms, frame_norm=1.0e5, time=time, evfr=evfr, model="power")
+    np.testing.assert_allclose(out, expected, rtol=1e-12)
+
+
+def test_deadtime_factor_clipped_nonnegative():
+    """A runaway loss > 1 cannot drive the corrected counts negative."""
+    counts = np.array([1.0e4])
+    terms = (1.0e3, 0.0, 0.0, 0.0, 0.0)  # absurd DT0 -> loss >> 1
+    out = _apply_deadtime(counts, terms, frame_norm=1.0, time=counts, evfr=1.0, model="simple")
+    assert np.all(out >= 0.0)
+
+
+def test_deadtime_all_zero_is_exact_noop():
+    counts = np.array([1.0e4, 5.0e3])
+    terms = (0.0, 0.0, 0.0, 0.0, 0.0)
+    for model in ("simple", "linear", "polynomial", "power"):
+        out = _apply_deadtime(counts, terms, frame_norm=1e5, time=counts, evfr=0.5, model=model)
+        assert out is counts  # returned unchanged, not a copy
+
+
+def test_unknown_deadtime_model_raises():
+    ds = _continuous_run()
+    with pytest.raises(ValueError, match="Unknown deadtime model"):
+        fit_single_histogram(ds, 1, _tf, _continuous_single(), deadtime_model="quintic")
+
+
+def test_deadtime_dt1_recovered_with_event_fraction():
+    """With evfr metadata present, the linear form recovers an injected DT1."""
+    template = build_builtin_template("ideal_continuous_fb")
+    run = simulate_run(
+        template, _tf, {"A": 20.0, "f": 1.0, "phi": 0.0},
+        total_events=20e6, alpha=1.0, background_per_bin=10.0, seed=2,
+    )  # fmt: skip
+    good_frames, evfr = 1.0e6, 0.5
+    run.grouping["good_frames"] = good_frames
+    run.grouping["event_fraction"] = evfr
+    bin_width = float(run.histograms[0].bin_width)
+    dt0_true, dt1_true = 0.004, 0.012
+    hist = run.histograms[0]
+    n_true = np.asarray(hist.counts, dtype=float)
+    qq = n_true / (bin_width * good_frames)  # single-detector group
+    hist.counts = n_true * (1.0 - (dt0_true + dt1_true * evfr) * qq)
+    ds = MuonDataset(
+        time=np.array([]), asymmetry=np.array([]), error=np.array([]), metadata={}, run=run
+    )
+    params = _continuous_single()
+    params.add(Parameter("DT0", dt0_true, fixed=True))  # pin DT0 to isolate DT1
+    params.add(Parameter("DT1", 0.005, min=0.0, max=0.1))
+    result = fit_single_histogram(ds, 1, _tf, params, cost="gaussian", deadtime_model="linear")
+    assert result.success
+    assert result.parameters["DT1"].value == pytest.approx(dt1_true, abs=0.003)
+
+
 def test_promote_deadtime_replace_and_additive():
     grouping = {"dead_time_us": [0.0, 0.0]}
     out = promote_deadtime_to_grouping(
@@ -469,7 +573,36 @@ def test_promote_deadtime_defaults_to_all_detectors():
     grouping = {}
     out = promote_deadtime_to_grouping(grouping, 0.02, n_histograms=3)
     assert out["after"] == {0: 0.02, 1: 0.02, 2: 0.02}
-    assert grouping["dead_time_us"] == [0.02, 0.02, 0.02]
+
+
+def test_promote_deadtime_carries_polynomial_terms():
+    """A polynomial/power-law promotion records the model + higher-order terms."""
+    grouping = {"dead_time_us": [0.0, 0.0]}
+    promote_deadtime_to_grouping(
+        grouping,
+        0.012,
+        n_histograms=2,
+        detector_indices=[0],
+        model="polynomial",
+        extra_terms={"C2": 0.003, "C3": 0.001, "DT1": 0.0},  # DT1 zero is dropped
+    )
+    # DT0 still drives the per-detector deadtime the reduction applies.
+    assert grouping["dead_time_us"][0] == pytest.approx(0.012)
+    assert grouping["deadtime_model"] == "polynomial"
+    assert grouping["deadtime_model_terms"] == {"C2": 0.003, "C3": 0.001}
+
+    # Additive accumulates the higher-order terms too.
+    promote_deadtime_to_grouping(
+        grouping,
+        0.001,
+        n_histograms=2,
+        detector_indices=[0],
+        additive=True,
+        model="polynomial",
+        extra_terms={"C2": 0.002},
+    )
+    assert grouping["deadtime_model_terms"]["C2"] == pytest.approx(0.005)
+    assert grouping["dead_time_us"][0] == pytest.approx(0.013)
 
 
 def _double_pulse_dataset(*, dpsep_us=0.324, seed=3):

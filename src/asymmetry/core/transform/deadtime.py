@@ -228,6 +228,10 @@ def parse_deadtime_calibration_text(text: str, *, n_histograms: int | None = Non
     return [float(value) for value in values]
 
 
+#: Higher-order count-loss coefficients carried alongside the promoted DT0.
+DEADTIME_MODEL_TERM_NAMES: tuple[str, ...] = ("DT1", "C2", "C3", "C4")
+
+
 def promote_deadtime_to_grouping(
     grouping: dict,
     dead_time_us_value: float,
@@ -235,6 +239,8 @@ def promote_deadtime_to_grouping(
     n_histograms: int,
     detector_indices: list[int] | None = None,
     additive: bool = False,
+    model: str | None = None,
+    extra_terms: dict[str, float] | None = None,
 ) -> dict[str, dict[int, float]]:
     """Write a fitted deadtime (μs) into the grouping correction (WiMDA Send-to-Group).
 
@@ -244,6 +250,15 @@ def promote_deadtime_to_grouping(
     (WiMDA's ``DTmodelChanges``) instead of replacing it; ``detector_indices``
     restricts the write to the fitted group's detectors (default: all). The
     correction is enabled and the method marked ``value``.
+
+    For a polynomial or power-law count-loss fit, pass the loss ``model`` and its
+    higher-order ``extra_terms`` (``DT1``/``C2``/``C3``/``C4``). The dominant
+    ``DT0`` term still drives the per-detector ``dead_time_us`` that the reduction
+    applies (Asymmetry's grouping stores a single non-paralyzable deadtime per
+    histogram), while the model name and the higher-order coefficients are
+    recorded in ``deadtime_model`` / ``deadtime_model_terms`` so the full
+    calibration round-trips with the run. ``additive`` accumulates the extra
+    terms too.
 
     Returns ``{"before": {idx: value}, "after": {idx: value}}`` for the affected
     detectors, so the GUI can show the change before/after.
@@ -272,7 +287,41 @@ def promote_deadtime_to_grouping(
     grouping["dead_time_us"] = values
     grouping["deadtime_correction"] = True
     grouping["deadtime_method"] = "value"
+
+    if model is not None or extra_terms:
+        _promote_deadtime_model_terms(grouping, model, extra_terms, additive=additive)
     return {"before": before, "after": after}
+
+
+def _promote_deadtime_model_terms(
+    grouping: dict,
+    model: str | None,
+    extra_terms: dict[str, float] | None,
+    *,
+    additive: bool,
+) -> None:
+    """Record the count-loss model name and higher-order coefficients in grouping."""
+    if model is not None:
+        grouping["deadtime_model"] = str(model)
+    incoming = {
+        name: float(value)
+        for name, value in (extra_terms or {}).items()
+        if name in DEADTIME_MODEL_TERM_NAMES and value not in (None, 0.0)
+    }
+    if not incoming:
+        return
+    stored = grouping.get("deadtime_model_terms")
+    stored = dict(stored) if isinstance(stored, dict) else {}
+    for name, value in incoming.items():
+        if additive:
+            try:
+                base = float(stored.get(name, 0.0))
+            except (TypeError, ValueError):
+                base = 0.0
+            stored[name] = base + value
+        else:
+            stored[name] = value
+    grouping["deadtime_model_terms"] = stored
 
 
 def has_file_deadtime(grouping: dict, n_histograms: int = 0) -> bool:

@@ -46,7 +46,10 @@ from asymmetry.core.utils.constants import MUON_LIFETIME_US
 COUNT_COSTS: tuple[str, ...] = ("poisson", "gaussian")
 
 #: Optional count-loss (deadtime) parameters, applied when present in the fit set.
-DEADTIME_PARAMS: tuple[str, ...] = ("DT0", "C2", "C3", "C4")
+DEADTIME_PARAMS: tuple[str, ...] = ("DT0", "DT1", "C2", "C3", "C4")
+
+#: Selectable count-loss models (WiMDA ``CountLossModelling``).
+DEADTIME_MODELS: tuple[str, ...] = ("simple", "linear", "polynomial", "power")
 
 _INF = float("inf")
 
@@ -139,14 +142,21 @@ def _split_time_offset(kw: dict) -> float:
 # --- count loss (deadtime) --------------------------------------------------
 
 
-def _pop_deadtime(kw: dict) -> tuple[float, float, float, float]:
-    """Pop the optional deadtime parameters ``(DT0, C2, C3, C4)`` (all default 0)."""
+def _pop_deadtime(kw: dict) -> tuple[float, float, float, float, float]:
+    """Pop the deadtime parameters ``(DT0, DT1, C2, C3, C4)`` (all default 0)."""
     return (
         float(kw.pop("DT0", 0.0)),
+        float(kw.pop("DT1", 0.0)),
         float(kw.pop("C2", 0.0)),
         float(kw.pop("C3", 0.0)),
         float(kw.pop("C4", 0.0)),
     )
+
+
+def _validate_deadtime_model(model: str) -> str:
+    if model not in DEADTIME_MODELS:
+        raise ValueError(f"Unknown deadtime model {model!r}; expected one of {DEADTIME_MODELS}")
+    return model
 
 
 def _deadtime_frame_norm(dataset: MuonDataset, group_id: int) -> float:
@@ -170,22 +180,70 @@ def _deadtime_frame_norm(dataset: MuonDataset, group_id: int) -> float:
     return max(n_det * bin_width * n_frames, 1e-30)
 
 
-def _apply_deadtime(
-    counts: NDArray[np.float64], dt_terms: tuple[float, float, float, float], frame_norm: float
-) -> NDArray[np.float64]:
-    """Multiply true counts by the non-paralyzable count-loss factor ``1 - L(qq)``.
+def _deadtime_event_fraction(dataset: MuonDataset, group_id: int) -> float:
+    """Per-group event fraction ``evfr`` for the linear / power-law loss forms.
 
-    With ``qq = counts / frame_norm`` the per-frame, per-detector rate,
-    ``L = DT0*qq + C2*qq^2 + C3*qq^3 + C4*qq^4`` (Simple = DT0 only; the higher
-    terms are the polynomial extension). An exact no-op when every coefficient is
-    zero. The factor is clipped at 0 so a runaway trial cannot make counts
-    negative.
+    WiMDA's ``evfr`` is the fraction of the run's events landing in this group.
+    The loaders do not carry an ISIS event-fraction block, so this reads an
+    optional ``event_fractions`` (per group id) or scalar ``event_fraction`` from
+    the grouping and **falls back to 1.0** (the whole event budget) for
+    PSI/synthetic runs that lack it. With ``evfr = 1`` the linear form reduces to
+    ``(DT0 + DT1)·qq`` and the power-law base to ``DT0``.
     """
-    dt0, c2, c3, c4 = dt_terms
-    if dt0 == 0.0 and c2 == 0.0 and c3 == 0.0 and c4 == 0.0:
+    grouping = (
+        dataset.run.grouping if dataset.run and isinstance(dataset.run.grouping, dict) else {}
+    )
+    fractions = grouping.get("event_fractions")
+    if isinstance(fractions, dict):
+        try:
+            return float(fractions[int(group_id)])
+        except (KeyError, TypeError, ValueError):
+            pass
+    try:
+        value = float(grouping.get("event_fraction", 1.0))
+    except (TypeError, ValueError):
+        return 1.0
+    return value if np.isfinite(value) else 1.0
+
+
+def _apply_deadtime(
+    counts: NDArray[np.float64],
+    dt_terms: tuple[float, float, float, float, float],
+    *,
+    frame_norm: float,
+    time: NDArray[np.float64],
+    evfr: float,
+    model: str,
+) -> NDArray[np.float64]:
+    """Multiply true counts by the non-paralyzable count-loss factor ``1 - L``.
+
+    Transcribes WiMDA ``ArrayMusrFunc`` (``AsymFitFunction.pas``) with
+    ``qq = counts / frame_norm`` the per-frame, per-detector rate and ``evfr`` the
+    group event fraction. An exact no-op when every coefficient is zero; the
+    factor is clipped at 0 so a runaway trial cannot make counts negative.
+
+    - ``"simple"``: ``L = DT0·qq``.
+    - ``"linear"``: ``L = (DT0 + DT1·evfr)·qq``.
+    - ``"polynomial"``: ``L = DT0·qq + C2·10³·qq² + C3·10⁶·qq³ + C4·10⁹·qq⁴``.
+    - ``"power"``: ``L = (evfr·DT0)^C2 · exp(-(C4·λ_μ·t)^C3)`` (rate-independent;
+      ``λ_μ = 1/τ_μ``).
+    """
+    dt0, dt1, c2, c3, c4 = dt_terms
+    if dt0 == 0.0 and dt1 == 0.0 and c2 == 0.0 and c3 == 0.0 and c4 == 0.0:
         return counts
-    qq = np.asarray(counts, dtype=float) / frame_norm
-    loss = dt0 * qq + c2 * qq**2 + c3 * qq**3 + c4 * qq**4
+    counts = np.asarray(counts, dtype=float)
+    if model == "power":
+        base = max(float(evfr) * dt0, 0.0)
+        decay_arg = np.maximum(c4 * np.asarray(time, dtype=float) / float(MUON_LIFETIME_US), 0.0)
+        loss = (base**c2) * np.exp(-np.power(decay_arg, c3))
+    else:
+        qq = counts / frame_norm
+        if model == "simple":
+            loss = dt0 * qq
+        elif model == "linear":
+            loss = (dt0 + dt1 * float(evfr)) * qq
+        else:  # polynomial
+            loss = dt0 * qq + c2 * 1.0e3 * qq**2 + c3 * 1.0e6 * qq**3 + c4 * 1.0e9 * qq**4
     return counts * np.clip(1.0 - loss, 0.0, None)
 
 
@@ -451,6 +509,7 @@ def fit_single_histogram(
     *,
     side: str = "forward",
     cost: str = "poisson",
+    deadtime_model: str = "polynomial",
     t_min: float | None = None,
     t_max: float | None = None,
     exclude: tuple[float, float] | None = None,
@@ -465,13 +524,16 @@ def fit_single_histogram(
     Optional window/nuisance flexibility, all no-ops unless requested:
     ``exclude`` drops an interior time window from the fit; a free ``t0``
     parameter shifts the model time axis; free ``lambda_base`` / ``beta_base``
-    parameters add a stretched-exponential baseline drift; ``DT0`` (+ ``C2``,
-    ``C3``, ``C4``) add a count-loss/deadtime term; a ``dpsep`` parameter
-    switches on the ISIS double-pulse count model — fixed by default, or located
-    by a coarse->fine grid scan when supplied free (the non-smooth pulse-onset
-    gate defeats gradient fitting).
+    parameters add a stretched-exponential baseline drift; the deadtime
+    parameters (``DT0``, ``DT1``, ``C2``, ``C3``, ``C4``) add a count-loss term
+    whose form is set by ``deadtime_model`` (``"simple"`` / ``"linear"`` /
+    ``"polynomial"`` / ``"power"`` — see :func:`_apply_deadtime`); a ``dpsep``
+    parameter switches on the ISIS double-pulse count model — fixed by default,
+    or located by a coarse->fine grid scan when supplied free (the non-smooth
+    pulse-onset gate defeats gradient fitting).
     """
     _validate_cost(cost)
+    _validate_deadtime_model(deadtime_model)
     if _has_free_dpsep(params):
         return _refine_free_dpsep(
             params["dpsep"],
@@ -482,6 +544,7 @@ def fit_single_histogram(
                 _with_fixed_dpsep(params, value),
                 side=side,
                 cost=cost,
+                deadtime_model=deadtime_model,
                 t_min=t_min,
                 t_max=t_max,
                 exclude=exclude,
@@ -501,6 +564,7 @@ def fit_single_histogram(
     dp_model = _double_pulse_single_model(fraction_fn) if double_pulse else None
     corrected_model = None if double_pulse else build_grouped_count_model(fraction_fn)
     frame_norm = _deadtime_frame_norm(dataset, group_id)
+    evfr = _deadtime_event_fraction(dataset, group_id)
 
     # The per-group amplitude/phase are fixed nuisances here: the sign carries the
     # forward/backward orientation and the physics model owns the real amplitude.
@@ -532,7 +596,9 @@ def fit_single_histogram(
             # raw count = exp(-t/tau) * [lifetime-corrected model]; the cached
             # decay avoids re-exponentiating the invariant time axis each call.
             model = decay * np.asarray(corrected_model(t_eval, **kw), dtype=float)
-        return _apply_deadtime(model, dt_terms, frame_norm)
+        return _apply_deadtime(
+            model, dt_terms, frame_norm=frame_norm, time=t_eval, evfr=evfr, model=deadtime_model
+        )
 
     def total_cost(*args) -> float:
         return _cost_value(counts, predict(args), cost)
@@ -562,6 +628,7 @@ def fit_fb_alpha(
     params: ParameterSet,
     *,
     cost: str = "poisson",
+    deadtime_model: str = "polynomial",
     t_min: float | None = None,
     t_max: float | None = None,
     exclude: tuple[float, float] | None = None,
@@ -587,6 +654,7 @@ def fit_fb_alpha(
     evaluated at ``t ± dpsep/2``).
     """
     _validate_cost(cost)
+    _validate_deadtime_model(deadtime_model)
     for required in ("alpha", "N0", "background", "background_b"):
         if required not in params:
             raise ValueError(f"Forward/backward count fit requires a {required!r} parameter")
@@ -607,6 +675,7 @@ def fit_fb_alpha(
                 model_fn,
                 _with_fixed_dpsep(params, value),
                 cost=cost,
+                deadtime_model=deadtime_model,
                 t_min=t_min,
                 t_max=t_max,
                 exclude=exclude,
@@ -638,6 +707,8 @@ def fit_fb_alpha(
 
     frame_norm_f = _deadtime_frame_norm(dataset, forward_group)
     frame_norm_b = _deadtime_frame_norm(dataset, backward_group)
+    evfr_f = _deadtime_event_fraction(dataset, forward_group)
+    evfr_b = _deadtime_event_fraction(dataset, backward_group)
 
     free = params.free_parameters
     free_names = [p.name for p in free]
@@ -650,7 +721,7 @@ def fit_fb_alpha(
     shared_keys = [n for n in free_names if n not in _per_eval]
     shared_fixed = {k: v for k, v in fixed_kw.items() if k not in _per_eval}  # hoisted
 
-    def _eval(args, time, base_decay, counts_key, sign, frame_norm) -> NDArray[np.float64]:
+    def _eval(args, time, base_decay, counts_key, sign, frame_norm, evfr) -> NDArray[np.float64]:
         kw = {**fixed_kw, **dict(zip(free_names, args, strict=False))}
         for follower, main in followers.items():
             kw[follower] = kw[main]
@@ -672,13 +743,15 @@ def fit_fb_alpha(
             model = decay * np.asarray(
                 fb_corrected(t_eval, sign=sign, background=kw[counts_key], **shared), dtype=float
             )
-        return _apply_deadtime(model, dt_terms, frame_norm)
+        return _apply_deadtime(
+            model, dt_terms, frame_norm=frame_norm, time=t_eval, evfr=evfr, model=deadtime_model
+        )
 
     def predict_f(args):
-        return _eval(args, time_f, base_decay_f, "background", +1.0, frame_norm_f)
+        return _eval(args, time_f, base_decay_f, "background", +1.0, frame_norm_f, evfr_f)
 
     def predict_b(args):
-        return _eval(args, time_b, base_decay_b, "background_b", -1.0, frame_norm_b)
+        return _eval(args, time_b, base_decay_b, "background_b", -1.0, frame_norm_b, evfr_b)
 
     def total_cost(*args) -> float:
         return _cost_value(counts_f, predict_f(args), cost) + _cost_value(

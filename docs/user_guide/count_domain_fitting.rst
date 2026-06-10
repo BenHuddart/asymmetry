@@ -125,12 +125,22 @@ Count loss and double pulse
   microseconds, the same quantity the Grouping dialog's deadtime correction
   applies. A high-rate run is needed for DT₀ to be well determined.
 
+  The core API offers WiMDA's full set of count-loss forms via the
+  ``deadtime_model`` argument — *simple* (DT₀ only), *linear*
+  ((DT₀ + DT₁·evfr)·r, using the group event fraction evfr), *polynomial*
+  (adding C₂·10³·r², C₃·10⁶·r³, C₄·10⁹·r⁴), and *power-law*
+  ((evfr·DT₀)^C₂·exp(−(C₄·λ_μ·t)^C₃)). The loaders carry no ISIS event-fraction
+  block, so evfr defaults to 1 unless the grouping supplies it. The GUI fits the
+  *simple* DT₀ term, which is the dominant and best-determined coefficient.
+
   Once a deadtime fit converges, **Promote DT₀ → grouping** writes the fitted
   value into the grouping's per-detector deadtime (WiMDA's Send-to-Group),
   reporting the before/after values; tick **accumulate** to add to the existing
   value rather than replace it. Re-reduce the run to apply the promoted
   correction. This closes the calibration loop: fit the deadtime, promote it,
-  and the reduced data is corrected.
+  and the reduced data is corrected. A polynomial or power-law promotion also
+  records the model name and higher-order coefficients with the run, while the
+  reduction still applies the dominant DT₀.
 
 * **Double pulse (μs)** — set the pulse separation for an ISIS double-pulse
   source; 0 leaves the single-pulse model. The two pulses each carry the
