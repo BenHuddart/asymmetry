@@ -2011,6 +2011,10 @@ class GlobalFitTab(QWidget):
         self._domain = "time"
         self._datasets = []  # Will be set by parent
         self._current_dataset: MuonDataset | None = None
+        # Last grouped fit's per-group simulate seed, keyed by source run number
+        # (shared normalised model + base values + per-group amplitude/phase),
+        # for the multi-group Generate Synthetic Run dialog.
+        self._grouped_simulate_seed: dict[int, dict] = {}
         # Member runs for a grouped *series* fit (empty → fall back to the active
         # dataset, i.e. the single-run grouped "single fit").
         self._member_datasets: list[MuonDataset] = []
@@ -4017,9 +4021,64 @@ class GlobalFitTab(QWidget):
         mode_label = "grouped fit" if self.is_grouped_time_domain_mode() else "global fit"
         self._result_text.setText(f"<b>Error during {mode_label}:</b><br>{error_msg}")
 
+    def _cache_grouped_simulate_seed(self, grouped_result) -> None:
+        """Cache a multi-group simulate seed from a converged grouped fit.
+
+        Stores, keyed by the active run number, the shared normalised model,
+        its base parameter values (amplitudes forced to 1, backgrounds to 0 —
+        the grouped contract) and the per-group amplitude/phase/N0 specs, so the
+        Generate Synthetic Run dialog can re-create the ring.
+        """
+        if self._current_dataset is None or getattr(self._current_dataset, "run", None) is None:
+            return
+        try:
+            run_number = int(self._current_dataset.run_number)
+        except (TypeError, ValueError):
+            return
+        from asymmetry.core.simulate import group_specs_from_grouped_fit
+
+        model = self._grouped_fit_model()
+        shared_values = {
+            parameter.name: float(parameter.value)
+            for parameter in getattr(grouped_result, "shared_parameters", [])
+        }
+        base: dict[str, float] = {}
+        for name in model.param_names:
+            if is_amplitude_parameter(name):
+                base[name] = 1.0
+            elif is_background_parameter(name):
+                base[name] = 0.0
+            else:
+                base[name] = shared_values.get(name, float(model.param_defaults.get(name, 0.0)))
+        specs = group_specs_from_grouped_fit(grouped_result)
+        if not specs:
+            return
+        self._grouped_simulate_seed[run_number] = {
+            "model": model.to_dict(),
+            "base_parameters": base,
+            "specs": [
+                {
+                    "group_id": spec.group_id,
+                    "amplitude": spec.amplitude,
+                    "relative_phase": spec.relative_phase,
+                    "n0_weight": spec.n0_weight,
+                    "label": spec.label,
+                }
+                for spec in specs
+            ],
+        }
+
+    def grouped_simulate_seed_for_run(self, run_number: int) -> dict | None:
+        """Return the cached multi-group simulate seed for a run, if any."""
+        try:
+            return self._grouped_simulate_seed.get(int(run_number))
+        except (TypeError, ValueError):
+            return None
+
     def _on_grouped_fit_finished(self, grouped_datasets: list[MuonDataset], grouped_result) -> None:
         """Handle successful grouped fit completion."""
         self._update_mode_ui(preserve_result=True)
+        self._cache_grouped_simulate_seed(grouped_result)
 
         results_with_curves: dict[int, tuple[FitResult, tuple[np.ndarray, np.ndarray], tuple]] = {}
         grouped_model = build_grouped_count_model(self._current_model.function)

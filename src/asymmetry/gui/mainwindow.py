@@ -517,6 +517,7 @@ class MainWindow(QMainWindow):
         file_menu = mb.addMenu("&File")
         file_menu.addAction("Open Data File(s)\u2026", self._on_open)
         file_menu.addAction("Generate Synthetic Run\u2026", self._on_generate_synthetic)
+        file_menu.addAction("Generate Multi-Group Run\u2026", self._on_generate_multi_group)
         self._add_simulate_preset_menu(file_menu)
         file_menu.addSeparator()
         file_menu.addAction("&New Project", self._on_new_project)
@@ -1845,6 +1846,35 @@ class MainWindow(QMainWindow):
             f"{sim.get('template_run_number', '?')} (seed {sim.get('seed', '?')}).",
             tag="load",
         )
+
+    def _on_generate_multi_group(self) -> None:
+        """Launch the multi-group synthetic-run dialog for the active run."""
+        from asymmetry.gui.windows.simulate_dialog import (
+            MultiGroupSimulateDialog,
+            _template_group_ids,
+        )
+
+        dataset = self._current_dataset
+        run = dataset.run if dataset is not None else None
+        if run is None or not run.histograms or len(_template_group_ids(run)) < 2:
+            QMessageBox.information(
+                self,
+                "Generate Multi-Group Run",
+                "Select a loaded run whose grouping defines at least two detector "
+                "groups to act as the multi-group template.",
+            )
+            return
+        seed = None
+        if self._multi_group_fit_window is not None:
+            seed = self._multi_group_fit_window.grouped_simulate_seed_for_run(run.run_number)
+        dialog = MultiGroupSimulateDialog(
+            run,
+            parent=self,
+            seed=seed,
+            run_number_allocator=self._data_browser.next_derived_run_number,
+        )
+        dialog.run_generated.connect(self._on_synthetic_run_generated)
+        dialog.exec()
 
     def _add_simulate_preset_menu(self, file_menu) -> None:
         """Add the archetype-gallery submenu (File → Simulate Preset)."""

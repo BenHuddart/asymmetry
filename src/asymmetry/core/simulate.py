@@ -671,6 +671,189 @@ def simulate_run(
 
 
 # ---------------------------------------------------------------------------
+# Multi-group simulation (per-group amplitude / phase, from a grouped fit)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GroupSignalSpec:
+    """Per-group amplitude, relative phase and count-rate weight for a TF ring.
+
+    The simulation analogue of a grouped time-domain fit's per-group nuisance
+    block (``amplitude``, ``relative_phase``, ``N0`` in
+    :mod:`asymmetry.core.fitting.grouped_time_domain`): each detector group sees
+    the *shared* normalised polarisation scaled by its own ``amplitude`` and
+    phase-shifted by its own ``relative_phase``, with ``n0_weight`` setting its
+    relative count rate (detector efficiency).
+    """
+
+    group_id: int
+    amplitude: float
+    relative_phase: float = 0.0
+    n0_weight: float = 1.0
+    label: str = ""
+
+
+def _phase_parameter_names(parameter_names: list[str]) -> list[str]:
+    """Names of the model's phase parameter(s) (``phase`` / ``phase_<n>``)."""
+    return [name for name in parameter_names if name == "phase" or name.startswith("phase_")]
+
+
+def build_group_signals(
+    model: Any,
+    specs: Mapping[int, GroupSignalSpec] | list[GroupSignalSpec],
+    *,
+    base_parameters: Mapping[str, float] | None = None,
+) -> tuple[dict[int, GroupSignal], dict[int, float]]:
+    """Build ``(group_signals, group_weights)`` for a multi-group simulation.
+
+    ``model`` is a *normalised* polarisation model (amplitude 1, background 0 —
+    the grouped-fit contract), so its output is the dimensionless polarisation
+    P(t) ≈ [−1, 1] directly (no percent conversion: the per-group ``amplitude``
+    owns the scale, exactly as in
+    :func:`~asymmetry.core.fitting.grouped_time_domain.build_grouped_count_model`).
+    Each spec forms ``a_g(t) = amplitude · P(t)`` and adds ``relative_phase``
+    (radians) to the model's phase parameter(s); ``base_parameters`` supplies
+    the shared model values. The returned weights are the per-group
+    ``n0_weight`` values, fed to :func:`simulate_run_from_group_signals` which
+    normalises them over the assigned detectors.
+
+    Raises :class:`ValueError` if a non-zero ``relative_phase`` is requested for
+    a model with no phase parameter.
+    """
+    spec_list = list(specs.values()) if isinstance(specs, Mapping) else list(specs)
+    base = dict(base_parameters or {})
+    if hasattr(model, "function") and callable(model.function):
+        model_fn = model.function
+        param_names = list(getattr(model, "param_names", []))
+    elif callable(model):
+        model_fn = model
+        import inspect
+
+        param_names = [
+            name
+            for name, parameter in inspect.signature(model).parameters.items()
+            if parameter.kind
+            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        ][1:]  # drop the time axis (first positional)
+    else:
+        raise TypeError("model must be a CompositeModel or a callable a(t) in percent.")
+    phase_names = _phase_parameter_names(param_names)
+
+    group_signals: dict[int, GroupSignal] = {}
+    group_weights: dict[int, float] = {}
+    for spec in spec_list:
+        params = dict(base)
+        if not np.isclose(spec.relative_phase, 0.0):
+            if not phase_names:
+                raise ValueError(
+                    "A non-zero relative_phase requires a phase-capable model "
+                    f"(group {spec.group_id} requested {spec.relative_phase})."
+                )
+            for phase_name in phase_names:
+                params[phase_name] = float(params.get(phase_name, 0.0)) + float(spec.relative_phase)
+
+        def signal(
+            t: NDArray[np.float64],
+            _amp: float = float(spec.amplitude),
+            _params: dict[str, float] = params,
+        ) -> NDArray[np.float64]:
+            return _amp * np.asarray(model_fn(t, **_params), dtype=float)
+
+        group_signals[int(spec.group_id)] = signal
+        group_weights[int(spec.group_id)] = float(spec.n0_weight)
+    return group_signals, group_weights
+
+
+def simulate_multi_group_run(
+    template: Run,
+    model: Any,
+    specs: Mapping[int, GroupSignalSpec] | list[GroupSignalSpec],
+    *,
+    total_events: float,
+    seed: int = 0,
+    base_parameters: Mapping[str, float] | None = None,
+    background_per_bin: float = 0.0,
+    run_number: int | None = None,
+    title: str | None = None,
+) -> Run:
+    """Simulate a run with a distinct amplitude/phase per detector group.
+
+    The multi-group counterpart of :func:`simulate_run`: instead of the F/B α
+    split it drives :func:`simulate_run_from_group_signals` with per-group
+    signals built by :func:`build_group_signals` from ``specs`` and the shared
+    normalised ``model``. Use it to synthesise a TF ring whose groups differ in
+    phase, seeded from a grouped time-domain fit's nuisance parameters.
+    """
+    group_signals, group_weights = build_group_signals(
+        model, specs, base_parameters=base_parameters
+    )
+    spec_list = list(specs.values()) if isinstance(specs, Mapping) else list(specs)
+    expression = (
+        model.formula_string()
+        if hasattr(model, "formula_string")
+        else getattr(model, "__name__", "custom callable")
+    )
+    return simulate_run_from_group_signals(
+        template,
+        group_signals,
+        total_events=total_events,
+        seed=seed,
+        group_weights=group_weights,
+        background_per_bin=background_per_bin,
+        run_number=run_number,
+        title=title if title is not None else f"Simulated multi-group: {expression}",
+        simulation_metadata={
+            "model": expression,
+            "parameters": {
+                name: float(value) for name, value in dict(base_parameters or {}).items()
+            },
+            "multi_group": True,
+            "group_specs": [
+                {
+                    "group_id": int(spec.group_id),
+                    "amplitude": float(spec.amplitude),
+                    "relative_phase": float(spec.relative_phase),
+                    "n0_weight": float(spec.n0_weight),
+                }
+                for spec in spec_list
+            ],
+        },
+    )
+
+
+def group_specs_from_grouped_fit(grouped_result: Any) -> list[GroupSignalSpec]:
+    """Extract per-group :class:`GroupSignalSpec`\\ s from a grouped fit result.
+
+    Reads the ``amplitude``/``relative_phase``/``N0`` nuisance values from each
+    group's :class:`~asymmetry.core.fitting.engine.FitResult` in a
+    :class:`~asymmetry.core.fitting.grouped_time_domain.GroupedTimeDomainFitResult`
+    (duck-typed: any object exposing ``group_results``). Groups with no fitted
+    amplitude fall back to a 0.2 default. The shared model values are *not*
+    captured here — pass them as ``base_parameters`` to
+    :func:`build_group_signals` / :func:`simulate_multi_group_run`.
+    """
+    specs: list[GroupSignalSpec] = []
+    group_results = getattr(grouped_result, "group_results", {})
+    for group_id, fit_result in group_results.items():
+        values = {p.name: float(p.value) for p in getattr(fit_result, "parameters", [])}
+        try:
+            gid = int(group_id)
+        except (TypeError, ValueError):
+            continue
+        specs.append(
+            GroupSignalSpec(
+                group_id=gid,
+                amplitude=values.get("amplitude", 0.2),
+                relative_phase=values.get("relative_phase", 0.0),
+                n0_weight=values.get("N0", 1.0),
+                label=str(group_id),
+            )
+        )
+    return specs
+
+
+# ---------------------------------------------------------------------------
 # Degrade statistics (WiMDA DegradeStats)
 # ---------------------------------------------------------------------------
 

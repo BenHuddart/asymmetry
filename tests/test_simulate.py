@@ -14,12 +14,16 @@ import pytest
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.simulate import (
     BUILTIN_TEMPLATES,
+    GroupSignalSpec,
     build_builtin_template,
+    build_group_signals,
     build_run_from_detector_asymmetries,
     degrade_run,
     expected_counts,
+    group_specs_from_grouped_fit,
     poisson_asymmetry_errors,
     reduce_run_to_dataset,
+    simulate_multi_group_run,
     simulate_run,
     simulate_run_from_group_signals,
 )
@@ -738,3 +742,105 @@ class TestBuiltinTemplates:
         )
         # Pre-t0 bins carry the flat background only.
         assert np.allclose(expected[0][: spec.t0_bin], spec.default_background_per_bin)
+
+
+def _ring_template(n_groups: int = 4) -> Run:
+    """A TF-ring template: one detector per group, all in one grouping."""
+    histograms = [
+        Histogram(
+            counts=np.zeros(N_BINS),
+            bin_width=BIN_WIDTH,
+            t0_bin=T0_BIN,
+            good_bin_start=T0_BIN,
+            good_bin_end=N_BINS - 1,
+        )
+        for _ in range(n_groups)
+    ]
+    grouping = {
+        "groups": {gid: [gid] for gid in range(1, n_groups + 1)},
+        "forward_group": 1,
+        "backward_group": 3,
+        "alpha": 1.0,
+        "t0_bin": T0_BIN,
+        "first_good_bin": T0_BIN,
+        "last_good_bin": N_BINS - 1,
+    }
+    return Run(run_number=7, histograms=histograms, grouping=grouping)
+
+
+def _poln(t: np.ndarray, frequency: float = 2.0, phase: float = 0.0) -> np.ndarray:
+    return np.cos(2 * np.pi * frequency * t + phase)
+
+
+class _FakeFitResult:
+    def __init__(self, params: dict[str, float]) -> None:
+        self.parameters = [type("P", (), {"name": k, "value": v}) for k, v in params.items()]
+
+
+class _FakeGroupedResult:
+    def __init__(self, group_results: dict) -> None:
+        self.group_results = group_results
+
+
+class TestMultiGroupSimulation:
+    def test_build_group_signals_bin_exact_per_group(self) -> None:
+        template = _ring_template(4)
+        specs = [
+            GroupSignalSpec(1, amplitude=0.20, relative_phase=0.0),
+            GroupSignalSpec(2, amplitude=0.18, relative_phase=np.pi / 2),
+            GroupSignalSpec(3, amplitude=0.22, relative_phase=np.pi),
+            GroupSignalSpec(4, amplitude=0.19, relative_phase=3 * np.pi / 2),
+        ]
+        base = {"frequency": 2.0, "phase": 0.0}
+        group_signals, group_weights = build_group_signals(_poln, specs, base_parameters=base)
+        expected = expected_counts(
+            template, group_signals, total_events=40e6, group_weights=group_weights
+        )
+
+        t = np.arange(N_BINS - T0_BIN) * BIN_WIDTH
+        for index, spec in enumerate(specs):
+            modulation = 1.0 + spec.amplitude * np.cos(2 * np.pi * 2.0 * t + spec.relative_phase)
+            envelope = expected[index][T0_BIN:] / modulation
+            decay = np.exp(-t / MUON_LIFETIME_US)
+            ratio = envelope / decay
+            # The de-modulated envelope is a clean lifetime exponential.
+            assert np.allclose(ratio, ratio[0], rtol=1e-9), spec.group_id
+
+    def test_non_zero_phase_without_phase_param_raises(self) -> None:
+        def no_phase(t, frequency=1.0):
+            return np.cos(2 * np.pi * frequency * t)
+
+        with pytest.raises(ValueError, match="phase-capable"):
+            build_group_signals(no_phase, [GroupSignalSpec(1, 0.2, relative_phase=0.5)])
+
+    def test_simulate_multi_group_provenance_and_determinism(self) -> None:
+        template = _ring_template(4)
+        specs = [
+            GroupSignalSpec(gid, amplitude=0.2, relative_phase=0.3 * gid) for gid in range(1, 5)
+        ]
+        base = {"frequency": 2.0, "phase": 0.0}
+        run_a = simulate_multi_group_run(
+            template, _poln, specs, total_events=20e6, seed=4, base_parameters=base
+        )
+        run_b = simulate_multi_group_run(
+            template, _poln, specs, total_events=20e6, seed=4, base_parameters=base
+        )
+        assert run_a.metadata["synthetic"] is True
+        assert run_a.metadata["simulation"]["multi_group"] is True
+        assert len(run_a.metadata["simulation"]["group_specs"]) == 4
+        for ha, hb in zip(run_a.histograms, run_b.histograms, strict=True):
+            assert np.array_equal(ha.counts, hb.counts)
+
+    def test_group_specs_from_grouped_fit(self) -> None:
+        grouped = _FakeGroupedResult(
+            {
+                1: _FakeFitResult({"amplitude": 0.21, "relative_phase": 0.0, "N0": 1.0}),
+                2: _FakeFitResult({"amplitude": 0.19, "relative_phase": 1.57, "N0": 1.2}),
+            }
+        )
+        specs = group_specs_from_grouped_fit(grouped)
+        assert {s.group_id for s in specs} == {1, 2}
+        spec2 = next(s for s in specs if s.group_id == 2)
+        assert spec2.amplitude == pytest.approx(0.19)
+        assert spec2.relative_phase == pytest.approx(1.57)
+        assert spec2.n0_weight == pytest.approx(1.2)

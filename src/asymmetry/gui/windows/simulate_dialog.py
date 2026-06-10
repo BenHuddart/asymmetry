@@ -36,8 +36,18 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.domain_library import default_model_for_domain
+from asymmetry.core.fitting.global_search.heuristics import (
+    is_amplitude_parameter,
+    is_background_parameter,
+)
 from asymmetry.core.io.nexus_writer import write_nexus_v1
-from asymmetry.core.simulate import BUILTIN_TEMPLATES, build_builtin_template, simulate_run
+from asymmetry.core.simulate import (
+    BUILTIN_TEMPLATES,
+    GroupSignalSpec,
+    build_builtin_template,
+    simulate_multi_group_run,
+    simulate_run,
+)
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 
 #: Synthetic runs are numbered from here, clear of real ISIS/PSI run series.
@@ -370,5 +380,262 @@ class SimulateDialog(QDialog):
             write_nexus_v1(self._last_run, path)
         except (OSError, ValueError, ImportError) as exc:
             QMessageBox.warning(self, "Save Synthetic Run", str(exc))
+            return
+        self._status_label.setText(f"Saved SIM {self._last_run.run_number} to {path}.")
+
+
+def _template_group_ids(template: Run) -> list[int]:
+    """Sorted integer group ids of a template's grouping."""
+    groups = template.grouping.get("groups", {}) if isinstance(template.grouping, dict) else {}
+    ids: list[int] = []
+    for key in groups:
+        try:
+            ids.append(int(key))
+        except (TypeError, ValueError):
+            continue
+    return sorted(ids)
+
+
+class MultiGroupSimulateDialog(QDialog):
+    """Simulate a run with a distinct amplitude/phase per detector group.
+
+    The multi-group counterpart of :class:`SimulateDialog`: a shared normalised
+    polarisation model plus a per-group amplitude/phase/N₀ table (seeded from a
+    grouped time-domain fit when one is supplied, otherwise from the template's
+    groups), driving
+    :func:`asymmetry.core.simulate.simulate_multi_group_run`. Used to synthesise
+    a transverse-field ring whose groups differ in phase.
+    """
+
+    run_generated = Signal(object)
+
+    def __init__(
+        self,
+        template: Run,
+        *,
+        parent: QWidget | None = None,
+        seed: dict | None = None,
+        run_number_allocator: Callable[[], int] | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Generate Multi-Group Run")
+        self._template = template
+        self._run_number_allocator = run_number_allocator
+        self._last_run: Run | None = None
+        self._allocated: set[int] = set()
+
+        if seed and isinstance(seed.get("model"), dict):
+            self._model = CompositeModel.from_dict(seed["model"])
+            self._base_values = dict(seed.get("base_parameters", {}))
+        else:
+            # A multi-group ring needs a phase-capable polarisation; the
+            # per-group amplitude owns the scale, so normalise the model.
+            self._model = CompositeModel(["Oscillatory"])
+            self._base_values = dict(self._model.param_defaults)
+        self._normalize_base()
+
+        layout = QVBoxLayout(self)
+
+        model_row = QHBoxLayout()
+        self._model_label = QLabel(self._model.formula_string())
+        self._model_label.setWordWrap(True)
+        edit_model = QPushButton("Edit Model…")
+        edit_model.clicked.connect(self._on_edit_model)
+        model_row.addWidget(QLabel("Polarisation P(t):"))
+        model_row.addWidget(self._model_label, stretch=1)
+        model_row.addWidget(edit_model)
+        layout.addLayout(model_row)
+
+        layout.addWidget(QLabel("Per-group signal (amplitude is fractional; phase in radians):"))
+        self._group_table = QTableWidget(0, 4)
+        self._group_table.setHorizontalHeaderLabels(["Group", "Amplitude", "Phase (rad)", "N₀"])
+        self._group_table.verticalHeader().setVisible(False)
+        layout.addWidget(self._group_table)
+        self._seed_group_table(seed)
+
+        controls = QFormLayout()
+        self._events_spin = QDoubleSpinBox()
+        self._events_spin.setRange(0.01, 1.0e5)
+        self._events_spin.setDecimals(2)
+        self._events_spin.setSuffix(" MEv")
+        self._events_spin.setValue(40.0)
+        controls.addRow("Total events:", self._events_spin)
+
+        self._background_spin = QDoubleSpinBox()
+        self._background_spin.setRange(0.0, 1.0e6)
+        self._background_spin.setDecimals(3)
+        self._background_spin.setValue(0.0)
+        controls.addRow("Background (counts/bin/detector):", self._background_spin)
+
+        seed_row = QHBoxLayout()
+        self._seed_check = QCheckBox("Fixed seed")
+        self._seed_check.setChecked(True)
+        self._seed_spin = QSpinBox()
+        self._seed_spin.setRange(0, 2**31 - 1)
+        self._seed_spin.setValue(0)
+        self._seed_check.toggled.connect(self._seed_spin.setEnabled)
+        seed_row.addWidget(self._seed_check)
+        seed_row.addWidget(self._seed_spin, stretch=1)
+        controls.addRow("Reproducibility:", seed_row)
+        layout.addLayout(controls)
+
+        self._status_label = QLabel("")
+        self._status_label.setWordWrap(True)
+        layout.addWidget(self._status_label)
+
+        buttons = QDialogButtonBox()
+        self._generate_button = buttons.addButton(
+            "Generate", QDialogButtonBox.ButtonRole.ActionRole
+        )
+        self._save_button = buttons.addButton(
+            "Save as NeXus…", QDialogButtonBox.ButtonRole.ActionRole
+        )
+        close_button = buttons.addButton(QDialogButtonBox.StandardButton.Close)
+        self._generate_button.clicked.connect(self._on_generate)
+        self._save_button.clicked.connect(self._on_save_nexus)
+        self._save_button.setEnabled(False)
+        close_button.clicked.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _seed_group_table(self, seed: dict | None) -> None:
+        group_ids = _template_group_ids(self._template)
+        specs: list[dict] = []
+        if seed and isinstance(seed.get("specs"), list):
+            specs = [s for s in seed["specs"] if int(s.get("group_id", -1)) in set(group_ids)]
+        if not specs:
+            # Spread phases evenly so the default ring is visibly multi-phase.
+            import math
+
+            n = max(1, len(group_ids))
+            specs = [
+                {
+                    "group_id": gid,
+                    "amplitude": 0.2,
+                    "relative_phase": 2.0 * math.pi * index / n,
+                    "n0_weight": 1.0,
+                }
+                for index, gid in enumerate(group_ids)
+            ]
+        self._group_table.setRowCount(len(specs))
+        for row, spec in enumerate(specs):
+            gid_item = QTableWidgetItem(str(spec.get("group_id")))
+            gid_item.setFlags(gid_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            gid_item.setData(Qt.ItemDataRole.UserRole, int(spec.get("group_id")))
+            self._group_table.setItem(row, 0, gid_item)
+            self._group_table.setItem(
+                row, 1, QTableWidgetItem(f"{float(spec.get('amplitude', 0.2)):g}")
+            )
+            self._group_table.setItem(
+                row, 2, QTableWidgetItem(f"{float(spec.get('relative_phase', 0.0)):g}")
+            )
+            self._group_table.setItem(
+                row, 3, QTableWidgetItem(f"{float(spec.get('n0_weight', 1.0)):g}")
+            )
+
+    def _normalize_base(self) -> None:
+        """Force the shared model to a normalised polarisation (amp 1, bg 0).
+
+        The per-group amplitude owns the overall scale and the per-group N₀ the
+        background, so the shared model must integrate to a unit-amplitude,
+        zero-baseline polarisation — the grouped time-domain fit contract.
+        """
+        for name in getattr(self._model, "param_names", []):
+            if is_amplitude_parameter(name):
+                self._base_values[name] = 1.0
+            elif is_background_parameter(name):
+                self._base_values[name] = 0.0
+
+    def _on_edit_model(self) -> None:
+        dialog = FitFunctionBuilderDialog(self, initial_model=self._model, domain="time")
+        if dialog.exec():
+            model = dialog.get_composite_model()
+            if model is not None:
+                self._model = model
+                merged = dict(model.param_defaults)
+                merged.update({k: v for k, v in self._base_values.items() if k in merged})
+                self._base_values = merged
+                self._normalize_base()
+                self._model_label.setText(self._model.formula_string())
+
+    def _specs_from_table(self) -> list[GroupSignalSpec]:
+        specs: list[GroupSignalSpec] = []
+        for row in range(self._group_table.rowCount()):
+            gid_item = self._group_table.item(row, 0)
+            if gid_item is None:
+                continue
+            gid = int(gid_item.data(Qt.ItemDataRole.UserRole))
+
+            def _value(column: int, default: float) -> float:
+                item = self._group_table.item(row, column)
+                try:
+                    return float(item.text())
+                except (TypeError, ValueError, AttributeError):
+                    return default
+
+            specs.append(
+                GroupSignalSpec(
+                    group_id=gid,
+                    amplitude=_value(1, 0.2),
+                    relative_phase=_value(2, 0.0),
+                    n0_weight=_value(3, 1.0),
+                )
+            )
+        return specs
+
+    def _next_run_number(self) -> int:
+        if self._run_number_allocator is not None:
+            return int(self._run_number_allocator())
+        number = _SYNTHETIC_RUN_SERIES
+        while number in self._allocated:
+            number += 1
+        self._allocated.add(number)
+        return number
+
+    def _on_generate(self) -> None:
+        seed = self._seed_spin.value() if self._seed_check.isChecked() else None
+        if seed is None:
+            import secrets
+
+            seed = secrets.randbelow(2**31 - 1)
+            self._seed_spin.setValue(seed)
+        run_number = self._next_run_number()
+        try:
+            run = simulate_multi_group_run(
+                self._template,
+                self._model,
+                self._specs_from_table(),
+                total_events=self._events_spin.value() * 1.0e6,
+                seed=int(seed),
+                base_parameters=self._base_values,
+                background_per_bin=self._background_spin.value(),
+                run_number=run_number,
+            )
+        except (TypeError, ValueError) as exc:
+            QMessageBox.warning(self, "Generate Multi-Group Run", str(exc))
+            self._allocated.discard(run_number)
+            return
+        self._last_run = run
+        self._save_button.setEnabled(True)
+        self._status_label.setText(
+            f"Generated SIM {run.run_number} ({len(run.histograms)} detectors, "
+            f"{self._events_spin.value():g} MEv, seed {seed})."
+        )
+        self.run_generated.emit(run)
+
+    def _on_save_nexus(self) -> None:
+        if self._last_run is None:
+            return
+        path, _selected = QFileDialog.getSaveFileName(
+            self,
+            "Save Synthetic Run as NeXus",
+            f"SIM{self._last_run.run_number}.nxs",
+            "NeXus files (*.nxs)",
+        )
+        if not path:
+            return
+        try:
+            write_nexus_v1(self._last_run, path)
+        except (OSError, ValueError, ImportError) as exc:
+            QMessageBox.warning(self, "Save Multi-Group Run", str(exc))
             return
         self._status_label.setText(f"Saved SIM {self._last_run.run_number} to {path}.")
