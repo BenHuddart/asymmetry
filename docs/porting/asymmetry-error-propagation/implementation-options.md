@@ -101,3 +101,35 @@ updates the formula **and** these tests together. Tests identified on `main`:
 
 Any pinned σ_A in the testing worktree (`Asymmetry-testing`) or saved `.asymp`
 golden projects with stored errors. Grep before merge; regenerate goldens.
+
+## As implemented (2026-06-10)
+
+Option A landed in
+[`compute_asymmetry`](../../../src/asymmetry/core/transform/asymmetry.py):
+`σ_A = 2|α|√(FB(F+B))/(F+αB)²`, with the one-sided floor realised by computing
+the exact error only on `informative = safe & (F·B > 0)` bins and leaving every
+other bin at the `1.0` no-information sentinel (shared with the zero-denominator
+case). The docstring/comment no longer claim Mantid compatibility for the error
+model and point here for the divergence.
+
+Deviations from the plan, all minor:
+
+- **One-sided floor = the existing sentinel**, not a new computed floor. `F·B=0`
+  bins reuse the `err = np.ones_like(f)` default rather than a separate clamp,
+  so there is a single sentinel value (1.0) and no extra branch. Confirmed it
+  reads as "essentially unweighted" against real σ_A ≈ 0.01–0.1.
+- **Most "recompute" tests needed no edit.** `test_integral_shares_compute_asymmetry_error_model`,
+  `test_fb_asymmetry_matches_core_pipeline`, and the `test_mainwindow_additional`
+  vector-subtraction test all derive their expected error by *calling*
+  `compute_asymmetry`, so they stayed green automatically. Only two genuine
+  pins changed: the `√2` literal in `test_transforms` (renamed
+  `test_one_sided_counts_use_default_error`, now expects `1.0`) and the χ²ᵣ
+  centring in `TestRefitRecovery` (now `abs(χ²ᵣ − 1.0) < 3√(2/dof)`).
+- **Added verification unit tests** (verification-plan items 1–3) in
+  `test_transforms`: exact α=1 identity, general-α exact form, and agreement
+  with `compute_asymmetry_with_count_errors` at Poisson `√N` count errors.
+
+Verification outcome: `python tools/harness.py validate` green — 2000 passed,
+1 xfailed, structural + lint ok. The refit χ²ᵣ band re-centred on 1 passes and
+the pull-distribution test passes with the corrected (no longer over-narrow)
+errors.
