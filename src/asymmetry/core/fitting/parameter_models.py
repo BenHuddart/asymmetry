@@ -63,6 +63,30 @@ def _power_law(x: NDArray, a: float, n: float, c: float = 0.0) -> NDArray[np.flo
     return a * np.power(safe_x, n) + c
 
 
+def _polynomial(
+    x: NDArray,
+    c0: float = 0.0,
+    c1: float = 0.0,
+    c2: float = 0.0,
+    c3: float = 0.0,
+    c4: float = 0.0,
+    c5: float = 0.0,
+) -> NDArray[np.float64]:
+    xx = np.asarray(x, dtype=float)
+    # Horner evaluation of the quintic; fix unused coefficients at 0 to fit
+    # lower orders (WiMDA "Polynomial fit up to fifth order term").
+    result = np.full_like(xx, float(c5))
+    for coeff in (c4, c3, c2, c1, c0):
+        result = result * xx + float(coeff)
+    return result
+
+
+def _power_law_quad_bg(x: NDArray, a: float, n: float, BG: float = 0.0) -> NDArray[np.float64]:
+    xx = np.asarray(x, dtype=float)
+    safe_x = np.maximum(np.abs(xx), 1e-12)
+    return np.hypot(a * np.power(safe_x, n), BG)
+
+
 def _exp_decay(x: NDArray, a: float, tau: float, c: float = 0.0) -> NDArray[np.float64]:
     xx = np.asarray(x, dtype=float)
     tau_value = float(tau)
@@ -145,6 +169,34 @@ def _redfield(
     m_safe = max(abs(float(m)), 1e-12)
     denom = 1.0 + np.power(omega_mu / nu_safe, m_safe)
     return ((float(D) ** 2) / 4.0) * (2.0 / nu_safe) / denom
+
+
+#: (γₑ + γ_μ)/2π in MHz/G — converts a muonium hyperfine constant A_hf (MHz)
+#: into the characteristic repolarisation field B₀ = A_hf / this (in G).
+_ISOTROPIC_MU_B0_DENOM_MHZ_PER_G = (
+    ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G / (2.0 * np.pi)
+    + MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
+)
+
+
+def isotropic_mu_b0_gauss(A_hf_mhz: float) -> float:
+    """Characteristic field B₀ = A_hf/(γₑ + γ_μ) of isotropic muonium, in G."""
+    return max(abs(float(A_hf_mhz)), 1e-12) / _ISOTROPIC_MU_B0_DENOM_MHZ_PER_G
+
+
+def _mu_repolarisation(
+    x: NDArray, a_Mu: float, A_hf: float, a_Dia: float = 0.0
+) -> NDArray[np.float64]:
+    """Time-averaged longitudinal polarization of isotropic muonium.
+
+    In LF only the 2↔4 transition mixes the muon spin states; averaging the
+    unresolved fast oscillation leaves ``1 - a24 = (1/2 + r²)/(1 + r²)`` with
+    ``r = B/B0`` and ``B0 = A_hf/(γₑ + γ_μ)``. ``x`` is field in Gauss,
+    ``A_hf`` in MHz.
+    """
+    xx = np.asarray(x, dtype=float)
+    r2 = (xx / isotropic_mu_b0_gauss(A_hf)) ** 2
+    return float(a_Mu) * (0.5 + r2) / (1.0 + r2) + float(a_Dia)
 
 
 def _lorentzian(x: NDArray, a: float, B0: float, c: float = 0.0) -> NDArray[np.float64]:
@@ -268,6 +320,17 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         latex_equation=r"y(x) = m x + b",
         scopes=("common", "field", "temperature"),
     ),
+    "Polynomial": ParameterModelComponentDefinition(
+        name="Polynomial",
+        description="c0 + c1*x + c2*x^2 + c3*x^3 + c4*x^4 + c5*x^5",
+        function=_polynomial,
+        param_names=["c0", "c1", "c2", "c3", "c4", "c5"],
+        param_defaults={"c0": 0.0, "c1": 1.0, "c2": 0.0, "c3": 0.0, "c4": 0.0, "c5": 0.0},
+        param_info={f"c{k}": get_param_info(f"c{k}") for k in range(6)},
+        formula_template="{c0} + {c1}*x + {c2}*x^2 + {c3}*x^3 + {c4}*x^4 + {c5}*x^5",
+        latex_equation=r"y(x) = c_0 + c_1 x + c_2 x^2 + c_3 x^3 + c_4 x^4 + c_5 x^5",
+        scopes=("common",),
+    ),
     "PowerLaw": ParameterModelComponentDefinition(
         name="PowerLaw",
         description="a*|x|^n + c",
@@ -281,6 +344,21 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         },
         formula_template="{a}*|x|^{n} + {c}",
         latex_equation=r"y(x) = a \lvert x \rvert^{n} + c",
+        scopes=("common",),
+    ),
+    "PowerLawQuadBG": ParameterModelComponentDefinition(
+        name="PowerLawQuadBG",
+        description="sqrt((a*|x|^n)^2 + BG^2)",
+        function=_power_law_quad_bg,
+        param_names=["a", "n", "BG"],
+        param_defaults={"a": 1.0, "n": 1.0, "BG": 0.0},
+        param_info={
+            "a": get_param_info("a"),
+            "n": get_param_info("n"),
+            "BG": get_param_info("BG"),
+        },
+        formula_template="sqrt(({a}*|x|^{n})^2 + {BG}^2)",
+        latex_equation=r"y(x) = \sqrt{(a \lvert x \rvert^{n})^2 + \mathrm{BG}^2}",
         scopes=("common",),
     ),
     "ExponentialDecay": ParameterModelComponentDefinition(
@@ -371,6 +449,26 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         },
         formula_template="{a}/(1 + (x/{B0})^2) + {c}",
         latex_equation=r"y(B) = \frac{a}{1 + (B/B_0)^2} + c",
+        scopes=("field",),
+    ),
+    "MuRepolarisation": ParameterModelComponentDefinition(
+        name="MuRepolarisation",
+        description="a_Mu*(1/2 + (B/B0)^2)/(1 + (B/B0)^2) + a_Dia, B0 = A_hf/(γₑ+γµ)",
+        function=_mu_repolarisation,
+        param_names=["a_Mu", "A_hf", "a_Dia"],
+        param_defaults={"a_Mu": 15.0, "A_hf": 4463.0, "a_Dia": 5.0},
+        param_info={
+            "a_Mu": get_param_info("a_Mu"),
+            "A_hf": get_param_info("A_hf"),
+            "a_Dia": get_param_info("a_Dia"),
+        },
+        formula_template=(
+            "{a_Mu}*(0.5 + (x/B0)^2)/(1 + (x/B0)^2) + {a_Dia} with B0 = {A_hf}/(γₑ+γµ)"
+        ),
+        latex_equation=(
+            r"y(B) = a_{\mathrm{Mu}} \frac{\tfrac{1}{2} + (B/B_0)^2}{1 + (B/B_0)^2}"
+            r" + a_{\mathrm{Dia}}, \quad B_0 = \frac{A_{\mathrm{hf}}}{\gamma_e + \gamma_\mu}"
+        ),
         scopes=("field",),
     ),
     "GaussianLCR": ParameterModelComponentDefinition(
