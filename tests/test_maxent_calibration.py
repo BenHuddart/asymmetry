@@ -15,6 +15,8 @@ from asymmetry.core.maxent import (
     spectrum_to_text,
     subtract_zero_frequency,
 )
+from asymmetry.core.transform.deadtime import calibrate_deadtime_from_histograms
+from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
 def _kubo_toyabe_fb_run(*, delta: float = 0.3, alpha: float = 1.2) -> Run:
@@ -244,3 +246,76 @@ def test_spectrum_and_log_export_are_well_formed() -> None:
     log_text = run_log_text(result, config)
     assert "per-cycle convergence" in log_text
     assert "final group phases" in log_text
+
+
+# ── deadtime fit: recover a known injected non-paralysable deadtime ──────────
+
+
+def _decay_histogram(
+    *,
+    amplitude: float,
+    bin_width: float,
+    n_bins: int,
+    tau_inj_us: float,
+    num_good_frames: float,
+) -> Histogram:
+    """A muon-lifetime decay thinned by a known non-paralysable deadtime.
+
+    The fit (``calibrate_deadtime_from_histograms``) reads bin ``k`` at time
+    ``(k+1)·bin_width`` from ``t0``, so the synthetic counts use that same
+    convention.  Each bin's true count ``N`` is reduced to the observed count by
+    the first-order non-paralysable loss ``N → N(1 − Nτ/T)`` with
+    ``T = num_good_frames·bin_width`` — exactly the rate-squared distortion the
+    ``countfit`` model inverts.  ``tau_inj_us = 0`` gives a clean (un-thinned)
+    histogram.
+    """
+    k = np.arange(n_bins, dtype=np.float64)
+    times_us = (k + 1.0) * bin_width
+    true_counts = amplitude * np.exp(-times_us / MUON_LIFETIME_US)
+    frame_window = float(num_good_frames) * float(bin_width)
+    observed = true_counts * (1.0 - true_counts * float(tau_inj_us) / frame_window)
+    return Histogram(counts=np.clip(observed, 1.0, None), bin_width=bin_width, t0_bin=0)
+
+
+def test_fit_deadtime_recovers_known_injected_value() -> None:
+    # 5% loss at t0 (amplitude·τ/(frames·bin_width) = 0.05) — a realistic ISIS
+    # deadtime distortion.  The countfit model carries the full
+    # τ_µ(1−e^{−τ/τ_µ}) loss factor, so the recovered τ maps to the injected
+    # one as τ_fit = −τ_µ·ln(1 − τ_inj/τ_µ); both agree to ~1% here.
+    bin_width = 0.016
+    frames = 2.0e5
+    amplitude = 3200.0
+    tau_inj = 0.05  # µs (50 ns)
+    histograms = [
+        _decay_histogram(
+            amplitude=amplitude,
+            bin_width=bin_width,
+            n_bins=400,
+            tau_inj_us=tau_inj,
+            num_good_frames=frames,
+        )
+        for _ in range(2)
+    ]
+    recovered = calibrate_deadtime_from_histograms(histograms, num_good_frames=frames)
+    assert recovered is not None
+    assert len(recovered) == 2
+    for tau_fit in recovered:
+        assert tau_fit == pytest.approx(tau_inj, rel=0.05)
+
+
+def test_fit_deadtime_returns_near_zero_for_a_clean_run() -> None:
+    bin_width = 0.016
+    frames = 2.0e5
+    histograms = [
+        _decay_histogram(
+            amplitude=3200.0,
+            bin_width=bin_width,
+            n_bins=400,
+            tau_inj_us=0.0,
+            num_good_frames=frames,
+        )
+    ]
+    recovered = calibrate_deadtime_from_histograms(histograms, num_good_frames=frames)
+    assert recovered is not None
+    # No injected loss → the fitted deadtime collapses to ≈0 (a few ps at most).
+    assert recovered[0] == pytest.approx(0.0, abs=1.0e-3)

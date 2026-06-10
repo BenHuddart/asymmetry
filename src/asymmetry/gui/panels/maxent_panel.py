@@ -36,6 +36,8 @@ class MaxEntPanel(QWidget):
 
     #: Emitted when the "Show time-domain reconstruction" toggle changes.
     reconstruction_toggled = Signal(bool)
+    #: Emitted when the reconstruction layout (per-group vs combined) changes.
+    reconstruction_layout_changed = Signal(bool)
     #: Phase-exchange and calibration actions, handled by the main window.
     use_fitted_phases_requested = Signal()
     send_phases_to_fit_requested = Signal()
@@ -251,6 +253,15 @@ class MaxEntPanel(QWidget):
         )
         self._show_reconstruction_check.toggled.connect(self.reconstruction_toggled.emit)
         content_layout.addWidget(self._show_reconstruction_check)
+
+        self._combine_reconstruction_check = QCheckBox("Combine groups on one axis")
+        self._combine_reconstruction_check.setChecked(False)
+        self._combine_reconstruction_check.setToolTip(
+            "Overlay every selected group's reconstruction on a single colour-coded "
+            "axis with a shared residuals strip, instead of stacking them per group."
+        )
+        self._combine_reconstruction_check.toggled.connect(self.reconstruction_layout_changed.emit)
+        content_layout.addWidget(self._combine_reconstruction_check)
 
         self._apply_to_selection_btn = QPushButton("Apply settings to selected runs")
         content_layout.addWidget(self._apply_to_selection_btn)
@@ -510,6 +521,9 @@ class MaxEntPanel(QWidget):
             "fit_constant_background": bool(self._fit_constant_background_check.isChecked()),
             "use_deadtime_correction": bool(self._use_deadtime_check.isChecked()),
             "show_reconstruction": bool(self._show_reconstruction_check.isChecked()),
+            # Display-only layout preference (not a MaxEntConfig field — from_dict
+            # ignores it); persisted with the panel state so the layout sticks.
+            "reconstruction_combined": bool(self._combine_reconstruction_check.isChecked()),
             "selected_group_ids": self.selected_group_ids(),
             "group_enabled_table": self.group_enabled_table(),
             "group_phase_degrees": self.group_phase_table(),
@@ -518,6 +532,10 @@ class MaxEntPanel(QWidget):
     def show_reconstruction_enabled(self) -> bool:
         """Return whether the reconstruction overlay toggle is checked."""
         return bool(self._show_reconstruction_check.isChecked())
+
+    def reconstruction_combined(self) -> bool:
+        """Return whether the reconstruction overlay uses the combined layout."""
+        return bool(self._combine_reconstruction_check.isChecked())
 
     def mode(self) -> str:
         """Return the selected reconstruction mode ("general" / "zf_lf")."""
@@ -627,6 +645,11 @@ class MaxEntPanel(QWidget):
         blocker = self._show_reconstruction_check.blockSignals(True)
         self._show_reconstruction_check.setChecked(bool(state.get("show_reconstruction", False)))
         self._show_reconstruction_check.blockSignals(blocker)
+        blocker = self._combine_reconstruction_check.blockSignals(True)
+        self._combine_reconstruction_check.setChecked(
+            bool(state.get("reconstruction_combined", False))
+        )
+        self._combine_reconstruction_check.blockSignals(blocker)
         enabled = state.get("group_enabled_table")
         phases = state.get("group_phase_degrees")
         if self._table_group_ids and (isinstance(enabled, dict) or isinstance(phases, dict)):

@@ -97,6 +97,49 @@ def test_plot_panel_renders_reconstruction_with_residual_strips(qapp: QApplicati
         panel.deleteLater()
 
 
+def test_plot_panel_renders_combined_reconstruction_on_one_axis(qapp: QApplication) -> None:
+    panel = PlotPanel()
+    try:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        datasets = _reconstruction_datasets()
+        assert len(datasets) >= 2  # the combined layout only earns its keep here
+        panel.plot_maxent_reconstruction(datasets, combined=True)
+        # Combined: exactly one main axis + one shared residuals strip, whatever
+        # the group count — distinct from the per-group stack (2·n axes).
+        assert len(panel._figure.axes) == 2
+    finally:
+        panel.close()
+        panel.deleteLater()
+
+
+def test_maxent_panel_combined_reconstruction_toggle_round_trips_and_signals(
+    qapp: QApplication,
+) -> None:
+    panel = MaxEntPanel()
+    try:
+        assert panel.reconstruction_combined() is False
+        assert panel.get_state()["reconstruction_combined"] is False
+
+        received: list[bool] = []
+        panel.reconstruction_layout_changed.connect(received.append)
+        panel._combine_reconstruction_check.setChecked(True)
+        assert received == [True]
+        assert panel.reconstruction_combined() is True
+        assert panel.get_state()["reconstruction_combined"] is True
+
+        # restore_state must not re-emit; a missing key defaults OFF.
+        received.clear()
+        panel.restore_state({"reconstruction_combined": False})
+        assert panel.reconstruction_combined() is False
+        panel.restore_state({})
+        assert panel.reconstruction_combined() is False
+        assert received == []
+    finally:
+        panel.close()
+        panel.deleteLater()
+
+
 def test_maxent_panel_reconstruction_toggle_round_trips_and_signals(qapp: QApplication) -> None:
     panel = MaxEntPanel()
     try:

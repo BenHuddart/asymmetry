@@ -1241,6 +1241,10 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self._maxent_panel, "reconstruction_toggled"):
             self._maxent_panel.reconstruction_toggled.connect(self._on_show_reconstruction_toggled)
+        if hasattr(self._maxent_panel, "reconstruction_layout_changed"):
+            self._maxent_panel.reconstruction_layout_changed.connect(
+                self._on_reconstruction_layout_changed
+            )
         if hasattr(self._maxent_panel, "use_fitted_phases_requested"):
             self._maxent_panel.use_fitted_phases_requested.connect(
                 self._on_maxent_use_fitted_phases
@@ -4906,7 +4910,9 @@ class MainWindow(QMainWindow):
         run_number = int(self._current_dataset.run_number)
         datasets = self._maxent_reconstruction_datasets(run_number)
         if datasets and hasattr(self._plot_panel, "plot_maxent_reconstruction"):
-            self._plot_panel.plot_maxent_reconstruction(datasets)
+            self._plot_panel.plot_maxent_reconstruction(
+                datasets, combined=self._maxent_panel.reconstruction_combined()
+            )
         else:
             self._set_fourier_status(
                 "Run MaxEnt for this run to see the time-domain reconstruction."
@@ -4925,6 +4931,14 @@ class MainWindow(QMainWindow):
                 )
         elif self._plot_workspace.active_view() == "reconstruction":
             self._plot_workspace.set_active_view("maxent")
+
+    def _on_reconstruction_layout_changed(self, _combined: bool) -> None:
+        """Re-render the reconstruction overlay when its layout toggle changes."""
+        if (
+            hasattr(self._plot_workspace, "active_view")
+            and self._plot_workspace.active_view() == "reconstruction"
+        ):
+            self._render_maxent_reconstruction_plot()
 
     def _maxent_active_run_number_or_none(self) -> int | None:
         if self._current_dataset is None:

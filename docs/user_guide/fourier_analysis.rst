@@ -293,6 +293,12 @@ showing the weighted residual :math:`(d-m)/\sigma`. The χ² printed above the
 plot is the same number the Diagnostics line reports — it is computed from these
 very residuals, so the overlay and the convergence figure can never disagree.
 
+Tick **Combine groups on one axis** to overlay every group's data and model on a
+single colour-coded panel above one shared residuals strip, instead of the
+per-group stack. The combined view is the quicker read when you only want to see
+whether the whole fit holds together; the per-group stack is better for tracing
+left-over structure to a particular detector. Both report the same total χ².
+
 This is the strongest single check of fit quality:
 
 * **A good fit** sits on the data with residuals scattered evenly around zero
