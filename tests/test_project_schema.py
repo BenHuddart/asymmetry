@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from types import SimpleNamespace
 
@@ -2141,3 +2142,104 @@ class TestMainWindowProjectState:
             "show_components": True,
             "fit_share_x": True,
         }
+
+
+class TestNonFiniteJsonSafety:
+    """Non-finite floats (NaN / ±Infinity) must round-trip through the project
+    file as valid *strict* JSON, while in-app load behaviour is unchanged."""
+
+    def _state_with_non_finite(self) -> dict:
+        state = _minimal_state()
+        # Unbounded parameter bounds (the pervasive ±inf case) + a NaN
+        # uncertainty + a non-finite value inside a list.
+        state["fit_parameters_state"] = {
+            "rows": [],
+            "model_fits": {
+                "A": {
+                    "parameter_name": "A",
+                    "x_key": "temperature",
+                    "active": True,
+                    "ranges": [
+                        {
+                            "x_min": None,
+                            "x_max": None,
+                            "windows": None,
+                            "model": {"component_names": ["Linear"], "operators": []},
+                            "parameters": [
+                                {
+                                    "name": "m",
+                                    "value": 0.5,
+                                    "min": -float("inf"),
+                                    "max": float("inf"),
+                                    "fixed": False,
+                                }
+                            ],
+                            "result": {
+                                "success": True,
+                                "chi_squared": 1.0,
+                                "reduced_chi_squared": 1.0,
+                                "message": "",
+                                "error_mode": "column",
+                                "n_points": 5,
+                                "parameters": [
+                                    {
+                                        "name": "m",
+                                        "value": 0.5,
+                                        "min": -float("inf"),
+                                        "max": float("inf"),
+                                        "fixed": False,
+                                    }
+                                ],
+                                "uncertainties": {"m": float("nan")},
+                            },
+                        }
+                    ],
+                }
+            },
+        }
+        state["_non_finite_list"] = [1.0, float("nan"), float("inf"), -float("inf"), 2.0]
+        return state
+
+    def test_saved_file_is_strict_json(self, tmp_path):
+        path = tmp_path / "nonfinite.asymp"
+        save_project(self._state_with_non_finite(), path)
+        text = path.read_text(encoding="utf-8")
+
+        # A strict parser (one that rejects the NaN/Infinity barewords) must
+        # accept the file.
+        def _reject(token):
+            raise AssertionError(f"non-standard JSON token written: {token}")
+
+        json.loads(text, parse_constant=_reject)
+        # And it re-serialises under allow_nan=False (no non-finite floats left).
+        json.dumps(json.loads(text), allow_nan=False)
+
+    def test_non_finite_round_trips_to_exact_floats(self, tmp_path):
+        path = tmp_path / "nonfinite.asymp"
+        save_project(self._state_with_non_finite(), path)
+        loaded = load_project(path)
+
+        rng = loaded["fit_parameters_state"]["model_fits"]["A"]["ranges"][0]
+        pmin = rng["parameters"][0]["min"]
+        pmax = rng["parameters"][0]["max"]
+        unc = rng["result"]["uncertainties"]["m"]
+        assert math.isinf(pmin) and pmin < 0  # -inf bound preserved
+        assert math.isinf(pmax) and pmax > 0  # +inf bound preserved
+        assert math.isnan(unc)  # NaN uncertainty preserved as a real float
+
+        lst = loaded["_non_finite_list"]
+        assert lst[0] == 1.0 and lst[4] == 2.0
+        assert math.isnan(lst[1])
+        assert math.isinf(lst[2]) and lst[2] > 0
+        assert math.isinf(lst[3]) and lst[3] < 0
+
+    def test_legitimate_string_tokens_are_not_converted(self, tmp_path):
+        """A genuine string value equal to 'NaN'/'Infinity' must survive as a
+        string (the wrapper is a uniquely-keyed object, not a bare string)."""
+        state = _minimal_state()
+        state["browser_state"]["filters"] = {"title": "NaN", "note": "Infinity"}
+        path = tmp_path / "strings.asymp"
+        save_project(state, path)
+        loaded = load_project(path)
+        assert loaded["browser_state"]["filters"]["title"] == "NaN"
+        assert loaded["browser_state"]["filters"]["note"] == "Infinity"
