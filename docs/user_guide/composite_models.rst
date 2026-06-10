@@ -204,7 +204,7 @@ name in ``CompositeModel``:
      - :math:`A \left[\tfrac{1}{3} + \tfrac{2}{3}(1-\Delta^2 t^2)e^{-\Delta^2 t^2/2}\right]`
      - ``A``, ``Delta``
    * - ``LongitudinalFieldKT``
-     - Hayano LF-KT :math:`G_z(t;\Delta,B_L)` — see :ref:`lf-kubo-toyabe`
+     - Hayano LF-KT :math:`G_z(t;\Delta,B_L)` — see :ref:`fit-lf-kubo-toyabe`
      - ``A``, ``Delta``, ``B_L`` (Gauss)
    * - ``MuF``
      - Analytical single mu-F polarization :math:`D_z(t)`

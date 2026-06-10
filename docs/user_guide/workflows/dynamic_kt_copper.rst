@@ -132,7 +132,7 @@ then yields the diffusion activation energy.
 See also
 --------
 
-- :doc:`/user_guide/dynamic_relaxation` — full DynamicGaussianKT
+- :doc:`/user_guide/fit_functions/kubo_toyabe` — full DynamicGaussianKT
   reference and its relation to the Keren and static-KT models.
-- :doc:`/user_guide/static_gkt_zf` — the static limit used to fix
+- :doc:`/user_guide/fit_functions/kubo_toyabe` — the static limit used to fix
   :math:`\Delta`.

@@ -19,7 +19,7 @@
       "tests_path": "tests/test_muonium.py",
       "src_path": "src/asymmetry/core/fitting/muonium.py",
       "updated": "2026-06-10",
-      "notes": "Follow-on from link-groups (PR #27). IMPLEMENTED: faithful ports of WiMDA TFMuonium/LowTFMuonium/ZFmuonium as undamped components MuoniumTF/MuoniumLowTF/MuoniumZF (composed with *Exponential like Oscillatory). Conventions: leading amplitude A (standard chain-amplitude), hyperfine A_hf (avoids the A clash), ZF anisotropy D_mu (bare D is a Redfield param), field in Gauss via existing g_mu/g_e constants, phase in radians, central diamagnetic line a separate OscillatoryField. TWO findings: (1) positive-frequency convention — TFMuonium uses signed w12 (lower satellite at -phase) while LowTFMuonium negates it; the port uses |w| so all lines share +phase. (2) These do NOT meet a CdS chi2~1.3 bar (chi2~22 vs 1.35 for independent lines) because (field,A_hf) is over-determined and the chi2 landscape is razor-sharp; WiMDA's own docx routes CdS to three independent lines = link groups. So scope = GENERAL genuine-muonium feature, verified by self-consistency (recover A_hf at chi2~1) + WiMDA arithmetic, NOT the CdS corpus. CdS stays with link groups."
+      "notes": "Follow-on from link-groups (PR #27). IMPLEMENTED: faithful ports of WiMDA TFMuonium/LowTFMuonium/ZFmuonium as undamped components MuoniumTF/MuoniumLowTF/MuoniumZF (composed with *Exponential like Oscillatory). Conventions: leading amplitude A (standard chain-amplitude), hyperfine A_hf (avoids the A clash), ZF anisotropy D_mu (bare D is a Redfield param), field in Gauss via existing g_mu/g_e constants, phase in radians, central diamagnetic line a separate OscillatoryField. TWO findings: (1) positive-frequency convention \u2014 TFMuonium uses signed w12 (lower satellite at -phase) while LowTFMuonium negates it; the port uses |w| so all lines share +phase. (2) These do NOT meet a CdS chi2~1.3 bar (chi2~22 vs 1.35 for independent lines) because (field,A_hf) is over-determined and the chi2 landscape is razor-sharp; WiMDA's own docx routes CdS to three independent lines = link groups. So scope = GENERAL genuine-muonium feature, verified by self-consistency (recover A_hf at chi2~1) + WiMDA arithmetic, NOT the CdS corpus. CdS stays with link groups."
     },
     {
       "slug": "link-groups",
@@ -82,7 +82,7 @@
       "tests_path": null,
       "src_path": null,
       "updated": "2026-05-15",
-      "notes": "WiMDA-first implementation complete. musrfit comparison pass done 2026-05-15. Phase family investigation done 2026-05-15. Dangerous naming collisions documented: musrfit ‘phase’ = WiMDA ‘Phase Spectrum’; musrfit ‘real’ = WiMDA ‘Phase’; musrfit ‘power’ = |F|^2 != WiMDA ‘(Power)^1/2’ = |F|. Phase family conclusion: musrfit uses linear c0+c1 ONLY inside phaseOptReal optimizer; all manual/CLI paths use constant c0 only. Do NOT expose c1 as a user control; implement as optimizer backend only. t0_offset_us already covers the physical timing-slope case. Recommended follow-on: (1) phaseOptReal mode with entropy optimizer using c0+c1 backend, (2) N0 normalization for single-histogram inputs, (3) range-based background subtraction, (4) Tesla unit, (5) imag/real+imag output modes. musrfit qualitative apodization levels explicitly rejected in favour of WiMDA explicit tau/start. Per-detector FFT deferred."
+      "notes": "WiMDA-first implementation complete. musrfit comparison pass done 2026-05-15. Phase family investigation done 2026-05-15. Dangerous naming collisions documented: musrfit \u2018phase\u2019 = WiMDA \u2018Phase Spectrum\u2019; musrfit \u2018real\u2019 = WiMDA \u2018Phase\u2019; musrfit \u2018power\u2019 = |F|^2 != WiMDA \u2018(Power)^1/2\u2019 = |F|. Phase family conclusion: musrfit uses linear c0+c1 ONLY inside phaseOptReal optimizer; all manual/CLI paths use constant c0 only. Do NOT expose c1 as a user control; implement as optimizer backend only. t0_offset_us already covers the physical timing-slope case. Recommended follow-on: (1) phaseOptReal mode with entropy optimizer using c0+c1 backend, (2) N0 normalization for single-histogram inputs, (3) range-based background subtraction, (4) Tesla unit, (5) imag/real+imag output modes. musrfit qualitative apodization levels explicitly rejected in favour of WiMDA explicit tau/start. Per-detector FFT deferred."
     },
     {
       "slug": "multi-group-time-domain-fitting",
@@ -146,7 +146,7 @@
       "tests_path": null,
       "src_path": null,
       "updated": "2026-06-05",
-      "notes": "Promotes candidate slug maxent-spectrum. Study pass done 2026-06-05. Four implementations found across references, three distinct methods: (1) MULTIMAX lineage = WiMDA Wimdamax.pas AND Mantid MuonMaxent/MaxentTools (same FORTRAN ancestor, near-identical — implement ONCE, never offer as separate user choices); (2) Mantid generic MaxEnt-v1 (Skilling-Bryan, PosNeg entropy, complex images — genuinely different but Mantid's muon GUI dropped it in v3.12; do not expose as second engine, keep core seam engine-shaped); (3) WiMDA src/MaxEnt.pas is Burg all-poles MEM, NOT MaxEnt — excluded, naming hazard. musrfit has NO MaxEnt (roadmap item only; its PFTPhaseCorrection entropy code is FFT phase correction). WARNING: WiMDA's own FEATURE_MAP/SYMBOL_MAP 'maxent-spectrum' entries point at the Burg code and miss Wimdamax.pas entirely — do not navigate by them. Mantid MaxentTools is GPL-3: usable as verification oracle, must not be copied into MIT Asymmetry. Decision: port MULTIMAX with WiMDA as behavioral contract, Mantid numpy port as oracle."
+      "notes": "Promotes candidate slug maxent-spectrum. Study pass done 2026-06-05. Four implementations found across references, three distinct methods: (1) MULTIMAX lineage = WiMDA Wimdamax.pas AND Mantid MuonMaxent/MaxentTools (same FORTRAN ancestor, near-identical \u2014 implement ONCE, never offer as separate user choices); (2) Mantid generic MaxEnt-v1 (Skilling-Bryan, PosNeg entropy, complex images \u2014 genuinely different but Mantid's muon GUI dropped it in v3.12; do not expose as second engine, keep core seam engine-shaped); (3) WiMDA src/MaxEnt.pas is Burg all-poles MEM, NOT MaxEnt \u2014 excluded, naming hazard. musrfit has NO MaxEnt (roadmap item only; its PFTPhaseCorrection entropy code is FFT phase correction). WARNING: WiMDA's own FEATURE_MAP/SYMBOL_MAP 'maxent-spectrum' entries point at the Burg code and miss Wimdamax.pas entirely \u2014 do not navigate by them. Mantid MaxentTools is GPL-3: usable as verification oracle, must not be copied into MIT Asymmetry. Decision: port MULTIMAX with WiMDA as behavioral contract, Mantid numpy port as oracle."
     },
     {
       "slug": "minos-error-analysis",
@@ -155,7 +155,10 @@
       "tier": "now",
       "score": 20,
       "path": "docs/porting/candidates/minos-error-analysis",
-      "references": ["musrfit", "Mantid"],
+      "references": [
+        "musrfit",
+        "Mantid"
+      ],
       "docs": {
         "readme": "docs/porting/candidates/minos-error-analysis/README.md",
         "comparison": "docs/porting/candidates/minos-error-analysis/comparison.md",
@@ -170,7 +173,11 @@
       "tier": "now",
       "score": 20,
       "path": "docs/porting/candidates/dynamic-kubo-toyabe",
-      "references": ["Mantid", "musrfit", "WiMDA"],
+      "references": [
+        "Mantid",
+        "musrfit",
+        "WiMDA"
+      ],
       "docs": {
         "readme": "docs/porting/candidates/dynamic-kubo-toyabe/README.md",
         "comparison": "docs/porting/candidates/dynamic-kubo-toyabe/comparison.md",
@@ -185,7 +192,10 @@
       "tier": "now",
       "score": 16,
       "path": "docs/porting/candidates/theory-library-expansion",
-      "references": ["musrfit", "Mantid"],
+      "references": [
+        "musrfit",
+        "Mantid"
+      ],
       "docs": {
         "readme": "docs/porting/candidates/theory-library-expansion/README.md",
         "comparison": "docs/porting/candidates/theory-library-expansion/comparison.md",
@@ -200,7 +210,9 @@
       "tier": "now",
       "score": 16,
       "path": "docs/porting/candidates/simulate-mode",
-      "references": ["WiMDA"],
+      "references": [
+        "WiMDA"
+      ],
       "docs": {
         "readme": "docs/porting/candidates/simulate-mode/README.md",
         "comparison": "docs/porting/candidates/simulate-mode/comparison.md",
@@ -215,7 +227,10 @@
       "tier": "next",
       "score": 12,
       "path": "docs/porting/candidates/maxent-spectrum",
-      "references": ["WiMDA", "Mantid"],
+      "references": [
+        "WiMDA",
+        "Mantid"
+      ],
       "docs": {
         "readme": "docs/porting/candidates/maxent-spectrum/README.md",
         "comparison": "docs/porting/candidates/maxent-spectrum/comparison.md",
@@ -231,7 +246,10 @@
       "tier": "next",
       "score": 12,
       "path": "docs/porting/candidates/rrf-transform",
-      "references": ["Mantid", "musrfit"],
+      "references": [
+        "Mantid",
+        "musrfit"
+      ],
       "docs": {
         "readme": "docs/porting/candidates/rrf-transform/README.md",
         "comparison": "docs/porting/candidates/rrf-transform/comparison.md",
@@ -246,7 +264,11 @@
       "tier": "next",
       "score": 12,
       "path": "docs/porting/candidates/python-user-functions",
-      "references": ["musrfit", "WiMDA", "Mantid"],
+      "references": [
+        "musrfit",
+        "WiMDA",
+        "Mantid"
+      ],
       "docs": {
         "readme": "docs/porting/candidates/python-user-functions/README.md",
         "comparison": "docs/porting/candidates/python-user-functions/comparison.md",
@@ -261,7 +283,9 @@
       "tier": "later",
       "score": 10,
       "path": "docs/porting/candidates/moments-analysis",
-      "references": ["WiMDA"],
+      "references": [
+        "WiMDA"
+      ],
       "docs": {
         "readme": "docs/porting/candidates/moments-analysis/README.md",
         "comparison": "docs/porting/candidates/moments-analysis/comparison.md",
@@ -276,7 +300,9 @@
       "tier": "next",
       "score": 9,
       "path": "docs/porting/candidates/phase-auto-calibration",
-      "references": ["Mantid"],
+      "references": [
+        "Mantid"
+      ],
       "docs": {
         "readme": "docs/porting/candidates/phase-auto-calibration/README.md",
         "comparison": "docs/porting/candidates/phase-auto-calibration/comparison.md",
@@ -291,7 +317,10 @@
       "tier": "next",
       "score": 9,
       "path": "docs/porting/candidates/period-arithmetic",
-      "references": ["Mantid", "WiMDA"],
+      "references": [
+        "Mantid",
+        "WiMDA"
+      ],
       "docs": {
         "readme": "docs/porting/candidates/period-arithmetic/README.md",
         "comparison": "docs/porting/candidates/period-arithmetic/comparison.md",
@@ -306,7 +335,9 @@
       "tier": "next",
       "score": 9,
       "path": "docs/porting/candidates/msr-import",
-      "references": ["musrfit"],
+      "references": [
+        "musrfit"
+      ],
       "docs": {
         "readme": "docs/porting/candidates/msr-import/README.md",
         "comparison": "docs/porting/candidates/msr-import/comparison.md",
@@ -321,7 +352,9 @@
       "tier": "later",
       "score": 6,
       "path": "docs/porting/candidates/alc-avoided-level-crossing",
-      "references": ["Mantid"],
+      "references": [
+        "Mantid"
+      ],
       "docs": {
         "readme": "docs/porting/candidates/alc-avoided-level-crossing/README.md",
         "comparison": "docs/porting/candidates/alc-avoided-level-crossing/comparison.md",
@@ -336,13 +369,17 @@
       "tier": "next",
       "score": 9,
       "path": "docs/porting/candidates/muonium-radical-hyperfine",
-      "references": ["Mantid"],
+      "references": [
+        "Mantid"
+      ],
       "docs": {
         "readme": "docs/porting/candidates/muonium-radical-hyperfine/README.md",
         "comparison": "docs/porting/candidates/muonium-radical-hyperfine/comparison.md",
         "scoring": "docs/porting/candidates/muonium-radical-hyperfine/scoring.md"
       },
-      "depends_on": ["theory-library-expansion"],
+      "depends_on": [
+        "theory-library-expansion"
+      ],
       "updated": "2026-05-23"
     },
     {
@@ -377,12 +414,15 @@
     },
     {
       "slug": "lem-depth-profiling",
-      "feature_name": "LEM depth-profiling helpers (implant-energy → depth conversion)",
+      "feature_name": "LEM depth-profiling helpers (implant-energy \u2192 depth conversion)",
       "status": "candidate",
       "tier": "later",
       "score": 6,
       "path": "docs/porting/candidates/lem-depth-profiling",
-      "references": ["Mantid", "musrfit"],
+      "references": [
+        "Mantid",
+        "musrfit"
+      ],
       "docs": {
         "readme": "docs/porting/candidates/lem-depth-profiling/README.md",
         "comparison": "docs/porting/candidates/lem-depth-profiling/comparison.md",
@@ -479,9 +519,30 @@
       },
       "tests_path": "tests/test_time_integral_asymmetry.py",
       "src_path": "src/asymmetry/core/transform/integral.py",
-      "depends_on": ["period-selection"],
+      "depends_on": [
+        "period-selection"
+      ],
       "notes": "CORE API IMPLEMENTED (Qt-free; GUI deferred) in src/asymmetry/core/transform/integral.py, tests in tests/test_time_integral_asymmetry.py. Per-run reduction: integrate_asymmetry(forward,backward,...,method) [low-level on grouped counts, 'integral'=sum-counts-then-(F-aB)/(F+aB) and 'differential'=per-bin-asymmetry-then-mean], integrate_curve(time,asym,err) [mean of an already-formed curve e.g. combined G-R], integrate_run(dataset_or_run) [reduces via run.grouping mirroring TimeFBAsymmetry, default window = good-bin range]. Field-scan: build_field_scan(runs,order_key) -> FieldScan(sorted x/value/error + excluded list), order_key in {field,temperature,run}; runs missing the log are skipped with a reason (Mantid parity). differentiate_scan(scan,max_gap) = WiMDA dA/dB. 'integral' path reuses compute_asymmetry so integral + time-domain share ONE error model (Mantid-compatible); alpha=1.0 reproduces WiMDA exactly. LAYERING: transform takes NO io dependency - period selection is upstream (periods.select_period). Validated end-to-end on corpus EMU LF series 10-100 G @350 K (repolarisation recovery curve). DEFERRED follow-ups: GUI scan representation + trend panel, .asymp persistence as a representation type, and ALC baseline+peak-fit (alc-avoided-level-crossing candidate, depends on this). ---- STUDY: Flagged by WiMDA Muon School corpus testing: unblocks ALC/repolarisation/QLCR. Two-layer feature: (1) per-run reduction counts/asymmetry over [t_min,t_max] -> one (value,error) scalar; (2) series assembly across runs ordered by field/temperature/run -> scan curve. FINDINGS: WiMDA ALC mode = count-integral (F-B)/(F+B) over full good-bin window, NO alpha, Poisson error, plus dA/dB differential transform (muondata.pas:807-815, FitTableUnit.pas:322-402). Mantid PlotAsymmetryByLogValue is the most complete + most portable reference: alpha-aware, two Types - Integral (integrate counts THEN form (F-aB)/(F+aB)) and Differential (form A(t) per bin THEN integrate) - single [TimeMin,TimeMax], Red/Green periods, LogValue sample-log x-axis + Function(Mean/Min/Max/First/Last); feeds 3-step ALC interface (load->baseline->peak fit). musrfit NEGATIVE RESULT: no native integral observable; ALC is just a filename instrument tag fitted as ordinary fittype-2 asymmetry; mupp plots FITTED params vs field, never integrates counts. RECOMMENDATION (Option A): port Mantid model as behavioural contract with WiMDA count-integral as default Integral formula (alpha=1.0 reproduces WiMDA exactly); reject musrfit param-only approach for core observable. Realise as Qt-free core/transform/integral.py reusing compute_asymmetry kernel (shared Mantid-compatible error model) + good-bin windowing + periods.py red/green, plus a FIELD_SCAN_INTEGRAL representation/series reusing FitSeries order_key + fit_parameters_panel trend surface. Mantid GPL-3 = oracle only, do NOT vendor (same rule as maxent study). ALC baseline-subtraction + peak-fitting DEFERRED to follow-up alc-avoided-level-crossing candidate (depends on this). Asymmetry already has every primitive (alpha-aware asymmetry, good-bin window, period selection, field/T metadata, series ordering, trend plot) - port is mostly composition.",
       "updated": "2026-06-07"
+    },
+    {
+      "slug": "wimda-fit-function-parity",
+      "feature_name": "WiMDA Time-Domain Fit Function Parity",
+      "status": "implemented",
+      "path": "docs/porting/wimda-fit-function-parity",
+      "references": [
+        "WiMDA"
+      ],
+      "docs": {
+        "readme": "docs/porting/wimda-fit-function-parity/README.md",
+        "comparison": "docs/porting/wimda-fit-function-parity/comparison.md",
+        "implementation_options": "docs/porting/wimda-fit-function-parity/implementation-options.md",
+        "test_data": "docs/porting/wimda-fit-function-parity/test-data.md",
+        "verification_plan": "docs/porting/wimda-fit-function-parity/verification-plan.md"
+      },
+      "tests_path": "tests/test_wimda_parity_components.py",
+      "src_path": "src/asymmetry/core/fitting",
+      "updated": "2026-06-10"
     }
   ]
 }

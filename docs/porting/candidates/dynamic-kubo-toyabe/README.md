@@ -19,7 +19,7 @@ Dynamic KT is the canonical model for *every* μSR study of magnetic
 systems with thermal fluctuations — spin glasses, paramagnets near a
 transition, frustrated magnets, hopping muons. It is the most
 frequently-cited "missing model" in Asymmetry against the
-`docs/user_guide/lf_kubo_toyabe.rst` page, which currently has to
+`docs/user_guide/fit_functions/kubo_toyabe.rst` page, which currently has to
 stay in the static regime.
 
 ## Prior art

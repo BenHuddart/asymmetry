@@ -621,10 +621,10 @@ Available components in the builder:
   frequency is derived automatically from :math:`\gamma_\mu = 13.554\,\text{MHz/kG}`
 * **StretchedExponential**: :math:`A e^{-(|\lambda|t)^\beta}`
 * **StaticGKT_ZF**: Static Gaussian Kubo-Toyabe
-* **LongitudinalFieldKT**: Hayano LF-KT; :math:`B_L` initialised from run field. See :ref:`lf-kubo-toyabe`.
-* **Muon-Fluorine / MuF**: Analytical single-``mu-F`` polarization
-* **Muon-Fluorine / FmuF_Linear**: Analytical collinear ``F-mu-F`` polarization
-* **Muon-Fluorine / FmuF_General**: Numerical powder-averaged ``F-mu-F`` polarization
+* **LongitudinalFieldKT**: Hayano LF-KT; :math:`B_L` initialised from run field. See :ref:`fit-lf-kubo-toyabe`.
+* **Nuclear dipolar / MuF**: Analytical single-``mu-F`` polarization
+* **Nuclear dipolar / FmuF_Linear**: Analytical collinear ``F-mu-F`` polarization
+* **Nuclear dipolar / FmuF_General**: Numerical powder-averaged ``F-mu-F`` polarization
 * **Constant**: :math:`A_{\mathrm{bg}}`
 
 .. note::

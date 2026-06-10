@@ -67,12 +67,11 @@ def test_general_fmuf_cache_hits_on_repeated_geometry() -> None:
 
 
 def test_muon_fluorine_components_registered() -> None:
-    expected = {"MuF", "FmuF_Linear", "FmuF_General"}
+    expected = {"MuF", "FmuF_Linear", "FmuF_General", "FmuF_Triangle", "DynamicFmuF"}
     assert expected.issubset(COMPONENTS)
 
-    assert COMPONENTS["MuF"].category == "Muon-Fluorine"
-    assert COMPONENTS["FmuF_Linear"].category == "Muon-Fluorine"
-    assert COMPONENTS["FmuF_General"].category == "Muon-Fluorine"
+    for name in expected:
+        assert COMPONENTS[name].category == "Nuclear dipolar"
 
 
 def test_muon_fluorine_components_return_finite_arrays() -> None:
@@ -134,10 +133,14 @@ def test_muon_fluorine_applicability_text_mentions_physical_use_cases() -> None:
     linear_text = get_component_applicability("FmuF_Linear")
     general_text = get_component_applicability("FmuF_General")
 
-    assert "one dominant 19f nucleus" in muf_text.lower()
+    import re
+
+    # Tolerate either unicode or ASCII renderings of the isotope/formula
+    # glyphs — these assertions pin the physics content, not the typography.
+    assert re.search(r"one dominant (?:¹⁹|19)f nucleus", muf_text.lower())
     assert "ionic fluorides" in linear_text.lower()
     assert "three coupled spins" in general_text.lower()
-    assert "hf2" in general_text.lower()
+    assert re.search(r"hf[₂2]", general_text.lower())
 
 
 def test_component_info_html_includes_muon_fluorine_physics_sections() -> None:

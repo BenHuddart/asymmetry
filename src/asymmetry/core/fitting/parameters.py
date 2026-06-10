@@ -7,6 +7,9 @@ from dataclasses import dataclass
 
 _INDEXED_PARAM_RE = re.compile(r"^(.+)_([0-9]+)$")
 _GLE_CONTROL_WORD_RE = re.compile(r"^\\[A-Za-z]+$")
+# A trailing subscript group: braced (`_{...}`, allowing one nesting level
+# such as `_{\mathrm{cut}}`), a control word (`_\Delta`), or a bare token.
+_TRAILING_SUBSCRIPT_RE = re.compile(r"^(.*)_(\{(?:[^{}]|\{[^{}]*\})*\}|\\[A-Za-z]+|[^_{}\\])$")
 
 
 @dataclass(frozen=True)
@@ -23,13 +26,18 @@ class ParamInfo:
     description: str | None = None
 
     def with_index(self, index: str) -> ParamInfo:
-        """Return indexed metadata (e.g. ``A`` -> ``A_2``)."""
+        """Return indexed metadata (e.g. ``A`` -> ``A_2``).
+
+        Symbols that already carry a subscript merge the index into it
+        (``\\lambda_T`` -> ``\\lambda_{T,2}``) — a naive ``_2`` suffix would
+        produce a double subscript, which LaTeX/mathtext rejects.
+        """
         return ParamInfo(
             name=f"{self.name}_{index}",
             plain=f"{self.plain}_{index}",
             unicode=f"{self.unicode}_{index}",
             latex=_append_latex_index(self.latex, index),
-            gle=f"{self.gle}_{{{index}}}",
+            gle=_merge_subscript_index(self.gle, index),
             unit=self.unit,
             default_min=self.default_min,
             description=self.description,
@@ -65,9 +73,24 @@ def split_parameter_name(name: str) -> tuple[str, str | None]:
     return match.group(1), match.group(2)
 
 
+def _merge_subscript_index(symbol: str, index: str) -> str:
+    """Append an index subscript, merging with an existing trailing subscript.
+
+    ``\\lambda_{T}`` or ``\\lambda_T`` become ``\\lambda_{T,2}`` rather than
+    the invalid double subscript ``\\lambda_T_{2}``.
+    """
+    match = _TRAILING_SUBSCRIPT_RE.match(symbol)
+    if match:
+        sub = match.group(2)
+        if sub.startswith("{"):
+            sub = sub[1:-1]
+        return f"{match.group(1)}_{{{sub},{index}}}"
+    return f"{symbol}_{{{index}}}"
+
+
 def _append_latex_index(symbol: str, index: str) -> str:
     if symbol.startswith("$") and symbol.endswith("$"):
-        return f"${symbol[1:-1]}_{{{index}}}$"
+        return f"${_merge_subscript_index(symbol[1:-1], index)}$"
     return f"{symbol}_{index}"
 
 
@@ -139,7 +162,10 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
         r"{\rm FWHM}",
         "MHz",
         default_min=0.0,
-        description="Full width at half maximum of a frequency-domain peak.",
+        description=(
+            "Full width at half maximum of a frequency-domain peak "
+            "(the w in the line-shape expression)."
+        ),
     ),
     "bg": ParamInfo(
         "bg",
@@ -171,7 +197,34 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     ),
     "r1": ParamInfo("r1", "r1", "r₁", r"$r_1$", r"{\it r}_{1}", "Å", default_min=0.0),
     "r2": ParamInfo("r2", "r2", "r₂", r"$r_2$", r"{\it r}_{2}", "Å", default_min=0.0),
+    "r3": ParamInfo("r3", "r3", "r₃", r"$r_3$", r"{\it r}_{3}", "Å", default_min=0.0),
     "theta": ParamInfo("theta", "theta", "θ", r"$\theta$", r"\theta", "°", default_min=0.0),
+    "phi3": ParamInfo("phi3", "phi3", "φ₃", r"$\phi_3$", r"\phi_{3}", "°", default_min=0.0),
+    "Gamma": ParamInfo("Gamma", "Gamma", "Γ", r"$\Gamma$", r"\Gamma", "μs⁻¹", default_min=0.0),
+    "delta_ex": ParamInfo(
+        "delta_ex", "delta_ex", "δ_ex", r"$\delta_{ex}$", r"\delta_{ex}", "MHz", default_min=0.0
+    ),
+    "tau_c": ParamInfo("tau_c", "tau_c", "τ_c", r"$\tau_c$", r"\tau_{c}", "μs", default_min=0.0),
+    "w_rel": ParamInfo(
+        "w_rel", "w_rel", "w_Δ", r"$w_\Delta$", r"{\it w}_{\Delta}", default_min=0.0
+    ),
+    "B_dip": ParamInfo(
+        "B_dip", "B_dip", "B_dip", r"$B_{dip}$", r"{\it B}_{dip}", "G", default_min=0.0
+    ),
+    "lambda_T": ParamInfo(
+        "lambda_T", "lambda_T", "λ_T", r"$\lambda_T$", r"\lambda_{T}", "μs⁻¹", default_min=0.0
+    ),
+    "r_muH": ParamInfo(
+        "r_muH", "r_muH", "r_μH", r"$r_{\mu H}$", r"{\it r}_{\mu H}", "Å", default_min=0.0
+    ),
+    "r_mue": ParamInfo(
+        "r_mue", "r_mue", "r_μe", r"$r_{\mu e}$", r"{\it r}_{\mu e}", "Å", default_min=0.0
+    ),
+    "f_dip": ParamInfo(
+        "f_dip", "f_dip", "f_dip", r"$f_{dip}$", r"{\it f}_{dip}", "MHz", default_min=0.0
+    ),
+    "f_quad": ParamInfo("f_quad", "f_quad", "f_quad", r"$f_{quad}$", r"{\it f}_{quad}", "MHz"),
+    "J_spin": ParamInfo("J_spin", "J", "J", r"$J$", r"{\it J}", default_min=0.5),
     "baseline": ParamInfo("baseline", "baseline", "baseline", "baseline", "baseline", "%"),
     "a": ParamInfo("a", "a", "a", r"$a$", r"{\it a}"),
     "b": ParamInfo("b", "b", "b", r"$b$", r"{\it b}"),
@@ -321,7 +374,20 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "r_muF": "Muon-fluorine distance for two-spin or linear F-mu-F polarization functions.",
     "r1": "First muon-fluorine distance in the general F-mu-F geometry.",
     "r2": "Second muon-fluorine distance in the general F-mu-F geometry.",
+    "r3": "Distance from the muon to the third fluorine in the F-mu-F + F geometry.",
     "theta": "F-mu-F bond angle in degrees for the general three-spin geometry.",
+    "phi3": "Angle in degrees between the F-mu-F axis and the third fluorine direction.",
+    "Gamma": "Risch-Kehr relaxation rate set by the 1D diffusion of the depolarizing carrier.",
+    "delta_ex": "Amplitude of the fluctuating (nuclear-hyperfine or spin-exchange) coupling relaxing muonium.",
+    "tau_c": "Correlation time of the fluctuating coupling (inverse hop or collision rate).",
+    "w_rel": "Fractional standard deviation of the Gaussian distribution of the Kubo-Toyabe width Δ.",
+    "B_dip": "Dipolar field at the muon from the coupled nuclear spin (ω_d = γµB_dip).",
+    "lambda_T": "Transverse damping applied to the oscillating part of the dipole-pair polarization.",
+    "r_muH": "Muon-proton distance for the spin-1/2 dipole-pair polarization.",
+    "r_mue": "Muon-electron distance for the spin-1/2 dipole-pair polarization.",
+    "f_dip": "Dipolar coupling frequency between the muon and the spin-J nucleus.",
+    "f_quad": "Quadrupolar splitting frequency of the spin-J nucleus (sign-sensitive).",
+    "J_spin": "Nuclear spin quantum number J (half-integer); normally held fixed.",
     "baseline": "Additive constant baseline contribution.",
     "a": "Scale prefactor for the component term.",
     "b": "Additive intercept term.",
@@ -343,22 +409,22 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "lambda_BG": "Field-independent background relaxation contribution.",
     "lambda_0D": "Field-independent local (0D) dynamic relaxation contribution.",
     "C": "Overall coupling prefactor in transport-based relaxation expressions.",
-    "sigma_0": "Additive superconducting scale in sigma(T)=sigma_0*rho_s(T)+sigma_bg; approximately the T->0 superconducting linewidth.",
+    "sigma_0": "Additive superconducting scale in σ(T) = σ₀·ρ_s(T) + σ_bg; approximately the T → 0 superconducting linewidth.",
     "sigma_bg": "Additive non-superconducting background linewidth (temperature-independent within the model).",
-    "sigma_sc": "Quadrature superconducting linewidth scale in sigma(T)=sqrt((sigma_sc*rho_s)^2+sigma_nm^2).",
+    "sigma_sc": "Quadrature superconducting linewidth scale in σ²(T) = (σ_sc·ρ_s)² + σ_nm².",
     "sigma_nm": "Quadrature normal/nuclear linewidth floor combined in quadrature with superconducting broadening.",
-    "gap_ratio": "Dimensionless zero-temperature gap ratio Delta_0/(k_B T_c); weak-coupling references include 1.764 (s-wave), 2.14 (d-wave), and 2.77 (s+g).",
-    "gap_ratio_1": "Gap ratio Delta_01/(k_B T_c) for band/component 1 in two-gap s+s models.",
-    "gap_ratio_2": "Gap ratio Delta_02/(k_B T_c) for band/component 2 in two-gap s+s models.",
+    "gap_ratio": "Dimensionless zero-temperature gap ratio Δ₀/(k_B·Tc); weak-coupling references include 1.764 (s-wave), 2.14 (d-wave), and 2.77 (s+g).",
+    "gap_ratio_1": "Gap ratio Δ₀₁/(k_B·Tc) for band/component 1 in two-gap s+s models.",
+    "gap_ratio_2": "Gap ratio Δ₀₂/(k_B·Tc) for band/component 2 in two-gap s+s models.",
     "gap_ratio_s": "s-wave channel gap ratio in mixed two-gap s+d models.",
     "gap_ratio_d": "d-wave channel gap ratio in mixed two-gap s+d models.",
-    "a_anis": "Fourfold anisotropy amplitude in g(phi)=1+a*cos(4phi); |a|<1 is nodeless while |a|>=1 can generate accidental nodes.",
+    "a_anis": "Fourfold anisotropy amplitude in g(φ) = 1 + a·cos(4φ); |a| < 1 is nodeless while |a| ≥ 1 can generate accidental nodes.",
     "shape_factor_a": "Optional weak-coupling shape-factor parameter a used in the generalized reduced-gap law; values > 0 enable the generalized form, while 0 falls back to the Carrington-Manzano interpolation.",
-    "beta_nm": "Harmonic-mixing parameter in nonmonotonic d-wave g(phi)=beta*cos(2phi)+(1-beta)*cos(6phi).",
-    "alpha_sc": "Alpha-model scaling factor multiplying the weak-coupling s-wave ratio: Delta_0/(k_B T_c)=alpha_sc*1.764.",
-    "weight": "Band mixing weight w constrained to [0,1] for weighted sums rho=w*rho_1+(1-w)*rho_2.",
+    "beta_nm": "Harmonic-mixing parameter in nonmonotonic d-wave g(φ) = β·cos(2φ) + (1 − β)·cos(6φ).",
+    "alpha_sc": "Alpha-model scaling factor multiplying the weak-coupling s-wave ratio: Δ₀/(k_B·Tc) = α·1.764.",
+    "weight": "Band mixing weight w constrained to [0, 1] for weighted sums ρ = w·ρ₁ + (1 − w)·ρ₂.",
     "fraction": "Normalized mixture fraction within a fraction-defined composite component group.",
-    "signed_gap": "Flag-like control for extended-s convention; nonzero values preserve sign of cos(2phi), zero uses magnitude |cos(2phi)|.",
+    "signed_gap": "Flag-like control for extended-s convention; nonzero values preserve the sign of cos(2φ), zero uses the magnitude |cos(2φ)|.",
 }
 
 

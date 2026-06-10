@@ -80,8 +80,10 @@ class ComponentSelectorButton(QPushButton):
             action = menu.addAction(name)
             action.triggered.connect(lambda _checked=False, n=name: self.setCurrentText(n))
 
+        # Preserve the caller-provided category order (the panel passes a dict
+        # ordered by its canonical display order).
         submenu_categories = [
-            category for category in sorted(self._components_by_category) if category != "General"
+            category for category in self._components_by_category if category != "General"
         ]
         if regular_components and submenu_categories:
             menu.addSeparator()

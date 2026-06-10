@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 from scipy import integrate
-from scipy.special import sici
+from scipy.special import erfcx, j0, sici
 
 from asymmetry.core.fitting.parameters import ParamInfo, param_info_map
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
@@ -329,6 +329,26 @@ def static_lorentzian_kt_zf(
     return A0 * (1.0 / 3.0 + 2.0 / 3.0 * (1.0 - at) * exp_term) + baseline
 
 
+def _bounded_cache_get(
+    cache: dict, max_size: int, key: tuple, compute: Callable[[], tuple]
+) -> tuple:
+    """Return ``cache[key]``, computing and inserting it on a miss.
+
+    When full, the *oldest* entry is evicted (dicts are insertion-ordered)
+    rather than clearing the cache, which would force a full recompute on the
+    next call.  Shared by the grid caches of the static Lorentzian-LF line
+    shape, the dynamic Kubo-Toyabe family, and the dynamic F-mu-F solver, so
+    cache-policy fixes (eviction, thread-safety) happen in one place.
+    """
+    cached = cache.get(key)
+    if cached is None:
+        cached = compute()
+        if len(cache) >= max_size:
+            cache.pop(next(iter(cache)))
+        cache[key] = cached
+    return cached
+
+
 # Cache of (time grid, static Lorentzian-LF line shape) keyed by quantised
 # (a_L, omega0, tmax, grid sizes).
 _LOR_LF_CACHE: dict[tuple, tuple[NDArray, NDArray]] = {}
@@ -418,16 +438,12 @@ def _static_lorentzian_lf_grid(
     negligible.
     """
     key = (round(a_L, 6), round(omega0, 6), round(tmax, 5), n_t)
-    cached = _LOR_LF_CACHE.get(key)
-    if cached is not None:
-        return cached
-    grid = np.linspace(0.0, tmax, n_t)
-    gs = _lorentzian_lf_lineshape(a_L, omega0, grid)
-    if len(_LOR_LF_CACHE) >= _LOR_LF_CACHE_MAX:
-        # Evict the oldest entry rather than wiping the whole cache.
-        _LOR_LF_CACHE.pop(next(iter(_LOR_LF_CACHE)))
-    _LOR_LF_CACHE[key] = (grid, gs)
-    return grid, gs
+
+    def _compute() -> tuple[NDArray, NDArray]:
+        grid = np.linspace(0.0, tmax, n_t)
+        return grid, _lorentzian_lf_lineshape(a_L, omega0, grid)
+
+    return _bounded_cache_get(_LOR_LF_CACHE, _LOR_LF_CACHE_MAX, key, _compute)
 
 
 def static_lorentzian_kt_lf(
@@ -471,6 +487,128 @@ def static_lorentzian_kt_lf(
         grid, gs_grid = _static_lorentzian_lf_grid(a, omega0, tmax)
         gs = np.interp(tt, grid, gs_grid)
     out = A0 * np.asarray(gs, dtype=float) + baseline
+    return float(out[0]) if scalar else out
+
+
+def risch_kehr(t: NDArray, Gamma: float) -> NDArray:
+    """Risch-Kehr relaxation for spin transport by 1D diffusion.
+
+    G(t) = e^{Gamma t} erfc(sqrt(Gamma t))
+
+    Relaxation of the muon (or muonium) polarisation when the depolarising
+    agent diffuses in one dimension (e.g. a polaron on a conducting-polymer
+    chain): the return probability of a 1D random walk gives a
+    ``(pi Gamma t)^{-1/2}`` long-time tail instead of an exponential.
+
+    Evaluated as ``erfcx(sqrt(Gamma t))`` (the scaled complementary error
+    function), which is numerically stable for all ``Gamma t`` — no asymptotic
+    branch switch is needed (WiMDA switches forms at ``Gamma t = 20``).
+    ``Gamma`` is used as ``|Gamma|``; WiMDA's mirrored ``2 - G`` branch for
+    negative rates is an unphysical fitting convenience and is not ported.
+
+    References
+    ----------
+    R. Risch and K. W. Kehr, Phys. Rev. B 46, 5246 (1992).
+    """
+    gt = np.abs(float(Gamma)) * np.abs(np.asarray(t, dtype=float))
+    return np.asarray(erfcx(np.sqrt(gt)), dtype=float)
+
+
+def bessel_oscillation(t: NDArray, frequency: float, phase: float = 0.0) -> NDArray:
+    """Zeroth-order Bessel oscillation J0(2 pi f t + phase).
+
+    The polarisation produced by an incommensurate (spin-density-wave) field
+    distribution: an Overhauser distribution of local fields between -B_1 and
+    +B_1 gives P(t) = J0(gamma_mu B_1 t) (Blundell, De Renzi, Lancaster &
+    Pratt, *Muon Spectroscopy*, OUP 2022, eqn 6.47), which at late times looks
+    like a damped cosine with a -45 degree phase shift (eqn 6.48).  Here the
+    field-distribution edge is parameterised as a frequency
+    ``f = gamma_mu B_1 / 2 pi`` in MHz.
+    """
+    t = np.asarray(t, dtype=float)
+    return np.asarray(j0(2.0 * np.pi * float(frequency) * t + float(phase)), dtype=float)
+
+
+# Gauss-Hermite quadrature for the Gaussian-broadened KT, computed at import.
+_GBKT_NODES = 21
+_GBKT_X, _GBKT_WEIGHTS = np.polynomial.hermite.hermgauss(_GBKT_NODES)
+_GBKT_WN = _GBKT_WEIGHTS / np.sqrt(np.pi)  # normalised quadrature weights
+
+
+def gaussian_broadened_kt(
+    t: NDArray,
+    Delta: float,
+    B_L: float,
+    w_rel: float,
+) -> NDArray:
+    """Static Gaussian Kubo-Toyabe averaged over a Gaussian distribution of Delta.
+
+    G(t) = integral dDelta' p(Delta') G_KT(t; Delta', B_L), with ``p`` a Gaussian
+    of mean ``Delta`` and standard deviation ``w_rel * Delta`` (``w_rel`` is the
+    *fractional* width).  Models disordered hosts where a single Kubo-Toyabe
+    width is too sharp — the distribution of static widths fills in the dip and
+    softens the 1/3-tail recovery (cf. the Gaussian-broadened Gaussian of
+    Noakes & Kalvius, Phys. Rev. B 56, 2352 (1997); WiMDA's ``Gau broad KT``).
+
+    Evaluated by Gauss-Hermite quadrature (21 nodes) over the Delta
+    distribution, with negative quadrature widths reflected to ``|Delta'|`` (as
+    in WiMDA).  The quadrature is evaluated **directly at the requested times**
+    (vectorised over the nodes, with the Hayano longitudinal-field integral
+    computed once on a shared fine grid for all nodes), so the model is smooth
+    in ``w_rel`` and ``w_rel = 0`` reduces exactly and continuously to the
+    static (LF) Kubo-Toyabe.
+
+    Note: WiMDA's ``rel width`` parameter enters as weight ``exp(-(i/7)^2)`` over
+    ``Delta(1 + w i/7)``, i.e. a Gaussian of fractional standard deviation
+    ``w/sqrt(2)``; ``w_rel`` here *is* the fractional standard deviation
+    (``w_rel = w_WiMDA / sqrt(2)``).
+    """
+    t = np.asarray(t, dtype=float)
+    scalar = t.ndim == 0
+    tt = np.atleast_1d(np.abs(t))
+    delta = abs(float(Delta))
+    width = abs(float(w_rel))
+    if width <= 0.0 or delta <= 0.0 or tt.size == 0:
+        gz = longitudinal_field_kubo_toyabe(tt, 1.0, delta, B_L, 0.0)
+        out = np.asarray(gz, dtype=float)
+        return float(out[0]) if scalar else out
+
+    deltas = np.abs(delta * (1.0 + np.sqrt(2.0) * width * _GBKT_X))  # (nodes,)
+    gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+    omega0 = gamma_mu * (float(B_L) * GAUSS_TO_TESLA)
+
+    dt2 = (deltas[:, None] * tt[None, :]) ** 2  # (nodes, n_t)
+    exp_term = np.exp(np.clip(-dt2 / 2.0, -700, 0))
+
+    # Per node, use the exact zero-field form when the applied field is
+    # negligible against that node's width (same rule as the single-Delta
+    # function); otherwise the Hayano longitudinal-field expression with the
+    # oscillatory integral evaluated once on a grid shared by all LF nodes.
+    zf_mask = np.abs(omega0) < np.maximum(1e-10, _FIELD_DECOUPLING_RATIO * deltas)
+    gz_nodes = np.empty_like(dt2)
+    gz_nodes[zf_mask] = 1.0 / 3.0 + 2.0 / 3.0 * (1.0 - dt2[zf_mask]) * exp_term[zf_mask]
+
+    lf_idx = np.nonzero(~zf_mask)[0]
+    if lf_idx.size:
+        tmax = float(max(tt.max(), 1e-6))
+        delta_max = float(deltas[lf_idx].max())
+        h = min(0.01, 0.25 / max(abs(omega0), 1e-9), 0.1 / max(delta_max, 1e-9))
+        n = int(min(max(round(tmax / h) + 1, 64), 200000))
+        tau = np.linspace(0.0, tmax, n)
+        integrand = (
+            np.exp(np.clip(-0.5 * (deltas[lf_idx, None] * tau[None, :]) ** 2, -700, 0))
+            * np.sin(omega0 * tau)[None, :]
+        )
+        integral = integrate.cumulative_trapezoid(integrand, tau, axis=1, initial=0.0)
+        cos_term = np.cos(omega0 * tt)
+        for row, k in enumerate(lf_idx):
+            d_k = deltas[k]
+            i_t = np.interp(tt, tau, integral[row])
+            factor1 = 2.0 * d_k**2 / omega0**2
+            factor2 = 2.0 * d_k**4 / omega0**3
+            gz_nodes[k] = 1.0 - factor1 * (1.0 - exp_term[k] * cos_term) + factor2 * i_t
+
+    out = np.asarray(_GBKT_WN @ gz_nodes, dtype=float)
     return float(out[0]) if scalar else out
 
 
@@ -563,9 +701,7 @@ def _dynamic_kt_grid(
         gd = _strong_collision_solve(np.asarray(gs, dtype=float), nu_eff, h)
 
     if len(_DYN_KT_CACHE) >= _DYN_KT_CACHE_MAX:
-        # Evict the oldest entry (dicts are insertion-ordered) rather than wiping
-        # the whole cache, which would force a full recompute on the next call.
-        _DYN_KT_CACHE.pop(next(iter(_DYN_KT_CACHE)))
+        _DYN_KT_CACHE.pop(next(iter(_DYN_KT_CACHE)))  # see _bounded_cache_get
     _DYN_KT_CACHE[key] = (grid, gd)
     return grid, gd
 

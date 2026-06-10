@@ -21,7 +21,7 @@ what the internal-field distribution :math:`P(B)` looks like inside the
 vortex lattice of a type-II superconductor in the mixed state
 (:doc:`workflows/superconductor_penetration_depth`). The frequency-domain
 view is also the standard way to choose a sensible seed frequency before
-attempting an oscillatory time-domain fit (:doc:`oscillatory`).
+attempting an oscillatory time-domain fit (:doc:`fit_functions/oscillation`).
 
 Apodisation is the key practical knob. A Lorentzian filter sharpens an
 exponentially damped line; a Gaussian filter is the natural choice for

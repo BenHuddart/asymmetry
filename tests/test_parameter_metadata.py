@@ -32,8 +32,10 @@ def test_get_param_info_indexed_parameter_preserves_formats() -> None:
     info = get_param_info("A0_2")
     assert info.plain == "A0_2"
     assert info.unicode == "A₀_2"
-    assert info.latex == r"$A_0_{2}$"
-    assert info.gle == r"{\it A}_{0}_{2}"
+    # An existing subscript merges with the index — a naive suffix would give
+    # the invalid double subscript $A_0_{2}$, which mathtext rejects.
+    assert info.latex == r"$A_{0,2}$"
+    assert info.gle == r"{\it A}_{0,2}"
     assert info.unit == "%"
 
 
