@@ -43,6 +43,12 @@ class CrossGroupDialogOutput:
 class CrossGroupFitDialog(ModelFitDialog):
     """Cross-group fit dialog extending the base model-fit dialog."""
 
+    # global_fit_parameter_model honours neither error modes nor fit windows,
+    # so the inherited controls must not be shown promising semantics the
+    # cross-group fit would silently ignore.
+    _supports_error_modes = False
+    _supports_windows = False
+
     def __init__(
         self,
         *,
@@ -121,9 +127,14 @@ class CrossGroupFitDialog(ModelFitDialog):
 
         self._apply_existing_config(existing_config)
         self._refresh_range_selector()
+        self._post_rebuild_ranges_ui()
+        self._select_range(0)
+
+    def _post_rebuild_ranges_ui(self) -> None:
+        # Cross-group mode has no per-range activity concept; keep the
+        # checkboxes hidden across every rebuild, not just the first one.
         for widgets in self._range_widgets:
             widgets.active.setVisible(False)
-        self._select_range(0)
 
     def _collect_config(self) -> dict[str, object]:
         self._commit_param_table()

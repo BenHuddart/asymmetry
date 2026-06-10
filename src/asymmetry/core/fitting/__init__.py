@@ -18,6 +18,7 @@ from asymmetry.core.fitting.field_scan import (
     fit_scan_model,
     parameter_set_for_model,
 )
+from asymmetry.core.fitting.fit_quality import FitQuality, assess_fit_quality
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     CandidateTemplate,
@@ -56,14 +57,20 @@ from asymmetry.core.fitting.grouped_time_domain import (
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.parameter_models import (
     PARAMETER_MODEL_COMPONENTS,
+    ErrorMode,
     ModelFitRange,
     ParameterCompositeModel,
     ParameterModelComponentDefinition,
     ParameterModelFit,
     ParameterModelFitResult,
+    apply_error_mode,
     component_names_for_x,
+    effective_range_bounds,
     evaluate_parameter_model_fit,
     fit_parameter_model,
+    range_mask,
+    validate_fit_windows,
+    windows_mask,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, ParamInfo, get_param_info
 from asymmetry.core.fitting.result_summary import fit_result_summary
@@ -126,7 +133,15 @@ __all__ = [
     "ParameterModelFit",
     "ModelFitRange",
     "ParameterModelFitResult",
+    "ErrorMode",
+    "FitQuality",
+    "apply_error_mode",
+    "assess_fit_quality",
+    "effective_range_bounds",
     "fit_parameter_model",
+    "range_mask",
+    "validate_fit_windows",
+    "windows_mask",
     "evaluate_parameter_model_fit",
     "component_names_for_x",
     "fit_scan_baseline",

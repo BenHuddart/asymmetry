@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 from itertools import product
 
 import numpy as np
@@ -16,6 +17,11 @@ from asymmetry.core.fitting.composite import (
     parse_component_expression,
 )
 from asymmetry.core.fitting.diffusion import lambda_total as diffusion_lambda_total
+from asymmetry.core.fitting.muonium import (
+    G_E_MHZ_PER_G,
+    G_MU_MHZ_PER_G,
+    VACUUM_MUONIUM_A_HF_MHZ,
+)
 from asymmetry.core.fitting.parameters import (
     Parameter,
     ParameterSet,
@@ -61,6 +67,30 @@ def _power_law(x: NDArray, a: float, n: float, c: float = 0.0) -> NDArray[np.flo
     xx = np.asarray(x, dtype=float)
     safe_x = np.maximum(np.abs(xx), 1e-12)
     return a * np.power(safe_x, n) + c
+
+
+def _polynomial(
+    x: NDArray,
+    c0: float = 0.0,
+    c1: float = 0.0,
+    c2: float = 0.0,
+    c3: float = 0.0,
+    c4: float = 0.0,
+    c5: float = 0.0,
+) -> NDArray[np.float64]:
+    xx = np.asarray(x, dtype=float)
+    # Horner evaluation of the quintic; fix unused coefficients at 0 to fit
+    # lower orders (WiMDA "Polynomial fit up to fifth order term").
+    result = np.full_like(xx, float(c5))
+    for coeff in (c4, c3, c2, c1, c0):
+        result = result * xx + float(coeff)
+    return result
+
+
+def _power_law_quad_bg(x: NDArray, a: float, n: float, BG: float = 0.0) -> NDArray[np.float64]:
+    xx = np.asarray(x, dtype=float)
+    safe_x = np.maximum(np.abs(xx), 1e-12)
+    return np.hypot(a * np.power(safe_x, n), BG)
 
 
 def _exp_decay(x: NDArray, a: float, tau: float, c: float = 0.0) -> NDArray[np.float64]:
@@ -145,6 +175,33 @@ def _redfield(
     m_safe = max(abs(float(m)), 1e-12)
     denom = 1.0 + np.power(omega_mu / nu_safe, m_safe)
     return ((float(D) ** 2) / 4.0) * (2.0 / nu_safe) / denom
+
+
+#: (γₑ + γ_μ)/2π in MHz/G — converts a muonium hyperfine constant A_hf (MHz)
+#: into the characteristic repolarisation field B₀ = A_hf / this (in G).
+#: Shares the per-ratio constants with the Breit-Rabi muonium components so a
+#: repolarisation-fitted A_hf stays consistent with a TF-muonium-fitted one.
+_ISOTROPIC_MU_B0_DENOM_MHZ_PER_G = G_E_MHZ_PER_G + G_MU_MHZ_PER_G
+
+
+def isotropic_mu_b0_gauss(A_hf_mhz: float) -> float:
+    """Characteristic field B₀ = A_hf/(γₑ + γ_μ) of isotropic muonium, in G."""
+    return max(abs(float(A_hf_mhz)), 1e-12) / _ISOTROPIC_MU_B0_DENOM_MHZ_PER_G
+
+
+def _mu_repolarisation(
+    x: NDArray, a_Mu: float, A_hf: float, a_Dia: float = 0.0
+) -> NDArray[np.float64]:
+    """Time-averaged longitudinal polarization of isotropic muonium.
+
+    In LF only the 2↔4 transition mixes the muon spin states; averaging the
+    unresolved fast oscillation leaves ``1 - a24 = (1/2 + r²)/(1 + r²)`` with
+    ``r = B/B0`` and ``B0 = A_hf/(γₑ + γ_μ)``. ``x`` is field in Gauss,
+    ``A_hf`` in MHz.
+    """
+    xx = np.asarray(x, dtype=float)
+    r2 = (xx / isotropic_mu_b0_gauss(A_hf)) ** 2
+    return float(a_Mu) * (0.5 + r2) / (1.0 + r2) + float(a_Dia)
 
 
 def _lorentzian(x: NDArray, a: float, B0: float, c: float = 0.0) -> NDArray[np.float64]:
@@ -268,6 +325,17 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         latex_equation=r"y(x) = m x + b",
         scopes=("common", "field", "temperature"),
     ),
+    "Polynomial": ParameterModelComponentDefinition(
+        name="Polynomial",
+        description="c0 + c1*x + c2*x^2 + c3*x^3 + c4*x^4 + c5*x^5",
+        function=_polynomial,
+        param_names=["c0", "c1", "c2", "c3", "c4", "c5"],
+        param_defaults={"c0": 0.0, "c1": 1.0, "c2": 0.0, "c3": 0.0, "c4": 0.0, "c5": 0.0},
+        param_info={f"c{k}": get_param_info(f"c{k}") for k in range(6)},
+        formula_template="{c0} + {c1}*x + {c2}*x^2 + {c3}*x^3 + {c4}*x^4 + {c5}*x^5",
+        latex_equation=r"y(x) = c_0 + c_1 x + c_2 x^2 + c_3 x^3 + c_4 x^4 + c_5 x^5",
+        scopes=("common",),
+    ),
     "PowerLaw": ParameterModelComponentDefinition(
         name="PowerLaw",
         description="a*|x|^n + c",
@@ -281,6 +349,21 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         },
         formula_template="{a}*|x|^{n} + {c}",
         latex_equation=r"y(x) = a \lvert x \rvert^{n} + c",
+        scopes=("common",),
+    ),
+    "PowerLawQuadBG": ParameterModelComponentDefinition(
+        name="PowerLawQuadBG",
+        description="sqrt((a*|x|^n)^2 + BG^2)",
+        function=_power_law_quad_bg,
+        param_names=["a", "n", "BG"],
+        param_defaults={"a": 1.0, "n": 1.0, "BG": 0.0},
+        param_info={
+            "a": get_param_info("a"),
+            "n": get_param_info("n"),
+            "BG": get_param_info("BG"),
+        },
+        formula_template="sqrt(({a}*|x|^{n})^2 + {BG}^2)",
+        latex_equation=r"y(x) = \sqrt{(a \lvert x \rvert^{n})^2 + \mathrm{BG}^2}",
         scopes=("common",),
     ),
     "ExponentialDecay": ParameterModelComponentDefinition(
@@ -371,6 +454,26 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         },
         formula_template="{a}/(1 + (x/{B0})^2) + {c}",
         latex_equation=r"y(B) = \frac{a}{1 + (B/B_0)^2} + c",
+        scopes=("field",),
+    ),
+    "MuRepolarisation": ParameterModelComponentDefinition(
+        name="MuRepolarisation",
+        description="a_Mu*(1/2 + (B/B0)^2)/(1 + (B/B0)^2) + a_Dia, B0 = A_hf/(γₑ+γµ)",
+        function=_mu_repolarisation,
+        param_names=["a_Mu", "A_hf", "a_Dia"],
+        param_defaults={"a_Mu": 15.0, "A_hf": VACUUM_MUONIUM_A_HF_MHZ, "a_Dia": 5.0},
+        param_info={
+            "a_Mu": get_param_info("a_Mu"),
+            "A_hf": get_param_info("A_hf"),
+            "a_Dia": get_param_info("a_Dia"),
+        },
+        formula_template=(
+            "{a_Mu}*(0.5 + (x/B0)^2)/(1 + (x/B0)^2) + {a_Dia} with B0 = {A_hf}/(γₑ+γµ)"
+        ),
+        latex_equation=(
+            r"y(B) = a_{\mathrm{Mu}} \frac{\tfrac{1}{2} + (B/B_0)^2}{1 + (B/B_0)^2}"
+            r" + a_{\mathrm{Dia}}, \quad B_0 = \frac{A_{\mathrm{hf}}}{\gamma_e + \gamma_\mu}"
+        ),
         scopes=("field",),
     ),
     "GaussianLCR": ParameterModelComponentDefinition(
@@ -1171,6 +1274,60 @@ class ParameterCompositeModel:
         )
 
 
+class ErrorMode(str, Enum):
+    """How per-point σ values are assigned when weighting a model fit.
+
+    ``COLUMN`` uses the propagated errors of the trended parameter (the
+    default and the only mode where the stabilisation floor applies);
+    ``PERCENT`` sets σᵢ = (value/100)·|yᵢ|; ``ABSOLUTE`` a constant σ =
+    value; ``NONE`` unit weights; ``SCATTER`` fits with unit weights and
+    rescales the parameter errors by √(χ²/ν) afterwards — the standard
+    estimate of errors from the scatter of the points (and the fixed point
+    of WiMDA's iterated Estimate mode).
+    """
+
+    COLUMN = "column"
+    PERCENT = "percent"
+    ABSOLUTE = "absolute"
+    NONE = "none"
+    SCATTER = "scatter"
+
+
+def apply_error_mode(
+    y: NDArray,
+    yerr: NDArray | None,
+    mode: ErrorMode | str = ErrorMode.COLUMN,
+    value: float | None = None,
+) -> NDArray[np.float64] | None:
+    """Return the σ array a fit should weight with under ``mode``.
+
+    ``value`` is the percentage for ``PERCENT`` and the constant σ for
+    ``ABSOLUTE``. A missing, non-finite, or non-positive value falls back to
+    σ = 1 for ``ABSOLUTE`` (matching WiMDA) and to 1 % for ``PERCENT`` (so a
+    zero percentage cannot zero out every error and mask the whole fit).
+    Returns ``None`` for ``COLUMN`` with no error column, which callers treat
+    as unit weights. Percent-mode points with y = 0 get σ = 0 and are
+    excluded by the standard validity mask — they carry no error information.
+    """
+    mode = ErrorMode(mode)
+    yy = np.asarray(y, dtype=float)
+    if mode is ErrorMode.COLUMN:
+        return None if yerr is None else np.asarray(yerr, dtype=float)
+    if mode is ErrorMode.PERCENT:
+        pct = abs(float(value)) if value is not None and np.isfinite(value) else 1.0
+        if pct <= 0.0:
+            pct = 1.0
+        return (pct / 100.0) * np.abs(yy)
+    if mode is ErrorMode.ABSOLUTE:
+        const = abs(float(value)) if value is not None and np.isfinite(value) else 1.0
+        if const <= 0.0:
+            const = 1.0
+        return np.full_like(yy, const)
+    # NONE and SCATTER both weight uniformly; SCATTER additionally rescales
+    # the resulting parameter errors after the fit.
+    return np.ones_like(yy)
+
+
 @dataclass
 class ParameterModelFitResult:
     """Result of fitting a parameter-vs-x model."""
@@ -1181,17 +1338,110 @@ class ParameterModelFitResult:
     parameters: ParameterSet = field(default_factory=ParameterSet)
     uncertainties: dict[str, float] = field(default_factory=dict)
     message: str = ""
+    #: Error mode the fit was run with (χ²ᵣ carries no goodness information
+    #: for ``"none"``/``"scatter"`` — quality verdicts should be suppressed).
+    error_mode: str = ErrorMode.COLUMN.value
+    #: Number of points that entered the fit (0 when unknown/legacy).
+    n_points: int = 0
 
 
 @dataclass
 class ModelFitRange:
-    """A model and fit results over a specific x-range."""
+    """A model and fit results over a specific x-range.
+
+    ``windows`` optionally restricts the range to a union of (min, max)
+    intervals: a point enters the fit if it falls in *any* window
+    (OR-combination), with one model fitted across the union. When absent,
+    the plain ``x_min``/``x_max`` bounds apply.
+    """
 
     x_min: float | None
     x_max: float | None
     model: ParameterCompositeModel
     parameters: ParameterSet
     result: ParameterModelFitResult | None = None
+    windows: list[tuple[float, float]] | None = None
+
+
+def validate_fit_windows(
+    windows: Sequence[tuple[float, float]] | None,
+) -> list[tuple[float, float]] | None:
+    """Normalise a window list: drop None, reject inverted windows."""
+    if not windows:
+        return None
+    normalised: list[tuple[float, float]] = []
+    for window in windows:
+        lo, hi = float(window[0]), float(window[1])
+        if not (np.isfinite(lo) and np.isfinite(hi)):
+            raise ValueError(f"Fit window bounds must be finite, got ({lo}, {hi})")
+        if lo > hi:
+            raise ValueError(f"Fit window is inverted: ({lo}, {hi})")
+        normalised.append((lo, hi))
+    return normalised
+
+
+def parse_fit_windows(state: object) -> list[tuple[float, float]] | None:
+    """Leniently parse a serialized window list (sequence of [lo, hi] pairs).
+
+    Malformed entries are dropped rather than raising — saved state must
+    never prevent a project from opening. Returns ``None`` when nothing
+    usable remains.
+    """
+    if not isinstance(state, (list, tuple)):
+        return None
+    windows: list[tuple[float, float]] = []
+    for entry in state:
+        if isinstance(entry, (list, tuple)) and len(entry) == 2:
+            try:
+                windows.append((float(entry[0]), float(entry[1])))
+            except (TypeError, ValueError):
+                continue
+    return windows or None
+
+
+def windows_mask(
+    x: NDArray,
+    windows: Sequence[tuple[float, float]] | None,
+    x_min: float | None = None,
+    x_max: float | None = None,
+) -> NDArray[np.bool_]:
+    """Boolean mask of points inside the window union (or x_min/x_max).
+
+    With ``windows`` present the mask is the OR over all (min, max)
+    intervals and ``x_min``/``x_max`` are ignored; otherwise the plain
+    bounds apply (``None`` bounds are open).
+    """
+    xx = np.asarray(x, dtype=float)
+    valid = validate_fit_windows(windows)
+    if valid is not None:
+        mask = np.zeros(xx.shape, dtype=bool)
+        for lo, hi in valid:
+            mask |= (xx >= lo) & (xx <= hi)
+        return mask
+    mask = np.ones(xx.shape, dtype=bool)
+    if x_min is not None:
+        mask &= xx >= float(x_min)
+    if x_max is not None:
+        mask &= xx <= float(x_max)
+    return mask
+
+
+def range_mask(x: NDArray, fit_range: ModelFitRange) -> NDArray[np.bool_]:
+    """Window-union (or min/max) mask for a :class:`ModelFitRange`."""
+    return windows_mask(x, fit_range.windows, fit_range.x_min, fit_range.x_max)
+
+
+def effective_range_bounds(fit_range: ModelFitRange) -> tuple[float | None, float | None]:
+    """The x-extent a range's fitted curve should span.
+
+    With windows present this is the union envelope (so the curve is drawn
+    continuously through excluded gaps); otherwise the plain bounds. Raises
+    ``ValueError`` for invalid windows, like :func:`validate_fit_windows`.
+    """
+    windows = validate_fit_windows(fit_range.windows)
+    if windows is not None:
+        return min(lo for lo, _ in windows), max(hi for _, hi in windows)
+    return fit_range.x_min, fit_range.x_max
 
 
 @dataclass
@@ -1526,28 +1776,47 @@ def fit_parameter_model(
     x_min: float | None = None,
     x_max: float | None = None,
     method: str = "migrad",
+    error_mode: ErrorMode | str = ErrorMode.COLUMN,
+    error_value: float | None = None,
+    windows: Sequence[tuple[float, float]] | None = None,
 ) -> ParameterModelFitResult:
-    """Fit a parameter-vs-x model using iminuit."""
+    """Fit a parameter-vs-x model using iminuit.
+
+    ``error_mode``/``error_value`` select the per-point σ assignment (see
+    :class:`ErrorMode`); ``windows`` optionally restricts the fit to a union
+    of (min, max) intervals, overriding ``x_min``/``x_max``.
+    """
+    error_mode = ErrorMode(error_mode)
     xx = np.asarray(x, dtype=float)
     yy = np.asarray(y, dtype=float)
-    if yerr is None:
+    ee = apply_error_mode(yy, yerr, error_mode, error_value)
+    if ee is None:
         ee = np.ones_like(xx)
-    else:
-        ee = np.asarray(yerr, dtype=float)
+
+    try:
+        window_selection = windows_mask(xx, windows, x_min, x_max)
+    except ValueError as exc:
+        # Keep the documented failure contract: bad range inputs yield a
+        # failed result, never an exception.
+        return ParameterModelFitResult(success=False, message=str(exc), error_mode=error_mode.value)
 
     mask = np.isfinite(xx) & np.isfinite(yy) & np.isfinite(ee) & (ee > 0)
-    if x_min is not None:
-        mask &= xx >= float(x_min)
-    if x_max is not None:
-        mask &= xx <= float(x_max)
+    mask &= window_selection
 
     if not np.any(mask):
-        return ParameterModelFitResult(success=False, message="No valid points in selected range")
+        return ParameterModelFitResult(
+            success=False,
+            message="No valid points in selected range",
+            error_mode=error_mode.value,
+        )
 
     x_fit = xx[mask]
     y_fit = yy[mask]
     e_fit = ee[mask]
-    e_fit = _stabilize_parameter_model_errors(e_fit)
+    if error_mode is ErrorMode.COLUMN:
+        # The stabilisation floor exists to tame near-zero propagated errors;
+        # explicit Percent/Absolute/unit weights are honoured verbatim.
+        e_fit = _stabilize_parameter_model_errors(e_fit)
 
     initial_candidates: list[dict[str, float] | None] = [None]
     heuristic_seed = _transport_seed_initial_values(x_fit, y_fit, e_fit, model, parameters)
@@ -1580,7 +1849,32 @@ def fit_parameter_model(
             best_fval = fval
 
     if best_result is None:
-        return ParameterModelFitResult(success=False, message="Fit failed")
+        return ParameterModelFitResult(
+            success=False, message="Fit failed", error_mode=error_mode.value
+        )
+
+    best_result.error_mode = error_mode.value
+    best_result.n_points = int(len(x_fit))
+    if error_mode is ErrorMode.SCATTER and best_result.success:
+        # Estimate errors from the scatter of the points: the unit-weight fit
+        # location is independent of a uniform σ rescale, so multiplying the
+        # parameter errors by √(χ²/ν) is exactly the fixed point of WiMDA's
+        # iterated Estimate mode (σ ← σ·√χ²ᵣ until χ²ᵣ = 1).
+        ndof = len(x_fit) - len(parameters.free_parameters)
+        if ndof < 1:
+            # An (over)determined interpolation has no residual scatter to
+            # estimate errors from — χ² ≈ 0 would collapse the rescaled
+            # errors to ~0, reporting an indeterminate fit as exact.
+            best_result.uncertainties = {}
+            best_result.message = (
+                f"{best_result.message}; no degrees of freedom to estimate errors from scatter"
+            )
+        else:
+            scale = float(np.sqrt(best_result.chi_squared / ndof))
+            if np.isfinite(scale) and scale > 0.0:
+                best_result.uncertainties = {
+                    name: err * scale for name, err in best_result.uncertainties.items()
+                }
     return best_result
 
 
@@ -1806,8 +2100,14 @@ def evaluate_parameter_model_fit(
         if fit_range.result is None or not fit_range.result.success:
             continue
 
-        x_min = fit_range.x_min
-        x_max = fit_range.x_max
+        try:
+            # One model across the window union: sample the full envelope so
+            # the curve is drawn continuously through the excluded gaps.
+            x_min, x_max = effective_range_bounds(fit_range)
+        except ValueError:
+            # Invalid windows (e.g. inverted mid-edit): skip the curve rather
+            # than raising inside a plotting path.
+            continue
         if x_min is None or x_max is None:
             continue
         if x_max <= x_min:

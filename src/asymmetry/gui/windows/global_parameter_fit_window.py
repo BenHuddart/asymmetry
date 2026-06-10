@@ -39,6 +39,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterModelFit,
     ParameterModelFitResult,
     evaluate_parameter_model_fit,
+    parse_fit_windows,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, get_param_info
 from asymmetry.gui.export_paths import (
@@ -294,6 +295,11 @@ class GlobalParameterFitWindow(QMainWindow):
                 range_item: dict[str, object] = {
                     "x_min": fit_range.x_min,
                     "x_max": fit_range.x_max,
+                    "windows": (
+                        [[float(lo), float(hi)] for lo, hi in fit_range.windows]
+                        if fit_range.windows
+                        else None
+                    ),
                     "model": fit_range.model.to_dict(),
                     "parameters": [
                         {
@@ -312,6 +318,8 @@ class GlobalParameterFitWindow(QMainWindow):
                         "chi_squared": fit_range.result.chi_squared,
                         "reduced_chi_squared": fit_range.result.reduced_chi_squared,
                         "message": fit_range.result.message,
+                        "error_mode": fit_range.result.error_mode,
+                        "n_points": fit_range.result.n_points,
                         "parameters": [
                             {
                                 "name": p.name,
@@ -405,6 +413,8 @@ class GlobalParameterFitWindow(QMainWindow):
                             for k, v in dict(result_state.get("uncertainties", {})).items()
                         },
                         message=str(result_state.get("message", "")),
+                        error_mode=str(result_state.get("error_mode", "column")),
+                        n_points=int(result_state.get("n_points", 0)),
                     )
 
                 ranges.append(
@@ -418,6 +428,7 @@ class GlobalParameterFitWindow(QMainWindow):
                         model=model,
                         parameters=params,
                         result=result_obj,
+                        windows=parse_fit_windows(range_state.get("windows")),
                     )
                 )
 

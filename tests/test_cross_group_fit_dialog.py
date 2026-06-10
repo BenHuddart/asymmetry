@@ -230,3 +230,35 @@ def test_cross_group_run_fit_sets_in_progress_state(monkeypatch) -> None:
 
     assert dlg._fit_in_progress is False
     assert app is not None
+
+
+def test_cross_group_dialog_hides_unsupported_controls() -> None:
+    """global_fit_parameter_model honours neither error modes nor windows, so
+    the inherited selector and '+ Window' button must not be shown."""
+    QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    assert dlg._error_mode_combo is None
+    assert dlg._error_value_spin is None
+    from asymmetry.core.fitting.parameter_models import ErrorMode
+
+    assert dlg._error_mode() is ErrorMode.COLUMN
+    assert dlg._error_value() is None
+
+    from PySide6.QtWidgets import QPushButton
+
+    buttons = [b.text() for b in dlg.findChildren(QPushButton)]
+    assert "+ Window" not in buttons
+
+    # Range bounds stay editable (no windows can override them here).
+    assert dlg._range_widgets[0].x_min.isEnabled()
+
+    # The per-range 'active' checkboxes stay hidden across UI rebuilds, not
+    # just after the constructor's one-time pass.
+    dlg._rebuild_ranges_ui()
+    assert all(w.active.isHidden() for w in dlg._range_widgets)
