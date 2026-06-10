@@ -159,6 +159,9 @@ def test_pulse_fold_reproduces_explicit_column_scaled_kernel() -> None:
     rng = np.random.default_rng(8)
     spectrum = rng.random(prepared.n_spectrum_points)
     for group in prepared.groups:
+        # The explicit kernel below assumes unit amplitude / zero background, the
+        # input defaults — assert them so a future default change fails loudly here.
+        assert group.amplitude == 1.0 and group.background == 0.0
         time = np.asarray(group.time_us, dtype=float)
         phase = np.deg2rad(group.phase_degrees)
         # Explicit column-scaled kernel, the operator the fold must reproduce.
