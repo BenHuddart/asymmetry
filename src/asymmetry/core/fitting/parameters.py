@@ -7,6 +7,9 @@ from dataclasses import dataclass
 
 _INDEXED_PARAM_RE = re.compile(r"^(.+)_([0-9]+)$")
 _GLE_CONTROL_WORD_RE = re.compile(r"^\\[A-Za-z]+$")
+# A trailing subscript group: braced (`_{...}`, allowing one nesting level
+# such as `_{\mathrm{cut}}`), a control word (`_\Delta`), or a bare token.
+_TRAILING_SUBSCRIPT_RE = re.compile(r"^(.*)_(\{(?:[^{}]|\{[^{}]*\})*\}|\\[A-Za-z]+|[^_{}\\])$")
 
 
 @dataclass(frozen=True)
@@ -23,13 +26,18 @@ class ParamInfo:
     description: str | None = None
 
     def with_index(self, index: str) -> ParamInfo:
-        """Return indexed metadata (e.g. ``A`` -> ``A_2``)."""
+        """Return indexed metadata (e.g. ``A`` -> ``A_2``).
+
+        Symbols that already carry a subscript merge the index into it
+        (``\\lambda_T`` -> ``\\lambda_{T,2}``) — a naive ``_2`` suffix would
+        produce a double subscript, which LaTeX/mathtext rejects.
+        """
         return ParamInfo(
             name=f"{self.name}_{index}",
             plain=f"{self.plain}_{index}",
             unicode=f"{self.unicode}_{index}",
             latex=_append_latex_index(self.latex, index),
-            gle=f"{self.gle}_{{{index}}}",
+            gle=_merge_subscript_index(self.gle, index),
             unit=self.unit,
             default_min=self.default_min,
             description=self.description,
@@ -65,9 +73,24 @@ def split_parameter_name(name: str) -> tuple[str, str | None]:
     return match.group(1), match.group(2)
 
 
+def _merge_subscript_index(symbol: str, index: str) -> str:
+    """Append an index subscript, merging with an existing trailing subscript.
+
+    ``\\lambda_{T}`` or ``\\lambda_T`` become ``\\lambda_{T,2}`` rather than
+    the invalid double subscript ``\\lambda_T_{2}``.
+    """
+    match = _TRAILING_SUBSCRIPT_RE.match(symbol)
+    if match:
+        sub = match.group(2)
+        if sub.startswith("{"):
+            sub = sub[1:-1]
+        return f"{match.group(1)}_{{{sub},{index}}}"
+    return f"{symbol}_{{{index}}}"
+
+
 def _append_latex_index(symbol: str, index: str) -> str:
     if symbol.startswith("$") and symbol.endswith("$"):
-        return f"${symbol[1:-1]}_{{{index}}}$"
+        return f"${_merge_subscript_index(symbol[1:-1], index)}$"
     return f"{symbol}_{index}"
 
 

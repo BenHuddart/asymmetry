@@ -303,8 +303,15 @@ def _physics_payload(component_name: str) -> tuple[tuple[str, LatexBlock, str], 
     return tuple(payload)
 
 
-def _references_payload(component_name: str) -> tuple[str, ...]:
-    return get_component_references(component_name)
+def _doc_kind(component: ComponentDocDefinition) -> str:
+    """Registry the component belongs to, for name-collision disambiguation."""
+    if isinstance(component, ParameterModelComponentDefinition):
+        return "parameter_model"
+    return "fit"
+
+
+def _references_payload(component: ComponentDocDefinition) -> tuple[str, ...]:
+    return get_component_references(component.name, kind=_doc_kind(component))
 
 
 def _availability_text(component: ComponentDocDefinition) -> str:
@@ -433,10 +440,10 @@ def build_component_info_html(
         component.formula_template,
         component.latex_equation,
         _availability_text(component),
-        get_component_applicability(component.name),
+        get_component_applicability(component.name, kind=_doc_kind(component)),
         tuple(row_payload),
         _physics_payload(component.name),
-        _references_payload(component.name),
+        _references_payload(component),
     )
     return _build_component_info_html_cached(cache_key, render_latex_images=render_latex_images)
 

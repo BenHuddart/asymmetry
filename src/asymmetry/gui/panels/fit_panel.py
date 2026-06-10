@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.domain_library import coerce_domain
 from asymmetry.core.fitting.engine import FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
@@ -659,6 +660,31 @@ def _set_formula_label_text(label: QLabel, formula: str, **_kwargs) -> None:
     label.setToolTip(raw_text)
 
 
+def _apply_domain_mismatch_warning(label: QLabel, model: CompositeModel, domain: str) -> None:
+    """Flag a model containing components from the wrong analysis domain.
+
+    Such models can only come from projects saved before domain filtering (or
+    hand-edited files); they are kept loaded and fittable so nothing the user
+    saved is destroyed, but the formula label is marked so the mismatch is
+    visible, and Edit Function explains which component is foreign.
+    """
+    foreign = {d for d in model.domains() if d != domain}
+    if not foreign:
+        label.setStyleSheet("")
+        return
+    foreign_names = sorted(
+        component.name for component in model.components if component.domain != domain
+    )
+    label.setStyleSheet("color: #A44A00; font-weight: bold;")
+    label.setText("\u26a0 " + label.text())
+    label.setToolTip(
+        f"This model contains {'/'.join(sorted(foreign))}-domain component(s) "
+        f"({', '.join(foreign_names)}) but the representation is fitted in the "
+        f"{domain} domain. The model is kept as saved and can still be fitted; "
+        "use Edit Function to repair it."
+    )
+
+
 def _format_bounds_pair(min_val: float, max_val: float) -> str:
     def _format(value: float) -> str:
         if value == float("inf"):
@@ -726,6 +752,10 @@ def _fit_curve_sample_count(
         elif base_name == "field":
             field_frequency = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * numeric_value
             max_frequency_mhz = max(max_frequency_mhz, field_frequency)
+        elif base_name in {"A_hf", "D_mu", "f_dip", "f_quad"}:
+            # Hyperfine/dipolar couplings set the oscillation scale of the
+            # muonium and spin-J components (lines up to ~A_hf in MHz).
+            max_frequency_mhz = max(max_frequency_mhz, numeric_value)
 
     if max_frequency_mhz <= 0.0:
         return base_points
@@ -1094,7 +1124,7 @@ class SingleFitTab(QWidget):
 
     def set_domain(self, domain: str) -> None:
         """Switch labels and default model for time or frequency fitting."""
-        normalized = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        normalized = coerce_domain(domain)
         if normalized == self._domain:
             return
         self._domain = normalized
@@ -1226,6 +1256,7 @@ class SingleFitTab(QWidget):
         self._updating_fraction_values = True
         self._composite_model = model
         _set_formula_label_text(self._formula_label, model.formula_string())
+        _apply_domain_mismatch_warning(self._formula_label, model, self._domain)
 
         dataset_field = (
             self._current_dataset.run.field
@@ -1239,6 +1270,7 @@ class SingleFitTab(QWidget):
             else {}
         )
 
+        fixed_default_params = model.fixed_by_default_params()
         self._param_table.setRowCount(len(model.param_names))
         for i, pname in enumerate(model.param_names):
             # Name column (read-only, bold mono)
@@ -1258,7 +1290,7 @@ class SingleFitTab(QWidget):
             fix_layout = QHBoxLayout(fix_widget)
             fix_layout.setContentsMargins(0, 0, 0, 0)
             fix_checkbox = QCheckBox()
-            if pname == "shape_factor_a":
+            if pname == "shape_factor_a" or pname in fixed_default_params:
                 fix_checkbox.setChecked(True)
             fix_layout.addWidget(fix_checkbox)
             fix_layout.setAlignment(fix_checkbox, Qt.AlignmentFlag.AlignCenter)
@@ -2111,7 +2143,7 @@ class GlobalFitTab(QWidget):
 
     def set_domain(self, domain: str) -> None:
         """Switch labels and default model for time or frequency global fitting."""
-        normalized = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        normalized = coerce_domain(domain)
         if normalized == self._domain:
             return
         self._domain = normalized
@@ -2668,6 +2700,7 @@ class GlobalFitTab(QWidget):
         self._updating_fraction_values = True
         self._composite_model = model
         _set_formula_label_text(self._formula_label, model.formula_string())
+        _apply_domain_mismatch_warning(self._formula_label, model, self._domain)
 
         # Use the mean field across loaded datasets (if non-zero) as the default
         # for any 'field' parameters.
@@ -2686,6 +2719,7 @@ class GlobalFitTab(QWidget):
         }
         self._applied_field_default_gauss = mean_field
 
+        fixed_default_params = model.fixed_by_default_params()
         self._param_table.setRowCount(len(model.param_names))
         for i, pname in enumerate(model.param_names):
             previous = preserved_state.get(pname, {})
@@ -2707,8 +2741,12 @@ class GlobalFitTab(QWidget):
             base_name, _index = split_parameter_name(pname)
             if base_name in {"field", "B_L"}:
                 type_combo.addItem("File")
-            # Set default: first parameter (usually amplitude) as Global, others as Local
-            type_combo.setCurrentText("Global" if i == 0 else "Local")
+            # Set default: first parameter (usually amplitude) as Global, others
+            # as Local; component-declared fixed-by-default parameters as Fixed.
+            if pname in fixed_default_params:
+                type_combo.setCurrentText("Fixed")
+            else:
+                type_combo.setCurrentText("Global" if i == 0 else "Local")
             previous_type = previous.get("type")
             if previous_type:
                 previous_index = type_combo.findText(previous_type)
@@ -4982,7 +5020,7 @@ class FitPanel(QWidget):
 
     def set_domain(self, domain: str) -> None:
         """Switch the fit panel between time- and frequency-domain workflows."""
-        normalized = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        normalized = coerce_domain(domain)
         if normalized == self._domain:
             self._single_tab.set_domain(normalized)
             self._global_tab.set_domain(normalized)
@@ -5438,7 +5476,7 @@ class FitPanel(QWidget):
 
     def get_domain_state(self, domain: str) -> dict:
         """Return serialisable fit state for one fitting domain."""
-        normalized = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        normalized = coerce_domain(domain)
         if normalized == self._domain:
             return {
                 "domain": normalized,
@@ -5455,7 +5493,7 @@ class FitPanel(QWidget):
 
     def restore_domain_state(self, domain: str, state: dict | None) -> None:
         """Restore serialisable fit state for one fitting domain."""
-        normalized = "frequency" if str(domain).strip().lower() == "frequency" else "time"
+        normalized = coerce_domain(domain)
         if not isinstance(state, dict):
             state = {}
         self._single_state_by_domain[normalized] = copy.deepcopy(state.get("single_fit_state", {}))

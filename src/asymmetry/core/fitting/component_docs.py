@@ -542,20 +542,40 @@ for _sc_name in ("SC_DWave", "SC_NonmonotonicD", "SC_TwoGap_SD", "SC_DWave_Q"):
     PARAMETER_MODEL_REFERENCES[_sc_name] = _SC_CM_REFERENCES
 
 
-def get_component_applicability(component_name: str) -> str:
-    """Return physical-applicability text for a known component name."""
+_GENERIC_APPLICABILITY = (
+    "Use this component when its mathematical form matches the expected physics "
+    "and the fit remains stable across your selected data range."
+)
+
+
+def get_component_applicability(component_name: str, kind: str | None = None) -> str:
+    """Return physical-applicability text for a known component name.
+
+    ``kind`` disambiguates names registered both as a fit component and as a
+    parameter-trend model (currently ``Constant``): pass ``"fit"`` or
+    ``"parameter_model"`` so the caller's registry wins.  Without ``kind`` the
+    parameter-model dictionary is consulted first (historical behaviour).
+    """
+    if kind == "fit":
+        return FIT_COMPONENT_APPLICABILITY.get(component_name, _GENERIC_APPLICABILITY)
+    if kind == "parameter_model":
+        return PARAMETER_MODEL_APPLICABILITY.get(component_name, _GENERIC_APPLICABILITY)
     if component_name in PARAMETER_MODEL_APPLICABILITY:
         return PARAMETER_MODEL_APPLICABILITY[component_name]
     if component_name in FIT_COMPONENT_APPLICABILITY:
         return FIT_COMPONENT_APPLICABILITY[component_name]
-    return (
-        "Use this component when its mathematical form matches the expected physics "
-        "and the fit remains stable across your selected data range."
-    )
+    return _GENERIC_APPLICABILITY
 
 
-def get_component_references(component_name: str) -> tuple[str, ...]:
-    """Return the APS-style reference list for a component (may be empty)."""
+def get_component_references(component_name: str, kind: str | None = None) -> tuple[str, ...]:
+    """Return the APS-style reference list for a component (may be empty).
+
+    ``kind`` behaves as in :func:`get_component_applicability`.
+    """
+    if kind == "fit":
+        return FIT_COMPONENT_REFERENCES.get(component_name, ())
+    if kind == "parameter_model":
+        return PARAMETER_MODEL_REFERENCES.get(component_name, ())
     if component_name in FIT_COMPONENT_REFERENCES:
         return FIT_COMPONENT_REFERENCES[component_name]
     return PARAMETER_MODEL_REFERENCES.get(component_name, ())

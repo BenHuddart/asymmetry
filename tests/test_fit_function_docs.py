@@ -13,20 +13,15 @@ from pathlib import Path
 
 import pytest
 
-from asymmetry.core.fitting.composite import COMPONENTS
+from asymmetry.core.fitting.composite import CATEGORY_REGISTRY, COMPONENTS
 
 DOCS_DIR = Path(__file__).resolve().parents[1] / "docs" / "user_guide" / "fit_functions"
 
-#: Picker category -> documentation page. A new category must add a page here
-#: (and to the fit_functions toctree) before components can use it.
+#: Picker category -> documentation page, from the canonical registry in core.
+#: A new category must be added to CATEGORY_REGISTRY (with a docs page stem)
+#: and get a page in the fit_functions toctree before components can use it.
 CATEGORY_PAGES: dict[str, str] = {
-    "Relaxation": "relaxation.rst",
-    "Oscillation": "oscillation.rst",
-    "Kubo-Toyabe": "kubo_toyabe.rst",
-    "Muonium": "muonium.rst",
-    "Nuclear dipolar": "nuclear_dipolar.rst",
-    "Background": "background.rst",
-    "Frequency Domain": "frequency_domain.rst",
+    category: f"{stem}.rst" for category, stem in CATEGORY_REGISTRY.items() if stem
 }
 
 
@@ -71,3 +66,35 @@ def test_category_pages_are_in_the_toctree() -> None:
         assert page.removesuffix(".rst") in index_text, (
             f"{page} is missing from the fit_functions toctree"
         )
+
+
+def test_name_collisions_resolve_by_registry_kind() -> None:
+    """'Constant' exists as both a fit component and a parameter-trend model;
+    the kind-aware lookup must return each registry's own text."""
+    from asymmetry.core.fitting.component_docs import get_component_applicability
+
+    fit_text = get_component_applicability("Constant", kind="fit")
+    trend_text = get_component_applicability("Constant", kind="parameter_model")
+    assert "background" in fit_text.lower()
+    assert "independent of x" in trend_text
+    assert fit_text != trend_text
+
+
+def test_applicability_text_cites_via_reference_lists() -> None:
+    """Documentation policy: component-info applicability text must not cite
+    textbook equation numbers or inline journal references — literature lives
+    in the APS-style reference lists rendered below the applicability."""
+    from asymmetry.core.fitting.component_docs import (
+        FIT_COMPONENT_APPLICABILITY,
+        PARAMETER_MODEL_APPLICABILITY,
+    )
+
+    for name, text in {
+        **FIT_COMPONENT_APPLICABILITY,
+        **PARAMETER_MODEL_APPLICABILITY,
+    }.items():
+        lowered = text.lower()
+        assert "eqn" not in lowered, name
+        assert "eq." not in lowered, name
+        assert "ms-intro" not in lowered, name
+        assert "phys. rev." not in text, name
