@@ -337,6 +337,46 @@ enough to de-weight to ~1e-16 while keeping σ² clear of float overflow. Applie
 to the interior window only; head/tail trim stays as masking. Grid length
 preserved (asserted).
 
+**ZF/LF mode (Phase 3).** Implemented as a `MaxEntConfig.mode` ("general" /
+"zf_lf"); `build_maxent_input` requires exactly two selected groups in zf_lf,
+pins their phases to 0/180, and reads α from the run grouping. `_fit_group_nuisance`
+skips phase fitting and applies the α-tie `x[B]=(x[F]+x[B])/(1+α); x[F]=α·x[B]`
+to amplitudes and backgrounds after the per-group least-squares (matching
+WiMDA's redistribute-after-fit order). Verified on a synthetic Kubo–Toyabe F/B
+run: phases stay 0/180, the amplitude ratio equals α exactly, the spectrum is
+broad and centred near zero. `mode` is in `_state_signature`.
+
+**Deadtime fit — divergence from WiMDA's DEADFIT (recorded).** WiMDA fits
+deadtime *inside* the MaxEnt loop via a normalised-space 2×2 solve on the DAT²
+term. Asymmetry instead reuses its existing, tested count-domain
+`calibrate_deadtime_from_histograms` (the WiMDA `countfit` model on the raw
+early-time decay) as the "Fit deadtime" action, surfaces per-detector deadtime,
+and promotes it **suggest-only** to `grouping["dead_time_us"]` on an explicit
+"Apply to grouping" click (Ben's decision). Rationale: parity of functionality
+(the user gets a fitted deadtime they can apply) with more robust, non-redundant
+numerics, avoiding a hazardous in-loop normalised-space solve. Both behaviours
+stated; this is the deliberate divergence.
+
+**SpecBG (Phase 3).** `core/maxent/specbg.py` implements the zero-centred
+pseudo-Voigt subtraction with the empirical `×1.201` Gaussian-width factor
+carried verbatim; it anchors to the bin nearest zero (Asymmetry windows from
+f_min, so there is no `nmin−1` outside-window bin — documented difference).
+Display-only: applied by `apply_maxent_specbg` to the spectrum dataset in
+`FrequencyMaxEnt.compute` and the live worker path, never to the engine spectrum.
+
+**Phase exchange.** "Use fitted phases" reads the grouped-fit per-group
+`relative_phase` via the existing `fit_panel.grouped_simulate_seed_for_run`
+bridge (rad→deg); "Send phases to fit" writes MaxEnt phases back through
+`fit_panel.update_grouped_phase_seed` (deg→rad). Matched by **group id** (not row
+index — removes WiMDA's F/B-mapping footgun), with a provenance label (direction
++ timestamp). This is the WiMDA slice of the `phase-auto-calibration` candidate —
+note it as absorbed in that candidate's entry.
+
+**Export.** `core/maxent/export.py` writes a modern text spectrum (freq MHz /
+field G / density + parameter header) and a run log (per-cycle χ²/entropy/test +
+final phases/amps/backgrounds), on demand only — never WiMDA's binary `.max` or
+its auto-save-every-cycle side effect.
+
 ## 10. Verification oracle status
 
 Mantid is **not importable** in this worktree (`import mantid` →

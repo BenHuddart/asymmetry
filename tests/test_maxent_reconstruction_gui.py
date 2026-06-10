@@ -148,6 +148,50 @@ def test_maxent_panel_pulse_and_exclusion_controls_round_trip(qapp: QApplication
         panel.deleteLater()
 
 
+def test_maxent_panel_mode_specbg_and_phase_exchange(qapp: QApplication) -> None:
+    panel = MaxEntPanel()
+    try:
+        # Mode + SpecBG round-trip; SpecBG only enabled in ZF/LF mode.
+        assert panel.mode() == "general"
+        assert panel._specbg_group.isEnabled() is False
+        panel.restore_state(
+            {
+                "mode": "zf_lf",
+                "specbg_enabled": True,
+                "specbg_gaussian_width_mhz": 0.2,
+                "specbg_lorentzian_fraction": 0.3,
+            }
+        )
+        assert panel.mode() == "zf_lf"
+        assert panel._specbg_group.isEnabled() is True
+        state = panel.get_state()
+        assert state["mode"] == "zf_lf"
+        assert state["specbg_enabled"] is True
+        assert state["specbg_gaussian_width_mhz"] == pytest.approx(0.2)
+        assert state["specbg_lorentzian_fraction"] == pytest.approx(0.3)
+
+        # apply_phase_table updates only matching rows.
+        panel.set_group_definitions({1: "F", 2: "B"}, {1: 0.0, 2: 0.0}, {1: True, 2: True})
+        updated = panel.apply_phase_table({1: 12.5, 2: 192.5})
+        assert updated == 2
+        assert panel.group_phase_table()[1] == pytest.approx(12.5)
+        assert panel.group_phase_table()[2] == pytest.approx(192.5)
+
+        # The exchange/export actions exist as signals the main window wires.
+        for name in (
+            "use_fitted_phases_requested",
+            "send_phases_to_fit_requested",
+            "fit_deadtime_requested",
+            "apply_deadtime_requested",
+            "export_spectrum_requested",
+            "export_log_requested",
+        ):
+            assert hasattr(panel, name)
+    finally:
+        panel.close()
+        panel.deleteLater()
+
+
 def test_frequency_plot_panel_offers_tesla_axis(qapp: QApplication) -> None:
     panel = PlotPanel(domain="frequency")
     try:

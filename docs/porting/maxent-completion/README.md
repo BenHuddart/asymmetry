@@ -1,6 +1,9 @@
 # MaxEnt completion study
 
-Status: study pass complete; implementation plan committed; awaiting go-ahead.
+Status: implemented — all three phases landed (reconstruction overlay; ISIS
+pulse shape + exclusion window + field units; ZF/LF + SpecBG + deadtime/phase
+calibration + export). See [`comparison.md`](comparison.md) §"Implementation
+notes" for the as-built decisions and divergences.
 
 Slug: `maxent-completion` · Umbrella: [`wimda-parity-gap`](../wimda-parity-gap/)
 (Wave A, project 6) · Size L (3 phases).

@@ -36,6 +36,13 @@ class MaxEntPanel(QWidget):
 
     #: Emitted when the "Show time-domain reconstruction" toggle changes.
     reconstruction_toggled = Signal(bool)
+    #: Phase-exchange and calibration actions, handled by the main window.
+    use_fitted_phases_requested = Signal()
+    send_phases_to_fit_requested = Signal()
+    fit_deadtime_requested = Signal()
+    apply_deadtime_requested = Signal()
+    export_spectrum_requested = Signal()
+    export_log_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -51,6 +58,20 @@ class MaxEntPanel(QWidget):
         content = QWidget()
         scroll_area.setWidget(content)
         content_layout = QVBoxLayout(content)
+
+        mode_group = QGroupBox("Mode")
+        mode_form = QFormLayout(mode_group)
+        self._mode_combo = QComboBox()
+        self._mode_combo.addItem("General (multi-group)", userData="general")
+        self._mode_combo.addItem("ZF / LF (two-group)", userData="zf_lf")
+        self._mode_combo.setToolTip(
+            "ZF/LF mode reconstructs a zero/longitudinal-field distribution from "
+            "exactly two forward/backward groups, with phases pinned 0/180° and "
+            "amplitudes tied through the run's α."
+        )
+        self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        mode_form.addRow("Reconstruction:", self._mode_combo)
+        content_layout.addWidget(mode_group)
 
         groups_group = QGroupBox("Groups")
         groups_layout = QVBoxLayout(groups_group)
@@ -234,6 +255,82 @@ class MaxEntPanel(QWidget):
         self._apply_to_selection_btn = QPushButton("Apply settings to selected runs")
         content_layout.addWidget(self._apply_to_selection_btn)
 
+        calibration_group = QGroupBox("Calibration")
+        calibration_layout = QVBoxLayout(calibration_group)
+        phase_buttons = QGridLayout()
+        self._use_fitted_phases_btn = QPushButton("Use fitted phases")
+        self._use_fitted_phases_btn.setToolTip(
+            "Seed the group phases from the active run's grouped time-domain fit."
+        )
+        self._use_fitted_phases_btn.clicked.connect(self.use_fitted_phases_requested.emit)
+        self._send_phases_to_fit_btn = QPushButton("Send phases to fit")
+        self._send_phases_to_fit_btn.setToolTip(
+            "Write the current MaxEnt group phases back to the grouped time-domain fit."
+        )
+        self._send_phases_to_fit_btn.clicked.connect(self.send_phases_to_fit_requested.emit)
+        phase_buttons.addWidget(self._use_fitted_phases_btn, 0, 0)
+        phase_buttons.addWidget(self._send_phases_to_fit_btn, 0, 1)
+        calibration_layout.addLayout(phase_buttons)
+        self._phase_provenance_label = QLabel("")
+        self._phase_provenance_label.setWordWrap(True)
+        self._phase_provenance_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        calibration_layout.addWidget(self._phase_provenance_label)
+
+        deadtime_buttons = QGridLayout()
+        self._fit_deadtime_btn = QPushButton("Fit deadtime")
+        self._fit_deadtime_btn.setToolTip(
+            "Estimate per-detector deadtime from the early-time count decay."
+        )
+        self._fit_deadtime_btn.clicked.connect(self.fit_deadtime_requested.emit)
+        self._apply_deadtime_btn = QPushButton("Apply to grouping")
+        self._apply_deadtime_btn.setToolTip(
+            "Apply the fitted deadtime to the run's grouping deadtime correction."
+        )
+        self._apply_deadtime_btn.setEnabled(False)
+        self._apply_deadtime_btn.clicked.connect(self.apply_deadtime_requested.emit)
+        deadtime_buttons.addWidget(self._fit_deadtime_btn, 0, 0)
+        deadtime_buttons.addWidget(self._apply_deadtime_btn, 0, 1)
+        calibration_layout.addLayout(deadtime_buttons)
+        self._deadtime_label = QLabel("")
+        self._deadtime_label.setWordWrap(True)
+        self._deadtime_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        calibration_layout.addWidget(self._deadtime_label)
+        content_layout.addWidget(calibration_group)
+
+        self._specbg_group = QGroupBox("Zero-frequency background (ZF/LF)")
+        self._specbg_group.setCheckable(True)
+        self._specbg_group.setChecked(False)
+        self._specbg_group.setToolTip(
+            "Subtract a zero-centred pseudo-Voigt model of the static central "
+            "peak from the displayed field-distribution spectrum."
+        )
+        specbg_form = QFormLayout(self._specbg_group)
+        self._specbg_gaussian_edit = QLineEdit("0.1")
+        self._specbg_gaussian_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._specbg_gaussian_edit.setFont(mono_font(11.0))
+        self._specbg_gaussian_edit.setValidator(QDoubleValidator(0.0, 1_000.0, 6, self))
+        specbg_form.addRow("Gaussian width (MHz):", self._specbg_gaussian_edit)
+        self._specbg_lorentzian_edit = QLineEdit("0.1")
+        self._specbg_lorentzian_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._specbg_lorentzian_edit.setFont(mono_font(11.0))
+        self._specbg_lorentzian_edit.setValidator(QDoubleValidator(0.0, 1_000.0, 6, self))
+        specbg_form.addRow("Lorentzian width (MHz):", self._specbg_lorentzian_edit)
+        self._specbg_fraction_edit = QLineEdit("0.5")
+        self._specbg_fraction_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._specbg_fraction_edit.setFont(mono_font(11.0))
+        self._specbg_fraction_edit.setValidator(QDoubleValidator(0.0, 1.0, 6, self))
+        specbg_form.addRow("Lorentzian fraction:", self._specbg_fraction_edit)
+        content_layout.addWidget(self._specbg_group)
+
+        export_buttons = QGridLayout()
+        self._export_spectrum_btn = QPushButton("Export spectrum…")
+        self._export_spectrum_btn.clicked.connect(self.export_spectrum_requested.emit)
+        self._export_log_btn = QPushButton("Export log…")
+        self._export_log_btn.clicked.connect(self.export_log_requested.emit)
+        export_buttons.addWidget(self._export_spectrum_btn, 0, 0)
+        export_buttons.addWidget(self._export_log_btn, 0, 1)
+        content_layout.addLayout(export_buttons)
+
         progress_group = QGroupBox("Progress")
         progress_layout = QVBoxLayout(progress_group)
         self._progress_label = QLabel("")
@@ -260,6 +357,7 @@ class MaxEntPanel(QWidget):
 
         self._auto_window_check.toggled.connect(self._update_window_controls)
         self._update_window_controls()
+        self._update_mode_dependent_controls()
 
     @staticmethod
     def _parse_float(text: str, default: float) -> float:
@@ -356,6 +454,25 @@ class MaxEntPanel(QWidget):
             phases[int(group_id)] = self._parse_float(item.text() if item else "", 0.0)
         return phases
 
+    def apply_phase_table(self, phases_deg: dict[int, float]) -> int:
+        """Set the Phase column for matching group ids; return the count updated.
+
+        Used by the "Use fitted phases" exchange to seed the MaxEnt phases from a
+        grouped time-domain fit without rebuilding the whole group table.
+        """
+        updated = 0
+        self._table_updating = True
+        try:
+            for row, group_id in enumerate(self._table_group_ids):
+                if int(group_id) in phases_deg:
+                    item = self._group_table.item(row, 2)
+                    if item is not None:
+                        item.setText(self._format_float(phases_deg[int(group_id)], "0.0"))
+                        updated += 1
+        finally:
+            self._table_updating = False
+        return updated
+
     def selected_group_ids(self) -> list[int]:
         """Return included detector groups."""
         enabled = self.group_enabled_table()
@@ -378,6 +495,13 @@ class MaxEntPanel(QWidget):
             "pulse_mode": str(self._pulse_mode_combo.currentData() or "ignore"),
             "pulse_half_width_us": self._parse_float(self._pulse_half_width_edit.text(), 0.05),
             "pulse_separation_us": self._parse_float(self._pulse_separation_edit.text(), 0.324),
+            "mode": str(self._mode_combo.currentData() or "general"),
+            "specbg_enabled": bool(self._specbg_group.isChecked()),
+            "specbg_gaussian_width_mhz": self._parse_float(self._specbg_gaussian_edit.text(), 0.1),
+            "specbg_lorentzian_width_mhz": self._parse_float(
+                self._specbg_lorentzian_edit.text(), 0.1
+            ),
+            "specbg_lorentzian_fraction": self._parse_float(self._specbg_fraction_edit.text(), 0.5),
             "inner_iterations": int(self._inner_spin.value()),
             "chi2_target_over_n": self._parse_float(self._chi_target_edit.text(), 1.0),
             "fit_phases": bool(self._fit_phases_check.isChecked()),
@@ -394,6 +518,27 @@ class MaxEntPanel(QWidget):
     def show_reconstruction_enabled(self) -> bool:
         """Return whether the reconstruction overlay toggle is checked."""
         return bool(self._show_reconstruction_check.isChecked())
+
+    def mode(self) -> str:
+        """Return the selected reconstruction mode ("general" / "zf_lf")."""
+        return str(self._mode_combo.currentData() or "general")
+
+    def set_phase_provenance(self, text: str) -> None:
+        """Show a provenance line for the last phase exchange (which fit, when)."""
+        self._phase_provenance_label.setText(str(text))
+
+    def set_deadtime_text(self, text: str, *, can_apply: bool = False) -> None:
+        """Show the fitted-deadtime summary and enable/disable the apply button."""
+        self._deadtime_label.setText(str(text))
+        self._apply_deadtime_btn.setEnabled(bool(can_apply))
+
+    def _on_mode_changed(self, _index: int) -> None:
+        self._update_mode_dependent_controls()
+
+    def _update_mode_dependent_controls(self) -> None:
+        """Reflect the active mode: SpecBG is only meaningful in ZF/LF mode."""
+        is_zf_lf = self.mode() == "zf_lf"
+        self._specbg_group.setEnabled(is_zf_lf)
 
     def set_show_reconstruction(self, checked: bool) -> None:
         """Set the reconstruction toggle without emitting ``reconstruction_toggled``.
@@ -445,6 +590,22 @@ class MaxEntPanel(QWidget):
         self._pulse_separation_edit.setText(
             self._format_float(state.get("pulse_separation_us", 0.324), "0.324")
         )
+        mode = str(state.get("mode", "general"))
+        mode_index = self._mode_combo.findData(mode)
+        blocker = self._mode_combo.blockSignals(True)
+        self._mode_combo.setCurrentIndex(mode_index if mode_index >= 0 else 0)
+        self._mode_combo.blockSignals(blocker)
+        self._specbg_group.setChecked(bool(state.get("specbg_enabled", False)))
+        self._specbg_gaussian_edit.setText(
+            self._format_float(state.get("specbg_gaussian_width_mhz", 0.1), "0.1")
+        )
+        self._specbg_lorentzian_edit.setText(
+            self._format_float(state.get("specbg_lorentzian_width_mhz", 0.1), "0.1")
+        )
+        self._specbg_fraction_edit.setText(
+            self._format_float(state.get("specbg_lorentzian_fraction", 0.5), "0.5")
+        )
+        self._update_mode_dependent_controls()
         try:
             self._time_binning_spin.setValue(max(1, int(state.get("time_binning_factor", 1))))
         except (TypeError, ValueError):

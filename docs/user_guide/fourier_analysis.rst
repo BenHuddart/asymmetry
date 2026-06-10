@@ -354,6 +354,47 @@ A precession line at frequency ν corresponds to a local field B through
 Tesla) without recomputing — handy when the science is a field distribution
 (a vortex lattice, an internal-field spread) rather than a frequency.
 
+Calibration: phases, deadtime, and ZF/LF mode
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+MaxEnt needs one phase per detector group, and a good spectrum needs good
+phases. The **Calibration** controls connect MaxEnt to the rest of the analysis.
+
+**Phase exchange.** If you have already fitted the run with a grouped
+time-domain fit, click **Use fitted phases** to seed the MaxEnt group phases
+from that fit (converted from radians to degrees). After MaxEnt has refined the
+phases, **Send phases to fit** writes them back to the grouped fit. A provenance
+line records which direction the exchange went and when. (Phases are matched by
+group id, so the forward/backward mapping never gets crossed.)
+
+**Deadtime.** At a pulsed source the detectors lose counts at early times where
+the rate is highest, distorting the signal that carries the high-frequency
+information. **Fit deadtime** estimates a per-detector deadtime from the
+early-time count decay; **Apply to grouping** then promotes it to the run's
+deadtime correction. The fit never changes the grouping on its own — you apply
+it explicitly, so the provenance is clear.
+
+**ZF/LF mode.** In zero or longitudinal field the two detectors (forward and
+backward) measure the same relaxation with opposite phase. Select **ZF / LF
+(two-group)** as the mode: include exactly two groups, and MaxEnt pins their
+phases to 0° and 180° and ties their amplitudes through the run's α (the
+detector-efficiency balance). The resulting spectrum is the **field
+distribution** p(B) — for a static Gaussian Kubo–Toyabe relaxation it is broad
+and centred near zero field rather than a sharp line. (The MaxEnt method is
+tuned more for transverse-field rotation than for zero-field precession, so read
+ZF spectra as distributions, not as resolved frequencies.)
+
+**Zero-frequency background (SpecBG).** A ZF field distribution is dominated by
+its strong central peak, which can bury weak satellite structure. Enable
+**Zero-frequency background** (ZF/LF mode only) to subtract a zero-centred
+pseudo-Voigt model of that central peak from the *displayed* spectrum — the
+Gaussian and Lorentzian widths and the Lorentzian fraction shape the model. It
+is display-only and never alters the reconstructed spectrum.
+
+**Export.** **Export spectrum…** writes the spectrum as text (frequency MHz,
+field G, density, with a parameter header); **Export log…** writes the per-cycle
+convergence trace and the final per-group phases, amplitudes, and backgrounds.
+
 Choosing FFT vs MaxEnt
 -----------------------
 

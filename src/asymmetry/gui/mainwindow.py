@@ -81,6 +81,8 @@ from asymmetry.core.maxent import (
     estimate_maxent_workload,
     maxent,
     reconstruct_group_signals,
+    run_log_text,
+    spectrum_to_text,
 )
 from asymmetry.core.project import (
     CURRENT_SCHEMA_VERSION,
@@ -95,6 +97,7 @@ from asymmetry.core.representation import (
     build_maxent_reconstruction_datasets,
     canonical_model_matches,
 )
+from asymmetry.core.representation.frequency import apply_maxent_specbg
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
     FieldScan,
@@ -114,6 +117,7 @@ from asymmetry.core.transform import (
     prepare_histograms_with_deadtime,
     resolve_background_mode,
 )
+from asymmetry.core.transform.deadtime import calibrate_deadtime_from_histograms
 from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
@@ -417,6 +421,10 @@ class MainWindow(QMainWindow):
             RepresentationType.FREQ_MAXENT: {},
         }
         self._maxent_state_by_run: dict[int, MaxEntState] = {}
+        # The most recent full result + config per run, for spectrum/log export.
+        self._maxent_result_by_run: dict[int, tuple] = {}
+        # The last fitted per-detector deadtime (run_number, [µs per detector]).
+        self._maxent_fitted_deadtime: tuple[int, list[float]] | None = None
         self._maxent_panel_state_by_run: dict[int, dict] = {}
         self._maxent_thread: QThread | None = None
         self._maxent_worker: MaxEntWorker | None = None
@@ -1233,6 +1241,17 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self._maxent_panel, "reconstruction_toggled"):
             self._maxent_panel.reconstruction_toggled.connect(self._on_show_reconstruction_toggled)
+        if hasattr(self._maxent_panel, "use_fitted_phases_requested"):
+            self._maxent_panel.use_fitted_phases_requested.connect(
+                self._on_maxent_use_fitted_phases
+            )
+            self._maxent_panel.send_phases_to_fit_requested.connect(
+                self._on_maxent_send_phases_to_fit
+            )
+            self._maxent_panel.fit_deadtime_requested.connect(self._on_maxent_fit_deadtime)
+            self._maxent_panel.apply_deadtime_requested.connect(self._on_maxent_apply_deadtime)
+            self._maxent_panel.export_spectrum_requested.connect(self._on_maxent_export_spectrum)
+            self._maxent_panel.export_log_requested.connect(self._on_maxent_export_log)
 
         # Update selected datasets for global fitting whenever selection changes
         self._update_selected_datasets()
@@ -4907,6 +4926,153 @@ class MainWindow(QMainWindow):
         elif self._plot_workspace.active_view() == "reconstruction":
             self._plot_workspace.set_active_view("maxent")
 
+    def _maxent_active_run_number_or_none(self) -> int | None:
+        if self._current_dataset is None:
+            return None
+        return int(self._current_dataset.run_number)
+
+    def _on_maxent_use_fitted_phases(self) -> None:
+        """Seed the MaxEnt group phases from the active run's grouped fit."""
+        run_number = self._maxent_active_run_number_or_none()
+        if run_number is None:
+            self._set_fourier_status("Select a run before exchanging phases.")
+            return
+        seed = None
+        if hasattr(self._fit_panel, "grouped_simulate_seed_for_run"):
+            seed = self._fit_panel.grouped_simulate_seed_for_run(run_number)
+        specs = seed.get("specs") if isinstance(seed, dict) else None
+        if not specs:
+            self._set_fourier_status(
+                "No grouped time-domain fit for this run — run a grouped fit first."
+            )
+            return
+        phases_deg = {
+            int(spec["group_id"]): float(np.rad2deg(float(spec.get("relative_phase", 0.0))))
+            for spec in specs
+            if "group_id" in spec
+        }
+        updated = self._maxent_panel.apply_phase_table(phases_deg)
+        stamp = time.strftime("%Y-%m-%d %H:%M")
+        self._maxent_panel.set_phase_provenance(
+            f"Phases seeded from grouped fit ({updated} groups) · {stamp}"
+        )
+        self._set_fourier_status(
+            f"Seeded {updated} MaxEnt phase(s) from the grouped fit.", success=True
+        )
+
+    def _on_maxent_send_phases_to_fit(self) -> None:
+        """Write the current MaxEnt group phases back to the grouped fit seed."""
+        run_number = self._maxent_active_run_number_or_none()
+        if run_number is None:
+            self._set_fourier_status("Select a run before exchanging phases.")
+            return
+        phases_rad = {
+            int(gid): float(np.deg2rad(value))
+            for gid, value in self._maxent_panel.group_phase_table().items()
+        }
+        ok = hasattr(self._fit_panel, "update_grouped_phase_seed") and (
+            self._fit_panel.update_grouped_phase_seed(run_number, phases_rad)
+        )
+        if not ok:
+            self._set_fourier_status(
+                "No grouped time-domain fit for this run to receive the phases."
+            )
+            return
+        stamp = time.strftime("%Y-%m-%d %H:%M")
+        self._maxent_panel.set_phase_provenance(f"Phases sent to grouped fit · {stamp}")
+        self._set_fourier_status("Sent MaxEnt phases to the grouped fit.", success=True)
+
+    def _on_maxent_fit_deadtime(self) -> None:
+        """Estimate per-detector deadtime from the active run's histograms."""
+        run_number = self._maxent_active_run_number_or_none()
+        if run_number is None or self._current_dataset is None or self._current_dataset.run is None:
+            self._set_fourier_status("Select a grouped run before fitting deadtime.")
+            return
+        run = self._current_dataset.run
+        grouping = run.grouping if isinstance(run.grouping, dict) else {}
+        deadtimes = calibrate_deadtime_from_histograms(
+            list(run.histograms),
+            t_good_offset=int(grouping.get("first_good_bin", 0) or 0),
+            last_good_bin=grouping.get("last_good_bin"),
+            num_good_frames=float(run.metadata.get("good_frames", 1.0) or 1.0),
+        )
+        if not deadtimes:
+            self._maxent_panel.set_deadtime_text("Deadtime fit failed.", can_apply=False)
+            return
+        self._maxent_fitted_deadtime = (int(run_number), [float(v) for v in deadtimes])
+        mean_us = float(np.mean(deadtimes))
+        self._maxent_panel.set_deadtime_text(
+            f"Fitted deadtime: mean {mean_us * 1000.0:.2f} ns across {len(deadtimes)} detector(s).",
+            can_apply=True,
+        )
+        self._set_fourier_status(
+            f"Fitted deadtime for run {run_number} (mean {mean_us * 1000.0:.2f} ns).",
+            success=True,
+        )
+
+    def _on_maxent_apply_deadtime(self) -> None:
+        """Apply the fitted deadtime to the active run's grouping correction."""
+        run_number = self._maxent_active_run_number_or_none()
+        if (
+            run_number is None
+            or self._maxent_fitted_deadtime is None
+            or self._maxent_fitted_deadtime[0] != int(run_number)
+            or self._current_dataset is None
+            or self._current_dataset.run is None
+        ):
+            self._set_fourier_status("Fit deadtime for this run before applying it.")
+            return
+        run = self._current_dataset.run
+        grouping = dict(run.grouping) if isinstance(run.grouping, dict) else {}
+        grouping["dead_time_us"] = list(self._maxent_fitted_deadtime[1])
+        grouping["deadtime_method"] = "maxent_fit"
+        grouping["deadtime_correction"] = True
+        run.grouping = grouping
+        stamp = time.strftime("%Y-%m-%d %H:%M")
+        self._maxent_panel.set_deadtime_text(
+            f"Applied to grouping deadtime · {stamp}.", can_apply=False
+        )
+        self._set_fourier_status(
+            f"Applied fitted deadtime to run {run_number}'s grouping.", success=True
+        )
+        self._log_panel.log(f"Applied MaxEnt-fitted deadtime to run {run_number}.")
+
+    def _maxent_export_result(self, run_number: int):
+        """Return the (result, config) stored for *run_number*, or None."""
+        return self._maxent_result_by_run.get(int(run_number))
+
+    def _on_maxent_export_spectrum(self) -> None:
+        """Export the active run's MaxEnt spectrum as text."""
+        run_number = self._maxent_active_run_number_or_none()
+        stored = None if run_number is None else self._maxent_export_result(run_number)
+        if stored is None:
+            self._set_fourier_status("Run MaxEnt for this run before exporting the spectrum.")
+            return
+        result, config = stored
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export MaxEnt spectrum", f"maxent_{run_number}.txt", "Text files (*.txt)"
+        )
+        if not path:
+            return
+        Path(path).write_text(spectrum_to_text(result, config), encoding="utf-8")
+        self._set_fourier_status(f"Exported MaxEnt spectrum to {path}.", success=True)
+
+    def _on_maxent_export_log(self) -> None:
+        """Export the active run's MaxEnt run log as text."""
+        run_number = self._maxent_active_run_number_or_none()
+        stored = None if run_number is None else self._maxent_export_result(run_number)
+        if stored is None:
+            self._set_fourier_status("Run MaxEnt for this run before exporting the log.")
+            return
+        result, config = stored
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export MaxEnt log", f"maxent_{run_number}.log", "Log files (*.log *.txt)"
+        )
+        if not path:
+            return
+        Path(path).write_text(run_log_text(result, config), encoding="utf-8")
+        self._set_fourier_status(f"Exported MaxEnt log to {path}.", success=True)
+
     def _on_restart_maxent(self) -> None:
         """Drop resumable MaxEnt state for the active run."""
         if self._maxent_thread is not None:
@@ -4917,6 +5083,7 @@ class MainWindow(QMainWindow):
             return
         run_number = int(self._current_dataset.run_number)
         self._maxent_state_by_run.pop(run_number, None)
+        self._maxent_result_by_run.pop(run_number, None)
         representation = self._project_model.representation(
             run_number, RepresentationType.FREQ_MAXENT
         )
@@ -5034,9 +5201,10 @@ class MainWindow(QMainWindow):
         if run_number is None:
             run_number = int(result.metadata.get("run_number", 0))
         self._maxent_state_by_run[int(run_number)] = result.state
-        spectrum = result.as_dataset(self._maxent_active_run)
-        diagnostics = result.diagnostics.to_dict()
         config = self._maxent_active_config or MaxEntConfig()
+        self._maxent_result_by_run[int(run_number)] = (result, config)
+        spectrum = apply_maxent_specbg(result.as_dataset(self._maxent_active_run), config)
+        diagnostics = result.diagnostics.to_dict()
         self._record_frequency_maxent_recipe(
             int(run_number),
             config,
@@ -5167,6 +5335,11 @@ class MainWindow(QMainWindow):
             and config.t_max_us <= config.t_min_us
         ):
             self._set_fourier_status("MaxEnt end time must be greater than the start time.")
+            return
+        if config.mode == "zf_lf" and len(self._maxent_panel.selected_group_ids()) != 2:
+            self._set_fourier_status(
+                "ZF/LF mode needs exactly two included groups (forward and backward)."
+            )
             return
         state = self._maxent_state_by_run.get(run_number)
         estimate = estimate_maxent_workload(self._current_dataset.run, config)

@@ -16,13 +16,36 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fourier.spectrum import (
     GroupSpectrumConfig,
     compute_average_group_spectrum,
 )
-from asymmetry.core.maxent import MaxEntConfig, maxent
+from asymmetry.core.maxent import MaxEntConfig, maxent, subtract_zero_frequency
 from asymmetry.core.representation.base import Representation, RepresentationType
+
+
+def apply_maxent_specbg(dataset: MuonDataset, config: MaxEntConfig) -> MuonDataset:
+    """Subtract the SpecBG zero-frequency model from a MaxEnt spectrum dataset.
+
+    Display-only and a no-op unless SpecBG is enabled in ZF/LF mode; mutates and
+    returns the (freshly built) spectrum dataset in place.
+    """
+    if not (config.specbg_enabled and config.mode == "zf_lf"):
+        return dataset
+    dataset.asymmetry = np.asarray(
+        subtract_zero_frequency(
+            dataset.time,
+            dataset.asymmetry,
+            gaussian_width=config.specbg_gaussian_width_mhz,
+            lorentzian_width=config.specbg_lorentzian_width_mhz,
+            lorentzian_fraction=config.specbg_lorentzian_fraction,
+        ),
+        dtype=float,
+    )
+    return dataset
 
 
 def _resolve_selected_group_ids(run: Run, config: dict) -> list[int] | None:
@@ -119,4 +142,4 @@ class FrequencyMaxEnt(Representation):
             "f_min_mhz": float(result.frequencies_mhz[0]) if result.frequencies_mhz.size else None,
             "f_max_mhz": float(result.frequencies_mhz[-1]) if result.frequencies_mhz.size else None,
         }
-        return [result.as_dataset(run)]
+        return [apply_maxent_specbg(result.as_dataset(run), config)]

@@ -165,6 +165,17 @@ class MaxEntConfig:
     # not dropped, so the time grid length is preserved.  ``None`` disables it.
     exclude_t_min_us: float | None = None
     exclude_t_max_us: float | None = None
+    # Reconstruction mode: "general" (the joint multi-group fit) or "zf_lf"
+    # (zero/longitudinal field, exactly two forward/backward groups with phases
+    # pinned 0/180 and amplitudes tied through the run's α).
+    mode: str = "general"
+    # Display-only SpecBG: subtract a zero-centred pseudo-Voigt model of the
+    # static central peak from the displayed ZF/LF field-distribution spectrum.
+    # Widths in MHz; does not change the computation (absent from the signature).
+    specbg_enabled: bool = False
+    specbg_gaussian_width_mhz: float = 0.1
+    specbg_lorentzian_width_mhz: float = 0.1
+    specbg_lorentzian_fraction: float = 0.5
     # Display-only: whether the time-domain reconstruction overlay is the active
     # view (vs the spectrum).  It does not change the computation, so it is
     # absent from ``_state_signature`` (toggling it must not invalidate a
@@ -200,6 +211,11 @@ class MaxEntConfig:
             "pulse_separation_us": float(self.pulse_separation_us),
             "exclude_t_min_us": self.exclude_t_min_us,
             "exclude_t_max_us": self.exclude_t_max_us,
+            "mode": str(self.mode),
+            "specbg_enabled": bool(self.specbg_enabled),
+            "specbg_gaussian_width_mhz": float(self.specbg_gaussian_width_mhz),
+            "specbg_lorentzian_width_mhz": float(self.specbg_lorentzian_width_mhz),
+            "specbg_lorentzian_fraction": float(self.specbg_lorentzian_fraction),
             "show_reconstruction": bool(self.show_reconstruction),
         }
 
@@ -245,6 +261,17 @@ class MaxEntConfig:
             pulse_separation_us=max(0.0, _float_or_default(data.get("pulse_separation_us"), 0.324)),
             exclude_t_min_us=_optional_float(data.get("exclude_t_min_us")),
             exclude_t_max_us=_optional_float(data.get("exclude_t_max_us")),
+            mode=_parse_choice(data.get("mode"), ("general", "zf_lf"), "general"),
+            specbg_enabled=bool(data.get("specbg_enabled", False)),
+            specbg_gaussian_width_mhz=max(
+                0.0, _float_or_default(data.get("specbg_gaussian_width_mhz"), 0.1)
+            ),
+            specbg_lorentzian_width_mhz=max(
+                0.0, _float_or_default(data.get("specbg_lorentzian_width_mhz"), 0.1)
+            ),
+            specbg_lorentzian_fraction=float(
+                np.clip(_float_or_default(data.get("specbg_lorentzian_fraction"), 0.5), 0.0, 1.0)
+            ),
             show_reconstruction=bool(data.get("show_reconstruction", False)),
         )
 
@@ -280,6 +307,10 @@ class MaxEntInput:
     # ``R·cos(2πνt + φ − δ)``.  ``None`` means no pulse shaping (R = 1, δ = 0).
     pulse_amp: NDArray[np.float64] | None = None
     pulse_phase: NDArray[np.float64] | None = None
+    # ZF/LF mode: the reconstruction mode and the α used to tie the F/B group
+    # amplitudes/backgrounds.  ``mode == "general"`` leaves ``zf_lf_alpha`` None.
+    mode: str = "general"
+    zf_lf_alpha: float | None = None
 
     @cached_property
     def frequencies_mhz(self) -> NDArray[np.float64]:
@@ -606,6 +637,19 @@ def build_maxent_input(
     if not selected:
         raise ValueError("MaxEnt requires at least one selected group.")
 
+    # ZF/LF mode: exactly two forward/backward groups, phases pinned 0/180, and
+    # amplitudes/backgrounds tied through the run's α.
+    zf_lf_phase_map: dict[int, float] = {}
+    zf_lf_alpha: float | None = None
+    if resolved_config.mode == "zf_lf":
+        if len(selected) != 2:
+            raise ValueError("ZF/LF mode requires exactly two selected groups (forward/backward).")
+        zf_lf_phase_map = {int(selected[0]): 0.0, int(selected[1]): 180.0}
+        grouping = run.grouping if isinstance(run.grouping, dict) else {}
+        zf_lf_alpha = _float_or_default(grouping.get("alpha"), 1.0)
+        if not np.isfinite(zf_lf_alpha) or zf_lf_alpha <= 0.0:
+            zf_lf_alpha = 1.0
+
     groups: list[MaxEntGroupInput] = []
     max_points = 0
     # Shared across the sweep so a reference_run background loads + deadtime-
@@ -655,7 +699,11 @@ def build_maxent_input(
                 time_us=time,
                 signal=normalized,
                 sigma=normalized_sigma,
-                phase_degrees=float(resolved_config.group_phase_degrees.get(group_id, 0.0)),
+                phase_degrees=float(
+                    zf_lf_phase_map.get(
+                        group_id, resolved_config.group_phase_degrees.get(group_id, 0.0)
+                    )
+                ),
                 amplitude=1.0,
                 background=0.0,
                 mask=mask,
@@ -687,11 +735,15 @@ def build_maxent_input(
         default_level=float(resolved_config.default_level),
         pulse_amp=pulse_amp,
         pulse_phase=pulse_phase,
+        mode=str(resolved_config.mode),
+        zf_lf_alpha=zf_lf_alpha,
         metadata={
             "field": run.metadata.get("field") if isinstance(run.metadata, dict) else None,
             "group_ids": [group.group_id for group in groups],
             "time_binning_factor": int(resolved_config.time_binning_factor),
             "pulse_mode": str(resolved_config.pulse_mode),
+            "maxent_mode": str(resolved_config.mode),
+            "zf_lf_alpha": zf_lf_alpha,
         },
     )
 
@@ -965,6 +1017,9 @@ def _state_signature(maxent_input: MaxEntInput, config: MaxEntConfig) -> tuple[A
         round(float(config.pulse_separation_us), 12),
         None if config.exclude_t_min_us is None else round(float(config.exclude_t_min_us), 12),
         None if config.exclude_t_max_us is None else round(float(config.exclude_t_max_us), 12),
+        # ZF/LF mode ties group amplitudes/backgrounds and pins phases, so it
+        # reshapes the fit; a changed mode must invalidate a resumed state.
+        str(config.mode),
         # Effective phase seeds: ``state.phases`` is seeded from these at
         # initialisation and a resumed state never re-reads the config, so an
         # edited seed must force a restart or it would be silently ignored
@@ -1160,7 +1215,8 @@ def _fit_group_nuisance(
                     if config.fit_backgrounds or config.fit_constant_background:
                         state.backgrounds[group.group_id] = float(coeffs[idx])
 
-        if config.fit_phases:
+        # ZF/LF pins phases at 0/180; never refit them in that mode.
+        if config.fit_phases and config.mode != "zf_lf":
             current = float(state.phases.get(group.group_id, group.phase_degrees))
             candidates = current + np.linspace(-4.0, 4.0, 9)
             _check_cancel(cancel_callback)
@@ -1189,6 +1245,38 @@ def _fit_group_nuisance(
                     best_score = score
                     best_phase = float(candidate)
             state.phases[group.group_id] = best_phase
+
+    _apply_zf_lf_tie(state, maxent_input, config)
+
+
+def _apply_zf_lf_tie(
+    state: MaxEntState,
+    maxent_input: MaxEntInput,
+    config: MaxEntConfig,
+) -> None:
+    """Tie the two F/B group amplitudes and backgrounds through α (ZF/LF mode).
+
+    Mirrors WiMDA's per-cycle redistribution: the two independently fitted
+    values are summed and split in ratio α:1 (group1 = α·group2), enforcing the
+    F = α·B detector-efficiency balance after the least-squares step rather than
+    as a constraint inside it.
+    """
+    if config.mode != "zf_lf":
+        return
+    alpha = maxent_input.zf_lf_alpha
+    if alpha is None or not np.isfinite(alpha) or alpha <= 0.0 or len(maxent_input.groups) != 2:
+        return
+    forward_id = int(maxent_input.groups[0].group_id)
+    backward_id = int(maxent_input.groups[1].group_id)
+    for table, lo, hi in (
+        (state.amplitudes, 0.01, 100.0),
+        (state.backgrounds, -np.inf, np.inf),
+    ):
+        x_forward = float(table.get(forward_id, 0.0))
+        x_backward = float(table.get(backward_id, 0.0))
+        tied_backward = (x_forward + x_backward) / (1.0 + alpha)
+        table[backward_id] = float(np.clip(tied_backward, lo, hi))
+        table[forward_id] = float(np.clip(alpha * table[backward_id], lo, hi))
 
 
 def _entropy(spectrum: NDArray[np.float64], default_level: float) -> float:

@@ -20,11 +20,13 @@ from asymmetry.core.maxent.engine import (
     run_cycles,
     tropus,
 )
+from asymmetry.core.maxent.export import run_log_text, spectrum_to_text
 from asymmetry.core.maxent.pulse import (
     PULSE_MODES,
     pulse_amplitude_phase,
     pulse_response,
 )
+from asymmetry.core.maxent.specbg import subtract_zero_frequency
 
 __all__ = [
     "PULSE_MODES",
@@ -47,5 +49,8 @@ __all__ = [
     "pulse_response",
     "reconstruct_group_signals",
     "run_cycles",
+    "run_log_text",
+    "spectrum_to_text",
+    "subtract_zero_frequency",
     "tropus",
 ]
