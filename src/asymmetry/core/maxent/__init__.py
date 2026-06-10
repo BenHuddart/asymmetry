@@ -20,8 +20,14 @@ from asymmetry.core.maxent.engine import (
     run_cycles,
     tropus,
 )
+from asymmetry.core.maxent.pulse import (
+    PULSE_MODES,
+    pulse_amplitude_phase,
+    pulse_response,
+)
 
 __all__ = [
+    "PULSE_MODES",
     "MaxEntConfig",
     "MaxEntDiagnostics",
     "MaxEntGroupInput",
@@ -37,6 +43,8 @@ __all__ = [
     "initialize_state",
     "maxent",
     "opus",
+    "pulse_amplitude_phase",
+    "pulse_response",
     "reconstruct_group_signals",
     "run_cycles",
     "tropus",

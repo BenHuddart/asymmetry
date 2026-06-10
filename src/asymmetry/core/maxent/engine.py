@@ -22,15 +22,21 @@ from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
+from asymmetry.core.fourier.units import gauss_to_mhz
+from asymmetry.core.maxent.pulse import pulse_amplitude_phase
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
-from asymmetry.core.utils.constants import (
-    GAUSS_TO_TESLA,
-    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
-)
 
 _MAX_SPECTRUM_POINTS = 1 << 20
 _MIN_POSITIVE = 1.0e-15
 _MAX_DESIGN_CHUNK_ELEMENTS = 2_000_000
+
+# Interior-exclusion σ-inflation factor: points inside the exclusion window keep
+# their place in the time grid but are de-weighted to ~zero (weight ∝ 1/σ²), so
+# the FFT/grid length is preserved.  Large but finite (WiMDA uses 1e15; 1e8
+# keeps σ² well clear of float overflow while contributing weight ~1e-16).
+_EXCLUSION_SIGMA_INFLATION = 1.0e8
+
+_PULSE_N_PULSES = {"ignore": 0, "single": 1, "double": 2}
 
 # Early-stop guard for forced cycle counts.  Past the χ² optimum the projected
 # gradient keeps minimising χ² by collapsing spectral weight onto a grid edge
@@ -115,8 +121,15 @@ def _parse_phase_table(value: object) -> dict[int, float]:
     return parsed
 
 
+def _parse_choice(value: object, choices: tuple[str, ...], default: str) -> str:
+    """Return *value* if it is one of *choices* (case-insensitive), else *default*."""
+    if isinstance(value, str) and value.strip().lower() in choices:
+        return value.strip().lower()
+    return default
+
+
 def _field_to_frequency_mhz(field_gauss: float) -> float:
-    return float(field_gauss) * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
+    return float(gauss_to_mhz(float(field_gauss)))
 
 
 @dataclass
@@ -142,6 +155,16 @@ class MaxEntConfig:
     t_min_us: float | None = None
     t_max_us: float | None = None
     time_binning_factor: int = 1
+    # ISIS pulse-shape response folded into the forward model (Phase 2).
+    # ``pulse_mode`` is one of "ignore" / "single" / "double"; the widths are in
+    # microseconds.  Defaults: off (continuous-source data needs no shaping).
+    pulse_mode: str = "ignore"
+    pulse_half_width_us: float = 0.05
+    pulse_separation_us: float = 0.324
+    # Interior exclusion window (µs): points inside are σ-inflated (de-weighted),
+    # not dropped, so the time grid length is preserved.  ``None`` disables it.
+    exclude_t_min_us: float | None = None
+    exclude_t_max_us: float | None = None
     # Display-only: whether the time-domain reconstruction overlay is the active
     # view (vs the spectrum).  It does not change the computation, so it is
     # absent from ``_state_signature`` (toggling it must not invalidate a
@@ -172,6 +195,11 @@ class MaxEntConfig:
             "t_min_us": self.t_min_us,
             "t_max_us": self.t_max_us,
             "time_binning_factor": int(self.time_binning_factor),
+            "pulse_mode": str(self.pulse_mode),
+            "pulse_half_width_us": float(self.pulse_half_width_us),
+            "pulse_separation_us": float(self.pulse_separation_us),
+            "exclude_t_min_us": self.exclude_t_min_us,
+            "exclude_t_max_us": self.exclude_t_max_us,
             "show_reconstruction": bool(self.show_reconstruction),
         }
 
@@ -210,6 +238,13 @@ class MaxEntConfig:
             t_min_us=_optional_float(data.get("t_min_us")),
             t_max_us=_optional_float(data.get("t_max_us")),
             time_binning_factor=_parse_positive_int(data.get("time_binning_factor", 1)),
+            pulse_mode=_parse_choice(
+                data.get("pulse_mode"), ("ignore", "single", "double"), "ignore"
+            ),
+            pulse_half_width_us=max(0.0, _float_or_default(data.get("pulse_half_width_us"), 0.05)),
+            pulse_separation_us=max(0.0, _float_or_default(data.get("pulse_separation_us"), 0.324)),
+            exclude_t_min_us=_optional_float(data.get("exclude_t_min_us")),
+            exclude_t_max_us=_optional_float(data.get("exclude_t_max_us")),
             show_reconstruction=bool(data.get("show_reconstruction", False)),
         )
 
@@ -240,6 +275,11 @@ class MaxEntInput:
     f_max_mhz: float
     default_level: float
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Pulse-shape response over ``frequencies_mhz`` as a per-frequency amplitude
+    # ``R(ν)`` and phase shift ``δ(ν)`` (radians): the forward kernel becomes
+    # ``R·cos(2πνt + φ − δ)``.  ``None`` means no pulse shaping (R = 1, δ = 0).
+    pulse_amp: NDArray[np.float64] | None = None
+    pulse_phase: NDArray[np.float64] | None = None
 
     @cached_property
     def frequencies_mhz(self) -> NDArray[np.float64]:
@@ -597,6 +637,16 @@ def build_maxent_input(
             baseline = 1.0
         normalized = (signal / baseline) - 1.0
         normalized_sigma = np.maximum(sigma / abs(baseline), _MIN_POSITIVE)
+        # Interior exclusion: keep the points in place (grid length preserved)
+        # but inflate σ so they carry ~zero weight, mirroring WiMDA's σ=1e15
+        # sentinel for excluded channels rather than dropping them.
+        ex_lo = resolved_config.exclude_t_min_us
+        ex_hi = resolved_config.exclude_t_max_us
+        if ex_lo is not None and ex_hi is not None and ex_hi > ex_lo:
+            in_window = (time >= float(ex_lo)) & (time <= float(ex_hi))
+            normalized_sigma = np.where(
+                in_window, normalized_sigma * _EXCLUSION_SIGMA_INFLATION, normalized_sigma
+            )
         max_points = max(max_points, int(np.count_nonzero(mask)))
         groups.append(
             MaxEntGroupInput(
@@ -619,17 +669,29 @@ def build_maxent_input(
     f_min, f_max = _resolve_frequency_window(run, resolved_config)
     if f_max <= f_min:
         f_max = f_min + 1.0
+    n_points = int(n_points)
+    frequencies = np.linspace(float(f_min), float(f_max), n_points)
+    n_pulses = _PULSE_N_PULSES.get(resolved_config.pulse_mode, 0)
+    pulse_amp, pulse_phase = pulse_amplitude_phase(
+        frequencies,
+        half_width_us=resolved_config.pulse_half_width_us,
+        separation_us=resolved_config.pulse_separation_us,
+        n_pulses=n_pulses,
+    )
     return MaxEntInput(
         run_number=int(run.run_number),
         groups=tuple(groups),
-        n_spectrum_points=int(n_points),
+        n_spectrum_points=n_points,
         f_min_mhz=float(f_min),
         f_max_mhz=float(f_max),
         default_level=float(resolved_config.default_level),
+        pulse_amp=pulse_amp,
+        pulse_phase=pulse_phase,
         metadata={
             "field": run.metadata.get("field") if isinstance(run.metadata, dict) else None,
             "group_ids": [group.group_id for group in groups],
             "time_binning_factor": int(resolved_config.time_binning_factor),
+            "pulse_mode": str(resolved_config.pulse_mode),
         },
     )
 
@@ -641,25 +703,44 @@ def _chunk_rows(n_time: int, n_frequency: int) -> int:
     return max(1, min(int(n_time), _MAX_DESIGN_CHUNK_ELEMENTS // max(1, int(n_frequency))))
 
 
+def _kernel_phase_offset(
+    phase: float,
+    pulse_phase: NDArray[np.float64] | None,
+) -> float | NDArray[np.float64]:
+    """Return the per-frequency kernel angle offset ``phase − δ(ν)``."""
+    return phase if pulse_phase is None else phase - pulse_phase[np.newaxis, :]
+
+
 def _project_forward(
     time_us: NDArray[np.float64],
     frequencies_mhz: NDArray[np.float64],
     spectrum: NDArray[np.float64],
     *,
     phase_degrees: float,
+    pulse_amp: NDArray[np.float64] | None = None,
+    pulse_phase: NDArray[np.float64] | None = None,
 ) -> NDArray[np.float64]:
-    """Return dense-equivalent OPUS output without materialising all rows."""
+    """Return dense-equivalent OPUS output without materialising all rows.
+
+    The pulse-shape response enters as the per-frequency amplitude ``pulse_amp``
+    (R) and phase shift ``pulse_phase`` (δ): the kernel becomes
+    ``R(ν)·cos(2πνt + φ − δ(ν))``, which preserves the OPUS/TROPUS adjoint pair
+    because both maps build the identical matrix.
+    """
     time = np.asarray(time_us, dtype=np.float64)
     frequencies = np.asarray(frequencies_mhz, dtype=np.float64)
     f = np.asarray(spectrum, dtype=np.float64)
     phase = np.deg2rad(float(phase_degrees))
+    offset = _kernel_phase_offset(phase, pulse_phase)
     output = np.empty(time.size, dtype=np.float64)
     chunk = _chunk_rows(time.size, frequencies.size)
     for start in range(0, time.size, chunk):
         stop = min(start + chunk, time.size)
         matrix = np.cos(
-            2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + phase
+            2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + offset
         )
+        if pulse_amp is not None:
+            matrix = matrix * pulse_amp[np.newaxis, :]
         output[start:stop] = matrix @ f
     return output
 
@@ -668,24 +749,34 @@ def _project_forward_components(
     time_us: NDArray[np.float64],
     frequencies_mhz: NDArray[np.float64],
     spectrum: NDArray[np.float64],
+    *,
+    pulse_amp: NDArray[np.float64] | None = None,
+    pulse_phase: NDArray[np.float64] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Return ``(C @ f, S @ f)`` for the zero-phase cosine/sine kernels.
+    """Return ``(C @ f, S @ f)`` for the (pulse-shaped) cosine/sine kernels.
 
-    ``cos(2πft + φ) = cosφ·C − sinφ·S``, so one component pair prices any
-    number of phase candidates at vector cost instead of a kernel rebuild per
-    candidate.
+    With the pulse response the bare kernel ``cos(2πνt)`` / ``sin(2πνt)`` is
+    replaced by ``R(ν)·cos(2πνt − δ(ν))`` / ``R(ν)·sin(2πνt − δ(ν))`` so that the
+    model at phase φ is still ``cosφ·C − sinφ·S`` — the phase scan formula is
+    unchanged, the components simply carry the pulse shaping.
     """
     time = np.asarray(time_us, dtype=np.float64)
     frequencies = np.asarray(frequencies_mhz, dtype=np.float64)
     f = np.asarray(spectrum, dtype=np.float64)
+    offset = _kernel_phase_offset(0.0, pulse_phase)
     cos_output = np.empty(time.size, dtype=np.float64)
     sin_output = np.empty(time.size, dtype=np.float64)
     chunk = _chunk_rows(time.size, frequencies.size)
     for start in range(0, time.size, chunk):
         stop = min(start + chunk, time.size)
-        angle = 2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :]
-        cos_output[start:stop] = np.cos(angle) @ f
-        sin_output[start:stop] = np.sin(angle) @ f
+        angle = 2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + offset
+        cos_kernel = np.cos(angle)
+        sin_kernel = np.sin(angle)
+        if pulse_amp is not None:
+            cos_kernel = cos_kernel * pulse_amp[np.newaxis, :]
+            sin_kernel = sin_kernel * pulse_amp[np.newaxis, :]
+        cos_output[start:stop] = cos_kernel @ f
+        sin_output[start:stop] = sin_kernel @ f
     return cos_output, sin_output
 
 
@@ -695,19 +786,28 @@ def _project_adjoint(
     values: NDArray[np.float64],
     *,
     phase_degrees: float,
+    pulse_amp: NDArray[np.float64] | None = None,
+    pulse_phase: NDArray[np.float64] | None = None,
 ) -> NDArray[np.float64]:
-    """Return dense-equivalent TROPUS output without materialising all rows."""
+    """Return dense-equivalent TROPUS output without materialising all rows.
+
+    Uses the same pulse-shaped kernel as :func:`_project_forward`, so it remains
+    its exact matrix transpose (the OPUS/TROPUS adjoint property is preserved).
+    """
     time = np.asarray(time_us, dtype=np.float64)
     frequencies = np.asarray(frequencies_mhz, dtype=np.float64)
     v = np.asarray(values, dtype=np.float64)
     phase = np.deg2rad(float(phase_degrees))
+    offset = _kernel_phase_offset(phase, pulse_phase)
     output = np.zeros(frequencies.size, dtype=np.float64)
     chunk = _chunk_rows(time.size, frequencies.size)
     for start in range(0, time.size, chunk):
         stop = min(start + chunk, time.size)
         matrix = np.cos(
-            2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + phase
+            2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + offset
         )
+        if pulse_amp is not None:
+            matrix = matrix * pulse_amp[np.newaxis, :]
         output += matrix.T @ v[start:stop]
     return output
 
@@ -732,7 +832,15 @@ def opus(
         amplitude = float(amplitudes.get(group.group_id, group.amplitude))
         background = float(backgrounds.get(group.group_id, group.background))
         predictions[group.group_id] = (
-            amplitude * _project_forward(group.time_us, frequencies, f, phase_degrees=phase)
+            amplitude
+            * _project_forward(
+                group.time_us,
+                frequencies,
+                f,
+                phase_degrees=phase,
+                pulse_amp=maxent_input.pulse_amp,
+                pulse_phase=maxent_input.pulse_phase,
+            )
             + background
         )
     return predictions
@@ -761,6 +869,8 @@ def tropus(
             frequencies,
             np.asarray(values, dtype=np.float64),
             phase_degrees=phase,
+            pulse_amp=maxent_input.pulse_amp,
+            pulse_phase=maxent_input.pulse_phase,
         )
     return output
 
@@ -847,6 +957,14 @@ def _state_signature(maxent_input: MaxEntInput, config: MaxEntConfig) -> tuple[A
         None if config.t_min_us is None else round(float(config.t_min_us), 12),
         None if config.t_max_us is None else round(float(config.t_max_us), 12),
         int(config.time_binning_factor),
+        # Pulse-shape response and the interior exclusion window both reshape the
+        # forward model / the data weighting, so a resumed state with a changed
+        # setting would iterate a stale spectrum against an incompatible model.
+        str(config.pulse_mode),
+        round(float(config.pulse_half_width_us), 12),
+        round(float(config.pulse_separation_us), 12),
+        None if config.exclude_t_min_us is None else round(float(config.exclude_t_min_us), 12),
+        None if config.exclude_t_max_us is None else round(float(config.exclude_t_max_us), 12),
         # Effective phase seeds: ``state.phases`` is seeded from these at
         # initialisation and a resumed state never re-reads the config, so an
         # edited seed must force a restart or it would be silently ignored
@@ -870,6 +988,8 @@ def _initial_spectrum(maxent_input: MaxEntInput) -> NDArray[np.float64]:
                 frequencies,
                 weighted,
                 phase_degrees=group.phase_degrees,
+                pulse_amp=maxent_input.pulse_amp,
+                pulse_phase=maxent_input.pulse_phase,
             )
         )
         if power.size and np.nanmax(power) > 0.0:
@@ -940,6 +1060,8 @@ def _residual_gradient_payload(
     seconds, and window-close waits on cooperative cancel with a timeout.
     """
     frequencies = maxent_input.frequencies_mhz
+    pulse_amp = maxent_input.pulse_amp
+    pulse_phase = maxent_input.pulse_phase
     f = np.asarray(state.spectrum, dtype=np.float64)
     grad = np.zeros(frequencies.size, dtype=np.float64)
     chi2 = 0.0
@@ -947,6 +1069,7 @@ def _residual_gradient_payload(
     for group in maxent_input.groups:
         mask = group.mask if group.mask is not None else np.ones(group.time_us.size, dtype=bool)
         phase = np.deg2rad(float(state.phases.get(group.group_id, group.phase_degrees)))
+        offset = _kernel_phase_offset(phase, pulse_phase)
         amplitude = float(state.amplitudes.get(group.group_id, group.amplitude))
         background = float(state.backgrounds.get(group.group_id, group.background))
         time = np.asarray(group.time_us, dtype=np.float64)
@@ -961,8 +1084,10 @@ def _residual_gradient_payload(
                 continue
             matrix = np.cos(
                 2.0 * np.pi * time[start:stop][rows, np.newaxis] * frequencies[np.newaxis, :]
-                + phase
+                + offset
             )
+            if pulse_amp is not None:
+                matrix = matrix * pulse_amp[np.newaxis, :]
             pred = amplitude * (matrix @ f) + background
             residual = (signal[start:stop][rows] - pred) / sigma[start:stop][rows]
             chi2 += float(np.dot(residual, residual))
@@ -1045,6 +1170,8 @@ def _fit_group_nuisance(
                 np.asarray(group.time_us, dtype=float)[mask],
                 maxent_input.frequencies_mhz,
                 state.spectrum,
+                pulse_amp=maxent_input.pulse_amp,
+                pulse_phase=maxent_input.pulse_phase,
             )
             amplitude = float(state.amplitudes[group.group_id])
             background = float(state.backgrounds[group.group_id])

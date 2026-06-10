@@ -310,6 +310,50 @@ stored in the project file; re-open the spectrum and run a cycle to regenerate
 it. Untick the box (or click the **MaxEnt** domain button) to return to the
 spectrum.
 
+Pulsed sources: the pulse-shape response
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+At a pulsed source (ISIS) the muons arrive spread over a finite pulse of order
+tens of nanoseconds, so a precession signal that oscillates fast compared with
+the pulse is averaged across the spread of arrival times and its amplitude is
+suppressed. Above roughly 5 MHz this distorts the recovered spectrum: a real
+line at high frequency comes out with too little weight. Continuous sources
+(PSI, TRIUMF) do not have this limit, so the correction is off by default.
+
+The **Pulse shape** controls fold the instrument response into the forward
+model, where it belongs — MaxEnt then reconstructs the *true* spectral weight
+rather than the attenuated one. Choose:
+
+* **Ignore** — no pulse shaping (continuous-source data).
+* **Single pulse** — one proton pulse of the given **Half-width** (µs).
+* **Double pulse** — the ISIS double-pulse structure, with the **Separation**
+  (µs) between the two pulses.
+
+The response is a parabolic proton-pulse transform rolled off by the pion
+lifetime; the half-width and separation default to the ISIS values (about 50 ns
+and 0.324 µs) because the loaders do not yet record them per run. The effect is
+dramatic: on synthetic pulsed data with equal-amplitude lines at 1 and 7 MHz,
+the recovered 7 MHz weight is suppressed by a factor of ~4 with the response off
+and restored to roughly the 1 MHz weight with it on.
+
+Excluding a time window
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A laser flash, an RF burst, or a detector glitch can corrupt an interior stretch
+of the histogram. Set **Exclude from / to** (µs) to drop that window from the
+fit. The points are *de-weighted* (their error bars are inflated so they carry
+essentially no weight), not removed, so the time grid — and any frequency
+resolution derived from it — is unchanged. Leave the fields blank to disable.
+
+Field axis
+~~~~~~~~~~~
+
+A precession line at frequency ν corresponds to a local field B through
+ν = γ_μ B / 2π, with γ_μ/2π = 135.5 MHz/T. The spectrum's **X Units** selector
+(above the plot) switches the axis between frequency (MHz) and field (Gauss or
+Tesla) without recomputing — handy when the science is a field distribution
+(a vortex lattice, an internal-field spread) rather than a frequency.
+
 Choosing FFT vs MaxEnt
 -----------------------
 

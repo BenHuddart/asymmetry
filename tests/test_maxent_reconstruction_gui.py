@@ -121,6 +121,53 @@ def test_maxent_panel_reconstruction_toggle_round_trips_and_signals(qapp: QAppli
         panel.deleteLater()
 
 
+def test_maxent_panel_pulse_and_exclusion_controls_round_trip(qapp: QApplication) -> None:
+    panel = MaxEntPanel()
+    try:
+        panel.restore_state(
+            {
+                "pulse_mode": "double",
+                "pulse_half_width_us": 0.08,
+                "pulse_separation_us": 0.324,
+                "exclude_t_min_us": 1.5,
+                "exclude_t_max_us": 2.5,
+            }
+        )
+        state = panel.get_state()
+        assert state["pulse_mode"] == "double"
+        assert state["pulse_half_width_us"] == pytest.approx(0.08)
+        assert state["pulse_separation_us"] == pytest.approx(0.324)
+        assert state["exclude_t_min_us"] == pytest.approx(1.5)
+        assert state["exclude_t_max_us"] == pytest.approx(2.5)
+        # These flow straight into a MaxEntConfig.
+        config = panel.maxent_config(cycles=1)
+        assert config.pulse_mode == "double"
+        assert config.exclude_t_min_us == pytest.approx(1.5)
+    finally:
+        panel.close()
+        panel.deleteLater()
+
+
+def test_frequency_plot_panel_offers_tesla_axis(qapp: QApplication) -> None:
+    panel = PlotPanel(domain="frequency")
+    try:
+        if not getattr(panel, "_has_mpl", False) or not hasattr(panel, "_frequency_x_unit_combo"):
+            pytest.skip("frequency plot panel unavailable")
+        units = [
+            panel._frequency_x_unit_combo.itemData(i)
+            for i in range(panel._frequency_x_unit_combo.count())
+        ]
+        assert units == ["frequency_mhz", "field_gauss", "field_tesla"]
+        # In Tesla mode a 135.538817 MHz line maps to 1 T (γ_μ/2π).
+        panel._current_frequency_x_unit = "field_tesla"
+        converted = panel._convert_frequency_axis_for_display(np.array([135.538817]))
+        assert float(converted[0]) == pytest.approx(1.0)
+        assert panel._display_x_label() == "Field (T)"
+    finally:
+        panel.close()
+        panel.deleteLater()
+
+
 def test_plot_workspace_exposes_reconstruction_as_time_view(qapp: QApplication) -> None:
     workspace = PlotWorkspacePanel(time_panel=QWidget(), frequency_panel=QWidget())
     try:

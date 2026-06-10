@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -128,7 +129,48 @@ class MaxEntPanel(QWidget):
         self._time_binning_spin.setRange(1, 4096)
         self._time_binning_spin.setValue(1)
         time_form.addRow("Binning:", self._time_binning_spin)
+
+        self._exclude_t_min_edit = QLineEdit("")
+        self._exclude_t_min_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._exclude_t_min_edit.setFont(mono_font(11.0))
+        self._exclude_t_min_edit.setValidator(QDoubleValidator(-1_000_000.0, 1_000_000.0, 6, self))
+        self._exclude_t_min_edit.setToolTip(
+            "Start of an interior time window to exclude (e.g. a glitch). Points "
+            "inside are de-weighted, not dropped — leave blank to disable."
+        )
+        time_form.addRow("Exclude from (μs):", self._exclude_t_min_edit)
+
+        self._exclude_t_max_edit = QLineEdit("")
+        self._exclude_t_max_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._exclude_t_max_edit.setFont(mono_font(11.0))
+        self._exclude_t_max_edit.setValidator(QDoubleValidator(-1_000_000.0, 1_000_000.0, 6, self))
+        time_form.addRow("Exclude to (μs):", self._exclude_t_max_edit)
         content_layout.addWidget(time_group)
+
+        pulse_group = QGroupBox("Pulse shape (pulsed sources)")
+        pulse_form = QFormLayout(pulse_group)
+        self._pulse_mode_combo = QComboBox()
+        self._pulse_mode_combo.addItem("Ignore", userData="ignore")
+        self._pulse_mode_combo.addItem("Single pulse", userData="single")
+        self._pulse_mode_combo.addItem("Double pulse", userData="double")
+        self._pulse_mode_combo.setToolTip(
+            "Correct the forward model for the finite muon pulse at a pulsed "
+            "source (ISIS). Leave on 'Ignore' for continuous-source data."
+        )
+        pulse_form.addRow("Mode:", self._pulse_mode_combo)
+
+        self._pulse_half_width_edit = QLineEdit("0.05")
+        self._pulse_half_width_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._pulse_half_width_edit.setFont(mono_font(11.0))
+        self._pulse_half_width_edit.setValidator(QDoubleValidator(0.0, 1_000.0, 6, self))
+        pulse_form.addRow("Half-width (μs):", self._pulse_half_width_edit)
+
+        self._pulse_separation_edit = QLineEdit("0.324")
+        self._pulse_separation_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self._pulse_separation_edit.setFont(mono_font(11.0))
+        self._pulse_separation_edit.setValidator(QDoubleValidator(0.0, 1_000.0, 6, self))
+        pulse_form.addRow("Separation (μs):", self._pulse_separation_edit)
+        content_layout.addWidget(pulse_group)
 
         fit_group = QGroupBox("Cycle Refinement")
         fit_layout = QVBoxLayout(fit_group)
@@ -331,6 +373,11 @@ class MaxEntPanel(QWidget):
             "t_min_us": self._parse_optional_float(self._t_min_edit.text()),
             "t_max_us": self._parse_optional_float(self._t_max_edit.text()),
             "time_binning_factor": int(self._time_binning_spin.value()),
+            "exclude_t_min_us": self._parse_optional_float(self._exclude_t_min_edit.text()),
+            "exclude_t_max_us": self._parse_optional_float(self._exclude_t_max_edit.text()),
+            "pulse_mode": str(self._pulse_mode_combo.currentData() or "ignore"),
+            "pulse_half_width_us": self._parse_float(self._pulse_half_width_edit.text(), 0.05),
+            "pulse_separation_us": self._parse_float(self._pulse_separation_edit.text(), 0.324),
             "inner_iterations": int(self._inner_spin.value()),
             "chi2_target_over_n": self._parse_float(self._chi_target_edit.text(), 1.0),
             "fit_phases": bool(self._fit_phases_check.isChecked()),
@@ -387,6 +434,17 @@ class MaxEntPanel(QWidget):
         self._f_max_edit.setText(self._format_float(state.get("f_max_mhz"), ""))
         self._t_min_edit.setText(self._format_float(state.get("t_min_us"), ""))
         self._t_max_edit.setText(self._format_float(state.get("t_max_us"), ""))
+        self._exclude_t_min_edit.setText(self._format_float(state.get("exclude_t_min_us"), ""))
+        self._exclude_t_max_edit.setText(self._format_float(state.get("exclude_t_max_us"), ""))
+        pulse_mode = str(state.get("pulse_mode", "ignore"))
+        pulse_index = self._pulse_mode_combo.findData(pulse_mode)
+        self._pulse_mode_combo.setCurrentIndex(pulse_index if pulse_index >= 0 else 0)
+        self._pulse_half_width_edit.setText(
+            self._format_float(state.get("pulse_half_width_us", 0.05), "0.05")
+        )
+        self._pulse_separation_edit.setText(
+            self._format_float(state.get("pulse_separation_us", 0.324), "0.324")
+        )
         try:
             self._time_binning_spin.setValue(max(1, int(state.get("time_binning_factor", 1))))
         except (TypeError, ValueError):

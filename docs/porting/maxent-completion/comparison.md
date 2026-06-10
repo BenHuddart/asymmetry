@@ -303,6 +303,40 @@ never WiMDA's binary `.max`, never auto-save-every-cycle.
   project; it consumes this project's spectrum. Left alone here.
 - **Muonium-correlation display** — niche; not in this brief.
 
+## Implementation notes (filled in during the build)
+
+**Pulse-shape placement (Phase 2).** Implemented exactly as §0/§2 anticipated:
+the complex response folds into the real cosine/sine kernel as a per-frequency
+amplitude `R(ν)=√(P_c²+P_s²)` and phase shift `δ(ν)=atan2(P_s,P_c)`, so every
+kernel site (`_project_forward`, `_project_forward_components`,
+`_project_adjoint`, the inline gradient matrix) just adds `−δ(ν)` to the angle
+and scales columns by `R(ν)`. This preserves the OPUS/TROPUS adjoint exactly
+(verified by `test_opus_tropus_are_adjoint_with_pulse`) and adds only O(n_freq)
+work. `pulse_amplitude_phase` returns `(R, δ)` — **not** `(P_c, P_s)`; a verifier
+must use `R` as the magnitude directly, not `hypot(R, δ)`. Single pulse is the
+`separation→0` limit of the double-pulse formula (asserted).
+
+**Pulse defaults from metadata — research finding.** The NeXus loader detects
+pulsed vs continuous definitions (`pulsedTD`, `nexus.py:99,110`) but does **not**
+record the proton-pulse half-width or double-pulse separation per run. So the
+pulse widths default from constants (≈50 ns half-width, 0.324 µs separation,
+`MaxEntConfig.pulse_half_width_us`/`pulse_separation_us`). Capturing them from
+the loader is a small recorded follow-on for the data-loading family.
+
+**Field-axis units — reused, not duplicated.** The frequency `PlotPanel`
+already had an MHz↔Gauss display toggle. Rather than add a second selector in the
+MaxEnt panel, the existing toggle gained a **Tesla** option and all its
+conversions now route through the new `core/fourier/units.py` helper (single
+source). So `MaxEntConfig` carries **no** `field_axis_unit` field — the display
+unit is panel state, persisted by the plot panel, not the recipe. (The plan had
+suggested a config field; this is the recorded divergence — it would have been
+dead config given the panel already owns the unit globally.)
+
+**Exclusion window.** σ-inflation factor `1e8` (not WiMDA's `1e15`) — large
+enough to de-weight to ~1e-16 while keeping σ² clear of float overflow. Applied
+to the interior window only; head/tail trim stays as masking. Grid length
+preserved (asserted).
+
 ## 10. Verification oracle status
 
 Mantid is **not importable** in this worktree (`import mantid` →

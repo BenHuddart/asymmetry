@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fourier.units import convert as convert_field_unit
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     available_background_modes,
@@ -78,6 +79,13 @@ _TIME_VIEW_FIELDS: list[tuple[str, str]] = [
     ("FB Asymmetry", "fb_asymmetry"),
     ("Individual Groups", "groups"),
 ]
+
+#: Map the frequency plot panel's x-unit tokens to ``core.fourier.units`` units.
+_FREQUENCY_X_UNIT_FIELD = {
+    "frequency_mhz": "mhz",
+    "field_gauss": "gauss",
+    "field_tesla": "tesla",
+}
 
 
 class _FloatLimitField(QLineEdit):
@@ -430,6 +438,7 @@ class PlotPanel(QWidget):
             self._frequency_x_unit_combo = QComboBox()
             self._frequency_x_unit_combo.addItem("Frequency (MHz)", userData="frequency_mhz")
             self._frequency_x_unit_combo.addItem("Field (G)", userData="field_gauss")
+            self._frequency_x_unit_combo.addItem("Field (T)", userData="field_tesla")
             self._frequency_x_unit_combo.currentIndexChanged.connect(
                 self._on_frequency_x_unit_changed
             )
@@ -658,23 +667,26 @@ class PlotPanel(QWidget):
         if reference_mhz is None:
             return 0.0
         resolved_unit = self._current_frequency_x_unit if unit is None else str(unit)
-        if resolved_unit == "field_gauss":
-            return reference_mhz / self._mhz_per_gauss()
-        return reference_mhz
+        field_unit = _FREQUENCY_X_UNIT_FIELD.get(resolved_unit, "mhz")
+        return float(convert_field_unit(reference_mhz, "mhz", field_unit))
 
     def _display_x_label(self) -> str:
         """Return the x-axis label for the current display unit."""
         if not self._is_frequency_plot_panel():
             return "Time (μs)"
-        if self._current_frequency_x_unit == "field_gauss":
-            return "Field (G)"
-        return "Frequency (MHz)"
+        return {
+            "field_gauss": "Field (G)",
+            "field_tesla": "Field (T)",
+        }.get(self._current_frequency_x_unit, "Frequency (MHz)")
 
     def _display_x_unit_suffix(self) -> str:
         """Return the compact unit suffix for the x-limit controls."""
         if not self._is_frequency_plot_panel():
             return "μs"
-        return "G" if self._current_frequency_x_unit == "field_gauss" else "MHz"
+        return {
+            "field_gauss": "G",
+            "field_tesla": "T",
+        }.get(self._current_frequency_x_unit, "MHz")
 
     def _display_y_unit_suffix(self, y_label: str | None = None) -> str:
         """Return the compact unit suffix for the y-limit controls."""
@@ -688,9 +700,10 @@ class PlotPanel(QWidget):
         arr = np.asarray(x_values, dtype=float)
         if not self._is_frequency_plot_panel():
             return arr
-        if self._current_frequency_x_unit != "field_gauss":
+        field_unit = _FREQUENCY_X_UNIT_FIELD.get(self._current_frequency_x_unit, "mhz")
+        if field_unit == "mhz":
             return arr
-        return arr / self._mhz_per_gauss()
+        return np.asarray(convert_field_unit(arr, "mhz", field_unit), dtype=float)
 
     def _convert_frequency_axis_limit_to_control_value(self, value: float) -> float:
         """Convert one absolute axis x-limit into the toolbar control value."""
@@ -720,11 +733,11 @@ class PlotPanel(QWidget):
         """Convert one x-limit value between frequency-view display units."""
         if from_unit == to_unit:
             return float(value)
-        if from_unit == "frequency_mhz" and to_unit == "field_gauss":
-            return float(value) / self._mhz_per_gauss()
-        if from_unit == "field_gauss" and to_unit == "frequency_mhz":
-            return float(value) * self._mhz_per_gauss()
-        return float(value)
+        source = _FREQUENCY_X_UNIT_FIELD.get(from_unit)
+        target = _FREQUENCY_X_UNIT_FIELD.get(to_unit)
+        if source is None or target is None:
+            return float(value)
+        return float(convert_field_unit(value, source, target))
 
     def _convert_display_limit_to_canonical_mhz(
         self,
@@ -4996,10 +5009,13 @@ class PlotPanel(QWidget):
                         not in {
                             "frequency_mhz",
                             "field_gauss",
+                            "field_tesla",
                             "frequency_mhz:absolute",
                             "frequency_mhz:relative",
                             "field_gauss:absolute",
                             "field_gauss:relative",
+                            "field_tesla:absolute",
+                            "field_tesla:relative",
                         }
                         or not isinstance(raw_limits, (list, tuple))
                         or len(raw_limits) != 2
@@ -5013,7 +5029,7 @@ class PlotPanel(QWidget):
                     self._frequency_x_limits_by_unit[str(raw_unit)] = (lo, hi)
 
             restored_unit = str(state.get("frequency_x_unit", "frequency_mhz"))
-            if restored_unit not in {"frequency_mhz", "field_gauss"}:
+            if restored_unit not in {"frequency_mhz", "field_gauss", "field_tesla"}:
                 restored_unit = "frequency_mhz"
             self._current_frequency_x_unit = restored_unit
             self._frequency_axis_relative_to_reference = bool(
