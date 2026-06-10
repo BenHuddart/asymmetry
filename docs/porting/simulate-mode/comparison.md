@@ -98,6 +98,17 @@ muon-specific simulate UI, so WiMDA is the sole behavioural reference.
     template's field/temperature explicitly (they parameterise models like
     precession frequencies) plus an unambiguous synthetic marker; nothing
     stale survives by accident.
+11. **Source of the instrument template.** WiMDA can only simulate from the
+    previously loaded `.nxs` run — no run, no Simulate. Asymmetry (follow-on,
+    [follow-ons.md](follow-ons.md)) additionally simulates from **built-in
+    idealised instrument templates** (an ideal pulsed F/B and an ideal
+    continuous F/B, no run loaded) and from one-click **textbook archetype
+    presets** (Ag KT, EuO T-scan, F-μ-F, YBCO TF) that generate badged
+    synthetic runs deterministically and refit to their stated physics. WiMDA
+    has no analogue of either, nor of the multi-group per-phase ring
+    (`simulate_multi_group_run`) or the in-GUI pull-distribution diagnostic.
+    No conflict with WiMDA behaviour — these are pure additions; the
+    loaded-run template path still behaves as WiMDA's does.
 
 ## Settled exclusions
 
