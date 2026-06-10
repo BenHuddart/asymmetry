@@ -11,6 +11,17 @@ Components shipped: `RischKehr`, `Bessel`, `GaussianBroadenedKT`,
 picker was regrouped into Relaxation / Oscillation / Kubo-Toyabe / Muonium /
 Nuclear dipolar / Background submenus.
 
+**Documentation convention (agreed 2026-06-10):** the user-facing component
+info must not cite textbook equation numbers. Expressions are kept consistent
+with *Muon Spectroscopy: An Introduction* (Blundell, De Renzi, Lancaster,
+Pratt; OUP 2022), but each component's applicability text is followed by an
+APS-style reference list citing the original literature
+(`FIT_COMPONENT_REFERENCES` / `PARAMETER_MODEL_REFERENCES` in
+`core/fitting/component_docs.py`, rendered by the component-info dialog).
+Applicability text uses rendered symbols (Greek letters, unicode
+sub/superscripts); enforced by
+`tests/test_wimda_parity_components.py::test_applicability_text_cites_via_reference_lists`.
+
 ## Problem statement
 
 Asymmetry should be able to fit every kind of time-domain muon data (FB asymmetry

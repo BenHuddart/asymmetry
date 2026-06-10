@@ -8,7 +8,10 @@ from functools import lru_cache
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QDialog, QPushButton, QTextBrowser, QVBoxLayout, QWidget
 
-from asymmetry.core.fitting.component_docs import get_component_applicability
+from asymmetry.core.fitting.component_docs import (
+    get_component_applicability,
+    get_component_references,
+)
 from asymmetry.core.fitting.composite import ComponentDefinition
 from asymmetry.core.fitting.parameter_models import ParameterModelComponentDefinition
 from asymmetry.core.fitting.parameters import ParamInfo, get_param_info
@@ -27,7 +30,7 @@ _SC_KERNEL_LATEX = (
 _SC_KERNEL_TEXT = (
     "This kernel defines normalized superfluid density. In TF-muSR, the superconducting "
     "Gaussian relaxation rate tracks the second moment of the vortex-lattice field distribution, "
-    "so rho_s(T) controls the temperature dependence of sigma(T)."
+    "so ρ_s(T) controls the temperature dependence of σ(T)."
 )
 
 _SC_GAP_MODEL_LATEX: dict[str, str] = {
@@ -78,7 +81,7 @@ _SC_GAP_MODEL_TEXT: dict[str, str] = {
         "a positive fixed value or allows it to vary, that positive value is used instead."
     ),
     "SC_NonmonotonicD": (
-        "Nonmonotonic d-wave extension that mixes harmonics to capture curvature not reproduced by a simple cos(2phi) form."
+        "Nonmonotonic d-wave extension that mixes harmonics to capture curvature not reproduced by a simple cos(2φ) form."
     ),
     "SC_SPlusG": (
         "Anisotropic singlet s+g form used when pure isotropic s-wave and pure d-wave are both too restrictive."
@@ -91,14 +94,14 @@ _SC_GAP_MODEL_TEXT: dict[str, str] = {
     ),
     "SC_ExtendedS": (
         "Extended-s phenomenology useful for data that sit between simple isotropic s-wave and nodal alternatives. "
-        "In this implementation the cos(2phi) basis uses the generalized weak-coupling reduced-gap form with the "
+        "In this implementation the cos(2φ) basis uses the generalized weak-coupling reduced-gap form with the "
         "d-wave-like shape factor a = 4/3, rather than the Carrington-Manzano interpolation."
     ),
     "SC_AlphaModel": (
-        "Single-gap BCS shape with adjustable coupling strength. The alpha parameter rescales the weak-coupling gap ratio."
+        "Single-gap BCS shape with adjustable coupling strength. The α parameter rescales the weak-coupling gap ratio."
     ),
     "SC_TwoGap_SS": (
-        "Two-gap weighted model (MgB2-style) where two isotropic channels contribute with weight w and 1-w."
+        "Two-gap weighted model (MgB₂-style) where two isotropic channels contribute with weights w and 1 − w."
     ),
     "SC_TwoGap_SD": (
         "Mixed-symmetry weighted model combining an isotropic channel and a d-wave channel."
@@ -115,14 +118,14 @@ _SC_GAP_MODEL_TEXT: dict[str, str] = {
 }
 
 _SC_SIGMA_MIXING_TEXT: dict[str, str] = {
-    "SC_SWave": "Additive convention with superconducting scale sigma_0 and background sigma_bg.",
-    "SC_DWave": "Additive convention with superconducting scale sigma_0 and background sigma_bg.",
-    "SC_AnisotropicS_Cos4": "Additive convention with superconducting scale sigma_0 and background sigma_bg.",
-    "SC_NonmonotonicD": "Additive convention with superconducting scale sigma_0 and background sigma_bg.",
-    "SC_SPlusG": "Additive convention with superconducting scale sigma_0 and background sigma_bg.",
-    "SC_PWaveAxial": "Additive convention with superconducting scale sigma_0 and background sigma_bg.",
-    "SC_ExtendedS": "Additive convention with superconducting scale sigma_0 and background sigma_bg.",
-    "SC_AlphaModel": "Additive convention with superconducting scale sigma_0 and background sigma_bg.",
+    "SC_SWave": "Additive convention with superconducting scale σ₀ and background σ_bg.",
+    "SC_DWave": "Additive convention with superconducting scale σ₀ and background σ_bg.",
+    "SC_AnisotropicS_Cos4": "Additive convention with superconducting scale σ₀ and background σ_bg.",
+    "SC_NonmonotonicD": "Additive convention with superconducting scale σ₀ and background σ_bg.",
+    "SC_SPlusG": "Additive convention with superconducting scale σ₀ and background σ_bg.",
+    "SC_PWaveAxial": "Additive convention with superconducting scale σ₀ and background σ_bg.",
+    "SC_ExtendedS": "Additive convention with superconducting scale σ₀ and background σ_bg.",
+    "SC_AlphaModel": "Additive convention with superconducting scale σ₀ and background σ_bg.",
     "SC_TwoGap_SS": "Additive convention after computing weighted two-gap superfluid density.",
     "SC_TwoGap_SD": "Additive convention after computing weighted mixed-symmetry superfluid density.",
     "SC_SWave_Q": (
@@ -162,15 +165,15 @@ _MUON_FLUORINE_CASE_LATEX: dict[str, str] = {
 
 _MUON_FLUORINE_CASE_TEXT: dict[str, str] = {
     "MuF": (
-        "Single-fluorine stopping state: the muon is localized near one dominant 19F nucleus, producing the three-frequency signature of a two-spin mu-F pair. "
+        "Single-fluorine stopping state: the muon is localized near one dominant ¹⁹F nucleus, producing the three-frequency signature of a two-spin µ–F pair. "
         "This corresponds to Case I in Lancaster et al. and is relevant when a symmetric two-fluorine site is chemically disfavored."
     ),
     "FmuF_Linear": (
-        "Collinear three-spin F-mu-F center: the muon sits approximately midway between two equivalent fluorines in a hydrogen-bond-like configuration. "
+        "Collinear three-spin F–µ–F center: the muon sits approximately midway between two equivalent fluorines in a hydrogen-bond-like configuration. "
         "This is the classic ionic-fluoride scenario of Brewer et al., where the closed-form powder-averaged expression is available."
     ),
     "FmuF_General": (
-        "Distorted three-spin F-mu-F geometry: two fluorines couple to the muon with unequal distances and/or a bent bond angle. "
+        "Distorted three-spin F–µ–F geometry: two fluorines couple to the muon with unequal distances and/or a bent bond angle. "
         "The polarization is obtained numerically from the three-spin dipolar eigenspectrum and powder averaged over orientations."
     ),
 }
@@ -183,7 +186,7 @@ _MUON_FLUORINE_MEASURED_ASYMMETRY_LATEX: dict[str, str] = {
 
 _MUON_FLUORINE_MEASURED_ASYMMETRY_TEXT: dict[str, str] = {
     "MuF": (
-        "In the PRL molecular-magnet analysis, the polarization function enters one part of a larger measured asymmetry with additional exponential/Gaussian relaxation channels and background."
+        "In the original molecular-magnet analysis (see references), the polarization function enters one part of a larger measured asymmetry with additional exponential/Gaussian relaxation channels and background."
     ),
     "FmuF_Linear": (
         "In practice this component is usually multiplied by a phenomenological relaxation envelope and combined with a background term, rather than used as a complete measured asymmetry by itself."
@@ -196,16 +199,7 @@ _MUON_FLUORINE_MEASURED_ASYMMETRY_TEXT: dict[str, str] = {
 _MUON_FLUORINE_LIMITS_TEXT: dict[str, str] = {
     "MuF": "Does not describe signals where two fluorines contribute comparably or where a third nearby nucleus materially changes the entangled-state spectrum.",
     "FmuF_Linear": "Assumes two equivalent fluorines in a nearly collinear geometry, so it should not be used for bent or strongly asymmetric molecular stopping states.",
-    "FmuF_General": "Covers bent/asymmetric three-spin F-mu-F geometries, but the current implementation does not include extra nuclei such as the proton-coupled HF2- Case III configuration discussed in Lancaster et al.",
-}
-
-_MUON_FLUORINE_REFERENCES: dict[str, tuple[str, ...]] = {
-    "MuF": ("T. Lancaster et al., Phys. Rev. Lett. 99, 267601 (2007).",),
-    "FmuF_Linear": ("J. H. Brewer et al., Phys. Rev. B 33, 7813 (1986).",),
-    "FmuF_General": (
-        "T. Lancaster et al., Phys. Rev. Lett. 99, 267601 (2007).",
-        "J. H. Brewer et al., Phys. Rev. B 33, 7813 (1986).",
-    ),
+    "FmuF_General": "Covers bent/asymmetric three-spin F–µ–F geometries, but the current implementation does not include extra nuclei such as the proton-coupled HF₂⁻ Case III configuration discussed in Lancaster et al.",
 }
 
 
@@ -250,12 +244,12 @@ def _physics_payload(component_name: str) -> tuple[tuple[str, LatexBlock, str], 
             (
                 "Dipolar Hamiltonian",
                 _MUON_FLUORINE_HAMILTONIAN_LATEX,
-                "These models describe entangled evolution of the muon spin with nearby fluorine-19 nuclear spins through the magnetic dipole-dipole interaction.",
+                "These models describe entangled evolution of the muon spin with nearby ¹⁹F nuclear spins through the magnetic dipole–dipole interaction.",
             ),
             (
                 "Dipolar Frequency",
                 _MUON_FLUORINE_FREQUENCY_LATEX,
-                "For the MuF and FmuF models the characteristic oscillation frequencies scale as r^-3, so the fitted muon-fluorine distances directly set the entangled-state spectrum.",
+                "For the MuF and FmuF models the characteristic oscillation frequencies scale as r⁻³, so the fitted muon–fluorine distances directly set the entangled-state spectrum.",
             ),
             (
                 "Stopping-State Scenario",
@@ -310,7 +304,7 @@ def _physics_payload(component_name: str) -> tuple[tuple[str, LatexBlock, str], 
 
 
 def _references_payload(component_name: str) -> tuple[str, ...]:
-    return _MUON_FLUORINE_REFERENCES.get(component_name, tuple())
+    return get_component_references(component_name)
 
 
 def _availability_text(component: ComponentDocDefinition) -> str:

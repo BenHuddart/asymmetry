@@ -86,6 +86,35 @@ def test_new_components_have_applicability_docs() -> None:
         assert len(text) > 100
 
 
+def test_new_components_have_aps_style_references() -> None:
+    import re
+
+    from asymmetry.core.fitting.component_docs import get_component_references
+
+    for name in NEW_COMPONENTS:
+        refs = get_component_references(name)
+        assert refs, name
+        for ref in refs:
+            # APS style ends with "(year)." (journal) or "year)." (book).
+            assert re.search(r"\(.*\d{4}\)\.$", ref), ref
+
+
+def test_applicability_text_cites_via_reference_lists() -> None:
+    from asymmetry.core.fitting.component_docs import PARAMETER_MODEL_APPLICABILITY
+
+    for name, text in {
+        **FIT_COMPONENT_APPLICABILITY,
+        **PARAMETER_MODEL_APPLICABILITY,
+    }.items():
+        lowered = text.lower()
+        # No textbook equation numbers or inline journal citations: literature
+        # belongs in the references list below the applicability text.
+        assert "eqn" not in lowered, name
+        assert "eq." not in lowered, name
+        assert "ms-intro" not in lowered, name
+        assert "phys. rev." not in text, name
+
+
 def test_new_components_finite_and_normalised_at_defaults() -> None:
     for name in NEW_COMPONENTS:
         definition = COMPONENTS[name]

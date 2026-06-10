@@ -9,7 +9,7 @@ quadrupolar interactions).
 
 Physics references:
 
-* W. B. Meier, Hyperfine Interact. 17-19, 427 (1984) — spin-1/2 pair; the same
+* P. F. Meier, Hyperfine Interact. 17-19, 427 (1984) — spin-1/2 pair; the same
   polycrystalline average appears as eqn 4.80 of Blundell, De Renzi, Lancaster
   & Pratt, *Muon Spectroscopy* (OUP, 2022) (cited below as MS-Intro):
 

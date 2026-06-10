@@ -133,10 +133,10 @@ def test_muon_fluorine_applicability_text_mentions_physical_use_cases() -> None:
     linear_text = get_component_applicability("FmuF_Linear")
     general_text = get_component_applicability("FmuF_General")
 
-    assert "one dominant 19f nucleus" in muf_text.lower()
+    assert "one dominant ¹⁹f nucleus" in muf_text.lower()
     assert "ionic fluorides" in linear_text.lower()
     assert "three coupled spins" in general_text.lower()
-    assert "hf2" in general_text.lower()
+    assert "hf₂" in general_text.lower()
 
 
 def test_component_info_html_includes_muon_fluorine_physics_sections() -> None:
