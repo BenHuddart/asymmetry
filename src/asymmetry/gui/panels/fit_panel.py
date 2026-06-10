@@ -38,6 +38,14 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.count_domain import (
+    COUNT_COSTS,
+    RESERVED_COUNT_PARAMS,
+    fb_overlay_curves,
+    fit_fb_alpha,
+    fit_single_histogram,
+    single_histogram_overlay,
+)
 from asymmetry.core.fitting.domain_library import coerce_domain
 from asymmetry.core.fitting.engine import FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
@@ -59,6 +67,7 @@ from asymmetry.core.fitting.global_search.heuristics import (
 from asymmetry.core.fitting.grouped_time_domain import (
     GROUP_NUISANCE_PARAMS,
     _group_dataset_run_number,
+    build_count_group,
     build_grouped_count_model,
     build_grouped_time_domain_datasets,
     build_grouped_time_domain_groups,
@@ -91,6 +100,7 @@ from asymmetry.gui.styles.widgets import (
     RESULTS_GROUP_SUCCESS_STYLE,
     apply_param_table_style,
     configure_formula_label,
+    error_html,
     success_html,
 )
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
@@ -2006,6 +2016,12 @@ class GlobalFitTab(QWidget):
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
     grouped_preview_requested = Signal(object, object)  # (grouped_datasets, preview_curves)
     fit_range_edit_committed = Signal(float, float)  # (x_min, x_max) from spinbox commit
+    # (dataset, {"result": FitResult|GroupedTimeDomainFitResult,
+    #            "overlays": {group_id: (time, corrected_model)}}) — the fit result
+    # plus the overlay curves for the Individual-Groups plot (displayed
+    # lifetime-corrected scale).
+    count_fit_completed = Signal(object, object)
+    count_grouping_promoted = Signal(object)  # (dataset) — a count calibration hit the grouping
 
     def __init__(
         self,
@@ -2033,6 +2049,21 @@ class GlobalFitTab(QWidget):
         self._member_datasets: list[MuonDataset] = []
         # Populated by the grouped-context builder: run_number -> list[groups].
         self._grouped_members: dict[int, list[object]] = {}
+        # Count-domain fit target: "all" (fgAll, the existing grouped path),
+        # "fb" (forward+backward with free alpha), or "single" (one histogram).
+        self._count_fit_mode = "all"
+        self._count_fit_cost = "poisson"
+        self._count_single_side = "forward"
+        # Phase 2 window/nuisance flexibility (all off by default).
+        self._count_exclude: tuple[float, float] | None = None
+        self._count_fit_t0 = False
+        self._count_baseline = False
+        # Phase 3 count-loss + double pulse.
+        self._count_deadtime = False
+        self._count_dpsep = 0.0  # μs; > 0 switches on the double-pulse model
+        self._count_dpsep_fit = False  # locate dpsep by a coarse->fine scan
+        self._last_count_dt0: float | None = None
+        self._last_count_group: int | None = None
         self._fit_blocked = False
         self._fit_block_reason = ""
         self._composite_model = self._default_composite_model()
@@ -3463,6 +3494,13 @@ class GlobalFitTab(QWidget):
             )
             return
 
+        # Count-domain targets (forward+backward with free alpha, or a single
+        # histogram) fit raw counts via the dedicated count-domain driver instead
+        # of the lifetime-corrected fgAll path.
+        if self._count_fit_mode in ("fb", "single"):
+            self._run_count_domain_fit()
+            return
+
         grouped_groups, grouped_datasets, message = self._grouped_mode_context()
         if grouped_groups is None or grouped_datasets is None:
             self._result_text.setText(message)
@@ -3526,6 +3564,359 @@ class GlobalFitTab(QWidget):
         self._fit_worker.error.connect(self._fit_thread.quit)
         self._fit_thread.finished.connect(self._cleanup_thread)
         self._fit_thread.start()
+
+    # --- count-domain fit modes (forward/backward free-alpha, single histogram) ---
+
+    def set_count_fit_mode(self, mode: str) -> None:
+        """Select the count-domain fit target: ``all``, ``fb`` or ``single``."""
+        self._count_fit_mode = mode if mode in ("all", "fb", "single") else "all"
+
+    def set_count_fit_cost(self, cost: str) -> None:
+        """Select the count-fit cost: ``poisson`` (default) or ``gaussian``."""
+        self._count_fit_cost = cost if cost in COUNT_COSTS else "poisson"
+
+    def set_count_single_side(self, side: str) -> None:
+        """Select which detector group the single-histogram fit targets."""
+        self._count_single_side = "backward" if str(side).lower() == "backward" else "forward"
+
+    def set_count_exclude(self, exclude: tuple[float, float] | None) -> None:
+        """Set the optional interior exclude window (μs) for count fits."""
+        if exclude is None or float(exclude[1]) <= float(exclude[0]):
+            self._count_exclude = None
+        else:
+            self._count_exclude = (float(exclude[0]), float(exclude[1]))
+
+    def set_count_fit_t0(self, enabled: bool) -> None:
+        """Toggle a free time-zero offset parameter for count fits."""
+        self._count_fit_t0 = bool(enabled)
+
+    def set_count_baseline(self, enabled: bool) -> None:
+        """Toggle a free stretched-exponential baseline-drift term for count fits."""
+        self._count_baseline = bool(enabled)
+
+    def set_count_deadtime(self, enabled: bool) -> None:
+        """Toggle a free count-loss (deadtime DT0) term for count fits."""
+        self._count_deadtime = bool(enabled)
+
+    def set_count_dpsep(self, dpsep_us: float) -> None:
+        """Set the ISIS double-pulse separation (μs); 0 disables the double-pulse model."""
+        try:
+            value = float(dpsep_us)
+        except (TypeError, ValueError):
+            value = 0.0
+        self._count_dpsep = value if value > 0.0 else 0.0
+
+    def set_count_dpsep_fit(self, enabled: bool) -> None:
+        """Toggle locating dpsep by a coarse->fine scan rather than fixing it."""
+        self._count_dpsep_fit = bool(enabled)
+
+    def promote_count_deadtime(self, *, additive: bool = False) -> None:
+        """Promote the last fitted deadtime DT0 into the grouping (WiMDA Send-to-Group)."""
+        from asymmetry.core.transform.deadtime import promote_deadtime_to_grouping
+        from asymmetry.core.transform.grouping import effective_group_indices
+
+        dataset = self._current_dataset
+        if self._last_count_dt0 is None or self._last_count_group is None:
+            self._result_text.setText("Run a deadtime count fit first, then promote DT0.")
+            return
+        if dataset is None or dataset.run is None or not dataset.run.histograms:
+            self._result_text.setText("Promote needs the active run with detector histograms.")
+            return
+        grouping = dataset.run.grouping if isinstance(dataset.run.grouping, dict) else {}
+        indices = effective_group_indices(grouping, int(self._last_count_group))
+        change = promote_deadtime_to_grouping(
+            grouping,
+            float(self._last_count_dt0),
+            n_histograms=len(dataset.run.histograms),
+            detector_indices=indices or None,
+            additive=additive,
+        )
+        before = next(iter(change["before"].values()), 0.0)
+        after = next(iter(change["after"].values()), 0.0)
+        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._result_text.setHtml(
+            success_html(
+                "Deadtime promoted to grouping",
+                detail=(
+                    f"Group {self._last_count_group} detectors: "
+                    f"{before:.5g} → {after:.5g} μs ({'added' if additive else 'replaced'}). "
+                    "Re-reduce the run to apply."
+                ),
+            )
+        )
+        self.count_grouping_promoted.emit(dataset)
+
+    def _count_fb_groups(self, dataset: MuonDataset) -> tuple[int, int]:
+        grouping = (
+            dataset.run.grouping if dataset.run and isinstance(dataset.run.grouping, dict) else {}
+        )
+        try:
+            forward = int(grouping.get("forward_group", 1))
+        except (TypeError, ValueError):
+            forward = 1
+        try:
+            backward = int(grouping.get("backward_group", 2))
+        except (TypeError, ValueError):
+            backward = 2
+        return forward, backward
+
+    def _count_fit_range(self) -> tuple[float | None, float | None]:
+        lo = float(self._fit_range_min_spin.value())
+        hi = float(self._fit_range_max_spin.value())
+        if hi > lo:
+            return lo, hi
+        return None, None
+
+    def _count_n0_seed(self, dataset: MuonDataset, group_id: int) -> float:
+        try:
+            group = build_count_group(dataset, group_id, lifetime_corrected=False)
+        except ValueError:
+            return 1.0
+        counts = np.asarray(group.counts, dtype=float)
+        return float(counts[0]) if counts.size else 1.0
+
+    def _count_fit_seed_params(self, dataset: MuonDataset, model, *, mode: str) -> ParameterSet:
+        """Seed a count-fit parameter set with the model amplitude left FREE.
+
+        Count modes recover the asymmetry amplitude itself (carried by the model),
+        so unlike the normalised fgAll path the model's amplitude parameter is not
+        pinned to 1; it is seeded at a typical calibration value and fitted.
+        """
+        # A model parameter named like a count-fit nuisance/structural slot would
+        # be silently swallowed by the name-based dispatch; reject it up front.
+        collisions = sorted(set(model.param_names) & RESERVED_COUNT_PARAMS)
+        if collisions:
+            raise ValueError(
+                f"Model parameter(s) {collisions} collide with reserved count-fit names; "
+                "rename them before running a count-domain fit."
+            )
+
+        config = self._parse_grouped_parameter_configuration()
+        model_values = dict(config["model_values"])
+        bounds = dict(config["bounds"])
+        fixed = set(config["fixed"])
+
+        params = ParameterSet()
+        for name in model.param_names:
+            lo, hi = bounds.get(name, (-float("inf"), float("inf")))
+            # The asymmetry amplitude (unit "%") is what count modes recover, so
+            # leave it free and seed it near a calibration value. Identify it by
+            # its unit, not is_amplitude_parameter, which also matches rate
+            # parameters like ``a_L`` and misses the standard ``A0``.
+            if get_param_info(name).unit == "%":
+                seed = float(model_values.get(name, 0.0))
+                if abs(seed) <= 1e-6 or seed == 1.0:
+                    seed = 20.0  # percent; typical transverse-field calibration amplitude
+                params.add(Parameter(name=name, value=seed, min=lo, max=hi))
+            else:
+                params.add(
+                    Parameter(
+                        name=name,
+                        value=float(model_values.get(name, 0.0)),
+                        min=lo,
+                        max=hi,
+                        fixed=name in fixed,
+                    )
+                )
+
+        forward, backward = self._count_fb_groups(dataset)
+        if mode == "fb":
+            params.add(Parameter(name="N0", value=self._count_n0_seed(dataset, forward), min=0.0))
+            params.add(Parameter(name="background", value=0.0, min=0.0))
+            params.add(Parameter(name="background_b", value=0.0, min=0.0))
+            params.add(Parameter(name="alpha", value=1.0, min=0.05, max=20.0))
+        else:
+            target = backward if self._count_single_side == "backward" else forward
+            params.add(Parameter(name="N0", value=self._count_n0_seed(dataset, target), min=0.0))
+            params.add(Parameter(name="background", value=0.0, min=0.0))
+        if self._count_fit_t0:
+            params.add(Parameter(name="t0", value=0.0, min=-0.1, max=0.1))
+        if self._count_baseline:
+            params.add(Parameter(name="lambda_base", value=0.05, min=0.0, max=10.0))
+            # beta held fixed at 1 (simple exponential); free beta is unstable.
+            params.add(Parameter(name="beta_base", value=1.0, min=0.2, max=3.0, fixed=True))
+        if self._count_deadtime:
+            params.add(Parameter(name="DT0", value=0.005, min=0.0, max=0.5))
+        if self._count_dpsep > 0.0:
+            if self._count_dpsep_fit:
+                # Free dpsep: a coarse->fine scan refines it around the instrument
+                # value (the non-smooth pulse gate defeats gradient fitting). The
+                # window brackets the seed so the scan refines, not blind-searches.
+                lo = max(0.0, 0.5 * self._count_dpsep)
+                hi = 1.5 * self._count_dpsep
+                params.add(Parameter(name="dpsep", value=self._count_dpsep, min=lo, max=hi))
+            else:
+                # dpsep comes from the instrument; held fixed.
+                params.add(Parameter(name="dpsep", value=self._count_dpsep, fixed=True))
+        return params
+
+    def _run_count_domain_fit(self) -> None:
+        """Run a forward/backward free-alpha or single-histogram count fit."""
+        dataset = self._current_dataset
+        if dataset is None or dataset.run is None or not dataset.run.histograms:
+            self._result_text.setText(
+                "Count-domain fits need an active run with detector histograms."
+            )
+            return
+        if len(self._member_datasets) > 1:
+            self._result_text.setText(
+                "Count-domain α / single-histogram fits run on one run. "
+                "Use the Single surface (the active run)."
+            )
+            return
+        if self._composite_model is None:
+            self._result_text.setText("Error: No function defined")
+            return
+
+        model = self._grouped_fit_model()
+        try:
+            params = self._count_fit_seed_params(dataset, model, mode=self._count_fit_mode)
+        except ValueError as exc:
+            self._result_text.setText(str(exc))
+            return
+
+        t_min, t_max = self._count_fit_range()
+        cost = self._count_fit_cost
+        forward, backward = self._count_fb_groups(dataset)
+
+        self._result_text.setText("Fitting count-domain data…")
+        self._fit_btn.setEnabled(False)
+        try:
+            if self._count_fit_mode == "fb":
+                result = fit_fb_alpha(
+                    dataset,
+                    forward,
+                    backward,
+                    model.function,
+                    params,
+                    cost=cost,
+                    t_min=t_min,
+                    t_max=t_max,
+                    exclude=self._count_exclude,
+                )
+                self._render_count_fb_result(dataset, result, forward, backward)
+            else:
+                target = backward if self._count_single_side == "backward" else forward
+                result = fit_single_histogram(
+                    dataset,
+                    target,
+                    model.function,
+                    params,
+                    side=self._count_single_side,
+                    cost=cost,
+                    t_min=t_min,
+                    t_max=t_max,
+                    exclude=self._count_exclude,
+                )
+                self._render_count_single_result(dataset, result, target)
+        except (ValueError, RuntimeError) as exc:
+            self._results_group.setStyleSheet("")
+            self._result_text.setHtml(error_html(f"Count-domain fit failed: {exc}"))
+        finally:
+            self._fit_btn.setEnabled(True)
+
+    def _render_count_fb_result(self, dataset, result, forward: int, backward: int) -> None:
+        if not result.success:
+            self._results_group.setStyleSheet("")
+            self._result_text.setHtml(error_html(result.message or "Forward/backward fit failed"))
+            return
+        fwd = result.group_results[forward]
+        self._store_count_deadtime(fwd, forward)
+        alpha = fwd.parameters["alpha"].value
+        alpha_err = fwd.uncertainties.get("alpha")
+        rows = [self._count_param_row(fwd, name) for name in fwd.parameters.names]
+        detail = (
+            f"α = {self._fmt_value(alpha, alpha_err)} · χ²/ν = {fwd.reduced_chi_squared:.4f} "
+            f"(cost: {self._count_fit_cost})<br>" + "<br>".join(rows)
+        )
+        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._result_text.setHtml(
+            success_html(f"Forward/backward fit · groups {forward}/{backward}", detail=detail)
+        )
+        self.count_fit_completed.emit(
+            dataset,
+            {
+                "result": result,
+                "overlays": self._count_overlays_for_fb(dataset, result, forward, backward),
+            },
+        )
+
+    def _render_count_single_result(self, dataset, result, group_id: int) -> None:
+        if not result.success:
+            self._results_group.setStyleSheet("")
+            self._result_text.setHtml(error_html(result.message or "Single-histogram fit failed"))
+            return
+        self._store_count_deadtime(result, group_id)
+        rows = [self._count_param_row(result, name) for name in result.parameters.names]
+        detail = (
+            f"χ²/ν = {result.reduced_chi_squared:.4f} (cost: {self._count_fit_cost})<br>"
+            + "<br>".join(rows)
+        )
+        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._result_text.setHtml(
+            success_html(
+                f"Single-histogram fit · group {group_id} ({self._count_single_side})",
+                detail=detail,
+            )
+        )
+        self.count_fit_completed.emit(
+            dataset,
+            {
+                "result": result,
+                "overlays": self._count_overlays_for_single(dataset, result, group_id),
+            },
+        )
+
+    def _count_overlays_for_single(self, dataset, result, group_id: int) -> dict:
+        """Overlay curves for a single-histogram count fit (empty on failure)."""
+        t_min, t_max = self._count_fit_range()
+        try:
+            return single_histogram_overlay(
+                dataset,
+                group_id,
+                result,
+                t_min=t_min,
+                t_max=t_max,
+                exclude=self._count_exclude,
+            )
+        except ValueError:
+            return {}
+
+    def _count_overlays_for_fb(self, dataset, result, forward: int, backward: int) -> dict:
+        """Overlay curves for a forward/backward count fit (empty on failure)."""
+        t_min, t_max = self._count_fit_range()
+        try:
+            return fb_overlay_curves(
+                dataset,
+                forward,
+                backward,
+                result,
+                t_min=t_min,
+                t_max=t_max,
+                exclude=self._count_exclude,
+            )
+        except ValueError:
+            return {}
+
+    def _store_count_deadtime(self, fit_result, group_id: int) -> None:
+        """Remember a converged DT0 so it can be promoted to the grouping."""
+        if "DT0" in fit_result.parameters.names:
+            self._last_count_dt0 = float(fit_result.parameters["DT0"].value)
+            self._last_count_group = int(group_id)
+        else:
+            self._last_count_dt0 = None
+            self._last_count_group = None
+
+    def _count_param_row(self, fit_result, name: str) -> str:
+        value = fit_result.parameters[name].value
+        err = fit_result.uncertainties.get(name)
+        return f"{_format_param_label(name)} = {self._fmt_value(value, err)}"
+
+    @staticmethod
+    def _fmt_value(value: float, err: float | None) -> str:
+        if err is None or not np.isfinite(err):
+            return f"{value:.5g}"
+        return f"{value:.5g} ± {err:.2g}"
 
     @staticmethod
     def _derive_grouped_relationship(

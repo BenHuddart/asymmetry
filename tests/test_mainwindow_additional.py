@@ -1480,6 +1480,90 @@ class TestMainWindowBasic:
         assert payload[4204][4] is None
         assert payload[4204][5] == "A(t)"
 
+    def test_count_fit_overlay_routes_to_group_subplots(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A count-fit overlay is keyed onto each group's synthetic-run subplot."""
+        # Two display groups whose synthetic run numbers differ from their group ids.
+        grouped_datasets = [
+            MuonDataset(
+                time=np.array([0.0, 1.0]),
+                asymmetry=np.array([2.0, 1.0]),
+                error=np.array([1.0, 1.0]),
+                metadata={"run_number": -4301001, "group_id": 1},
+            ),
+            MuonDataset(
+                time=np.array([0.0, 1.0]),
+                asymmetry=np.array([2.0, 1.0]),
+                error=np.array([1.0, 1.0]),
+                metadata={"run_number": -4301002, "group_id": 2},
+            ),
+        ]
+        monkeypatch.setattr(
+            mainwindow,
+            "_grouped_time_domain_display_datasets",
+            lambda dataset=None: grouped_datasets,
+        )
+        captured: dict[str, object] = {}
+        mainwindow._plot_panel.set_global_fits = lambda payload: captured.update(
+            {"payload": payload}
+        )
+        mainwindow._plot_panel.plot_grouped_time_domain_subplots = lambda datasets: captured.update(
+            {"datasets": list(datasets)}
+        )
+
+        overlays = {
+            1: (np.array([0.0, 1.0]), np.array([10.0, 11.0])),
+            2: (np.array([0.0, 1.0]), np.array([20.0, 21.0])),
+        }
+        source = MuonDataset(time=np.array([]), asymmetry=np.array([]), error=np.array([]))
+        mainwindow._on_count_fit_completed(source, {"result": None, "overlays": overlays})
+
+        payload = captured["payload"]
+        # Each group's overlay lands on that group's synthetic run-number key.
+        assert set(payload) == {-4301001, -4301002}
+        assert payload[-4301001][2] == "Count Fit"
+        np.testing.assert_allclose(payload[-4301001][1], [10.0, 11.0])
+        np.testing.assert_allclose(payload[-4301002][1], [20.0, 21.0])
+        assert captured["datasets"] == grouped_datasets
+
+    def test_count_fit_overlay_skips_unmatched_group(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An overlay for a group with no displayed subplot is silently dropped."""
+        grouped_datasets = [
+            MuonDataset(
+                time=np.array([0.0, 1.0]),
+                asymmetry=np.array([2.0, 1.0]),
+                error=np.array([1.0, 1.0]),
+                metadata={"run_number": -4302001, "group_id": 1},
+            ),
+        ]
+        monkeypatch.setattr(
+            mainwindow,
+            "_grouped_time_domain_display_datasets",
+            lambda dataset=None: grouped_datasets,
+        )
+        captured: dict[str, object] = {}
+        mainwindow._plot_panel.set_global_fits = lambda payload: captured.update(
+            {"payload": payload}
+        )
+        mainwindow._plot_panel.plot_grouped_time_domain_subplots = lambda datasets: captured.update(
+            {"datasets": list(datasets)}
+        )
+
+        # Group 7 is not among the displayed groups → no payload, no redraw.
+        source = MuonDataset(time=np.array([]), asymmetry=np.array([]), error=np.array([]))
+        mainwindow._on_count_fit_completed(
+            source, {"result": None, "overlays": {7: (np.array([0.0]), np.array([1.0]))}}
+        )
+        assert "payload" not in captured
+        assert "datasets" not in captured
+
     def test_time_view_switch_replaces_visible_fit_dock_with_grouped_panel(
         self,
         mainwindow: MainWindow,
