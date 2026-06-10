@@ -6642,7 +6642,100 @@ class MainWindow(QMainWindow):
             results_by_run=results_by_run,
         )
         self._project_model.add_batch(series)
+
+        # Item D — accumulate this fit's shared globals into a singleton
+        # "Global summary" series so the globals can themselves be trended across
+        # successive cross-group fits.
+        self._accumulate_global_summary_row(
+            rep_type=rep_type,
+            parameter_name=parameter_name,
+            x_key=x_key,
+            logical_key=logical_key,
+            global_vals=global_vals,
+            global_unc=global_unc,
+            fit_result=fit_result,
+        )
         self._refresh_trend_panel()
+
+    def _accumulate_global_summary_row(
+        self,
+        *,
+        rep_type: object,
+        parameter_name: str,
+        x_key: str,
+        logical_key: str,
+        global_vals: dict,
+        global_unc: dict,
+        fit_result: object,
+    ) -> None:
+        """Upsert one row for this fit into the per-representation accumulator.
+
+        A dedicated, persistent ``Global summary`` series collects one member per
+        *distinct* cross-group fit (keyed by the same logical key as the per-fit
+        results series, so re-running a fit updates its single row rather than
+        appending a duplicate). Each row carries that fit's shared global
+        parameters, χ²ᵣ, and a monotonic first-seen ``fit_index``; the globals
+        are then trendable across fits (pick ``fit_index`` or another global as
+        the x-axis via arbitrary-X). The rows sit off both physical axes
+        (field/temperature → NaN) so they never pollute a real group-variable
+        trend.
+        """
+        accum_id = f"modelfit-globals-{rep_type.value}"
+        existing = self._project_model.batches.get(accum_id)
+
+        # Deterministic, stable member key from the fit's logical key (negative
+        # so it never collides with a real run; reproducible across save/reload
+        # so re-running the same fit overwrites its row).
+        digest = hashlib.sha1(logical_key.encode("utf-8")).hexdigest()[:12]
+        member_key = -(1_000_000 + (int(digest, 16) % 1_000_000))
+
+        member_run_numbers = list(existing.member_run_numbers) if existing is not None else []
+        results_by_run = dict(existing.results_by_run) if existing is not None else {}
+
+        def _existing_index(summary: object) -> float:
+            if isinstance(summary, dict):
+                params = summary.get("parameters")
+                if isinstance(params, dict) and isinstance(params.get("fit_index"), (int, float)):
+                    return float(params["fit_index"])
+            return 0.0
+
+        if member_key in results_by_run:
+            # Re-run of a known fit: keep its position in the accumulation order.
+            fit_index = _existing_index(results_by_run[member_key])
+        else:
+            prior = [_existing_index(s) for s in results_by_run.values()]
+            fit_index = (max(prior) + 1.0) if prior else 1.0
+            member_run_numbers.append(member_key)
+
+        results_by_run[member_key] = {
+            "success": True,
+            "parameters": {
+                **global_vals,
+                "chi2_r": float(fit_result.reduced_chi_squared),
+                "fit_index": float(fit_index),
+            },
+            "uncertainties": dict(global_unc),
+            "chi_squared": float(fit_result.chi_squared),
+            "reduced_chi_squared": float(fit_result.reduced_chi_squared),
+            "run_label": f"{parameter_name} vs {x_key}",
+            # Off both physical axes (None → NaN coordinate): a successive-fit
+            # series has no field/temperature; it is trended against fit_index or
+            # a global parameter via arbitrary-X.
+            "field": None,
+            "temperature": None,
+        }
+
+        series = FitSeries(
+            accum_id,
+            rep_type,
+            label="Global summary",
+            member_run_numbers=member_run_numbers,
+            order_key="run",
+            canonical_model=None,
+            param_roles={},
+            results_by_run=results_by_run,
+        )
+        self._project_model.add_batch(series)
 
     def _on_fit_parameters_group_fits_deleted(self, group_id: str, run_numbers: object) -> None:
         """Clear run-level fit state when a Fit Parameters group is deleted."""

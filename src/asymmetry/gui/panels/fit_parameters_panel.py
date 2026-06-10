@@ -1713,8 +1713,17 @@ class FitParametersPanel(QWidget):
         temps = np.array([r.temperature for r in rows], dtype=float)
         field_unique = len(np.unique(np.round(fields, 9)))
         temp_unique = len(np.unique(np.round(temps, 9)))
-        field_span = float(np.nanmax(fields) - np.nanmin(fields))
-        temp_span = float(np.nanmax(temps) - np.nanmin(temps))
+
+        def _finite_span(arr: np.ndarray) -> float:
+            # A computed series can sit entirely off an axis (every coordinate
+            # NaN — e.g. the cross-fit Global summary). Span over finite values
+            # only, defaulting to 0.0, so np.nanmax/min never warn on an all-NaN
+            # slice.
+            finite = arr[np.isfinite(arr)]
+            return float(np.max(finite) - np.min(finite)) if finite.size else 0.0
+
+        field_span = _finite_span(fields)
+        temp_span = _finite_span(temps)
         if field_unique > 1 and (field_span > temp_span or temp_unique <= 1):
             return "field"
         if temp_unique > 1:
