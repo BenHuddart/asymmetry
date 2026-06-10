@@ -538,6 +538,42 @@ def test_reconstruct_group_signals_chi2_equals_engine_chi2() -> None:
         assert rg.n_obs == int(np.count_nonzero(mask))
 
 
+def test_result_carries_prepared_input_for_zero_rebuild_reconstruction() -> None:
+    """The result threads the exact prepared input the cycles iterated, so the
+    GUI overlay can reconstruct without rebuilding it — and the χ² it gets is the
+    engine's by identity (same object), not merely by deterministic rebuild."""
+    run = _synthetic_run(frequency_mhz=1.5)
+    config = MaxEntConfig(
+        n_spectrum_points=128,
+        f_min_mhz=0.2,
+        f_max_mhz=3.0,
+        auto_window=False,
+        outer_cycles=4,
+        inner_iterations=4,
+    )
+    maxent_input = build_maxent_input(run, config)
+    result = run_cycles(maxent_input, config)
+    # run_cycles threads the very object it iterated through onto the result.
+    assert result.maxent_input is maxent_input
+    # Reconstructing from that carried input reproduces the engine χ² exactly.
+    recon = reconstruct_group_signals(result.maxent_input, result.state)
+    total_chi2 = sum(rg.chi2 for rg in recon.values())
+    assert total_chi2 == pytest.approx(result.metadata["maxent_chi2"], rel=1e-12, abs=1e-12)
+
+    # The maxent() convenience wrapper (build + run) attaches it too, and its
+    # reconstruction matches the same-config rebuild path the GUI falls back to.
+    wrapped = maxent(run, config)
+    assert wrapped.maxent_input is not None
+    carried = sum(
+        rg.chi2 for rg in reconstruct_group_signals(wrapped.maxent_input, wrapped.state).values()
+    )
+    rebuilt = sum(
+        rg.chi2
+        for rg in reconstruct_group_signals(build_maxent_input(run, config), wrapped.state).values()
+    )
+    assert carried == pytest.approx(rebuilt, rel=1e-12, abs=1e-12)
+
+
 def _fb_single_line_run(*, frequency_mhz: float = 1.5) -> Run:
     """Two opposed F/B groups carrying one clean TF line at known phase."""
     rng = np.random.default_rng(7)

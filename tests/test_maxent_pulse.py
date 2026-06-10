@@ -134,6 +134,47 @@ def test_opus_tropus_are_adjoint_with_pulse() -> None:
     assert lhs == pytest.approx(rhs, rel=1e-10, abs=1e-10)
 
 
+def test_pulse_fold_reproduces_explicit_column_scaled_kernel() -> None:
+    """Stronger than the inner-product adjoint check: the folded forward/adjoint
+    must reproduce the *explicit* column-scaled kernel ``K[i,j] = R(ν_j)·cos(2π
+    t_i ν_j + φ − δ(ν_j))`` and its exact transpose, to float precision.  This
+    pins the efficiency fold (R folded into the spectrum / accumulated adjoint)
+    to the same linear operator the dense per-chunk scaling computed."""
+    run = _pulsed_two_line_run()
+    config = MaxEntConfig(
+        n_spectrum_points=48,
+        f_min_mhz=0.2,
+        f_max_mhz=9.0,
+        auto_window=False,
+        pulse_mode="single",
+        pulse_half_width_us=0.08,
+        group_phase_degrees={1: 17.0, 2: 163.0},  # non-trivial phases
+    )
+    prepared = build_maxent_input(run, config)
+    freqs = prepared.frequencies_mhz
+    amp = prepared.pulse_amp
+    delta = prepared.pulse_phase
+    assert amp is not None and delta is not None
+
+    rng = np.random.default_rng(8)
+    spectrum = rng.random(prepared.n_spectrum_points)
+    for group in prepared.groups:
+        time = np.asarray(group.time_us, dtype=float)
+        phase = np.deg2rad(group.phase_degrees)
+        # Explicit column-scaled kernel, the operator the fold must reproduce.
+        kernel = amp[np.newaxis, :] * np.cos(
+            2.0 * np.pi * time[:, np.newaxis] * freqs[np.newaxis, :] + phase - delta[np.newaxis, :]
+        )
+        forward = opus(spectrum, prepared)[group.group_id]
+        np.testing.assert_allclose(forward, kernel @ spectrum, rtol=1e-12, atol=1e-12)
+
+        v = rng.normal(size=time.size)
+        # tropus skips groups absent from the values dict, so passing only this
+        # group's values isolates its adjoint contribution.
+        adjoint = tropus({group.group_id: v}, prepared)
+        np.testing.assert_allclose(adjoint, kernel.T @ v, rtol=1e-12, atol=1e-12)
+
+
 def test_pulse_correction_recovers_flat_amplitude() -> None:
     """The headline Phase-2 target: on pulsed data with equal-amplitude lines at
     1 and 7 MHz, the recovered spectral weight rolls off with frequency when the

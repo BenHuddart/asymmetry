@@ -4871,16 +4871,22 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Compute and cache the per-group time-domain reconstruction overlay.
 
-        The forward model is rebuilt from the same run+config the worker used,
-        so the reconstruction is self-consistent with the displayed spectrum and
-        its summed χ² equals the engine's.  Failures here never block the run —
-        the overlay is a diagnostic, not the result.
+        The worker threads the exact prepared input it iterated through on the
+        result, so the overlay reuses those grouped signals/kernel directly
+        (deadtime prep, per-group dataset build, t0 search and normalisation are
+        not redone on the GUI thread).  Its summed χ² then equals the engine's
+        by identity.  Only if that input is unavailable (e.g. a result restored
+        without it) do we rebuild from the same run+config — still deterministic,
+        so the χ²-equals-engine invariant holds either way.  Failures here never
+        block the run — the overlay is a diagnostic, not the result.
         """
         run = self._maxent_active_run
         if run is None:
             return
         try:
-            maxent_input = build_maxent_input(run, config)
+            maxent_input = getattr(result, "maxent_input", None)
+            if maxent_input is None:
+                maxent_input = build_maxent_input(run, config)
             reconstructions = reconstruct_group_signals(maxent_input, result.state)
             datasets = build_maxent_reconstruction_datasets(reconstructions, run)
         except Exception:  # noqa: BLE001 — overlay is best-effort, never fatal

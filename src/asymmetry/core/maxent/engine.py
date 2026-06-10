@@ -447,6 +447,12 @@ class MaxEntResult:
     stop_reason: str = "max_cycles"
     converged: bool = False
     diverged: bool = False
+    # The prepared input the cycles iterated.  Carried so callers (the GUI
+    # reconstruction overlay) can reuse the exact grouped signals/kernel the
+    # engine fitted instead of rebuilding them — the reconstruction's χ² then
+    # equals the engine's by identity, not just by deterministic rebuild.  Not
+    # serialised (the project persists recipes, not prepared arrays).
+    maxent_input: MaxEntInput | None = None
 
     @property
     def early_stopped(self) -> bool:
@@ -782,6 +788,23 @@ def _kernel_phase_offset(
     return phase if pulse_phase is None else phase - pulse_phase[np.newaxis, :]
 
 
+def _apply_pulse_amp(
+    vector: NDArray[np.float64],
+    pulse_amp: NDArray[np.float64] | None,
+) -> NDArray[np.float64]:
+    """Scale a per-frequency vector by the pulse amplitude ``R(ν)`` (identity if None).
+
+    The pulse amplitude column-scales the kernel ``M·diag(R)``.  Rather than
+    materialise that scaled matrix per chunk, the forward map folds ``R`` into
+    the spectrum it multiplies (``M @ (R⊙f)``) and the adjoint folds it into the
+    accumulated result (``R ⊙ (Mᵀ@v)``).  Both equal the column-scaled operator
+    and its exact transpose, so the OPUS/TROPUS adjoint property is preserved
+    bit-for-bit in the matrix ``M`` — only the cheap O(n_freq) scaling moves out
+    of the hot ``n_time × n_freq`` block.
+    """
+    return vector if pulse_amp is None else vector * pulse_amp
+
+
 def _project_forward(
     time_us: NDArray[np.float64],
     frequencies_mhz: NDArray[np.float64],
@@ -800,7 +823,9 @@ def _project_forward(
     """
     time = np.asarray(time_us, dtype=np.float64)
     frequencies = np.asarray(frequencies_mhz, dtype=np.float64)
-    f = np.asarray(spectrum, dtype=np.float64)
+    # Fold the pulse amplitude R(ν) into the spectrum once: M @ (R⊙f) equals the
+    # column-scaled kernel (M·diag(R)) @ f without allocating the scaled block.
+    f = _apply_pulse_amp(np.asarray(spectrum, dtype=np.float64), pulse_amp)
     phase = np.deg2rad(float(phase_degrees))
     offset = _kernel_phase_offset(phase, pulse_phase)
     output = np.empty(time.size, dtype=np.float64)
@@ -810,8 +835,6 @@ def _project_forward(
         matrix = np.cos(
             2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + offset
         )
-        if pulse_amp is not None:
-            matrix = matrix * pulse_amp[np.newaxis, :]
         output[start:stop] = matrix @ f
     return output
 
@@ -833,7 +856,9 @@ def _project_forward_components(
     """
     time = np.asarray(time_us, dtype=np.float64)
     frequencies = np.asarray(frequencies_mhz, dtype=np.float64)
-    f = np.asarray(spectrum, dtype=np.float64)
+    # Fold R(ν) into the spectrum once (see :func:`_apply_pulse_amp`); both the
+    # cosine and sine projections then carry the pulse shaping via this scaling.
+    f = _apply_pulse_amp(np.asarray(spectrum, dtype=np.float64), pulse_amp)
     offset = _kernel_phase_offset(0.0, pulse_phase)
     cos_output = np.empty(time.size, dtype=np.float64)
     sin_output = np.empty(time.size, dtype=np.float64)
@@ -841,13 +866,8 @@ def _project_forward_components(
     for start in range(0, time.size, chunk):
         stop = min(start + chunk, time.size)
         angle = 2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + offset
-        cos_kernel = np.cos(angle)
-        sin_kernel = np.sin(angle)
-        if pulse_amp is not None:
-            cos_kernel = cos_kernel * pulse_amp[np.newaxis, :]
-            sin_kernel = sin_kernel * pulse_amp[np.newaxis, :]
-        cos_output[start:stop] = cos_kernel @ f
-        sin_output[start:stop] = sin_kernel @ f
+        cos_output[start:stop] = np.cos(angle) @ f
+        sin_output[start:stop] = np.sin(angle) @ f
     return cos_output, sin_output
 
 
@@ -877,10 +897,10 @@ def _project_adjoint(
         matrix = np.cos(
             2.0 * np.pi * time[start:stop, np.newaxis] * frequencies[np.newaxis, :] + offset
         )
-        if pulse_amp is not None:
-            matrix = matrix * pulse_amp[np.newaxis, :]
         output += matrix.T @ v[start:stop]
-    return output
+    # Weight the accumulated adjoint by R(ν) once: R ⊙ (Mᵀ@v) is the exact
+    # transpose of the column-scaled forward map M @ (R⊙f).
+    return _apply_pulse_amp(output, pulse_amp)
 
 
 def opus(
@@ -1136,7 +1156,11 @@ def _residual_gradient_payload(
     frequencies = maxent_input.frequencies_mhz
     pulse_amp = maxent_input.pulse_amp
     pulse_phase = maxent_input.pulse_phase
-    f = np.asarray(state.spectrum, dtype=np.float64)
+    # Fold R(ν) into the spectrum once for every group's forward projection; the
+    # adjoint gradient gets it back once at the end (R is common to all groups,
+    # so it factors straight out of the group sum).  Net: no scaled kernel block
+    # is materialised in the chunk loop.
+    f = _apply_pulse_amp(np.asarray(state.spectrum, dtype=np.float64), pulse_amp)
     grad = np.zeros(frequencies.size, dtype=np.float64)
     chi2 = 0.0
     n_obs = 0
@@ -1160,14 +1184,12 @@ def _residual_gradient_payload(
                 2.0 * np.pi * time[start:stop][rows, np.newaxis] * frequencies[np.newaxis, :]
                 + offset
             )
-            if pulse_amp is not None:
-                matrix = matrix * pulse_amp[np.newaxis, :]
             pred = amplitude * (matrix @ f) + background
             residual = (signal[start:stop][rows] - pred) / sigma[start:stop][rows]
             chi2 += float(np.dot(residual, residual))
             n_obs += int(np.count_nonzero(rows))
             grad += amplitude * (matrix.T @ (residual / sigma[start:stop][rows]))
-    return grad, chi2, n_obs
+    return _apply_pulse_amp(grad, pulse_amp), chi2, n_obs
 
 
 def _check_cancel(cancel_callback: MaxEntCancelCallback | None) -> None:
@@ -1471,6 +1493,7 @@ def run_cycles(
         stop_reason=stop_reason,
         converged=converged,
         diverged=diverged,
+        maxent_input=maxent_input,
     )
 
 
