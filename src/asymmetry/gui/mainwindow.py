@@ -6579,14 +6579,10 @@ class MainWindow(QMainWindow):
         trend_axis = "field" if x_key == "temperature" else "temperature"
         other_axis = "temperature" if trend_axis == "field" else "field"
 
-        def _json_coord(value: float) -> float | None:
-            # Persisted via json.dumps (allow_nan would emit a non-standard NaN
-            # token); store ``None`` (JSON null) for a non-finite coordinate.
-            v = float(value)
-            return v if np.isfinite(v) else None
-
         def _coordinate_fields(coord: float) -> dict[str, float | None]:
-            return {trend_axis: _json_coord(coord), other_axis: 0.0}
+            # _safe_float stores a non-finite coordinate as None (JSON null);
+            # allow_nan=False would otherwise reject the persisted series.
+            return {trend_axis: _safe_float(coord), other_axis: 0.0}
 
         base_key = -1_000_000_000
         member_run_numbers: list[int] = []
@@ -6648,12 +6644,13 @@ class MainWindow(QMainWindow):
 
         # Item D — accumulate this fit's shared globals into a singleton
         # "Global summary" series so the globals can themselves be trended across
-        # successive cross-group fits.
+        # successive cross-group fits. Reuse the per-fit digest so the
+        # accumulator row stays co-keyed with this fit's series.
         self._accumulate_global_summary_row(
             rep_type=rep_type,
             parameter_name=parameter_name,
             x_key=x_key,
-            logical_key=logical_key,
+            digest=digest,
             global_vals=global_vals,
             global_unc=global_unc,
             fit_result=fit_result,
@@ -6666,7 +6663,7 @@ class MainWindow(QMainWindow):
         rep_type: object,
         parameter_name: str,
         x_key: str,
-        logical_key: str,
+        digest: str,
         global_vals: dict,
         global_unc: dict,
         fit_result: object,
@@ -6674,23 +6671,24 @@ class MainWindow(QMainWindow):
         """Upsert one row for this fit into the per-representation accumulator.
 
         A dedicated, persistent ``Global summary`` series collects one member per
-        *distinct* cross-group fit (keyed by the same logical key as the per-fit
-        results series, so re-running a fit updates its single row rather than
-        appending a duplicate). Each row carries that fit's shared global
-        parameters, χ²ᵣ, and a monotonic first-seen ``fit_index``; the globals
-        are then trendable across fits (pick ``fit_index`` or another global as
-        the x-axis via arbitrary-X). The rows sit off both physical axes
-        (field/temperature → NaN) so they never pollute a real group-variable
-        trend.
+        *distinct* cross-group fit (keyed by the per-fit ``digest`` — the same
+        one that names the fit's results series — so re-running a fit updates its
+        single row rather than appending a duplicate). Each row carries that
+        fit's shared global parameters, χ²ᵣ, and a monotonic first-seen
+        ``fit_index``; the globals are then trendable across fits (pick
+        ``fit_index`` or another global as the x-axis via arbitrary-X). The rows
+        sit off both physical axes (field/temperature → NaN) so they never
+        pollute a real group-variable trend.
         """
         accum_id = f"modelfit-globals-{rep_type.value}"
         existing = self._project_model.batches.get(accum_id)
 
-        # Deterministic, stable member key from the fit's logical key (negative
-        # so it never collides with a real run; reproducible across save/reload
-        # so re-running the same fit overwrites its row).
-        digest = hashlib.sha1(logical_key.encode("utf-8")).hexdigest()[:12]
-        member_key = -(1_000_000 + (int(digest, 16) % 1_000_000))
+        # Deterministic, stable member key from the fit's full digest (negative so
+        # it never collides with a real run; reproducible across save/reload so
+        # re-running the same fit overwrites its row). Use the whole digest — not
+        # a small modulus — so two distinct fits cannot alias onto one row while
+        # their per-fit series (keyed by the full digest) stay distinct.
+        member_key = -(1_000_000 + int(digest, 16))
 
         member_run_numbers = list(existing.member_run_numbers) if existing is not None else []
         results_by_run = dict(existing.results_by_run) if existing is not None else {}

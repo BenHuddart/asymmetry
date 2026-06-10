@@ -951,9 +951,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
 _ALLOWED_OPERATORS: frozenset[str] = frozenset({"+", "-", "*", "/"})
 #: Quadrature-sum operator ``f ⊕ g = √(f² + g²)``. It is *not* part of the
 #: time-domain composite grammar (only the parameter-vs-x grammar enables it via
-#: ``parse_component_expression(..., allowed_operators=...)``); the tokenizer
-#: recognises the glyph so an accidental use in a time-domain expression fails
-#: with a clear "unexpected operator" rather than a confusing parse.
+#: ``parse_component_expression(..., allowed_operators=...)``). The tokenizer
+#: recognises the glyph as a single token so a time-domain expression using it
+#: fails the parse cleanly (an "unexpected operator" where an operator is
+#: expected, or an unknown-component error where an operand is expected) rather
+#: than a confusing character-level tokenise failure.
 QUADRATURE_OPERATOR = "⊕"
 _UNIT_AMPLITUDE_SENTINEL = "__UNIT_AMPLITUDE__"
 _FRACTION_GROUP_DECORATOR = "frac"

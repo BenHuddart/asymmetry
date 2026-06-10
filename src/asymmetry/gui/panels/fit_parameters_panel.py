@@ -1714,8 +1714,12 @@ class FitParametersPanel(QWidget):
             return "run"
         fields = np.array([r.field for r in rows], dtype=float)
         temps = np.array([r.temperature for r in rows], dtype=float)
-        field_unique = len(np.unique(np.round(fields, 9)))
-        temp_unique = len(np.unique(np.round(temps, 9)))
+        # Count distinct values over finite coordinates only: a computed series
+        # can mix real-axis rows with off-axis ones (NaN — e.g. the cross-group
+        # 'globals' row or the Global summary series), and a phantom NaN bucket
+        # would otherwise inflate the unique count and mis-infer the axis.
+        field_unique = len(np.unique(np.round(fields[np.isfinite(fields)], 9)))
+        temp_unique = len(np.unique(np.round(temps[np.isfinite(temps)], 9)))
 
         def _finite_span(arr: np.ndarray) -> float:
             # A computed series can sit entirely off an axis (every coordinate
