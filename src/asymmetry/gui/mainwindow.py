@@ -6893,8 +6893,46 @@ class MainWindow(QMainWindow):
                 path += ".asymp"
             self._write_project(path)
 
+    def _unsaved_synthetic_run_labels(self) -> list[str]:
+        """Labels of synthetic/degraded runs with no backing file.
+
+        Synthetic and degraded runs live only in memory until saved as NeXus
+        (study decision 2: projects reference data files, not histograms), so a
+        project that references one cannot re-load it. These are the runs whose
+        ``run.source_file`` is empty.
+        """
+        labels: list[str] = []
+        for dataset in self._data_browser.all_datasets():
+            run = getattr(dataset, "run", None)
+            if run is None:
+                continue
+            is_derived = bool(run.metadata.get("synthetic")) or bool(run.metadata.get("degraded"))
+            if is_derived and not run.source_file:
+                labels.append(str(getattr(dataset, "run_label", run.run_number)))
+        return labels
+
+    def _confirm_save_with_unsaved_synthetic_runs(self) -> bool:
+        """Warn if the project references unsaved synthetic runs; return proceed."""
+        labels = self._unsaved_synthetic_run_labels()
+        if not labels:
+            return True
+        listed = ", ".join(labels)
+        answer = QMessageBox.warning(
+            self,
+            "Unsaved synthetic runs",
+            "This project contains synthetic or degraded runs that have not been "
+            f"saved to a file and will not reload with the project: {listed}.\n\n"
+            "Use Save as NeXus… on each from the Data Browser first to keep them. "
+            "Save the project anyway?",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        return answer == QMessageBox.StandardButton.Save
+
     def _write_project(self, path: str) -> None:
         """Collect state and write to *path*, updating recent projects."""
+        if not self._confirm_save_with_unsaved_synthetic_runs():
+            return
         try:
             state = self.collect_project_state()
             save_project(state, path)
