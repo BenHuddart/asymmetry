@@ -7193,6 +7193,33 @@ class MainWindow(QMainWindow):
                         continue
                 if dataset is None and len(candidates) == 1:
                     dataset = candidates[0]
+
+                # A period-mapped dataset is saved as {run_number: combined N,
+                # source_file: the multi-period file}, but a 3+-period file
+                # reloads as per-period siblings numbered by the loader's own
+                # scheme — none match N, so the entry was being silently
+                # dropped. Rebuild the combined dataset from the persisted
+                # period_mapping (combine_mapped_periods reproduces exactly what
+                # "Map periods…" built originally).
+                if dataset is None:
+                    overrides = ds_info.get("grouping_overrides")
+                    persisted_mapping = (
+                        overrides.get("period_mapping") if isinstance(overrides, dict) else None
+                    )
+                    period_candidates = [cand for cand in candidates if cand is not None]
+                    if persisted_mapping and len(period_candidates) >= 2:
+                        try:
+                            dataset = combine_mapped_periods(
+                                period_candidates,
+                                persisted_mapping,
+                                source_run_number=int(rn),
+                                source_file=resolved,
+                            )
+                        except (ValueError, TypeError) as exc:
+                            self._log_panel.log(
+                                f"WARNING: Run {rn} period mapping could not be rebuilt: {exc}"
+                            )
+
                 if dataset is None:
                     self._log_panel.log(
                         f"WARNING: Run {rn} not found in loaded file {source_file}; skipping."

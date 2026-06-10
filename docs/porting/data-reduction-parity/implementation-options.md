@@ -394,12 +394,20 @@ named.
 - Umbrella docs correction: the "EMU LF series" in
   `wimda-parity-gap/test-data.md` is HIFI 118222–118240 (fix the umbrella
   table when this project merges).
-- (Phase 3 implementation note) For 3+-period files the loader still
+- **DONE** — (Phase 3 implementation note) For 3+-period files the loader
   returns one dataset per period; **Map periods…** builds a new combined
   dataset from those siblings via `combine_mapped_periods` and records
-  `period_mapping` in its grouping. Re-deriving the mapped dataset when a
-  project is reloaded is a follow-on (the mapping persists, the combined
-  dataset is rebuilt by re-running Map periods).
+  `period_mapping` in its grouping. Project reload now **rebuilds** the mapped
+  dataset automatically: `MainWindow.restore_project_state` detects a persisted
+  `period_mapping` on a multi-period source whose combined run number matches
+  no per-period sibling and rebuilds via `combine_mapped_periods` (previously
+  the entry was silently dropped). The duplicate combined-dataset assembly is
+  also unified — `nexus._combine_two_period_datasets` now delegates to
+  `combine_mapped_periods` with the trivial `{1: red, 2: green}` mapping (then
+  re-caches `period_reduced` for `select_period`), so the two- and N-period
+  combinations are one code path. The loader's two-period output gains only the
+  additive `period_mapping` provenance key; the bit-for-bit period tests +
+  photo-µSR corpus test confirm parity.
 - **DONE** — Reference-run resolution moved into core. The matching +
   loader-fallback + frame-scale logic that lived only in
   `MainWindow._resolve_background_reference` is now

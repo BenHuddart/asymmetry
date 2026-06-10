@@ -1396,6 +1396,95 @@ class TestMainWindowProjectState:
         assert window2._plot_panel._y_min.value() == pytest.approx(20.0)
         assert window2._plot_panel._y_max.value() == pytest.approx(45.0)
 
+    def test_period_mapped_dataset_survives_reload(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
+    ) -> None:
+        """A 3+-period mapped dataset reloads even though the file's per-period
+        siblings are numbered by the loader's scheme and never match the saved
+        combined run number — the persisted period_mapping rebuilds it."""
+        from asymmetry.core.data.dataset import Run
+        from asymmetry.core.io.periods import combine_mapped_periods
+
+        source_file = tmp_path / "multiperiod.nxs"
+        source_file.write_bytes(b"\x00")
+
+        def _period_dataset(run_number: int, level: float) -> MuonDataset:
+            h0 = Histogram(counts=np.full(4, level), bin_width=1.0)
+            h1 = Histogram(counts=np.full(4, level + 1.0), bin_width=1.0)
+            run = Run(
+                run_number=run_number,
+                histograms=[h0, h1],
+                source_file=str(source_file),
+                grouping={
+                    "groups": {1: [1], 2: [2]},
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "alpha": 1.0,
+                    "first_good_bin": 0,
+                    "last_good_bin": 3,
+                    "bunching_factor": 1,
+                    "deadtime_correction": False,
+                    "good_frames": 1000.0,
+                },
+                metadata={"source_run_number": 900},
+            )
+            t = np.array([0.0, 1.0, 2.0, 3.0], dtype=float)
+            return MuonDataset(
+                time=t,
+                asymmetry=np.zeros_like(t),
+                error=np.ones_like(t),
+                metadata={"source_run_number": 900},
+                run=run,
+            )
+
+        def _periods() -> list[MuonDataset]:
+            return [
+                _period_dataset(9001, 10.0),
+                _period_dataset(9002, 20.0),
+                _period_dataset(9003, 30.0),
+                _period_dataset(9004, 40.0),
+            ]
+
+        mapping = {1: "red", 2: "red", 3: "green", 4: "ignore"}
+        mapped = combine_mapped_periods(
+            _periods(), mapping, source_run_number=900, source_file=str(source_file)
+        )
+
+        window1 = mw_module.MainWindow()
+        if not getattr(window1._plot_panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        window1._data_browser.add_dataset(mapped)
+        state = window1.collect_project_state()
+        path = tmp_path / "mapped.asymp"
+        save_project(state, path)
+        loaded_state = load_project(path)
+
+        # The reloaded file yields the per-period siblings, not the combined run.
+        def _stub_load_file(self_inner, path_str: str):
+            return _periods()
+
+        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+        window2 = mw_module.MainWindow()
+        if not getattr(window2._plot_panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        window2.restore_project_state(loaded_state, str(path))
+
+        restored = window2._data_browser.get_dataset(900)
+        assert restored is not None, "mapped dataset was dropped on reload"
+        assert restored.run is not None
+        # period_mapping persisted and the combined structure was rebuilt.
+        assert restored.run.grouping.get("period_mapping") == {
+            "1": "red",
+            "2": "red",
+            "3": "green",
+            "4": "ignore",
+        }
+        # Red set sums periods 1+2 detector-wise: group 1 forward = 10 + 20 = 30.
+        from asymmetry.core.transform import group_forward_backward
+
+        fb = group_forward_backward(restored.run.histograms, restored.run.grouping)
+        np.testing.assert_array_equal(fb.forward, np.full(4, 30.0))
+
     def test_project_round_trip_restores_nexus_grouping_bunching(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
     ) -> None:
