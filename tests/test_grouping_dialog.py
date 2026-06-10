@@ -245,7 +245,8 @@ def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:
     dataset.run.grouping["dead_time_us"] = [0.01, 0.01]
     dialog = GroupingDialog([dataset])
     dialog._deadtime_checkbox.setChecked(True)
-    dialog._background_checkbox.setChecked(True)
+    idx = dialog._background_mode_combo.findData("range")
+    dialog._background_mode_combo.setCurrentIndex(idx)
     dialog._bunch_spin.setValue(1234)
     result = dialog.get_grouping_result()
     assert result is not None
@@ -256,6 +257,7 @@ def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:
     assert result["included_groups"] == {1: True, 2: True}
     assert result["deadtime_correction"] is True
     assert result["background_correction"] is True
+    assert result["background_mode"] == "range"
     assert result["bunching_factor"] == 1234
 
 
@@ -386,11 +388,18 @@ def test_calibrate_deadtime_populates_explicit_table(
     assert dialog._deadtime_value_combo.itemText(0) == "H1: 11.000 ns"
 
 
-def test_background_checkbox_disabled_for_non_psi_data(qapp: QApplication) -> None:
+def test_background_range_mode_disabled_for_non_psi_data(qapp: QApplication) -> None:
     dialog = GroupingDialog([_dataset_with_histograms()])
 
-    assert not dialog._background_checkbox.isEnabled()
+    idx = dialog._background_mode_combo.findData("range")
+    item = dialog._background_mode_combo.model().item(idx)
+    assert item is not None and not item.isEnabled()
+    # Tail fit and background-run modes stay available on pulsed data.
+    for mode in ("tail_fit", "reference_run"):
+        idx = dialog._background_mode_combo.findData(mode)
+        assert dialog._background_mode_combo.model().item(idx).isEnabled()
     assert dialog._current_grouping_payload()["background_correction"] is False
+    assert dialog._current_grouping_payload()["background_mode"] == "none"
 
 
 def test_vector_mode_shows_per_axis_alpha_controls(qapp: QApplication) -> None:
@@ -1013,3 +1022,250 @@ def test_group_table_uses_scrollable_capped_height(qapp: QApplication) -> None:
 
     assert dialog._group_table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
     assert dialog._group_table.maximumHeight() > 0
+
+
+# ---------------------------------------------------------------------------
+# Alpha estimation method picker + provenance (data-reduction-parity Phase 1)
+# ---------------------------------------------------------------------------
+
+
+def test_alpha_method_combo_defaults_to_diamagnetic(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    assert dialog._current_alpha_method() == "diamagnetic"
+    result = dialog.get_grouping_result()
+    assert result["alpha_method"] == "diamagnetic"
+
+
+def test_alpha_method_round_trips_through_payload_and_reload(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    dialog = GroupingDialog([dataset])
+    dialog._set_alpha_method("ratio")
+    result = dialog.get_grouping_result()
+    assert result["alpha_method"] == "ratio"
+
+    dataset.run.grouping["alpha_method"] = "general"
+    dialog2 = GroupingDialog([dataset])
+    assert dialog2._current_alpha_method() == "general"
+
+
+def test_estimate_records_provenance_in_payload(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog._estimate_alpha()
+    assert dialog._alpha_spin.value() == pytest.approx(2.0)
+    assert dialog._alpha_result_label.text() != ""
+    result = dialog.get_grouping_result()
+    assert result["alpha_method"] == "diamagnetic"
+    assert result["alpha_reference_run"] == 4001
+    # Bootstrap error from flat 100/50 counts is small but present.
+    assert result.get("alpha_error") is None or result["alpha_error"] >= 0.0
+
+
+def test_manual_alpha_edit_invalidates_estimate_provenance(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog._estimate_alpha()
+    dialog._alpha_spin.setValue(dialog._alpha_spin.value() + 0.5)
+    result = dialog.get_grouping_result()
+    assert "alpha_error" not in result
+    assert "alpha_reference_run" not in result
+    assert result["alpha_method"] == "diamagnetic"
+
+
+def test_estimate_failure_warns_and_leaves_alpha(qapp: QApplication, monkeypatch) -> None:
+    dataset = _dataset_with_histograms()
+    dialog = GroupingDialog([dataset])
+    dialog._set_alpha_method("general")  # flat 4-bin data: no relaxation contrast
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        grouping_dialog_module.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: warnings.append(str(args[2]) if len(args) > 2 else ""),
+    )
+    before = dialog._alpha_spin.value()
+    dialog._estimate_alpha()
+    assert warnings, "expected a warning dialog for the failed estimate"
+    assert dialog._alpha_spin.value() == pytest.approx(before)
+
+
+def test_format_value_with_uncertainty() -> None:
+    fmt = grouping_dialog_module._format_value_with_uncertainty
+    assert fmt(1.2345, 0.0067) == "1.2345(67)"
+    assert fmt(1.37, None) == "1.3700"
+    assert fmt(0.9876, 0.05) == "0.988(50)"
+    assert fmt(1.3, 0.0995) == "1.30(10)"
+
+
+def test_tail_fit_mode_shows_preview_status(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    # Long histograms so the tail fit has a usable window.
+    rng = np.random.default_rng(0)
+    counts = rng.poisson(np.full(400, 50.0)).astype(float)
+    dataset.run.histograms = [
+        Histogram(counts=counts, bin_width=0.016),
+        Histogram(counts=counts * 0.8, bin_width=0.016),
+    ]
+    dataset.run.grouping["last_good_bin"] = 399
+    dialog = GroupingDialog([dataset])
+    idx = dialog._background_mode_combo.findData("tail_fit")
+    dialog._background_mode_combo.setCurrentIndex(idx)
+    assert "Tail-fit background" in dialog._background_status_label.text()
+    result = dialog.get_grouping_result()
+    assert result["background_mode"] == "tail_fit"
+    assert result["background_correction"] is True
+
+
+def test_background_run_payload_round_trips(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    dataset.run.grouping["background_correction"] = True
+    dataset.run.grouping["background_mode"] = "reference_run"
+    dataset.run.grouping["background_run"] = {"run_number": 9001, "source_file": "/tmp/x.nxs"}
+    dialog = GroupingDialog([dataset])
+    assert dialog._current_background_mode() == "reference_run"
+    result = dialog.get_grouping_result()
+    assert result["background_run"]["run_number"] == 9001
+    assert "9001" in dialog._background_status_label.text()
+
+
+# ---------------------------------------------------------------------------
+# Binning modes, Find t0, detector exclusion (data-reduction-parity Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def test_binning_mode_round_trips_through_payload(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    dialog = GroupingDialog([dataset])
+    assert dialog._current_binning_mode() == "fixed"
+    assert "binning_mode" not in dialog.get_grouping_result()
+
+    dialog._set_binning_mode("variable")
+    dialog._bin0_spin.setValue(0.1)
+    dialog._bin10_spin.setValue(0.5)
+    result = dialog.get_grouping_result()
+    assert result["binning_mode"] == "variable"
+    assert result["bin0_us"] == pytest.approx(0.1)
+    assert result["bin10_us"] == pytest.approx(0.5)
+    assert not dialog._bunch_spin.isEnabled()
+
+    dataset.run.grouping.update(result)
+    dialog2 = GroupingDialog([dataset])
+    assert dialog2._current_binning_mode() == "variable"
+    assert dialog2._bin0_spin.value() == pytest.approx(0.1)
+
+
+def test_constant_error_mode_hides_bin10(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog._set_binning_mode("constant_error")
+    result = dialog.get_grouping_result()
+    assert result["binning_mode"] == "constant_error"
+    assert "bin10_us" not in result
+    assert not dialog._bin10_spin.isEnabled()
+
+
+def test_find_t0_fills_spinner_without_applying(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    rng = np.random.default_rng(0)
+    counts = np.full(200, 5.0)
+    counts[37] = 5000.0
+    counts[38:] = 100.0
+    dataset.run.histograms = [
+        Histogram(counts=rng.poisson(counts).astype(float), bin_width=0.00125),
+        Histogram(counts=rng.poisson(counts).astype(float), bin_width=0.00125),
+    ]
+    dataset.run.metadata["facility"] = "PSI"
+    dataset.metadata["facility"] = "PSI"
+    dataset.run.grouping["last_good_bin"] = 199
+    dialog = GroupingDialog([dataset])
+    dialog._on_find_t0()
+    assert dialog._t0_spin.value() == 37 + dialog._bin_index_base()
+    assert "t0" in dialog._alpha_result_label.text()
+
+
+def test_exclusion_field_round_trips_and_validates(qapp: QApplication, monkeypatch) -> None:
+    dataset = _dataset_with_histograms()
+    dataset.run.grouping["groups"] = {1: [1, 2], 2: [3, 4]}
+    dataset.run.histograms = [Histogram(counts=np.full(4, 100.0), bin_width=0.01) for _ in range(4)]
+    dialog = GroupingDialog([dataset])
+    dialog._exclude_edit.setText("2")
+    result = dialog.get_grouping_result()
+    assert result["excluded_detectors"] == [2]
+
+    dialog._exclude_edit.setText("")
+    # The key is always present: an empty list explicitly clears exclusions
+    # (a missing key would leave the apply path falling back to stale state).
+    assert dialog.get_grouping_result()["excluded_detectors"] == []
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        grouping_dialog_module.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: warnings.append(str(args[2]) if len(args) > 2 else ""),
+    )
+    dialog._exclude_edit.setText("nonsense")
+    assert dialog._current_excluded_detectors() is None
+    assert warnings
+
+
+def test_apply_blocks_when_exclusion_empties_a_group(qapp: QApplication, monkeypatch) -> None:
+    dataset = _dataset_with_histograms()
+    dialog = GroupingDialog([dataset])
+    dialog._exclude_edit.setText("1")  # forward group is exactly detector 1
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        grouping_dialog_module.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: warnings.append(str(args[2]) if len(args) > 2 else ""),
+    )
+    dialog._on_apply()
+    assert any("no detectors left" in w for w in warnings)
+
+
+def test_estimate_alpha_respects_detector_exclusion(qapp: QApplication) -> None:
+    """Review fix: the estimate is computed on the same detector set the
+    reduction will use."""
+    dataset = _dataset_with_histograms()
+    dataset.run.histograms = [
+        Histogram(counts=np.full(4, 100.0), bin_width=0.01),  # det 1 (forward)
+        Histogram(counts=np.full(4, 900.0), bin_width=0.01),  # det 2 (forward, hot)
+        Histogram(counts=np.full(4, 50.0), bin_width=0.01),  # det 3 (backward)
+        Histogram(counts=np.full(4, 50.0), bin_width=0.01),  # det 4 (backward)
+    ]
+    dataset.run.grouping["groups"] = {1: [1, 2], 2: [3, 4]}
+    dialog = GroupingDialog([dataset])
+    dialog._set_alpha_method("ratio")
+
+    dialog._estimate_alpha()
+    with_hot = dialog._alpha_spin.value()
+    dialog._exclude_edit.setText("2")
+    dialog._estimate_alpha()
+    without_hot = dialog._alpha_spin.value()
+
+    assert with_hot == pytest.approx(1000.0 / 100.0)
+    assert without_hot == pytest.approx(100.0 / 100.0)
+
+
+def test_find_t0_skips_excluded_detectors(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    good = np.full(200, 5.0)
+    good[40] = 5000.0
+    bad = np.full(200, 5.0)
+    bad[120] = 5000.0  # excluded detector with a bogus peak
+    dataset.run.histograms = [
+        Histogram(counts=good.copy(), bin_width=0.00125),
+        Histogram(counts=bad.copy(), bin_width=0.00125),
+        Histogram(counts=good.copy(), bin_width=0.00125),
+    ]
+    dataset.run.metadata["facility"] = "PSI"
+    dataset.metadata["facility"] = "PSI"
+    dataset.run.grouping["groups"] = {1: [1, 2], 2: [3]}
+    dataset.run.grouping["last_good_bin"] = 199
+    dialog = GroupingDialog([dataset])
+    dialog._exclude_edit.setText("2")
+    dialog._on_find_t0()
+    assert dialog._t0_spin.value() == 40 + dialog._bin_index_base()
+
+
+def test_format_value_with_uncertainty_large_errors() -> None:
+    """Review fix: uncertainties >= ~100 must not crash the formatter."""
+    fmt = grouping_dialog_module._format_value_with_uncertainty
+    assert fmt(1.2345, 150.0) == "1(150)"
+    assert fmt(1.2, 99.6) == "1(100)"
+    assert fmt(2.4, 1234.0) == "2(1234)"

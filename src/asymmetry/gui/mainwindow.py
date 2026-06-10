@@ -65,6 +65,7 @@ from asymmetry.core.fourier import (
     fourier_mode_uses_phase_correction,
 )
 from asymmetry.core.io.periods import (
+    combine_mapped_periods,
     combine_period_asymmetry,
     select_period_histograms,
 )
@@ -93,17 +94,20 @@ from asymmetry.core.transform import (
     apply_deadtime_correction,
     apply_grouped_background_correction,
     apply_grouping_aligned,
+    available_background_modes,
     build_field_scan,
     common_t0_for_groups,
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
     differentiate_scan,
+    filter_excluded_indices,
     has_file_deadtime,
     has_resolved_deadtime,
     prepare_histograms_with_deadtime,
+    resolve_background_mode,
     supports_background_correction,
 )
-from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -286,6 +290,35 @@ def _coerce_bool(value: object, default: bool = False) -> bool:
     if value is None:
         return default
     return bool(value)
+
+
+#: Grouping keys synced verbatim between dialog payloads and run.grouping:
+#: present in the payload → copied, absent → removed. One list feeds the
+#: apply paths AND the project-persistence extractor, so a new reduction
+#: setting cannot be persisted on one path and silently erased on another.
+ALPHA_PROVENANCE_KEYS = ("alpha_method", "alpha_error", "alpha_reference_run")
+REDUCTION_SETTING_KEYS = (
+    "background_mode",
+    "background_run",
+    "excluded_detectors",
+    "binning_mode",
+    "bin0_us",
+    "bin10_us",
+)
+DEADTIME_SETTING_KEYS = (
+    "deadtime_manual_us",
+    "deadtime_estimated_us",
+    "deadtime_reference_run",
+)
+
+
+def _sync_grouping_keys(grouping: dict, payload: dict, keys: tuple[str, ...]) -> None:
+    """Copy each key from payload into grouping, removing it when absent."""
+    for key in keys:
+        if key in payload:
+            grouping[key] = payload.get(key)
+        else:
+            grouping.pop(key, None)
 
 
 class MainWindow(QMainWindow):
@@ -2295,6 +2328,8 @@ class MainWindow(QMainWindow):
                 if isinstance(grouping, dict) and grouping.get("background_method") in {
                     "estimated",
                     "fixed",
+                    "tail_fit",
+                    "reference_run",
                 }:
                     background_applied += 1
                 else:
@@ -2305,6 +2340,10 @@ class MainWindow(QMainWindow):
             if first_updated_dataset is None:
                 first_updated_dataset = dataset
             updated += 1
+
+        mapping_request = getattr(dialog, "period_mapping_request", None)
+        if mapping_request:
+            self._create_period_mapped_dataset(mapping_request, grouping_result)
 
         rebuilt_combined_dataset = None
         if (
@@ -2550,6 +2589,9 @@ class MainWindow(QMainWindow):
         ):
             if isinstance(grouping.get(key), list):
                 payload[key] = list(grouping.get(key, []))
+        for key in REDUCTION_SETTING_KEYS + ALPHA_PROVENANCE_KEYS + ("period_mapping",):
+            if key in grouping:
+                payload[key] = copy.deepcopy(grouping.get(key))
         return payload
 
     def _normalize_group_entries(self, values) -> list[object]:
@@ -2685,8 +2727,15 @@ class MainWindow(QMainWindow):
 
         vector_alphas = self._resolve_vector_alpha_values(grouping_result, existing_grouping)
 
-        forward_idx = self._group_detector_indices(groups.get(forward_gid, []))
-        backward_idx = self._group_detector_indices(groups.get(backward_gid, []))
+        exclusion_source = (
+            grouping_result if "excluded_detectors" in grouping_result else existing_grouping
+        )
+        forward_idx = filter_excluded_indices(
+            self._group_detector_indices(groups.get(forward_gid, [])), exclusion_source
+        )
+        backward_idx = filter_excluded_indices(
+            self._group_detector_indices(groups.get(backward_gid, [])), exclusion_source
+        )
 
         if run.histograms:
             max_bin = len(run.histograms[0].counts) - 1
@@ -2771,9 +2820,13 @@ class MainWindow(QMainWindow):
         )
         if deadtime_mode == "load":
             deadtime_mode = "manual"
+        background_mode = resolve_background_mode(
+            grouping_result if "background_mode" in grouping_result else existing_grouping
+        )
         use_background = bool(
             grouping_result.get("background_correction", False)
-            and self._dataset_supports_background_correction(dataset)
+            and background_mode != "none"
+            and self._dataset_allows_background_mode(dataset, background_mode)
         )
 
         if not run.histograms:
@@ -2802,6 +2855,7 @@ class MainWindow(QMainWindow):
                 run.grouping["forward_group"] = forward_gid
                 run.grouping["backward_group"] = backward_gid
             run.grouping["alpha"] = float(alpha if alpha > 0 else 1.0)
+            _sync_grouping_keys(run.grouping, grouping_result, ALPHA_PROVENANCE_KEYS)
             if axis_pairs:
                 run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run.grouping["alpha"]))
                 run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run.grouping["alpha"]))
@@ -2820,15 +2874,7 @@ class MainWindow(QMainWindow):
                 run.grouping["deadtime_method"] = str(grouping_result.get("deadtime_method"))
             else:
                 run.grouping.pop("deadtime_method", None)
-            for key in (
-                "deadtime_manual_us",
-                "deadtime_estimated_us",
-                "deadtime_reference_run",
-            ):
-                if key in grouping_result:
-                    run.grouping[key] = grouping_result.get(key)
-                else:
-                    run.grouping.pop(key, None)
+            _sync_grouping_keys(run.grouping, grouping_result, DEADTIME_SETTING_KEYS)
             run.grouping.pop("deadtime_source_path", None)
             run.grouping.pop("deadtime_loaded_us", None)
             if deadtime_mode != "file":
@@ -2839,6 +2885,7 @@ class MainWindow(QMainWindow):
                         grouping_result.get("deadtime_loaded_us", [])
                     )
             run.grouping["background_correction"] = use_background
+            _sync_grouping_keys(run.grouping, grouping_result, REDUCTION_SETTING_KEYS)
             if not use_background:
                 run.grouping.pop("background_method", None)
                 run.grouping.pop("background_values", None)
@@ -2933,15 +2980,7 @@ class MainWindow(QMainWindow):
             run.grouping["deadtime_method"] = str(grouping_result.get("deadtime_method"))
         else:
             run.grouping.pop("deadtime_method", None)
-        for key in (
-            "deadtime_manual_us",
-            "deadtime_estimated_us",
-            "deadtime_reference_run",
-        ):
-            if key in grouping_result:
-                run.grouping[key] = grouping_result.get(key)
-            else:
-                run.grouping.pop(key, None)
+        _sync_grouping_keys(run.grouping, grouping_result, DEADTIME_SETTING_KEYS)
         run.grouping.pop("deadtime_source_path", None)
         run.grouping.pop("deadtime_loaded_us", None)
 
@@ -2964,6 +3003,7 @@ class MainWindow(QMainWindow):
         ):
             if key in grouping_result:
                 run.grouping[key] = grouping_result.get(key)
+        _sync_grouping_keys(run.grouping, grouping_result, REDUCTION_SETTING_KEYS)
 
         reduction_grouping = dict(run.grouping)
         reduction_grouping.update(
@@ -3117,26 +3157,58 @@ class MainWindow(QMainWindow):
                     [int(v) for v in ranges[0]],
                     [int(v) for v in ranges[1]],
                 ]
+            details = (
+                background_state.get("details") if isinstance(background_state, dict) else None
+            )
+            if isinstance(details, dict) and details:
+                run.grouping["background_details"] = dict(details)
+            else:
+                run.grouping.pop("background_details", None)
+            method = (
+                str(background_state.get("method", ""))
+                if isinstance(background_state, dict)
+                else ""
+            )
+            if method in {
+                "missing_reference",
+                "missing_fixed_values",
+                "tail_fit_failed",
+                "invalid_range",
+                "none",
+            }:
+                self.statusBar().showMessage(
+                    f"Background correction NOT applied to run {run.run_number} "
+                    f"({method.replace('_', ' ')}).",
+                    8000,
+                )
         else:
             run.grouping.pop("background_method", None)
             run.grouping.pop("background_values", None)
+            run.grouping.pop("background_details", None)
 
-        lo = max(0, first_good)
-        hi = min(len(asymmetry) - 1, last_good)
-        if lo <= hi:
-            time_out = time_axis[lo : hi + 1].copy()
-            asym_out = asymmetry[lo : hi + 1].copy()
-            err_out = error[lo : hi + 1].copy()
-            if bunch_factor > 1:
-                time_out, asym_out, err_out = rebin(
-                    time_out,
-                    asym_out,
-                    err_out,
-                    bunch_factor,
-                )
-            dataset.time = time_out
-            dataset.asymmetry = asym_out
-            dataset.error = err_out
+        reduction_binning_mode, _, _ = resolve_binning_mode(reduction_grouping)
+        if reduction_binning_mode != "fixed":
+            # binned_fb_asymmetry already applied the good window and bins.
+            dataset.time = time_axis.copy()
+            dataset.asymmetry = asymmetry.copy()
+            dataset.error = error.copy()
+        else:
+            lo = max(0, first_good)
+            hi = min(len(asymmetry) - 1, last_good)
+            if lo <= hi:
+                time_out = time_axis[lo : hi + 1].copy()
+                asym_out = asymmetry[lo : hi + 1].copy()
+                err_out = error[lo : hi + 1].copy()
+                if bunch_factor > 1:
+                    time_out, asym_out, err_out = rebin(
+                        time_out,
+                        asym_out,
+                        err_out,
+                        bunch_factor,
+                    )
+                dataset.time = time_out
+                dataset.asymmetry = asym_out
+                dataset.error = err_out
 
         run.grouping.update(
             {
@@ -3156,6 +3228,7 @@ class MainWindow(QMainWindow):
                 "period_mode": period_mode,
             }
         )
+        _sync_grouping_keys(run.grouping, grouping_result, ALPHA_PROVENANCE_KEYS)
         if axis_pairs:
             run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run_alpha))
             run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run_alpha))
@@ -3251,6 +3324,32 @@ class MainWindow(QMainWindow):
                     dataset.metadata.get("facility", dataset.metadata.get("instrument", "")),
                 )
             )
+            reference_forward = None
+            reference_backward = None
+            reference_scale = None
+            if resolve_background_mode(grouping) == "reference_run":
+                resolved = self._resolve_background_reference(grouping, run)
+                if resolved is not None:
+                    reference_histograms, reference_scale = resolved
+                    reference_prepared, _ = self._prepare_grouping_histograms(
+                        reference_histograms,
+                        grouping,
+                        effective_use_deadtime,
+                    )
+                    reference_forward = apply_grouping_aligned(
+                        reference_prepared,
+                        forward_idx,
+                        common_t0_bin=common_t0,
+                    )
+                    reference_backward = apply_grouping_aligned(
+                        reference_prepared,
+                        backward_idx,
+                        common_t0_bin=common_t0,
+                    )
+            try:
+                last_good = int(grouping.get("last_good_bin", n_grouped - 1))
+            except (TypeError, ValueError):
+                last_good = n_grouped - 1
             bkg_result = apply_grouped_background_correction(
                 forward,
                 backward,
@@ -3258,6 +3357,10 @@ class MainWindow(QMainWindow):
                 t0_bin=common_t0,
                 bin_width_us=bin_width,
                 facility=facility,
+                last_good_bin=last_good,
+                reference_forward=reference_forward,
+                reference_backward=reference_backward,
+                reference_scale=reference_scale,
             )
             forward = bkg_result.forward
             backward = bkg_result.backward
@@ -3273,13 +3376,51 @@ class MainWindow(QMainWindow):
                         [int(v) for v in bkg_result.ranges[0]],
                         [int(v) for v in bkg_result.ranges[1]],
                     ]
+                if bkg_result.details is not None:
+                    background_state["details"] = dict(bkg_result.details)
 
-        if (
+        bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
+        background_errors = (
             bkg_result is not None
             and bkg_result.applied
             and bkg_result.forward_error is not None
             and bkg_result.backward_error is not None
-        ):
+        )
+
+        binning_mode, _, _ = resolve_binning_mode(grouping)
+        if binning_mode != "fixed":
+            # Variable-width modes bin the counts before forming the
+            # asymmetry; the returned arrays are final (good window applied,
+            # no further slicing or bunching by the caller).
+            try:
+                first_good = max(0, int(grouping.get("first_good_bin", 0)))
+            except (TypeError, ValueError):
+                first_good = 0
+            try:
+                last_good = int(grouping.get("last_good_bin", n_grouped - 1))
+            except (TypeError, ValueError):
+                last_good = n_grouped - 1
+            time_axis, asymmetry, error = binned_fb_asymmetry(
+                forward,
+                backward,
+                grouping=grouping,
+                common_t0=common_t0,
+                bin_width_us=bin_width,
+                alpha=alpha,
+                first_good_bin=first_good,
+                last_good_bin=last_good,
+                forward_error=bkg_result.forward_error if background_errors else None,
+                backward_error=bkg_result.backward_error if background_errors else None,
+            )
+            return (
+                np.asarray(time_axis, dtype=np.float64),
+                np.asarray(asymmetry * 100.0, dtype=np.float64),
+                np.asarray(error * 100.0, dtype=np.float64),
+                dt_applied,
+                background_state,
+            )
+
+        if background_errors:
             asymmetry, error = compute_asymmetry_with_count_errors(
                 forward,
                 backward,
@@ -3290,7 +3431,6 @@ class MainWindow(QMainWindow):
         else:
             asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
 
-        bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
         time_axis = (np.arange(len(asymmetry), dtype=np.float64) - float(common_t0)) * bin_width
         return (
             time_axis,
@@ -3332,6 +3472,127 @@ class MainWindow(QMainWindow):
         if not source_file:
             source_file = str(metadata.get("source_file", ""))
         return supports_background_correction(metadata=metadata, source_file=source_file)
+
+    def _dataset_allows_background_mode(self, dataset, mode: str) -> bool:
+        """Return whether *mode* applies to this dataset (per-mode gating)."""
+        run = getattr(dataset, "run", None)
+        metadata = dict(getattr(dataset, "metadata", {}) or {})
+        if run is not None:
+            metadata.update(getattr(run, "metadata", {}) or {})
+        source_file = str(getattr(run, "source_file", "") if run is not None else "")
+        if not source_file:
+            source_file = str(metadata.get("source_file", ""))
+        return str(mode) in available_background_modes(metadata=metadata, source_file=source_file)
+
+    def _create_period_mapped_dataset(self, request: dict, grouping_result: dict) -> None:
+        """Build and register the combined red/green dataset for a mapping."""
+        run_numbers = [int(v) for v in request.get("period_run_numbers", [])]
+        siblings = [
+            ds
+            for run_number in run_numbers
+            for ds in self._data_browser.get_all_datasets()
+            if ds.run is not None and int(ds.run_number) == run_number
+        ]
+        if len(siblings) != len(run_numbers) or len(siblings) < 3:
+            self.statusBar().showMessage(
+                "Period mapping skipped: per-period datasets are no longer loaded.", 8000
+            )
+            return
+        try:
+            mapped = combine_mapped_periods(
+                siblings,
+                request.get("mapping", {}),
+                source_run_number=request.get("source_run_number"),
+            )
+        except ValueError as exc:
+            self.statusBar().showMessage(f"Period mapping failed: {exc}", 8000)
+            return
+        self._apply_grouping_settings_to_dataset(mapped, grouping_result)
+        self._data_browser.add_dataset(mapped)
+        mapping_text = ", ".join(
+            f"{period}→{target}"
+            for period, target in sorted((int(k), v) for k, v in request.get("mapping", {}).items())
+        )
+        self.statusBar().showMessage(
+            f"Added mapped dataset for run {mapped.run_number} ({mapping_text}).", 8000
+        )
+
+    def _resolve_background_reference(
+        self, grouping: dict, sample_run
+    ) -> tuple[list, float] | None:
+        """Resolve a ``background_run`` payload to (histograms, scale).
+
+        Loaded project datasets are matched by run number first; otherwise
+        the file named in the payload is loaded (and cached per source
+        path). The scale is the good-frame ratio sample/reference, falling
+        back to the snapshot stored in the payload.
+        """
+        payload = grouping.get("background_run")
+        if not isinstance(payload, dict):
+            self.statusBar().showMessage(
+                "Background run unavailable: no reference is recorded.", 8000
+            )
+            return None
+        reference_run = None
+        run_number = payload.get("run_number")
+        if run_number is not None:
+            for ds in self._data_browser.get_all_datasets():
+                if ds.run is not None and int(ds.run_number) == int(run_number):
+                    reference_run = ds.run
+                    break
+        if reference_run is None:
+            source_file = str(payload.get("source_file", "") or "")
+            if not source_file:
+                self.statusBar().showMessage(
+                    "Background run unavailable: the reference is not loaded and "
+                    "no source file is recorded.",
+                    8000,
+                )
+                return None
+            cache = getattr(self, "_background_run_cache", None)
+            if cache is None:
+                cache = {}
+                self._background_run_cache = cache
+            if source_file in cache:
+                reference_run = cache[source_file]
+            else:
+                try:
+                    from asymmetry.core.io import load_background_run
+
+                    reference_run = load_background_run(payload).run
+                except (ValueError, OSError) as exc:
+                    self.statusBar().showMessage(f"Background run unavailable: {exc}", 8000)
+                    return None
+                cache[source_file] = reference_run
+        if reference_run is None or not reference_run.histograms:
+            self.statusBar().showMessage(
+                "Background run unavailable: the reference has no histograms.", 8000
+            )
+            return None
+
+        def _good_frames(source) -> float | None:
+            grouping_dict = getattr(source, "grouping", None)
+            if isinstance(grouping_dict, dict):
+                try:
+                    value = float(grouping_dict.get("good_frames", 0.0))
+                except (TypeError, ValueError):
+                    value = 0.0
+                if value > 0.0:
+                    return value
+            return None
+
+        sample_frames = _good_frames(sample_run) or payload.get("good_frames_sample")
+        reference_frames = _good_frames(reference_run) or payload.get("good_frames_reference")
+        try:
+            scale = float(sample_frames) / float(reference_frames)
+        except (TypeError, ValueError, ZeroDivisionError):
+            try:
+                scale = float(payload.get("scale", 1.0))
+            except (TypeError, ValueError):
+                scale = 1.0
+        if not np.isfinite(scale) or scale <= 0.0:
+            scale = 1.0
+        return list(reference_run.histograms), float(scale)
 
     def _apply_deadtime_correction(
         self,

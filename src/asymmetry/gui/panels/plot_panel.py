@@ -49,6 +49,7 @@ from asymmetry.core.transform.background import (
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
     common_t0_for_groups,
+    filter_excluded_indices,
 )
 from asymmetry.core.transform.rebin import rebin
 from asymmetry.core.utils.constants import (
@@ -3204,8 +3205,8 @@ class PlotPanel(QWidget):
                     continue
             return out
 
-        forward_idx = _to_indices(groups.get(forward_gid, []))
-        backward_idx = _to_indices(groups.get(backward_gid, []))
+        forward_idx = filter_excluded_indices(_to_indices(groups.get(forward_gid, [])), grouping)
+        backward_idx = filter_excluded_indices(_to_indices(groups.get(backward_gid, [])), grouping)
         if not forward_idx or not backward_idx:
             return self._project_source_mask_to_analysis_dataset(
                 source_mask=saturated,
@@ -4384,7 +4385,15 @@ class PlotPanel(QWidget):
                 fg_text = "" if t_good_offset is None else str(t_good_offset)
                 lg_text = "" if last_good_bin is None else str(last_good_bin)
                 f.write(f"!  Offset to first good bin = {fg_text}, Last good bin = {lg_text}\n")
-            if bunching_factor is not None:
+            binning_mode = str(grouping.get("binning_mode", "fixed"))
+            if binning_mode == "variable":
+                f.write(
+                    f"!  Variable binning, initial bin = {grouping.get('bin0_us')} us, "
+                    f"bin at 10 us = {grouping.get('bin10_us')} us\n"
+                )
+            elif binning_mode == "constant_error":
+                f.write(f"!  Constant-error binning, initial bin = {grouping.get('bin0_us')} us\n")
+            elif bunching_factor is not None:
                 f.write(f"!  Fixed binning, bunching factor = {bunching_factor}\n")
             f.write(f"!  Deadtime correction {'on' if deadtime_correction else 'off'}\n")
             f.write("! END OF GROUPING INFORMATION\n")

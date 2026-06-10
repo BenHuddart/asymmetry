@@ -45,13 +45,17 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 __all__ = [
     "RED_INDEX",
     "GREEN_INDEX",
+    "PERIOD_MAPPING_TARGETS",
     "PeriodMode",
+    "combine_mapped_periods",
+    "combine_period_asymmetry",
+    "normalise_period_mapping",
     "period_count",
     "period_labels",
     "resolve_period_index",
     "select_period",
     "select_period_histograms",
-    "combine_period_asymmetry",
+    "sum_period_histograms",
 ]
 
 #: Histogram index of the first ("red") period in a two-period file.
@@ -373,3 +377,194 @@ def _clone_histogram(hist: Histogram) -> Histogram:
 
 def _clone_histograms(histograms: list[Histogram]) -> list[Histogram]:
     return [_clone_histogram(hist) for hist in histograms]
+
+
+# --- multi-period subset -> red/green mapping ---------------------------------
+
+#: Valid targets in a period mapping (WiMDA ``PeriodMappingUnit`` semantics).
+PERIOD_MAPPING_TARGETS = ("red", "green", "ignore")
+
+
+def normalise_period_mapping(mapping: dict, n_periods: int) -> dict[int, str]:
+    """Validate a ``{period_number: target}`` mapping.
+
+    Keys are 1-based period numbers (``int`` or numeric ``str`` — JSON round
+    trips turn them into strings); targets are ``"red"``, ``"green"`` or
+    ``"ignore"``. At least one period must map to red. Raises ``ValueError``
+    on out-of-range periods, unknown targets, or an empty red set, so a stale
+    persisted mapping fails loudly instead of silently reducing nothing.
+    """
+    if not isinstance(mapping, dict) or not mapping:
+        raise ValueError("Period mapping must be a non-empty dict")
+    normalised: dict[int, str] = {}
+    for raw_period, raw_target in mapping.items():
+        try:
+            period = int(raw_period)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Period mapping key {raw_period!r} is not a period number") from exc
+        if not 1 <= period <= n_periods:
+            raise ValueError(f"Period {period} is outside this run's 1..{n_periods} periods")
+        target = str(raw_target).strip().lower()
+        if target not in PERIOD_MAPPING_TARGETS:
+            raise ValueError(
+                f"Period mapping target {raw_target!r} is not one of {PERIOD_MAPPING_TARGETS}"
+            )
+        normalised[period] = target
+    if "red" not in normalised.values():
+        raise ValueError("Period mapping must send at least one period to red")
+    return normalised
+
+
+def sum_period_histograms(period_histograms: list[list[Histogram]]) -> list[Histogram]:
+    """Sum per-period histogram lists detector-wise (count level).
+
+    All periods of a run share detector layout, bin width and t0, so the sum
+    is exact Poisson addition. Arrays are truncated to the shortest common
+    bin count per detector.
+    """
+    if not period_histograms:
+        raise ValueError("No period histograms to sum")
+    n_detectors = min(len(period) for period in period_histograms)
+    if n_detectors == 0:
+        raise ValueError("Period histogram lists are empty")
+    summed: list[Histogram] = []
+    for det in range(n_detectors):
+        first = period_histograms[0][det]
+        n_bins = min(len(period[det].counts) for period in period_histograms)
+        counts = np.zeros(n_bins, dtype=np.float64)
+        for period in period_histograms:
+            counts += np.asarray(period[det].counts[:n_bins], dtype=np.float64)
+        summed.append(
+            Histogram(
+                counts=counts,
+                bin_width=first.bin_width,
+                t0_bin=first.t0_bin,
+                good_bin_start=first.good_bin_start,
+                good_bin_end=first.good_bin_end,
+            )
+        )
+    return summed
+
+
+def combine_mapped_periods(
+    period_datasets: list[MuonDataset],
+    mapping: dict,
+    *,
+    source_run_number: int | None = None,
+    source_file: str = "",
+) -> MuonDataset:
+    """Build one red/green dataset from per-period datasets and a mapping.
+
+    ``period_datasets`` are the loader's per-period datasets for one run
+    (3+-period files load as such a list); ``mapping`` sends each period to
+    red, green or ignore (WiMDA's period-mapping form). Counts and good
+    frames are summed per set at the count level — periods of one run share
+    beam exposure bookkeeping exactly, so no scaling is involved (unlike
+    background-run subtraction). The result carries the standard two-period
+    structure (``period_histograms``, ``period_good_frames``,
+    ``period_dead_time_us``, ``period_mode``) that the RG reduction and the
+    grouping dialog already understand; with no green periods the result is
+    a single-set run (G±R modes do not apply). The mapping is recorded on
+    the grouping as ``period_mapping`` for provenance.
+
+    The trivial mapping ``{1: red, 2: green}`` of a two-period run
+    reproduces the loader's combined dataset structure.
+    """
+    runs = [ds.run for ds in period_datasets]
+    if any(run is None or not run.histograms for run in runs):
+        raise ValueError("Every period dataset needs run histograms to map periods")
+    n_periods = len(period_datasets)
+    normalised = normalise_period_mapping(mapping, n_periods)
+
+    def _collect(target: str) -> list[int]:
+        return [p for p in sorted(normalised) if normalised[p] == target]
+
+    red_periods = _collect("red")
+    green_periods = _collect("green")
+
+    def _histograms(periods: list[int]) -> list[Histogram]:
+        return sum_period_histograms([_clone_histograms(runs[p - 1].histograms) for p in periods])
+
+    def _good_frames(periods: list[int]) -> float:
+        total = 0.0
+        for p in periods:
+            grouping = runs[p - 1].grouping if isinstance(runs[p - 1].grouping, dict) else {}
+            try:
+                total += float(grouping.get("good_frames", 1.0))
+            except (TypeError, ValueError):
+                total += 1.0
+        return total
+
+    def _dead_times(periods: list[int]) -> list[float]:
+        # Keep each surviving table paired with ITS period's frame count —
+        # periods without a table must not shift the weights of the others.
+        tables: list[tuple[list[float], float]] = []
+        for p in periods:
+            grouping = runs[p - 1].grouping if isinstance(runs[p - 1].grouping, dict) else {}
+            values = grouping.get("dead_time_us")
+            if isinstance(values, list) and values:
+                tables.append(([float(v) for v in values], _good_frames([p])))
+        if not tables:
+            return []
+        # Tables of different lengths (malformed metadata) reduce to their
+        # common detector count rather than crashing the mapping.
+        n_detectors = min(len(values) for values, _ in tables)
+        reference = tables[0][0][:n_detectors]
+        if all(np.allclose(values[:n_detectors], reference) for values, _ in tables[1:]):
+            return list(reference)
+        # Differing per-period deadtimes: frame-weighted mean is the best
+        # single table for the summed counts.
+        stacked = np.asarray([values[:n_detectors] for values, _ in tables], dtype=np.float64)
+        weights = [frames for _, frames in tables]
+        table = np.average(stacked, axis=0, weights=weights)
+        return [float(v) for v in table]
+
+    red_histograms = _histograms(red_periods)
+    sets: list[list[Histogram]] = [red_histograms]
+    good_frames = [_good_frames(red_periods)]
+    dead_times = [_dead_times(red_periods)]
+    if green_periods:
+        sets.append(_histograms(green_periods))
+        good_frames.append(_good_frames(green_periods))
+        dead_times.append(_dead_times(green_periods))
+
+    base_run = runs[red_periods[0] - 1]
+    run_number = (
+        int(source_run_number)
+        if source_run_number is not None
+        else int(base_run.metadata.get("source_run_number", base_run.run_number))
+    )
+    metadata = dict(period_datasets[red_periods[0] - 1].metadata)
+    metadata["run_number"] = run_number
+    metadata["source_run_number"] = run_number
+    metadata["run_label"] = str(run_number)
+    metadata["period_number"] = 1
+    metadata["period_count"] = len(sets)
+    metadata["period_mapping"] = {str(k): v for k, v in sorted(normalised.items())}
+
+    grouping = dict(base_run.grouping) if isinstance(base_run.grouping, dict) else {}
+    grouping["period_histograms"] = sets
+    grouping["period_good_frames"] = good_frames
+    grouping["period_dead_time_us"] = dead_times
+    grouping["period_mode"] = str(PeriodMode.RED)
+    grouping["period_mapping"] = {str(k): v for k, v in sorted(normalised.items())}
+    grouping["good_frames"] = good_frames[0]
+    if dead_times[0]:
+        grouping["dead_time_us"] = list(dead_times[0])
+    grouping.pop("period_reduced", None)
+
+    run = Run(
+        run_number=run_number,
+        histograms=_clone_histograms(red_histograms),
+        metadata=metadata,
+        grouping=grouping,
+        source_file=source_file or base_run.source_file,
+    )
+    reference = period_datasets[red_periods[0] - 1]
+    return MuonDataset(
+        time=np.asarray(reference.time, dtype=np.float64).copy(),
+        asymmetry=np.asarray(reference.asymmetry, dtype=np.float64).copy(),
+        error=np.asarray(reference.error, dtype=np.float64).copy(),
+        metadata=metadata,
+        run=run,
+    )

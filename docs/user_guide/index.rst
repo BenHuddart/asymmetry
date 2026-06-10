@@ -25,6 +25,7 @@ material.
    simulation
    gui_usage
    project_files
+   data_reduction/index
 
 .. toctree::
    :maxdepth: 2

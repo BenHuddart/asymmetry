@@ -89,6 +89,7 @@ class DetectorLayoutDialog(QDialog):
         initial_preset_name: str | None = None,
         forward_group: int = 1,
         backward_group: int = 2,
+        excluded_detectors: list[int] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -129,6 +130,7 @@ class DetectorLayoutDialog(QDialog):
         self._schematic.setMinimumWidth(360)
         self._schematic.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._schematic.detector_toggled.connect(self._on_detector_toggled)
+        self._schematic.set_excluded_detectors(set(excluded_detectors or []))
         root.addWidget(self._schematic, stretch=6)
 
         # ------------------------------------------------------------------
@@ -185,6 +187,17 @@ class DetectorLayoutDialog(QDialog):
         clear_btn.setDefault(False)
         clear_btn.clicked.connect(self._on_clear_all)
         group_layout.addWidget(clear_btn)
+
+        self._exclude_mode_btn = QPushButton("Exclude mode")
+        self._exclude_mode_btn.setCheckable(True)
+        self._exclude_mode_btn.setAutoDefault(False)
+        self._exclude_mode_btn.setDefault(False)
+        self._exclude_mode_btn.setToolTip(
+            "While active, clicking a detector toggles its exclusion (dead/hot "
+            "detectors are dropped from every group at reduction time)."
+        )
+        self._exclude_mode_btn.toggled.connect(self._schematic.set_exclude_mode)
+        group_layout.addWidget(self._exclude_mode_btn)
 
         root.addWidget(group_box, stretch=3)
 
@@ -531,4 +544,5 @@ class DetectorLayoutDialog(QDialog):
             "backward_group": self._backward_group,
             "instrument": self._instrument.name,
             "grouping_preset": self._applied_preset_name,
+            "excluded_detectors": sorted(self._schematic.get_excluded_detectors()),
         }
