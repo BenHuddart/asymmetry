@@ -56,7 +56,10 @@ from asymmetry.core.fitting import (
     fit_scan_baseline,
     fit_scan_model,
 )
-from asymmetry.core.fitting.parameter_models import CrossGroupFitResult
+from asymmetry.core.fitting.parameter_models import (
+    CrossGroupFitResult,
+    effective_range_bounds,
+)
 from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.fourier import (
     GroupSpectrumConfig,
@@ -1180,6 +1183,10 @@ class MainWindow(QMainWindow):
         if hasattr(self._fit_parameters_panel, "cross_group_fit_completed"):
             self._fit_parameters_panel.cross_group_fit_completed.connect(
                 self._on_cross_group_fit_completed
+            )
+        if hasattr(self._fit_parameters_panel, "model_fit_completed"):
+            self._fit_parameters_panel.model_fit_completed.connect(
+                self._on_single_model_fit_completed
             )
         if hasattr(self._fit_parameters_panel, "delete_group_fits_requested"):
             self._fit_parameters_panel.delete_group_fits_requested.connect(
@@ -6631,17 +6638,13 @@ class MainWindow(QMainWindow):
         # would not be stable across sessions).
         digest = hashlib.sha1(logical_key.encode("utf-8")).hexdigest()[:12]
         batch_id = f"modelfit-{digest}"
-        series = FitSeries(
+        self._add_results_series(
             batch_id,
             rep_type,
-            label=f"Model fit: {parameter_name} vs {x_key}",
-            member_run_numbers=member_run_numbers,
-            order_key="run",
-            canonical_model=None,
-            param_roles={},
-            results_by_run=results_by_run,
+            f"Model fit: {parameter_name} vs {x_key}",
+            member_run_numbers,
+            results_by_run,
         )
-        self._project_model.add_batch(series)
 
         # Item D — accumulate this fit's shared globals into a singleton
         # "Global summary" series so the globals can themselves be trended across
@@ -6725,17 +6728,116 @@ class MainWindow(QMainWindow):
             "temperature": None,
         }
 
-        series = FitSeries(
-            accum_id,
-            rep_type,
-            label="Global summary",
-            member_run_numbers=member_run_numbers,
-            order_key="run",
-            canonical_model=None,
-            param_roles={},
-            results_by_run=results_by_run,
+        self._add_results_series(
+            accum_id, rep_type, "Global summary", member_run_numbers, results_by_run
         )
-        self._project_model.add_batch(series)
+
+    def _add_results_series(
+        self,
+        batch_id: str,
+        rep_type: object,
+        label: str,
+        member_run_numbers: list[int],
+        results_by_run: dict[int, dict],
+    ) -> None:
+        """Register a model-less (computed) results ``FitSeries`` in the project.
+
+        Shared by every model-fit results recorder (cross-group per-fit,
+        cross-fit Global summary, single-fit ranges): a deterministic ``batch_id``
+        means re-running replaces rather than duplicates, and ``canonical_model
+        =None`` makes the series computed (persists, refresh-safe, trendable).
+        """
+        self._project_model.add_batch(
+            FitSeries(
+                batch_id,
+                rep_type,
+                label=label,
+                member_run_numbers=list(member_run_numbers),
+                order_key="run",
+                canonical_model=None,
+                param_roles={},
+                results_by_run=dict(results_by_run),
+            )
+        )
+
+    def _on_single_model_fit_completed(self, parameter_name, x_key, fit) -> None:
+        """Record a single-series model fit's per-range outputs as a series."""
+        self._record_single_model_fit_results_series(parameter_name, x_key, fit)
+        self._refresh_trend_panel()
+
+    def _record_single_model_fit_results_series(
+        self, parameter_name: str, x_key: str, fit: object
+    ) -> None:
+        """Turn a single fit's ranges into a trendable results series (item B).
+
+        Each successful :class:`ModelFitRange` becomes one member carrying that
+        range's fitted parameters, χ²ᵣ and a ``range_center`` column; the row's
+        trend coordinate is the centre of the range's fitted x-window (in the
+        trend's native x-units), so a multi-range fit is immediately trendable
+        and a single trend fit's outputs can themselves be trended. Re-running
+        the same fit (same parameter + x-key) replaces its series.
+        """
+        ranges = list(getattr(fit, "ranges", []) or [])
+        if not ranges:
+            return
+        rep_type = self._active_representation_type()
+        if rep_type is None:
+            return
+
+        # Which physical axis (if any) the range centre maps onto, so the derived
+        # series trends on a real axis by default; param:* / run x-keys have no
+        # such slot and fall back to the range_center column via arbitrary-X.
+        axis_slot = x_key if x_key in ("field", "temperature") else None
+
+        member_run_numbers: list[int] = []
+        results_by_run: dict[int, dict] = {}
+        for idx, fit_range in enumerate(ranges):
+            result = getattr(fit_range, "result", None)
+            if result is None or not getattr(result, "success", False):
+                continue
+            try:
+                lo, hi = effective_range_bounds(fit_range)
+            except ValueError:
+                lo, hi = None, None
+            if lo is not None and hi is not None and np.isfinite(lo) and np.isfinite(hi):
+                center = 0.5 * (float(lo) + float(hi))
+                label_range = f"[{float(lo):g}, {float(hi):g}]"
+            else:
+                # Fully open range (no usable bounds): fall back to the ordinal.
+                center = float(idx)
+                label_range = "full"
+
+            member_key = -(2_000_000_000 + idx)
+            member_run_numbers.append(member_key)
+            values = {p.name: float(p.value) for p in result.parameters}
+            values["chi2_r"] = float(result.reduced_chi_squared)
+            values["range_center"] = float(center)
+            summary = {
+                "success": True,
+                "parameters": values,
+                "uncertainties": {k: float(v) for k, v in result.uncertainties.items()},
+                "chi_squared": float(result.chi_squared),
+                "reduced_chi_squared": float(result.reduced_chi_squared),
+                "run_label": f"range {idx + 1}: {label_range}",
+                # Off the physical axes unless the x-key is one of them.
+                "field": float(center) if axis_slot == "field" else None,
+                "temperature": float(center) if axis_slot == "temperature" else None,
+            }
+            results_by_run[member_key] = summary
+
+        if not results_by_run:
+            return
+
+        logical_key = f"{parameter_name}::{x_key}"
+        digest = hashlib.sha1(logical_key.encode("utf-8")).hexdigest()[:12]
+        batch_id = f"modelfit-single-{digest}"
+        self._add_results_series(
+            batch_id,
+            rep_type,
+            f"Model fit (single): {parameter_name} vs {x_key}",
+            member_run_numbers,
+            results_by_run,
+        )
 
     def _on_fit_parameters_group_fits_deleted(self, group_id: str, run_numbers: object) -> None:
         """Clear run-level fit state when a Fit Parameters group is deleted."""

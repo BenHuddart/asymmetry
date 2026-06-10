@@ -189,6 +189,9 @@ class FitParametersPanel(QWidget):
     """Table + plot view for parameter trends from global fits."""
 
     cross_group_fit_completed = Signal(object, object, object)
+    #: Emitted when a single-series model fit completes (parameter_name, x_key,
+    #: ParameterModelFit) so its per-range outputs become a trendable series.
+    model_fit_completed = Signal(object, object, object)
     delete_group_fits_requested = Signal(str, object)
     #: Emitted when the user activates a different fit series (batch_id).
     series_selection_changed = Signal(str)
@@ -2293,6 +2296,10 @@ class FitParametersPanel(QWidget):
             fit = dialog.get_model_fit()
             if fit is not None:
                 self._model_fits[param_name] = fit
+                # Item B: surface this single fit's per-range outputs as a
+                # trendable results series (one row per range), so a single fit's
+                # outputs can themselves be trended.
+                self.model_fit_completed.emit(param_name, x_key, fit)
 
         self._sync_active_group_state()
 
