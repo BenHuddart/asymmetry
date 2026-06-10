@@ -395,14 +395,66 @@ cancellation; (7) the reconstruction overlay no longer pollutes the workspace's
 time-view fallback. The `show_reconstruction` restore default was corrected to
 off.
 
+**Completion pass (verification gaps, combined view, deferred efficiency).** A
+follow-up pass closed the remaining brief items and the deferred review notes:
+
+- **Verification gaps now covered by tests.** Injected-deadtime recovery
+  (`test_fit_deadtime_recovers_known_injected_value`), full project round-trip of
+  the MaxEnt recipe + `TIME_MAXENT_RECON` representation
+  (`test_maxent_recipe_and_reconstruction_survive_project_round_trip` — additive
+  schema, no migration), and a render-only real-corpus smoke
+  (`test_maxent_corpus_smoke.py`, skipif-guarded on the local WiMDA corpus).
+- **Combined reconstruction view (brief B).** The overlay now offers a *combined*
+  layout (all selected groups' data+model on one colour-coded axis above a shared
+  residuals strip) alongside the per-group stack, switched by a panel toggle. The
+  brief asked for both per-group and combined; only per-group had shipped. Total
+  χ² is identical between layouts.
+- **Efficiency (deferred review).** The reconstruction overlay reuses the
+  worker's prepared `MaxEntInput` (threaded on `MaxEntResult`) instead of
+  rebuilding it on the GUI thread; the per-frequency pulse amplitude `R(ν)` is
+  folded out of the inner-loop kernel block (forward: `M @ (R⊙f)`, adjoint:
+  `R ⊙ (Mᵀ@v)`), preserving the OPUS/TROPUS adjoint exactly (pinned by an
+  explicit dense-kernel equality test). SpecBG is unified to one application
+  point (`MaxEntResult.as_dataset(config)`).
+
+**Recorded follow-ons (left as notes, not implemented):**
+
+- **Reconstruction view as a first-class view band.** The `"reconstruction"`
+  plot-workspace token is coordinated across a few mainwindow render-dispatch
+  sites. `PlotWorkspacePanel` already centralises its *classification*
+  (`_VIEW_TOKENS` / `_FREQUENCY_VIEWS` / `_PRIMARY_TIME_VIEWS` set membership), so
+  a future token cannot desync the domain/fallback logic. The remaining
+  mainwindow special-cases are localised render routing; a deeper "view band"
+  abstraction would only risk the recently bug-fixed view-sync wiring, so it is
+  left as a note.
+- **Loader pulse metadata.** `nexus.py` detects pulsed definitions but still does
+  not capture the proton-pulse half-width / double-pulse separation per run, so
+  the pulse widths default from constants (`MaxEntConfig.pulse_half_width_us` /
+  `pulse_separation_us`). At ISIS these are accelerator-tune constants rather than
+  per-run NeXus fields (Mantid's own `start.py` hardcodes 0.05 µs / 0.324 µs), so
+  capturing them is a speculative data-loading follow-on for the loader family —
+  left as a recorded note.
+
 ## 10. Verification oracle status
 
-Mantid is **not importable** in this worktree (`import mantid` →
-`ModuleNotFoundError`). The pure-numpy `MaxentTools` kernel modules
-(`start.py`, `opus.py`, `tropus.py`, `deadfit.py`) appear to have no Mantid
-framework imports and may run standalone to generate **kernel-level golden
-data** for the pulse-shape response and the deadtime 2×2 solve — a study
-research item (try importing them in a throwaway venv during Phase 2/3). If they
-do not import cleanly, verification is **synthetic-first**: the brief's
-verification targets are all synthetic and self-consistent, and that is the
-primary plan (see `verification-plan.md`). Either way, no Mantid code is copied.
+Mantid the **framework** is not importable (`import mantid` →
+`ModuleNotFoundError`), but the pure-numpy `MaxentTools` kernel modules were
+probed standalone (follow-on resolved):
+
+- **`start.py` imports cleanly** standalone (exposes `START`, `np`, `math`; no
+  Mantid-framework imports). Its `PULSESHAPE_convol = convolr + i·convoli` is
+  exactly our pulse kernel with `convolr = P_cos`, `convoli = −P_sin`. With
+  `TZERO_fine = −τ_π` its internal `exp(i(TZERO+τ_π)ω)` time shift cancels,
+  giving a clean comparison. `tests/test_maxent_pulse_oracle.py` (skipif-guarded
+  on a local `~/Source/mantid` checkout, so it skips in CI) confirms the match:
+  **single pulse to machine precision** (no τ_µ dependence — the tanh
+  interference weight vanishes), **double pulse to ~1e-3** (Mantid truncates
+  τ_µ = 2.19704 vs our CODATA 2.1969811, which only enters the tanh). This is the
+  documented constants-differ tolerance the study predicted. No code copied.
+- **`deadfit.py` does not import** standalone (`from ...Muon import …` →
+  `ModuleNotFoundError: No module named 'Muon'`), so the DEADFIT 2×2 solve has
+  **no usable kernel oracle**. Asymmetry's deadtime fit is verified synthetically
+  instead (`test_fit_deadtime_recovers_known_injected_value`: recover a known
+  injected non-paralysable τ on a thinned decay), which is the primary plan.
+
+Everything else stays **synthetic-first** (see `verification-plan.md`).
