@@ -388,6 +388,36 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "appropriate for muonium (where the contact hyperfine dominates — use the Muonium components) or for "
         "dense magnets (use Oscillatory or Bessel with an internal field)."
     ),
+    "GaussianPeak": (
+        "Use for a spectral line whose underlying time-domain envelope is Gaussian — a static, dense "
+        "(Gaussian) distribution of local fields, as in nuclear-dipole hosts or frozen disorder. The line is "
+        "parameterised by its full width at half maximum: a time-domain envelope e^(−(σt)²) transforms to a "
+        "Gaussian line of FWHM = 2σ√(ln2)/π, so the fitted width converts back to the relaxation rate via "
+        "σ = π·FWHM/(2√(ln2)). The centre ν₀ gives the local field through B₀ = ν₀/(γµ/2π). Peak heights are "
+        "in the arbitrary units of the displayed spectrum (they depend on apodization and normalisation), so "
+        "physical conclusions should rest on positions and widths rather than absolute heights."
+    ),
+    "LorentzianPeak": (
+        "Use for a spectral line whose underlying time-domain envelope is exponential — dynamic (motionally "
+        "narrowed) relaxation, or a dilute (Lorentzian) static field distribution. The line is parameterised "
+        "by its full width at half maximum: a time-domain envelope e^(−λt) transforms to a Lorentzian line of "
+        "FWHM = λ/π, so the fitted width converts back to the relaxation rate via λ = π·FWHM. The centre ν₀ "
+        "gives the local field through B₀ = ν₀/(γµ/2π). Lorentzian tails are heavy: fit windows should extend "
+        "several FWHM beyond the peak or the width will be underestimated. A line that is neither Gaussian "
+        "nor Lorentzian usually signals overlapping sites — prefer two peaks over one broadened one."
+    ),
+    "ConstantBackground": (
+        "Use for the flat spectral baseline present in essentially every displayed Fourier spectrum, arising "
+        "from white noise in the time-domain data and the flat part of any apodization pedestal. Include it "
+        "additively in every frequency-domain model unless the baseline has already been subtracted; leaving "
+        "it out biases peak heights and widths upward."
+    ),
+    "LinearBackground": (
+        "Use instead of ConstantBackground when the baseline visibly slopes across the fit window — typically "
+        "the shoulder of an intense line outside the window or low-frequency leakage from a non-zero mean. "
+        "The slope is strongly correlated with the peak parameters in narrow windows, so prefer the constant "
+        "form unless the slope is clearly resolved."
+    ),
     "DipolarSpinJ": (
         "Use for zero-field precession of a muon coupled to one nucleus of spin J > ½ with both dipolar and "
         "quadrupolar interactions — e.g. µ⁺–⁶³Cu (J = 3/2) or µ⁺–⁹³Nb (J = 9/2) pairs, where the electric "

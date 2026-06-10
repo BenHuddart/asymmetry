@@ -54,6 +54,17 @@ def test_component_documented_in_its_category_page(name: str) -> None:
     )
 
 
+def test_every_component_has_explicit_applicability_text() -> None:
+    from asymmetry.core.fitting.component_docs import FIT_COMPONENT_APPLICABILITY
+
+    missing = [name for name in COMPONENTS if name not in FIT_COMPONENT_APPLICABILITY]
+    assert not missing, (
+        f"Components without explicit applicability text (falling back to the generic "
+        f"placeholder): {missing}. Add a physically motivated entry to "
+        "FIT_COMPONENT_APPLICABILITY in core/fitting/component_docs.py."
+    )
+
+
 def test_category_pages_are_in_the_toctree() -> None:
     index_text = (DOCS_DIR / "index.rst").read_text(encoding="utf-8")
     for page in CATEGORY_PAGES.values():
