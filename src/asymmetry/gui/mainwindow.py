@@ -137,6 +137,7 @@ from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFit
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
 from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
+from asymmetry.gui.windows.simulate_dialog import SimulateDialog
 
 _MAX_RECENT_PROJECTS = 10
 _PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
@@ -515,6 +516,7 @@ class MainWindow(QMainWindow):
         # File
         file_menu = mb.addMenu("&File")
         file_menu.addAction("Open Data File(s)\u2026", self._on_open)
+        file_menu.addAction("Generate Synthetic Run\u2026", self._on_generate_synthetic)
         file_menu.addSeparator()
         file_menu.addAction("&New Project", self._on_new_project)
         file_menu.addAction("Open Project\u2026", self._on_open_project)
@@ -1807,6 +1809,46 @@ class MainWindow(QMainWindow):
                 self._last_open_dir = selected_dir
                 self._settings.setValue("io/last_open_dir", selected_dir)
             self._load_files(paths)
+
+    def _on_generate_synthetic(self) -> None:
+        """Launch the Generate Synthetic Run dialog (File menu)."""
+        eligible = [
+            ds
+            for ds in self._data_browser.all_datasets()
+            if ds.run is not None and ds.run.histograms
+        ]
+        if not eligible:
+            QMessageBox.information(
+                self,
+                "Generate Synthetic Run",
+                "Load a run with detector histograms to act as the instrument template first.",
+            )
+            return
+        preselected = (
+            self._current_dataset.run_number if self._current_dataset is not None else None
+        )
+        dialog = SimulateDialog(
+            eligible,
+            parent=self,
+            preselected_run=preselected,
+            fit_state_provider=getattr(self._fit_panel, "get_single_state_for_run", None),
+            run_number_allocator=self._data_browser.next_derived_run_number,
+        )
+        dialog.run_generated.connect(self._on_synthetic_run_generated)
+        dialog.exec()
+
+    def _on_synthetic_run_generated(self, run) -> None:
+        """Surface a generated synthetic run in the Data Browser."""
+        from asymmetry.core.simulate import reduce_run_to_dataset
+
+        dataset = reduce_run_to_dataset(run)
+        self._data_browser.add_dataset(dataset)
+        sim = run.metadata.get("simulation", {})
+        self._log_panel.log(
+            f"Generated synthetic run {dataset.run_label} from run "
+            f"{sim.get('template_run_number', '?')} (seed {sim.get('seed', '?')}).",
+            tag="load",
+        )
 
     def _on_export_current_plot(self) -> None:
         """Export the current main plot view to GLE/PDF/EPS."""

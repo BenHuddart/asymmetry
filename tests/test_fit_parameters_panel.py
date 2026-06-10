@@ -2012,3 +2012,89 @@ def test_set_highlight_active_no_active_group_emits_nothing(qapp: QApplication) 
 
     panel.set_highlight_active(True)
     assert emitted == []
+
+
+def test_model_fit_serialization_round_trips_windows_and_error_mode(
+    panel: FitParametersPanel,
+) -> None:
+    """Fit windows and the result's error_mode/n_points must survive a
+    save/reload cycle — silently dropping them leaves a windowed or
+    scatter-mode fit mislabelled as a plain column-error full-range fit."""
+    import json
+
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=0.21)])
+    result = ParameterModelFitResult(
+        success=True,
+        chi_squared=4.2,
+        reduced_chi_squared=0.6,
+        parameters=params,
+        uncertainties={"c": 0.01},
+        message="Fit successful",
+        error_mode="scatter",
+        n_points=9,
+    )
+    panel._model_fits = {
+        "A0": ParameterModelFit(
+            parameter_name="A0",
+            x_key="field",
+            active=True,
+            ranges=[
+                ModelFitRange(
+                    x_min=0.0,
+                    x_max=10.0,
+                    model=model,
+                    parameters=params,
+                    result=result,
+                    windows=[(1.0, 4.0), (7.0, 10.0)],
+                )
+            ],
+        )
+    }
+
+    # JSON round-trip mirrors project persistence (tuples become lists).
+    state = json.loads(json.dumps(panel._serialize_model_fits()))
+    restored = panel._deserialize_model_fits(state)
+
+    fit_range = restored["A0"].ranges[0]
+    assert fit_range.windows == [(1.0, 4.0), (7.0, 10.0)]
+    assert fit_range.result is not None
+    assert fit_range.result.error_mode == "scatter"
+    assert fit_range.result.n_points == 9
+
+    # Legacy state without the new keys still loads (defaults applied).
+    for range_state in state["A0"]["ranges"]:
+        range_state.pop("windows", None)
+        range_state["result"].pop("error_mode", None)
+        range_state["result"].pop("n_points", None)
+    legacy = panel._deserialize_model_fits(state)
+    legacy_range = legacy["A0"].ranges[0]
+    assert legacy_range.windows is None
+    assert legacy_range.result.error_mode == "column"
+    assert legacy_range.result.n_points == 0
+
+
+def test_fit_range_curve_sampler_spans_window_envelope(panel: FitParametersPanel) -> None:
+    """The panel overlay/GLE sampler must cover the window-union envelope,
+    not the stale x_min/x_max, so the drawn curve matches what was fitted."""
+    model = ParameterCompositeModel(["Constant"])
+    params = ParameterSet([Parameter("c", value=0.21)])
+    result = ParameterModelFitResult(success=True, parameters=params)
+    fit_range = ModelFitRange(
+        x_min=2.0,
+        x_max=5.0,
+        model=model,
+        parameters=params,
+        result=result,
+        windows=[(1.0, 3.0), (7.0, 12.0)],
+    )
+
+    sampled = panel._sample_fit_range_curve(fit_range, x_key="field")
+    assert sampled is not None
+    xs, _ys = sampled
+    assert xs[0] == pytest.approx(1.0)
+    assert xs[-1] == pytest.approx(12.0)
+
+    # Invalid (inverted) windows skip the curve instead of raising.
+    fit_range.windows = [(5.0, 1.0)]
+    assert panel._sample_fit_range_curve(fit_range, x_key="field") is None

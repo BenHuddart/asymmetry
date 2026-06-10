@@ -205,20 +205,23 @@
     },
     {
       "slug": "simulate-mode",
-      "feature_name": "Simulate mode (synthetic dataset generation)",
-      "status": "candidate",
+      "feature_name": "Simulate mode (synthetic dataset generation + degrade statistics)",
+      "status": "implemented",
       "tier": "now",
       "score": 16,
-      "path": "docs/porting/candidates/simulate-mode",
+      "path": "docs/porting/simulate-mode",
       "references": [
         "WiMDA"
       ],
       "docs": {
-        "readme": "docs/porting/candidates/simulate-mode/README.md",
-        "comparison": "docs/porting/candidates/simulate-mode/comparison.md",
-        "scoring": "docs/porting/candidates/simulate-mode/scoring.md"
+        "readme": "docs/porting/simulate-mode/README.md",
+        "comparison": "docs/porting/simulate-mode/comparison.md",
+        "implementation_options": "docs/porting/simulate-mode/implementation-options.md",
+        "test_data": "docs/porting/simulate-mode/test-data.md",
+        "verification_plan": "docs/porting/simulate-mode/verification-plan.md"
       },
-      "updated": "2026-05-23"
+      "updated": "2026-06-10",
+      "notes": "Promoted from candidate (tier now, score 16) under the wimda-parity-gap umbrella, Wave A project 8. Candidate docs preserved at docs/porting/simulate-mode/candidate/ (same-slug promotion: the structural harness requires unique slugs, so the candidates/ entry is replaced rather than kept, unlike maxent-spectrum->maxent). Study pass done 2026-06-10 against WiMDA Simulate.pas + DegradeStats.pas (Pascal read directly; brief verified). Decisions (Ben, 2026-06-10): loaded-run template required; persistence via saved NeXus file (no schema change); degrade -> new derived run (not in-place); minimal standalone NeXus V1 writer (not template-copy; works for PSI .bin templates); dialog seeds model+params from current fit else builder; core takes per-group signal specs, v1 dialog is F/B alpha-split; deadtimes written as zeros + optional flat background (default 0). Key divergences from WiMDA (all documented in comparison.md): Poisson draws of expected counts with numpy PCG64 + first-class seed (WiMDA: unseeded Delphi RNG); pre-t0 bins = background only (WiMDA: unphysical growing exponential); degrade = exact binomial thinning for f<1 (WiMDA: Poisson(k*f), over-dispersed); exact time_zero (WiMDA: quantised to whole microseconds). Double-pulse halving, count-mode simulation, two-period output deferred to count-domain-fit-modes. IMPLEMENTED 2026-06-10 (4 phases, validate green, 53 new tests): core/simulate.py (simulate_run, simulate_run_from_group_signals, degrade_run, expected_counts, reduce_run_to_dataset, promoted archetype builders), core/io/nexus_writer.py (write_nexus_v1, works for PSI .bin templates), SimulateDialog + Data Browser Degrade Statistics action + provenance badging, docs/user_guide/simulation.rst. Verified: round-trip refit recovery, 100-seed pull distribution ~ N(0,1), degrade 1/sqrt(f) error scaling, corpus round trips (nickel HDF5 + EuO PSI .bin). FINDING for follow-up: compute_asymmetry's error formula treats F+-aB as independent ((1+A^2) form), over-estimating sigma_A by (1+A^2)/(1-A^2) vs exact Poisson propagation \u2014 chi2_r centres below 1 against known truth; affects all fits; recorded as follow-on in implementation-options.md."
     },
     {
       "slug": "maxent-spectrum",
@@ -563,6 +566,26 @@
       "src_path": null,
       "updated": "2026-06-10",
       "notes": "UMBRELLA study: full WiMDA source sweep (every unit in wimda.dpr) vs fresh Asymmetry scan at 474534e; supersedes the WiMDA column of comparison-matrix.md. Output: consolidated gap inventory (comparison.md) + 12-project parallel portfolio + 1 deferred brief (projects/*.md), partitioned for parallel worktree sessions in three waves (implementation-options.md). Decisions 2026-06-10: Burg all-poles MEM INCLUDED as diagnostic (reverses prior exclusion); Eigen.pas excluded permanently (old roadmap mislabel - Hermitian eigensolvers for FmuF models, not a spectral estimator); Kramers-Kronig dropped (optical spectroscopy, not muSR); HDF4 stays out; NegMu deferred brief (adapt-not-port); live-run monitoring = optional phase. KEY FINDINGS: fit-function parity verified complete against WiMDA source (all remaining gaps are machinery/workflow); curve-averaging co-add is statistically wrong (run-arithmetic project is a correctness fix); Multifit is subsumed by the Global tab; WiMDA's own MUD loader is a non-functional stub (not a parity item); WiMDA KTBArray low-field bug documented (never oracle against it). Each project still requires its own five-doc study pass before implementation; briefs are pre-studies."
+    },
+    {
+      "slug": "model-function-parity",
+      "feature_name": "Model Function Parity (WiMDA Model layer)",
+      "status": "implemented",
+      "path": "docs/porting/model-function-parity",
+      "references": [
+        "WiMDA"
+      ],
+      "docs": {
+        "readme": "docs/porting/model-function-parity/README.md",
+        "comparison": "docs/porting/model-function-parity/comparison.md",
+        "implementation_options": "docs/porting/model-function-parity/implementation-options.md",
+        "test_data": "docs/porting/model-function-parity/test-data.md",
+        "verification_plan": "docs/porting/model-function-parity/verification-plan.md"
+      },
+      "tests_path": "tests/test_wimda_model_function_parity.py",
+      "src_path": null,
+      "updated": "2026-06-10",
+      "notes": "Parameter-trending model functions + Model-layer machinery (umbrella wimda-parity-gap, Wave A). All 8 fitfunctions.pas functions and the Model.pas machinery verified against the Pascal source. Phase 1: Polynomial, PowerLawQuadBG, MuRepolarisation (A_hf-parameterised, B0=A/(gamma_e+gamma_mu) from constants.py) + documented composite recipes (Arrhenius+Arrhenius eV->meV delta 0.089%; OrderParameter+Constant; 2xLorentzianLCR+Polynomial with coefficient non-transfer warning). Phase 2: error-mode selector (Column/Percent/Absolute/None + estimate-from-scatter as the one-pass fixed point of WiMDA's Estimate iteration), union multi-range windows on ModelFitRange, shared chi2-quality helper (core/fitting/fit_quality.py, reused by fit-workflow-diagnostics). Session-only (no .asymp changes); GUI in ModelFitDialog only. OUT: x2 second variable (requirements recorded; cross-group fitting covers it), *fit.dll (-> python-user-functions), .mfit ReloadFit, GLE. IMPLEMENTED 2026-06-10: Phases 1+2 shipped (validate green, 1810 passed); EuO regression Tc=69.24(9)/beta=0.409(7)/alpha=1.18(4) matches PR #15 within combined sigma; arbitrary-X stretch not reached (follow-on; GUI-only, core is x-agnostic)."
     },
     {
       "slug": "data-reduction-parity",
