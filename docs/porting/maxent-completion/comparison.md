@@ -1,0 +1,316 @@
+# MaxEnt completion — WiMDA ↔ Asymmetry comparison
+
+This document extends the implemented-engine study at
+[`docs/porting/maxent/comparison.md`](../maxent/comparison.md). That study
+chose the MULTIMAX algorithm with WiMDA as the behavioural contract and shipped
+the core engine (`core/maxent/engine.py`, PRs #16/#26). **This study does not
+re-litigate the engine.** It records the WiMDA behaviours behind the four
+remaining gaps — time-domain reconstruction, ISIS pulse shape, ZF/LF + SpecBG,
+deadtime/phase calibration — verified against the WiMDA Pascal source, and
+states where Asymmetry will diverge.
+
+All WiMDA citations are to `/Users/bhuddart/Source/WiMDA/src/` (ignoring
+`__history/`, `__recovery/`). The Mantid `MaxentTools` numpy port
+(`~/Source/mantid/scripts/Muon/MaxentTools/`) is a GPL-3 verification oracle —
+read and run only, never copied.
+
+## 0. The shipped engine is a projected-gradient V1, not the full Skilling–Bryan kernel
+
+A load-bearing fact for this port. `core/maxent/engine.py` implements a
+**deterministic entropy-regularised projected-gradient** reconstruction
+(`run_cycles`, exp-update with normalisation, `engine.py:1013–1165`), not
+WiMDA's 3-direction Cholesky Skilling–Bryan inner loop. It keeps the MULTIMAX
+*data shape* — joint multi-group, one positive spectrum, per-group phase /
+amplitude / background nuisance fit in an outer loop — and a resumable
+`MaxEntState`, but the numerical kernel is Asymmetry's own.
+
+Crucially the forward/adjoint maps are **real**: `OPUS` is
+`signal(t) = amp·Σ_ν f(ν) cos(2πνt + φ) + bg` (`_project_forward`,
+`engine.py:637–657`); the adjoint is the transpose (`_project_adjoint`,
+`:685–705`). WiMDA instead carries a **complex** kernel `ZR + i·ZI` built by
+`ZFT` and applies the pulse response and lifetime envelope to it in the
+frequency domain before an FFT (`Wimdamax.pas:569–606`).
+
+Consequence for this port: every new physics term must fold into the **real
+cosine/sine forward–adjoint contract**, not a complex-FFT rewrite. This is
+feasible because the engine already exposes a cosine/sine component split
+(`_project_forward_components` returns `(C@f, S@f)`, `engine.py:660–682`):
+a frequency-dependent complex response `P(ν) = P_c(ν) − i·P_s(ν)` enters as
+`amp·[P_c(ν)·cos(2πνt+φ) − P_s(ν)·sin(2πνt+φ)]`, i.e. multiply the C-projection
+by `P_c` and the S-projection by `P_s`. Pulse shape, exclusion windows and
+deadtime all attach at this seam without touching the inner descent.
+
+## 1. Time-domain reconstruction overlay
+
+**WiMDA — `Timedom` (`Wimdamax.pas:1146–1164`).** Inside the iteration WiMDA
+snapshots the forward model `OPUS(F)` per group, then fills, per group `i`,
+channel `j`:
+
+`Timedom[i,j] = (model[i,j] + DATT[i,j] − DATUM[i,j]) / (fnorm · bunch)`
+
+where `DATT` is the original normalised data and `DATUM` the working data after
+exponential-background and deadtime correction. So `DATT − DATUM` reinstates
+everything the reduction subtracted, and the `/(fnorm·bunch)` undoes the
+`1e7`-event normalisation and rebinning — the result is a per-group
+reconstruction on the **raw rebinned counts scale**, directly over-layable on
+the histogram. It is strictly per-group; no combined trace and no stored
+residual array (the residual is computed transiently for χ² and overwritten as
+the TROPUS gradient seed).
+
+**Asymmetry.** `opus(spectrum, maxent_input, phases=…, amplitudes=…,
+backgrounds=…)` (`engine.py:708–731`) already returns exactly the per-group
+forward model `predictions[group_id]`. The MaxEnt input normalises each group
+to `(signal/baseline) − 1` with `baseline = mean(signal)` (`build_maxent_input`,
+`engine.py:588–592`), so the reconstruction lives in that **normalised
+asymmetry-like space**, not raw counts.
+
+**Divergence (stated both ways).**
+- *WiMDA*: reconstruction returned on the raw rebinned-counts scale, baseline
+  reinstated; per-group only.
+- *Asymmetry*: reconstruction returned in the engine's internal normalised
+  space `(signal/baseline − 1)` — the same space the χ² is computed in, so the
+  shown χ² is exactly the engine's by construction. We overlay in that space
+  (data and model both), and additionally offer a **combined** view (a
+  representative group or the selected-group mean) which WiMDA lacks, plus an
+  explicit **residuals strip** `(data − model)/σ` which WiMDA computes but never
+  displays. Rationale: the normalised space is what the fit minimises, so the
+  overlay is an honest picture of fit quality; reinstating the raw-counts
+  baseline would add reduction bookkeeping that the modern representation/plot
+  stack does not need. The χ² shown equals the engine χ² (verification target).
+
+## 2. ISIS pulse-shape response
+
+**WiMDA — `START` (`Wimdamax.pas:266–319`).** The instrument response that
+multiplies the forward-model kernel in the frequency domain. With angular
+frequency per bin `ω = 2π·fperchan·(i−1)`, proton-pulse half-width `w`
+(`PwidEdit`, ns→µs), double-pulse separation `s` (`PsepEdit`), pion lifetime
+`τ_π = 0.026 µs`, muon lifetime `τ_µ`:
+
+- Parabolic proton-pulse FT (`GW[1]=1` at DC):
+  `G(ω) = (3/w)·[ sin(ωw)/((wω)²·ω) − cos(ωw)/(w·ω²) ]`
+- Pion low-pass: `A(ω) = G(ω) / (1 + (ω·τ_π)²)`
+- Complex single/double-pulse response (`PULSE2T = 0` single, `= s` double):
+  - `CONVOL_R(ω) = A(ω)·[ cos(ωs/2) − tanh(s/2τ_µ)·sin(ωs/2)·ω·τ_π ]`
+  - `CONVOL_I(ω) = −A(ω)·[ tanh(s/2τ_µ)·sin(ωs/2) + cos(ωs/2)·ω·τ_π ]`
+
+Single-pulse limit (`s=0`): `CONVOL_R = A(ω)`, `CONVOL_I = −A(ω)·ω·τ_π`. The
+`tanh(s/2τ_µ)` weight accounts for muon-population depletion between the two
+proton pulses — **genuine physics**, not a hack. Applied symmetrically in
+`OPUS` and `TROPUS` (`:598–599, 630`); the muon-decay envelope `E(t)` is applied
+after the FFT, separately.
+
+`NPULSE = 0` (ignore) → kernel `(1, 0)`. Mantid's `start.py:17–40` is the same
+math with widths already in µs and constants truncated (`τ_µ=2.19704`).
+
+**Asymmetry.** No pulse-shape term today: amplitudes above ~5 MHz are distorted
+on pulsed data. The real cosine/sine kernel folds the complex response as in §0:
+`P_c(ν) = CONVOL_R(2πν)`, `P_s(ν) = CONVOL_I(2πν)` (note Asymmetry frequencies
+are in MHz; `ω = 2πν` with `ν` in MHz and `t` in µs keeps `ωt` dimensionless).
+
+**Divergence.**
+- *WiMDA*: complex kernel `ZR+iZI`, pulse response a frequency-domain multiply
+  before FFT; widths entered in ns; in the forward model (OPUS).
+- *Asymmetry*: pulse response folds into the real cosine/sine projection
+  `amp·[P_c·cos − P_s·sin]` in `_project_forward`/`_project_adjoint`; widths
+  entered in µs (or ns with a labelled field); CODATA constants
+  (`τ_µ = 2.1969811 µs`, `τ_π = 0.026 µs`). Same physics, V1-compatible
+  placement (forward model, never a post-hoc spectrum correction). The `E(t)`
+  lifetime envelope is already applied upstream in `build_group_signal_dataset`
+  (`apply_lifetime_correction=True`), so we do **not** re-apply it in the kernel.
+
+## 3. ZF/LF two-group mode + SpecBG
+
+**WiMDA.** In zero/longitudinal field the two groups (F, B) measure the same
+relaxation with opposite phase and α-fixed relative efficiency. Phases are
+pinned (F=0°, B=180°) and the fit uses `MODAMP` (amplitudes only, not `MODAB`).
+Every fitted per-group scalar (exp-BG `D`, amplitude `Amp`, BG-change `c`) is
+α-tied by the identical idiom (`:404–408, 736–740, 797–801, 904–908`):
+`x[2] = (x[1]+x[2])/(1+α); x[1] = α·x[2]`, i.e. sum the two independent fits and
+redistribute in ratio α:1. The tie is applied **after** the per-group
+least-squares, not as a constraint inside it.
+
+**SpecBG (`SpecBG.pas`, applied in `Plot.pas:2378–2400`).** Display-only
+zero-frequency lineshape subtraction for the field-distribution view: a
+pseudo-Voigt centred at zero, anchored to the spectrum value just below the
+window `a0 = spectrum[nmin−1]`:
+`Δ(x) = a0·[ (1−lfrac)·exp(−(x/(gwid·1.201))²) + lfrac/(1+(x/lwid)²) ]`,
+subtracted from each displayed bin. Widths in display units; the `×1.201`
+relates the edit's width to the Gaussian σ (empirical magic number).
+
+**Asymmetry.** No ZF/LF mode; the general engine fits all phases/amps freely.
+Per Ben's decision, **strict 2-group F/B parity**: ZF/LF mode requires exactly
+two selected groups, pins phases 0/180, ties amplitudes via the run's α, and
+offers SpecBG as a display-only subtraction on the spectrum.
+
+**Divergence.**
+- *WiMDA*: α-tie applied to F=group1/B=group2 by index after the LS; SpecBG
+  anchored to one bin below the window; `×1.201` magic constant carried verbatim.
+- *Asymmetry*: ZF/LF is an explicit mode that constrains the group table to two
+  forward/backward groups and reads α from the run grouping; the α-tie is
+  applied inside `_fit_group_nuisance` when the mode is active (amplitudes tied,
+  phases held at 0/180 with `fit_phases` forced off). SpecBG is a display-time
+  transform on the spectrum dataset, not on the engine spectrum; we carry the
+  `×1.201` constant and document it as empirical, and anchor to the lowest
+  in-window bin (Asymmetry windows from f_min, no `nmin−1` outside-bin) — stated
+  as a deliberate, documented difference.
+
+## 4. Deadtime fitting inside MaxEnt (DEADFIT)
+
+**WiMDA — `DEADFIT` (`Wimdamax.pas:867–937`).** An outer-loop nuisance fit (run
+once per cycle after the entropy solve, with the kernel rebuilt by `ZFT`). Per
+group it accumulates five weighted sums over channels and solves a 2×2 linear
+system for (exp-BG scale, deadtime τ) jointly: the residual `data − model` is
+explained by an exponential-background term `E(t)` plus a deadtime term `∝ DAT²`
+(the first-order non-paralysable distortion, lost counts ∝ rate²):
+
+`τ = (Bx·Cx − Ax·Ex)/(Ax·Dx − Cx²)`, then physical
+`taud = τ·RES·HISTS·FRAMES·fnorm`.
+
+The fitted deadtime then **reshapes the working data** for the next cycle:
+`DATUM = DATT + DATT²·τ − D·E`. So deadtime is an outer-loop parameter that
+changes the data the entropy fit sees, not a parameter inside the descent. Off →
+plain `MODBAK` (exp-BG only). Results logged per cycle; editable afterward in
+`MaxEdit`; round-trips through the `RES·HISTS·FRAMES·fnorm` unit conversion that
+mirrors `INPUT`.
+
+**Asymmetry.** Deadtime is currently **pre-correction** only
+(`prepare_histograms_with_deadtime` before grouping, `engine.py:546–551`); there
+is no in-loop deadtime fit. The outer-loop nuisance fit already exists
+(`_fit_group_nuisance`, `engine.py:909–994`) for amplitude/background/phase, so
+DEADFIT slots in as one more nuisance term there.
+
+**Divergence.**
+- *WiMDA*: deadtime fitted jointly with exp-BG via a 5-sum 2×2 solve on the raw
+  normalised counts; physical units via `RES·HISTS·FRAMES·fnorm`; auto-reshapes
+  the working data each cycle; promotion to grouping is implicit (the same
+  `taud` array drives both).
+- *Asymmetry*: deadtime fitted as an added nuisance in `_fit_group_nuisance`
+  against the engine's normalised signal; reported per group in physical µs (we
+  reconstruct the count scale from the prepared histograms / frames metadata,
+  documented); **suggest-only promotion** (Ben's decision) — the fitted value is
+  surfaced and the user explicitly applies it to the run grouping with a
+  provenance label, never auto-written. Because Asymmetry works in normalised
+  asymmetry space, the `∝ DAT²` term is reformulated against the pre-normalised
+  group counts threaded through the input; the verification target (recover a
+  known injected deadtime on a thinned run) anchors the unit round-trip.
+
+## 5. Exclusion time window (σ-inflation)
+
+**WiMDA — `readcontrol:112–116` + `INPUT`.** A user time window `[ex1, ex2]` µs
+maps to channels and those channels get `σ = 1e15` (excluded by weight, **not**
+dropped), decrementing the live count; the FFT length is preserved. The base
+error is `σ = sqrt(N + 2)·fnorm` (the `+2` a small-count regulariser). Late-time
+Gaussian apodisation is also expressed as σ-inflation, off by default.
+
+**Asymmetry.** `t_min_us`/`t_max_us` already trim the head/tail by masking
+(`build_maxent_input`, `engine.py:582–585`). There is no *interior* exclusion
+window. The engine's σ comes from the grouped error model, not `sqrt(N+2)`.
+
+**Divergence.**
+- *WiMDA*: exclusion = σ→1e15 over an interior window, points retained, FFT
+  length sacred; `sqrt(N+2)` error floor.
+- *Asymmetry*: add an interior exclusion window `[ex_min, ex_max]` implemented
+  as **σ-inflation** on the masked-in points (mirroring the engine's input
+  model — multiply σ by a large factor rather than dropping the rows), so the
+  time grid and any future FFT length stay intact and the existing mask
+  semantics are preserved. We keep Asymmetry's grouped Poisson error model
+  (already shipped, exact `(1−A²)` form per the asymmetry-error study), not
+  `sqrt(N+2)` — stated as a deliberate modern-correctness divergence. Head/tail
+  trim (`t_min`/`t_max`) stays as masking; only the interior window inflates σ.
+
+## 6. Field-axis / units display
+
+**WiMDA — `MaxControl.pas:157–314`.** Three x-axis modes: frequency (MHz), field
+(Gauss), time. Field↔frequency via `gmu2 = 0.01355342 MHz/G`
+(`freq = field·gmu2`). Resolution `fres = 1/(2·tres·bunch·nptsME)` MHz,
+`bres = fres/gmu2` G. A ±window centres the display on the applied field
+(`UseWindow`). Tesla is not offered for the MaxEnt spectrum axis (Gauss + MHz
+only); Tesla appears only as a fit-display option elsewhere.
+
+**Asymmetry.** Spectrum is MHz only; `_field_to_frequency_mhz`
+(`engine.py:118–119`) already does `field_gauss · 135.538817 · 1e-4`. No shared
+units helper exists.
+
+**Divergence.**
+- *WiMDA*: Gauss + MHz axes, `gmu2 = 0.01355342`.
+- *Asymmetry*: add **Gauss and Tesla** display axes alongside MHz via a new
+  `core/fourier/units.py` helper built on the existing CODATA constants
+  (`MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = 135.538817`, `GAUSS_TO_TESLA = 1e-4`).
+  We add Tesla (WiMDA omits it for this axis) because modern high-field µSR is
+  reported in Tesla — a superset, not a conflict. The helper is shared with the
+  `frequency-domain-finishers` project (its API is recorded in
+  `implementation-options.md` so that project reuses it unchanged).
+
+## 7. Editable phase/deadtime tables + phase exchange
+
+**WiMDA — `MaxEdit.pas`, `PhaseTableUnit.pas`.** A per-group text table edits
+either phases (degrees) or deadtimes (`taud` units) in place. Phase exchange is
+a scratch buffer: `GetFromMaxent` pulls `phi[]` into the table, `SendToMaxent`
+pushes table phases into `phi[]` and sets `phasesfitted := true` (which makes
+MaxEnt hold phases fixed). Matching is **by group index only**; there is **no
+provenance** (no "from fit"/"from MaxEnt" tag, no timestamp).
+
+**Asymmetry.** Per-group phases are editable in the panel group table (degrees)
+and flow through `MaxEntConfig.group_phase_degrees`. Grouped time-domain fits
+store per-group `relative_phase` (**radians**, `±π`) in each group's
+`FitResult.parameters`; the read path `group_specs_from_grouped_fit`
+(`core/simulate.py:833–861`) already extracts them, and `fit_panel`
+caches a per-run `grouped_simulate_seed` carrying per-group `relative_phase`.
+
+**Divergence.**
+- *WiMDA*: phase exchange by index, no provenance, single global `phasesfitted`
+  flag; deadtime/phase share one editor via a mode flag.
+- *Asymmetry*: a dedicated **tables tab** in the MaxEnt panel surfacing the
+  per-group phase / amplitude / deadtime (the diagnostics payload already
+  carries the per-cycle dicts). Paired **"Use fitted phases"** (seed MaxEnt from
+  the grouped fit, `rad2deg`) / **"Send phases to fit"** (write back, `deg2rad`)
+  actions, each stamped with a **provenance label** (which fit, when) — an
+  explicit improvement over WiMDA's untagged buffer. Exchange matches on
+  **group id**, not row index (Asymmetry groups carry stable ids), removing
+  WiMDA's F/B-mapping footgun. Unit conversion at every boundary
+  (radians↔degrees) is the main correctness trap, called out in the test plan.
+
+## 8. Spectrum / log export
+
+**WiMDA.** `.max` spectrum file with a full parameter header auto-saved every
+Converge cycle; `.mlog` rich text log. Auto-save-every-cycle is a side effect
+the maxent study already flagged "do not replicate; save on demand".
+
+**Asymmetry.** Recipe-in-project only; no text export.
+
+**Divergence.** Asymmetry adds an **on-demand** spectrum text export (two-column
+frequency/field + density, with a parameter header) and a run log (per-cycle
+χ²/entropy/TEST + final phases/amps/deadtimes), in a modern CSV-like format —
+never WiMDA's binary `.max`, never auto-save-every-cycle.
+
+## 9. Out of scope (recorded with rationale)
+
+- **Spectral deconvolution (`Sconv`)** — WiMDA's `1/Sconv` adjoint grows without
+  bound at late times (`Wimdamax.pas:329–347`); the maxent study flagged it a
+  numerical hazard needing a regularised adjoint. **Deferred.**
+- **Looseness / phase-acceleration knobs** — `PhaseAccelFactor` blends old/new
+  phases (`:668`); the MOVE auto-tighten loop multiplies all σ by 0.99 when
+  bisection stalls (`:1064–1082`). Both are numerical-era convergence cruft on
+  WiMDA's Skilling–Bryan kernel. Asymmetry's projected-gradient V1 has its own
+  χ²-plateau / divergence guard (already shipped) and does not use a MOVE
+  bisection, so these knobs have **no V1 analogue**. **Verdict (recorded now,
+  not deferred to testing): out** — they would be dead controls. If Phase 3
+  testing surfaces a genuine convergence pathology, the fix belongs in the
+  engine's existing guard, not a resurrected looseness knob. (The brief allowed
+  "decide with evidence"; the evidence is that the knobs target a kernel
+  Asymmetry does not run.)
+- **Spectral moments** (B_pk/B_ave/B_rms/skew) — the `spectral-moments` Wave B
+  project; it consumes this project's spectrum. Left alone here.
+- **Muonium-correlation display** — niche; not in this brief.
+
+## 10. Verification oracle status
+
+Mantid is **not importable** in this worktree (`import mantid` →
+`ModuleNotFoundError`). The pure-numpy `MaxentTools` kernel modules
+(`start.py`, `opus.py`, `tropus.py`, `deadfit.py`) appear to have no Mantid
+framework imports and may run standalone to generate **kernel-level golden
+data** for the pulse-shape response and the deadtime 2×2 solve — a study
+research item (try importing them in a throwaway venv during Phase 2/3). If they
+do not import cleanly, verification is **synthetic-first**: the brief's
+verification targets are all synthetic and self-consistent, and that is the
+primary plan (see `verification-plan.md`). Either way, no Mantid code is copied.
