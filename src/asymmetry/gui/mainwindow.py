@@ -517,6 +517,7 @@ class MainWindow(QMainWindow):
         file_menu = mb.addMenu("&File")
         file_menu.addAction("Open Data File(s)\u2026", self._on_open)
         file_menu.addAction("Generate Synthetic Run\u2026", self._on_generate_synthetic)
+        self._add_simulate_preset_menu(file_menu)
         file_menu.addSeparator()
         file_menu.addAction("&New Project", self._on_new_project)
         file_menu.addAction("Open Project\u2026", self._on_open_project)
@@ -1842,6 +1843,41 @@ class MainWindow(QMainWindow):
         self._log_panel.log(
             f"Generated synthetic run {dataset.run_label} from run "
             f"{sim.get('template_run_number', '?')} (seed {sim.get('seed', '?')}).",
+            tag="load",
+        )
+
+    def _add_simulate_preset_menu(self, file_menu) -> None:
+        """Add the archetype-gallery submenu (File → Simulate Preset)."""
+        from asymmetry.core.simulate_presets import ARCHETYPE_PRESETS
+
+        preset_menu = file_menu.addMenu("Simulate Preset")
+        for key, preset in ARCHETYPE_PRESETS.items():
+            action = preset_menu.addAction(
+                preset.label, lambda checked=False, k=key: self._on_generate_preset(k)
+            )
+            action.setToolTip(f"{preset.description} ({preset.chapter})")
+
+    def _on_generate_preset(self, key: str) -> None:
+        """Generate an archetype preset's synthetic run(s) into the browser."""
+        from asymmetry.core.simulate import reduce_run_to_dataset
+        from asymmetry.core.simulate_presets import ARCHETYPE_PRESETS, build_preset_runs
+
+        try:
+            runs = build_preset_runs(
+                key, run_number_allocator=self._data_browser.next_derived_run_number
+            )
+        except (KeyError, ValueError) as exc:
+            QMessageBox.warning(self, "Simulate Preset", str(exc))
+            return
+        labels = []
+        for run in runs:
+            dataset = reduce_run_to_dataset(run)
+            self._data_browser.add_dataset(dataset)
+            labels.append(dataset.run_label)
+        preset = ARCHETYPE_PRESETS[key]
+        self._log_panel.log(
+            f"Generated {len(runs)} synthetic run(s) for preset '{preset.label}' "
+            f"({', '.join(labels)}).",
             tag="load",
         )
 
