@@ -2,6 +2,29 @@
   "version": 1,
   "studies": [
     {
+      "slug": "asymmetry-error-propagation",
+      "feature_name": "Asymmetry statistical error: exact Poisson vs Mantid independent-propagation",
+      "status": "study",
+      "path": "docs/porting/asymmetry-error-propagation",
+      "references": [
+        "Mantid",
+        "WiMDA",
+        "musrfit",
+        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
+      ],
+      "docs": {
+        "readme": "docs/porting/asymmetry-error-propagation/README.md",
+        "comparison": "docs/porting/asymmetry-error-propagation/comparison.md",
+        "implementation_options": "docs/porting/asymmetry-error-propagation/implementation-options.md",
+        "test_data": "docs/porting/asymmetry-error-propagation/test-data.md",
+        "verification_plan": "docs/porting/asymmetry-error-propagation/verification-plan.md"
+      },
+      "tests_path": null,
+      "src_path": "src/asymmetry/core/transform/asymmetry.py",
+      "updated": "2026-06-10",
+      "notes": "Follow-on from the simulate-mode verification suite (verification §2). compute_asymmetry ships Mantid AsymmetryCalc's independent-N/D error (1+A²)/(F+B), which over-estimates σ_A by (1+A²)/(1-A²) vs exact Poisson 4α²FB(F+B)/(F+αB)⁴ = (1-A²)/(F+B). Derivation verified analytically + Monte Carlo; oracle: Mantid is the outlier, WiMDA/musrfit/textbook use 1-A². Measured fit impact: amplitude σ +3.2%, χ²ᵣ biased low. Recommendation: Option A, switch to exact propagation with a one-sided-counts floor; migration note lists pinned-value tests (test_transforms, test_time_integral_asymmetry, test_representation_model, test_mainwindow_additional) and the chi2r re-centring of TestRefitRecovery. compute_asymmetry_with_count_errors and the simulate builder already use the exact form. Not yet implemented."
+    },
+    {
       "slug": "muonium-triplet",
       "feature_name": "Muonium triplet model component",
       "status": "study",
