@@ -40,6 +40,7 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.count_domain import (
     COUNT_COSTS,
+    RESERVED_COUNT_PARAMS,
     fb_overlay_curves,
     fit_fb_alpha,
     fit_single_histogram,
@@ -3680,6 +3681,15 @@ class GlobalFitTab(QWidget):
         so unlike the normalised fgAll path the model's amplitude parameter is not
         pinned to 1; it is seeded at a typical calibration value and fitted.
         """
+        # A model parameter named like a count-fit nuisance/structural slot would
+        # be silently swallowed by the name-based dispatch; reject it up front.
+        collisions = sorted(set(model.param_names) & RESERVED_COUNT_PARAMS)
+        if collisions:
+            raise ValueError(
+                f"Model parameter(s) {collisions} collide with reserved count-fit names; "
+                "rename them before running a count-domain fit."
+            )
+
         config = self._parse_grouped_parameter_configuration()
         model_values = dict(config["model_values"])
         bounds = dict(config["bounds"])

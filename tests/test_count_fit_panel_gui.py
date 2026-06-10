@@ -130,6 +130,20 @@ def test_phase3_controls_push_to_tabs(qapp, fb_dataset):
     assert tab._count_dpsep == pytest.approx(0.324)
 
 
+def test_colliding_model_name_reports_error(qapp, fb_dataset):
+    """A model parameter named like a reserved count-fit slot is rejected loudly."""
+
+    class _Model:
+        param_names = ["A", "dpsep", "phase"]  # 'dpsep' collides with the reserved name
+
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(1)  # fb
+    tab = window._single_fit_tab
+    with pytest.raises(ValueError, match="collide with reserved count-fit names"):
+        tab._count_fit_seed_params(fb_dataset, _Model(), mode="fb")
+
+
 def test_dpsep_fit_toggle_routes_to_tab(qapp, fb_dataset):
     """The dpsep 'fit' checkbox flips the tab into scan-refinement mode."""
     window = MultiGroupFitWindow()

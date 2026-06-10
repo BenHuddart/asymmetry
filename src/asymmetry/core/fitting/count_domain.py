@@ -24,6 +24,7 @@ owns only the count-space statistics and a small iminuit driver. The multi-group
 from __future__ import annotations
 
 import functools
+import inspect
 from collections.abc import Callable, Hashable
 
 import numpy as np
@@ -51,7 +52,56 @@ DEADTIME_PARAMS: tuple[str, ...] = ("DT0", "DT1", "C2", "C3", "C4")
 #: Selectable count-loss models (WiMDA ``CountLossModelling``).
 DEADTIME_MODELS: tuple[str, ...] = ("simple", "linear", "polynomial", "power")
 
+#: Names the count-fit driver consumes structurally or as optional nuisances. A
+#: physics-model parameter sharing one of these would be silently swallowed by the
+#: name-based dispatch (popped as a nuisance, or shadowed by a fixed structural
+#: value), so a collision is rejected up front.
+RESERVED_COUNT_PARAMS: frozenset[str] = frozenset(
+    {
+        "N0",
+        "background",
+        "background_b",
+        "amplitude",
+        "relative_phase",
+        "alpha",
+        "sign",
+        "t0",
+        "tau",
+        "dpsep",
+        "lambda_base",
+        "beta_base",
+        *DEADTIME_PARAMS,
+    }
+)
+
 _INF = float("inf")
+
+
+def _guard_model_param_collisions(model_fn: Callable[..., NDArray]) -> None:
+    """Reject a physics model whose declared parameters collide with reserved names.
+
+    The count-fit dispatch pops its nuisances (``t0``, the deadtime terms,
+    ``dpsep``, ``tau``, ``lambda_base``/``beta_base``) by name and fixes the
+    structural ones (``N0``/``background``/``alpha``/``sign``/``amplitude``/
+    ``relative_phase``). A model parameter literally named one of these would be
+    consumed by the driver and never reach the model — a silent wrong result.
+    This inspects the model's *declared* parameters (skipping the leading time
+    axis; models taking only ``**kwargs`` expose their names via
+    ``param_names``, guarded at the GUI seam) and fails loudly on a collision.
+    """
+    parameters = list(inspect.signature(model_fn).parameters.values())
+    named = {
+        p.name
+        for p in parameters[1:]
+        if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    collisions = sorted(named & RESERVED_COUNT_PARAMS)
+    if collisions:
+        raise ValueError(
+            f"Model parameter(s) {collisions} collide with reserved count-fit names "
+            f"{sorted(RESERVED_COUNT_PARAMS)}; rename the model parameter(s) so the "
+            "count-fit dispatch is unambiguous."
+        )
 
 
 # --- cost functions ---------------------------------------------------------
@@ -546,6 +596,7 @@ def fit_single_histogram(
     """
     _validate_cost(cost)
     _validate_deadtime_model(deadtime_model)
+    _guard_model_param_collisions(model_fn)
     if "tau" in params and "dpsep" in params:
         raise ValueError("Free muon lifetime is not supported with the double-pulse model")
     if _has_free_dpsep(params):
@@ -679,6 +730,7 @@ def fit_fb_alpha(
     """
     _validate_cost(cost)
     _validate_deadtime_model(deadtime_model)
+    _guard_model_param_collisions(model_fn)
     if "tau" in params and "dpsep" in params:
         raise ValueError("Free muon lifetime is not supported with the double-pulse model")
     for required in ("alpha", "N0", "background", "background_b"):

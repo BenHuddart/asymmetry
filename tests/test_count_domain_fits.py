@@ -9,6 +9,8 @@ from ``AsymFitFunction.pas``, and parameter recovery is checked against
 
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 import pytest
 
@@ -918,6 +920,48 @@ def test_fb_negative_alpha_seed_is_clamped_positive():
     alpha_fit = result.group_results[1].parameters["alpha"].value
     assert alpha_fit > 0.0
     assert alpha_fit == pytest.approx(1.25, abs=0.02)
+
+
+@pytest.mark.parametrize("bad_name", ["t0", "dpsep", "DT0", "N0", "background", "alpha", "tau"])
+def test_model_param_colliding_with_reserved_name_raises(bad_name):
+    """A model parameter named like a count-fit nuisance/structural slot fails loudly."""
+    ds = _continuous_run()
+
+    # A model whose declared parameter literally shadows a reserved count-fit name.
+    def colliding_model(t, A, **_kwargs):  # noqa: N803 (A is the conventional amplitude symbol)
+        return A * np.cos(2.0 * np.pi * np.asarray(t, dtype=float))
+
+    pk = inspect.Parameter
+    colliding_model.__signature__ = inspect.Signature(
+        parameters=[
+            pk("t", pk.POSITIONAL_OR_KEYWORD),
+            pk("A", pk.POSITIONAL_OR_KEYWORD),
+            pk(bad_name, pk.KEYWORD_ONLY, default=0.0),
+        ]
+    )
+    params = ParameterSet([Parameter("N0", 4.0e3, min=0.0), Parameter("background", 9.0)])
+    with pytest.raises(ValueError, match="collide with reserved count-fit names"):
+        fit_single_histogram(ds, 1, colliding_model, params)
+
+
+def test_non_colliding_model_is_accepted():
+    """A model whose declared parameters avoid the reserved set fits normally."""
+
+    def clean_model(t, A, freq, phase):  # noqa: N803
+        return A * np.cos(2.0 * np.pi * freq * np.asarray(t, dtype=float) + phase)
+
+    ds = _continuous_run()
+    params = ParameterSet(
+        [
+            Parameter("N0", 4.0e3, min=0.0),
+            Parameter("background", 9.0, min=0.0),
+            Parameter("A", 19.0, min=0.0, max=50.0),
+            Parameter("freq", 1.0, min=0.0),
+            Parameter("phase", 0.0),
+        ]
+    )
+    result = fit_single_histogram(ds, 1, clean_model, params, cost="gaussian")
+    assert result.success
 
 
 def test_amplitude_identified_by_percent_unit_not_rate():
