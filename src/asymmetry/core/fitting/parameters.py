@@ -139,7 +139,10 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
         r"{\rm FWHM}",
         "MHz",
         default_min=0.0,
-        description="Full width at half maximum of a frequency-domain peak.",
+        description=(
+            "Full width at half maximum of a frequency-domain peak "
+            "(the w in the line-shape expression)."
+        ),
     ),
     "bg": ParamInfo(
         "bg",

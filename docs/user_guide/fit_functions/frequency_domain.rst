@@ -34,20 +34,21 @@ GaussianPeak
 .. math::
 
    S(\nu) = h\,\exp\!\left[-4\ln 2\,
-   \frac{(\nu-\nu_0)^2}{\mathrm{FWHM}^2}\right]
+   \frac{(\nu-\nu_0)^2}{w^2}\right],
+   \qquad w \equiv \mathrm{FWHM}
 
 A Gaussian spectral line — appropriate when the underlying time-domain
 envelope is Gaussian (static, dense field distribution): the spectral-domain
-counterpart of :ref:`fit-gaussian`. The normalisation is such that
-:math:`S(\nu_0 \pm \mathrm{FWHM}/2) = h/2` exactly.
+counterpart of :ref:`fit-gaussian`. The width :math:`w` is the literal full
+width at half maximum, :math:`S(\nu_0 \pm w/2) = h/2` exactly.
 
-==========  ======================  =====  ====================================
-Name        Symbol                  Unit   Description
-==========  ======================  =====  ====================================
-``height``  :math:`h`               a.u.   Peak height.
-``nu0``     :math:`\nu_0`           MHz    Peak centre.
-``fwhm``    :math:`\mathrm{FWHM}`   MHz    Full width at half maximum.
-==========  ======================  =====  ====================================
+==========  ==============  =====  ============================================
+Name        Symbol          Unit   Description
+==========  ==============  =====  ============================================
+``height``  :math:`h`       a.u.   Peak height.
+``nu0``     :math:`\nu_0`   MHz    Peak centre.
+``fwhm``    :math:`w`       MHz    Full width at half maximum.
+==========  ==============  =====  ============================================
 
 .. _fit-lorentzian-peak:
 
@@ -56,7 +57,8 @@ LorentzianPeak
 
 .. math::
 
-   S(\nu) = \frac{h}{1 + 4\,(\nu-\nu_0)^2/\mathrm{FWHM}^2}
+   S(\nu) = \frac{h}{1 + 4\,(\nu-\nu_0)^2/w^2},
+   \qquad w \equiv \mathrm{FWHM}
 
 A Lorentzian spectral line — appropriate when the time-domain envelope is
 exponential (dynamic broadening, or a dilute static field distribution): the

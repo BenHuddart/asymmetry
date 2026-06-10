@@ -838,7 +838,10 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "fwhm": get_param_info("fwhm"),
         },
         formula_template="{height}*exp(-4*ln(2)*((nu-{nu0})/{fwhm})^2)",
-        latex_equation=(r"S(\nu)=h\exp\left[-4\ln 2\,\frac{(\nu-\nu_0)^2}{\mathrm{FWHM}^2}\right]"),
+        latex_equation=(
+            r"S(\nu)=h\exp\left[-4\ln 2\,\frac{(\nu-\nu_0)^2}{w^2}\right],"
+            r"\quad w \equiv \mathrm{FWHM}"
+        ),
         category="Frequency Domain",
         domain="frequency",
     ),
@@ -854,7 +857,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "fwhm": get_param_info("fwhm"),
         },
         formula_template="{height}/(1+4*((nu-{nu0})/{fwhm})^2)",
-        latex_equation=(r"S(\nu)=\frac{h}{1+4\,(\nu-\nu_0)^2/\mathrm{FWHM}^2}"),
+        latex_equation=(r"S(\nu)=\frac{h}{1+4\,(\nu-\nu_0)^2/w^2},\quad w \equiv \mathrm{FWHM}"),
         category="Frequency Domain",
         domain="frequency",
     ),
