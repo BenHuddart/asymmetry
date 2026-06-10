@@ -1817,13 +1817,8 @@ class MainWindow(QMainWindow):
             for ds in self._data_browser.all_datasets()
             if ds.run is not None and ds.run.histograms
         ]
-        if not eligible:
-            QMessageBox.information(
-                self,
-                "Generate Synthetic Run",
-                "Load a run with detector histograms to act as the instrument template first.",
-            )
-            return
+        # No loaded run is required: the dialog always offers built-in
+        # idealised instrument templates (File-menu teaching path).
         preselected = (
             self._current_dataset.run_number if self._current_dataset is not None else None
         )

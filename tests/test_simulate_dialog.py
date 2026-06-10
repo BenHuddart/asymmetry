@@ -170,6 +170,44 @@ class TestSimulateDialog:
             assert np.array_equal(again.counts, original.counts)
 
 
+class TestBuiltinTemplateDialog:
+    """The dialog offers built-in instruments and works with no run loaded."""
+
+    def test_builtins_present_with_no_loaded_run(self, qapp) -> None:
+        from asymmetry.core.simulate import BUILTIN_TEMPLATES
+
+        dialog = SimulateDialog([])
+        # Every built-in is offered even though no run was loaded.
+        offered = {
+            dialog._template_combo.itemData(i) for i in range(dialog._template_combo.count())
+        }
+        for key in BUILTIN_TEMPLATES:
+            assert key in offered
+        # Generate is not blocked by the absence of a loaded run.
+        assert dialog._generate_button.isEnabled()
+
+    def test_generate_from_builtin(self, qapp) -> None:
+        dialog = SimulateDialog([], run_number_allocator=lambda: 90001)
+        index = dialog._template_combo.findData("ideal_pulsed_fb")
+        assert index >= 0
+        dialog._template_combo.setCurrentIndex(index)
+        generated: list[Run] = []
+        dialog.run_generated.connect(generated.append)
+        dialog._on_generate()
+
+        assert len(generated) == 1
+        run = generated[0]
+        assert run.metadata["synthetic"] is True
+        assert len(run.histograms) == 64
+
+    def test_continuous_seeds_background_default(self, qapp) -> None:
+        dialog = SimulateDialog([])
+        index = dialog._template_combo.findData("ideal_continuous_fb")
+        dialog._template_combo.setCurrentIndex(index)
+        # The continuous template seeds a non-zero flat background.
+        assert dialog._background_spin.value() > 0.0
+
+
 class TestDegradeAction:
     def test_apply_degrade_adds_derived_run(self, qapp) -> None:
         browser = DataBrowserPanel()

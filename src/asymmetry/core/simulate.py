@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -60,6 +61,157 @@ _PERIOD_KEYS = (
     "period_good_frames",
     "period_dead_time_us",
 )
+
+
+# ---------------------------------------------------------------------------
+# Built-in ideal-instrument templates (simulate with no run loaded)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class InstrumentTemplate:
+    """A built-in idealised instrument that can stand in for a loaded run.
+
+    :func:`simulate_run` only reads *structure* from its template — detector
+    count, bin width, per-detector t0, the good-bin window and the
+    forward/backward grouping — never the (zero) counts, so a built-in
+    template carries empty histograms and a complete grouping. The
+    :attr:`default_total_events` and :attr:`default_background_per_bin` are
+    teaching-sensible starting points the dialog seeds its spinners with; the
+    continuous instrument carries a non-zero flat background (the
+    time-independent uncorrelated background characteristic of continuous
+    sources — textbook Ch. 14), the pulsed one does not.
+    """
+
+    key: str
+    label: str
+    description: str
+    n_detectors: int
+    n_bins: int
+    bin_width_us: float
+    t0_bin: int
+    forward_detectors: tuple[int, ...]
+    backward_detectors: tuple[int, ...]
+    alpha: float = 1.0
+    good_frames: float = 1.0
+    good_bin_start: int | None = None
+    good_bin_end: int | None = None
+    default_total_events: float = 10.0e6
+    default_background_per_bin: float = 0.0
+    instrument_name: str = ""
+    field_state: str = "ZF"
+    detector_orientation: str = "Longitudinal"
+
+    def build(self) -> Run:
+        """Materialise an empty-histogram :class:`Run` with this geometry."""
+        first_good = self.t0_bin if self.good_bin_start is None else self.good_bin_start
+        last_good = self.n_bins - 1 if self.good_bin_end is None else self.good_bin_end
+        histograms = [
+            Histogram(
+                counts=np.zeros(self.n_bins, dtype=float),
+                bin_width=self.bin_width_us,
+                t0_bin=self.t0_bin,
+                good_bin_start=first_good,
+                good_bin_end=last_good,
+            )
+            for _ in range(self.n_detectors)
+        ]
+        groups = {
+            1: list(self.forward_detectors),
+            2: list(self.backward_detectors),
+        }
+        grouping = {
+            "groups": groups,
+            "group_names": {1: "Forward", 2: "Backward"},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": float(self.alpha),
+            "t0_bin": self.t0_bin,
+            "t_good_offset": 0,
+            "first_good_bin": first_good,
+            "last_good_bin": last_good,
+            "bin_index_base": 1,
+            "bunching_factor": 1,
+            "good_frames": float(self.good_frames),
+            "deadtime_correction": False,
+            "dead_time_us": [0.0] * self.n_detectors,
+            "included_groups": {1: True, 2: True},
+        }
+        return Run(
+            run_number=0,
+            histograms=histograms,
+            metadata={
+                "title": self.label,
+                "instrument": self.instrument_name,
+                "field_state": self.field_state,
+                "detector_orientation": self.detector_orientation,
+                "builtin_template": self.key,
+            },
+            grouping=grouping,
+            source_file="",
+        )
+
+
+#: Built-in idealised instruments, keyed for the dialog template combo. The
+#: pulsed F/B template mirrors an ISIS-style spectrometer (32 + 32 detectors,
+#: 16 ns bins, a 32 μs window); the continuous template a PSI-style F/B pair
+#: with fine 1 ns binning, a short 10 μs window and a flat background. The two
+#: are the source archetypes the textbook contrasts (Ch. 14).
+BUILTIN_TEMPLATES: dict[str, InstrumentTemplate] = {
+    "ideal_pulsed_fb": InstrumentTemplate(
+        key="ideal_pulsed_fb",
+        label="Ideal pulsed F/B (ISIS-style)",
+        description=(
+            "Pulsed-source spectrometer: 32 forward + 32 backward detectors, "
+            "16 ns bins over a 32 μs window, no uncorrelated background."
+        ),
+        n_detectors=64,
+        n_bins=2000,
+        bin_width_us=0.016,
+        t0_bin=100,
+        forward_detectors=tuple(range(1, 33)),
+        backward_detectors=tuple(range(33, 65)),
+        alpha=1.0,
+        good_frames=1.0,
+        default_total_events=40.0e6,
+        default_background_per_bin=0.0,
+        instrument_name="IDEAL-PULSED",
+    ),
+    "ideal_continuous_fb": InstrumentTemplate(
+        key="ideal_continuous_fb",
+        label="Ideal continuous F/B (PSI-style)",
+        description=(
+            "Continuous-source F/B pair: 1 ns bins over a 10 μs window with a "
+            "flat uncorrelated background (10 counts/bin/detector)."
+        ),
+        n_detectors=2,
+        n_bins=10000,
+        bin_width_us=0.001,
+        t0_bin=1000,
+        forward_detectors=(1,),
+        backward_detectors=(2,),
+        alpha=1.0,
+        good_frames=1.0,
+        default_total_events=20.0e6,
+        default_background_per_bin=10.0,
+        instrument_name="IDEAL-CONTINUOUS",
+    ),
+}
+
+
+def build_builtin_template(key: str) -> Run:
+    """Build an empty-histogram :class:`Run` for a named built-in instrument.
+
+    Raises :class:`KeyError` for an unknown key. See :data:`BUILTIN_TEMPLATES`
+    for the available instruments.
+    """
+    try:
+        template = BUILTIN_TEMPLATES[key]
+    except KeyError:
+        raise KeyError(
+            f"Unknown built-in instrument template {key!r}; available: {sorted(BUILTIN_TEMPLATES)}."
+        ) from None
+    return template.build()
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,8 @@ import pytest
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.simulate import (
+    BUILTIN_TEMPLATES,
+    build_builtin_template,
     build_run_from_detector_asymmetries,
     degrade_run,
     expected_counts,
@@ -637,3 +639,102 @@ class TestReduceRunToDataset:
         assert dataset.metadata["synthetic"] is True
         # Percent scale: early-time asymmetry near 20, not 0.2.
         assert 10.0 < float(dataset.asymmetry[:20].mean()) < 30.0
+
+
+class TestBuiltinTemplates:
+    """Built-in idealised instrument templates (no loaded run required)."""
+
+    def test_registry_has_pulsed_and_continuous(self) -> None:
+        assert "ideal_pulsed_fb" in BUILTIN_TEMPLATES
+        assert "ideal_continuous_fb" in BUILTIN_TEMPLATES
+
+    def test_pulsed_geometry(self) -> None:
+        run = build_builtin_template("ideal_pulsed_fb")
+        assert len(run.histograms) == 64
+        assert run.histograms[0].n_bins == 2000
+        assert np.isclose(run.histograms[0].bin_width, 0.016)
+        assert run.grouping["groups"][1] == list(range(1, 33))
+        assert run.grouping["groups"][2] == list(range(33, 65))
+        # Counts are unused structure carriers — they must be all-zero.
+        assert all(float(h.counts.sum()) == 0.0 for h in run.histograms)
+        # Deadtimes are zero and correction is off (synthetic counts are clean).
+        assert run.grouping["deadtime_correction"] is False
+        assert run.grouping["dead_time_us"] == [0.0] * 64
+
+    def test_continuous_geometry_and_window(self) -> None:
+        run = build_builtin_template("ideal_continuous_fb")
+        assert len(run.histograms) == 2
+        assert run.histograms[0].n_bins == 10000
+        assert np.isclose(run.histograms[0].bin_width, 0.001)
+        # 10 μs window at 1 ns binning.
+        assert np.isclose(run.histograms[0].n_bins * run.histograms[0].bin_width, 10.0)
+
+    def test_unknown_key_raises(self) -> None:
+        with pytest.raises(KeyError, match="Unknown built-in"):
+            build_builtin_template("no_such_instrument")
+
+    def test_simulate_from_builtin_round_trips_through_writer(self, tmp_path) -> None:
+        """A built-in template simulates, writes NeXus and reloads bit-exact."""
+        h5py = pytest.importorskip("h5py")  # noqa: F841
+        from asymmetry.core.io import load
+        from asymmetry.core.io.nexus_writer import write_nexus_v1
+
+        template = build_builtin_template("ideal_pulsed_fb")
+        run = simulate_run(
+            template,
+            _exp_model,
+            {"a0": 20.0, "rate": 0.4},
+            total_events=BUILTIN_TEMPLATES["ideal_pulsed_fb"].default_total_events,
+            seed=3,
+            run_number=90001,
+        )
+        path = tmp_path / "builtin.nxs"
+        write_nexus_v1(run, path)
+        reloaded = load(path).run
+        assert len(reloaded.histograms) == len(run.histograms)
+        for original, again in zip(run.histograms, reloaded.histograms, strict=True):
+            assert np.array_equal(again.counts, original.counts)
+
+    def test_builtin_refit_recovers_parameters(self) -> None:
+        """Simulate from the pulsed built-in and refit to the generating values."""
+        pytest.importorskip("iminuit")
+        from asymmetry.core.fitting.engine import FitEngine
+        from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+        template = build_builtin_template("ideal_pulsed_fb")
+        truth = {"a0": 22.0, "rate": 0.45}
+        run = simulate_run(
+            template,
+            _exp_model,
+            truth,
+            total_events=BUILTIN_TEMPLATES["ideal_pulsed_fb"].default_total_events,
+            seed=11,
+            run_number=90001,
+        )
+        dataset = reduce_run_to_dataset(run)
+        params = ParameterSet(
+            [
+                Parameter(name="a0", value=10.0, min=0.0, max=100.0),
+                Parameter(name="rate", value=1.5, min=0.0, max=10.0),
+            ]
+        )
+        # Window to the healthy-count region (early time), as a real fit would.
+        result = FitEngine().fit(dataset, _exp_model, params, t_max=8.0)
+        assert result.success
+        fitted = {p.name: p.value for p in result.parameters}
+        assert abs(fitted["a0"] - truth["a0"]) < 3.0 * result.uncertainties["a0"]
+        assert abs(fitted["rate"] - truth["rate"]) < 3.0 * result.uncertainties["rate"]
+
+    def test_continuous_background_seeds_flat_offset(self) -> None:
+        """The continuous template's flat background lands in the pre-t0 bins."""
+        spec = BUILTIN_TEMPLATES["ideal_continuous_fb"]
+        assert spec.default_background_per_bin > 0.0
+        template = spec.build()
+        expected = expected_counts(
+            template,
+            {1: _zero_model, 2: _zero_model},
+            total_events=spec.default_total_events,
+            background_per_bin=spec.default_background_per_bin,
+        )
+        # Pre-t0 bins carry the flat background only.
+        assert np.allclose(expected[0][: spec.t0_bin], spec.default_background_per_bin)

@@ -37,7 +37,7 @@ from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.domain_library import default_model_for_domain
 from asymmetry.core.io.nexus_writer import write_nexus_v1
-from asymmetry.core.simulate import simulate_run
+from asymmetry.core.simulate import BUILTIN_TEMPLATES, build_builtin_template, simulate_run
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 
 #: Synthetic runs are numbered from here, clear of real ISIS/PSI run series.
@@ -122,6 +122,11 @@ class SimulateDialog(QDialog):
             title = str(ds.metadata.get("title", "")).strip()
             label = f"{ds.run_label} — {title}" if title else str(ds.run_label)
             self._template_combo.addItem(label, ds.run_number)
+        # Built-in idealised instruments stand in when no run is loaded (and
+        # are always offered as a teaching baseline). Their combo data is the
+        # string registry key, distinguishing them from a loaded run number.
+        for key, template in BUILTIN_TEMPLATES.items():
+            self._template_combo.addItem(f"Built-in: {template.label}", key)
         form.addRow("Template run:", self._template_combo)
 
         model_row = QHBoxLayout()
@@ -189,7 +194,9 @@ class SimulateDialog(QDialog):
             index = self._template_combo.findData(preselected_run)
             if index >= 0:
                 self._template_combo.setCurrentIndex(index)
-        self._generate_button.setEnabled(bool(self._templates))
+        # Built-in templates are always available, so Generate is never blocked
+        # purely by the absence of a loaded run.
+        self._generate_button.setEnabled(self._template_combo.count() > 0)
         self._on_template_changed()
 
     # ------------------------------------------------------------------
@@ -197,9 +204,11 @@ class SimulateDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _current_template(self) -> Run | None:
-        run_number = self._template_combo.currentData()
+        data = self._template_combo.currentData()
+        if isinstance(data, str):
+            return build_builtin_template(data)
         for ds in self._templates:
-            if ds.run_number == run_number and ds.run is not None:
+            if ds.run_number == data and ds.run is not None:
                 return ds.run
         return None
 
@@ -209,11 +218,20 @@ class SimulateDialog(QDialog):
             return
         # Keep values the user typed but has not generated with yet.
         self._param_values.update(self._table_parameters())
-        # Default the event budget to the template's realised statistics.
-        total_counts = sum(float(h.counts.sum()) for h in template.histograms)
-        if total_counts > 0:
-            self._events_spin.setValue(max(0.01, round(total_counts / 1.0e6, 2)))
-        self._seed_from_fit(template)
+        data = self._template_combo.currentData()
+        if isinstance(data, str):
+            # Built-in instrument: seed the event budget and background from
+            # its teaching-sensible defaults (the run has zero counts), and
+            # skip fit seeding (a built-in carries no fit state).
+            spec = BUILTIN_TEMPLATES[data]
+            self._events_spin.setValue(max(0.01, round(spec.default_total_events / 1.0e6, 2)))
+            self._background_spin.setValue(spec.default_background_per_bin)
+        else:
+            # Default the event budget to the template's realised statistics.
+            total_counts = sum(float(h.counts.sum()) for h in template.histograms)
+            if total_counts > 0:
+                self._events_spin.setValue(max(0.01, round(total_counts / 1.0e6, 2)))
+            self._seed_from_fit(template)
         self._refresh_model_view()
 
     def _seed_from_fit(self, template: Run) -> None:
