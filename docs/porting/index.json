@@ -563,6 +563,30 @@
       "src_path": null,
       "updated": "2026-06-10",
       "notes": "UMBRELLA study: full WiMDA source sweep (every unit in wimda.dpr) vs fresh Asymmetry scan at 474534e; supersedes the WiMDA column of comparison-matrix.md. Output: consolidated gap inventory (comparison.md) + 12-project parallel portfolio + 1 deferred brief (projects/*.md), partitioned for parallel worktree sessions in three waves (implementation-options.md). Decisions 2026-06-10: Burg all-poles MEM INCLUDED as diagnostic (reverses prior exclusion); Eigen.pas excluded permanently (old roadmap mislabel - Hermitian eigensolvers for FmuF models, not a spectral estimator); Kramers-Kronig dropped (optical spectroscopy, not muSR); HDF4 stays out; NegMu deferred brief (adapt-not-port); live-run monitoring = optional phase. KEY FINDINGS: fit-function parity verified complete against WiMDA source (all remaining gaps are machinery/workflow); curve-averaging co-add is statistically wrong (run-arithmetic project is a correctness fix); Multifit is subsumed by the Global tab; WiMDA's own MUD loader is a non-functional stub (not a parity item); WiMDA KTBArray low-field bug documented (never oracle against it). Each project still requires its own five-doc study pass before implementation; briefs are pre-studies."
+    },
+    {
+      "slug": "data-reduction-parity",
+      "feature_name": "Data-reduction parity (alpha estimation, backgrounds, binning modes, t0 search, detector exclusion, period mapping)",
+      "status": "study",
+      "path": "docs/porting/data-reduction-parity",
+      "references": [
+        "WiMDA",
+        "Mantid",
+        "musrfit",
+        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
+      ],
+      "docs": {
+        "readme": "docs/porting/data-reduction-parity/README.md",
+        "comparison": "docs/porting/data-reduction-parity/comparison.md",
+        "implementation_options": "docs/porting/data-reduction-parity/implementation-options.md",
+        "test_data": "docs/porting/data-reduction-parity/test-data.md",
+        "verification_plan": "docs/porting/data-reduction-parity/verification-plan.md"
+      },
+      "tests_path": null,
+      "src_path": null,
+      "supersedes_candidate": "period-arithmetic",
+      "updated": "2026-06-10",
+      "notes": "Wave A project 1 of the wimda-parity-gap umbrella. Three phases: (1) diamagnetic + General alpha estimators with uncertainties; (2) tail-fit background for pulsed sources + frame-ratio background-run subtraction; (3) variable/constant-error binning, automatic t0 search, per-detector exclusion, multi-period subset->red/green mapping. Phase 3 period mapping realises the REMAINDER of the period-arithmetic candidate (period-selection shipped the red/green selection slice; this adds arbitrary subset summation with Ignore). WiMDA arithmetic transcribed as test oracles; divergences recorded in comparison.md."
     }
   ]
 }
