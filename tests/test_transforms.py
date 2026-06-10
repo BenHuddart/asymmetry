@@ -39,13 +39,54 @@ class TestComputeAsymmetry:
         assert asym[0] == pytest.approx(0.0)
         assert err[0] == pytest.approx(1.0)
 
-    def test_one_sided_counts_have_nonzero_error(self):
+    def test_one_sided_counts_use_default_error(self):
         f = np.array([1.0])
         b = np.array([0.0])
         asym, err = compute_asymmetry(f, b, alpha=1.0)
         assert asym[0] == pytest.approx(1.0)
-        # Mantid-compatible formula gives sqrt(2) for this case.
-        assert err[0] == pytest.approx(np.sqrt(2.0))
+        # One-sided bins (F*B == 0) are degenerate: A is pinned to +/-1 and the
+        # exact first-order variance is zero, which is useless as a fit weight,
+        # so they fall back to the 1.0 "no information" sentinel.
+        assert err[0] == pytest.approx(1.0)
+
+    def test_exact_poisson_error_alpha_one(self):
+        # Exact propagation: var(A) = (1 - A^2)/(F + B) at alpha = 1.
+        f = np.array([6000.0])
+        b = np.array([4000.0])
+        asym, err = compute_asymmetry(f, b, alpha=1.0)
+        a = asym[0]
+        assert err[0] ** 2 == pytest.approx((1.0 - a * a) / (f[0] + b[0]))
+
+    def test_exact_error_general_alpha(self):
+        # var(A) = 4 alpha^2 F B (F + B) / (F + alpha B)^4 for any alpha.
+        f = np.array([5200.0])
+        b = np.array([4100.0])
+        alpha = 1.3
+        _, err = compute_asymmetry(f, b, alpha=alpha)
+        d = f[0] + alpha * b[0]
+        expected = np.sqrt(4.0 * alpha**2 * f[0] * b[0] * (f[0] + b[0])) / d**2
+        assert err[0] == pytest.approx(expected)
+
+    def test_error_matches_count_error_path(self):
+        # compute_asymmetry must agree with the explicit count-error form when
+        # the count errors are the Poisson sqrt(N): both are exact propagation.
+        f = np.array([90.0, 150.0, 5000.0])
+        b = np.array([60.0, 150.0, 4800.0])
+        alpha = 1.1
+        _, err = compute_asymmetry(f, b, alpha=alpha)
+        _, err_counts = compute_asymmetry_with_count_errors(
+            f, b, np.sqrt(f), np.sqrt(b), alpha=alpha
+        )
+        np.testing.assert_allclose(err, err_counts)
+
+    def test_negative_counts_do_not_produce_nan_error(self):
+        # Out-of-contract negative (e.g. over-subtracted) counts must not yield
+        # a NaN error from sqrt of a negative radicand; the clamp returns 0.0.
+        f = np.array([-3.0])
+        b = np.array([-2.0])
+        _, err = compute_asymmetry(f, b, alpha=1.0)
+        assert np.isfinite(err[0])
+        assert err[0] == pytest.approx(0.0)
 
     def test_supplied_count_errors_use_musrfit_style_propagation(self):
         f = np.array([90.0])

@@ -43,23 +43,37 @@ def compute_asymmetry(
 
     numerator = f - alpha * b
     denominator = f + alpha * b
-    # Mantid-compatible handling: only divide on non-zero denominator.
+    # Only divide on non-zero denominator.
     safe = denominator != 0.0
     asym = np.zeros_like(f)
-    err = np.zeros_like(f)
+    # Default error 1.0 is a "no information" sentinel used for both the
+    # zero-denominator bins and the degenerate one-sided bins below.
+    err = np.ones_like(f)
 
     asym[safe] = numerator[safe] / denominator[safe]
 
-    # Match Mantid AsymmetryCalc error model:
-    # error = sqrt((F + alpha^2 B) * (1 + (num/den)^2)) / den
-    # with a default error of 1.0 where denominator is zero.
-    err[~safe] = 1.0
-    if np.any(safe):
-        den_safe = denominator[safe]
-        num_safe = numerator[safe]
-        q1 = f[safe] + (alpha * alpha) * b[safe]
-        q2 = 1.0 + (num_safe * num_safe) / (den_safe * den_safe)
-        err[safe] = np.sqrt(np.maximum(q1 * q2, 0.0)) / np.abs(den_safe)
+    # Exact Poisson propagation of A = (F - alpha B)/(F + alpha B) with
+    # var(F) = F, var(B) = B, keeping the cov(num, den) = F - alpha^2 B term:
+    #   var(A) = 4 alpha^2 F B (F + B) / (F + alpha B)^4
+    #          = (1 - A^2)/(F + B)        at alpha = 1.
+    # This is the textbook / WiMDA / musrfit result. (The older Mantid
+    # AsymmetryCalc model propagated num and den as *independent*, dropping
+    # that covariance and over-estimating sigma_A by (1 + A^2)/(1 - A^2);
+    # see docs/porting/asymmetry-error-propagation/.)
+    #
+    # One-sided bins (F * B == 0) have a degenerate zero first-order variance
+    # (A is pinned to +/-1), which is useless as a fit weight, so they keep
+    # the 1.0 sentinel rather than a zero error.
+    informative = safe & (f * b > 0.0)
+    if np.any(informative):
+        den = denominator[informative]
+        fi = f[informative]
+        bi = b[informative]
+        # np.maximum guards against negative radicands from out-of-contract
+        # (e.g. background-subtracted) counts, matching the clamp in
+        # compute_asymmetry_with_count_errors.
+        radicand = np.maximum(fi * bi * (fi + bi), 0.0)
+        err[informative] = 2.0 * abs(float(alpha)) * np.sqrt(radicand) / (den * den)
 
     return asym, err
 
