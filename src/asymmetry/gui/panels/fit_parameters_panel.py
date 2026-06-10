@@ -2328,6 +2328,9 @@ class FitParametersPanel(QWidget):
                     y=y_vals,
                     yerr=y_err,
                     group_variable_value=self._group_variable_value_for_rows(rows, x_key),
+                    # Per-point x-uncertainty for the effective-variance option —
+                    # only present (non-None) when the abscissa is a fitted param.
+                    xerr=self._x_error_array(rows, x_key),
                 )
             )
 
@@ -2555,6 +2558,7 @@ class FitParametersPanel(QWidget):
                     ]
                     or None
                 ),
+                "use_x_errors": bool(config.get("use_x_errors", False)),
             }
         return out
 
@@ -2589,6 +2593,7 @@ class FitParametersPanel(QWidget):
                     ]
                     or None
                 ),
+                "use_x_errors": bool(config.get("use_x_errors", False)),
             }
         return out
 

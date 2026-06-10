@@ -233,11 +233,36 @@ def test_cross_group_run_fit_sets_in_progress_state(monkeypatch) -> None:
     assert app is not None
 
 
+def _param_groups_with_xerr() -> list[ParameterGroupData]:
+    """Groups whose abscissa is a fitted parameter (param:nu) carrying σ_x."""
+    x = np.array([1.0, 2.0, 3.0, 4.0], dtype=float)
+    xe = np.array([0.1, 0.1, 0.1, 0.1], dtype=float)
+    g0 = ParameterGroupData(
+        group_id="g0",
+        group_name="G0",
+        x=x,
+        y=np.array([0.1, 0.2, 0.3, 0.4], dtype=float),
+        yerr=np.full_like(x, 0.01),
+        group_variable_value=0.0,
+        xerr=xe,
+    )
+    g1 = ParameterGroupData(
+        group_id="g1",
+        group_name="G1",
+        x=x,
+        y=np.array([0.12, 0.22, 0.32, 0.42], dtype=float),
+        yerr=np.full_like(x, 0.01),
+        group_variable_value=1.0,
+        xerr=xe,
+    )
+    return [g0, g1]
+
+
 def test_cross_group_dialog_exposes_error_modes_and_windows() -> None:
     """global_fit_parameter_model now honours error modes and windows, so the
     inherited selector and '+ Window' button are shown and wired. The
-    effective-variance x-uncertainty toggle stays hidden (cross-group backend
-    does not thread it through yet)."""
+    effective-variance toggle is hidden for a run-level axis (field has no
+    x-uncertainty), not because cross-group lacks backend support."""
     QApplication.instance() or QApplication([])
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
@@ -257,13 +282,77 @@ def test_cross_group_dialog_exposes_error_modes_and_windows() -> None:
     buttons = [b.text() for b in dlg.findChildren(QPushButton)]
     assert "+ Window" in buttons
 
-    # Effective-variance toggle is not offered in cross-group mode.
+    # field is exact (no σ_x), so the effective-variance toggle is not offered.
     assert dlg._x_error_check is None
 
     # The per-range 'active' checkboxes stay hidden across UI rebuilds, not
     # just after the constructor's one-time pass.
     dlg._rebuild_ranges_ui()
     assert all(w.active.isHidden() for w in dlg._range_widgets)
+
+
+def test_cross_group_dialog_offers_x_uncertainty_for_param_axis() -> None:
+    """When the abscissa is a fitted parameter carrying σ_x, the cross-group
+    dialog now exposes the effective-variance toggle (decision E retired); it is
+    disabled under None/Scatter, whose unit y-weights have no scale for σ_x."""
+    QApplication.instance() or QApplication([])
+    from asymmetry.core.fitting.parameter_models import ErrorMode
+
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="param:nu",
+        groups=_param_groups_with_xerr(),
+        parent=None,
+    )
+
+    assert dlg._x_error_check is not None
+    # Default Column mode → live and usable.
+    assert dlg._x_error_check.isEnabled()
+    dlg._x_error_check.setChecked(True)
+    assert dlg._use_x_errors() is True
+
+    # None/Scatter disable the toggle, so a box left checked stays inert.
+    none_idx = dlg._error_mode_combo.findData(ErrorMode.NONE.value)
+    dlg._error_mode_combo.setCurrentIndex(none_idx)
+    assert not dlg._x_error_check.isEnabled()
+    assert dlg._use_x_errors() is False
+
+
+def test_cross_group_dialog_x_uncertainty_config_roundtrips() -> None:
+    """use_x_errors survives _collect_config → _apply_existing_config; legacy
+    config (no key) loads as off."""
+    QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="param:nu",
+        groups=_param_groups_with_xerr(),
+        parent=None,
+    )
+    assert dlg._x_error_check is not None
+    dlg._x_error_check.setChecked(True)
+    config = dlg._collect_config()
+    assert config["use_x_errors"] is True
+
+    reloaded = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="param:nu",
+        groups=_param_groups_with_xerr(),
+        existing_config=config,
+        parent=None,
+    )
+    assert reloaded._use_x_errors() is True
+
+    # Legacy config without the key → off.
+    legacy = dict(config)
+    legacy.pop("use_x_errors")
+    legacy_dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="param:nu",
+        groups=_param_groups_with_xerr(),
+        existing_config=legacy,
+        parent=None,
+    )
+    assert legacy_dlg._use_x_errors() is False
 
 
 def test_local_param_error_cell_shows_per_group_values_not_just_group0() -> None:

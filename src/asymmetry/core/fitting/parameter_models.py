@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import partial
 from itertools import product
 
 import numpy as np
@@ -1477,6 +1478,9 @@ class ParameterGroupData:
     y: NDArray[np.float64]
     yerr: NDArray[np.float64]
     group_variable_value: float
+    #: Optional per-point x-uncertainty (aligned to ``x``), used only for an
+    #: effective-variance fit when the abscissa is itself a fitted parameter.
+    xerr: NDArray[np.float64] | None = None
 
 
 @dataclass
@@ -1699,6 +1703,33 @@ def _transport_seed_initial_values(
     return best_seed
 
 
+def _effective_variance_residual(
+    predict: Callable[[NDArray[np.float64]], NDArray[np.float64]],
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    sigma_y2: NDArray[np.float64],
+    xerr2: NDArray[np.float64],
+    x_step: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Orear/York effective-variance residual when both x and y are uncertain.
+
+    ``σ²_eff = σ_y² + (∂f/∂x)²·σ_x²``, with the local slope evaluated by a
+    central finite difference ``(f(x+h) − f(x−h)) / 2h`` (no analytic
+    derivative needed). A model undefined just outside the data range yields a
+    non-finite probe; the slope falls back to zero there rather than poisoning
+    the whole cost (``σ_y² > 0`` is guaranteed by the caller's validity mask, so
+    the denominator stays positive). Shared by the single-series and
+    cross-group fits so the two paths cannot drift numerically.
+    """
+    pred = np.asarray(predict(x), dtype=float)
+    slope = (
+        np.asarray(predict(x + x_step), dtype=float) - np.asarray(predict(x - x_step), dtype=float)
+    ) / (2.0 * x_step)
+    slope = np.where(np.isfinite(slope), slope, 0.0)
+    sigma2 = sigma_y2 + (slope**2) * xerr2
+    return (y - pred) / np.sqrt(sigma2)
+
+
 def _run_parameter_model_minuit(
     x_fit: NDArray[np.float64],
     y_fit: NDArray[np.float64],
@@ -1742,17 +1773,14 @@ def _run_parameter_model_minuit(
         xerr2 = np.asarray(xerr_fit, dtype=float) ** 2
 
         def cost(*args: float) -> float:
-            pred = model_wrapper(x_fit, *args)
-            slope = (
-                model_wrapper(x_fit + x_step, *args) - model_wrapper(x_fit - x_step, *args)
-            ) / (2.0 * x_step)
-            # A model undefined just outside the data range would give a NaN
-            # probe; fall back to the y-only variance there rather than poisoning
-            # the whole cost (e2 > 0 is guaranteed by the validity mask, so the
-            # denominator stays positive).
-            slope = np.where(np.isfinite(slope), slope, 0.0)
-            sigma2 = e2 + (slope**2) * xerr2
-            resid = (y_fit - pred) / np.sqrt(sigma2)
+            resid = _effective_variance_residual(
+                lambda x_local: model_wrapper(x_local, *args),
+                x_fit,
+                y_fit,
+                e2,
+                xerr2,
+                x_step,
+            )
             return float(np.sum(resid**2))
 
         cost.errordef = Minuit.LEAST_SQUARES
@@ -1955,6 +1983,7 @@ def global_fit_parameter_model(
     error_mode: ErrorMode | str = ErrorMode.COLUMN,
     error_value: float | None = None,
     windows: Sequence[tuple[float, float]] | None = None,
+    xerr: Mapping[str, NDArray] | None = None,
 ) -> CrossGroupFitResult:
     """Jointly fit a parameter model across multiple groups.
 
@@ -1968,8 +1997,23 @@ def global_fit_parameter_model(
     group to a union of (min, max) intervals (OR-combined, one model across the
     union). ``SCATTER`` rescales *all* parameter errors (global and local) by
     √(χ²/ν) after the fit — the fixed point of WiMDA's Estimate iteration.
+
+    ``xerr`` optionally maps ``group_id`` → per-point x-uncertainties (aligned
+    to that group's stored ``x``) for an errors-in-variables (Orear/York
+    effective-variance) fit, used for parameter-vs-parameter trending where the
+    abscissa is itself a fitted quantity. It uses the same central-difference
+    estimator as the single-series :func:`fit_parameter_model`. A group with no
+    entry, or all-zero/non-finite σ_x, keeps ordinary least squares. Like the
+    single-series path, ``xerr`` is ignored under ``NONE``/``SCATTER``, whose
+    unit y-weights carry no physical scale to combine with the x-variance term.
     """
     error_mode = ErrorMode(error_mode)
+    # Effective variance combines σ_x with a real per-point σ_y; under unit
+    # weights (NONE) or scatter estimation (SCATTER) the "σ_y" is a placeholder
+    # of arbitrary scale, so the combination would be scale-dependent — ignore
+    # x-errors in those modes (matching the single-series path and the GUI
+    # toggle's enable rule).
+    use_xerr = xerr is not None and error_mode not in (ErrorMode.NONE, ErrorMode.SCATTER)
     if len(groups) < 2:
         return CrossGroupFitResult(
             success=False,
@@ -2075,9 +2119,17 @@ def global_fit_parameter_model(
 
     # Precompute per-group fit arrays once: the window mask, finite mask and the
     # per-point σ under the chosen error mode are all data-only (independent of
-    # the fitted parameters), so they need not be rebuilt every cost call.
+    # the fitted parameters), so they need not be rebuilt every cost call. When
+    # x-uncertainty is active a group also carries its σ_x² and the finite
+    # -difference step (None → ordinary least squares for that group).
     group_fit_arrays: list[
-        tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]
+        tuple[
+            NDArray[np.float64],
+            NDArray[np.float64],
+            NDArray[np.float64],
+            NDArray[np.float64] | None,
+            NDArray[np.float64] | None,
+        ]
     ] = []
     total_points = 0
     for group in groups:
@@ -2097,18 +2149,36 @@ def global_fit_parameter_model(
                 error_mode=error_mode.value,
             )
         mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(sigma) & (sigma > 0) & window_sel
-        group_fit_arrays.append((x[mask], y[mask], sigma[mask]))
+        x_masked = x[mask]
+        xe2: NDArray[np.float64] | None = None
+        xstep: NDArray[np.float64] | None = None
+        if use_xerr:
+            raw_xe = xerr.get(group.group_id) if xerr is not None else None
+            if raw_xe is not None:
+                xe = np.asarray(raw_xe, dtype=float)
+                if xe.shape == x.shape:
+                    xe_masked = xe[mask]
+                    xe_masked = np.where(np.isfinite(xe_masked) & (xe_masked > 0.0), xe_masked, 0.0)
+                    if np.any(xe_masked > 0.0):
+                        xe2 = xe_masked**2
+                        xstep = np.maximum(np.abs(x_masked), 1.0) * 1e-6
+        group_fit_arrays.append((x_masked, y[mask], sigma[mask], xe2, xstep))
         total_points += int(np.count_nonzero(mask))
 
     def cost_function(*args: float) -> float:
         arg_map = dict(zip(fit_param_names, args, strict=False))
         total = 0.0
-        for gidx, (xx, yy, ee) in enumerate(group_fit_arrays):
+        for gidx, (xx, yy, ee, xe2, xstep) in enumerate(group_fit_arrays):
             if xx.size == 0:
                 continue
             kwargs = _build_kwargs(arg_map, gidx)
-            pred = np.asarray(model.function(xx, **kwargs), dtype=float)
-            resid = (yy - pred) / ee
+            if xe2 is None or xstep is None:
+                pred = np.asarray(model.function(xx, **kwargs), dtype=float)
+                resid = (yy - pred) / ee
+            else:
+                resid = _effective_variance_residual(
+                    partial(model.function, **kwargs), xx, yy, ee**2, xe2, xstep
+                )
             total += float(np.sum(resid**2))
         return total
 
