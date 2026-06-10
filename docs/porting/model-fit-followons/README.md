@@ -1,6 +1,7 @@
 # Model-fit follow-ons (WiMDA Model layer, second pass)
 
-Status: **study** (2026-06-10). Implements the Model-layer follow-ons recorded
+Status: **implemented** (2026-06-10; items 1–3 shipped, validate green; item 4
+stretch state recorded below). Implements the Model-layer follow-ons recorded
 by the merged *model-function-parity* project (PR #32, `d64820c`), namely items
 1, 2, 4 and the relevant slice of item 5 of its
 [`implementation-options.md` §Follow-ons](../model-function-parity/implementation-options.md).

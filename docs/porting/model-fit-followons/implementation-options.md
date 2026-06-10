@@ -169,6 +169,46 @@ clean with `python tools/harness.py docs`.
 4. **Generic quadrature combinator** if Phase 4 not reached.
 5. **python-user-functions** (Wave B) generalises the registry — land after.
 
+## Verification outcomes (2026-06-10)
+
+Phases 1–3 implemented; full `validate` green after each
+(2011 → 2017 → ~2030 passed). Docs build clean (only pre-existing
+missing-screenshot warnings). Milestone commits per phase.
+
+- **Phase 1**: effective variance is byte-identical to OLS at σ_x = 0 (tested),
+  matches an independent scipy minimisation of the Orear/York cost, and
+  inflates errors; param-vs-param runs on the real EuO trend; x-key encoding,
+  combo, GLE x-column, dialog toggle and persistence all round-trip
+  (`tests/test_model_fit_followons.py`).
+- **Phase 2**: `global_fit_parameter_model` honours windows (point counts) and
+  error modes (weighting), SCATTER rescales global+local σ, two-identical-groups
+  equals the single-series fit, invalid windows fail soft; the cross-group
+  dialog now exposes + wires the controls and round-trips config
+  (`test_cross_group_fit_dialog.py` guard test inverted).
+- **Phase 3**: cross-group outputs become a computed `FitSeries`; the recursion
+  round-trip (a second trend fit on the derived series) succeeds; re-running
+  replaces; the series survives a trend-panel refresh
+  (`tests/test_model_fit_results_series.py`).
+
+### Divergence from the planned Phase 3 design (recorded)
+
+The plan envisaged injecting `_FitRow`s into a panel-only `_GroupFitData`
+series with a new `_FitRow.origin` field. **Implemented instead as a first-class
+model-less (`is_computed`) `FitSeries` recorded in `ProjectModel`** via
+`MainWindow._record_model_fit_results_series`, because `load_representation_series`
+rebuilds the panel's series from `ProjectModel` after every fit and on
+representation switch — a panel-only series would be wiped. The ProjectModel
+route makes the results series persist (project save/load), survive refreshes,
+and appear like any other series. Consequences:
+
+- `_FitRow.origin` was **not** added (provenance is the series label
+  "Model fit: …"); no `_FitRow` schema change was needed.
+- `_build_series_rows` now prefers summary-provided field/temperature/run_label,
+  so computed members without a backing dataset carry their trend coordinate.
+- Global params appear as constant columns on every group row **plus** a
+  dedicated `globals` summary row carrying χ²ᵣ (decision D), the group row's
+  orthogonal coordinate on the trend axis (NaN for the globals row).
+
 ## Authoring/agent notes
 - Always verify `git branch --show-current` == `feat/model-fit-followons` before
   committing; never touch the hub checkout.
