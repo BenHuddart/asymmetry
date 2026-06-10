@@ -13,8 +13,15 @@ engine's reconstructed spectrum.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 from numpy.typing import NDArray
+
+from asymmetry.core.data.dataset import MuonDataset
+
+if TYPE_CHECKING:
+    from asymmetry.core.maxent.engine import MaxEntConfig
 
 # Empirical factor relating the edit's Gaussian-width value to the 1/e width of
 # the subtracted Gaussian (carried verbatim from WiMDA's SpecBG; magic number).
@@ -60,3 +67,37 @@ def subtract_zero_frequency(
     lorentzian = 1.0 / (1.0 + (freqs / lorentz) ** 2)
     background = anchor * ((1.0 - fraction) * gaussian + fraction * lorentzian)
     return values - background
+
+
+def apply_maxent_specbg(dataset: MuonDataset, config: MaxEntConfig) -> MuonDataset:
+    """Subtract the SpecBG zero-frequency model from a MaxEnt spectrum dataset.
+
+    Display-only and a no-op unless SpecBG is enabled in ZF/LF mode; mutates and
+    returns the (freshly built) spectrum dataset in place.  This is the **single
+    application point** for SpecBG — both the on-demand representation
+    (:class:`FrequencyMaxEnt`) and the live worker path reach it through
+    :meth:`MaxEntResult.as_dataset`, so the two cannot drift.
+    """
+    if not (config.specbg_enabled and config.mode == "zf_lf"):
+        return dataset
+    frequencies = np.asarray(dataset.time, dtype=float)
+    if frequencies.size == 0:
+        return dataset
+    # SpecBG subtracts a *zero-centred* model of the static peak, so it only
+    # makes sense when the spectrum window actually reaches zero frequency (true
+    # ZF, window from 0).  For an LF window centred on the Larmor line the peak
+    # is not at zero, so skip rather than subtract a meaningless edge model.
+    width = max(config.specbg_gaussian_width_mhz, config.specbg_lorentzian_width_mhz, 1.0e-3)
+    if float(np.min(np.abs(frequencies))) > width:
+        return dataset
+    dataset.asymmetry = np.asarray(
+        subtract_zero_frequency(
+            frequencies,
+            dataset.asymmetry,
+            gaussian_width=config.specbg_gaussian_width_mhz,
+            lorentzian_width=config.specbg_lorentzian_width_mhz,
+            lorentzian_fraction=config.specbg_lorentzian_fraction,
+        ),
+        dtype=float,
+    )
+    return dataset

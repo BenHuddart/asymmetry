@@ -97,7 +97,6 @@ from asymmetry.core.representation import (
     build_maxent_reconstruction_datasets,
     canonical_model_matches,
 )
-from asymmetry.core.representation.frequency import apply_maxent_specbg
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
     FieldScan,
@@ -5227,7 +5226,7 @@ class MainWindow(QMainWindow):
         self._maxent_state_by_run[int(run_number)] = result.state
         config = self._maxent_active_config or MaxEntConfig()
         self._maxent_result_by_run[int(run_number)] = (result, config)
-        spectrum = apply_maxent_specbg(result.as_dataset(self._maxent_active_run), config)
+        spectrum = result.as_dataset(self._maxent_active_run, config)
         diagnostics = result.diagnostics.to_dict()
         self._record_frequency_maxent_recipe(
             int(run_number),

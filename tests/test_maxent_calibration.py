@@ -223,6 +223,37 @@ def test_apply_maxent_specbg_skips_when_window_excludes_zero() -> None:
     np.testing.assert_allclose(result.asymmetry, values)
 
 
+def test_as_dataset_is_the_single_specbg_application_point() -> None:
+    # SpecBG now flows through MaxEntResult.as_dataset(config) — one place both
+    # the on-demand representation and the live worker reach.  Passing the config
+    # applies the zero-frequency subtraction; omitting it leaves the spectrum raw.
+    run = _kubo_toyabe_fb_run()
+    config = MaxEntConfig(
+        n_spectrum_points=128,
+        f_min_mhz=0.0,
+        f_max_mhz=3.0,
+        auto_window=False,
+        outer_cycles=4,
+        inner_iterations=4,
+        mode="zf_lf",
+        selected_group_ids=[1, 2],
+        specbg_enabled=True,
+        specbg_gaussian_width_mhz=0.2,
+        specbg_lorentzian_width_mhz=0.2,
+    )
+    result = run_cycles(build_maxent_input(run, config), config)
+
+    raw = result.as_dataset(run)
+    subtracted = result.as_dataset(run, config)
+    # The zero-frequency central peak is suppressed only on the config path.
+    assert abs(subtracted.asymmetry[0]) < abs(raw.asymmetry[0])
+    # as_dataset(config) and the re-exported helper agree (one implementation).
+    from asymmetry.core.representation.frequency import apply_maxent_specbg
+
+    direct = apply_maxent_specbg(result.as_dataset(run), config)
+    np.testing.assert_allclose(subtracted.asymmetry, direct.asymmetry)
+
+
 def test_spectrum_and_log_export_are_well_formed() -> None:
     run = _kubo_toyabe_fb_run()
     config = MaxEntConfig(

@@ -26,7 +26,7 @@ from asymmetry.core.maxent.pulse import (
     pulse_amplitude_phase,
     pulse_response,
 )
-from asymmetry.core.maxent.specbg import subtract_zero_frequency
+from asymmetry.core.maxent.specbg import apply_maxent_specbg, subtract_zero_frequency
 
 __all__ = [
     "PULSE_MODES",
@@ -39,6 +39,7 @@ __all__ = [
     "MaxEntWorkloadEstimate",
     "MaxEntCancelledError",
     "ReconstructedGroup",
+    "apply_maxent_specbg",
     "build_maxent_input",
     "default_n_spectrum_points",
     "estimate_maxent_workload",

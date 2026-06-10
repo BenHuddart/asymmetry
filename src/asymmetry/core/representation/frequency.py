@@ -16,46 +16,18 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
-
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fourier.spectrum import (
     GroupSpectrumConfig,
     compute_average_group_spectrum,
 )
-from asymmetry.core.maxent import MaxEntConfig, maxent, subtract_zero_frequency
+from asymmetry.core.maxent import MaxEntConfig, apply_maxent_specbg, maxent
 from asymmetry.core.representation.base import Representation, RepresentationType
 
-
-def apply_maxent_specbg(dataset: MuonDataset, config: MaxEntConfig) -> MuonDataset:
-    """Subtract the SpecBG zero-frequency model from a MaxEnt spectrum dataset.
-
-    Display-only and a no-op unless SpecBG is enabled in ZF/LF mode; mutates and
-    returns the (freshly built) spectrum dataset in place.
-    """
-    if not (config.specbg_enabled and config.mode == "zf_lf"):
-        return dataset
-    frequencies = np.asarray(dataset.time, dtype=float)
-    if frequencies.size == 0:
-        return dataset
-    # SpecBG subtracts a *zero-centred* model of the static peak, so it only
-    # makes sense when the spectrum window actually reaches zero frequency
-    # (true ZF, window from 0).  For an LF window centred on the Larmor line the
-    # peak is not at zero, so skip rather than subtract a meaningless edge model.
-    width = max(config.specbg_gaussian_width_mhz, config.specbg_lorentzian_width_mhz, 1.0e-3)
-    if float(np.min(np.abs(frequencies))) > width:
-        return dataset
-    dataset.asymmetry = np.asarray(
-        subtract_zero_frequency(
-            frequencies,
-            dataset.asymmetry,
-            gaussian_width=config.specbg_gaussian_width_mhz,
-            lorentzian_width=config.specbg_lorentzian_width_mhz,
-            lorentzian_fraction=config.specbg_lorentzian_fraction,
-        ),
-        dtype=float,
-    )
-    return dataset
+# Re-exported for callers that historically imported it from this module; the
+# single implementation now lives beside the SpecBG model in core.maxent.specbg
+# and is applied through MaxEntResult.as_dataset (one application point).
+__all__ = ["FrequencyFFT", "FrequencyMaxEnt", "apply_maxent_specbg"]
 
 
 def _resolve_selected_group_ids(run: Run, config: dict) -> list[int] | None:
@@ -152,4 +124,4 @@ class FrequencyMaxEnt(Representation):
             "f_min_mhz": float(result.frequencies_mhz[0]) if result.frequencies_mhz.size else None,
             "f_max_mhz": float(result.frequencies_mhz[-1]) if result.frequencies_mhz.size else None,
         }
-        return [apply_maxent_specbg(result.as_dataset(run), config)]
+        return [result.as_dataset(run, config)]

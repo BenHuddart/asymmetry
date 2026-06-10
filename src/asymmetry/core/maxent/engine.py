@@ -24,6 +24,7 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.maxent.pulse import pulse_amplitude_phase
+from asymmetry.core.maxent.specbg import apply_maxent_specbg
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 
 _MAX_SPECTRUM_POINTS = 1 << 20
@@ -459,16 +460,25 @@ class MaxEntResult:
         """Whether the run stopped before the requested cycle count."""
         return self.stop_reason != "max_cycles"
 
-    def as_dataset(self, run: Run | None = None) -> MuonDataset:
-        """Return the primary MaxEnt spectrum as a plottable dataset."""
+    def as_dataset(self, run: Run | None = None, config: MaxEntConfig | None = None) -> MuonDataset:
+        """Return the primary MaxEnt spectrum as a plottable dataset.
+
+        When *config* is supplied this is also the single point where the
+        display-only SpecBG zero-frequency subtraction is applied (a no-op unless
+        SpecBG is enabled in ZF/LF mode), so the on-demand and live render paths
+        cannot diverge on whether/how the central peak is removed.
+        """
         error = np.zeros_like(self.spectrum, dtype=float)
-        return MuonDataset(
+        dataset = MuonDataset(
             time=np.asarray(self.frequencies_mhz, dtype=float),
             asymmetry=np.asarray(self.spectrum, dtype=float),
             error=error,
             metadata=dict(self.metadata),
             run=run,
         )
+        if config is not None:
+            return apply_maxent_specbg(dataset, config)
+        return dataset
 
 
 def _group_names(run: Run) -> dict[int, str]:
