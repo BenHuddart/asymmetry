@@ -374,3 +374,12 @@ migration, bump per the v4 precedent and record here).
 - Umbrella docs correction: the "EMU LF series" in
   `wimda-parity-gap/test-data.md` is HIFI 118222–118240 (fix the umbrella
   table when this project merges).
+- (Phase 3 implementation note) For 3+-period files the loader still
+  returns one dataset per period; **Map periods…** builds a new combined
+  dataset from those siblings via `combine_mapped_periods` and records
+  `period_mapping` in its grouping. Re-deriving the mapped dataset when a
+  project is reloaded is a follow-on (the mapping persists, the combined
+  dataset is rebuilt by re-running Map periods).
+- (Phase 2/3 implementation note) The grouped *Fourier* input path keeps
+  its legacy continuous-source-only background gate; offering tail-fit
+  there is a follow-on for `frequency-domain-finishers`.

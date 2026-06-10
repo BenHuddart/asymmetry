@@ -34,7 +34,11 @@ from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
     common_t0_for_groups,
     effective_grouping,
+    excluded_detector_indices,
+    filter_excluded_indices,
+    format_detector_list,
     group_forward_backward,
+    parse_detector_list,
     resolve_group_indices,
 )
 from asymmetry.core.transform.integral import (
@@ -46,7 +50,20 @@ from asymmetry.core.transform.integral import (
     integrate_curve,
     integrate_run,
 )
-from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.transform.rebin import (
+    BINNING_MODES,
+    binned_fb_asymmetry,
+    binning_slice_edges,
+    rebin,
+    resolve_binning_mode,
+)
+from asymmetry.core.transform.t0 import (
+    RunT0Search,
+    T0Estimate,
+    find_t0,
+    find_t0_for_run,
+    source_is_pulsed,
+)
 
 __all__ = [
     "compute_asymmetry",
@@ -86,4 +103,17 @@ __all__ = [
     "fit_tail_background",
     "resolve_background_mode",
     "subtract_scaled_counts",
+    "BINNING_MODES",
+    "binned_fb_asymmetry",
+    "binning_slice_edges",
+    "resolve_binning_mode",
+    "RunT0Search",
+    "T0Estimate",
+    "find_t0",
+    "find_t0_for_run",
+    "source_is_pulsed",
+    "excluded_detector_indices",
+    "filter_excluded_indices",
+    "format_detector_list",
+    "parse_detector_list",
 ]

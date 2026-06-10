@@ -567,7 +567,7 @@
     {
       "slug": "data-reduction-parity",
       "feature_name": "Data-reduction parity (alpha estimation, backgrounds, binning modes, t0 search, detector exclusion, period mapping)",
-      "status": "study",
+      "status": "implemented",
       "path": "docs/porting/data-reduction-parity",
       "references": [
         "WiMDA",
@@ -582,8 +582,8 @@
         "test_data": "docs/porting/data-reduction-parity/test-data.md",
         "verification_plan": "docs/porting/data-reduction-parity/verification-plan.md"
       },
-      "tests_path": null,
-      "src_path": null,
+      "tests_path": "tests/test_alpha_estimation.py",
+      "src_path": "src/asymmetry/core/transform/asymmetry.py",
       "supersedes_candidate": "period-arithmetic",
       "updated": "2026-06-10",
       "notes": "Wave A project 1 of the wimda-parity-gap umbrella. Three phases: (1) diamagnetic + General alpha estimators with uncertainties; (2) tail-fit background for pulsed sources + frame-ratio background-run subtraction; (3) variable/constant-error binning, automatic t0 search, per-detector exclusion, multi-period subset->red/green mapping. Phase 3 period mapping realises the REMAINDER of the period-arithmetic candidate (period-selection shipped the red/green selection slice; this adds arbitrary subset summation with Ignore). WiMDA arithmetic transcribed as test oracles; divergences recorded in comparison.md."

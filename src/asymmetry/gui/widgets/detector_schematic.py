@@ -74,6 +74,8 @@ class DetectorSchematicWidget(QWidget):
     """
 
     detector_toggled: Signal = Signal(int, bool)
+    #: Emitted in exclude mode: (1-based detector id, now_excluded).
+    detector_exclusion_toggled: Signal = Signal(int, bool)
 
     def __init__(
         self,
@@ -93,6 +95,8 @@ class DetectorSchematicWidget(QWidget):
         # Axis map: bank index → polar axes
         self._axes: list = []
 
+        self._excluded: set[int] = set()
+        self._exclude_mode = False
         self._setup_ui()
         self._build_schematic()
 
@@ -416,6 +420,19 @@ class DetectorSchematicWidget(QWidget):
         self._active_group = active_group
         self._refresh_colours()
 
+    def set_excluded_detectors(self, detector_ids: set[int]) -> None:
+        """Mark detectors (1-based ids) as excluded and refresh the display."""
+        self._excluded = {int(v) for v in detector_ids}
+        self._refresh_colours()
+
+    def set_exclude_mode(self, enabled: bool) -> None:
+        """Toggle click-to-exclude mode (clicks edit the exclusion set)."""
+        self._exclude_mode = bool(enabled)
+
+    def get_excluded_detectors(self) -> set[int]:
+        """Return the current exclusion set (1-based ids)."""
+        return set(self._excluded)
+
     def get_filled_detectors(self) -> set[int]:
         """Return the set of detectors currently in the active group."""
         return set(self._groups.get(self._active_group, set()))
@@ -431,6 +448,12 @@ class DetectorSchematicWidget(QWidget):
     def _refresh_colours(self) -> None:
         """Recolour all patches to reflect the current group assignments."""
         for det_id, patch in self._patches.items():
+            if det_id in self._excluded:
+                patch.set_facecolor((0.55, 0.55, 0.55, 0.45))
+                patch.set_hatch("xx")
+                patch.set_linewidth(0.6)
+                continue
+            patch.set_hatch(None)
             gids = self._detector_groups(det_id)
             if gids:
                 # If a detector belongs to multiple groups, prioritise the active
@@ -476,6 +499,17 @@ class DetectorSchematicWidget(QWidget):
             return
 
         det_id = hit_seg.detector_id
+        if self._exclude_mode:
+            if det_id in self._excluded:
+                self._excluded.discard(det_id)
+                excluded_now = False
+            else:
+                self._excluded.add(det_id)
+                excluded_now = True
+            self._refresh_colours()
+            self.detector_exclusion_toggled.emit(det_id, excluded_now)
+            return
+
         active_members = self._groups.setdefault(self._active_group, set())
 
         if det_id in active_members:

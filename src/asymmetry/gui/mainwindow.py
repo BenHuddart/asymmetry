@@ -65,6 +65,7 @@ from asymmetry.core.fourier import (
     fourier_mode_uses_phase_correction,
 )
 from asymmetry.core.io.periods import (
+    combine_mapped_periods,
     combine_period_asymmetry,
     select_period_histograms,
 )
@@ -99,13 +100,14 @@ from asymmetry.core.transform import (
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
     differentiate_scan,
+    filter_excluded_indices,
     has_file_deadtime,
     has_resolved_deadtime,
     prepare_histograms_with_deadtime,
     resolve_background_mode,
     supports_background_correction,
 )
-from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -2255,6 +2257,8 @@ class MainWindow(QMainWindow):
                 if isinstance(grouping, dict) and grouping.get("background_method") in {
                     "estimated",
                     "fixed",
+                    "tail_fit",
+                    "reference_run",
                 }:
                     background_applied += 1
                 else:
@@ -2265,6 +2269,10 @@ class MainWindow(QMainWindow):
             if first_updated_dataset is None:
                 first_updated_dataset = dataset
             updated += 1
+
+        mapping_request = getattr(dialog, "period_mapping_request", None)
+        if mapping_request:
+            self._create_period_mapped_dataset(mapping_request, grouping_result)
 
         rebuilt_combined_dataset = None
         if (
@@ -2645,8 +2653,15 @@ class MainWindow(QMainWindow):
 
         vector_alphas = self._resolve_vector_alpha_values(grouping_result, existing_grouping)
 
-        forward_idx = self._group_detector_indices(groups.get(forward_gid, []))
-        backward_idx = self._group_detector_indices(groups.get(backward_gid, []))
+        exclusion_source = (
+            grouping_result if "excluded_detectors" in grouping_result else existing_grouping
+        )
+        forward_idx = filter_excluded_indices(
+            self._group_detector_indices(groups.get(forward_gid, [])), exclusion_source
+        )
+        backward_idx = filter_excluded_indices(
+            self._group_detector_indices(groups.get(backward_gid, [])), exclusion_source
+        )
 
         if run.histograms:
             max_bin = len(run.histograms[0].counts) - 1
@@ -2808,7 +2823,14 @@ class MainWindow(QMainWindow):
                         grouping_result.get("deadtime_loaded_us", [])
                     )
             run.grouping["background_correction"] = use_background
-            for key in ("background_mode", "background_run"):
+            for key in (
+                "background_mode",
+                "background_run",
+                "excluded_detectors",
+                "binning_mode",
+                "bin0_us",
+                "bin10_us",
+            ):
                 if key in grouping_result:
                     run.grouping[key] = grouping_result.get(key)
                 else:
@@ -2938,7 +2960,14 @@ class MainWindow(QMainWindow):
         ):
             if key in grouping_result:
                 run.grouping[key] = grouping_result.get(key)
-        for key in ("background_mode", "background_run"):
+        for key in (
+            "background_mode",
+            "background_run",
+            "excluded_detectors",
+            "binning_mode",
+            "bin0_us",
+            "bin10_us",
+        ):
             if key in grouping_result:
                 run.grouping[key] = grouping_result.get(key)
             else:
@@ -3108,22 +3137,29 @@ class MainWindow(QMainWindow):
             run.grouping.pop("background_values", None)
             run.grouping.pop("background_details", None)
 
-        lo = max(0, first_good)
-        hi = min(len(asymmetry) - 1, last_good)
-        if lo <= hi:
-            time_out = time_axis[lo : hi + 1].copy()
-            asym_out = asymmetry[lo : hi + 1].copy()
-            err_out = error[lo : hi + 1].copy()
-            if bunch_factor > 1:
-                time_out, asym_out, err_out = rebin(
-                    time_out,
-                    asym_out,
-                    err_out,
-                    bunch_factor,
-                )
-            dataset.time = time_out
-            dataset.asymmetry = asym_out
-            dataset.error = err_out
+        reduction_binning_mode, _, _ = resolve_binning_mode(reduction_grouping)
+        if reduction_binning_mode != "fixed":
+            # binned_fb_asymmetry already applied the good window and bins.
+            dataset.time = time_axis.copy()
+            dataset.asymmetry = asymmetry.copy()
+            dataset.error = error.copy()
+        else:
+            lo = max(0, first_good)
+            hi = min(len(asymmetry) - 1, last_good)
+            if lo <= hi:
+                time_out = time_axis[lo : hi + 1].copy()
+                asym_out = asymmetry[lo : hi + 1].copy()
+                err_out = error[lo : hi + 1].copy()
+                if bunch_factor > 1:
+                    time_out, asym_out, err_out = rebin(
+                        time_out,
+                        asym_out,
+                        err_out,
+                        bunch_factor,
+                    )
+                dataset.time = time_out
+                dataset.asymmetry = asym_out
+                dataset.error = err_out
 
         run.grouping.update(
             {
@@ -3298,12 +3334,48 @@ class MainWindow(QMainWindow):
                 if bkg_result.details is not None:
                     background_state["details"] = dict(bkg_result.details)
 
-        if (
+        bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
+        background_errors = (
             bkg_result is not None
             and bkg_result.applied
             and bkg_result.forward_error is not None
             and bkg_result.backward_error is not None
-        ):
+        )
+
+        binning_mode, _, _ = resolve_binning_mode(grouping)
+        if binning_mode != "fixed":
+            # Variable-width modes bin the counts before forming the
+            # asymmetry; the returned arrays are final (good window applied,
+            # no further slicing or bunching by the caller).
+            try:
+                first_good = max(0, int(grouping.get("first_good_bin", 0)))
+            except (TypeError, ValueError):
+                first_good = 0
+            try:
+                last_good = int(grouping.get("last_good_bin", n_grouped - 1))
+            except (TypeError, ValueError):
+                last_good = n_grouped - 1
+            time_axis, asymmetry, error = binned_fb_asymmetry(
+                forward,
+                backward,
+                grouping=grouping,
+                common_t0=common_t0,
+                bin_width_us=bin_width,
+                alpha=alpha,
+                first_good_bin=first_good,
+                last_good_bin=last_good,
+                forward_error=bkg_result.forward_error if background_errors else None,
+                backward_error=bkg_result.backward_error if background_errors else None,
+            )
+            return (
+                np.asarray(time_axis, dtype=np.float64),
+                np.asarray(asymmetry * 100.0, dtype=np.float64),
+                np.asarray(error * 100.0, dtype=np.float64),
+                dt_applied,
+                background_state,
+            )
+
+        if background_errors:
             asymmetry, error = compute_asymmetry_with_count_errors(
                 forward,
                 backward,
@@ -3314,7 +3386,6 @@ class MainWindow(QMainWindow):
         else:
             asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
 
-        bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
         time_axis = (np.arange(len(asymmetry), dtype=np.float64) - float(common_t0)) * bin_width
         return (
             time_axis,
@@ -3367,6 +3438,39 @@ class MainWindow(QMainWindow):
         if not source_file:
             source_file = str(metadata.get("source_file", ""))
         return str(mode) in available_background_modes(metadata=metadata, source_file=source_file)
+
+    def _create_period_mapped_dataset(self, request: dict, grouping_result: dict) -> None:
+        """Build and register the combined red/green dataset for a mapping."""
+        run_numbers = [int(v) for v in request.get("period_run_numbers", [])]
+        siblings = [
+            ds
+            for run_number in run_numbers
+            for ds in self._data_browser.get_all_datasets()
+            if ds.run is not None and int(ds.run_number) == run_number
+        ]
+        if len(siblings) != len(run_numbers) or len(siblings) < 3:
+            self.statusBar().showMessage(
+                "Period mapping skipped: per-period datasets are no longer loaded.", 8000
+            )
+            return
+        try:
+            mapped = combine_mapped_periods(
+                siblings,
+                request.get("mapping", {}),
+                source_run_number=request.get("source_run_number"),
+            )
+        except ValueError as exc:
+            self.statusBar().showMessage(f"Period mapping failed: {exc}", 8000)
+            return
+        self._apply_grouping_settings_to_dataset(mapped, grouping_result)
+        self._data_browser.add_dataset(mapped)
+        mapping_text = ", ".join(
+            f"{period}→{target}"
+            for period, target in sorted((int(k), v) for k, v in request.get("mapping", {}).items())
+        )
+        self.statusBar().showMessage(
+            f"Added mapped dataset for run {mapped.run_number} ({mapping_text}).", 8000
+        )
 
     def _resolve_background_reference(
         self, grouping: dict, sample_run

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -44,8 +45,12 @@ from asymmetry.core.transform import (
     available_background_modes,
     calibrate_deadtime_from_histograms,
     estimate_deadtime_from_histograms,
+    find_t0_for_run,
     fit_tail_background,
+    format_detector_list,
+    parse_detector_list,
     resolve_background_mode,
+    resolve_binning_mode,
 )
 from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_detailed
 from asymmetry.core.utils.constants import PeriodMode
@@ -306,6 +311,59 @@ class GroupingDialog(QDialog):
         self._bunch_spin.setMaximumWidth(100)
         self._bunch_spin.setToolTip("Set any bunching factor >= 1.")
 
+        self._binning_mode_combo = QComboBox()
+        for label, key, tooltip in (
+            ("Fixed", "fixed", "Merge a fixed number of raw bins (bunching factor)."),
+            (
+                "Variable",
+                "variable",
+                "Bin width grows exponentially from the initial width at t = 0 "
+                "to the late width at 10 µs.",
+            ),
+            (
+                "Constant error",
+                "constant_error",
+                "Bin width grows as exp(t/τ_µ) so every output bin holds "
+                "roughly equal counts and the error per bin stays flat.",
+            ),
+        ):
+            self._binning_mode_combo.addItem(label, key)
+            self._binning_mode_combo.setItemData(
+                self._binning_mode_combo.count() - 1, tooltip, Qt.ItemDataRole.ToolTipRole
+            )
+        self._bin0_spin = QDoubleSpinBox()
+        self._bin0_spin.setDecimals(4)
+        self._bin0_spin.setRange(0.0001, 100.0)
+        self._bin0_spin.setSuffix(" µs")
+        self._bin10_spin = QDoubleSpinBox()
+        self._bin10_spin.setDecimals(4)
+        self._bin10_spin.setRange(0.0001, 100.0)
+        self._bin10_spin.setSuffix(" µs")
+        initial_mode, initial_bin0, initial_bin10 = resolve_binning_mode(grouping)
+        self._bin0_spin.setValue(initial_bin0)
+        self._bin10_spin.setValue(initial_bin10)
+        self._set_binning_mode(initial_mode)
+        self._binning_mode_combo.currentIndexChanged.connect(self._on_binning_mode_changed)
+        self._on_binning_mode_changed()
+
+        self._exclude_edit = QLineEdit()
+        self._exclude_edit.setPlaceholderText("e.g. 1,5,10-15 (1-based detector ids)")
+        self._exclude_edit.setToolTip(
+            "Detectors to exclude from every group sum (dead or hot detectors). "
+            "Raw histograms are kept; exclusion applies at grouping time."
+        )
+        self._set_excluded_detectors_text(grouping)
+
+        self._find_t0_btn = QPushButton("Find t0")
+        self._find_t0_btn.setAutoDefault(False)
+        self._find_t0_btn.setDefault(False)
+        self._find_t0_btn.setToolTip(
+            "Estimate t0 from the reference run (prompt peak at continuous "
+            "sources, pulse-edge midpoint at pulsed sources) and fill the "
+            "override — nothing is applied until you press Apply."
+        )
+        self._find_t0_btn.clicked.connect(self._on_find_t0)
+
         self._deadtime_checkbox = QCheckBox("Enable Deadtime Correction")
         self._deadtime_checkbox.setChecked(bool(grouping.get("deadtime_correction", False)))
         self._deadtime_checkbox.toggled.connect(self._update_deadtime_controls)
@@ -483,16 +541,49 @@ class GroupingDialog(QDialog):
 
         form.addRow(self._vector_alpha_widget)
 
-        form.addRow("t0 Bin", self._t0_spin)
+        t0_row_widget = QWidget()
+        t0_row = QHBoxLayout(t0_row_widget)
+        t0_row.setContentsMargins(0, 0, 0, 0)
+        t0_row.addWidget(self._t0_spin)
+        t0_row.addWidget(self._find_t0_btn)
+        form.addRow("t0 Bin", t0_row_widget)
         form.addRow("t_good Offset", self._t_good_offset_spin)
         form.addRow("Last Good Bin", self._last_good_spin)
-        form.addRow("Bunching Factor", self._bunch_spin)
+        binning_row_widget = QWidget()
+        binning_row = QHBoxLayout(binning_row_widget)
+        binning_row.setContentsMargins(0, 0, 0, 0)
+        binning_row.addWidget(self._binning_mode_combo)
+        binning_row.addWidget(self._bunch_spin)
+        self._bin0_label = QLabel("Initial bin")
+        self._bin10_label = QLabel("Bin at 10 µs")
+        binning_row.addWidget(self._bin0_label)
+        binning_row.addWidget(self._bin0_spin)
+        binning_row.addWidget(self._bin10_label)
+        binning_row.addWidget(self._bin10_spin)
+        form.addRow("Binning", binning_row_widget)
+        self._on_binning_mode_changed()
+        form.addRow("Exclude Detectors", self._exclude_edit)
         form.addRow("Deadtime", self._deadtime_checkbox)
         form.addRow("Deadtime Mode", self._deadtime_mode_widget)
         form.addRow("Background", self._background_mode_combo)
         form.addRow("", self._background_status_label)
         self._update_background_status()
-        form.addRow(self._period_mode_label, self._period_mode_widget)
+        self._map_periods_btn = QPushButton("Map periods…")
+        self._map_periods_btn.setAutoDefault(False)
+        self._map_periods_btn.setDefault(False)
+        self._map_periods_btn.setToolTip(
+            "Sum arbitrary subsets of this run's periods into the red and "
+            "green sets (multi-period runs)."
+        )
+        self._map_periods_btn.clicked.connect(self._on_map_periods)
+        self.period_mapping_request: dict[str, Any] | None = None
+        period_row_widget = QWidget()
+        period_row_box = QHBoxLayout(period_row_widget)
+        period_row_box.setContentsMargins(0, 0, 0, 0)
+        period_row_box.addWidget(self._period_mode_widget)
+        period_row_box.addWidget(self._map_periods_btn)
+        form.addRow(self._period_mode_label, period_row_widget)
+        self._update_map_periods_visibility()
 
         right_layout.addLayout(form)
         right_layout.addStretch()
@@ -769,9 +860,16 @@ class GroupingDialog(QDialog):
         self._background_run_payload = dict(payload) if isinstance(payload, dict) else None
         self._populate_background_modes(grouping)
         self._update_background_status()
+        mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
+        self._bin0_spin.setValue(bin0_us)
+        self._bin10_spin.setValue(bin10_us)
+        self._set_binning_mode(mode)
+        self._on_binning_mode_changed()
+        self._set_excluded_detectors_text(grouping)
         self._set_period_mode(str(grouping.get("period_mode", PeriodMode.RED)))
         self._update_vector_mode_controls(grouping)
         self._update_period_mode_visibility()
+        self._update_map_periods_visibility()
 
     def _reference_has_file_deadtime(self, grouping: dict[str, Any]) -> bool:
         """Return whether the reference run provides file deadtime values."""
@@ -1335,6 +1433,22 @@ class GroupingDialog(QDialog):
             and self._resolve_deadtime_payload(show_warnings=True) is None
         ):
             return
+        excluded = self._current_excluded_detectors()
+        if excluded is None:
+            return  # parse error already shown
+        if excluded:
+            excluded_indices = {detector - 1 for detector in excluded}
+            forward_gid = int(self._forward_combo.currentData())
+            backward_gid = int(self._backward_combo.currentData())
+            for label, gid in (("Forward", forward_gid), ("Backward", backward_gid)):
+                remaining = [i for i in self._groups.get(gid, []) if i not in excluded_indices]
+                if not remaining:
+                    QMessageBox.warning(
+                        self,
+                        "Detector Exclusion",
+                        f"{label} group would have no detectors left after exclusion.",
+                    )
+                    return
         self.accept()
 
     def _checked_run_numbers(self) -> list[int]:
@@ -1638,6 +1752,7 @@ class GroupingDialog(QDialog):
         # Convert internal 0-based indices to 1-based for the layout editor
         groups_1based = {gid: [idx + 1 for idx in idxs] for gid, idxs in self._groups.items()}
 
+        current_exclusion = self._current_excluded_detectors() or []
         dlg = DetectorLayoutDialog(
             instrument=instrument,
             groups=groups_1based,
@@ -1645,12 +1760,14 @@ class GroupingDialog(QDialog):
             initial_preset_name=self._grouping_preset_name,
             forward_group=forward_gid,
             backward_group=backward_gid,
+            excluded_detectors=current_exclusion,
             parent=self,
         )
         if dlg.exec() != DetectorLayoutDialog.DialogCode.Accepted:
             return
 
         result = dlg.get_result()
+        self._exclude_edit.setText(format_detector_list(result.get("excluded_detectors", [])))
 
         # Write back: convert 1-based IDs back to 0-based internal indices
         new_groups_0based: dict[int, list[int]] = {}
@@ -1717,6 +1834,118 @@ class GroupingDialog(QDialog):
         self._alpha_result_label.setText(
             f"{slot_prefix}α = {formatted} — {method_label}, "
             f"run {self._reference_dataset.run_number}"
+        )
+
+    def _set_binning_mode(self, mode_key: str) -> None:
+        """Select the binning-mode combo entry, defaulting to fixed."""
+        idx = self._binning_mode_combo.findData(str(mode_key))
+        self._binning_mode_combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _current_binning_mode(self) -> str:
+        return str(self._binning_mode_combo.currentData() or "fixed")
+
+    def _on_binning_mode_changed(self) -> None:
+        """Enable the controls for the active binning mode (WiMDA pattern)."""
+        mode = self._current_binning_mode()
+        self._bunch_spin.setEnabled(mode == "fixed")
+        for widget in (self._bin0_spin, getattr(self, "_bin0_label", None)):
+            if widget is not None:
+                widget.setEnabled(mode != "fixed")
+                if hasattr(widget, "setVisible"):
+                    widget.setVisible(mode != "fixed")
+        for widget in (self._bin10_spin, getattr(self, "_bin10_label", None)):
+            if widget is not None:
+                enabled = mode == "variable"
+                widget.setEnabled(enabled)
+                widget.setVisible(enabled)
+
+    def _set_excluded_detectors_text(self, grouping: dict[str, Any]) -> None:
+        raw = grouping.get("excluded_detectors")
+        ids = [int(v) for v in raw] if isinstance(raw, (list, tuple)) else []
+        self._exclude_edit.setText(format_detector_list(ids))
+
+    def _current_excluded_detectors(self) -> list[int] | None:
+        """Parse the exclusion field; warn and return None on bad input."""
+        text = self._exclude_edit.text().strip()
+        if not text:
+            return []
+        try:
+            return parse_detector_list(text)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Detector Exclusion", str(exc))
+            return None
+
+    def _on_find_t0(self) -> None:
+        """Estimate t0 from the reference run and fill the override spinner."""
+        if self._run is None or not self._run.histograms:
+            QMessageBox.warning(self, "Find t0", "Reference run has no histograms.")
+            return
+        metadata = dict(getattr(self._reference_dataset, "metadata", {}) or {})
+        metadata.update(self._run.metadata or {})
+        search = find_t0_for_run(self._run.histograms, metadata)
+        if not search.ok:
+            QMessageBox.warning(self, "Find t0", search.message)
+            return
+        index_base = self._bin_index_base()
+        self._t0_spin.setValue(int(search.consensus_t0_bin) + index_base)
+        strategy = "pulse-edge midpoint" if search.strategy == "pulse_edge" else "prompt peak"
+        self._alpha_result_label.setText(
+            f"t0 = bin {search.consensus_t0_bin + index_base} ({strategy}, "
+            f"detector spread {search.spread_bins} bins) — press Apply to use it."
+        )
+
+    def _update_map_periods_visibility(self) -> None:
+        """Show Map periods… only when the reference run has 3+ periods."""
+        visible = len(self._sibling_period_datasets()) > 2
+        self._map_periods_btn.setVisible(visible)
+
+    def _sibling_period_datasets(self) -> list[MuonDataset]:
+        """Per-period sibling datasets of the reference run, in period order."""
+        if self._reference_dataset is None:
+            return []
+        metadata = getattr(self._reference_dataset, "metadata", {}) or {}
+        try:
+            count = int(metadata.get("period_count", 1))
+        except (TypeError, ValueError):
+            count = 1
+        if count <= 2:
+            return []
+        source = metadata.get("source_run_number", metadata.get("run_number"))
+        siblings = [
+            ds
+            for ds in self._datasets
+            if ds.run is not None
+            and (ds.metadata or {}).get("source_run_number") == source
+            and (ds.metadata or {}).get("period_number") is not None
+        ]
+        siblings.sort(key=lambda ds: int((ds.metadata or {}).get("period_number", 0)))
+        return siblings if len(siblings) == count else []
+
+    def _on_map_periods(self) -> None:
+        """Collect a period → red/green/ignore mapping for the reference run."""
+        from asymmetry.gui.windows.period_mapping_dialog import PeriodMappingDialog
+
+        siblings = self._sibling_period_datasets()
+        if len(siblings) < 3:
+            QMessageBox.warning(
+                self,
+                "Map Periods",
+                "Period mapping needs the per-period datasets of a 3+ period "
+                "run loaded in the project.",
+            )
+            return
+        dialog = PeriodMappingDialog(siblings, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or dialog.mapping is None:
+            return
+        metadata = getattr(self._reference_dataset, "metadata", {}) or {}
+        self.period_mapping_request = {
+            "mapping": dialog.mapping,
+            "source_run_number": metadata.get("source_run_number", metadata.get("run_number")),
+            "period_run_numbers": [int(ds.run_number) for ds in siblings],
+        }
+        self._alpha_result_label.setText(
+            "Period mapping recorded — a combined red/green dataset is created "
+            "when you press Apply."
         )
 
     def _estimate_alpha(self) -> None:
@@ -1896,6 +2125,8 @@ class GroupingDialog(QDialog):
                 "period_mode": self._current_period_mode(),
                 "bin_index_base": self._bin_index_base(),
             }
+            | self._binning_payload()
+            | self._exclusion_payload()
             | (
                 {"background_run": dict(self._background_run_payload)}
                 if self._current_background_mode() == "reference_run"
@@ -1914,6 +2145,25 @@ class GroupingDialog(QDialog):
             )
             | deadtime_payload
         )
+
+    def _binning_payload(self) -> dict[str, Any]:
+        """Binning-mode keys: only non-fixed modes carry the width knobs."""
+        mode = self._current_binning_mode()
+        if mode == "fixed":
+            return {}
+        payload: dict[str, Any] = {
+            "binning_mode": mode,
+            "bin0_us": float(self._bin0_spin.value()),
+        }
+        if mode == "variable":
+            payload["bin10_us"] = float(self._bin10_spin.value())
+        return payload
+
+    def _exclusion_payload(self) -> dict[str, Any]:
+        ids = self._current_excluded_detectors()
+        if not ids:
+            return {}
+        return {"excluded_detectors": [int(v) for v in ids]}
 
     def _save_grp_file(self) -> None:
         """Save current grouping configuration to a ``.grp`` file."""

@@ -105,6 +105,86 @@ def common_t0_for_groups(
     return max(0, max(int(histograms[idx].t0_bin) for idx in indices))
 
 
+def excluded_detector_indices(grouping: dict | None) -> frozenset[int]:
+    """0-based indices of detectors excluded by the grouping.
+
+    The ``excluded_detectors`` grouping key holds 1-based detector ids
+    (WiMDA ``Group2.pas`` semantics). Exclusion is applied at grouping time
+    — excluded detectors are dropped from every group sum — so the raw
+    histograms stay intact and no reload is needed (study divergence D10;
+    WiMDA zeroes the counts in its file-read path instead).
+    """
+    grouping = grouping if isinstance(grouping, dict) else {}
+    raw = grouping.get("excluded_detectors")
+    if not isinstance(raw, (list, tuple, set)):
+        return frozenset()
+    indices: set[int] = set()
+    for value in raw:
+        try:
+            detector = int(value)
+        except (TypeError, ValueError):
+            continue
+        if detector >= 1:
+            indices.add(detector - 1)
+    return frozenset(indices)
+
+
+def filter_excluded_indices(indices: list[int], grouping: dict | None) -> list[int]:
+    """Drop excluded detectors (0-based) from a group index list."""
+    excluded = excluded_detector_indices(grouping)
+    if not excluded:
+        return list(indices)
+    return [i for i in indices if i not in excluded]
+
+
+def parse_detector_list(text: str) -> list[int]:
+    """Parse a WiMDA-style detector list, e.g. ``"1,5,10-15"``.
+
+    Separators may be commas or whitespace; ranges use ``-`` and may run in
+    either direction (``"15-10"`` equals ``"10-15"``). Returns sorted unique
+    1-based detector ids. Raises ``ValueError`` on unparseable fragments so
+    typos surface instead of silently excluding nothing.
+    """
+    ids: set[int] = set()
+    for fragment in str(text).replace(";", ",").replace(" ", ",").split(","):
+        fragment = fragment.strip()
+        if not fragment:
+            continue
+        if "-" in fragment:
+            parts = fragment.split("-")
+            if len(parts) != 2:
+                raise ValueError(f"Cannot parse detector range {fragment!r}")
+            start, end = (int(parts[0]), int(parts[1]))
+            if start > end:
+                start, end = end, start
+            if start < 1:
+                raise ValueError(f"Detector ids start at 1, got {fragment!r}")
+            ids.update(range(start, end + 1))
+        else:
+            value = int(fragment)
+            if value < 1:
+                raise ValueError(f"Detector ids start at 1, got {fragment!r}")
+            ids.add(value)
+    return sorted(ids)
+
+
+def format_detector_list(ids: list[int]) -> str:
+    """Format detector ids compactly with ranges, e.g. ``"1,5,10-15"``."""
+    unique = sorted({int(v) for v in ids})
+    if not unique:
+        return ""
+    parts: list[str] = []
+    start = previous = unique[0]
+    for value in unique[1:] + [None]:
+        if value is not None and value == previous + 1:
+            previous = value
+            continue
+        parts.append(str(start) if start == previous else f"{start}-{previous}")
+        if value is not None:
+            start = previous = value
+    return ",".join(parts)
+
+
 def resolve_group_indices(groups: dict, group_id: int) -> list[int]:
     """Return zero-based detector indices for *group_id*.
 
@@ -182,11 +262,16 @@ def group_forward_backward(
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
     n = len(histograms)
-    forward_indices = _present_indices(resolve_group_indices(groups, forward_gid), n)
-    backward_indices = _present_indices(resolve_group_indices(groups, backward_gid), n)
+    forward_indices = filter_excluded_indices(
+        _present_indices(resolve_group_indices(groups, forward_gid), n), grouping
+    )
+    backward_indices = filter_excluded_indices(
+        _present_indices(resolve_group_indices(groups, backward_gid), n), grouping
+    )
     if not forward_indices or not backward_indices:
         raise ValueError(
-            "Forward/backward groups do not reference any detectors present in this run."
+            "Forward/backward groups do not reference any detectors present in this run "
+            "(after detector exclusion)."
         )
 
     try:

@@ -10,7 +10,11 @@ from asymmetry.core.transform.background import (
     supports_background_correction,
 )
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
-from asymmetry.core.transform.grouping import apply_grouping_aligned, common_t0_for_groups
+from asymmetry.core.transform.grouping import (
+    apply_grouping_aligned,
+    common_t0_for_groups,
+    filter_excluded_indices,
+)
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -217,9 +221,12 @@ def build_group_signal_dataset(
     if group_id not in groups:
         raise ValueError(f"Unknown detector group {group_id!r}.")
 
-    indices = _normalize_group_entries(groups[group_id])
+    indices = filter_excluded_indices(_normalize_group_entries(groups[group_id]), grouping)
     if not indices:
-        raise ValueError(f"Detector group {group_id!r} does not contain any detectors.")
+        raise ValueError(
+            f"Detector group {group_id!r} does not contain any detectors "
+            "(after detector exclusion)."
+        )
 
     histograms = list(run.histograms)
     if not histograms:

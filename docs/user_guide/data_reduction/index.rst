@@ -16,6 +16,10 @@ it does not.
 
    alpha_calibration
    backgrounds
+   binning
+   t0_search
+   detector_exclusion
+   period_mapping
 
 All of the corrections described here are applied at reduction time and
 recorded in the grouping settings: raw histograms are never modified, and a

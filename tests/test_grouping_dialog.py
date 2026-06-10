@@ -1123,3 +1123,94 @@ def test_background_run_payload_round_trips(qapp: QApplication) -> None:
     result = dialog.get_grouping_result()
     assert result["background_run"]["run_number"] == 9001
     assert "9001" in dialog._background_status_label.text()
+
+
+# ---------------------------------------------------------------------------
+# Binning modes, Find t0, detector exclusion (data-reduction-parity Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def test_binning_mode_round_trips_through_payload(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    dialog = GroupingDialog([dataset])
+    assert dialog._current_binning_mode() == "fixed"
+    assert "binning_mode" not in dialog.get_grouping_result()
+
+    dialog._set_binning_mode("variable")
+    dialog._bin0_spin.setValue(0.1)
+    dialog._bin10_spin.setValue(0.5)
+    result = dialog.get_grouping_result()
+    assert result["binning_mode"] == "variable"
+    assert result["bin0_us"] == pytest.approx(0.1)
+    assert result["bin10_us"] == pytest.approx(0.5)
+    assert not dialog._bunch_spin.isEnabled()
+
+    dataset.run.grouping.update(result)
+    dialog2 = GroupingDialog([dataset])
+    assert dialog2._current_binning_mode() == "variable"
+    assert dialog2._bin0_spin.value() == pytest.approx(0.1)
+
+
+def test_constant_error_mode_hides_bin10(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog._set_binning_mode("constant_error")
+    result = dialog.get_grouping_result()
+    assert result["binning_mode"] == "constant_error"
+    assert "bin10_us" not in result
+    assert not dialog._bin10_spin.isEnabled()
+
+
+def test_find_t0_fills_spinner_without_applying(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    rng = np.random.default_rng(0)
+    counts = np.full(200, 5.0)
+    counts[37] = 5000.0
+    counts[38:] = 100.0
+    dataset.run.histograms = [
+        Histogram(counts=rng.poisson(counts).astype(float), bin_width=0.00125),
+        Histogram(counts=rng.poisson(counts).astype(float), bin_width=0.00125),
+    ]
+    dataset.run.metadata["facility"] = "PSI"
+    dataset.metadata["facility"] = "PSI"
+    dataset.run.grouping["last_good_bin"] = 199
+    dialog = GroupingDialog([dataset])
+    dialog._on_find_t0()
+    assert dialog._t0_spin.value() == 37 + dialog._bin_index_base()
+    assert "t0" in dialog._alpha_result_label.text()
+
+
+def test_exclusion_field_round_trips_and_validates(qapp: QApplication, monkeypatch) -> None:
+    dataset = _dataset_with_histograms()
+    dataset.run.grouping["groups"] = {1: [1, 2], 2: [3, 4]}
+    dataset.run.histograms = [Histogram(counts=np.full(4, 100.0), bin_width=0.01) for _ in range(4)]
+    dialog = GroupingDialog([dataset])
+    dialog._exclude_edit.setText("2")
+    result = dialog.get_grouping_result()
+    assert result["excluded_detectors"] == [2]
+
+    dialog._exclude_edit.setText("")
+    assert "excluded_detectors" not in dialog.get_grouping_result()
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        grouping_dialog_module.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: warnings.append(str(args[2]) if len(args) > 2 else ""),
+    )
+    dialog._exclude_edit.setText("nonsense")
+    assert dialog._current_excluded_detectors() is None
+    assert warnings
+
+
+def test_apply_blocks_when_exclusion_empties_a_group(qapp: QApplication, monkeypatch) -> None:
+    dataset = _dataset_with_histograms()
+    dialog = GroupingDialog([dataset])
+    dialog._exclude_edit.setText("1")  # forward group is exactly detector 1
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        grouping_dialog_module.QMessageBox,
+        "warning",
+        lambda *args, **kwargs: warnings.append(str(args[2]) if len(args) > 2 else ""),
+    )
+    dialog._on_apply()
+    assert any("no detectors left" in w for w in warnings)
