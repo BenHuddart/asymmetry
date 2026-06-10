@@ -116,8 +116,8 @@ Note: `src/fitfunctions.pas` ("Standard fit models") is the **table-fit** librar
 | `dyn F-u-F ZF PCR` (`FmuFdyn`) | strong-collision dynamicization of F–μ–F (MS-Intro Eq. 5.30 framework) | ❌ **gap — port** |
 | `F-u-F-F ZF PCR` (`Ftriangle` → `polarize.pas` 16×16 eigenproblem) | muon + 3 fluorines, triangle geometry (r₁,r₂,r₃) | ❌ **gap — port** |
 | `uFFF eq tri ZF PCR` (`Fequitriangle`) | equilateral special case of the above | ❌ **gap** (special case; may fold into the triangle component) |
-| `Dip gen ZF PCR` (`ZFdipgen`) | muon + single spin-J nucleus, dipolar + quadrupolar (Celio & Meier, HFI **17-19**, 435 (1984)) | ❌ **gap — port** (non-textbook source, flagged) |
-| `Dipolar ZF PCR` (`ZFdipole`) | muon + single spin-½ dipole, B_dip input, transverse relaxation λ_t on the oscillating part (Meier, HFI **17-19**, 427 (1984); math = MS-Intro Eq. 4.80) | ⚠️ partial — `MuF` covers fluorine at distance r without the λ_t damping or B/r/nucleus generality |
+| `Dip gen ZF PCR` (`ZFdipgen`) | muon + single spin-J nucleus, dipolar + quadrupolar (Celio & Meier, HFI **18**, 435 (1984)) | ❌ **gap — port** (non-textbook source, flagged) |
+| `Dipolar ZF PCR` (`ZFdipole`) | muon + single spin-½ dipole, B_dip input, transverse relaxation λ_t on the oscillating part (Meier, HFI **18**, 427 (1984); math = MS-Intro Eq. 4.80) | ⚠️ partial — `MuF` covers fluorine at distance r without the λ_t damping or B/r/nucleus generality |
 | `Proton dip ZF PCR` (`ZFprotondipole`) | as above with proton at distance r | ❌ **gap** |
 | `Electron dip ZF PCR` (`ZFelectrondipole`) | as above with electron-moment scaling | ❌ **gap** |
 

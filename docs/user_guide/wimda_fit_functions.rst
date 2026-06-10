@@ -137,7 +137,7 @@ Nuclear dipolar
 ---------------
 
 The spin-1/2 pair family shares the polycrystalline two-spin form (MS-Intro
-eqn 4.80; Meier, *Hyperfine Interact.* **17-19**, 427 (1984)):
+eqn 4.80; Meier, *Hyperfine Interact.* **18**, 427 (1984)):
 
 .. math::
 
@@ -169,7 +169,7 @@ DipolarSpinJ
 Zero-field polycrystalline precession of a muon coupled to **one nucleus of
 spin J** with dipolar coupling ``f_dip`` and quadrupolar splitting ``f_quad``
 (sign-sensitive) — the closed-form eigen-solution of Celio & Meier,
-*Hyperfine Interact.* **17-19**, 435 (1984) (cf. the quadrupole Hamiltonian of
+*Hyperfine Interact.* **18**, 435 (1984) (cf. the quadrupole Hamiltonian of
 MS-Intro eqn 4.87). Use for μ⁺-⁶³Cu (J = 3/2), μ⁺-⁹³Nb (J = 9/2) and similar
 pairs; hold ``J`` fixed at the known nuclear spin. ``J = 1/2`` reduces
 exactly to the spin-1/2 pair.

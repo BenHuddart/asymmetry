@@ -9,7 +9,7 @@ quadrupolar interactions).
 
 Physics references:
 
-* P. F. Meier, Hyperfine Interact. 17-19, 427 (1984) — spin-1/2 pair; the same
+* P. F. Meier, Hyperfine Interact. 18, 427 (1984) — spin-1/2 pair; the same
   polycrystalline average appears as eqn 4.80 of Blundell, De Renzi, Lancaster
   & Pratt, *Muon Spectroscopy* (OUP, 2022) (cited below as MS-Intro):
 
@@ -21,7 +21,7 @@ Physics references:
   with the dipolar frequency :math:`\\hbar\\omega_d = \\mu_0\\hbar^2
   \\gamma_\\mu\\gamma_j / 4\\pi r^3` (MS-Intro eqn 4.76).
 
-* M. Celio and P. F. Meier, Hyperfine Interact. 17-19, 435 (1984) — general
+* M. Celio and P. F. Meier, Hyperfine Interact. 18, 435 (1984) — general
   spin ``J`` with quadrupole splitting.
 
 Conventions follow the rest of :mod:`asymmetry.core.fitting`: time in µs,
@@ -114,7 +114,7 @@ def dipolar_spin_j(
     Closed-form eigen-solution of the muon + spin-``J`` system with dipolar
     coupling ``f_dip`` (MHz) and quadrupolar splitting ``f_quad`` (MHz),
     averaged as ``(P_z + 2 P_x)/3`` for a polycrystal — the Celio-Meier result
-    (Hyperfine Interact. 17-19, 435 (1984)); WiMDA's ``Dip gen ZF PCR``.
+    (Hyperfine Interact. 18, 435 (1984)); WiMDA's ``Dip gen ZF PCR``.
 
     For ``J = 1/2`` the quadrupole interaction is inactive (a spin-1/2 nucleus
     has no quadrupole moment) and the function reduces to the Meier pair

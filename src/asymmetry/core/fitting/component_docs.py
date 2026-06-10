@@ -458,11 +458,11 @@ FIT_COMPONENT_REFERENCES: dict[str, tuple[str, ...]] = {
         "J. H. Brewer et al., Phys. Rev. B 33, 7813 (1986).",
         "J. M. Wilkinson and S. J. Blundell, Phys. Rev. Lett. 125, 087201 (2020).",
     ),
-    "DipolarPairField": ("P. F. Meier, Hyperfine Interact. 17-19, 427 (1984).",),
-    "ProtonDipole": ("P. F. Meier, Hyperfine Interact. 17-19, 427 (1984).",),
-    "ElectronDipole": ("P. F. Meier, Hyperfine Interact. 17-19, 427 (1984).",),
+    "DipolarPairField": ("P. F. Meier, Hyperfine Interact. 18, 427 (1984).",),
+    "ProtonDipole": ("P. F. Meier, Hyperfine Interact. 18, 427 (1984).",),
+    "ElectronDipole": ("P. F. Meier, Hyperfine Interact. 18, 427 (1984).",),
     "DipolarSpinJ": (
-        "M. Celio and P. F. Meier, Hyperfine Interact. 17-19, 435 (1984).",
+        "M. Celio and P. F. Meier, Hyperfine Interact. 18, 435 (1984).",
         "O. Hartmann, Phys. Rev. Lett. 39, 832 (1977).",
     ),
 }
