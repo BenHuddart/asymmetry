@@ -255,3 +255,133 @@ def test_single_group_builder_bypasses_two_group_guard():
     # The multi-group builder still requires two included groups.
     groups = build_grouped_time_domain_groups(ds, lifetime_corrected=False)
     assert len(groups) == 2
+
+
+# --- Phase 2: exclude range, fittable t0, baseline drift --------------------
+
+
+def _single_seed():
+    return ParameterSet(
+        [
+            Parameter("N0", 1.5e5, min=0.0),
+            Parameter("background", 0.0, min=0.0),
+            Parameter("A", 18.0, min=0.0, max=50.0),
+            Parameter("f", 1.5, min=0.0),
+            Parameter("phi", 0.2),
+        ]
+    )
+
+
+def _inject_forward_artefact(run, *, lo_offset=300, hi_offset=330, spike=5e4):
+    """Add a big count spike to forward detectors over an interior bin window."""
+    for hist in run.histograms[:32]:
+        counts = np.asarray(hist.counts, dtype=float)
+        lo = int(hist.t0_bin) + lo_offset
+        hi = int(hist.t0_bin) + hi_offset
+        counts[lo:hi] += spike
+        hist.counts = counts
+    bin_width = float(run.histograms[0].bin_width)
+    return lo_offset * bin_width, (hi_offset + 1) * bin_width
+
+
+def test_exclude_range_recovers_clean_fit_under_artefact():
+    clean = fit_single_histogram(
+        _pulsed_tf_run(alpha=1.0, seed=1), 1, _tf, _single_seed(), cost="gaussian"
+    )
+
+    run = _pulsed_tf_run(alpha=1.0, seed=1).run
+    ex0, ex1 = _inject_forward_artefact(run)
+    ds = MuonDataset(
+        time=np.array([]), asymmetry=np.array([]), error=np.array([]), metadata={}, run=run
+    )
+    pulled = fit_single_histogram(ds, 1, _tf, _single_seed(), cost="gaussian")
+    masked = fit_single_histogram(ds, 1, _tf, _single_seed(), cost="gaussian", exclude=(ex0, ex1))
+
+    clean_a = clean.parameters["A"].value
+    # The artefact pulls the un-masked fit; excluding it recovers the clean value.
+    assert abs(pulled.parameters["A"].value - clean_a) > 0.5
+    assert masked.parameters["A"].value == pytest.approx(clean_a, abs=0.1)
+
+
+def test_exclude_drops_interior_bins():
+    ds = _pulsed_tf_run()
+    full = build_count_group(ds, 1, lifetime_corrected=False)
+    ex0, ex1 = 2.0, 4.0
+    masked = build_count_group(ds, 1, lifetime_corrected=False, exclude=(ex0, ex1))
+    assert masked.time.size < full.time.size
+    assert not np.any((masked.time >= ex0) & (masked.time <= ex1))
+    # Bins outside the window are untouched.
+    assert masked.time.min() == pytest.approx(full.time.min())
+
+
+def test_fittable_t0_off_state_is_noop():
+    ds = _pulsed_tf_run(alpha=1.0, seed=1)
+    base = fit_single_histogram(ds, 1, _tf, _single_seed(), cost="gaussian")
+    params = _single_seed()
+    params.add(Parameter("t0", 0.0, fixed=True))
+    fixed_t0 = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+    assert fixed_t0.parameters["A"].value == pytest.approx(base.parameters["A"].value, abs=1e-6)
+
+
+def test_fittable_t0_is_unbiased_on_clean_data():
+    ds = _pulsed_tf_run(alpha=1.0, seed=1)
+    params = _single_seed()
+    params.add(Parameter("t0", 0.0, min=-0.05, max=0.05))
+    result = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+    assert result.success
+    assert result.parameters["t0"].value == pytest.approx(0.0, abs=0.02)
+
+
+def test_baseline_drift_recovered():
+    def _tf_drift(t, A=20.0, f=1.5, phi=0.0, lam0=0.3, beta0=1.0):  # noqa: N803
+        env = np.exp(-((lam0 * np.asarray(t, dtype=float)) ** beta0))
+        return A * np.cos(2.0 * np.pi * f * np.asarray(t, dtype=float) + phi) * env
+
+    template = build_builtin_template("ideal_pulsed_fb")
+    run = simulate_run(
+        template,
+        _tf_drift,
+        {"A": 20.0, "f": 1.5, "phi": 0.3, "lam0": 0.3, "beta0": 1.0},
+        total_events=40e6,
+        alpha=1.0,
+        seed=4,
+    )
+    ds = MuonDataset(
+        time=np.array([]), asymmetry=np.array([]), error=np.array([]), metadata={}, run=run
+    )
+    params = _single_seed()
+    params.add(Parameter("lambda_base", 0.1, min=0.0, max=5.0))
+    params.add(Parameter("beta_base", 1.0, min=0.2, max=3.0, fixed=True))
+    result = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+    assert result.success
+    assert result.parameters["lambda_base"].value == pytest.approx(0.3, abs=0.03)
+    assert result.parameters["A"].value == pytest.approx(20.0, abs=0.5)
+
+
+def test_baseline_drift_off_state_is_noop():
+    ds = _pulsed_tf_run(alpha=1.0, seed=1)
+    base = fit_single_histogram(ds, 1, _tf, _single_seed(), cost="gaussian")
+    params = _single_seed()
+    params.add(Parameter("lambda_base", 0.0, fixed=True))
+    params.add(Parameter("beta_base", 1.0, fixed=True))
+    with_terms = fit_single_histogram(ds, 1, _tf, params, cost="gaussian")
+    assert with_terms.parameters["A"].value == pytest.approx(base.parameters["A"].value, abs=1e-6)
+
+
+def test_fb_alpha_accepts_exclude_and_t0():
+    ds = _pulsed_tf_run(alpha=1.2, seed=8)
+    params = ParameterSet(
+        [
+            Parameter("alpha", 1.0, min=0.1, max=5.0),
+            Parameter("N0", 1.5e5, min=0.0),
+            Parameter("background", 0.0),
+            Parameter("background_b", 0.0),
+            Parameter("A", 18.0, min=0.0, max=50.0),
+            Parameter("f", 1.5, min=0.0),
+            Parameter("phi", 0.2),
+            Parameter("t0", 0.0, min=-0.05, max=0.05),
+        ]
+    )
+    result = fit_fb_alpha(ds, 1, 2, _tf, params, cost="gaussian", exclude=(2.0, 3.0))
+    assert result.success
+    assert result.group_results[1].parameters["alpha"].value == pytest.approx(1.2, abs=0.02)

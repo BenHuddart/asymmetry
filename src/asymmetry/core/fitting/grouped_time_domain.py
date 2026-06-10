@@ -286,10 +286,14 @@ def _build_one_count_group(
     t_min: float | None,
     t_max: float | None,
     lifetime_corrected: bool,
+    exclude: tuple[float, float] | None = None,
 ) -> GroupedTimeDomainGroup | None:
     """Build one count-domain group trace from a prepared context.
 
-    Returns ``None`` when the group yields no usable bins inside the fit window.
+    ``exclude`` drops an interior ``[t0, t1]`` window of bins from the trace
+    (WiMDA's second time range), endpoints inclusive — for rejecting a laser/RF
+    artefact or a spike without splitting the fit. Returns ``None`` when the
+    group yields no usable bins inside the fit window.
     """
     run = ctx.run
     counts = apply_grouping_aligned(
@@ -317,6 +321,10 @@ def _build_one_count_group(
         mask &= time >= float(t_min)
     if t_max is not None:
         mask &= time <= float(t_max)
+    if exclude is not None:
+        ex0, ex1 = float(exclude[0]), float(exclude[1])
+        if ex1 > ex0:
+            mask &= ~((time >= ex0) & (time <= ex1))
     if not np.any(mask):
         return None
 
@@ -348,6 +356,7 @@ def build_grouped_time_domain_groups(
     t_min: float | None = None,
     t_max: float | None = None,
     lifetime_corrected: bool = True,
+    exclude: tuple[float, float] | None = None,
 ) -> list[GroupedTimeDomainGroup]:
     """Build grouped count domains from one dataset (all included groups)."""
     run, grouping, groups_raw, included_groups = _count_group_setup(dataset)
@@ -367,6 +376,7 @@ def build_grouped_time_domain_groups(
             t_min=t_min,
             t_max=t_max,
             lifetime_corrected=lifetime_corrected,
+            exclude=exclude,
         )
         if group is not None:
             built_groups.append(group)
@@ -383,13 +393,14 @@ def build_count_group(
     t_min: float | None = None,
     t_max: float | None = None,
     lifetime_corrected: bool = True,
+    exclude: tuple[float, float] | None = None,
 ) -> GroupedTimeDomainGroup:
     """Build one named detector group's count-domain trace.
 
     Unlike :func:`build_grouped_time_domain_groups` this does not require two
     included groups: it serves single-histogram and forward/backward count fits,
     which select specific detector groups regardless of the ``included_groups``
-    map.
+    map. ``exclude`` drops an interior time window of bins.
     """
     run, grouping, groups_raw, included_groups = _count_group_setup(dataset)
     gid = int(group_id)
@@ -404,6 +415,7 @@ def build_count_group(
         t_min=t_min,
         t_max=t_max,
         lifetime_corrected=lifetime_corrected,
+        exclude=exclude,
     )
     if group is None:
         raise ValueError(f"Count-domain group {group_id!r} produced no usable bins")

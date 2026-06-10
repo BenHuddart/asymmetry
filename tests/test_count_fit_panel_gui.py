@@ -82,3 +82,32 @@ def test_all_groups_mode_leaves_existing_path(qapp, fb_dataset):
     window.set_dataset(fb_dataset)
     # Default is All groups; the count-domain routing must not intercept it.
     assert window._single_fit_tab._count_fit_mode == "all"
+
+
+def test_phase2_controls_push_to_tabs(qapp, fb_dataset):
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(1)  # fb → count mode enables the controls
+    assert window._t0_check.isEnabled()
+
+    window._exclude_min.setValue(2.0)
+    window._exclude_max.setValue(3.0)
+    window._t0_check.setChecked(True)
+    window._baseline_check.setChecked(True)
+
+    tab = window._single_fit_tab
+    assert tab._count_exclude == (2.0, 3.0)
+    assert tab._count_fit_t0 is True
+    assert tab._count_baseline is True
+
+    # An inverted window disables the exclude (max ≤ min → None).
+    window._exclude_max.setValue(1.0)
+    assert tab._count_exclude is None
+
+
+def test_count_controls_disabled_for_all_groups(qapp, fb_dataset):
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(0)  # All groups
+    assert not window._t0_check.isEnabled()
+    assert not window._exclude_min.isEnabled()

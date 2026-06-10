@@ -2046,6 +2046,10 @@ class GlobalFitTab(QWidget):
         self._count_fit_mode = "all"
         self._count_fit_cost = "poisson"
         self._count_single_side = "forward"
+        # Phase 2 window/nuisance flexibility (all off by default).
+        self._count_exclude: tuple[float, float] | None = None
+        self._count_fit_t0 = False
+        self._count_baseline = False
         self._fit_blocked = False
         self._fit_block_reason = ""
         self._composite_model = self._default_composite_model()
@@ -3561,6 +3565,21 @@ class GlobalFitTab(QWidget):
         """Select which detector group the single-histogram fit targets."""
         self._count_single_side = "backward" if str(side).lower() == "backward" else "forward"
 
+    def set_count_exclude(self, exclude: tuple[float, float] | None) -> None:
+        """Set the optional interior exclude window (μs) for count fits."""
+        if exclude is None or float(exclude[1]) <= float(exclude[0]):
+            self._count_exclude = None
+        else:
+            self._count_exclude = (float(exclude[0]), float(exclude[1]))
+
+    def set_count_fit_t0(self, enabled: bool) -> None:
+        """Toggle a free time-zero offset parameter for count fits."""
+        self._count_fit_t0 = bool(enabled)
+
+    def set_count_baseline(self, enabled: bool) -> None:
+        """Toggle a free stretched-exponential baseline-drift term for count fits."""
+        self._count_baseline = bool(enabled)
+
     def _count_fb_groups(self, dataset: MuonDataset) -> tuple[int, int]:
         grouping = (
             dataset.run.grouping if dataset.run and isinstance(dataset.run.grouping, dict) else {}
@@ -3631,6 +3650,12 @@ class GlobalFitTab(QWidget):
             target = backward if self._count_single_side == "backward" else forward
             params.add(Parameter(name="N0", value=self._count_n0_seed(dataset, target), min=0.0))
             params.add(Parameter(name="background", value=0.0, min=0.0))
+        if self._count_fit_t0:
+            params.add(Parameter(name="t0", value=0.0, min=-0.1, max=0.1))
+        if self._count_baseline:
+            params.add(Parameter(name="lambda_base", value=0.05, min=0.0, max=10.0))
+            # beta held fixed at 1 (simple exponential); free beta is unstable.
+            params.add(Parameter(name="beta_base", value=1.0, min=0.2, max=3.0, fixed=True))
         return params
 
     def _run_count_domain_fit(self) -> None:
@@ -3675,6 +3700,7 @@ class GlobalFitTab(QWidget):
                     cost=cost,
                     t_min=t_min,
                     t_max=t_max,
+                    exclude=self._count_exclude,
                 )
                 self._render_count_fb_result(dataset, result, forward, backward)
             else:
@@ -3688,6 +3714,7 @@ class GlobalFitTab(QWidget):
                     cost=cost,
                     t_min=t_min,
                     t_max=t_max,
+                    exclude=self._count_exclude,
                 )
                 self._render_count_single_result(dataset, result, target)
         except (ValueError, RuntimeError) as exc:

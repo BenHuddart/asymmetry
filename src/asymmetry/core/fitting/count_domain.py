@@ -107,6 +107,33 @@ def _percent_to_fraction(model_fn: Callable[..., NDArray]) -> Callable[..., NDAr
     return fraction
 
 
+def _with_baseline_drift(fraction_fn: Callable[..., NDArray]) -> Callable[..., NDArray]:
+    """Optionally damp the polarization by a stretched-exponential baseline drift.
+
+    WiMDA's ``Bsln lambda`` / ``Bsln beta``: the polarization is multiplied by
+    ``exp(-(lambda_base*t)^beta_base)``. The parameters are popped from the call
+    kwargs so they never reach the user model; when ``lambda_base`` is absent or
+    zero this is an exact no-op (the default state).
+    """
+
+    @functools.wraps(fraction_fn)
+    def damped(t, **kwargs):
+        lam = float(kwargs.pop("lambda_base", 0.0))
+        beta = float(kwargs.pop("beta_base", 1.0))
+        base = np.asarray(fraction_fn(t, **kwargs), dtype=float)
+        if lam > 0.0:
+            arg = np.maximum(lam * np.asarray(t, dtype=float), 0.0)
+            base = base * np.exp(-np.power(arg, beta))
+        return base
+
+    return damped
+
+
+def _split_time_offset(kw: dict) -> float:
+    """Pop and return the fittable ``t0`` time offset (microseconds), default 0."""
+    return float(kw.pop("t0", 0.0))
+
+
 def _raw_model(lifetime_corrected_model: Callable[..., NDArray]) -> Callable[..., NDArray]:
     """Turn a lifetime-corrected count model into a raw-count model.
 
@@ -214,6 +241,7 @@ def fit_single_histogram(
     cost: str = "poisson",
     t_min: float | None = None,
     t_max: float | None = None,
+    exclude: tuple[float, float] | None = None,
 ) -> FitResult:
     """Fit one detector group's raw counts (the musrfit fittype-0 analogue).
 
@@ -221,13 +249,22 @@ def fit_single_histogram(
     forward (+1) / backward (-1) sign set by ``side`` (``"selected"`` uses +1).
     ``params`` supplies the nuisances ``N0`` and ``background`` plus the physics
     model parameters; the muon lifetime is held fixed at the physical value.
+
+    Optional window/nuisance flexibility, all no-ops unless requested:
+    ``exclude`` drops an interior time window from the fit; a free ``t0``
+    parameter in ``params`` shifts the model time axis; free ``lambda_base`` /
+    ``beta_base`` parameters add a stretched-exponential baseline drift.
     """
     _validate_cost(cost)
-    group = build_count_group(dataset, group_id, t_min=t_min, t_max=t_max, lifetime_corrected=False)
+    group = build_count_group(
+        dataset, group_id, t_min=t_min, t_max=t_max, lifetime_corrected=False, exclude=exclude
+    )
     time = np.asarray(group.time, dtype=float)
     counts = np.asarray(group.counts, dtype=float)
 
-    raw_model = _raw_model(build_grouped_count_model(_percent_to_fraction(model_fn)))
+    raw_model = _raw_model(
+        build_grouped_count_model(_with_baseline_drift(_percent_to_fraction(model_fn)))
+    )
 
     # The per-group amplitude/phase are fixed nuisances here: the sign carries the
     # forward/backward orientation and the physics model owns the real amplitude.
@@ -245,7 +282,8 @@ def fit_single_histogram(
         kw = {**fixed_kw, **dict(zip(free_names, args, strict=False))}
         for follower, main in followers.items():
             kw[follower] = kw[main]
-        return np.asarray(raw_model(time, **kw), dtype=float)
+        t0 = _split_time_offset(kw)
+        return np.asarray(raw_model(time + t0, **kw), dtype=float)
 
     def total_cost(*args) -> float:
         return _cost_value(counts, predict(args), cost)
@@ -277,6 +315,7 @@ def fit_fb_alpha(
     cost: str = "poisson",
     t_min: float | None = None,
     t_max: float | None = None,
+    exclude: tuple[float, float] | None = None,
 ) -> GroupedTimeDomainFitResult:
     """Simultaneously fit forward and backward counts with the balance alpha free.
 
@@ -297,35 +336,39 @@ def fit_fb_alpha(
             raise ValueError(f"Forward/backward count fit requires a {required!r} parameter")
 
     g_fwd = build_count_group(
-        dataset, forward_group, t_min=t_min, t_max=t_max, lifetime_corrected=False
+        dataset, forward_group, t_min=t_min, t_max=t_max, lifetime_corrected=False, exclude=exclude
     )
     g_bwd = build_count_group(
-        dataset, backward_group, t_min=t_min, t_max=t_max, lifetime_corrected=False
+        dataset, backward_group, t_min=t_min, t_max=t_max, lifetime_corrected=False, exclude=exclude
     )
     time_f = np.asarray(g_fwd.time, dtype=float)
     counts_f = np.asarray(g_fwd.counts, dtype=float)
     time_b = np.asarray(g_bwd.time, dtype=float)
     counts_b = np.asarray(g_bwd.counts, dtype=float)
 
-    raw_model = _raw_model(build_fb_count_model(_percent_to_fraction(model_fn)))
+    raw_model = _raw_model(
+        build_fb_count_model(_with_baseline_drift(_percent_to_fraction(model_fn)))
+    )
 
     free = params.free_parameters
     free_names = [p.name for p in free]
     fixed_kw = {p.name: p.value for p in params if p.fixed}
     followers = params.link_followers()
-    # Shared physics/scale params: everything except the two per-side backgrounds.
-    shared_keys = [n for n in free_names if n not in ("background", "background_b")]
+    # Shared physics/scale params: everything except the two per-side backgrounds
+    # and the time offset (applied by shifting the model time axis).
+    shared_keys = [n for n in free_names if n not in ("background", "background_b", "t0")]
 
     def _eval(args, time, counts_key: str, sign: float) -> NDArray[np.float64]:
         kw = {**fixed_kw, **dict(zip(free_names, args, strict=False))}
         for follower, main in followers.items():
             kw[follower] = kw[main]
+        t0 = _split_time_offset(kw)
         shared = {k: kw[k] for k in shared_keys if k in kw}
         shared.update(
-            {k: v for k, v in fixed_kw.items() if k not in ("background", "background_b")}
+            {k: v for k, v in fixed_kw.items() if k not in ("background", "background_b", "t0")}
         )
         return np.asarray(
-            raw_model(time, sign=sign, background=kw[counts_key], **shared), dtype=float
+            raw_model(time + t0, sign=sign, background=kw[counts_key], **shared), dtype=float
         )
 
     def predict_f(args):

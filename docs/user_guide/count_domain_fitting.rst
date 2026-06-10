@@ -85,6 +85,30 @@ example a recovered balance of α = 1.250(1) — together with the per-degree
 statistic. For the free-α fit, the forward result carries the full covariance,
 so the α–amplitude correlation is available for inspection.
 
+Window and nuisance flexibility
+-------------------------------
+
+Three optional controls refine the fit window without splitting the run; each
+is off by default and, when off, leaves the fit numerically unchanged.
+
+* **Exclude (μs)** — drop an interior window of bins from the fit. Set the two
+  fields so the upper bound exceeds the lower; the bins inside are removed
+  (endpoints inclusive). Use it to reject a laser or RF artefact, a spike, or
+  any localized corruption — the fitted parameters then match what the clean
+  data alone would give, where leaving the artefact in pulls the amplitude.
+* **Fit t₀ offset** — add a free time-zero offset that shifts the model time
+  axis. Enable it when a small time-zero error is suspected; on clean data it
+  recovers an offset consistent with zero and changes nothing else.
+* **Fit baseline drift** — add a stretched-exponential damping
+  exp(−(λ_b·t)^β_b) on the polarization (β_b held at 1, simple exponential, by
+  default), for a slowly relaxing non-precessing baseline.
+
+  .. note::
+
+     WiMDA applies its baseline drift only to a dedicated constant-offset
+     component; Asymmetry has no single privileged offset parameter, so the
+     drift multiplies the whole polarization. The term is off by default.
+
 Worked example — α from a TF calibration run
 --------------------------------------------
 

@@ -11,9 +11,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QTabWidget,
     QVBoxLayout,
@@ -88,6 +91,34 @@ class MultiGroupFitWindow(QWidget):
         form.addRow(QLabel("Cost"), self._cost_combo)
         self._side_label = QLabel("Single group")
         form.addRow(self._side_label, self._side_combo)
+
+        # Interior exclude window (μs): inactive while max ≤ min.
+        self._exclude_min = QDoubleSpinBox()
+        self._exclude_max = QDoubleSpinBox()
+        for spin in (self._exclude_min, self._exclude_max):
+            spin.setDecimals(3)
+            spin.setRange(0.0, 1000.0)
+            spin.setSingleStep(0.1)
+            spin.valueChanged.connect(self._sync_count_fit_target)
+        exclude_row = QWidget()
+        exclude_layout = QHBoxLayout(exclude_row)
+        exclude_layout.setContentsMargins(0, 0, 0, 0)
+        exclude_layout.addWidget(self._exclude_min)
+        exclude_layout.addWidget(QLabel("–"))
+        exclude_layout.addWidget(self._exclude_max)
+        self._exclude_label = QLabel("Exclude (μs)")
+        form.addRow(self._exclude_label, exclude_row)
+
+        self._t0_check = QCheckBox("Fit t₀ offset")
+        self._t0_check.toggled.connect(self._sync_count_fit_target)
+        self._baseline_check = QCheckBox("Fit baseline drift")
+        self._baseline_check.toggled.connect(self._sync_count_fit_target)
+        nuisance_row = QWidget()
+        nuisance_layout = QHBoxLayout(nuisance_row)
+        nuisance_layout.setContentsMargins(0, 0, 0, 0)
+        nuisance_layout.addWidget(self._t0_check)
+        nuisance_layout.addWidget(self._baseline_check)
+        form.addRow(QLabel("Nuisances"), nuisance_row)
         return box
 
     def _sync_count_fit_target(self, *_args) -> None:
@@ -96,13 +127,29 @@ class MultiGroupFitWindow(QWidget):
         cost = _FIT_COSTS[self._cost_combo.currentIndex()][1]
         side = _SINGLE_SIDES[self._side_combo.currentIndex()][1]
         single = mode == "single"
+        count_mode = mode != "all"
         self._side_combo.setEnabled(single)
         self._side_label.setEnabled(single)
-        self._cost_combo.setEnabled(mode != "all")
+        self._cost_combo.setEnabled(count_mode)
+        for widget in (
+            self._exclude_min,
+            self._exclude_max,
+            self._exclude_label,
+            self._t0_check,
+            self._baseline_check,
+        ):
+            widget.setEnabled(count_mode)
+
+        ex_lo = float(self._exclude_min.value())
+        ex_hi = float(self._exclude_max.value())
+        exclude = (ex_lo, ex_hi) if ex_hi > ex_lo else None
         for tab in (self._single_fit_tab, self._batch_fit_tab):
             tab.set_count_fit_mode(mode)
             tab.set_count_fit_cost(cost)
             tab.set_count_single_side(side)
+            tab.set_count_exclude(exclude)
+            tab.set_count_fit_t0(self._t0_check.isChecked())
+            tab.set_count_baseline(self._baseline_check.isChecked())
 
     def _grouped_tabs(self) -> tuple[GlobalFitTab, GlobalFitTab]:
         return (self._single_fit_tab, self._batch_fit_tab)
