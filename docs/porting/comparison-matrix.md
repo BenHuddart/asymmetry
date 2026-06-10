@@ -1,5 +1,12 @@
 # Comparison matrix: WiMDA × musrfit × Mantid × Asymmetry
 
+> **Note (2026-06-10):** the WiMDA and Asymmetry columns of this matrix are
+> superseded by the full-source sweep in
+> [`docs/porting/wimda-parity-gap/comparison.md`](wimda-parity-gap/comparison.md)
+> (umbrella gap study). Consult that document for current WiMDA-vs-Asymmetry
+> status; this matrix remains authoritative only for the musrfit and Mantid
+> columns.
+
 This document is the canonical side-by-side feature matrix across the
 three reference programs and Asymmetry. It derives from the
 per-program inventories under

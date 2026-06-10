@@ -543,6 +543,26 @@
       "tests_path": "tests/test_wimda_parity_components.py",
       "src_path": "src/asymmetry/core/fitting",
       "updated": "2026-06-10"
+    },
+    {
+      "slug": "wimda-parity-gap",
+      "feature_name": "WiMDA functionality-parity gap study (umbrella)",
+      "status": "study",
+      "path": "docs/porting/wimda-parity-gap",
+      "references": [
+        "WiMDA"
+      ],
+      "docs": {
+        "readme": "docs/porting/wimda-parity-gap/README.md",
+        "comparison": "docs/porting/wimda-parity-gap/comparison.md",
+        "implementation_options": "docs/porting/wimda-parity-gap/implementation-options.md",
+        "test_data": "docs/porting/wimda-parity-gap/test-data.md",
+        "verification_plan": "docs/porting/wimda-parity-gap/verification-plan.md"
+      },
+      "tests_path": null,
+      "src_path": null,
+      "updated": "2026-06-10",
+      "notes": "UMBRELLA study: full WiMDA source sweep (every unit in wimda.dpr) vs fresh Asymmetry scan at 474534e; supersedes the WiMDA column of comparison-matrix.md. Output: consolidated gap inventory (comparison.md) + 12-project parallel portfolio + 1 deferred brief (projects/*.md), partitioned for parallel worktree sessions in three waves (implementation-options.md). Decisions 2026-06-10: Burg all-poles MEM INCLUDED as diagnostic (reverses prior exclusion); Eigen.pas excluded permanently (old roadmap mislabel - Hermitian eigensolvers for FmuF models, not a spectral estimator); Kramers-Kronig dropped (optical spectroscopy, not muSR); HDF4 stays out; NegMu deferred brief (adapt-not-port); live-run monitoring = optional phase. KEY FINDINGS: fit-function parity verified complete against WiMDA source (all remaining gaps are machinery/workflow); curve-averaging co-add is statistically wrong (run-arithmetic project is a correctness fix); Multifit is subsumed by the Global tab; WiMDA's own MUD loader is a non-functional stub (not a parity item); WiMDA KTBArray low-field bug documented (never oracle against it). Each project still requires its own five-doc study pass before implementation; briefs are pre-studies."
     }
   ]
 }
