@@ -416,9 +416,9 @@ named.
 - Period mapping in the time-integral/ALC scan path (Mantid
   `PlotAsymmetryByLogValue` red/green parity) — periods.py mapping makes
   it possible; wire into `integral.py` consumers on demand.
-- Umbrella docs correction: the "EMU LF series" in
-  `wimda-parity-gap/test-data.md` is HIFI 118222–118240 (fix the umbrella
-  table when this project merges).
+- **DONE** — Umbrella docs correction: the "EMU LF series" row in
+  `wimda-parity-gap/test-data.md` is corrected to HIFI runs 118222–118240
+  (corannulene, `Chemistry/Molecular dynamics of corannulene/data_hdf5/`).
 - **DONE** — (Phase 3 implementation note) For 3+-period files the loader
   returns one dataset per period; **Map periods…** builds a new combined
   dataset from those siblings via `combine_mapped_periods` and records
