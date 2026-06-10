@@ -127,6 +127,92 @@ Single-Series Fit
    result = fit_parameter_model(field, values, errors, model, params)
    print(result.success, result.reduced_chi_squared)
 
+Weighting and Error Modes
+-------------------------
+
+By default a model fit weights each point by the propagated error of the
+trended parameter (**Column** mode). The **Errors** selector in the model-fit
+dialog (and the ``error_mode`` argument of ``fit_parameter_model``) offers
+four alternatives for when those errors are absent or untrustworthy:
+
+- **Percent of y** — :math:`\sigma_i = (p/100)\,|y_i|`. Points with
+  :math:`y_i = 0` carry no error information and are excluded from the fit.
+- **Absolute** — one constant :math:`\sigma` for every point.
+- **None** — unit weights. The fitted parameters are the unweighted
+  least-squares solution; :math:`\chi^2` loses its absolute meaning.
+- **Estimate from scatter** — an unweighted fit whose parameter
+  uncertainties are rescaled by :math:`\sqrt{\chi^2/\nu}` afterwards. This
+  is the standard way to quote errors when the only information about the
+  noise is the scatter of the points themselves. It is exactly the
+  converged limit of WiMDA's *Estimate* mode (which rescales its constant
+  :math:`\sigma` by :math:`\sqrt{\chi^2_r}` after each fit until
+  :math:`\chi^2_r = 1`): because a uniform error rescale never moves the
+  minimum, the iteration lands on the same answer in one step.
+
+In Column mode (only), errors are floored at half the median positive error
+before fitting, so a single near-zero propagated error cannot dominate the
+fit; explicit Percent/Absolute choices are honoured verbatim. With unit
+weights or scatter-estimated errors, :math:`\chi^2_r` is forced toward 1 by
+construction and carries no goodness-of-fit information — the quality
+verdict (below) is suppressed in those modes.
+
+.. code-block:: python
+
+   result = fit_parameter_model(
+       field, values, None, model, params, error_mode="scatter"
+   )
+
+Fit Windows (Union Multi-Range)
+-------------------------------
+
+A fit range may be restricted to a union of (min, max) windows: a point
+enters the fit if it falls in *any* window, and a single model is fitted
+across all of them. Use **+ Window** on a range row in the model-fit dialog,
+or pass ``windows`` to ``fit_parameter_model``. The fitted curve is drawn
+continuously through the excluded gaps.
+
+The canonical use is excluding a critical region: a relaxation rate
+:math:`\lambda(T)` diverging at :math:`T_c` is well described by
+``CriticalDivergence`` on both sides of the transition, but the points
+nearest :math:`T_c` are dominated by physics the power law does not capture
+(and by the singularity itself). Fitting the union
+:math:`[T_{\min}, T_c - \delta] \cup [T_c + \delta, T_{\max}]` keeps one
+consistent model with the contaminated region excluded:
+
+.. code-block:: python
+
+   result = fit_parameter_model(
+       temperature, rate, rate_errors, model, params,
+       windows=[(40.0, 64.0), (74.0, 100.0)],
+   )
+
+This differs from adding a second *range* in the dialog: separate ranges fit
+independent models (piecewise modelling), whereas windows OR-combine into
+the mask of one model.
+
+χ² Quality Verdict
+------------------
+
+After a successful fit the dialog reports a quality verdict alongside
+:math:`\chi^2_r`. For a correct model with correct error bars, :math:`\chi^2`
+follows the chi-squared distribution with :math:`\nu = N - N_{\mathrm{free}}`
+degrees of freedom, so at 95 % confidence a good fit's :math:`\chi^2_r`
+falls inside a band around 1 that tightens as :math:`\nu` grows (for
+:math:`\nu = 10` the band is 0.32–2.05; for :math:`\nu = 50`, 0.65–1.43).
+The verdict is two-sided:
+
+- **good** — :math:`\chi^2_r` inside the band.
+- **poor** — above the band: the model misses real structure, or the errors
+  are underestimated.
+- **overdone** — below the band: the fit reproduces the data *better* than
+  the errors allow, which usually means overestimated errors or too many
+  free parameters soaking up noise.
+
+The verdict assumes real (Column-mode) errors and is suppressed for
+unit-weight and scatter-estimated fits. Programmatic access is via
+``asymmetry.core.fitting.assess_fit_quality(chi_squared, dof)``, which
+returns the verdict and the band.
+
 Cross-Group Fitting
 -------------------
 
@@ -222,6 +308,161 @@ parameter that vanishes there.
    print(result.success, result.reduced_chi_squared)
    for p in result.parameters:
        print(p.name, p.value, result.uncertainties.get(p.name))
+
+Polynomial Trends
+-----------------
+
+``Polynomial`` fits an empirical trend or background up to fifth order,
+
+.. math::
+
+   y(x) = c_0 + c_1 x + c_2 x^2 + c_3 x^3 + c_4 x^4 + c_5 x^5,
+
+with all six coefficients available as fit parameters. Fix the unused
+high-order coefficients at 0 to fit lower orders — for a quadratic
+background, free :math:`c_0`–:math:`c_2` and fix :math:`c_3`–:math:`c_5`.
+Use it when no physical model is available, or as the smooth background
+under resonance lineshapes (see the LCR recipe below). Two cautions apply
+to any polynomial fit: the coefficients are only meaningful inside the
+fitted window (polynomials extrapolate badly), and the order should be the
+lowest the residuals support — a freed high-order term that the data does
+not constrain will soak up noise and inflate the uncertainties of every
+other coefficient.
+
+Power Law with Quadrature Background
+------------------------------------
+
+``PowerLawQuadBG`` combines a power law with a constant background *in
+quadrature*,
+
+.. math::
+
+   y(x) = \sqrt{\left(a\,|x|^{n}\right)^2 + \mathrm{BG}^2},
+
+which is the natural composition rule for width-like quantities —
+relaxation rates, linewidths, second moments — where independent broadening
+channels add as squares. At small :math:`x` the curve saturates smoothly at
+:math:`\mathrm{BG}` instead of falling linearly onto an offset; at large
+:math:`x` it approaches the bare power law. Use the plain ``PowerLaw``
+(with its additive constant) when the background is a genuine offset of
+the observable itself rather than an independent broadening channel.
+
+Muonium Repolarisation
+----------------------
+
+``MuRepolarisation`` measures a muonium hyperfine constant from a
+longitudinal-field scan, without resolving any precession. In an applied
+field :math:`B` along the initial muon polarization, the only muonium
+transition that mixes the muon spin states is suppressed as the field
+decouples the muon and electron spins; time-averaging the unresolved fast
+oscillation leaves the repolarisation curve
+
+.. math::
+
+   y(B) = a_{\mathrm{Mu}}\,
+   \frac{\tfrac{1}{2} + (B/B_0)^2}{1 + (B/B_0)^2} + a_{\mathrm{Dia}},
+   \qquad B_0 = \frac{A_{\mathrm{hf}}}{\gamma_e + \gamma_\mu},
+
+rising from half the muonium amplitude at :math:`B = 0` (the other half is
+lost to the unobserved oscillation) to the full amplitude once
+:math:`B \gg B_0`, on top of a field-independent diamagnetic baseline
+:math:`a_{\mathrm{Dia}}`. The component is parameterised directly by the
+hyperfine constant :math:`A_{\mathrm{hf}}` (MHz) — the quantity the
+experiment is designed to extract — with :math:`B_0` derived internally
+from CODATA gyromagnetic ratios. For vacuum muonium
+(:math:`A_{\mathrm{hf}} = 4463\;\mathrm{MHz}`), :math:`B_0 \approx 1585` G,
+and the curve reaches three quarters of the muonium amplitude at exactly
+:math:`B = B_0`.
+
+Fit it to an initial-asymmetry or integral-asymmetry LF scan (built with
+the integral-asymmetry observable, :doc:`/user_guide/alc_mode`, x-axis
+in G). It is the standard method when the hyperfine coupling is too large
+for the precession to be resolved directly. The model assumes an isotropic
+(vacuum-like) hyperfine interaction observed in time average: anisotropic
+muonium, rapid chemical reaction, or spin exchange distort the curve, and
+any missing fraction appears as a reduced :math:`a_{\mathrm{Mu}}`.
+
+.. code-block:: python
+
+   import numpy as np
+   from asymmetry.core.fitting import (
+       Parameter,
+       ParameterSet,
+       ParameterCompositeModel,
+       fit_parameter_model,
+   )
+
+   field_G = np.array([0.0, 50.0, 150.0, 400.0, 1000.0, 2500.0, 6000.0, 15000.0])
+   asym = np.array([12.6, 12.7, 13.1, 14.2, 16.4, 19.0, 21.0, 21.9])
+   errors = np.full_like(asym, 0.2)
+
+   model = ParameterCompositeModel(["MuRepolarisation"])
+   params = ParameterSet([
+       Parameter("a_Mu", value=10.0),
+       Parameter("A_hf", value=4000.0, min=1.0),
+       Parameter("a_Dia", value=5.0),
+   ])
+
+   result = fit_parameter_model(field_G, asym, errors, model, params)
+   print({p.name: p.value for p in result.parameters})
+
+References
+~~~~~~~~~~
+
+1. S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
+   Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
+2. B. D. Patterson, Rev. Mod. Phys. **60**, 69 (1988).
+
+Migrating WiMDA Model Functions
+-------------------------------
+
+Every function in WiMDA's Model-layer library ("Standard fit models") has a
+direct counterpart or a composite recipe. Parameter names map as follows:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 36 36
+
+   * - WiMDA function
+     - Asymmetry equivalent
+     - Notes
+   * - Polynomial fit up to fifth order
+     - ``Polynomial``
+     - Identical (coefficients c₀–c₅).
+   * - Power law
+     - ``PowerLaw``
+     - Identical on :math:`x > 0`; Asymmetry evaluates :math:`|x|^n` so
+       negative-:math:`x` points cannot fault the fit.
+   * - Power law (BG quad)
+     - ``PowerLawQuadBG``
+     - Identical.
+   * - 2 Lorentzians + cubic BG
+     - ``LorentzianLCR + LorentzianLCR + Polynomial``
+     - Peak terms map exactly (Ampl → f, Pos → B₀, Wid → B_wid; fix
+       :math:`c_4, c_5` at 0 for the cubic). **Background coefficients do
+       not transfer**: WiMDA's cubic is in powers of :math:`(x - \mathrm{Pos}\,1)`,
+       Asymmetry's in absolute :math:`x` — refit rather than copying values.
+   * - Thermal activation (2 component)
+     - ``Arrhenius + Arrhenius``
+     - WiMDA uses eV, Asymmetry meV: :math:`E_a[\mathrm{meV}] = 1000
+       \times E_a[\mathrm{eV}]`. WiMDA's hard-coded :math:`e/k_B` is
+       0.089 % below the CODATA value, so refitted activation energies are
+       expected to come out very slightly higher than WiMDA's.
+   * - Internal field vs T for ordered magnet
+     - ``OrderParameter + Constant``
+     - Identical on the physical domain, including the clamp to the
+       background value above :math:`T_c` (B₀ → y₀, B_bg → the Constant).
+   * - Divergence of relaxation rate
+     - ``CriticalDivergence``
+     - Identical away from :math:`T = T_c` (Tc → Tc, alpha → ν,
+       Min rate → c, scaling → a). Exclude the critical region from the
+       fit window rather than relying on the singular point.
+   * - Repolarisation of isotropic Mu
+     - ``MuRepolarisation``
+     - Same curve; WiMDA fits :math:`B_0` in G, Asymmetry fits
+       :math:`A_{\mathrm{hf}}` in MHz with
+       :math:`B_0 = A_{\mathrm{hf}}/(\gamma_e + \gamma_\mu)` derived
+       (:math:`A_{\mathrm{hf}}[\mathrm{MHz}] = 2.816 \times B_0[\mathrm{G}]`).
 
 Composite Parameters in the Fit Parameters Panel
 ------------------------------------------------

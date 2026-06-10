@@ -26,9 +26,22 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
         "Use for first-order monotonic trends where the parameter changes approximately linearly with x. "
         "It is usually appropriate over narrow windows where curvature is not yet significant."
     ),
+    "Polynomial": (
+        "Use as a flexible empirical trend or background up to fifth order in x when no physical model "
+        "is available. Fix the coefficients of unused orders at 0 to fit lower orders (for a quadratic, "
+        "fix c₃–c₅). Polynomials extrapolate poorly: keep the order as low as the residuals allow and "
+        "interpret the coefficients only within the fitted window."
+    ),
     "PowerLaw": (
         "Use near scale-invariant regimes or crossover windows where the observable follows a power law. "
         "It is especially useful for phenomenological critical-like behavior without a full microscopic model."
+    ),
+    "PowerLawQuadBG": (
+        "Use when a power-law signal combines with a constant background in quadrature, "
+        "y = √((a·|x|ⁿ)² + BG²), as for width-like quantities (relaxation rates, linewidths) whose "
+        "independent broadening channels add as squares. Unlike an additive constant, the curve "
+        "saturates smoothly at BG where the power-law term is small; prefer PowerLaw with an additive "
+        "constant when the background is a genuine offset of the observable itself."
     ),
     "ExponentialDecay": (
         "Use for relaxation toward an asymptote with a characteristic x-scale τ. "
@@ -58,6 +71,16 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
         "where λ(B) = 2Δ²ν/(ν² + ωµ²) with ωµ = γµB. It is appropriate when a single dominant fluctuation "
         "rate ν and coupling scale are physically meaningful; the suppression of λ with field measures ν "
         "directly."
+    ),
+    "MuRepolarisation": (
+        "Use for the longitudinal-field repolarisation of isotropic muonium: the time-averaged muon "
+        "polarization rises from half the muonium amplitude at B = 0 to the full amplitude once "
+        "B ≫ B₀ = A_hf/(γₑ + γµ), on top of a field-independent diamagnetic baseline a_Dia. Fit it to "
+        "initial- or integral-asymmetry LF scans (e.g. built with the integral-vs-field observable) to "
+        "estimate the hyperfine constant A_hf when the muonium precession is too fast to resolve — the "
+        "standard method for large hyperfine couplings. It assumes an isotropic hyperfine interaction "
+        "and time-averaged observation; anisotropic or chemically reacting muonium states distort the "
+        "curve, and any missing fraction appears as a reduced a_Mu."
     ),
     "Lorentzian": (
         "Use for field response with a central peak and a characteristic width B₀. "
@@ -498,6 +521,11 @@ FIT_COMPONENT_REFERENCES: dict[str, tuple[str, ...]] = {
 }
 
 PARAMETER_MODEL_REFERENCES: dict[str, tuple[str, ...]] = {
+    "MuRepolarisation": (
+        "S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, "
+        "Muon Spectroscopy: An Introduction (Oxford University Press, Oxford, 2022).",
+        "B. D. Patterson, Rev. Mod. Phys. 60, 69 (1988).",
+    ),
     "Redfield": ("N. Bloembergen, E. M. Purcell, and R. V. Pound, Phys. Rev. 73, 679 (1948).",),
     "GaussianLCR": ("S. R. Kreitzman et al., Phys. Rev. Lett. 56, 181 (1986).",),
     "LorentzianLCR": ("S. R. Kreitzman et al., Phys. Rev. Lett. 56, 181 (1986).",),
