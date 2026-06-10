@@ -1,5 +1,15 @@
 # Asymmetry roadmap
 
+> **Note (2026-06-10):** the WiMDA-sourced entries of this roadmap are
+> superseded by the umbrella gap study at
+> [`docs/porting/wimda-parity-gap/`](wimda-parity-gap/README.md), which
+> partitions all remaining WiMDA functionality into a 12-project parallel
+> portfolio (absorbing `simulate-mode`, `moments-analysis`, `rrf-transform`,
+> `python-user-functions`, `minos-error-analysis`, the WiMDA slice of
+> `phase-auto-calibration`, and the `period-arithmetic` remainder).
+> Non-WiMDA entries (`msr-import`, `lem-depth-profiling`,
+> `structural-transitions`, `bpp-relaxation`) are unaffected.
+
 This roadmap aggregates Phase 3 candidate scoring into a single
 prioritised plan. It is the canonical "what next?" document for
 Asymmetry maintainers.
