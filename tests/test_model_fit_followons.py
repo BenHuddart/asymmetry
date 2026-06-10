@@ -92,6 +92,27 @@ def test_effective_variance_matches_independent_reference() -> None:
     assert r.uncertainties["m"] > r_ols.uncertainties["m"]
 
 
+def test_xerr_ignored_under_scatter_and_none_modes() -> None:
+    """Effective variance needs a real σ_y; under unit-weight (NONE) or
+    scatter-estimated errors the x-error term is ignored (the combination would
+    be scale-dependent), so passing xerr must not change the result."""
+    rng = np.random.default_rng(13)
+    x = np.linspace(0, 10, 15)
+    y = 2.0 * x + 1.0 + rng.normal(0, 0.3, x.size)
+    yerr = np.full_like(x, 0.3)
+    xerr = np.full_like(x, 0.4)
+
+    for mode in ("none", "scatter"):
+        m1, p1 = _linear_model()
+        without = fit_parameter_model(x, y, yerr, m1, p1, error_mode=mode)
+        m2, p2 = _linear_model()
+        with_xerr = fit_parameter_model(x, y, yerr, m2, p2, error_mode=mode, xerr=xerr)
+        v1 = {p.name: p.value for p in without.parameters}
+        v2 = {p.name: p.value for p in with_xerr.parameters}
+        for name in v1:
+            assert v2[name] == pytest.approx(v1[name], abs=1e-12), mode
+
+
 def test_effective_variance_central_difference_slope_is_accurate() -> None:
     """The internal central-difference slope matches the analytic derivative
     for a non-linear model (guards the finite-difference step choice)."""

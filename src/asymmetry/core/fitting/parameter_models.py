@@ -1746,6 +1746,11 @@ def _run_parameter_model_minuit(
             slope = (
                 model_wrapper(x_fit + x_step, *args) - model_wrapper(x_fit - x_step, *args)
             ) / (2.0 * x_step)
+            # A model undefined just outside the data range would give a NaN
+            # probe; fall back to the y-only variance there rather than poisoning
+            # the whole cost (e2 > 0 is guaranteed by the validity mask, so the
+            # denominator stays positive).
+            slope = np.where(np.isfinite(slope), slope, 0.0)
             sigma2 = e2 + (slope**2) * xerr2
             resid = (y_fit - pred) / np.sqrt(sigma2)
             return float(np.sum(resid**2))
@@ -1824,7 +1829,9 @@ def fit_parameter_model(
     errors-in-variables (Orear/York effective-variance) fit — used for
     parameter-vs-parameter trending where the abscissa is itself a fitted
     quantity. When ``xerr`` is ``None`` or all zero/non-finite the fit is
-    ordinary least squares (the abscissa is treated as exact).
+    ordinary least squares (the abscissa is treated as exact). It is ignored
+    under the ``NONE``/``SCATTER`` error modes, whose unit y-weights have no
+    physical scale to combine with the x-variance term.
     """
     error_mode = ErrorMode(error_mode)
     xx = np.asarray(x, dtype=float)
@@ -1832,7 +1839,14 @@ def fit_parameter_model(
     ee = apply_error_mode(yy, yerr, error_mode, error_value)
     if ee is None:
         ee = np.ones_like(xx)
-    xe = None if xerr is None else np.asarray(xerr, dtype=float)
+    # Effective variance combines σ_x with a real per-point σ_y; under unit
+    # weights (NONE) or scatter estimation (SCATTER) the "σ_y" is a placeholder
+    # of arbitrary scale, so the combination σ_y² + slope²·σ_x² would be
+    # scale-dependent — ignore x-errors in those modes.
+    if error_mode in (ErrorMode.NONE, ErrorMode.SCATTER):
+        xe = None
+    else:
+        xe = None if xerr is None else np.asarray(xerr, dtype=float)
 
     try:
         window_selection = windows_mask(xx, windows, x_min, x_max)

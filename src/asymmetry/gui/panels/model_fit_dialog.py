@@ -544,9 +544,15 @@ class ModelFitDialog(QDialog):
         return None
 
     def _on_error_mode_changed(self, _idx: int) -> None:
+        mode = self._error_mode()
+        # The effective-variance toggle has no real σ_y to combine with under
+        # unit-weight (None) or scatter modes, so the fit ignores x-errors there
+        # — disable the control instead of leaving it promising a no-op.
+        if getattr(self, "_x_error_check", None) is not None:
+            self._x_error_check.setEnabled(mode not in (ErrorMode.NONE, ErrorMode.SCATTER))
         if self._error_value_label is None or self._error_value_spin is None:
             return
-        needs_value = self._error_mode() in (ErrorMode.PERCENT, ErrorMode.ABSOLUTE)
+        needs_value = mode in (ErrorMode.PERCENT, ErrorMode.ABSOLUTE)
         self._error_value_label.setVisible(needs_value)
         self._error_value_spin.setVisible(needs_value)
         self._error_value_spin.setEnabled(needs_value)

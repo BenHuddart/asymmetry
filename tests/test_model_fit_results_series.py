@@ -125,11 +125,33 @@ def test_recursion_trend_of_results(mainwindow: MainWindow) -> None:
 def test_rerun_replaces_results_series(mainwindow: MainWindow) -> None:
     output = SimpleNamespace(fit_result=_cross_group_result(), x_key="field")
     mainwindow._record_model_fit_results_series("lambda", _groups(), output)
+    first_id = next(
+        s.batch_id
+        for s in mainwindow._project_model.batches.values()
+        if s.batch_id.startswith("modelfit-")
+    )
     mainwindow._record_model_fit_results_series("lambda", _groups(), output)
     modelfit = [
         s for s in mainwindow._project_model.batches.values() if s.batch_id.startswith("modelfit-")
     ]
     assert len(modelfit) == 1  # replaced, not duplicated
+    # The id is a deterministic function of the logical key (stable across
+    # sessions), so the re-run lands on the same batch and replaces it.
+    assert modelfit[0].batch_id == first_id
+
+
+def test_results_series_is_json_safe(mainwindow: MainWindow) -> None:
+    """The computed series must serialise to strict JSON — the off-axis globals
+    coordinate is stored as null, not a non-standard NaN token."""
+    import json
+
+    output = SimpleNamespace(fit_result=_cross_group_result(), x_key="field")
+    mainwindow._record_model_fit_results_series("lambda", _groups(), output)
+    series = next(
+        s for s in mainwindow._project_model.batches.values() if s.batch_id.startswith("modelfit-")
+    )
+    # allow_nan=False raises ValueError if any NaN/Infinity is present.
+    json.dumps(series.to_dict(), allow_nan=False)
 
 
 def test_results_series_survives_trend_panel_refresh(mainwindow: MainWindow) -> None:

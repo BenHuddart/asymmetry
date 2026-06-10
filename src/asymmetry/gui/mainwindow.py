@@ -20,6 +20,7 @@ Layout overview (mirroring WiMDA):
 from __future__ import annotations
 
 import copy
+import hashlib
 import os
 import time
 from pathlib import Path
@@ -389,9 +390,6 @@ class MainWindow(QMainWindow):
         self._alc_scan_points: list[dict] = []
         #: Project-model id of the current ALC scan series (replaced on rebuild).
         self._alc_scan_series_id: str | None = None
-        #: Logical-key → batch_id of recorded cross-group model-fit result series,
-        #: so re-running the same fit replaces (not duplicates) its results series.
-        self._model_fit_result_series_ids: dict[str, str] = {}
         #: Baseline-corrected scan from the last baseline fit (basis for peaks).
         self._alc_corrected_scan: FieldScan | None = None
         #: The fitted baseline curve (display units), for the total-fit overlay.
@@ -5490,9 +5488,16 @@ class MainWindow(QMainWindow):
 
             # Computed series (e.g. cross-group model-fit results) carry their own
             # field/temperature in the summary, since their synthetic members have
-            # no backing dataset; fall back to dataset metadata otherwise.
-            field = summary.get("field", meta.get("field", 0.0))
-            temperature = summary.get("temperature", meta.get("temperature", 0.0))
+            # no backing dataset; fall back to dataset metadata otherwise. A
+            # present-but-None summary value means "off this axis" → NaN.
+            def _coord(key: str) -> float:
+                if key in summary:
+                    val = summary[key]
+                    return float("nan") if val is None else float(val)
+                return float(meta.get(key, 0.0))
+
+            field = _coord("field")
+            temperature = _coord("temperature")
 
             rows.append(
                 {
@@ -6543,8 +6548,14 @@ class MainWindow(QMainWindow):
         trend_axis = "field" if x_key == "temperature" else "temperature"
         other_axis = "temperature" if trend_axis == "field" else "field"
 
-        def _coordinate_fields(coord: float) -> dict[str, float]:
-            return {trend_axis: coord, other_axis: 0.0}
+        def _json_coord(value: float) -> float | None:
+            # Persisted via json.dumps (allow_nan would emit a non-standard NaN
+            # token); store ``None`` (JSON null) for a non-finite coordinate.
+            v = float(value)
+            return v if np.isfinite(v) else None
+
+        def _coordinate_fields(coord: float) -> dict[str, float | None]:
+            return {trend_axis: _json_coord(coord), other_axis: 0.0}
 
         base_key = -1_000_000_000
         member_run_numbers: list[int] = []
@@ -6580,19 +6591,22 @@ class MainWindow(QMainWindow):
             "chi_squared": float(fit_result.chi_squared),
             "reduced_chi_squared": float(fit_result.reduced_chi_squared),
             "run_label": "globals",
-            # Off the trend axis (NaN → excluded from the trend line, still in
-            # the table); the other axis stays numeric so x-axis inference works.
-            trend_axis: float("nan"),
+            # Off the trend axis (None → NaN coordinate, excluded from the trend
+            # line but kept in the table); the other axis stays numeric so x-axis
+            # inference works.
+            trend_axis: None,
             other_axis: 0.0,
         }
 
         group_ids = "|".join(sorted(str(getattr(g, "group_id", "")) for g in groups))
         logical_key = f"{parameter_name}::{x_key}::{group_ids}"
-        existing_id = self._model_fit_result_series_ids.get(logical_key)
-        if existing_id and self._project_model.batch(existing_id):
-            self._project_model.remove_batch(existing_id)
-
-        batch_id = f"modelfit-{abs(hash(logical_key)) % 1_000_000:06d}"
+        # Derive the batch id deterministically from the logical key so re-running
+        # the same fit — in this session or after a save/reload — yields the same
+        # id and add_batch replaces the prior results series rather than
+        # duplicating it (Python's built-in hash() is salted per process and
+        # would not be stable across sessions).
+        digest = hashlib.sha1(logical_key.encode("utf-8")).hexdigest()[:12]
+        batch_id = f"modelfit-{digest}"
         series = FitSeries(
             batch_id,
             rep_type,
@@ -6604,7 +6618,6 @@ class MainWindow(QMainWindow):
             results_by_run=results_by_run,
         )
         self._project_model.add_batch(series)
-        self._model_fit_result_series_ids[logical_key] = series.batch_id
         self._refresh_trend_panel()
 
     def _on_fit_parameters_group_fits_deleted(self, group_id: str, run_numbers: object) -> None:
