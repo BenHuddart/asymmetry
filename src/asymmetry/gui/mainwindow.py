@@ -291,6 +291,35 @@ def _coerce_bool(value: object, default: bool = False) -> bool:
     return bool(value)
 
 
+#: Grouping keys synced verbatim between dialog payloads and run.grouping:
+#: present in the payload → copied, absent → removed. One list feeds the
+#: apply paths AND the project-persistence extractor, so a new reduction
+#: setting cannot be persisted on one path and silently erased on another.
+ALPHA_PROVENANCE_KEYS = ("alpha_method", "alpha_error", "alpha_reference_run")
+REDUCTION_SETTING_KEYS = (
+    "background_mode",
+    "background_run",
+    "excluded_detectors",
+    "binning_mode",
+    "bin0_us",
+    "bin10_us",
+)
+DEADTIME_SETTING_KEYS = (
+    "deadtime_manual_us",
+    "deadtime_estimated_us",
+    "deadtime_reference_run",
+)
+
+
+def _sync_grouping_keys(grouping: dict, payload: dict, keys: tuple[str, ...]) -> None:
+    """Copy each key from payload into grouping, removing it when absent."""
+    for key in keys:
+        if key in payload:
+            grouping[key] = payload.get(key)
+        else:
+            grouping.pop(key, None)
+
+
 class MainWindow(QMainWindow):
     """Top-level application window for the Asymmetry μSR analysis GUI.
 
@@ -2518,6 +2547,9 @@ class MainWindow(QMainWindow):
         ):
             if isinstance(grouping.get(key), list):
                 payload[key] = list(grouping.get(key, []))
+        for key in REDUCTION_SETTING_KEYS + ALPHA_PROVENANCE_KEYS + ("period_mapping",):
+            if key in grouping:
+                payload[key] = copy.deepcopy(grouping.get(key))
         return payload
 
     def _normalize_group_entries(self, values) -> list[object]:
@@ -2781,11 +2813,7 @@ class MainWindow(QMainWindow):
                 run.grouping["forward_group"] = forward_gid
                 run.grouping["backward_group"] = backward_gid
             run.grouping["alpha"] = float(alpha if alpha > 0 else 1.0)
-            for key in ("alpha_method", "alpha_error", "alpha_reference_run"):
-                if key in grouping_result:
-                    run.grouping[key] = grouping_result.get(key)
-                else:
-                    run.grouping.pop(key, None)
+            _sync_grouping_keys(run.grouping, grouping_result, ALPHA_PROVENANCE_KEYS)
             if axis_pairs:
                 run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run.grouping["alpha"]))
                 run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run.grouping["alpha"]))
@@ -2804,15 +2832,7 @@ class MainWindow(QMainWindow):
                 run.grouping["deadtime_method"] = str(grouping_result.get("deadtime_method"))
             else:
                 run.grouping.pop("deadtime_method", None)
-            for key in (
-                "deadtime_manual_us",
-                "deadtime_estimated_us",
-                "deadtime_reference_run",
-            ):
-                if key in grouping_result:
-                    run.grouping[key] = grouping_result.get(key)
-                else:
-                    run.grouping.pop(key, None)
+            _sync_grouping_keys(run.grouping, grouping_result, DEADTIME_SETTING_KEYS)
             run.grouping.pop("deadtime_source_path", None)
             run.grouping.pop("deadtime_loaded_us", None)
             if deadtime_mode != "file":
@@ -2823,18 +2843,7 @@ class MainWindow(QMainWindow):
                         grouping_result.get("deadtime_loaded_us", [])
                     )
             run.grouping["background_correction"] = use_background
-            for key in (
-                "background_mode",
-                "background_run",
-                "excluded_detectors",
-                "binning_mode",
-                "bin0_us",
-                "bin10_us",
-            ):
-                if key in grouping_result:
-                    run.grouping[key] = grouping_result.get(key)
-                else:
-                    run.grouping.pop(key, None)
+            _sync_grouping_keys(run.grouping, grouping_result, REDUCTION_SETTING_KEYS)
             if not use_background:
                 run.grouping.pop("background_method", None)
                 run.grouping.pop("background_values", None)
@@ -2929,15 +2938,7 @@ class MainWindow(QMainWindow):
             run.grouping["deadtime_method"] = str(grouping_result.get("deadtime_method"))
         else:
             run.grouping.pop("deadtime_method", None)
-        for key in (
-            "deadtime_manual_us",
-            "deadtime_estimated_us",
-            "deadtime_reference_run",
-        ):
-            if key in grouping_result:
-                run.grouping[key] = grouping_result.get(key)
-            else:
-                run.grouping.pop(key, None)
+        _sync_grouping_keys(run.grouping, grouping_result, DEADTIME_SETTING_KEYS)
         run.grouping.pop("deadtime_source_path", None)
         run.grouping.pop("deadtime_loaded_us", None)
 
@@ -2960,18 +2961,7 @@ class MainWindow(QMainWindow):
         ):
             if key in grouping_result:
                 run.grouping[key] = grouping_result.get(key)
-        for key in (
-            "background_mode",
-            "background_run",
-            "excluded_detectors",
-            "binning_mode",
-            "bin0_us",
-            "bin10_us",
-        ):
-            if key in grouping_result:
-                run.grouping[key] = grouping_result.get(key)
-            else:
-                run.grouping.pop(key, None)
+        _sync_grouping_keys(run.grouping, grouping_result, REDUCTION_SETTING_KEYS)
 
         reduction_grouping = dict(run.grouping)
         reduction_grouping.update(
@@ -3132,6 +3122,23 @@ class MainWindow(QMainWindow):
                 run.grouping["background_details"] = dict(details)
             else:
                 run.grouping.pop("background_details", None)
+            method = (
+                str(background_state.get("method", ""))
+                if isinstance(background_state, dict)
+                else ""
+            )
+            if method in {
+                "missing_reference",
+                "missing_fixed_values",
+                "tail_fit_failed",
+                "invalid_range",
+                "none",
+            }:
+                self.statusBar().showMessage(
+                    f"Background correction NOT applied to run {run.run_number} "
+                    f"({method.replace('_', ' ')}).",
+                    8000,
+                )
         else:
             run.grouping.pop("background_method", None)
             run.grouping.pop("background_values", None)
@@ -3179,11 +3186,7 @@ class MainWindow(QMainWindow):
                 "period_mode": period_mode,
             }
         )
-        for key in ("alpha_method", "alpha_error", "alpha_reference_run"):
-            if key in grouping_result:
-                run.grouping[key] = grouping_result.get(key)
-            else:
-                run.grouping.pop(key, None)
+        _sync_grouping_keys(run.grouping, grouping_result, ALPHA_PROVENANCE_KEYS)
         if axis_pairs:
             run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run_alpha))
             run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run_alpha))
@@ -3484,6 +3487,9 @@ class MainWindow(QMainWindow):
         """
         payload = grouping.get("background_run")
         if not isinstance(payload, dict):
+            self.statusBar().showMessage(
+                "Background run unavailable: no reference is recorded.", 8000
+            )
             return None
         reference_run = None
         run_number = payload.get("run_number")
@@ -3495,6 +3501,11 @@ class MainWindow(QMainWindow):
         if reference_run is None:
             source_file = str(payload.get("source_file", "") or "")
             if not source_file:
+                self.statusBar().showMessage(
+                    "Background run unavailable: the reference is not loaded and "
+                    "no source file is recorded.",
+                    8000,
+                )
                 return None
             cache = getattr(self, "_background_run_cache", None)
             if cache is None:
@@ -3512,6 +3523,9 @@ class MainWindow(QMainWindow):
                     return None
                 cache[source_file] = reference_run
         if reference_run is None or not reference_run.histograms:
+            self.statusBar().showMessage(
+                "Background run unavailable: the reference has no histograms.", 8000
+            )
             return None
 
         def _good_frames(source) -> float | None:

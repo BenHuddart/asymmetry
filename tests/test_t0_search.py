@@ -148,3 +148,14 @@ def test_t0_search_recovers_loader_t0_on_continuous_corpus():
     assert search.strategy == "prompt_peak"
     file_t0_values = [int(h.t0_bin) for h in run.histograms]
     assert min(file_t0_values) - 1 <= search.consensus_t0_bin <= max(file_t0_values) + 1
+
+
+def test_pulsed_edge_ignores_early_noise_spike():
+    """Review fix: a prompt flash/noise spike above half-maximum far before
+    the pulse must not capture the edge — the crossing adjacent to the peak
+    (after the last sub-half bin) is the edge."""
+    counts = _pulsed_histogram(200, 10, seed=4)
+    counts[3] = counts.max() * 0.9  # early spike above half-maximum
+    estimate = find_t0(counts, pulsed=True)
+    assert estimate.ok
+    assert abs(estimate.t0_bin - 200) <= 1

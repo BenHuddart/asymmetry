@@ -174,3 +174,27 @@ def test_time_representation_honours_binning_mode():
     np.testing.assert_array_equal(fixed_run.histograms[0].counts, counts_f)
     # Fixed path unchanged: matches the plain reduction bit-for-bit.
     assert fixed.time.size == n - t0
+
+
+def test_binned_time_convention_matches_fixed_mode():
+    """Review fix: the time stamps of binned output are the mean of the
+    merged raw bins' (k − t0)·w stamps — identical to the fixed-mode path,
+    so switching modes never shifts the time axis."""
+    n, t0, w = 400, 10, BIN_WIDTH_US
+    forward = np.full(n, 1000.0)
+    backward = np.full(n, 1000.0)
+    # bin0 below the raw width keeps the early output bins single raw bins
+    # (the target width stays < w for ~τ·ln2): their stamps must equal the
+    # fixed-mode (k − t0)·w exactly.
+    time, _, _ = binned_fb_asymmetry(
+        forward,
+        backward,
+        grouping={"binning_mode": "constant_error", "bin0_us": 0.5 * w},
+        common_t0=t0,
+        bin_width_us=w,
+        alpha=1.0,
+        first_good_bin=t0,
+        last_good_bin=n - 1,
+    )
+    fixed_stamps = (np.arange(t0, n) - t0) * w
+    np.testing.assert_allclose(time[:20], fixed_stamps[:20])

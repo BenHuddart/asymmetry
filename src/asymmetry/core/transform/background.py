@@ -384,7 +384,11 @@ def apply_grouped_background_correction(
         )
 
     fixed = _fixed_background_values(grouping)
-    if fixed is not None and mode == "fixed":
+    if mode == "fixed":
+        if fixed is None:
+            # An explicit fixed mode without usable values must not silently
+            # degrade to a range estimate the user never asked for.
+            return BackgroundCorrectionResult(f, b, None, None, False, "missing_fixed_values")
         return BackgroundCorrectionResult(
             forward=f - fixed[0],
             backward=b - fixed[1],

@@ -90,6 +90,8 @@ def _format_value_with_uncertainty(value: float, error: float | None) -> str:
     if scaled_error >= 100:  # rounding pushed it to three digits, e.g. 0.0995
         scaled_error = int(round(scaled_error / 10))
         decimals -= 1
+    if decimals < 0:  # uncertainty >= ~100: integer digits on both sides
+        return f"{value:.0f}({int(round(error))})"
     return f"{value:.{decimals}f}({scaled_error})"
 
 
@@ -1310,7 +1312,9 @@ class GroupingDialog(QDialog):
             and ds.run.histograms
             and int(ds.run_number) != int(self._reference_dataset.run_number)
         ]
-        labels = [ds.run_label for ds in candidates] + ["Browse for file…"]
+        labels = [f"{ds.run_label} (run {ds.run_number})" for ds in candidates] + [
+            "Browse for file…"
+        ]
         from PySide6.QtWidgets import QInputDialog
 
         choice, accepted = QInputDialog.getItem(
@@ -1389,8 +1393,9 @@ class GroupingDialog(QDialog):
         t0_bin, _offset, _first, last_good = self._resolve_good_bin_limits_from_controls()
         bin_width = float(self._run.histograms[0].bin_width)
         parts: list[str] = []
+        excluded = self._excluded_index_set()
         for name, gid in (("F", forward_gid), ("B", backward_gid)):
-            indices = self._groups.get(gid, [])
+            indices = [i for i in self._groups.get(gid, []) if i not in excluded]
             if not indices or max(indices) >= len(self._run.histograms):
                 continue
             counts = apply_grouping(self._run.histograms, indices)
@@ -1864,6 +1869,11 @@ class GroupingDialog(QDialog):
         ids = [int(v) for v in raw] if isinstance(raw, (list, tuple)) else []
         self._exclude_edit.setText(format_detector_list(ids))
 
+    def _excluded_index_set(self) -> set[int]:
+        """0-based indices of currently excluded detectors (empty on parse error)."""
+        ids = self._current_excluded_detectors() or []
+        return {int(v) - 1 for v in ids}
+
     def _current_excluded_detectors(self) -> list[int] | None:
         """Parse the exclusion field; warn and return None on bad input."""
         text = self._exclude_edit.text().strip()
@@ -1882,7 +1892,12 @@ class GroupingDialog(QDialog):
             return
         metadata = dict(getattr(self._reference_dataset, "metadata", {}) or {})
         metadata.update(self._run.metadata or {})
-        search = find_t0_for_run(self._run.histograms, metadata)
+        excluded = self._excluded_index_set()
+        histograms = [hist for i, hist in enumerate(self._run.histograms) if i not in excluded]
+        if not histograms:
+            QMessageBox.warning(self, "Find t0", "All detectors are excluded.")
+            return
+        search = find_t0_for_run(histograms, metadata)
         if not search.ok:
             QMessageBox.warning(self, "Find t0", search.message)
             return
@@ -1971,10 +1986,15 @@ class GroupingDialog(QDialog):
             )
             return None
 
-        forward_indices = self._groups.get(forward_gid, [])
-        backward_indices = self._groups.get(backward_gid, [])
+        excluded = self._excluded_index_set()
+        forward_indices = [i for i in self._groups.get(forward_gid, []) if i not in excluded]
+        backward_indices = [i for i in self._groups.get(backward_gid, []) if i not in excluded]
         if not forward_indices or not backward_indices:
-            QMessageBox.warning(self, "Invalid Grouping", "Selected groups are empty.")
+            QMessageBox.warning(
+                self,
+                "Invalid Grouping",
+                "Selected groups are empty (after detector exclusion).",
+            )
             return None
 
         if self._run is None or not self._run.histograms:
@@ -2160,9 +2180,9 @@ class GroupingDialog(QDialog):
         return payload
 
     def _exclusion_payload(self) -> dict[str, Any]:
-        ids = self._current_excluded_detectors()
-        if not ids:
-            return {}
+        # Always present: an empty list explicitly clears exclusions, so the
+        # apply path never has to guess between "cleared" and "unspecified".
+        ids = self._current_excluded_detectors() or []
         return {"excluded_detectors": [int(v) for v in ids]}
 
     def _save_grp_file(self) -> None:

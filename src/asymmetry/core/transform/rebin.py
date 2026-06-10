@@ -147,8 +147,11 @@ def binned_fb_asymmetry(
     Counts (and, when supplied, count variances) are summed onto the output
     bins first and the asymmetry formed per output bin — the counts-then-
     ratio order all reference programs use. Returns ``(time, asymmetry,
-    error)`` with bin-centre times in µs relative to t0; the asymmetry is
-    fractional (callers scale to percent).
+    error)`` in µs relative to t0; the asymmetry is fractional (callers
+    scale to percent). Output times are the mean of the merged raw bins'
+    reduction time stamps ``(k − t0)·w`` — the same convention the
+    fixed-mode path and :func:`rebin` use, so switching binning modes never
+    shifts the time axis.
     """
     mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
     f = np.asarray(forward, dtype=np.float64)
@@ -185,5 +188,8 @@ def binned_fb_asymmetry(
         )
     else:
         asymmetry, error = compute_asymmetry(f_out, b_out, alpha=alpha)
-    time = t_start + (edges[:-1] + edges[1:]) * 0.5 * float(bin_width_us)
+    # Mean of the merged raw bins' time stamps (k − t0)·w: for the slice
+    # [e0, e1) that is ((e0 + e1 − 1)/2)·w — matching the fixed-mode path,
+    # where rebin() averages the same left-edge stamps.
+    time = t_start + (edges[:-1] + edges[1:] - 1) * 0.5 * float(bin_width_us)
     return np.asarray(time, dtype=np.float64), asymmetry, error

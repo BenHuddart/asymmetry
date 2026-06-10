@@ -291,3 +291,89 @@ def test_explicit_range_mode_ignores_fixed_values():
     )
     assert result.applied
     assert result.method == "estimated"
+
+
+def test_explicit_fixed_mode_without_values_does_not_fall_through_to_range():
+    """Review fix: an explicit fixed mode with missing values must not
+    silently subtract a pre-t0 range mean instead."""
+    counts = np.arange(100, dtype=np.float64) + 50.0
+    result = apply_grouped_background_correction(
+        counts,
+        counts,
+        grouping={"background_mode": "fixed"},
+        t0_bin=20,
+        bin_width_us=BIN_WIDTH_US,
+    )
+    assert not result.applied
+    assert result.method == "missing_fixed_values"
+    np.testing.assert_array_equal(result.forward, counts)
+
+
+def test_fourier_group_path_honours_injected_values_under_explicit_range_mode():
+    """Review fix: the grouped Fourier input subtracts the per-group values
+    recorded by the time-domain reduction even though the persisted grouping
+    carries background_mode='range'."""
+    from asymmetry.core.fourier.grouped import _apply_group_background_correction
+
+    counts = np.full(200, 80.0)
+    grouping = {
+        "background_correction": True,
+        "background_mode": "range",
+        "background_values": [7.0, 3.0],
+        "forward_group": 1,
+        "backward_group": 2,
+    }
+    corrected, applied, value = _apply_group_background_correction(
+        counts,
+        grouping=grouping,
+        group_id=2,  # backward group must get ITS value, not the forward one
+        t0_bin=20,
+        bin_width=BIN_WIDTH_US,
+        metadata={"facility": "PSI"},
+        source_file="run.bin",
+    )
+    assert applied
+    assert value == pytest.approx(3.0)
+    np.testing.assert_allclose(corrected, counts - 3.0)
+
+
+def test_fourier_group_path_applies_tail_fit_on_pulsed_data():
+    """Review fix: pulsed data with tail-fit background corrects the Fourier
+    input too (the old range-only gate skipped it)."""
+    from asymmetry.core.fourier.grouped import _apply_group_background_correction
+
+    counts = _pulsed_counts(5000.0, 0.8, seed=7)
+    grouping = {
+        "background_correction": True,
+        "background_mode": "tail_fit",
+        "last_good_bin": N_BINS - 1,
+    }
+    corrected, applied, value = _apply_group_background_correction(
+        counts,
+        grouping=grouping,
+        group_id=1,
+        t0_bin=T0_BIN,
+        bin_width=BIN_WIDTH_US,
+        metadata={"facility": "ISIS"},
+        source_file="run.nxs",
+    )
+    assert applied
+    assert value is not None and value > 0.0
+    assert float(np.sum(corrected)) < float(np.sum(counts))
+
+
+def test_fourier_group_path_skips_reference_run_mode_without_correcting():
+    from asymmetry.core.fourier.grouped import _apply_group_background_correction
+
+    counts = np.full(50, 80.0)
+    corrected, applied, _ = _apply_group_background_correction(
+        counts,
+        grouping={"background_correction": True, "background_mode": "reference_run"},
+        group_id=1,
+        t0_bin=5,
+        bin_width=BIN_WIDTH_US,
+        metadata={"facility": "ISIS"},
+        source_file="run.nxs",
+    )
+    assert not applied
+    np.testing.assert_array_equal(corrected, counts)

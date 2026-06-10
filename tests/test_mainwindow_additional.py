@@ -3918,3 +3918,71 @@ class TestBackgroundModesReduction:
         assert applied is True
         # Reduction proceeds without subtraction; method records the miss.
         assert dataset.run.grouping.get("background_method") == "missing_reference"
+
+
+class TestReductionSettingsPersistence:
+    """Review fix: the new grouping keys survive non-dialog apply flows and
+    round-trip through the project extractor."""
+
+    NEW_KEYS = {
+        "background_mode": "tail_fit",
+        "excluded_detectors": [2],
+        "binning_mode": "variable",
+        "bin0_us": 0.1,
+        "bin10_us": 0.5,
+        "alpha_method": "diamagnetic",
+        "alpha_error": 0.01,
+        "alpha_reference_run": 9001,
+    }
+
+    def _configured_dataset(self) -> MuonDataset:
+        dataset = _make_dataset(9001, with_grouping=True)
+        counts = dataset.run.histograms[0].counts
+        dataset.run.histograms = [Histogram(counts=counts.copy(), bin_width=0.01) for _ in range(4)]
+        dataset.run.grouping["groups"] = {1: [1, 2], 2: [3, 4]}
+        dataset.run.grouping.update(self.NEW_KEYS)
+        dataset.run.grouping["background_correction"] = True
+        dataset.run.grouping["background_run"] = {"run_number": 9002, "source_file": "/x.nxs"}
+        dataset.run.grouping["period_mapping"] = {"1": "red", "2": "green"}
+        return dataset
+
+    def test_extractor_emits_the_new_keys(self, mainwindow: MainWindow) -> None:
+        dataset = self._configured_dataset()
+        payload = mainwindow._extract_grouping_overrides(dataset)
+        for key, value in self.NEW_KEYS.items():
+            assert payload[key] == value, key
+        assert payload["background_run"]["run_number"] == 9002
+        assert payload["period_mapping"] == {"1": "red", "2": "green"}
+
+    def test_extracted_payload_reapplies_without_erasing_settings(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """The toolbar/vector/project flows apply extracted payloads; the
+        settings must survive the round trip."""
+        dataset = self._configured_dataset()
+        payload = mainwindow._extract_grouping_overrides(dataset)
+        payload["bunching_factor"] = 7  # what the toolbar flow changes
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        grouping = dataset.run.grouping
+        assert grouping["excluded_detectors"] == [2]
+        assert grouping["binning_mode"] == "variable"
+        assert grouping["bin0_us"] == pytest.approx(0.1)
+        assert grouping["background_mode"] == "tail_fit"
+        assert grouping["background_run"]["run_number"] == 9002
+        assert grouping["alpha_method"] == "diamagnetic"
+        assert grouping["bunching_factor"] == 7
+
+    def test_dialog_payload_without_keys_still_clears_them(self, mainwindow: MainWindow) -> None:
+        """The pop-when-absent contract stays for dialog payloads, which
+        always carry the keys they own — absence means 'cleared'."""
+        dataset = self._configured_dataset()
+        payload = mainwindow._extract_grouping_overrides(dataset)
+        for key in ("binning_mode", "bin0_us", "bin10_us"):
+            payload.pop(key)
+
+        mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert "binning_mode" not in dataset.run.grouping

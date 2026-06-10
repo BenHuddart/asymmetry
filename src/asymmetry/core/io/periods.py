@@ -496,21 +496,27 @@ def combine_mapped_periods(
         return total
 
     def _dead_times(periods: list[int]) -> list[float]:
-        per_period = []
+        # Keep each surviving table paired with ITS period's frame count —
+        # periods without a table must not shift the weights of the others.
+        tables: list[tuple[list[float], float]] = []
         for p in periods:
             grouping = runs[p - 1].grouping if isinstance(runs[p - 1].grouping, dict) else {}
             values = grouping.get("dead_time_us")
             if isinstance(values, list) and values:
-                per_period.append([float(v) for v in values])
-        if not per_period:
+                tables.append(([float(v) for v in values], _good_frames([p])))
+        if not tables:
             return []
-        reference = per_period[0]
-        if all(np.allclose(values, reference) for values in per_period[1:]):
+        # Tables of different lengths (malformed metadata) reduce to their
+        # common detector count rather than crashing the mapping.
+        n_detectors = min(len(values) for values, _ in tables)
+        reference = tables[0][0][:n_detectors]
+        if all(np.allclose(values[:n_detectors], reference) for values, _ in tables[1:]):
             return list(reference)
         # Differing per-period deadtimes: frame-weighted mean is the best
         # single table for the summed counts.
-        weights = [_good_frames([p]) for p in periods][: len(per_period)]
-        table = np.average(np.asarray(per_period, dtype=np.float64), axis=0, weights=weights)
+        stacked = np.asarray([values[:n_detectors] for values, _ in tables], dtype=np.float64)
+        weights = [frames for _, frames in tables]
+        table = np.average(stacked, axis=0, weights=weights)
         return [float(v) for v in table]
 
     red_histograms = _histograms(red_periods)

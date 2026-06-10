@@ -92,11 +92,12 @@ def find_t0(
         return T0Estimate(peak, "prompt_peak", peak, ok=True)
 
     half = c[peak] / 2.0
-    rising = np.flatnonzero(c[: peak + 1] >= half)
-    if rising.size == 0:  # cannot happen (peak >= half), defensive
-        return T0Estimate(peak, "pulse_edge", peak, ok=True)
-    crossing = int(rising[0])
-    if crossing == 0:
+    # Walk back from the peak: the edge is the crossing adjacent to the
+    # pulse, i.e. just after the LAST sub-half-maximum bin before the peak.
+    # Taking the first above-half bin anywhere would instead lock onto an
+    # early prompt flash or noise spike that tops half-maximum.
+    below_half = np.flatnonzero(c[: peak + 1] < half)
+    if below_half.size == 0:
         return T0Estimate(
             0,
             "pulse_edge",
@@ -104,6 +105,7 @@ def find_t0(
             ok=False,
             message="Histogram starts above half-maximum — no leading edge in range",
         )
+    crossing = int(below_half[-1]) + 1
     below = c[crossing - 1]
     above = c[crossing]
     fraction = 0.5 if above == below else (half - below) / (above - below)

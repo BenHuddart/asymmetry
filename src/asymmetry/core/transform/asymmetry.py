@@ -478,16 +478,24 @@ def estimate_alpha_detailed(
         f_lam = np.clip(f, 0.0, None)
         b_lam = np.clip(b, 0.0, None)
         replicas: list[float] = []
-        for _ in range(int(n_bootstrap)):
-            fr = rng.poisson(f_lam).astype(np.float64)
-            br = rng.poisson(b_lam).astype(np.float64)
-            if method == "diamagnetic":
-                fr, br, t_rep = _positive_mask(fr, br, t)
-                replica = _single_alpha_estimate(method, fr, br, t_rep)
-            else:
-                replica = _single_alpha_estimate(method, fr, br, t)
-            if replica is not None and np.isfinite(replica):
-                replicas.append(replica)
+        if method == "ratio":
+            # The ratio only sees the two window sums, and a sum of
+            # independent Poisson counts is Poisson(sum of means) — draw the
+            # totals directly instead of full per-bin replicas.
+            totals_f = rng.poisson(float(np.sum(f_lam)), int(n_bootstrap)).astype(np.float64)
+            totals_b = rng.poisson(float(np.sum(b_lam)), int(n_bootstrap)).astype(np.float64)
+            replicas = [float(tf / tb) for tf, tb in zip(totals_f, totals_b) if tb > 0.0]
+        else:
+            for _ in range(int(n_bootstrap)):
+                fr = rng.poisson(f_lam).astype(np.float64)
+                br = rng.poisson(b_lam).astype(np.float64)
+                if method == "diamagnetic":
+                    fr, br, t_rep = _positive_mask(fr, br, t)
+                    replica = _single_alpha_estimate(method, fr, br, t_rep)
+                else:
+                    replica = _single_alpha_estimate(method, fr, br, t)
+                if replica is not None and np.isfinite(replica):
+                    replicas.append(replica)
         if len(replicas) >= 10:
             # Robust standard error: half-width of the central 68.27%
             # interval — equals the standard deviation for well-behaved

@@ -1189,7 +1189,9 @@ def test_exclusion_field_round_trips_and_validates(qapp: QApplication, monkeypat
     assert result["excluded_detectors"] == [2]
 
     dialog._exclude_edit.setText("")
-    assert "excluded_detectors" not in dialog.get_grouping_result()
+    # The key is always present: an empty list explicitly clears exclusions
+    # (a missing key would leave the apply path falling back to stale state).
+    assert dialog.get_grouping_result()["excluded_detectors"] == []
 
     warnings: list[str] = []
     monkeypatch.setattr(
@@ -1214,3 +1216,56 @@ def test_apply_blocks_when_exclusion_empties_a_group(qapp: QApplication, monkeyp
     )
     dialog._on_apply()
     assert any("no detectors left" in w for w in warnings)
+
+
+def test_estimate_alpha_respects_detector_exclusion(qapp: QApplication) -> None:
+    """Review fix: the estimate is computed on the same detector set the
+    reduction will use."""
+    dataset = _dataset_with_histograms()
+    dataset.run.histograms = [
+        Histogram(counts=np.full(4, 100.0), bin_width=0.01),  # det 1 (forward)
+        Histogram(counts=np.full(4, 900.0), bin_width=0.01),  # det 2 (forward, hot)
+        Histogram(counts=np.full(4, 50.0), bin_width=0.01),  # det 3 (backward)
+        Histogram(counts=np.full(4, 50.0), bin_width=0.01),  # det 4 (backward)
+    ]
+    dataset.run.grouping["groups"] = {1: [1, 2], 2: [3, 4]}
+    dialog = GroupingDialog([dataset])
+    dialog._set_alpha_method("ratio")
+
+    dialog._estimate_alpha()
+    with_hot = dialog._alpha_spin.value()
+    dialog._exclude_edit.setText("2")
+    dialog._estimate_alpha()
+    without_hot = dialog._alpha_spin.value()
+
+    assert with_hot == pytest.approx(1000.0 / 100.0)
+    assert without_hot == pytest.approx(100.0 / 100.0)
+
+
+def test_find_t0_skips_excluded_detectors(qapp: QApplication) -> None:
+    dataset = _dataset_with_histograms()
+    good = np.full(200, 5.0)
+    good[40] = 5000.0
+    bad = np.full(200, 5.0)
+    bad[120] = 5000.0  # excluded detector with a bogus peak
+    dataset.run.histograms = [
+        Histogram(counts=good.copy(), bin_width=0.00125),
+        Histogram(counts=bad.copy(), bin_width=0.00125),
+        Histogram(counts=good.copy(), bin_width=0.00125),
+    ]
+    dataset.run.metadata["facility"] = "PSI"
+    dataset.metadata["facility"] = "PSI"
+    dataset.run.grouping["groups"] = {1: [1, 2], 2: [3]}
+    dataset.run.grouping["last_good_bin"] = 199
+    dialog = GroupingDialog([dataset])
+    dialog._exclude_edit.setText("2")
+    dialog._on_find_t0()
+    assert dialog._t0_spin.value() == 40 + dialog._bin_index_base()
+
+
+def test_format_value_with_uncertainty_large_errors() -> None:
+    """Review fix: uncertainties >= ~100 must not crash the formatter."""
+    fmt = grouping_dialog_module._format_value_with_uncertainty
+    assert fmt(1.2345, 150.0) == "1(150)"
+    assert fmt(1.2, 99.6) == "1(100)"
+    assert fmt(2.4, 1234.0) == "2(1234)"
