@@ -70,3 +70,14 @@ def test_converters_are_array_friendly() -> None:
     out = mhz_to_gauss(arr)
     assert out.shape == arr.shape
     np.testing.assert_allclose(gauss_to_mhz(out), arr, atol=1e-12)
+
+
+@pytest.mark.parametrize("bad_ratio", [0.0, -1.0, float("nan"), float("inf")])
+def test_gyromagnetic_ratio_override_rejects_non_positive_or_non_finite(bad_ratio: float) -> None:
+    # A bad probe constant on the override path would yield inf/sign-flipped
+    # fields; the converters fail fast instead.
+    for converter in (mhz_to_gauss, gauss_to_mhz, mhz_to_tesla, tesla_to_mhz):
+        with pytest.raises(ValueError, match="positive and finite"):
+            converter(1.0, gyromagnetic_ratio_mhz_per_t=bad_ratio)
+    with pytest.raises(ValueError, match="positive and finite"):
+        convert(1.0, "mhz", "gauss", gyromagnetic_ratio_mhz_per_t=bad_ratio)

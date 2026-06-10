@@ -45,8 +45,23 @@ class FieldUnit(str, Enum):
         return fallback
 
 
+def _validated_ratio(gyromagnetic_ratio_mhz_per_t: float) -> float:
+    """Return a positive, finite gyromagnetic ratio or raise.
+
+    The ratio is a denominator on the field→ frequency override path, so a
+    non-positive or non-finite override (a bad probe constant) would silently
+    yield ``inf``/sign-flipped fields — fail fast instead.
+    """
+    ratio = float(gyromagnetic_ratio_mhz_per_t)
+    if not np.isfinite(ratio) or ratio <= 0.0:
+        raise ValueError(
+            f"gyromagnetic_ratio_mhz_per_t must be positive and finite, got {ratio!r}."
+        )
+    return ratio
+
+
 def _ratio_mhz_per_gauss(gyromagnetic_ratio_mhz_per_t: float) -> float:
-    return float(gyromagnetic_ratio_mhz_per_t) * GAUSS_TO_TESLA
+    return _validated_ratio(gyromagnetic_ratio_mhz_per_t) * GAUSS_TO_TESLA
 
 
 def mhz_to_gauss(
@@ -73,7 +88,7 @@ def mhz_to_tesla(
     gyromagnetic_ratio_mhz_per_t: float = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
 ) -> NDArray[np.float64]:
     """Convert a frequency (MHz) to a field (Tesla)."""
-    return np.asarray(mhz, dtype=float) / float(gyromagnetic_ratio_mhz_per_t)
+    return np.asarray(mhz, dtype=float) / _validated_ratio(gyromagnetic_ratio_mhz_per_t)
 
 
 def tesla_to_mhz(
@@ -82,7 +97,7 @@ def tesla_to_mhz(
     gyromagnetic_ratio_mhz_per_t: float = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
 ) -> NDArray[np.float64]:
     """Convert a field (Tesla) to a frequency (MHz)."""
-    return np.asarray(tesla, dtype=float) * float(gyromagnetic_ratio_mhz_per_t)
+    return np.asarray(tesla, dtype=float) * _validated_ratio(gyromagnetic_ratio_mhz_per_t)
 
 
 def gauss_to_tesla(gauss: ArrayLike) -> NDArray[np.float64]:

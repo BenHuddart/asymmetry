@@ -102,10 +102,9 @@ class MaxEntPanel(QWidget):
         self._points_spin.setValue(1024)
         spectrum_form.addRow("Spectrum points:", self._points_spin)
 
-        self._default_level_edit = QLineEdit("0.01")
-        self._default_level_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._default_level_edit.setFont(mono_font(11.0))
-        self._default_level_edit.setValidator(QDoubleValidator(1.0e-12, 1.0e6, 8, self))
+        self._default_level_edit = self._make_numeric_edit(
+            "0.01", minimum=1.0e-12, maximum=1.0e6, decimals=8
+        )
         spectrum_form.addRow("Default level:", self._default_level_edit)
         content_layout.addWidget(spectrum_group)
 
@@ -115,37 +114,28 @@ class MaxEntPanel(QWidget):
         self._auto_window_check.setChecked(True)
         window_form.addRow(self._auto_window_check)
 
-        self._half_width_edit = QLineEdit("300")
-        self._half_width_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._half_width_edit.setFont(mono_font(11.0))
-        self._half_width_edit.setValidator(QDoubleValidator(0.0, 1_000_000.0, 6, self))
+        self._half_width_edit = self._make_numeric_edit(
+            "300", minimum=0.0, maximum=1_000_000.0, decimals=6
+        )
         window_form.addRow("Half width (G):", self._half_width_edit)
 
-        self._f_min_edit = QLineEdit("")
-        self._f_min_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._f_min_edit.setFont(mono_font(11.0))
-        self._f_min_edit.setValidator(QDoubleValidator(0.0, 1_000_000.0, 6, self))
+        self._f_min_edit = self._make_numeric_edit("", minimum=0.0, maximum=1_000_000.0, decimals=6)
         window_form.addRow("Min frequency (MHz):", self._f_min_edit)
 
-        self._f_max_edit = QLineEdit("")
-        self._f_max_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._f_max_edit.setFont(mono_font(11.0))
-        self._f_max_edit.setValidator(QDoubleValidator(0.0, 1_000_000.0, 6, self))
+        self._f_max_edit = self._make_numeric_edit("", minimum=0.0, maximum=1_000_000.0, decimals=6)
         window_form.addRow("Max frequency (MHz):", self._f_max_edit)
         content_layout.addWidget(window_group)
 
         time_group = QGroupBox("Time")
         time_form = QFormLayout(time_group)
-        self._t_min_edit = QLineEdit("")
-        self._t_min_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._t_min_edit.setFont(mono_font(11.0))
-        self._t_min_edit.setValidator(QDoubleValidator(-1_000_000.0, 1_000_000.0, 6, self))
+        self._t_min_edit = self._make_numeric_edit(
+            "", minimum=-1_000_000.0, maximum=1_000_000.0, decimals=6
+        )
         time_form.addRow("Start (μs):", self._t_min_edit)
 
-        self._t_max_edit = QLineEdit("")
-        self._t_max_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._t_max_edit.setFont(mono_font(11.0))
-        self._t_max_edit.setValidator(QDoubleValidator(-1_000_000.0, 1_000_000.0, 6, self))
+        self._t_max_edit = self._make_numeric_edit(
+            "", minimum=-1_000_000.0, maximum=1_000_000.0, decimals=6
+        )
         time_form.addRow("End (μs):", self._t_max_edit)
 
         self._time_binning_spin = QSpinBox()
@@ -153,20 +143,21 @@ class MaxEntPanel(QWidget):
         self._time_binning_spin.setValue(1)
         time_form.addRow("Binning:", self._time_binning_spin)
 
-        self._exclude_t_min_edit = QLineEdit("")
-        self._exclude_t_min_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._exclude_t_min_edit.setFont(mono_font(11.0))
-        self._exclude_t_min_edit.setValidator(QDoubleValidator(-1_000_000.0, 1_000_000.0, 6, self))
-        self._exclude_t_min_edit.setToolTip(
-            "Start of an interior time window to exclude (e.g. a glitch). Points "
-            "inside are de-weighted, not dropped — leave blank to disable."
+        self._exclude_t_min_edit = self._make_numeric_edit(
+            "",
+            minimum=-1_000_000.0,
+            maximum=1_000_000.0,
+            decimals=6,
+            tooltip=(
+                "Start of an interior time window to exclude (e.g. a glitch). Points "
+                "inside are de-weighted, not dropped — leave blank to disable."
+            ),
         )
         time_form.addRow("Exclude from (μs):", self._exclude_t_min_edit)
 
-        self._exclude_t_max_edit = QLineEdit("")
-        self._exclude_t_max_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._exclude_t_max_edit.setFont(mono_font(11.0))
-        self._exclude_t_max_edit.setValidator(QDoubleValidator(-1_000_000.0, 1_000_000.0, 6, self))
+        self._exclude_t_max_edit = self._make_numeric_edit(
+            "", minimum=-1_000_000.0, maximum=1_000_000.0, decimals=6
+        )
         time_form.addRow("Exclude to (μs):", self._exclude_t_max_edit)
         content_layout.addWidget(time_group)
 
@@ -182,16 +173,14 @@ class MaxEntPanel(QWidget):
         )
         pulse_form.addRow("Mode:", self._pulse_mode_combo)
 
-        self._pulse_half_width_edit = QLineEdit("0.05")
-        self._pulse_half_width_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._pulse_half_width_edit.setFont(mono_font(11.0))
-        self._pulse_half_width_edit.setValidator(QDoubleValidator(0.0, 1_000.0, 6, self))
+        self._pulse_half_width_edit = self._make_numeric_edit(
+            "0.05", minimum=0.0, maximum=1_000.0, decimals=6
+        )
         pulse_form.addRow("Half-width (μs):", self._pulse_half_width_edit)
 
-        self._pulse_separation_edit = QLineEdit("0.324")
-        self._pulse_separation_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._pulse_separation_edit.setFont(mono_font(11.0))
-        self._pulse_separation_edit.setValidator(QDoubleValidator(0.0, 1_000.0, 6, self))
+        self._pulse_separation_edit = self._make_numeric_edit(
+            "0.324", minimum=0.0, maximum=1_000.0, decimals=6
+        )
         pulse_form.addRow("Separation (μs):", self._pulse_separation_edit)
         content_layout.addWidget(pulse_group)
 
@@ -202,10 +191,9 @@ class MaxEntPanel(QWidget):
         self._inner_spin.setRange(1, 200)
         self._inner_spin.setValue(12)
         fit_form.addRow("Inner iterations:", self._inner_spin)
-        self._chi_target_edit = QLineEdit("1.0")
-        self._chi_target_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._chi_target_edit.setFont(mono_font(11.0))
-        self._chi_target_edit.setValidator(QDoubleValidator(1.0e-12, 1.0e6, 8, self))
+        self._chi_target_edit = self._make_numeric_edit(
+            "1.0", minimum=1.0e-12, maximum=1.0e6, decimals=8
+        )
         fit_form.addRow("χ² target / N:", self._chi_target_edit)
         fit_layout.addLayout(fit_form)
 
@@ -316,20 +304,17 @@ class MaxEntPanel(QWidget):
             "peak from the displayed field-distribution spectrum."
         )
         specbg_form = QFormLayout(self._specbg_group)
-        self._specbg_gaussian_edit = QLineEdit("0.1")
-        self._specbg_gaussian_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._specbg_gaussian_edit.setFont(mono_font(11.0))
-        self._specbg_gaussian_edit.setValidator(QDoubleValidator(0.0, 1_000.0, 6, self))
+        self._specbg_gaussian_edit = self._make_numeric_edit(
+            "0.1", minimum=0.0, maximum=1_000.0, decimals=6
+        )
         specbg_form.addRow("Gaussian width (MHz):", self._specbg_gaussian_edit)
-        self._specbg_lorentzian_edit = QLineEdit("0.1")
-        self._specbg_lorentzian_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._specbg_lorentzian_edit.setFont(mono_font(11.0))
-        self._specbg_lorentzian_edit.setValidator(QDoubleValidator(0.0, 1_000.0, 6, self))
+        self._specbg_lorentzian_edit = self._make_numeric_edit(
+            "0.1", minimum=0.0, maximum=1_000.0, decimals=6
+        )
         specbg_form.addRow("Lorentzian width (MHz):", self._specbg_lorentzian_edit)
-        self._specbg_fraction_edit = QLineEdit("0.5")
-        self._specbg_fraction_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._specbg_fraction_edit.setFont(mono_font(11.0))
-        self._specbg_fraction_edit.setValidator(QDoubleValidator(0.0, 1.0, 6, self))
+        self._specbg_fraction_edit = self._make_numeric_edit(
+            "0.5", minimum=0.0, maximum=1.0, decimals=6
+        )
         specbg_form.addRow("Lorentzian fraction:", self._specbg_fraction_edit)
         content_layout.addWidget(self._specbg_group)
 
@@ -369,6 +354,28 @@ class MaxEntPanel(QWidget):
         self._auto_window_check.toggled.connect(self._update_window_controls)
         self._update_window_controls()
         self._update_mode_dependent_controls()
+
+    def _make_numeric_edit(
+        self,
+        text: str,
+        *,
+        minimum: float,
+        maximum: float,
+        decimals: int,
+        tooltip: str | None = None,
+    ) -> QLineEdit:
+        """Return a right-aligned mono-font numeric ``QLineEdit`` with a validator.
+
+        Collapses the repeated alignment/font/validator boilerplate shared by the
+        panel's ~dozen numeric fields into one place.
+        """
+        edit = QLineEdit(text)
+        edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+        edit.setFont(mono_font(11.0))
+        edit.setValidator(QDoubleValidator(minimum, maximum, decimals, self))
+        if tooltip:
+            edit.setToolTip(tooltip)
+        return edit
 
     @staticmethod
     def _parse_float(text: str, default: float) -> float:

@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fourier.units import convert as convert_field_unit
+from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     available_background_modes,
@@ -51,8 +52,6 @@ from asymmetry.core.transform.background import (
 from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
-    GAUSS_TO_TESLA,
-    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     PeriodMode,
 )
 from asymmetry.gui.export_paths import (
@@ -629,8 +628,12 @@ class PlotPanel(QWidget):
         return "Time (μs)", "Asymmetry (%)"
 
     def _mhz_per_gauss(self) -> float:
-        """Return the frequency equivalent of one Gauss in MHz."""
-        return MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
+        """Return the frequency equivalent of one Gauss in MHz.
+
+        Routed through the shared ``core.fourier.units`` converter so the
+        Gauss↔MHz constant lives in exactly one place.
+        """
+        return float(gauss_to_mhz(1.0))
 
     def _frequency_limit_mode_key(
         self,
