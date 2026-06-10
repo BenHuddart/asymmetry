@@ -56,7 +56,7 @@ def test_fb_count_fit_runs_and_recovers_alpha(qapp, fb_dataset):
     window._target_combo.setCurrentIndex(1)  # fb
 
     captured = []
-    window.count_fit_completed.connect(lambda dataset, result: captured.append(result))
+    window.count_fit_completed.connect(lambda dataset, payload: captured.append(payload["result"]))
     window._single_fit_tab._run_count_domain_fit()
 
     assert len(captured) == 1
@@ -75,7 +75,7 @@ def test_single_count_fit_runs_and_emits(qapp, fb_dataset):
     assert window._side_combo.isEnabled()
 
     captured = []
-    window.count_fit_completed.connect(lambda dataset, result: captured.append(result))
+    window.count_fit_completed.connect(lambda dataset, payload: captured.append(payload["result"]))
     window._single_fit_tab._run_count_domain_fit()
     assert len(captured) == 1
     assert "N0" in captured[0].parameters.names
@@ -205,7 +205,7 @@ def test_fb_double_pulse_target_runs_via_dpsep_control(qapp):
     assert window._single_fit_tab._count_dpsep == pytest.approx(0.324)
 
     captured = []
-    window.count_fit_completed.connect(lambda dataset, result: captured.append(result))
+    window.count_fit_completed.connect(lambda dataset, payload: captured.append(payload["result"]))
     window._single_fit_tab._run_count_domain_fit()
 
     assert len(captured) == 1 and captured[0].success
@@ -219,7 +219,9 @@ def test_fb_fit_emits_overlay_for_both_banks(qapp, fb_dataset):
     window._target_combo.setCurrentIndex(1)  # fb
 
     overlays = []
-    window.count_fit_overlay_ready.connect(lambda dataset, ov: overlays.append(ov))
+    window.count_fit_completed.connect(
+        lambda dataset, payload: overlays.append(payload["overlays"])
+    )
     window._single_fit_tab._run_count_domain_fit()
 
     assert len(overlays) == 1
@@ -238,7 +240,9 @@ def test_single_fit_emits_overlay_for_target_group(qapp, fb_dataset):
     window._side_combo.setCurrentIndex(0)  # Forward
 
     overlays = []
-    window.count_fit_overlay_ready.connect(lambda dataset, ov: overlays.append(ov))
+    window.count_fit_completed.connect(
+        lambda dataset, payload: overlays.append(payload["overlays"])
+    )
     window._single_fit_tab._run_count_domain_fit()
 
     forward, _backward = window._single_fit_tab._count_fb_groups(fb_dataset)

@@ -944,6 +944,44 @@ def test_model_param_colliding_with_reserved_name_raises(bad_name):
         fit_single_histogram(ds, 1, colliding_model, params)
 
 
+def test_linked_follower_reports_fitted_main_value():
+    """A tied (link-group) parameter is reported at the fitted main value, not its seed."""
+
+    def tied_model(t, A, f, f_tied, phi):  # noqa: N803  (f_tied is declared but mirrors f)
+        return A * np.cos(2.0 * np.pi * f * np.asarray(t, dtype=float) + phi)
+
+    ds = _continuous_run()
+    params = ParameterSet(
+        [
+            Parameter("N0", 4.0e3, min=0.0),
+            Parameter("background", 9.0, min=0.0),
+            Parameter("A", 19.0, min=0.0, max=50.0),
+            Parameter("f", 1.0, min=0.0, link_group=1),
+            Parameter("f_tied", 5.0, min=0.0, link_group=1),  # seed deliberately wrong
+            Parameter("phi", 0.0),
+        ]
+    )
+    result = fit_single_histogram(ds, 1, tied_model, params, cost="gaussian")
+    assert result.success
+    f_main = result.parameters["f"].value
+    # The follower must mirror the fitted main (~1.0), not its 5.0 seed.
+    assert result.parameters["f_tied"].value == pytest.approx(f_main)
+    assert f_main == pytest.approx(1.0, abs=0.02)
+
+
+def test_power_deadtime_stays_finite_for_degenerate_exponent():
+    """0**negative in the power form must not crash or poison the cost (-> finite)."""
+    counts = np.array([1.0e4, 5.0e3, 2.0e3])
+    time = np.array([0.0, 1.0, 5.0])
+    # base = evfr*DT0 = 0 with a negative C2 would be 0**negative (ZeroDivisionError
+    # on a Python float / inf in numpy); the guard maps it to a full, finite loss.
+    # C2 != 0 keeps the loss factor active (not short-circuited to a no-op).
+    terms = (0.0, 0.0, -1.5, 2.0, 0.3)  # (DT0, DT1, C2, C3, C4)
+    out = _apply_deadtime(counts, terms, frame_norm=1e5, time=time, evfr=0.4, model="power")
+    assert np.all(np.isfinite(out))
+    assert np.all(out >= 0.0)
+
+
 def test_non_colliding_model_is_accepted():
     """A model whose declared parameters avoid the reserved set fits normally."""
 

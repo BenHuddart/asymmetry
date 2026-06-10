@@ -43,8 +43,7 @@ class MultiGroupFitWindow(QWidget):
     grouped_fit_completed = Signal(object, object)
     grouped_preview_requested = Signal(object, object)
     fit_range_edit_committed = Signal(float, float)
-    count_fit_completed = Signal(object, object)  # (dataset, count-fit result)
-    count_fit_overlay_ready = Signal(object, object)  # (dataset, {group_id: (time, corrected)})
+    count_fit_completed = Signal(object, object)  # (dataset, {"result", "overlays"})
     count_grouping_promoted = Signal(object)  # (dataset) — a count calibration hit the grouping
 
     def __init__(self, parent=None) -> None:
@@ -63,7 +62,6 @@ class MultiGroupFitWindow(QWidget):
             tab.grouped_preview_requested.connect(self.grouped_preview_requested.emit)
             tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
             tab.count_fit_completed.connect(self.count_fit_completed.emit)
-            tab.count_fit_overlay_ready.connect(self.count_fit_overlay_ready.emit)
             tab.count_grouping_promoted.connect(self.count_grouping_promoted.emit)
         self._tabs.addTab(self._single_fit_tab, "Single")
         self._tabs.addTab(self._batch_fit_tab, "Batch")

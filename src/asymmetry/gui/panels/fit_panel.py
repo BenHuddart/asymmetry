@@ -2016,10 +2016,11 @@ class GlobalFitTab(QWidget):
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
     grouped_preview_requested = Signal(object, object)  # (grouped_datasets, preview_curves)
     fit_range_edit_committed = Signal(float, float)  # (x_min, x_max) from spinbox commit
-    count_fit_completed = Signal(object, object)  # (dataset, GroupedTimeDomainFitResult|FitResult)
-    # (dataset, {group_id: (time, corrected_model)}) — overlay curves for the
-    # Individual-Groups plot on the displayed lifetime-corrected scale.
-    count_fit_overlay_ready = Signal(object, object)
+    # (dataset, {"result": FitResult|GroupedTimeDomainFitResult,
+    #            "overlays": {group_id: (time, corrected_model)}}) — the fit result
+    # plus the overlay curves for the Individual-Groups plot (displayed
+    # lifetime-corrected scale).
+    count_fit_completed = Signal(object, object)
     count_grouping_promoted = Signal(object)  # (dataset) — a count calibration hit the grouping
 
     def __init__(
@@ -3832,9 +3833,12 @@ class GlobalFitTab(QWidget):
         self._result_text.setHtml(
             success_html(f"Forward/backward fit · groups {forward}/{backward}", detail=detail)
         )
-        self.count_fit_completed.emit(dataset, result)
-        self.count_fit_overlay_ready.emit(
-            dataset, self._count_overlays_for_fb(dataset, result, forward, backward)
+        self.count_fit_completed.emit(
+            dataset,
+            {
+                "result": result,
+                "overlays": self._count_overlays_for_fb(dataset, result, forward, backward),
+            },
         )
 
     def _render_count_single_result(self, dataset, result, group_id: int) -> None:
@@ -3855,9 +3859,12 @@ class GlobalFitTab(QWidget):
                 detail=detail,
             )
         )
-        self.count_fit_completed.emit(dataset, result)
-        self.count_fit_overlay_ready.emit(
-            dataset, self._count_overlays_for_single(dataset, result, group_id)
+        self.count_fit_completed.emit(
+            dataset,
+            {
+                "result": result,
+                "overlays": self._count_overlays_for_single(dataset, result, group_id),
+            },
         )
 
     def _count_overlays_for_single(self, dataset, result, group_id: int) -> dict:

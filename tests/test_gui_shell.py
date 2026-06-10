@@ -207,7 +207,7 @@ class _StubMultiGroupFitWindow(QWidget):
         super().__init__()
         self.grouped_fit_completed = _DummySignal()
         self.grouped_preview_requested = _DummySignal()
-        self.count_fit_overlay_ready = _DummySignal()
+        self.count_fit_completed = _DummySignal()
         self.count_grouping_promoted = _DummySignal()
         self.last_dataset = None
         self.last_block_state = None

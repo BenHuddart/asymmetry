@@ -293,9 +293,16 @@ def _apply_deadtime(
         return counts
     counts = np.asarray(counts, dtype=float)
     if model == "power":
-        base = max(float(evfr) * dt0, 0.0)
+        base = np.float64(max(float(evfr) * dt0, 0.0))
         decay_arg = np.maximum(c4 * np.asarray(time, dtype=float) / float(MUON_LIFETIME_US), 0.0)
-        loss = (base**c2) * np.exp(-np.power(decay_arg, c3))
+        # base/decay_arg are clamped >= 0, but a degenerate exponent (e.g. a
+        # fitted C2 <= 0 with base -> 0, giving 0**negative) can still make the
+        # loss non-finite. Use numpy power (yields inf, not a ZeroDivisionError)
+        # and map non-finite to a full loss (factor 0) so the Cash / least-squares
+        # cost stays finite rather than derailing migrad.
+        with np.errstate(divide="ignore", invalid="ignore"):
+            loss = np.power(base, c2) * np.exp(-np.power(decay_arg, c3))
+        loss = np.nan_to_num(loss, nan=1.0, posinf=1.0, neginf=1.0)
     else:
         qq = counts / frame_norm
         if model == "simple":
@@ -310,32 +317,46 @@ def _apply_deadtime(
 # --- double pulse -----------------------------------------------------------
 
 
-def _double_pulse_single_model(fraction_fn: Callable[..., NDArray]) -> Callable[..., NDArray]:
-    """Raw single-histogram count model for an ISIS double-pulse source.
+def _double_pulse_factor(
+    fraction_fn: Callable[..., NDArray],
+    time: NDArray[np.float64],
+    dpsep: float,
+    sign: float,
+    physics: dict,
+) -> NDArray[np.float64]:
+    """The two-pulse ``(1 + sign·P)`` envelope shared by the single and F+B models.
 
     Two muon pulses separated by ``dpsep`` (μs) each carry the polarization,
     evaluated at ``t ± dpsep/2`` and weighted by ``exp(∓dpsep/2τ_μ)`` (WiMDA
-    ``ArrayMusrFunc``). The decay envelope and ``N0``/background stay at ``t``;
-    only the polarization is shifted. The 0.5 normalization recovers the
-    single-pulse limit as ``dpsep → 0``; the second pulse is gated to
-    ``t > dpsep/2``.
+    ``ArrayMusrFunc``); the 0.5 normalization recovers the single-pulse limit as
+    ``dpsep → 0`` and the second pulse is gated to ``t > dpsep/2``. The gated-out
+    times are clamped to ``>= 0`` before evaluating the model, so a model
+    undefined for ``t < 0`` cannot poison the (zero-weighted) early bins.
+    ``sign`` is the per-histogram ±1 (single: the orientation; F+B: the forward/
+    backward sign).
+    """
+    tau = float(MUON_LIFETIME_US)
+    dpsep2 = float(dpsep) / 2.0
+    c1 = np.exp(-dpsep2 / tau)
+    c2 = np.exp(dpsep2 / tau)
+    gate = (time > dpsep2).astype(float)
+    a1 = np.asarray(fraction_fn(time + dpsep2, **physics), dtype=float)
+    a2 = np.asarray(fraction_fn(np.maximum(time - dpsep2, 0.0), **physics), dtype=float)
+    return 0.5 * (c1 * (1.0 + sign * a1) + gate * c2 * (1.0 + sign * a2))
+
+
+def _double_pulse_single_model(fraction_fn: Callable[..., NDArray]) -> Callable[..., NDArray]:
+    """Raw single-histogram count model for an ISIS double-pulse source.
+
+    The decay envelope and ``N0``/background stay at ``t``; only the polarization
+    is shifted (see :func:`_double_pulse_factor`). The per-histogram ``amplitude``
+    (fixed ±1) carries the forward/backward orientation.
     """
     tau = float(MUON_LIFETIME_US)
 
     def model(t, *, N0, background, amplitude, relative_phase, dpsep, **physics):  # noqa: N803
         time = np.asarray(t, dtype=float)
-        dpsep2 = float(dpsep) / 2.0
-        c1 = np.exp(-dpsep2 / tau)
-        c2 = np.exp(dpsep2 / tau)
-        gate = (time > dpsep2).astype(float)
-        # The second pulse only contributes for t > dpsep/2. Clamp the gated-out
-        # times to >= 0 before evaluating the model, so a model that raises or
-        # returns non-finite values for t < 0 cannot poison the (zero-weighted)
-        # early bins. Where the gate is active, time - dpsep2 > 0 already, so the
-        # clamp is a no-op there.
-        a1 = np.asarray(fraction_fn(time + dpsep2, **physics), dtype=float)
-        a2 = np.asarray(fraction_fn(np.maximum(time - dpsep2, 0.0), **physics), dtype=float)
-        factor = 0.5 * (c1 * (1.0 + amplitude * a1) + gate * c2 * (1.0 + amplitude * a2))
+        factor = _double_pulse_factor(fraction_fn, time, dpsep, amplitude, physics)
         return float(N0) * np.exp(-time / tau) * factor + float(background)
 
     return model
@@ -345,32 +366,21 @@ def _double_pulse_fb_model(fraction_fn: Callable[..., NDArray]) -> Callable[...,
     """Raw forward/backward count model for an ISIS double-pulse source.
 
     The ``fgFB`` double-pulse analogue of :func:`_double_pulse_single_model`: the
-    two-pulse polarization (evaluated at ``t ± dpsep/2`` and weighted by
-    ``exp(∓dpsep/2τ_μ)``, second pulse gated to ``t > dpsep/2``) is carried with
-    the forward/backward ``sign``, and the shared ``N0`` is split by the detector
+    same two-pulse envelope (:func:`_double_pulse_factor`) is carried with the
+    forward/backward ``sign``, and the shared ``N0`` is split by the detector
     balance as ``N0·√alpha`` (forward) / ``N0/√alpha`` (backward) exactly as in
-    :func:`build_fb_count_model`. The single-pulse limit (``dpsep → 0``) recovers
-    that model. Each side keeps its own background.
+    :func:`build_fb_count_model`. Each side keeps its own background.
     """
     tau = float(MUON_LIFETIME_US)
 
     def model(t, *, alpha, N0, background, sign, dpsep, **physics):  # noqa: N803
         time = np.asarray(t, dtype=float)
-        dpsep2 = float(dpsep) / 2.0
-        c1 = np.exp(-dpsep2 / tau)
-        c2 = np.exp(dpsep2 / tau)
-        gate = (time > dpsep2).astype(float)
-        # Clamp the gated-out times to >= 0 before evaluating, matching the
-        # single-histogram path: a model undefined for t < 0 must not poison the
-        # zero-weighted early bins.
-        a1 = np.asarray(fraction_fn(time + dpsep2, **physics), dtype=float)
-        a2 = np.asarray(fraction_fn(np.maximum(time - dpsep2, 0.0), **physics), dtype=float)
         ralp = np.sqrt(abs(float(alpha)))
         if sign >= 0.0:
             scale = ralp
         else:
             scale = 1.0 / ralp if ralp > 0.0 else 0.0
-        factor = 0.5 * (c1 * (1.0 + sign * a1) + gate * c2 * (1.0 + sign * a2))
+        factor = _double_pulse_factor(fraction_fn, time, dpsep, sign, physics)
         return float(N0) * scale * np.exp(-time / tau) * factor + float(background)
 
     return model
@@ -421,6 +431,7 @@ def _result_from_minuit(
     model_values: NDArray[np.float64],
     keep_params: list[str] | None = None,
     chi_squared: float | None = None,
+    followers: dict[str, str] | None = None,
     success_message: str = "Count fit successful",
     failure_prefix: str = "Count fit failed",
 ) -> FitResult:
@@ -428,16 +439,21 @@ def _result_from_minuit(
 
     ``chi_squared`` overrides the reported cost; pass the per-side cost for a
     joint forward/backward fit (``m.fval`` is the combined cost). Defaults to
-    ``m.fval`` (correct for a single-domain fit).
+    ``m.fval`` (correct for a single-domain fit). ``followers`` (``{follower:
+    main}``) maps equality-link followers to their group main so a tied parameter
+    is reported at the main's *fitted* value, not its pre-fit seed.
     """
     keep = set(keep_params) if keep_params is not None else None
+    link_followers = followers or {}
     result_params = ParameterSet()
     uncertainties: dict[str, float] = {}
     for p in params:
         if keep is not None and p.name not in keep:
             continue
-        if p.name in free_names:
-            idx = free_names.index(p.name)
+        # A link-follower mirrors its group main: report the main's fitted value.
+        source = link_followers.get(p.name, p.name)
+        if source in free_names:
+            idx = free_names.index(source)
             result_params.add(Parameter(name=p.name, value=m.values[idx], min=p.min, max=p.max))
             if m.errors[idx] is not None:
                 uncertainties[p.name] = float(m.errors[idx])
@@ -685,6 +701,7 @@ def fit_single_histogram(
         time=time,
         counts=counts,
         model_values=model_values,
+        followers=followers,
         success_message="Single-histogram count fit successful",
         failure_prefix="Single-histogram count fit failed",
     )
@@ -867,6 +884,7 @@ def fit_fb_alpha(
         model_values=model_f,
         keep_params=fwd_keep,
         chi_squared=chi2_f,
+        followers=followers,
         success_message="Forward/backward count fit successful",
         failure_prefix="Forward/backward count fit failed",
     )
@@ -879,24 +897,24 @@ def fit_fb_alpha(
         model_values=model_b,
         keep_params=bwd_keep,
         chi_squared=chi2_b,
+        followers=followers,
         success_message="Forward/backward count fit successful",
         failure_prefix="Forward/backward count fit failed",
     )
 
     shared_parameters = ParameterSet()
-    reported: set[str] = set()
-    # Free shared scale/physics params, plus the free per-eval nuisances that are
-    # genuinely shared across both banks (t0, tau, deadtime terms). The two
-    # backgrounds are per-side and reported on each group result instead.
-    for name in [*shared_keys, *free_names]:
-        if name in reported or name in ("background", "background_b"):
+    # Every free parameter except the two per-side backgrounds is shared: the
+    # scale/physics params plus the free per-eval nuisances (t0, tau, deadtime
+    # terms). The backgrounds are reported on each group result instead.
+    side_only = ("background", "background_b")
+    for name in free_names:
+        if name in side_only:
             continue
         p = params[name]
         idx = free_names.index(name)
         shared_parameters.add(Parameter(name=name, value=m.values[idx], min=p.min, max=p.max))
-        reported.add(name)
     for p in params:
-        if p.fixed and p.name not in ("background", "background_b") and p.name not in reported:
+        if p.fixed and p.name not in side_only:
             shared_parameters.add(Parameter(name=p.name, value=p.value, fixed=True))
 
     group_results: dict[Hashable, FitResult] = {

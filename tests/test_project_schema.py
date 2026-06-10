@@ -1107,7 +1107,7 @@ class _StubMultiGroupFitWindowWithState(QWidget):
         super().__init__()
         self.grouped_fit_completed = SimpleNamespace(connect=lambda _callback: None)
         self.grouped_preview_requested = SimpleNamespace(connect=lambda _callback: None)
-        self.count_fit_overlay_ready = SimpleNamespace(connect=lambda _callback: None)
+        self.count_fit_completed = SimpleNamespace(connect=lambda _callback: None)
         self.count_grouping_promoted = SimpleNamespace(connect=lambda _callback: None)
         self._state = {"model_name": "Composite", "parameters": [], "result_html": ""}
         self.restored_state = None

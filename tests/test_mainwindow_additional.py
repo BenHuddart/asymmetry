@@ -1519,7 +1519,7 @@ class TestMainWindowBasic:
             2: (np.array([0.0, 1.0]), np.array([20.0, 21.0])),
         }
         source = MuonDataset(time=np.array([]), asymmetry=np.array([]), error=np.array([]))
-        mainwindow._on_count_fit_completed(source, overlays)
+        mainwindow._on_count_fit_completed(source, {"result": None, "overlays": overlays})
 
         payload = captured["payload"]
         # Each group's overlay lands on that group's synthetic run-number key.
@@ -1558,7 +1558,9 @@ class TestMainWindowBasic:
 
         # Group 7 is not among the displayed groups → no payload, no redraw.
         source = MuonDataset(time=np.array([]), asymmetry=np.array([]), error=np.array([]))
-        mainwindow._on_count_fit_completed(source, {7: (np.array([0.0]), np.array([1.0]))})
+        mainwindow._on_count_fit_completed(
+            source, {"result": None, "overlays": {7: (np.array([0.0]), np.array([1.0]))}}
+        )
         assert "payload" not in captured
         assert "datasets" not in captured
 

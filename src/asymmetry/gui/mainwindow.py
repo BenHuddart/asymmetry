@@ -1052,7 +1052,7 @@ class MainWindow(QMainWindow):
                 else None,
             )
         )
-        self._multi_group_fit_window.count_fit_overlay_ready.connect(self._on_count_fit_completed)
+        self._multi_group_fit_window.count_fit_completed.connect(self._on_count_fit_completed)
         self._multi_group_fit_window.count_grouping_promoted.connect(
             self._on_count_grouping_promoted
         )
@@ -6522,16 +6522,17 @@ class MainWindow(QMainWindow):
         if hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
             self._plot_panel.plot_grouped_time_domain_subplots(grouped_datasets)
 
-    def _on_count_fit_completed(self, dataset, overlays) -> None:
+    def _on_count_fit_completed(self, dataset, payload) -> None:
         """Overlay a finished count fit on the Individual-Groups plot.
 
-        ``overlays`` maps a fitted detector ``group_id`` to ``(time,
-        corrected_model)`` on the displayed lifetime-corrected scale. The
-        Individual-Groups subplots are keyed by a synthetic run number derived per
-        group, so each overlay is routed to its group's subplot by matching
-        ``group_id``; a fitted group with no displayed subplot (e.g. excluded from
-        the grouping) is silently skipped.
+        ``payload`` is ``{"result": <fit result>, "overlays": {group_id: (time,
+        corrected_model)}}``; the overlays are on the displayed lifetime-corrected
+        scale. The Individual-Groups subplots are keyed by a synthetic run number
+        derived per group, so each overlay is routed to its group's subplot by
+        matching ``group_id``; a fitted group with no displayed subplot (e.g.
+        excluded from the grouping) is silently skipped.
         """
+        overlays = payload.get("overlays") if isinstance(payload, dict) else None
         if dataset is None or not isinstance(overlays, dict) or not overlays:
             return
         grouped_datasets = self._grouped_time_domain_display_datasets(dataset)
