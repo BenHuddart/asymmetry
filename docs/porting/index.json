@@ -633,6 +633,26 @@
       "supersedes_candidate": "period-arithmetic",
       "updated": "2026-06-10",
       "notes": "Wave A project 1 of the wimda-parity-gap umbrella. Three phases: (1) diamagnetic + General alpha estimators with uncertainties; (2) tail-fit background for pulsed sources + frame-ratio background-run subtraction; (3) variable/constant-error binning, automatic t0 search, per-detector exclusion, multi-period subset->red/green mapping. Phase 3 period mapping realises the REMAINDER of the period-arithmetic candidate (period-selection shipped the red/green selection slice; this adds arbitrary subset summation with Ignore). WiMDA arithmetic transcribed as test oracles; divergences recorded in comparison.md."
+    },
+    {
+      "slug": "model-fit-followons",
+      "feature_name": "Model-fit follow-ons (arbitrary X, cross-group error/windows, results-table recursion)",
+      "status": "implemented",
+      "path": "docs/porting/model-fit-followons",
+      "references": [
+        "WiMDA"
+      ],
+      "docs": {
+        "readme": "docs/porting/model-fit-followons/README.md",
+        "comparison": "docs/porting/model-fit-followons/comparison.md",
+        "implementation_options": "docs/porting/model-fit-followons/implementation-options.md",
+        "test_data": "docs/porting/model-fit-followons/test-data.md",
+        "verification_plan": "docs/porting/model-fit-followons/verification-plan.md"
+      },
+      "tests_path": "tests/test_model_fit_followons.py",
+      "src_path": "src/asymmetry/core/fitting/parameter_models.py",
+      "updated": "2026-06-10",
+      "notes": "Second-pass Model-layer follow-ons from model-function-parity (PR #32). Item 1 arbitrary X: any fitted parameter as x (param:<name> encoding), common-scope components (core component_names_for_x already degrades), opt-in effective-variance (Orear/York) x-uncertainty toggle default-off + horizontal x-bars (ODR rejected: no box bounds). Item 2 cross-group error modes + windows: global_fit_parameter_model gains error_mode/error_value/windows (reuse apply_error_mode/windows_mask; SCATTER rescales global+local sigma) FIRST, then un-hide CrossGroupFitDialog controls + config persistence. Item 3 results-table recursion: cross-group local+global outputs become a new trendable _GroupFitData series in FitParametersPanel (single-fit-range export deferred). Item 4 STRETCH: quadrature combinator. Decisions A/B/C agreed 2026-06-10. WiMDA columnscan/column-spinners verified directly against Model.pas. Study pass only; implementation paused for go-ahead. IMPLEMENTED 2026-06-10: items 1-3 shipped, validate green. Phase 3 landed as a first-class computed FitSeries in ProjectModel (MainWindow._record_model_fit_results_series) rather than panel-injected rows (load_representation_series rebuilds from ProjectModel, so a panel-only series would be wiped); no _FitRow.origin needed. Item 4 (quadrature combinator) remains a follow-on."
     }
   ]
 }

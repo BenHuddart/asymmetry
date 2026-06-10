@@ -18,6 +18,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
     ParameterGroupData,
 )
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 
 
@@ -232,9 +233,11 @@ def test_cross_group_run_fit_sets_in_progress_state(monkeypatch) -> None:
     assert app is not None
 
 
-def test_cross_group_dialog_hides_unsupported_controls() -> None:
-    """global_fit_parameter_model honours neither error modes nor windows, so
-    the inherited selector and '+ Window' button must not be shown."""
+def test_cross_group_dialog_exposes_error_modes_and_windows() -> None:
+    """global_fit_parameter_model now honours error modes and windows, so the
+    inherited selector and '+ Window' button are shown and wired. The
+    effective-variance x-uncertainty toggle stays hidden (cross-group backend
+    does not thread it through yet)."""
     QApplication.instance() or QApplication([])
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
@@ -243,22 +246,65 @@ def test_cross_group_dialog_hides_unsupported_controls() -> None:
         parent=None,
     )
 
-    assert dlg._error_mode_combo is None
-    assert dlg._error_value_spin is None
+    assert dlg._error_mode_combo is not None
+    assert dlg._error_value_spin is not None
     from asymmetry.core.fitting.parameter_models import ErrorMode
 
-    assert dlg._error_mode() is ErrorMode.COLUMN
-    assert dlg._error_value() is None
+    assert dlg._error_mode() is ErrorMode.COLUMN  # default
 
     from PySide6.QtWidgets import QPushButton
 
     buttons = [b.text() for b in dlg.findChildren(QPushButton)]
-    assert "+ Window" not in buttons
+    assert "+ Window" in buttons
 
-    # Range bounds stay editable (no windows can override them here).
-    assert dlg._range_widgets[0].x_min.isEnabled()
+    # Effective-variance toggle is not offered in cross-group mode.
+    assert dlg._x_error_check is None
 
     # The per-range 'active' checkboxes stay hidden across UI rebuilds, not
     # just after the constructor's one-time pass.
     dlg._rebuild_ranges_ui()
     assert all(w.active.isHidden() for w in dlg._range_widgets)
+
+
+def test_local_param_error_cell_shows_per_group_values_not_just_group0() -> None:
+    """Regression: a Local parameter has a distinct value/error per group, so
+    the Error column must not silently report only the first group's number.
+    It shows 'varies' with every group's value ± error in the tooltip."""
+    QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    result = CrossGroupFitResult(
+        success=True,
+        chi_squared=2.0,
+        reduced_chi_squared=1.0,
+        global_parameters=ParameterSet([Parameter(name="m", value=0.5)]),
+        local_parameters={
+            "g0": ParameterSet([Parameter(name="b", value=1.0)]),
+            "g1": ParameterSet([Parameter(name="b", value=3.0)]),
+        },
+        global_uncertainties={"m": 0.05},
+        local_uncertainties={"g0": {"b": 0.1}, "g1": {"b": 0.2}},
+    )
+
+    # Global parameter: single shared uncertainty.
+    global_cell = dlg._build_error_cell("m", "Global", result)
+    assert global_cell.text() == f"{0.05:.4g}"
+
+    # Local parameter: 'varies' + per-group breakdown covering BOTH groups,
+    # not just g0 (the bug showed only group 0's 0.1).
+    local_cell = dlg._build_error_cell("b", "Local", result)
+    assert local_cell.text() == "varies"
+    tip = local_cell.toolTip()
+    assert "G0" in tip and "G1" in tip
+    assert "1" in tip and "3" in tip  # both fitted values present
+    assert "0.1" in tip and "0.2" in tip  # both per-group errors present
+
+    # Fixed parameter: no uncertainty shown.
+    assert dlg._build_error_cell("b", "Fixed", result).text() == ""
+    # No result yet: blank.
+    assert dlg._build_error_cell("b", "Local", None).text() == ""

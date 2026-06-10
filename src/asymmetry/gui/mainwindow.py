@@ -20,6 +20,7 @@ Layout overview (mirroring WiMDA):
 from __future__ import annotations
 
 import copy
+import hashlib
 import os
 import time
 from pathlib import Path
@@ -55,6 +56,8 @@ from asymmetry.core.fitting import (
     fit_scan_baseline,
     fit_scan_model,
 )
+from asymmetry.core.fitting.parameter_models import CrossGroupFitResult
+from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.fourier import (
     GroupSpectrumConfig,
     build_group_signal_dataset,
@@ -5505,14 +5508,27 @@ class MainWindow(QMainWindow):
 
             meta = getattr(dataset, "metadata", {}) or {}
             if run_label is None:
-                run_label = str(meta.get("run_label") or member_key)
+                run_label = str(summary.get("run_label") or meta.get("run_label") or member_key)
+
+            # Computed series (e.g. cross-group model-fit results) carry their own
+            # field/temperature in the summary, since their synthetic members have
+            # no backing dataset; fall back to dataset metadata otherwise. A
+            # present-but-None summary value means "off this axis" → NaN.
+            def _coord(key: str) -> float:
+                if key in summary:
+                    val = summary[key]
+                    return float("nan") if val is None else float(val)
+                return float(meta.get(key, 0.0))
+
+            field = _coord("field")
+            temperature = _coord("temperature")
 
             rows.append(
                 {
                     "run_number": member_key,
                     "run_label": run_label,
-                    "field": float(meta.get("field", 0.0)),
-                    "temperature": float(meta.get("temperature", 0.0)),
+                    "field": float(field),
+                    "temperature": float(temperature),
                     "values": dict(summary.get("parameters", {})),
                     "errors": dict(summary.get("uncertainties", {})),
                 }
@@ -6519,6 +6535,114 @@ class MainWindow(QMainWindow):
         self._global_parameter_fit_window.raise_()
         self._global_parameter_fit_window.activateWindow()
         self._update_global_parameter_fit_menu_style(True)
+
+        # Item 3: record the per-group local + global outputs as a trendable
+        # results series so model-fit outputs can themselves be trended.
+        self._record_model_fit_results_series(parameter_name, groups, output)
+
+    def _record_model_fit_results_series(
+        self, parameter_name: str, groups: object, output: object
+    ) -> None:
+        """Record a cross-group fit's outputs as a computed ``FitSeries``.
+
+        Each selected group becomes one member carrying that group's local
+        parameters (plus the shared global parameters as constant columns),
+        indexed by the group's orthogonal coordinate; a final ``globals`` member
+        carries the shared parameters and χ²ᵣ. The series is model-less
+        (``is_computed``), so it joins the trend panel like any other series and
+        can be trended again — the recursion the follow-on is for. Re-running the
+        same fit replaces its results series rather than duplicating it.
+        """
+        fit_result = getattr(output, "fit_result", None)
+        x_key = getattr(output, "x_key", "run")
+        if not isinstance(fit_result, CrossGroupFitResult) or not fit_result.success:
+            return
+        if not isinstance(groups, (list, tuple)) or not groups:
+            return
+        rep_type = self._active_representation_type()
+        if rep_type is None:
+            return
+
+        global_vals = {p.name: float(p.value) for p in fit_result.global_parameters}
+        global_unc = {k: float(v) for k, v in fit_result.global_uncertainties.items()}
+
+        # The axis the panel trends against (the orthogonal coordinate): for a
+        # field fit, local parameters trend vs temperature, and vice versa —
+        # mirroring _group_variable_value_for_rows.
+        trend_axis = "field" if x_key == "temperature" else "temperature"
+        other_axis = "temperature" if trend_axis == "field" else "field"
+
+        def _json_coord(value: float) -> float | None:
+            # Persisted via json.dumps (allow_nan would emit a non-standard NaN
+            # token); store ``None`` (JSON null) for a non-finite coordinate.
+            v = float(value)
+            return v if np.isfinite(v) else None
+
+        def _coordinate_fields(coord: float) -> dict[str, float | None]:
+            return {trend_axis: _json_coord(coord), other_axis: 0.0}
+
+        base_key = -1_000_000_000
+        member_run_numbers: list[int] = []
+        results_by_run: dict[int, dict] = {}
+        for idx, group in enumerate(groups):
+            gid = getattr(group, "group_id", None)
+            local_vals = {
+                p.name: float(p.value) for p in fit_result.local_parameters.get(gid, ParameterSet())
+            }
+            local_unc = {
+                k: float(v) for k, v in fit_result.local_uncertainties.get(gid, {}).items()
+            }
+            member_key = base_key - idx - 1
+            member_run_numbers.append(member_key)
+            summary = {
+                "success": True,
+                "parameters": {**global_vals, **local_vals},
+                "uncertainties": {**global_unc, **local_unc},
+                "chi_squared": float(fit_result.chi_squared),
+                "reduced_chi_squared": float(fit_result.reduced_chi_squared),
+                "run_label": str(getattr(group, "group_name", f"group {idx + 1}")),
+            }
+            summary.update(_coordinate_fields(float(getattr(group, "group_variable_value", 0.0))))
+            results_by_run[member_key] = summary
+
+        # Global-summary member: shared parameters + χ²ᵣ, off the trend axis.
+        global_member = base_key
+        member_run_numbers.append(global_member)
+        results_by_run[global_member] = {
+            "success": True,
+            "parameters": {**global_vals, "chi2_r": float(fit_result.reduced_chi_squared)},
+            "uncertainties": dict(global_unc),
+            "chi_squared": float(fit_result.chi_squared),
+            "reduced_chi_squared": float(fit_result.reduced_chi_squared),
+            "run_label": "globals",
+            # Off the trend axis (None → NaN coordinate, excluded from the trend
+            # line but kept in the table); the other axis stays numeric so x-axis
+            # inference works.
+            trend_axis: None,
+            other_axis: 0.0,
+        }
+
+        group_ids = "|".join(sorted(str(getattr(g, "group_id", "")) for g in groups))
+        logical_key = f"{parameter_name}::{x_key}::{group_ids}"
+        # Derive the batch id deterministically from the logical key so re-running
+        # the same fit — in this session or after a save/reload — yields the same
+        # id and add_batch replaces the prior results series rather than
+        # duplicating it (Python's built-in hash() is salted per process and
+        # would not be stable across sessions).
+        digest = hashlib.sha1(logical_key.encode("utf-8")).hexdigest()[:12]
+        batch_id = f"modelfit-{digest}"
+        series = FitSeries(
+            batch_id,
+            rep_type,
+            label=f"Model fit: {parameter_name} vs {x_key}",
+            member_run_numbers=member_run_numbers,
+            order_key="run",
+            canonical_model=None,
+            param_roles={},
+            results_by_run=results_by_run,
+        )
+        self._project_model.add_batch(series)
+        self._refresh_trend_panel()
 
     def _on_fit_parameters_group_fits_deleted(self, group_id: str, run_numbers: object) -> None:
         """Clear run-level fit state when a Fit Parameters group is deleted."""

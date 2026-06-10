@@ -14,9 +14,13 @@ from PySide6.QtWidgets import QComboBox, QLabel, QMessageBox, QTableWidgetItem
 
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
+    ErrorMode,
     ParameterCompositeModel,
     ParameterGroupData,
     global_fit_parameter_model,
+    parse_fit_windows,
+    validate_fit_windows,
+    windows_mask,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.model_fit_dialog import (
@@ -43,11 +47,13 @@ class CrossGroupDialogOutput:
 class CrossGroupFitDialog(ModelFitDialog):
     """Cross-group fit dialog extending the base model-fit dialog."""
 
-    # global_fit_parameter_model honours neither error modes nor fit windows,
-    # so the inherited controls must not be shown promising semantics the
-    # cross-group fit would silently ignore.
-    _supports_error_modes = False
-    _supports_windows = False
+    # global_fit_parameter_model now honours error modes and fit windows, so the
+    # inherited controls are shown and wired through _run_fit / config.
+    _supports_error_modes = True
+    _supports_windows = True
+    # Effective-variance x-uncertainty is not threaded through the cross-group
+    # backend yet (recorded follow-on), so its toggle stays hidden here.
+    _supports_x_errors = False
 
     def __init__(
         self,
@@ -144,6 +150,9 @@ class CrossGroupFitDialog(ModelFitDialog):
                 "fit_x_min": None,
                 "fit_x_max": None,
                 "parameter_rows": [],
+                "error_mode": self._error_mode().value,
+                "error_value": self._error_value(),
+                "windows": None,
             }
 
         fit_range = self._fit.ranges[0]
@@ -166,6 +175,13 @@ class CrossGroupFitDialog(ModelFitDialog):
             "fit_x_min": float(fit_range.x_min) if fit_range.x_min is not None else None,
             "fit_x_max": float(fit_range.x_max) if fit_range.x_max is not None else None,
             "parameter_rows": rows,
+            "error_mode": self._error_mode().value,
+            "error_value": self._error_value(),
+            "windows": (
+                [[float(lo), float(hi)] for lo, hi in fit_range.windows]
+                if fit_range.windows
+                else None
+            ),
         }
 
     @property
@@ -257,6 +273,19 @@ class CrossGroupFitDialog(ModelFitDialog):
             fit_range.x_min = float(fit_x_min)
         if isinstance(fit_x_max, (int, float)):
             fit_range.x_max = float(fit_x_max)
+
+        fit_range.windows = parse_fit_windows(config.get("windows"))
+
+        # Restore the error-mode selector + value (legacy config → Column).
+        if self._error_mode_combo is not None:
+            mode_value = str(config.get("error_mode", ErrorMode.COLUMN.value))
+            mode_idx = self._error_mode_combo.findData(mode_value)
+            if mode_idx >= 0:
+                self._error_mode_combo.setCurrentIndex(mode_idx)
+        if self._error_value_spin is not None:
+            err_value = config.get("error_value")
+            if isinstance(err_value, (int, float)) and float(err_value) > 0:
+                self._error_value_spin.setValue(float(err_value))
 
         rows_state = config.get("parameter_rows")
         if not isinstance(rows_state, list):
@@ -372,17 +401,8 @@ class CrossGroupFitDialog(ModelFitDialog):
             type_combo.currentTextChanged.connect(self._on_param_table_edited)
             self._param_table.setCellWidget(row, 4, type_combo)
 
-            err = np.nan
-            if result is not None:
-                err_map = (
-                    result.global_uncertainties
-                    if type_combo.currentText() == "Global"
-                    else result.local_uncertainties.get(self._groups[0].group_id, {})
-                )
-                err = err_map.get(param.name, np.nan) if isinstance(err_map, dict) else np.nan
-            self._param_table.setItem(
-                row, 5, QTableWidgetItem(f"{err:.4g}" if np.isfinite(err) else "")
-            )
+            err_item = self._build_error_cell(param.name, type_combo.currentText(), result)
+            self._param_table.setItem(row, 5, err_item)
 
         self._param_table.blockSignals(False)
         self._param_table.resizeColumnsToContents()
@@ -396,6 +416,45 @@ class CrossGroupFitDialog(ModelFitDialog):
             if widget is not None and not isinstance(widget, QComboBox):
                 self._param_table.removeCellWidget(row, 4)
                 widget.deleteLater()
+
+    def _build_error_cell(
+        self, param_name: str, role: str, result: CrossGroupFitResult | None
+    ) -> QTableWidgetItem:
+        """Error-column cell for one parameter row.
+
+        A *Global* parameter has one shared uncertainty. A *Local* parameter has
+        a distinct fitted value and uncertainty *per group*, which a single
+        number cannot represent — show "varies" and list every group's
+        value ± error in the tooltip rather than silently reporting only the
+        first group's. *Fixed* parameters carry no uncertainty.
+        """
+        if result is None:
+            return QTableWidgetItem("")
+
+        if role == "Global":
+            err = result.global_uncertainties.get(param_name, np.nan)
+            return QTableWidgetItem(f"{err:.4g}" if np.isfinite(err) else "")
+
+        if role == "Local":
+            lines: list[str] = []
+            for group in self._groups:
+                pset = result.local_parameters.get(group.group_id)
+                if pset is None or param_name not in pset:
+                    continue
+                value = float(pset[param_name].value)
+                gerr = result.local_uncertainties.get(group.group_id, {}).get(param_name)
+                if gerr is not None and np.isfinite(gerr):
+                    lines.append(f"{group.group_name}: {value:.6g} ± {gerr:.4g}")
+                else:
+                    lines.append(f"{group.group_name}: {value:.6g}")
+            if not lines:
+                return QTableWidgetItem("")
+            item = QTableWidgetItem("varies")
+            item.setToolTip("Per-group fitted value ± error:\n" + "\n".join(lines))
+            return item
+
+        # Fixed parameters have no uncertainty.
+        return QTableWidgetItem("")
 
     def _commit_param_table(self, *, notify_adjustments: bool = False) -> None:
         super()._commit_param_table(notify_adjustments=notify_adjustments)
@@ -433,20 +492,33 @@ class CrossGroupFitDialog(ModelFitDialog):
 
         self._commit_param_table(notify_adjustments=True)
         fit_range = self._fit.ranges[idx]
+        windows = list(fit_range.windows) if fit_range.windows else None
         x_min = float(fit_range.x_min if fit_range.x_min is not None else -float("inf"))
         x_max = float(fit_range.x_max if fit_range.x_max is not None else float("inf"))
-        if np.isfinite(x_min) and np.isfinite(x_max) and x_max <= x_min:
+        if windows:
+            try:
+                validate_fit_windows(windows)
+            except ValueError as exc:
+                _show_warning(self, "Invalid window", str(exc))
+                return
+        elif np.isfinite(x_min) and np.isfinite(x_max) and x_max <= x_min:
             _show_warning(self, "Invalid range", "x max must be greater than x min.")
             return
 
+        # Slice each group to the window union (or the [x_min, x_max] range) here,
+        # so the masking lives in one place; the shared model is then fitted
+        # across the surviving points.
         fitted_groups: list[ParameterGroupData] = []
         for group in self._groups:
             x = np.asarray(group.x, dtype=float)
-            mask = np.isfinite(x)
-            if np.isfinite(x_min):
-                mask &= x >= x_min
-            if np.isfinite(x_max):
-                mask &= x <= x_max
+            if windows:
+                mask = np.isfinite(x) & windows_mask(x, windows)
+            else:
+                mask = np.isfinite(x)
+                if np.isfinite(x_min):
+                    mask &= x >= x_min
+                if np.isfinite(x_max):
+                    mask &= x <= x_max
             if np.count_nonzero(mask) < 2:
                 continue
             fitted_groups.append(
@@ -504,8 +576,12 @@ class CrossGroupFitDialog(ModelFitDialog):
             for group in fitted_groups
         ]
         self._fit_progress_label.setText("Cross-group fit in progress...")
+        error_mode = self._error_mode()
+        error_value = self._error_value()
 
         def _task():
+            # Groups are already sliced to the window/range above, so the window
+            # mask is not re-applied here (windows omitted to avoid double-masking).
             return global_fit_parameter_model(
                 groups=groups_snapshot,
                 model=model_snapshot,
@@ -514,6 +590,8 @@ class CrossGroupFitDialog(ModelFitDialog):
                 fixed_params=dict(fixed_params),
                 initial_params=dict(initial_params),
                 parameter_bounds=dict(parameter_bounds),
+                error_mode=error_mode,
+                error_value=error_value,
             )
 
         def _on_done(result: object) -> None:
