@@ -205,20 +205,23 @@
     },
     {
       "slug": "simulate-mode",
-      "feature_name": "Simulate mode (synthetic dataset generation)",
-      "status": "candidate",
+      "feature_name": "Simulate mode (synthetic dataset generation + degrade statistics)",
+      "status": "implemented",
       "tier": "now",
       "score": 16,
-      "path": "docs/porting/candidates/simulate-mode",
+      "path": "docs/porting/simulate-mode",
       "references": [
         "WiMDA"
       ],
       "docs": {
-        "readme": "docs/porting/candidates/simulate-mode/README.md",
-        "comparison": "docs/porting/candidates/simulate-mode/comparison.md",
-        "scoring": "docs/porting/candidates/simulate-mode/scoring.md"
+        "readme": "docs/porting/simulate-mode/README.md",
+        "comparison": "docs/porting/simulate-mode/comparison.md",
+        "implementation_options": "docs/porting/simulate-mode/implementation-options.md",
+        "test_data": "docs/porting/simulate-mode/test-data.md",
+        "verification_plan": "docs/porting/simulate-mode/verification-plan.md"
       },
-      "updated": "2026-05-23"
+      "updated": "2026-06-10",
+      "notes": "Promoted from candidate (tier now, score 16) under the wimda-parity-gap umbrella, Wave A project 8. Candidate docs preserved at docs/porting/simulate-mode/candidate/ (same-slug promotion: the structural harness requires unique slugs, so the candidates/ entry is replaced rather than kept, unlike maxent-spectrum->maxent). Study pass done 2026-06-10 against WiMDA Simulate.pas + DegradeStats.pas (Pascal read directly; brief verified). Decisions (Ben, 2026-06-10): loaded-run template required; persistence via saved NeXus file (no schema change); degrade -> new derived run (not in-place); minimal standalone NeXus V1 writer (not template-copy; works for PSI .bin templates); dialog seeds model+params from current fit else builder; core takes per-group signal specs, v1 dialog is F/B alpha-split; deadtimes written as zeros + optional flat background (default 0). Key divergences from WiMDA (all documented in comparison.md): Poisson draws of expected counts with numpy PCG64 + first-class seed (WiMDA: unseeded Delphi RNG); pre-t0 bins = background only (WiMDA: unphysical growing exponential); degrade = exact binomial thinning for f<1 (WiMDA: Poisson(k*f), over-dispersed); exact time_zero (WiMDA: quantised to whole microseconds). Double-pulse halving, count-mode simulation, two-period output deferred to count-domain-fit-modes. IMPLEMENTED 2026-06-10 (4 phases, validate green, 53 new tests): core/simulate.py (simulate_run, simulate_run_from_group_signals, degrade_run, expected_counts, reduce_run_to_dataset, promoted archetype builders), core/io/nexus_writer.py (write_nexus_v1, works for PSI .bin templates), SimulateDialog + Data Browser Degrade Statistics action + provenance badging, docs/user_guide/simulation.rst. Verified: round-trip refit recovery, 100-seed pull distribution ~ N(0,1), degrade 1/sqrt(f) error scaling, corpus round trips (nickel HDF5 + EuO PSI .bin). FINDING for follow-up: compute_asymmetry's error formula treats F+-aB as independent ((1+A^2) form), over-estimating sigma_A by (1+A^2)/(1-A^2) vs exact Poisson propagation — chi2_r centres below 1 against known truth; affects all fits; recorded as follow-on in implementation-options.md."
     },
     {
       "slug": "maxent-spectrum",

@@ -44,7 +44,9 @@ instrument templates beyond "copy a loaded run".
 ## Current Asymmetry state
 
 Nothing user-facing; synthesis exists only inside tests and screenshot
-tooling. Candidate study folder: `docs/porting/candidates/simulate-mode/`.
+tooling. Candidate study folder: `docs/porting/simulate-mode/candidate/`
+(moved from `docs/porting/candidates/simulate-mode/` at promotion — the
+structural harness requires unique slugs across candidate and study entries).
 
 ## GUI/UX sketch
 
