@@ -47,13 +47,12 @@ class CrossGroupDialogOutput:
 class CrossGroupFitDialog(ModelFitDialog):
     """Cross-group fit dialog extending the base model-fit dialog."""
 
-    # global_fit_parameter_model now honours error modes and fit windows, so the
-    # inherited controls are shown and wired through _run_fit / config.
+    # global_fit_parameter_model now honours error modes, fit windows, and
+    # effective-variance x-uncertainty, so all the inherited controls are shown
+    # and wired through _run_fit / config.
     _supports_error_modes = True
     _supports_windows = True
-    # Effective-variance x-uncertainty is not threaded through the cross-group
-    # backend yet (recorded follow-on), so its toggle stays hidden here.
-    _supports_x_errors = False
+    _supports_x_errors = True
 
     def __init__(
         self,
@@ -87,6 +86,14 @@ class CrossGroupFitDialog(ModelFitDialog):
             if groups
             else np.array([], dtype=float)
         )
+        # Concatenated per-point x-uncertainty (only when every group carries it,
+        # i.e. the abscissa is a fitted parameter) so the inherited
+        # effective-variance toggle enables; the fit itself reads σ_x per group.
+        all_xe = (
+            np.concatenate([np.asarray(group.xerr, dtype=float) for group in groups])
+            if groups and all(getattr(group, "xerr", None) is not None for group in groups)
+            else None
+        )
 
         super().__init__(
             parameter_name=parameter_name,
@@ -96,6 +103,7 @@ class CrossGroupFitDialog(ModelFitDialog):
             y_errors=all_e,
             existing_fit=None,
             parent=parent,
+            x_errors=all_xe,
         )
         self.setWindowTitle(f"Cross-group fit: {parameter_name}")
 
@@ -153,6 +161,7 @@ class CrossGroupFitDialog(ModelFitDialog):
                 "error_mode": self._error_mode().value,
                 "error_value": self._error_value(),
                 "windows": None,
+                "use_x_errors": self._use_x_errors(),
             }
 
         fit_range = self._fit.ranges[0]
@@ -182,6 +191,7 @@ class CrossGroupFitDialog(ModelFitDialog):
                 if fit_range.windows
                 else None
             ),
+            "use_x_errors": self._use_x_errors(),
         }
 
     @property
@@ -286,6 +296,12 @@ class CrossGroupFitDialog(ModelFitDialog):
             err_value = config.get("error_value")
             if isinstance(err_value, (int, float)) and float(err_value) > 0:
                 self._error_value_spin.setValue(float(err_value))
+
+        # Restore the effective-variance toggle (legacy config → off). The
+        # error-mode restore above has already set the checkbox's enabled state,
+        # so a box checked under None/Scatter stays inert via _use_x_errors().
+        if self._x_error_check is not None:
+            self._x_error_check.setChecked(bool(config.get("use_x_errors", False)))
 
         rows_state = config.get("parameter_rows")
         if not isinstance(rows_state, list):
@@ -521,6 +537,7 @@ class CrossGroupFitDialog(ModelFitDialog):
                     mask &= x <= x_max
             if np.count_nonzero(mask) < 2:
                 continue
+            group_xe = getattr(group, "xerr", None)
             fitted_groups.append(
                 ParameterGroupData(
                     group_id=group.group_id,
@@ -529,6 +546,7 @@ class CrossGroupFitDialog(ModelFitDialog):
                     y=np.asarray(group.y, dtype=float)[mask],
                     yerr=np.asarray(group.yerr, dtype=float)[mask],
                     group_variable_value=float(group.group_variable_value),
+                    xerr=(None if group_xe is None else np.asarray(group_xe, dtype=float)[mask]),
                 )
             )
 
@@ -572,12 +590,29 @@ class CrossGroupFitDialog(ModelFitDialog):
                 y=np.asarray(group.y, dtype=float).copy(),
                 yerr=np.asarray(group.yerr, dtype=float).copy(),
                 group_variable_value=float(group.group_variable_value),
+                xerr=(
+                    None
+                    if getattr(group, "xerr", None) is None
+                    else np.asarray(group.xerr, dtype=float).copy()
+                ),
             )
             for group in fitted_groups
         ]
         self._fit_progress_label.setText("Cross-group fit in progress...")
         error_mode = self._error_mode()
         error_value = self._error_value()
+        # Effective-variance x-uncertainty: pass per-group σ_x only when the user
+        # opted in (and the toggle is live, i.e. x is a fitted param under a real
+        # error mode). The core ignores it under None/Scatter regardless.
+        xerr_map: dict[str, object] | None = None
+        if self._use_x_errors():
+            xerr_map = {
+                group.group_id: np.asarray(group.xerr, dtype=float)
+                for group in groups_snapshot
+                if getattr(group, "xerr", None) is not None
+            }
+            if not xerr_map:
+                xerr_map = None
 
         def _task():
             # Groups are already sliced to the window/range above, so the window
@@ -592,6 +627,7 @@ class CrossGroupFitDialog(ModelFitDialog):
                 parameter_bounds=dict(parameter_bounds),
                 error_mode=error_mode,
                 error_value=error_value,
+                xerr=xerr_map,
             )
 
         def _on_done(result: object) -> None:

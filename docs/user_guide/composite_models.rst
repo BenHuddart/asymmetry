@@ -52,6 +52,12 @@ Building a Composite Function
    )
    print(model.formula_string())
 
+The time-domain grammar combines components with ``+``, ``-``, ``*``, ``/`` and
+parentheses. The quadrature combinator ``⊕`` (:math:`\sqrt{f^2 + g^2}`) is
+*not* part of this grammar — it belongs to the parameter-vs-x trend models,
+where quadrature composition of width-like quantities is physically meaningful;
+see :doc:`parameter_trending`.
+
 Fraction Groups
 ---------------
 

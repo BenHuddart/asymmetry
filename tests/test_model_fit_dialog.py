@@ -349,6 +349,20 @@ def test_parameter_model_builder_accepts_parenthesized_expression(qapp: QApplica
     assert model.close_parentheses == [0, 0, 1]
 
 
+def test_parameter_model_builder_offers_quadrature_operator(qapp: QApplication) -> None:
+    """The parameter-model builder exposes a ⊕ keypad button and accepts a
+    quadrature expression (the operator is parameter-grammar only)."""
+    dialog = ParameterModelBuilderDialog(component_pool=["PowerLaw", "Constant"])
+    assert "⊕" in dialog._extra_token_buttons
+
+    dialog._expression_edit.setText("PowerLaw ⊕ Constant")
+    dialog._on_accept()
+    model = dialog.get_model()
+    assert model is not None
+    assert model.operators == ["⊕"]
+    assert model.component_names == ["PowerLaw", "Constant"]
+
+
 def test_parameter_model_builder_groups_sc_models_in_submenu(qapp: QApplication) -> None:
     dialog = ParameterModelBuilderDialog(component_pool=["Linear", "SC_SWave", "SC_DWave"])
 

@@ -189,6 +189,9 @@ class FitParametersPanel(QWidget):
     """Table + plot view for parameter trends from global fits."""
 
     cross_group_fit_completed = Signal(object, object, object)
+    #: Emitted when a single-series model fit completes (parameter_name, x_key,
+    #: ParameterModelFit) so its per-range outputs become a trendable series.
+    model_fit_completed = Signal(object, object, object)
     delete_group_fits_requested = Signal(str, object)
     #: Emitted when the user activates a different fit series (batch_id).
     series_selection_changed = Signal(str)
@@ -1711,10 +1714,23 @@ class FitParametersPanel(QWidget):
             return "run"
         fields = np.array([r.field for r in rows], dtype=float)
         temps = np.array([r.temperature for r in rows], dtype=float)
-        field_unique = len(np.unique(np.round(fields, 9)))
-        temp_unique = len(np.unique(np.round(temps, 9)))
-        field_span = float(np.nanmax(fields) - np.nanmin(fields))
-        temp_span = float(np.nanmax(temps) - np.nanmin(temps))
+        # Count distinct values over finite coordinates only: a computed series
+        # can mix real-axis rows with off-axis ones (NaN — e.g. the cross-group
+        # 'globals' row or the Global summary series), and a phantom NaN bucket
+        # would otherwise inflate the unique count and mis-infer the axis.
+        field_unique = len(np.unique(np.round(fields[np.isfinite(fields)], 9)))
+        temp_unique = len(np.unique(np.round(temps[np.isfinite(temps)], 9)))
+
+        def _finite_span(arr: np.ndarray) -> float:
+            # A computed series can sit entirely off an axis (every coordinate
+            # NaN — e.g. the cross-fit Global summary). Span over finite values
+            # only, defaulting to 0.0, so np.nanmax/min never warn on an all-NaN
+            # slice.
+            finite = arr[np.isfinite(arr)]
+            return float(np.max(finite) - np.min(finite)) if finite.size else 0.0
+
+        field_span = _finite_span(fields)
+        temp_span = _finite_span(temps)
         if field_unique > 1 and (field_span > temp_span or temp_unique <= 1):
             return "field"
         if temp_unique > 1:
@@ -2284,6 +2300,10 @@ class FitParametersPanel(QWidget):
             fit = dialog.get_model_fit()
             if fit is not None:
                 self._model_fits[param_name] = fit
+                # Item B: surface this single fit's per-range outputs as a
+                # trendable results series (one row per range), so a single fit's
+                # outputs can themselves be trended.
+                self.model_fit_completed.emit(param_name, x_key, fit)
 
         self._sync_active_group_state()
 
@@ -2328,6 +2348,9 @@ class FitParametersPanel(QWidget):
                     y=y_vals,
                     yerr=y_err,
                     group_variable_value=self._group_variable_value_for_rows(rows, x_key),
+                    # Per-point x-uncertainty for the effective-variance option —
+                    # only present (non-None) when the abscissa is a fitted param.
+                    xerr=self._x_error_array(rows, x_key),
                 )
             )
 
@@ -2555,6 +2578,7 @@ class FitParametersPanel(QWidget):
                     ]
                     or None
                 ),
+                "use_x_errors": bool(config.get("use_x_errors", False)),
             }
         return out
 
@@ -2589,6 +2613,7 @@ class FitParametersPanel(QWidget):
                     ]
                     or None
                 ),
+                "use_x_errors": bool(config.get("use_x_errors", False)),
             }
         return out
 
