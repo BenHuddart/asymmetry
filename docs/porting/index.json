@@ -722,7 +722,7 @@
     {
       "slug": "radical-correlation-spectrum",
       "feature_name": "Muoniated-radical correlation spectrum (WiMDA Corr/AvCorr + rmatch Breit–Rabi pair-matching)",
-      "status": "study",
+      "status": "implemented",
       "path": "docs/porting/radical-correlation-spectrum",
       "references": [
         "WiMDA",
@@ -744,7 +744,7 @@
         "frequency-domain-finishers"
       ],
       "updated": "2026-06-11",
-      "notes": "Promotion of frequency-domain-finishers comparison.md §9 (deferred follow-on). Verified vs WiMDA Pascal (Plot.pas rmatch 515-523, w12/w34 525-551, CorrFn 1387-1394, Corr/AvCorr loop 2149-2230; FFTPar CorrField/CorrOrder). Physics reconciled across THREE sources to machine precision: textbook eqn 4.54/4.65 (A=nu12+nu34 high-TF) == McKenzie eqns 6-8 (A_mu=nu43-nu12, her nu12 signed-negative) == muonium.py _tf_levels w12+w34. Decisions: exact Breit-Rabi forward map via muonium.py (NOT rmatch's approximate inverse w/ 5th-sig-fig rounded constants); build as derived display mode through compute_average_group_spectrum like Burg; badged specialist radio; A_mu coupling axis (MHz) excluded from field-unit selector; reference-field + CorrOrder(=2) controls; correlate-the-averaged-spectrum (AvCorr-like, documented divergence). Synthetic-first verification (cyclohexadienyl A_mu=514.4(1) MHz). User docs MUST teach radical-uSR + TF-vs-ALC complementarity (ALC already shipped PR #23, NOT touched). STUDY+PLAN committed; awaiting go-ahead to implement."
+      "notes": "Promotion of frequency-domain-finishers comparison.md §9 (deferred follow-on). Verified vs WiMDA Pascal (Plot.pas rmatch 515-523, w12/w34 525-551, CorrFn 1387-1394, Corr/AvCorr loop 2149-2230; FFTPar CorrField/CorrOrder). Physics reconciled across THREE sources to machine precision: textbook eqn 4.54/4.65 (A=nu12+nu34 high-TF) == McKenzie eqns 6-8 (A_mu=nu43-nu12, her nu12 signed-negative) == muonium.py _tf_levels w12+w34. Decisions: exact Breit-Rabi forward map via muonium.py (NOT rmatch's approximate inverse w/ 5th-sig-fig rounded constants); build as derived display mode through compute_average_group_spectrum like Burg; badged specialist radio; A_mu coupling axis (MHz) excluded from field-unit selector; reference-field + CorrOrder(=2) controls; correlate-the-averaged-spectrum (AvCorr-like, documented divergence). Synthetic-first verification (cyclohexadienyl A_mu=514.4(1) MHz). User docs MUST teach radical-uSR + TF-vs-ALC complementarity (ALC already shipped PR #23, NOT touched). IMPLEMENTED (3 phases): core/fourier/correlation.py + spectrum.py derived mode + fft.py alias (P1); badged GUI radio + reference-field/order controls + Aμ-axis field-unit lock + schema recipe keys (P2); user-guide page docs/user_guide/radical_correlation.rst with TF-vs-ALC subsection (P3). validate green 2328 passed."
     }
   ]
 }
