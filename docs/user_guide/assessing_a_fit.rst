@@ -29,7 +29,7 @@ implies. The verdict assumes the :math:`\chi^2` was computed against *real*
 error estimates; with unit weights or scatter-estimated errors (which force
 :math:`\chi^2_r` toward 1 by construction) it carries no goodness information
 and is suppressed (see :doc:`parameter_trending`). Inspecting the
-:ref:`residual time series <fit-statistics>` is the companion structural check:
+:ref:`residual time series <fit-residuals>` is the companion structural check:
 a good χ² with coherent residual structure still means a missing component.
 
 2. Is the verdict recorded and consistent across the series?

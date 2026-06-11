@@ -126,6 +126,8 @@ fits this is fine. For ill-conditioned problems — strongly correlated
 parameters, fits near a bound, multi-modal likelihoods — either bootstrap
 (see :ref:`monte-carlo-errors` below) or compute MINOS errors externally.
 
+.. _fit-residuals:
+
 Residuals
 ---------
 
