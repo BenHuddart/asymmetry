@@ -7966,6 +7966,14 @@ class MainWindow(QMainWindow):
         :data:`_GLOBAL_FIT_DECORATIONS_EXTRA_KEY`, so they persist attached to
         that series rather than under a standalone top-level key where they could
         orphan. Called at save time, mirroring :meth:`_sync_alc_series_extra`.
+
+        Decorations persist only when a backing series exists. A cross-group fit
+        that did not produce one — e.g. an unsuccessful fit the user chose to
+        "use anyway", which :meth:`_record_model_fit_results_series` does not
+        record — has no series to attach to, so its decorations are not saved.
+        This is deliberate: decorations belong to a trendable result, and a
+        standalone home for series-less decorations is exactly the orphan this
+        move removes.
         """
         window = self._global_parameter_fit_window
         if window is None:
