@@ -32,7 +32,7 @@ The five at a glance
      - :math:`(t_1, t_2)` µs
      - *(persisted from reconciliation Phase 2; see note)*
    * - **MaxEnt exclude window**
-       (:doc:`fourier_analysis` — "Exclude from / to (μs)")
+       (:doc:`fourier_analysis` — "De-weight from / to (μs)")
      - time points
      - **σ-inflate ×10⁸** — the points are de-weighted (error bars blown up)
        but kept, so the time grid and any derived frequency resolution are
