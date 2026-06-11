@@ -25,7 +25,7 @@ The five at a glance
      - Parameterisation
      - Schema key
    * - **Count-fit exclude window**
-       (:doc:`count_domain_fitting` — "Exclude (μs)")
+       (:doc:`count_domain_fitting` — "Skip window (μs)")
      - time bins
      - **hard drop** from the fit — the bins inside are removed (endpoints
        inclusive) and contribute nothing to the cost
