@@ -5138,12 +5138,17 @@ class MainWindow(QMainWindow):
             method="maxent_fit",
         )
         run.grouping = grouping
-        before = next(iter(change["before"].values()), 0.0)
-        after = next(iter(change["after"].values()), 0.0)
+        # MaxEnt fits one deadtime per detector, so summarise the change across
+        # all detectors (a single-detector readout would misreport when detector
+        # 0 fits ~0 but others do not).
+        before_vals = list(change["before"].values()) or [0.0]
+        after_vals = list(change["after"].values()) or [0.0]
+        before = sum(before_vals) / len(before_vals)
+        after = sum(after_vals) / len(after_vals)
         stamp = time.strftime("%Y-%m-%d %H:%M")
         self._maxent_panel.set_deadtime_text(
-            f"Applied to grouping deadtime: {before * 1000.0:.2f} → {after * 1000.0:.2f} ns "
-            f"· {stamp}. Re-reduce the run to apply.",
+            f"Applied to grouping deadtime: mean {before * 1000.0:.2f} → {after * 1000.0:.2f} ns "
+            f"across {len(after_vals)} detector(s) · {stamp}. Re-reduce the run to apply.",
             can_apply=False,
         )
         self._set_fourier_status(

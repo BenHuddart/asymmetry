@@ -270,6 +270,29 @@ def test_promote_alpha_after_fb_fit_writes_grouping(qapp, fb_dataset):
     assert len(promoted) == 1
 
 
+def test_switching_run_clears_captured_calibrations(qapp, fb_dataset):
+    """A captured calibration must not survive a run switch (wrong-run promote)."""
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(1)  # fb
+    tab = window._single_fit_tab
+    tab._run_count_domain_fit()
+    assert tab._last_count_alpha is not None
+
+    other = MuonDataset(
+        time=np.array([]),
+        asymmetry=np.array([]),
+        error=np.array([]),
+        metadata={},
+        run=fb_dataset.run,  # any different dataset object
+    )
+    window.set_dataset(other)
+    assert tab._last_count_alpha is None
+    # Promoting now reports a hint rather than writing run A's α into run B.
+    window._promote_alpha_btn.click()
+    assert "Forward + Backward" in tab._result_text.toPlainText()
+
+
 def test_promote_alpha_without_fb_fit_shows_hint(qapp, fb_dataset):
     """Promoting α without a forward/backward fit reports a hint, not a mutation."""
     window = MultiGroupFitWindow()

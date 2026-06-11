@@ -57,6 +57,10 @@ def test_promote_t0_clamps_negative_bin_to_zero():
     grouping = {"t0_bin": 2}
     out = promote_t0_to_grouping(grouping, -1.0, bin_width_us=0.05)
     assert out["after"]["t0_bin"] == 0
+    # The residual reflects the delta ACTUALLY applied after the ≥0 clamp
+    # (−2 bins = −0.1 µs), not the rounded −20 bins — so the clamp's lost shift
+    # is disclosed, not hidden as a zero residual.
+    assert out["residual_us"] == pytest.approx(-1.0 - (-2) * 0.05)
 
 
 def test_promote_t0_rejects_nonpositive_bin_width():
@@ -74,6 +78,8 @@ def test_promote_background_writes_fixed_pair_and_provenance():
     assert out["after"] == {"forward": 12.5, "backward": 11.0}
     assert grouping["background_fixed_values"] == [12.5, 11.0]
     assert grouping["background_mode"] == "fixed"
+    # Self-enables the correction so the reduction actually applies it.
+    assert grouping["background_correction"] is True
     assert grouping["background_method"] == "count_fit"
     assert grouping["background_reference_run"] == 3039
 

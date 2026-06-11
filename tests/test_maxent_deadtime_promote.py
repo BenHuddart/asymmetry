@@ -100,6 +100,25 @@ def test_maxent_apply_deadtime_shows_before_after_and_reduce_message(win, qapp) 
     assert captured["can_apply"] is False
 
 
+def test_maxent_apply_deadtime_summarises_across_detectors(win, qapp) -> None:
+    """Multi-detector deadtimes are summarised, not read off detector 0 alone."""
+    ds = _dataset(run_number=7)
+    win._current_dataset = ds
+    # Detector 0 fits ~0, detector 1 fits a real value — a det-0 readout would
+    # wrongly say "0.00 → 0.00".
+    win._maxent_fitted_deadtime = (7, [0.0, 0.018])
+
+    captured: dict[str, object] = {}
+    win._maxent_panel.set_deadtime_text = (  # type: ignore[method-assign]
+        lambda text, can_apply=True: captured.update(text=text)
+    )
+    win._on_maxent_apply_deadtime()
+
+    text = str(captured["text"])
+    assert "0.00 → 9.00 ns" in text  # mean of [0, 18] ns
+    assert "2 detector(s)" in text
+
+
 def test_maxent_apply_deadtime_requires_matching_run(win, qapp) -> None:
     """A fitted deadtime for a different run must not touch the grouping."""
     ds = _dataset(run_number=7)

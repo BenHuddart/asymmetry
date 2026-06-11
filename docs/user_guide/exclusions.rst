@@ -112,12 +112,11 @@ When to reach for each
 
 .. note::
 
-   The count-fit and MaxEnt window labels above ("Exclude (μs)" and "Exclude
-   from / to (μs)") are the current GUI labels. Reconciliation Phases 2 and 3
-   relabel them to encode their semantics — "Skip window (µs)" for the count fit
-   (drop) and "De-weight window (µs)" for MaxEnt — and Phase 2 adds the count-fit
-   window's schema key. This glossary's label and schema columns are updated by
-   those phases when they land.
+   The count-fit window is labelled "Skip window (µs)" (drop) as of
+   reconciliation Phase 2, which also gave it a persisted schema key. The MaxEnt
+   window is still labelled "Exclude from / to (μs)"; Phase 3 relabels it
+   "De-weight window (µs)" to encode that it de-weights rather than drops. This
+   glossary's MaxEnt label column is updated when that phase lands.
 
 See also
 --------

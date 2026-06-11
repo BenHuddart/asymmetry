@@ -78,7 +78,11 @@ def promote_t0_to_grouping(
     current = _as_int(grouping.get("t0_bin"), 0)
     delta_bins = int(round(float(t0_us) / bw))
     new_bin = max(0, current + delta_bins)
-    residual_us = float(t0_us) - delta_bins * bw
+    # The disclosed residual is the part of the offset the integer t0_bin cannot
+    # represent. Compute it from the delta actually applied (after the ≥0 clamp),
+    # not the rounded delta — otherwise a clamp would understate the lost shift.
+    applied_bins = new_bin - current
+    residual_us = float(t0_us) - applied_bins * bw
 
     grouping["t0_bin"] = new_bin
     grouping["t0_method"] = "count_fit"
@@ -118,6 +122,11 @@ def promote_background_to_grouping(
     before = {"forward": existing_f, "backward": existing_b}
     grouping["background_fixed_values"] = [new_f, new_b]
     grouping["background_mode"] = "fixed"
+    # Self-enable the correction (the reduction gate keys off
+    # ``background_correction``), mirroring the deadtime promote's
+    # ``deadtime_correction = True`` — otherwise the promoted background is inert
+    # on the next reduction despite the "Re-reduce to apply" message.
+    grouping["background_correction"] = True
     grouping["background_method"] = "count_fit"
     if reference_run is not None:
         grouping["background_reference_run"] = int(reference_run)
