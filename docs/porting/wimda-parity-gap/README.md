@@ -20,13 +20,15 @@ integration direction.
 
 All six Wave A projects shipped, with follow-on PRs, plus two emergent
 projects (exact asymmetry-error propagation #35; radical correlation
-spectrum #43) — PRs #32–#43. See
+spectrum #43) and the two stray handoffs (#44) — PRs #32–#44; every
+functionality item in the Wave A scope is on main. See
 [wave-a-closeout.md](wave-a-closeout.md) for the audit (status table, stray
 handoffs, Wave B brief revisions, collision watchlist) and
 [decision-record.md](decision-record.md) for the consolidated record of
 exclusions, deviations from WiMDA, and the reference-program bug ledger.
 Wave B briefs require the revisions listed in the closeout before launch;
-a collision-reconciliation session precedes Wave B.
+the collision-reconciliation session (watchlist in the closeout) is pending,
+deliberately deferred.
 
 ## Documents
 

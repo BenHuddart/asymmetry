@@ -1,6 +1,6 @@
 # Wave A closeout audit
 
-Date: 2026-06-11, on main at PR #43's merge. Companion to the durable
+Date: 2026-06-11, on main at PR #43's merge; §2 updated after PR #44. Companion to the durable
 [decision-record.md](decision-record.md). Three audit passes: shipped-vs-brief
 verification, Wave B brief impact, and a shallow collision scan (deep
 reconciliation deliberately deferred to a dedicated session).
@@ -17,24 +17,28 @@ reconciliation deliberately deferred to a dedicated session).
 | count-domain-fit-modes | #41 | Shipped + six follow-ons (FB double-pulse, dpsep scan, DT models, free-τ, overlay/promote, name guard) |
 | frequency-domain-finishers | #42 | Shipped (conditioning, S/N, real+imag, Burg, diamag removal) |
 | radical-correlation-spectrum | #43 | **Emergent project** (promoted from #42 optional scope): Corr/AvCorr → hyperfine axis |
+| wave-a-strays | #44 | The two stray handoffs from §2, shipped after this audit caught them |
 
 Wave A delivers the umbrella study's "analysis feature-complete" milestone:
 every analysis-capability gap in the inventory is closed; remaining waves are
 workflow machinery (B) and workflow-feel (C).
 
-## 2. Stray handoffs (deferred to another project that didn't deliver them)
+## 2. Stray handoffs — CLOSED (PR #44, 2026-06-11)
 
-1. **Two-period and count-mode simulation** — deferred from simulate-mode to
-   count-domain-fit-modes; PR #41 shipped double-pulse simulation but not
-   these (writer still single-period; no evfactor path in `core/simulate.py`).
-2. **Tail-fit background in the Fourier input path** — deferred from
-   data-reduction-parity to frequency-domain-finishers; not in PR #42
-   (no tail-fit mode in `core/fourier/grouped.py`).
+Two items had been deferred to another project that didn't deliver them;
+both were caught by this audit and shipped together in PR #44:
 
-Both are small; suggested placement: the collision-reconciliation session
-(stray 2 sits inside collision F3's background-story unification; stray 1 is
-a contained `core/simulate.py` extension that can ride along or join
-run-arithmetic's period-aware work).
+1. **Two-period and count-mode simulation** (simulate-mode →
+   count-domain-fit-modes; PR #41 shipped only the double-pulse slice) —
+   delivered in `core/simulate.py`: period-aware synthesis verified through
+   `select_period`/G−R combination, count-mode runs verified against the
+   PR #41 single-histogram and α-free fit modes.
+2. **Tail-fit background in the Fourier input path** (data-reduction-parity
+   → frequency-domain-finishers; absent from PR #42) — delivered as a
+   tail-fit mode of `core/fourier/grouped.py`'s background options, reusing
+   the single core estimator (no new background path; see F3 note in §5).
+
+With these, every functionality item in the Wave A scope is on main.
 
 ## 3. Wave B/C brief impact
 
@@ -105,6 +109,8 @@ multi-group vs data-group co-add (different operations).
 Quick mechanical wins first: N1/N2 (de-duplicate helpers), F2 (single
 reference-field resolver), F12 (generate one table from the other). Then the
 promote/reconcile design pair F5 + F7 (t0 and α promotion, mirroring the
-deadtime pattern), the background story F3 + N3 (+ stray tail-fit-in-Fourier),
-and the UX/docs batch F1/F4/F8/F10/F11/F13/N4/N5/N6. Stray 1 (two-period /
-count-mode simulation) schedules wherever convenient.
+deadtime pattern), the background story F3 + N3, and the UX/docs batch
+F1/F4/F8/F10/F11/F13/N4/N5/N6. Note for F3: the strays PR (#44) added the
+Fourier-input tail-fit as a mode of the existing background options — it
+reuses the single estimator by design, but the F3 stacking-UX investigation
+should now count it among the stackable options.
