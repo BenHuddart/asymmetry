@@ -1382,7 +1382,7 @@ class TestMainWindowBasic:
     ) -> None:
         """The toolbar Domain buttons should expose the 2+2 Time/Frequency views."""
         labels = [btn.text() for btn in mainwindow._domain_buttons]
-        assert labels == ["F-B asymmetry", "Individual groups", "Raw counts", "FFT", "MaxEnt"]
+        assert labels == ["F-B asymmetry", "Individual groups", "FFT", "MaxEnt"]
 
     def test_on_fit_reshows_closed_fit_dock(self, mainwindow: MainWindow) -> None:
         """The fit dock is visible by default; Fit re-shows it after a close."""
@@ -1932,12 +1932,11 @@ class TestMainWindowBasic:
         assert "Params" not in texts
 
     def test_toolbar_has_domain_segmented_control(self, mainwindow: MainWindow) -> None:
-        """Toolbar should expose five Domain buttons (Time 3 + Frequency 2)."""
+        """Toolbar should expose four Domain buttons (Time 2 + Frequency 2)."""
         assert hasattr(mainwindow, "_domain_buttons")
         assert [btn.text() for btn in mainwindow._domain_buttons] == [
             "F-B asymmetry",
             "Individual groups",
-            "Raw counts",
             "FFT",
             "MaxEnt",
         ]
@@ -1945,9 +1944,11 @@ class TestMainWindowBasic:
         assert buttons["fb_asymmetry"].isChecked()
         assert not buttons["groups"].isChecked()
         assert not buttons["frequency"].isChecked()
-        # Raw counts needs grouped data; MaxEnt needs a capable dataset.
-        assert not buttons["raw_counts"].isEnabled()
+        # MaxEnt needs a capable dataset; the raw-counts diagnostic lives in
+        # the View menu, not the toolbar, and needs grouped data.
+        assert "raw_counts" not in buttons
         assert not buttons["maxent"].isEnabled()
+        assert not mainwindow._raw_counts_action.isEnabled()
 
     def test_domain_button_click_changes_workspace_view(self, mainwindow: MainWindow) -> None:
         """Clicking the Frequency domain button should switch the workspace view."""
@@ -3821,7 +3822,7 @@ class TestPlotWorkspaceDomainPhase7:
         )
         mainwindow._refresh_time_view_selector()
         assert not mainwindow._domain_buttons_by_token["groups"].isEnabled()
-        assert not mainwindow._domain_buttons_by_token["raw_counts"].isEnabled()
+        assert not mainwindow._raw_counts_action.isEnabled()
 
     def test_groups_button_enabled_when_grouped_data_present(
         self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
@@ -3840,7 +3841,7 @@ class TestPlotWorkspaceDomainPhase7:
         mainwindow._current_dataset = ds
         mainwindow._refresh_time_view_selector()
         assert mainwindow._domain_buttons_by_token["groups"].isEnabled()
-        assert mainwindow._domain_buttons_by_token["raw_counts"].isEnabled()
+        assert mainwindow._raw_counts_action.isEnabled()
 
     def test_raw_counts_view_requests_uncorrected_grouped_datasets(
         self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
@@ -3879,6 +3880,34 @@ class TestPlotWorkspaceDomainPhase7:
         assert captured.get("plotted") == [ds]
         # The grouped fit surface serves the raw-counts view too.
         assert mainwindow._should_launch_multi_group_fit_window()
+
+    def test_raw_counts_menu_toggle_enters_and_leaves_view(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """View -> Diagnostics -> Raw counts toggles the diagnostic view; no
+        toolbar button stays lit while it is active."""
+        monkeypatch.setattr(mainwindow, "_grouped_time_domain_available", lambda dataset=None: True)
+        run = Run(run_number=43, grouping={}, metadata={})
+        ds = MuonDataset(
+            time=np.linspace(0, 8, 50),
+            asymmetry=np.zeros(50),
+            error=np.ones(50) * 0.01,
+            run=run,
+            metadata={},
+        )
+        mainwindow._current_dataset = ds
+        mainwindow._refresh_time_view_selector()
+        assert mainwindow._raw_counts_action.isEnabled()
+
+        mainwindow._raw_counts_action.trigger()
+        assert mainwindow._plot_workspace.active_view() == "raw_counts"
+        assert mainwindow._raw_counts_action.isChecked()
+        assert not any(btn.isChecked() for btn in mainwindow._domain_buttons_by_token.values())
+
+        mainwindow._raw_counts_action.trigger()
+        assert mainwindow._plot_workspace.active_view() == "groups"
+        assert not mainwindow._raw_counts_action.isChecked()
+        assert mainwindow._domain_buttons_by_token["groups"].isChecked()
 
     def test_no_signal_on_same_view_click(self, mainwindow: MainWindow, qapp: QApplication) -> None:
         """Selecting the already-active view emits no active_view_changed signal."""

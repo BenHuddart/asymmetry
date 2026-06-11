@@ -661,6 +661,19 @@ class MainWindow(QMainWindow):
         self._show_fourier_action = view_menu.addAction("Show Fourier", self._on_fourier)
         view_menu.addAction("Show Fit Parameters", self._on_fit_parameters)
         view_menu.addAction("Show Log", self._on_show_log)
+        view_menu.addSeparator()
+        diagnostics_menu = view_menu.addMenu("Diagnostics")
+        # Raw per-group detector counts (no lifetime correction). A diagnostic
+        # view, deliberately not a toolbar representation: checking enters the
+        # view, unchecking returns to Individual groups. Enabled exactly when
+        # grouped data is available (see _refresh_time_view_selector); the
+        # check state mirrors the active view (_sync_raw_counts_action).
+        self._raw_counts_action = diagnostics_menu.addAction("Raw counts")
+        self._raw_counts_action.setCheckable(True)
+        self._raw_counts_action.setEnabled(False)
+        # triggered (not toggled): fires on user action only, so programmatic
+        # check-state syncs cannot loop back into view switches.
+        self._raw_counts_action.triggered.connect(self._on_raw_counts_action_triggered)
 
         # Options
         options_menu = mb.addMenu("&Options")
@@ -767,13 +780,14 @@ class MainWindow(QMainWindow):
             column.addLayout(row)
             return container
 
+        # The raw-counts view is a diagnostic, deliberately NOT a toolbar
+        # representation — it lives under View → Diagnostics.
         self._main_toolbar.addWidget(
             _domain_cluster(
                 "Time domain",
                 [
                     ("F-B asymmetry", "fb_asymmetry"),
                     ("Individual groups", "groups"),
-                    ("Raw counts", "raw_counts"),
                 ],
             )
         )
@@ -785,10 +799,6 @@ class MainWindow(QMainWindow):
             )
         )
         self._domain_buttons_by_token["fb_asymmetry"].setChecked(True)
-        self._domain_buttons_by_token["raw_counts"].setEnabled(False)
-        self._domain_buttons_by_token["raw_counts"].setToolTip(
-            "Per-group raw detector counts (no lifetime correction)"
-        )
         self._domain_buttons_by_token["maxent"].setEnabled(False)
         self._domain_buttons_by_token["maxent"].setToolTip(
             "Maximum-entropy spectra from grouped counts"
@@ -1618,7 +1628,7 @@ class MainWindow(QMainWindow):
                 if self._plot_workspace.active_domain() == "time":
                     self._plot_workspace.set_active_view("fb_asymmetry")
             self._domain_buttons_by_token["groups"].setEnabled(False)
-            self._domain_buttons_by_token["raw_counts"].setEnabled(False)
+            self._raw_counts_action.setEnabled(False)
             self._refresh_maxent_domain_enabled()
             return
 
@@ -1629,7 +1639,7 @@ class MainWindow(QMainWindow):
             modes.append("maxent")
 
         self._domain_buttons_by_token["groups"].setEnabled("groups" in modes)
-        self._domain_buttons_by_token["raw_counts"].setEnabled("raw_counts" in modes)
+        self._raw_counts_action.setEnabled("raw_counts" in modes)
         self._refresh_maxent_domain_enabled()
 
         current_mode = None
@@ -5859,9 +5869,36 @@ class MainWindow(QMainWindow):
         self._sync_domain_buttons(self._plot_workspace.active_view())
 
     def _sync_domain_buttons(self, view: str) -> None:
-        """Update toolbar Domain button checked state to match *view*."""
-        for token, btn in getattr(self, "_domain_buttons_by_token", {}).items():
-            btn.setChecked(token == view)
+        """Update toolbar Domain button checked state to match *view*.
+
+        Diagnostic views (raw counts) have no toolbar button; the exclusive
+        button group must be relaxed momentarily so every button can be
+        unchecked while such a view is active — leaving a stale button lit
+        would misrepresent what is plotted.
+        """
+        buttons = getattr(self, "_domain_buttons_by_token", {})
+        group = getattr(self, "_domain_button_group", None)
+        if group is not None:
+            group.setExclusive(False)
+        try:
+            for token, btn in buttons.items():
+                btn.setChecked(token == view)
+        finally:
+            if group is not None:
+                group.setExclusive(True)
+
+    def _on_raw_counts_action_triggered(self, checked: bool) -> None:
+        """Enter/leave the raw-counts diagnostic view from View → Diagnostics."""
+        self._plot_workspace.set_active_view("raw_counts" if checked else "groups")
+        # set_active_view may have fallen back (e.g. the view became
+        # unavailable); reflect the actual outcome on the action.
+        self._sync_raw_counts_action(self._plot_workspace.active_view())
+
+    def _sync_raw_counts_action(self, view: str) -> None:
+        """Mirror the active view on the Diagnostics → Raw counts check state."""
+        action = getattr(self, "_raw_counts_action", None)
+        if action is not None:
+            action.setChecked(view == "raw_counts")
 
     def _on_plot_workspace_view_changed(self, view: str) -> None:
         """Map top-level workspace tab changes onto the shared time plot panel state."""
@@ -5885,6 +5922,7 @@ class MainWindow(QMainWindow):
         else:
             self._sync_frequency_plot_for_current_dataset()
         self._sync_domain_buttons(view)
+        self._sync_raw_counts_action(view)
         self._apply_inspector_for_domain(view)
         self._update_status_selection()
         # ALC mode is only valid for the F-B asymmetry view; keep the toggle's
