@@ -25,8 +25,10 @@ ACCENT_RED = "#a8332a"
 ACCENT_RED_SOFT = "#f5dcd8"
 ACCENT_RED_SOFT2 = "#efcfca"
 
-# Data browser groups — match _GROUP_HEADER_BACKGROUND / _GROUP_MEMBER_BACKGROUND
+# Data browser groups
 GROUP_HEADER_BG = "#c8d2e1"
+GROUP_HEADER_SEL_BG = "#a8b8d0"
+GROUP_HEADER_FOCUS_BG = "#8fa3c2"
 GROUP_MEMBER_BG = "#ebeff7"
 
 # Semantic

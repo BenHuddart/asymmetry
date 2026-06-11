@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.gui.panels.draggable_handles import nearest_handle
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 
 
@@ -284,7 +285,7 @@ class ALCScanView(QWidget):
 
         self._peaks_results = QLabel("")
         self._peaks_results.setWordWrap(True)
-        self._peaks_results.setStyleSheet("color: #1f4d8a;")
+        self._peaks_results.setStyleSheet(f"color: {tokens.ACCENT};")
         outer.addWidget(self._peaks_results)
         return group
 
@@ -761,7 +762,7 @@ class ALCScanView(QWidget):
                 self._handle_artists[("region", row, col)] = line
         # Peak centres: draggable dashed markers.
         for row, b0 in self._peak_centres():
-            line = self._ax.axvline(b0, color="#2a7a3f", linestyle="--", linewidth=0.9, zorder=1)
+            line = self._ax.axvline(b0, color=tokens.OK, linestyle="--", linewidth=0.9, zorder=1)
             self._handle_artists[("peak", row, 1)] = line
         # Data as markers only (no joining line).
         self._ax.errorbar(
@@ -770,11 +771,17 @@ class ALCScanView(QWidget):
         has_overlay = False
         if self._baseline_curve is not None and self._baseline_curve.shape == plot["x"].shape:
             self._ax.plot(
-                plot["x"], self._baseline_curve, color="#a8332a", linewidth=1.2, label="baseline"
+                plot["x"],
+                self._baseline_curve,
+                color=tokens.ACCENT_RED,
+                linewidth=1.2,
+                label="baseline",
             )
             has_overlay = True
         if self._fit_curve is not None and self._fit_curve.shape == plot["x"].shape:
-            self._ax.plot(plot["x"], self._fit_curve, color="#1f4d8a", linewidth=1.4, label="fit")
+            self._ax.plot(
+                plot["x"], self._fit_curve, color=tokens.ACCENT, linewidth=1.4, label="fit"
+            )
             has_overlay = True
         if has_overlay:
             self._ax.legend(loc="best", fontsize=8)

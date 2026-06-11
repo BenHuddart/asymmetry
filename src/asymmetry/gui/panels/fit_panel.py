@@ -685,7 +685,7 @@ def _apply_domain_mismatch_warning(label: QLabel, model: CompositeModel, domain:
     foreign_names = sorted(
         component.name for component in model.components if component.domain != domain
     )
-    label.setStyleSheet("color: #A44A00; font-weight: bold;")
+    label.setStyleSheet(f"color: {tokens.WARN}; font-weight: bold;")
     label.setText("\u26a0 " + label.text())
     label.setToolTip(
         f"This model contains {'/'.join(sorted(foreign))}-domain component(s) "

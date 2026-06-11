@@ -20,8 +20,8 @@ from asymmetry.gui.styles.typography import header_font
 
 RESULTS_GROUP_SUCCESS_STYLE = (
     "QGroupBox {"
-    " background-color: #f4f8f4;"
-    " border: 1px solid #cbe1cf;"
+    f" background-color: {tokens.SUCCESS_BG};"
+    f" border: 1px solid {tokens.SUCCESS_BORDER};"
     " border-radius: 4px;"
     " margin-top: 10px;"
     "}"

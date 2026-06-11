@@ -53,8 +53,8 @@ _GROUP_TEMP_REL_TOL = 2e-3
 _GROUP_FIELD_ABS_TOL_G = 1e-3
 _LOG_TEMPERATURE_FOREGROUND = QColor(176, 36, 36)
 _GROUP_FIELD_REL_TOL = 1e-4
-_GROUP_HEADER_BACKGROUND = QColor(200, 210, 225)
-_GROUP_MEMBER_BACKGROUND = QColor(235, 239, 247)
+_GROUP_HEADER_BACKGROUND = QColor(tokens.GROUP_HEADER_BG)
+_GROUP_MEMBER_BACKGROUND = QColor(tokens.GROUP_MEMBER_BG)
 # Soft red tint used to mark runs that belong to the active fit series in
 # the trend panel.  Red is the FitSeries brand colour (ACCENT_RED_SOFT).
 _SERIES_HIGHLIGHT_BACKGROUND = QColor(tokens.ACCENT_RED_SOFT)
@@ -216,10 +216,10 @@ class _RowHighlightDelegate(QStyledItemDelegate):
     """
 
     _SENTINEL = "group:"
-    _HEADER_SEL_BG = QColor(0xA8, 0xB8, 0xD0)  # #a8b8d0
-    _HEADER_FOC_BG = QColor(0x8F, 0xA3, 0xC2)  # #8fa3c2
-    _MEMBER_FOC_BG = QColor(0xDF, 0xE8, 0xF4)  # #dfe8f4  accentSoft2
-    _MEMBER_SEL_BG = QColor(0xE8, 0xEE, 0xF7)  # #e8eef7  accentSoft
+    _HEADER_SEL_BG = QColor(tokens.GROUP_HEADER_SEL_BG)
+    _HEADER_FOC_BG = QColor(tokens.GROUP_HEADER_FOCUS_BG)
+    _MEMBER_FOC_BG = QColor(tokens.ACCENT_SOFT2)
+    _MEMBER_SEL_BG = QColor(tokens.ACCENT_SOFT)
     _ACCENT = QColor(tokens.ACCENT)
     _ACCENT_SOFT = QColor(31, 77, 138, 102)  # 40 % accent
     _WHITE = QColor("white")

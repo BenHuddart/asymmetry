@@ -84,7 +84,7 @@ QHeaderView::section:hover {
 }
 
 /* ── Tables ─────────────────────────────────────────────────────── */
-QTableWidget {
+QTableView {
     background-color: #ffffff;
     gridline-color: #dedcd6;
     selection-background-color: #e8eef7;
@@ -92,13 +92,13 @@ QTableWidget {
     border: 1px solid #dedcd6;
 }
 
-QTableWidget::item:focus {
+QTableView::item:focus {
     background-color: #dfe8f4;
     color: #1f4d8a;
 }
 
-QListWidget,
-QTreeWidget {
+QListView,
+QTreeView {
     background-color: #ffffff;
     selection-background-color: #e8eef7;
     selection-color: #1c1d20;
@@ -204,6 +204,115 @@ QScrollArea {
    QPushButton rules in ways that cause pseudo-state padding to revert to
    the platform default rather than the rule-specified value. The style
    definitions are centralised in widgets.py; only application is per-widget. */
+
+/* ── Menus ──────────────────────────────────────────────────────── */
+QMenu {
+    background-color: #ffffff;
+    color: #1c1d20;
+    border: 1px solid #dedcd6;
+    padding: 4px 0;
+}
+
+QMenu::item {
+    background-color: transparent;
+    padding: 4px 24px 4px 12px;
+}
+
+QMenu::item:selected {
+    background-color: #e8eef7;
+    color: #1c1d20;
+}
+
+QMenu::item:disabled {
+    color: #9a9a9e;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: #dedcd6;
+    margin: 4px 8px;
+}
+
+/* ── Tooltips ───────────────────────────────────────────────────── */
+QToolTip {
+    background-color: #ffffff;
+    color: #1c1d20;
+    border: 1px solid #c2c0b9;
+    padding: 3px 6px;
+}
+
+/* ── Scroll bars ────────────────────────────────────────────────── */
+QScrollBar:vertical {
+    background: #fafaf9;
+    width: 12px;
+    margin: 0;
+}
+
+QScrollBar:horizontal {
+    background: #fafaf9;
+    height: 12px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background: #c2c0b9;
+    min-height: 28px;
+    border-radius: 4px;
+    margin: 2px 3px;
+}
+
+QScrollBar::handle:horizontal {
+    background: #c2c0b9;
+    min-width: 28px;
+    border-radius: 4px;
+    margin: 3px 2px;
+}
+
+QScrollBar::handle:vertical:hover,
+QScrollBar::handle:horizontal:hover {
+    background: #9a9a9e;
+}
+
+QScrollBar::add-line, QScrollBar::sub-line {
+    width: 0;
+    height: 0;
+}
+
+QScrollBar::add-page, QScrollBar::sub-page {
+    background: transparent;
+}
+
+/* ── Splitters and dock separators ──────────────────────────────── */
+QSplitter::handle {
+    background-color: #f4f3f0;
+}
+
+QSplitter::handle:hover {
+    background-color: #dfe8f4;
+}
+
+QMainWindow::separator {
+    background-color: #f4f3f0;
+    width: 4px;
+    height: 4px;
+}
+
+QMainWindow::separator:hover {
+    background-color: #dfe8f4;
+}
+
+/* ── Progress bars ──────────────────────────────────────────────── */
+QProgressBar {
+    background-color: #f4f3f0;
+    border: 1px solid #dedcd6;
+    border-radius: 3px;
+    color: #1c1d20;
+    text-align: center;
+}
+
+QProgressBar::chunk {
+    background-color: #1f4d8a;
+}
 
 /* ── Plot-canvas scroll bar ─────────────────────────────────────── */
 QScrollBar#plotScroll:vertical {
