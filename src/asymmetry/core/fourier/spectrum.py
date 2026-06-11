@@ -37,7 +37,8 @@ from asymmetry.core.fourier.fft import (
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
-from asymmetry.core.transform.grouping import common_t0_for_groups
+from asymmetry.core.transform.grouping import common_t0_for_groups, group_names
+from asymmetry.core.utils.coerce import optional_float
 
 #: Minimum applied field (Gauss) for a diamagnetic fit to be attempted.
 _MIN_DIAMAG_FIELD_GAUSS = 5.0
@@ -166,8 +167,8 @@ class GroupSpectrumConfig:
             t0_offset_us=float(data.get("t0_offset_us", 0.0)),
             subtract_average_signal=bool(data.get("subtract_average_signal", True)),
             estimate_average_error=bool(data.get("estimate_average_error", False)),
-            t_min_us=_optional_float(data.get("t_min_us")),
-            t_max_us=_optional_float(data.get("t_max_us")),
+            t_min_us=optional_float(data.get("t_min_us")),
+            t_max_us=optional_float(data.get("t_max_us")),
             selected_group_ids=[int(g) for g in selected] if isinstance(selected, list) else None,
             group_phase_degrees=group_phase_degrees,
             pulse_compensation=bool(data.get("pulse_compensation", False)),
@@ -184,20 +185,11 @@ class GroupSpectrumConfig:
             burg_order_min=int(data.get("burg_order_min", 2)),
             burg_order_max=int(data.get("burg_order_max", 40)),
             remove_diamag=bool(data.get("remove_diamag", False)),
-            correlation_reference_field_gauss=_optional_float(
+            correlation_reference_field_gauss=optional_float(
                 data.get("correlation_reference_field_gauss")
             ),
             correlation_order=int(data.get("correlation_order", DEFAULT_CORR_ORDER)),
         )
-
-
-def _optional_float(value: object) -> float | None:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _coerce_exclusion_ranges(value: object) -> list[tuple[float, float]]:
@@ -249,24 +241,6 @@ def precompute_group_fourier_inputs(
     if all_group_indices:
         reference_t0_bin = common_t0_for_groups(prepared_histograms, *all_group_indices)
     return prepared_histograms, int(reference_t0_bin)
-
-
-def _group_names(run: Run) -> dict[int, str]:
-    grouping = run.grouping if isinstance(run.grouping, dict) else {}
-    groups = grouping.get("groups") if isinstance(grouping, dict) else None
-    if not isinstance(groups, dict):
-        return {}
-    raw_names = grouping.get("group_names")
-    names = raw_names if isinstance(raw_names, dict) else {}
-    resolved: dict[int, str] = {}
-    for raw_id in groups:
-        try:
-            gid = int(raw_id)
-        except (TypeError, ValueError):
-            continue
-        name = names.get(gid, names.get(str(gid)))
-        resolved[gid] = str(name) if name is not None else f"Group {gid}"
-    return resolved
 
 
 def _reference_field_gauss(run: Run, dataset: MuonDataset | None) -> float | None:
@@ -346,11 +320,11 @@ def compute_average_group_spectrum(
     phase), and average the display channels (or, for entropy mode, average the
     complex spectra then run the entropy optimiser).
     """
-    group_names = _group_names(run)
-    if not group_names:
+    names_by_group = group_names(run)
+    if not names_by_group:
         return None
 
-    all_ids = sorted(group_names)
+    all_ids = sorted(names_by_group)
     if config.selected_group_ids is None:
         selected = list(all_ids)
     else:
@@ -421,7 +395,7 @@ def compute_average_group_spectrum(
 
         if first_group_dataset is None:
             first_group_dataset = group_dataset
-        selected_names.append(group_names.get(group_id, f"Group {group_id}"))
+        selected_names.append(names_by_group.get(group_id, f"Group {group_id}"))
 
         if is_burg:
             signal, dt = prepare_fft_time_signal(
