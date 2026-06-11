@@ -1,6 +1,6 @@
 # Mantid (muon slice) feature inventory
 
-**Upstream:** `/Users/bhuddart/Source/mantid`  
+**Upstream:** `$MANTID_SRC`  
 **Authors of original:** Mantid project team (ISIS + ORNL +
 contributors)  
 **Language:** C++ core (Framework) + Python/PySide2 (GUI) +

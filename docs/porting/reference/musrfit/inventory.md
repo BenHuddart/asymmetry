@@ -1,6 +1,6 @@
 # musrfit feature inventory
 
-**Upstream:** `/Users/bhuddart/Source/musrfit`  
+**Upstream:** `$MUSRFIT_SRC`  
 **Authors of original:** Andreas Suter, Bastian Wojek (PSI)  
 **Language:** C++ on top of ROOT + Minuit2; Qt5/Qt6 for editors  
 **Pre-existing catalog reused:** `FEATURE_MAP.json` (slugs:

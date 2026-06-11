@@ -2,7 +2,7 @@
 
 Notation reference: *Muon Spectroscopy: An Introduction* (Blundell, De Renzi,
 Lancaster, Pratt; OUP 2022) = **MS-Intro**. WiMDA code references are to
-`/Users/bhuddart/Source/WiMDA/src/` at the revision studied (June 2026 checkout).
+`$WIMDA_SRC/src/` at the revision studied (June 2026 checkout).
 
 ## Cross-cutting conventions
 

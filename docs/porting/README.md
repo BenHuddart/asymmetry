@@ -6,6 +6,22 @@ into Asymmetry from reference programs such as WiMDA, musrfit, and Mantid.
 The rule is simple: do not start implementing a ported feature until the study
 artifacts exist in stable paths under `docs/porting/<feature-slug>/`.
 
+## Reference-source placeholders
+
+The study notes cite the reference programs by path. To keep them portable, those
+paths are written as placeholders that refer to local checkouts on your own
+machine:
+
+- `$WIMDA_SRC` — root of a local WiMDA source checkout (e.g. its `src/` holds the
+  Object Pascal units).
+- `$MUSRFIT_SRC` — root of a local musrfit checkout (example data lives in
+  `$MUSRFIT_SRC/doc/examples/data`; also used by the reader-parity tests via the
+  `ASYMMETRY_MUSRFIT_DATA` environment variable).
+- `$MANTID_SRC` — root of a local Mantid checkout.
+
+These reference sources are studied, not vendored, and are not required to build
+or use Asymmetry — only to re-trace the porting notes.
+
 ## Two-Pass Workflow
 
 ### 1. Study pass

@@ -39,7 +39,7 @@ hardware fixers (dropped).
 ## Reference programs and sources
 
 - **WiMDA** — primary parity reference; all cited routines read directly from
-  the Pascal at `/Users/bhuddart/Source/WiMDA/src` (transcriptions in
+  the Pascal at `$WIMDA_SRC/src` (transcriptions in
   [comparison.md](comparison.md)).
 - **Mantid / musrfit** — cross-checks on workflow conventions (verification
   oracle only for any GPL code; never vendored).

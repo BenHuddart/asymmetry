@@ -1,7 +1,7 @@
 # Data-reduction parity — cross-program comparison
 
 Date: 2026-06-10. All WiMDA citations are from a direct reading of the Pascal
-at `/Users/bhuddart/Source/WiMDA/src` (ignoring `__history/`/`__recovery/`);
+at `$WIMDA_SRC/src` (ignoring `__history/`/`__recovery/`);
 Asymmetry citations are against `main` at `19f242b`. Textbook citations are to
 Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy: An Introduction*
 (book page numbers). The umbrella brief was verified against the source —

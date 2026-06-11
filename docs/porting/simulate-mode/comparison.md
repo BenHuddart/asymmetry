@@ -2,7 +2,7 @@
 
 Parity of functionality, not implementation: every divergence from WiMDA is
 listed with both behaviours. WiMDA line references are to
-`/Users/bhuddart/Source/WiMDA/src` (read directly 2026-06-10; `__history/`
+`$WIMDA_SRC/src` (read directly 2026-06-10; `__history/`
 and `__recovery/` ignored).
 
 ## Cross-program overview
