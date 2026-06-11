@@ -3925,6 +3925,30 @@ class TestPlotWorkspaceDomainPhase7:
         assert not mainwindow._raw_counts_action.isChecked()
         assert mainwindow._domain_buttons_by_token["groups"].isChecked()
 
+    def test_loading_a_file_enables_data_gated_views(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: Open plotted the loaded run but never made it current,
+        so the availability sync was skipped and Individual groups / MaxEnt
+        stayed greyed out until the user clicked the run in the browser."""
+        mw = mainwindow
+        assert not mw._domain_buttons_by_token["groups"].isEnabled()
+        assert not mw._domain_buttons_by_token["maxent"].isEnabled()
+
+        def _fake_load_file(_path: str) -> MuonDataset:
+            return _make_fourier_ready_dataset(8861, with_grouping=True)
+
+        monkeypatch.setattr(mw, "_load_file", _fake_load_file)
+        mw._load_files(["/tmp/run8861.nxs"])
+
+        assert mw._current_dataset is not None
+        assert int(mw._current_dataset.run_number) == 8861
+        assert mw._domain_buttons_by_token["groups"].isEnabled()
+        assert mw._domain_buttons_by_token["maxent"].isEnabled()
+        assert mw._raw_counts_action.isEnabled()
+        assert mw._plot_workspace.is_view_enabled("groups")
+        assert mw._plot_workspace.is_view_enabled("maxent")
+
     def test_domain_click_heals_stale_workspace_availability(
         self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
     ) -> None:

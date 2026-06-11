@@ -2231,9 +2231,12 @@ class MainWindow(QMainWindow):
                 self._log_panel.log(f"ERROR loading {path}: {e}")
                 failed += 1
 
-        # Plot the last successfully loaded dataset
+        # Plot the last successfully loaded dataset and make it current — it
+        # IS what the user now sees, and availability (Individual groups /
+        # MaxEnt / raw counts) is derived from the current dataset.
         if last_dataset:
             self._plot_panel.plot_dataset(last_dataset)
+            self._current_dataset = last_dataset
 
         # Update selected datasets for global fitting
         self._update_selected_datasets()
@@ -7599,7 +7602,9 @@ class MainWindow(QMainWindow):
                 self._frequency_plot_panel.clear()
                 self._fit_panel.set_dataset(None)
 
-            self._refresh_time_view_selector()
+        # Availability must track every selection update — including "nothing
+        # is current" (after removals) — or the data-gated buttons go stale.
+        self._refresh_time_view_selector()
 
         # Multi-selection render mode depends on the plot-panel Overlay toggle.
         if len(selected) > 1:
