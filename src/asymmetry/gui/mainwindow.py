@@ -702,10 +702,8 @@ class MainWindow(QMainWindow):
         # Fit / Fourier / Parameters live in the right-hand inspector deck
         # (visible by default, per-representation; see
         # _apply_inspector_for_domain) and are recoverable from the View menu.
-        self._global_parameter_fit_toolbar_action = self._main_toolbar.addAction(
-            "Global Fit", self._on_global_parameter_fit
-        )
-        self._global_parameter_fit_toolbar_action.setEnabled(False)
+        # Global Parameter Fit is an advanced feature reached via the
+        # Analysis menu only.
         self._main_toolbar.addSeparator()
 
         # Domain → representation segmented control under "Time" and
@@ -5711,8 +5709,6 @@ class MainWindow(QMainWindow):
         else:
             self._global_parameter_fit_action.setText("Global Parameter Fit")
         self._global_parameter_fit_action.setEnabled(bool(has_result))
-        if hasattr(self, "_global_parameter_fit_toolbar_action"):
-            self._global_parameter_fit_toolbar_action.setEnabled(bool(has_result))
 
     def _on_gle_setup(self) -> None:
         """Open the GLE executable configuration dialog."""

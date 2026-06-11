@@ -1936,6 +1936,8 @@ class TestMainWindowBasic:
         assert "Fit" not in texts
         assert "FFT" not in texts
         assert "Params" not in texts
+        # Global Parameter Fit is an advanced feature, menu-bar only.
+        assert "Global Fit" not in texts
 
     def test_toolbar_has_domain_segmented_control(self, mainwindow: MainWindow) -> None:
         """Toolbar should expose five Domain buttons (Time 3 + Frequency 2)."""
