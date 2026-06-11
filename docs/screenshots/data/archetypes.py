@@ -39,19 +39,29 @@ from asymmetry.core.simulate import (
     poisson_asymmetry_errors,
 )
 
+# Shared rounded textbook constants — single authority in core.simulate_presets,
+# imported here so the gallery presets and the documentation screenshots agree
+# by construction (reconciliation F12). The docs-only constants below
+# (γ_μ in MHz/T, MgB₂/YBCO parameters, the legacy lifetime pin) stay local.
+from asymmetry.core.simulate_presets import (
+    DELTA_AG_PER_US,
+    GAMMA_MU_MHZ_PER_G,
+    R_MUF_ANG,
+    TC_EUO_K,
+)
+
 # Legacy rounded lifetime, kept so the documentation data stay byte-stable.
 # The promoted core builder (asymmetry.core.simulate) defaults to the
 # canonical MUON_LIFETIME_US; the wrapper below pins this value explicitly.
 MUON_LIFETIME_US = 2.197
 
 # Physical constants and material parameters --------------------------------
+# GAMMA_MU_MHZ_PER_G, TC_EUO_K, DELTA_AG_PER_US and R_MUF_ANG are imported above
+# from core.simulate_presets (the shared authority). The rest are docs-only and
+# have no counterpart in the gallery presets.
 
-GAMMA_MU_MHZ_PER_G = 0.01355  # γ_μ / (2π) in MHz/G ≈ 13.55 kHz/G
-GAMMA_MU_MHZ_PER_T = 135.5  # γ_μ / (2π) in MHz/T
+GAMMA_MU_MHZ_PER_T = 135.5  # γ_μ / (2π) in MHz/T (docs-only)
 
-TC_EUO_K = 69.0  # EuO Curie temperature
-DELTA_AG_PER_US = 0.39  # Ag nuclear dipolar Δ (μs⁻¹), Ch 5.2
-R_MUF_ANG = 1.17  # F-μ-F equilibrium distance (Å)
 TC_MGB2_K = 36.0  # MgB₂ critical temperature
 TC_YBCO_K = 90.0  # YBa₂Cu₃O₇₋δ critical temperature
 LAMBDA_YBCO_NM = 130.0  # YBCO ab-plane penetration depth

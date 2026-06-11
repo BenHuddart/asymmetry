@@ -70,6 +70,38 @@ def rebin(
     return t, v, e
 
 
+def rebin_counts(
+    time: NDArray[np.float64],
+    counts: NDArray[np.float64],
+    factor: int,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Return count-preserving bunched traces (sum counts, mean times).
+
+    Unlike :func:`rebin`, which is value-domain (mean of values, errors in
+    quadrature ÷ factor), this merges neighbouring bins by *summing* the
+    counts while moving the time coordinate to the centre of the wider
+    effective bin — the right combiner for grouped count-like signals
+    (fit-input traces, grouped Fourier inputs). The two are deliberately
+    distinct: a value-domain mean would corrupt Poisson statistics on counts.
+
+    ``factor`` is clamped to ``max(1, int(factor))``; a no-op factor or a
+    series shorter than the factor returns ``float64`` copies of the inputs.
+    """
+    bunch_factor = max(1, int(factor))
+    if bunch_factor <= 1 or counts.size < bunch_factor:
+        return np.asarray(time, dtype=np.float64), np.asarray(counts, dtype=np.float64)
+
+    n_new = counts.size // bunch_factor
+    trimmed = n_new * bunch_factor
+    rebinned_time = (
+        np.asarray(time[:trimmed], dtype=np.float64).reshape(n_new, bunch_factor).mean(axis=1)
+    )
+    rebinned_counts = (
+        np.asarray(counts[:trimmed], dtype=np.float64).reshape(n_new, bunch_factor).sum(axis=1)
+    )
+    return rebinned_time, rebinned_counts
+
+
 def resolve_binning_mode(grouping: dict[str, Any] | None) -> tuple[str, float, float]:
     """Return ``(mode, bin0_us, bin10_us)`` from a grouping payload.
 

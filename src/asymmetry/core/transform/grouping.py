@@ -279,6 +279,31 @@ def effective_grouping(run: Run, grouping_ref: dict | None = None) -> dict:
     return base
 
 
+def group_names(run: Run) -> dict[int, str]:
+    """Return ``{group_id: display name}`` for a run's grouping.
+
+    Reads the optional ``group_names`` map from the run's grouping payload
+    (keyed by ``int`` or stringified id), falling back to ``"Group <id>"`` for
+    any group without an explicit name. Returns ``{}`` when the run has no
+    group definitions.
+    """
+    grouping = run.grouping if isinstance(run.grouping, dict) else {}
+    groups = grouping.get("groups") if isinstance(grouping, dict) else None
+    if not isinstance(groups, dict):
+        return {}
+    raw_names = grouping.get("group_names")
+    names = raw_names if isinstance(raw_names, dict) else {}
+    resolved: dict[int, str] = {}
+    for raw_id in groups:
+        try:
+            gid = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        name = names.get(gid, names.get(str(gid)))
+        resolved[gid] = str(name) if name is not None else f"Group {gid}"
+    return resolved
+
+
 @dataclass
 class GroupedForwardBackward:
     """Forward/backward grouped counts plus the metadata to reduce them."""

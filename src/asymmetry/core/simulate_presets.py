@@ -29,15 +29,21 @@ from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.simulate import build_builtin_template, simulate_run
 
-#: γ_μ / 2π in MHz/G (matches docs/screenshots/data/archetypes.py).
-_GAMMA_MU_MHZ_PER_G = 0.01355
+# Shared rounded textbook constants — the single public authority for the
+# archetype tables. ``docs/screenshots/data/archetypes.py`` imports these so
+# the gallery presets and the documentation screenshots agree by construction.
+# They are DELIBERATELY rounded for clean textbook values and are distinct from
+# the CODATA constants in ``core/utils/constants.py`` (e.g.
+# ``MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = 135.538817``); the unification is within
+# the rounded table, not across it.
+GAMMA_MU_MHZ_PER_G = 0.01355  # γ_μ / 2π in MHz/G
+DELTA_AG_PER_US = 0.39  # Ag nuclear dipolar width, Ch. 5
+TC_EUO_K = 69.0  # EuO Curie temperature, Ch. 6
+R_MUF_ANG = 1.17  # F-μ-F equilibrium separation, Ch. 4
 
-# Material parameters (textbook / classic μSR literature) ---------------------
-_DELTA_AG_PER_US = 0.39  # Ag nuclear dipolar width, Ch. 5
-_TC_EUO_K = 69.0  # EuO Curie temperature, Ch. 6
+# Preset-only material parameters (not shared with the docs table) ------------
 _NU0_EUO_MHZ = 28.0  # EuO T→0 precession frequency, Ch. 6 (Fig. 6.6)
 _BETA_EUO = 0.40  # EuO order-parameter exponent
-_R_MUF_ANG = 1.17  # F-μ-F equilibrium separation, Ch. 4
 _TF_YBCO_G = 200.0  # YBCO transverse field (chosen for clean cycles)
 
 
@@ -86,10 +92,10 @@ def _euo_specs() -> tuple[PresetRunSpec, ...]:
     specs: list[PresetRunSpec] = []
     for temp in (30.0, 50.0, 65.0, 73.0, 90.0):
         damping = damping_floor + lambda_peak * float(
-            np.exp(-(((temp - _TC_EUO_K) / delta_t_k) ** 2))
+            np.exp(-(((temp - TC_EUO_K) / delta_t_k) ** 2))
         )
-        if temp < _TC_EUO_K - 0.5:
-            order = (1.0 - temp / _TC_EUO_K) ** _BETA_EUO
+        if temp < TC_EUO_K - 0.5:
+            order = (1.0 - temp / TC_EUO_K) ** _BETA_EUO
             frequency = _NU0_EUO_MHZ * order
             specs.append(
                 PresetRunSpec(
@@ -128,7 +134,7 @@ def _ag_lf_specs() -> tuple[PresetRunSpec, ...]:
         PresetRunSpec(
             model_name="LFKuboToyabe",
             model=lfkt,
-            parameters={"A0": 24.0, "Delta": _DELTA_AG_PER_US, "B_L": field_g, "baseline": 0.0},
+            parameters={"A0": 24.0, "Delta": DELTA_AG_PER_US, "B_L": field_g, "baseline": 0.0},
             title=f"Ag LF {field_g:g} G",
             temperature=20.0,
             field=field_g,
@@ -156,7 +162,7 @@ def _build_registry() -> dict[str, SimulatePreset]:
                 PresetRunSpec(
                     model_name="StaticGKT_ZF",
                     model=MODELS["StaticGKT_ZF"].function,
-                    parameters={"A0": 24.0, "Delta": _DELTA_AG_PER_US, "baseline": 0.0},
+                    parameters={"A0": 24.0, "Delta": DELTA_AG_PER_US, "baseline": 0.0},
                     title="Ag ZF 20 K (Kubo–Toyabe)",
                     temperature=20.0,
                     field=0.0,
@@ -205,7 +211,7 @@ def _build_registry() -> dict[str, SimulatePreset]:
                 PresetRunSpec(
                     model_name="FmuF_Linear+Constant",
                     model=fmuf,
-                    parameters={"A_1": 22.0, "r_muF": _R_MUF_ANG, "A_bg": 0.2},
+                    parameters={"A_1": 22.0, "r_muF": R_MUF_ANG, "A_bg": 0.2},
                     title="PbF₂ ZF 5 K (F-μ-F)",
                     temperature=5.0,
                     field=0.0,
@@ -228,7 +234,7 @@ def _build_registry() -> dict[str, SimulatePreset]:
                 PresetRunSpec(
                     *_oscillatory(
                         A0=20.0,
-                        frequency=_GAMMA_MU_MHZ_PER_G * _TF_YBCO_G * 1.005,
+                        frequency=GAMMA_MU_MHZ_PER_G * _TF_YBCO_G * 1.005,
                         phase=0.0,
                         Lambda=0.08,
                         baseline=0.0,

@@ -26,6 +26,8 @@ from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.maxent.pulse import pulse_amplitude_phase
 from asymmetry.core.maxent.specbg import apply_maxent_specbg
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
+from asymmetry.core.transform.grouping import group_names
+from asymmetry.core.utils.coerce import optional_float
 
 _MAX_SPECTRUM_POINTS = 1 << 20
 _MIN_POSITIVE = 1.0e-15
@@ -73,18 +75,8 @@ def default_n_spectrum_points(n_time_points: int) -> int:
     return min(points, _MAX_SPECTRUM_POINTS)
 
 
-def _optional_float(value: object) -> float | None:
-    if value is None:
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if np.isfinite(number) else None
-
-
 def _float_or_default(value: object, default: float) -> float:
-    parsed = _optional_float(value)
+    parsed = optional_float(value)
     return float(default) if parsed is None else parsed
 
 
@@ -112,7 +104,7 @@ def _parse_phase_table(value: object) -> dict[int, float]:
         return {}
     parsed: dict[int, float] = {}
     for key, raw in value.items():
-        phase = _optional_float(raw)
+        phase = optional_float(raw)
         if phase is None:
             continue
         try:
@@ -234,8 +226,8 @@ class MaxEntConfig:
         return cls(
             n_spectrum_points=parsed_points,
             default_level=max(_MIN_POSITIVE, _float_or_default(data.get("default_level"), 0.01)),
-            f_min_mhz=_optional_float(data.get("f_min_mhz")),
-            f_max_mhz=_optional_float(data.get("f_max_mhz")),
+            f_min_mhz=optional_float(data.get("f_min_mhz")),
+            f_max_mhz=optional_float(data.get("f_max_mhz")),
             auto_window=bool(data.get("auto_window", True)),
             window_half_width_gauss=max(
                 0.0, _float_or_default(data.get("window_half_width_gauss"), 300.0)
@@ -252,16 +244,16 @@ class MaxEntConfig:
             use_deadtime_correction=bool(data.get("use_deadtime_correction", True)),
             selected_group_ids=_parse_group_ids(selected),
             group_phase_degrees=_parse_phase_table(phases),
-            t_min_us=_optional_float(data.get("t_min_us")),
-            t_max_us=_optional_float(data.get("t_max_us")),
+            t_min_us=optional_float(data.get("t_min_us")),
+            t_max_us=optional_float(data.get("t_max_us")),
             time_binning_factor=_parse_positive_int(data.get("time_binning_factor", 1)),
             pulse_mode=_parse_choice(
                 data.get("pulse_mode"), ("ignore", "single", "double"), "ignore"
             ),
             pulse_half_width_us=max(0.0, _float_or_default(data.get("pulse_half_width_us"), 0.05)),
             pulse_separation_us=max(0.0, _float_or_default(data.get("pulse_separation_us"), 0.324)),
-            exclude_t_min_us=_optional_float(data.get("exclude_t_min_us")),
-            exclude_t_max_us=_optional_float(data.get("exclude_t_max_us")),
+            exclude_t_min_us=optional_float(data.get("exclude_t_min_us")),
+            exclude_t_max_us=optional_float(data.get("exclude_t_max_us")),
             mode=_parse_choice(data.get("mode"), ("general", "zf_lf"), "general"),
             specbg_enabled=bool(data.get("specbg_enabled", False)),
             specbg_gaussian_width_mhz=max(
@@ -481,23 +473,6 @@ class MaxEntResult:
         return dataset
 
 
-def _group_names(run: Run) -> dict[int, str]:
-    grouping = run.grouping if isinstance(run.grouping, dict) else {}
-    groups = grouping.get("groups") if isinstance(grouping, dict) else None
-    if not isinstance(groups, dict):
-        return {}
-    raw_names = grouping.get("group_names")
-    names = raw_names if isinstance(raw_names, dict) else {}
-    resolved: dict[int, str] = {}
-    for raw_id in groups:
-        try:
-            gid = int(raw_id)
-        except (TypeError, ValueError):
-            continue
-        resolved[gid] = str(names.get(gid, names.get(str(gid), f"Group {gid}")))
-    return resolved
-
-
 def _parse_positive_int(value: object, default: int = 1) -> int:
     try:
         return max(1, int(value))
@@ -522,8 +497,8 @@ def estimate_maxent_workload(
 ) -> MaxEntWorkloadEstimate:
     """Estimate dense-matrix work for a MaxEnt run without building matrices."""
     resolved_config = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
-    group_names = _group_names(run)
-    all_ids = sorted(group_names)
+    names_by_group = group_names(run)
+    all_ids = sorted(names_by_group)
     if resolved_config.selected_group_ids is None:
         selected = all_ids
     else:
@@ -621,8 +596,8 @@ def build_maxent_input(
     """Build grouped raw-count MaxEnt input from *run* and *config*."""
     resolved_config = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
     run = _run_with_maxent_binning(run, resolved_config)
-    group_names = _group_names(run)
-    if not group_names:
+    names_by_group = group_names(run)
+    if not names_by_group:
         raise ValueError("MaxEnt requires detector groups.")
     if not run.histograms:
         raise ValueError("MaxEnt requires raw detector histograms.")
@@ -644,7 +619,7 @@ def build_maxent_input(
             and bool(grouping.get("deadtime_correction", False)),
         )
 
-    all_ids = sorted(group_names)
+    all_ids = sorted(names_by_group)
     if resolved_config.selected_group_ids is None:
         selected = all_ids
     else:
@@ -721,7 +696,7 @@ def build_maxent_input(
         groups.append(
             MaxEntGroupInput(
                 group_id=int(group_id),
-                group_name=group_names.get(group_id, f"Group {group_id}"),
+                group_name=names_by_group.get(group_id, f"Group {group_id}"),
                 time_us=time,
                 signal=normalized,
                 sigma=normalized_sigma,

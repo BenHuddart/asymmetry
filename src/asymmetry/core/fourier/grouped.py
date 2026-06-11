@@ -19,33 +19,8 @@ from asymmetry.core.transform.grouping import (
     good_frames,
     resolve_group_indices,
 )
+from asymmetry.core.transform.rebin import rebin_counts
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
-
-
-def _rebin_group_counts(
-    time: np.ndarray,
-    counts: np.ndarray,
-    factor: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return WiMDA-style bunched grouped counts.
-
-    Grouped Fourier inputs are count-like signals, so bunching should merge
-    neighboring bins by summing counts while moving the time coordinate to the
-    center of the wider effective bin.
-    """
-    bunch_factor = max(1, int(factor))
-    if bunch_factor <= 1 or counts.size < bunch_factor:
-        return np.asarray(time, dtype=np.float64), np.asarray(counts, dtype=np.float64)
-
-    n_new = counts.size // bunch_factor
-    trimmed = n_new * bunch_factor
-    rebinned_time = (
-        np.asarray(time[:trimmed], dtype=np.float64).reshape(n_new, bunch_factor).mean(axis=1)
-    )
-    rebinned_counts = (
-        np.asarray(counts[:trimmed], dtype=np.float64).reshape(n_new, bunch_factor).sum(axis=1)
-    )
-    return rebinned_time, rebinned_counts
 
 
 def _group_background_value_for_group(
@@ -392,7 +367,7 @@ def build_group_signal_dataset(
     axis_start = first_good - common_t0
     time = (np.arange(trimmed_counts.size, dtype=float) + float(axis_start)) * bin_width
     if bunch_factor > 1:
-        time, trimmed_counts = _rebin_group_counts(time, trimmed_counts, bunch_factor)
+        time, trimmed_counts = rebin_counts(time, trimmed_counts, bunch_factor)
 
     scale = np.ones_like(trimmed_counts, dtype=np.float64)
     if apply_lifetime_correction and trimmed_counts.size > 0:
