@@ -177,7 +177,10 @@ def correlation_spectrum(
     # (the lower line buried in DC/baseline).
     diamag_mhz = G_MU_MHZ_PER_G * field
     lower_floor = max(f_min, diamag_mhz + 2.0 * resolution)
-    resolvable = lambda nu12, nu34: (nu12 >= lower_floor) & (nu34 <= f_max) & np.isfinite(nu34)
+
+    def resolvable(nu12: NDArray[np.float64], nu34: NDArray[np.float64]) -> NDArray[np.bool_]:
+        """True where the pair is a measurable radical line pair."""
+        return (nu12 >= lower_floor) & (nu34 <= f_max) & np.isfinite(nu34)
 
     if a_axis is None:
         # ν₃₄ rises monotonically with A and ν₃₄ ≥ A/2 at high field, so
