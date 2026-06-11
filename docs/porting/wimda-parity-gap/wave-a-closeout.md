@@ -71,7 +71,13 @@ genuinely open. Revisions needed before launch (ranked):
    scope; note "Overlay" now names multi-run overlay (rename the F,B overlay
    item); all three touchpoint files grew substantially.
 
-## 4. Collision watchlist (flag-only; reconciliation session to investigate)
+## 4. Collision watchlist — RESOLVED (reconciliation study, 2026-06-11)
+
+Every flag below now has an investigated verdict agreed with Ben and a
+scheduled phase: see [reconciliation-study.md](reconciliation-study.md)
+(evidence + decisions, including one new flag NEW-R1 and three partial
+refutations) and [reconciliation-plan.md](reconciliation-plan.md) (five
+phases). The table is kept as the original point-in-time record.
 
 The recurring pattern is not duplicated implementations but **N-way concept
 proliferation without reconciliation/promote paths**, plus a few literal
@@ -104,13 +110,13 @@ Not collisions (checked): free-τ (single `MUON_LIFETIME_US` source);
 FieldUnit vs plot panel units (migrated cleanly, modulo F2); simulate
 multi-group vs data-group co-add (different operations).
 
-## 5. Suggested next-session agenda (collision reconciliation)
+## 5. Suggested next-session agenda (collision reconciliation) — DONE
 
-Quick mechanical wins first: N1/N2 (de-duplicate helpers), F2 (single
-reference-field resolver), F12 (generate one table from the other). Then the
-promote/reconcile design pair F5 + F7 (t0 and α promotion, mirroring the
-deadtime pattern), the background story F3 + N3, and the UX/docs batch
-F1/F4/F8/F10/F11/F13/N4/N5/N6. Note for F3: the strays PR (#44) added the
-Fourier-input tail-fit as a mode of the existing background options — it
-reuses the single estimator by design, but the F3 stacking-UX investigation
-should now count it among the stackable options.
+This agenda was executed on 2026-06-11; it is superseded by
+[reconciliation-plan.md](reconciliation-plan.md). The shape held up
+(mechanical wins first, then the promote pair, then backgrounds, then
+UX/docs), with corrections recorded in the study: the F3 stacking fear and
+N3 bias are interpretive traps, not mechanical ones (the four background
+options — including the PR #44 tail-fit — are mutually exclusive and applied
+once); F4 has two real paths, not three; and two of F10's "three" containers
+were already one (`FitSeries`).
