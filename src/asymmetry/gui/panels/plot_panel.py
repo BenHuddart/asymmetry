@@ -163,6 +163,11 @@ class PlotPanel(QWidget):
         self._current_frequency_x_unit = "frequency_mhz"
         self._frequency_axis_relative_to_reference = False
         self._frequency_reference_mhz: float | None = None
+        #: True when the active frequency dataset is a muoniated-radical
+        #: correlation spectrum, whose x-axis is a hyperfine coupling (A_µ, MHz)
+        #: and must not be field-converted by the MHz/G/T selector.
+        self._frequency_axis_is_correlation = False
+        self._frequency_correlation_x_label = "Muon hyperfine coupling Aμ (MHz)"
         self._frequency_x_limits_by_unit: dict[str, tuple[float, float]] = {}
         #: Optional ``(run_number, time_us, signal)`` diamagnetic-fit overlay for
         #: the time view; only drawn when the displayed run matches ``run_number``.
@@ -680,6 +685,8 @@ class PlotPanel(QWidget):
         """Return the x-axis label for the current display unit."""
         if not self._is_frequency_plot_panel():
             return "Time (μs)"
+        if self._frequency_axis_is_correlation:
+            return self._frequency_correlation_x_label
         return {
             "field_gauss": "Field (G)",
             "field_tesla": "Field (T)",
@@ -704,7 +711,7 @@ class PlotPanel(QWidget):
     def _convert_frequency_axis_for_display(self, x_values) -> np.ndarray:
         """Convert canonical MHz axis data into the selected absolute display unit."""
         arr = np.asarray(x_values, dtype=float)
-        if not self._is_frequency_plot_panel():
+        if not self._is_frequency_plot_panel() or self._frequency_axis_is_correlation:
             return arr
         field_unit = _FREQUENCY_X_UNIT_FIELD.get(self._current_frequency_x_unit, "mhz")
         if field_unit == "mhz":
@@ -1576,6 +1583,7 @@ class PlotPanel(QWidget):
         if not self._is_frequency_plot_panel():
             return
         self._frequency_reference_mhz = self._frequency_reference_for_dataset(dataset)
+        self._update_correlation_axis_state(dataset)
         if hasattr(self, "_frequency_reference_spin"):
             gauss = (
                 self._frequency_reference_mhz / self._mhz_per_gauss()
@@ -1584,6 +1592,36 @@ class PlotPanel(QWidget):
             )
             with QSignalBlocker(self._frequency_reference_spin):
                 self._frequency_reference_spin.setValue(gauss)
+
+    def _update_correlation_axis_state(self, dataset: MuonDataset | None) -> None:
+        """Lock the field-unit selector when *dataset* is a correlation spectrum.
+
+        A muoniated-radical correlation spectrum's x-axis is the muon hyperfine
+        coupling A_µ (MHz), not γ_µ·B, so the MHz/G/T field selector and the
+        applied-field reference are meaningless and disabled; the axis keeps its
+        own label from the dataset metadata.
+        """
+        is_correlation = bool(
+            dataset is not None
+            and isinstance(dataset.metadata, dict)
+            and dataset.metadata.get("correlation_axis") is True
+        )
+        self._frequency_axis_is_correlation = is_correlation
+        if is_correlation:
+            raw_label = dataset.metadata.get("x_label")
+            if isinstance(raw_label, str) and raw_label.strip():
+                self._frequency_correlation_x_label = raw_label
+            # Force MHz passthrough (no field conversion) while a correlation
+            # spectrum is shown.
+            self._current_frequency_x_unit = "frequency_mhz"
+            self._frequency_axis_relative_to_reference = False
+        if hasattr(self, "_frequency_x_unit_combo"):
+            if is_correlation:
+                with QSignalBlocker(self._frequency_x_unit_combo):
+                    idx = self._frequency_x_unit_combo.findData("frequency_mhz")
+                    if idx >= 0:
+                        self._frequency_x_unit_combo.setCurrentIndex(idx)
+            self._frequency_x_unit_combo.setEnabled(not is_correlation)
 
     def update_frequency_reference(self, dataset: MuonDataset | None) -> None:
         """Public entry-point: sync the reference field from *dataset* metadata.

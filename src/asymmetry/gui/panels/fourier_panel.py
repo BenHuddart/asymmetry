@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core.fourier.correlation import DEFAULT_CORR_ORDER
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.widgets import apply_param_table_style
@@ -47,6 +48,7 @@ _PHASE_MODE_LABELS = (
     "phaseOptReal",
     "Real+Imag",
     "Resolution (Burg)",
+    "Correlation (radical)",
 )
 
 _LEGACY_DISPLAY_TO_MODE = {
@@ -60,6 +62,8 @@ _LEGACY_DISPLAY_TO_MODE = {
     "real+imag": "Real+Imag",
     "real_imag": "Real+Imag",
     "burg": "Resolution (Burg)",
+    "correlation": "Correlation (radical)",
+    "correlation (radical)": "Correlation (radical)",
 }
 
 _PHASE_ACTIVE_COLOR = tokens.ACCENT
@@ -246,6 +250,16 @@ class FourierPanel(QWidget):
             "strong peaks and carries no uncertainties. Use fitting or MaxEnt "
             "for quantitative results."
         )
+        self._correlation_radio = QRadioButton("Correlation (radical) — specialist")
+        self._correlation_radio.setStyleSheet(
+            f"QRadioButton {{ color: {tokens.WARN}; font-weight: 600; padding-bottom: 2px; }}"
+        )
+        self._correlation_radio.setToolTip(
+            "Muoniated-radical correlation spectrum. Maps a transverse-field "
+            "radical's Breit–Rabi line pair onto the muon hyperfine-coupling "
+            "(Aμ) axis: a peak appears at Aμ. Specialist tool for identifying "
+            "muoniated radicals; high transverse field only."
+        )
         self._power_sqrt_radio.setChecked(True)
 
         mode_column = QWidget()
@@ -261,6 +275,7 @@ class FourierPanel(QWidget):
             self._real_imag_radio,
             self._phase_opt_real_radio,
             self._burg_radio,
+            self._correlation_radio,
         ):
             self._phase_mode_button_group.addButton(button)
             mode_column_layout.addWidget(button)
@@ -413,6 +428,8 @@ class FourierPanel(QWidget):
         self._phase_opt_real_radio.toggled.connect(self._update_phase_controls_enabled)
         self._burg_radio.toggled.connect(self._update_phase_controls_enabled)
         self._burg_radio.toggled.connect(self._update_conditioning_enabled)
+        self._correlation_radio.toggled.connect(self._update_phase_controls_enabled)
+        self._correlation_radio.toggled.connect(self._update_conditioning_enabled)
         self._phase_mode_info_btn.clicked.connect(self._show_phase_mode_info)
         self._phase_spin.editingFinished.connect(self._normalize_phase_line_edits)
         self._t0_offset_spin.editingFinished.connect(self._normalize_phase_line_edits)
@@ -478,6 +495,27 @@ class FourierPanel(QWidget):
         burg_layout.addStretch()
         form.addRow("Burg pole scan:", burg_row)
 
+        # Muoniated-radical correlation controls (revealed by the specialist
+        # display-mode radio, as with the Burg pole-scan above).
+        self._correlation_field_edit = QLineEdit("")
+        self._correlation_field_edit.setPlaceholderText("auto (run field)")
+        self._correlation_field_edit.setFont(mono_font(11.0))
+        self._correlation_field_edit.setValidator(QDoubleValidator(0.0, 1.0e6, 3, self))
+        self._correlation_field_edit.setToolTip(
+            "Transverse field (Gauss) used for the Breit–Rabi pairing; defaults "
+            "to the run's applied field."
+        )
+        form.addRow("Correlation field (G):", self._correlation_field_edit)
+
+        self._correlation_order_spin = QSpinBox()
+        self._correlation_order_spin.setRange(0, 10)
+        self._correlation_order_spin.setValue(DEFAULT_CORR_ORDER)
+        self._correlation_order_spin.setToolTip(
+            "CorrFn ratio-penalty order: higher values suppress unequal-amplitude "
+            "(spurious) line pairs more strongly. 0 = plain product."
+        )
+        form.addRow("Correlation order:", self._correlation_order_spin)
+
         self._pulse_comp_check.toggled.connect(self._update_conditioning_enabled)
         self._baseline_mode_combo.currentIndexChanged.connect(self._update_conditioning_enabled)
         self._update_conditioning_enabled()
@@ -539,6 +577,9 @@ class FourierPanel(QWidget):
         burg_on = self._burg_radio.isChecked()
         self._burg_order_min_spin.setEnabled(burg_on)
         self._burg_order_max_spin.setEnabled(burg_on)
+        correlation_on = self._correlation_radio.isChecked()
+        self._correlation_field_edit.setEnabled(correlation_on)
+        self._correlation_order_spin.setEnabled(correlation_on)
 
     def _update_exclusion_enabled(self) -> None:
         enabled = self._exclude_enabled_check.isChecked()
@@ -619,6 +660,8 @@ class FourierPanel(QWidget):
             return "phaseOptReal"
         if self._burg_radio.isChecked():
             return "Resolution (Burg)"
+        if self._correlation_radio.isChecked():
+            return "Correlation (radical)"
         return "(Power)^1/2"
 
     def _current_filter_mode(self) -> str:
@@ -678,6 +721,7 @@ class FourierPanel(QWidget):
         self._real_imag_radio.setChecked(mode == "Real+Imag")
         self._phase_opt_real_radio.setChecked(mode == "phaseOptReal")
         self._burg_radio.setChecked(mode == "Resolution (Burg)")
+        self._correlation_radio.setChecked(mode == "Correlation (radical)")
 
     def _update_filter_controls_enabled(self) -> None:
         enabled = self._current_filter_mode() != "none"
@@ -955,6 +999,12 @@ class FourierPanel(QWidget):
             "remove_diamag": self._remove_diamag_check.isChecked(),
             "burg_order_min": self._burg_order_min_spin.value(),
             "burg_order_max": self._burg_order_max_spin.value(),
+            "correlation_reference_field_gauss": (
+                self._parse_float_text(self._correlation_field_edit.text(), 0.0)
+                if self._correlation_field_edit.text().strip()
+                else None
+            ),
+            "correlation_order": self._correlation_order_spin.value(),
         }
 
     def restore_state(self, state: dict) -> None:
@@ -1053,6 +1103,19 @@ class FourierPanel(QWidget):
         try:
             self._burg_order_min_spin.setValue(int(state.get("burg_order_min", 2)))
             self._burg_order_max_spin.setValue(int(state.get("burg_order_max", 40)))
+        except (TypeError, ValueError):
+            pass
+        corr_field = state.get("correlation_reference_field_gauss")
+        if corr_field is None:
+            self._correlation_field_edit.setText("")
+        else:
+            self._correlation_field_edit.setText(
+                self._format_float_text(self._parse_float_text(corr_field, 0.0))
+            )
+        try:
+            self._correlation_order_spin.setValue(
+                int(state.get("correlation_order", DEFAULT_CORR_ORDER))
+            )
         except (TypeError, ValueError):
             pass
         self._update_conditioning_enabled()

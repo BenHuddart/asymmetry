@@ -132,6 +132,9 @@ _FOURIER_RECIPE_KEYS: tuple[str, ...] = (
     "remove_diamag",
     "burg_order_min",
     "burg_order_max",
+    # Muoniated-radical correlation spectrum; additive, defaulted.
+    "correlation_reference_field_gauss",
+    "correlation_order",
 )
 
 

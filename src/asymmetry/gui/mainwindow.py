@@ -4758,6 +4758,12 @@ class MainWindow(QMainWindow):
                 remove_diamag=bool(state.get("remove_diamag", False)),
                 burg_order_min=int(state.get("burg_order_min", 2)),
                 burg_order_max=int(state.get("burg_order_max", 40)),
+                correlation_reference_field_gauss=(
+                    float(state["correlation_reference_field_gauss"])
+                    if state.get("correlation_reference_field_gauss") is not None
+                    else None
+                ),
+                correlation_order=int(state.get("correlation_order", 2)),
             )
             average_dataset = compute_average_group_spectrum(
                 self._current_dataset.run,
