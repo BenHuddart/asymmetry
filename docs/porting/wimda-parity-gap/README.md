@@ -26,9 +26,12 @@ functionality item in the Wave A scope is on main. See
 handoffs, Wave B brief revisions, collision watchlist) and
 [decision-record.md](decision-record.md) for the consolidated record of
 exclusions, deviations from WiMDA, and the reference-program bug ledger.
-Wave B briefs require the revisions listed in the closeout before launch;
-the collision-reconciliation session (watchlist in the closeout) is pending,
-deliberately deferred.
+Wave B briefs require the revisions listed in the closeout before launch.
+The collision-reconciliation study is done (2026-06-11): every watchlist
+flag has an agreed verdict in
+[reconciliation-study.md](reconciliation-study.md) and a scheduled phase in
+[reconciliation-plan.md](reconciliation-plan.md); reconciliation Phase 2
+must merge before `fit-workflow-diagnostics` starts.
 
 ## Documents
 
@@ -39,6 +42,10 @@ deliberately deferred.
   deviations, and reference-program bug ledger (compiled at Wave A closeout).
 - [wave-a-closeout.md](wave-a-closeout.md) — Wave A audit: status, stray
   handoffs, Wave B impact, collision watchlist.
+- [reconciliation-study.md](reconciliation-study.md) — collision watchlist
+  investigated: evidence and per-flag verdicts (decisions with Ben).
+- [reconciliation-plan.md](reconciliation-plan.md) — five-phase,
+  parallelisable implementation plan for the reconciliation verdicts.
 - [implementation-options.md](implementation-options.md) — how the gaps were
   partitioned into projects; parallelisation (worktree) analysis and waves.
 - [test-data.md](test-data.md) — verification corpus mapped to projects.
