@@ -29,6 +29,7 @@ from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
     effective_group_indices,
 )
+from asymmetry.core.transform.rebin import rebin_counts
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 GROUP_NUISANCE_PARAMS: tuple[str, ...] = (
@@ -306,7 +307,7 @@ def _build_one_count_group(
     trimmed_counts = np.asarray(counts[ctx.first_good : ctx.last_good + 1], dtype=np.float64)
     time = (np.arange(trimmed_counts.size, dtype=float) + float(ctx.axis_start)) * ctx.bin_width
     if ctx.bunch_factor > 1:
-        time, trimmed_counts = _rebin_group_counts(time, trimmed_counts, ctx.bunch_factor)
+        time, trimmed_counts = rebin_counts(time, trimmed_counts, ctx.bunch_factor)
 
     if lifetime_corrected:
         scale = np.exp(time / float(MUON_LIFETIME_US))
@@ -606,27 +607,6 @@ def _supports_phase_parameter(model_fn) -> bool:
         if param.kind == inspect.Parameter.VAR_KEYWORD:
             return True
     return any(split_parameter_name(str(name))[0] == "phase" for name in signature.parameters)
-
-
-def _rebin_group_counts(
-    time: NDArray[np.float64],
-    counts: NDArray[np.float64],
-    factor: int,
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Return count-preserving bunched grouped traces."""
-    bunch_factor = max(1, int(factor))
-    if bunch_factor <= 1 or counts.size < bunch_factor:
-        return np.asarray(time, dtype=np.float64), np.asarray(counts, dtype=np.float64)
-
-    n_new = counts.size // bunch_factor
-    trimmed = n_new * bunch_factor
-    rebinned_time = (
-        np.asarray(time[:trimmed], dtype=np.float64).reshape(n_new, bunch_factor).mean(axis=1)
-    )
-    rebinned_counts = (
-        np.asarray(counts[:trimmed], dtype=np.float64).reshape(n_new, bunch_factor).sum(axis=1)
-    )
-    return rebinned_time, rebinned_counts
 
 
 def _group_dataset_run_number(source_run_number: int | None, group_index: int) -> int:

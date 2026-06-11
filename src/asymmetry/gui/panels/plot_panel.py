@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fourier.spectrum import reference_field_gauss
 from asymmetry.core.fourier.units import convert as convert_field_unit
 from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.transform.background import (
@@ -662,19 +663,17 @@ class PlotPanel(QWidget):
         return f"{resolved_unit}:{'relative' if resolved_relative else 'absolute'}"
 
     def _frequency_reference_for_dataset(self, dataset: MuonDataset | None) -> float | None:
-        """Return the applied-field reference frequency in MHz for *dataset*."""
+        """Return the applied-field reference frequency in MHz for *dataset*.
+
+        Delegates the dataset-metadata-before-run-metadata field lookup to the
+        shared core resolver and converts the resulting Gauss value to MHz; the
+        unit conversion is the GUI-only part of this method.
+        """
         if dataset is None:
             return None
-        field_value = dataset.metadata.get("field")
-        try:
-            field_gauss = float(field_value)
-        except (TypeError, ValueError):
-            run = getattr(dataset, "run", None)
-            metadata = getattr(run, "metadata", {}) if run is not None else {}
-            try:
-                field_gauss = float(metadata.get("field"))
-            except (TypeError, ValueError):
-                return None
+        field_gauss = reference_field_gauss(getattr(dataset, "run", None), dataset)
+        if field_gauss is None:
+            return None
         return field_gauss * self._mhz_per_gauss()
 
     def _display_frequency_reference(self, *, unit: str | None = None) -> float:
