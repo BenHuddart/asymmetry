@@ -7,6 +7,17 @@ import matplotlib lazily and no-op silently on ImportError.
 from __future__ import annotations
 
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.fonts import register_matplotlib_fonts
+
+_FONTS_REGISTERED = False
+
+
+def _ensure_fonts() -> None:
+    """Lazily register the bundled mono face with matplotlib, once."""
+    global _FONTS_REGISTERED
+    if not _FONTS_REGISTERED:
+        register_matplotlib_fonts()
+        _FONTS_REGISTERED = True
 
 
 def style_axes(ax: object) -> None:
@@ -17,6 +28,7 @@ def style_axes(ax: object) -> None:
     lighter grey than their monospaced labels. The closed four-spine box and
     the default tick treatment are most of what reads as "very matplotlib".
     """
+    _ensure_fonts()
     try:
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)  # type: ignore[union-attr]
@@ -38,6 +50,28 @@ def style_axes(ax: object) -> None:
         ax.grid(True, color=(r, g, b), alpha=a, linewidth=0.6)  # type: ignore[union-attr]
         ax.set_axisbelow(True)  # type: ignore[union-attr]
         ax.set_facecolor(tokens.SURFACE)  # type: ignore[union-attr]
+        # Axis labels: sans (per the handoff only symbols are italic; words
+        # and units stay roman) in the muted label grey, a step above the
+        # tick-label size. Colour/size live on the persistent label Text
+        # objects, so later set_xlabel calls keep them.
+        for axis_label in (ax.xaxis.label, ax.yaxis.label):  # type: ignore[union-attr]
+            axis_label.set_color(tokens.PLOT_TICK_LABEL)
+            axis_label.set_fontsize(10)
+    except Exception:
+        pass
+
+
+def draw_zero_line(ax: object) -> None:
+    """Draw the handoff's y = 0 reference line (excluded from autoscaling).
+
+    Invisible-by-construction on positive-only data (it coincides with the
+    bottom spine or sits outside the view), so callers can apply it from a
+    shared rendering chokepoint without per-domain branching.
+    """
+    try:
+        ax.axhline(  # type: ignore[union-attr]
+            0.0, color=tokens.PLOT_ZERO_LINE, linewidth=0.8, zorder=1.5
+        )
     except Exception:
         pass
 
@@ -51,9 +85,14 @@ def style_figure(fig: object) -> None:
 
 
 def style_legend(legend: object) -> None:
-    """Apply BENCH frame styling to a Legend, if present."""
+    """Apply BENCH frame and text styling to a Legend, if present.
+
+    Matches the handoff legend: white 95%-opaque card with a 1px border and
+    monospaced entries (the prototype lists runs/temperatures in mono).
+    """
     if legend is None:
         return
+    _ensure_fonts()
     try:
         frame = legend.get_frame()  # type: ignore[union-attr]
         r, g, b, a = tokens.PLOT_LEGEND_BG
@@ -61,6 +100,14 @@ def style_legend(legend: object) -> None:
         frame.set_alpha(a)
         frame.set_edgecolor(tokens.BORDER)
         frame.set_linewidth(1.0)
+        for text in legend.get_texts():  # type: ignore[union-attr]
+            text.set_fontfamily("IBM Plex Mono")
+            text.set_fontsize(9)
+            text.set_color(tokens.TEXT)
+        title = legend.get_title()  # type: ignore[union-attr]
+        if title is not None and title.get_text():
+            title.set_fontsize(9)
+            title.set_color(tokens.TEXT_MUTED)
     except Exception:
         pass
 

@@ -64,7 +64,13 @@ from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.plots import draw_fit_range_span, style_axes, style_figure, style_legend
+from asymmetry.gui.styles.plots import (
+    draw_fit_range_span,
+    draw_zero_line,
+    style_axes,
+    style_figure,
+    style_legend,
+)
 from asymmetry.gui.styles.widgets import build_nav_button_qss
 
 # Metadata fields available for dataset labelling in the legend.
@@ -2211,6 +2217,9 @@ class PlotPanel(QWidget):
         self, ax, datasets: list[MuonDataset], axis_key: str | None
     ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
         """Plot one or more datasets on ``ax`` and return flattened arrays for auto-y."""
+        # Handoff plot grammar: y = 0 reference line under the data (it is
+        # excluded from autoscaling, so positive-only data never stretches).
+        draw_zero_line(ax)
         all_times: list[np.ndarray] = []
         all_asym: list[np.ndarray] = []
         all_err: list[np.ndarray] = []
@@ -2818,6 +2827,7 @@ class PlotPanel(QWidget):
         self._set_frequency_reference_from_dataset(datasets[0])
         self._ax.clear()
         style_axes(self._ax)
+        draw_zero_line(self._ax)
 
         all_times: list[np.ndarray] = []
         all_asym: list[np.ndarray] = []
@@ -3074,6 +3084,7 @@ class PlotPanel(QWidget):
 
         self._ax.clear()
         style_axes(self._ax)
+        draw_zero_line(self._ax)
 
         finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
         valid_low = finite_mask & low_count_mask

@@ -735,7 +735,9 @@ class MainWindow(QMainWindow):
             # internal dividers, outer corners only.
             container = QWidget()
             column = QVBoxLayout(container)
-            column.setContentsMargins(0, 0, 0, 0)
+            # A little air below the segmented control so the cluster doesn't
+            # sit flush on the toolbar's bottom edge.
+            column.setContentsMargins(0, 0, 0, 3)
             column.setSpacing(2)
             heading = QLabel(header.upper())
             heading.setFont(header_font())

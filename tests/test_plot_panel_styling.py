@@ -290,3 +290,45 @@ class TestPlotFooter:
         assert "Add Annotation" not in limit_btns, (
             "'Add Annotation' is still in the limit toolbar — it should be in the footer"
         )
+
+
+class TestHandoffPlotGrammar:
+    """Axis labels, legend text, and the zero reference line (design handoff)."""
+
+    def test_axis_labels_use_muted_label_grey(self, panel, dataset) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(dataset)
+        import matplotlib.colors as mcolors
+
+        expected = mcolors.to_rgba(tokens.PLOT_TICK_LABEL)
+        for label in (panel._ax.xaxis.label, panel._ax.yaxis.label):
+            assert mcolors.to_rgba(label.get_color()) == pytest.approx(expected, abs=0.01)
+            assert label.get_fontsize() == pytest.approx(10.0)
+
+    def test_zero_reference_line_drawn_under_data(self, panel, dataset) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(dataset)
+        import matplotlib.colors as mcolors
+
+        expected = mcolors.to_rgba(tokens.PLOT_ZERO_LINE)
+        zero_lines = [
+            line
+            for line in panel._ax.get_lines()
+            if np.allclose(mcolors.to_rgba(line.get_color()), expected)
+            and np.allclose(np.asarray(line.get_ydata(), dtype=float), 0.0)
+        ]
+        assert zero_lines, "No y = 0 reference line found on the time plot"
+
+    def test_legend_entries_are_monospaced(self, panel, dataset) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(dataset)
+        legend = panel._ax.get_legend()
+        assert legend is not None
+        texts = legend.get_texts()
+        assert texts
+        for text in texts:
+            assert "IBM Plex Mono" in str(text.get_fontfamily())
+            assert text.get_fontsize() == pytest.approx(9.0)
