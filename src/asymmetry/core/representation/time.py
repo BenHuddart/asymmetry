@@ -120,13 +120,17 @@ class TimeFBAsymmetry(Representation):
 
 
 class TimeGroups(Representation):
-    """Per-group lifetime-corrected count curves for one run.
+    """Per-group count curves for one run (lifetime-corrected by default).
 
     Fitting this representation is always the joint multi-group fit.
 
     Recipe keys (optional)::
 
-        {"t_min": float | None, "t_max": float | None}
+        {"t_min": float | None, "t_max": float | None,
+         "lifetime_corrected": bool}
+
+    With ``lifetime_corrected`` false the raw detector counts are returned
+    (the GUI's Raw counts view; Poisson statistics are exact on them).
     """
 
     rep_type = RepresentationType.TIME_GROUPS
@@ -148,6 +152,7 @@ class TimeGroups(Representation):
             source,
             t_min=None if t_min is None else float(t_min),
             t_max=None if t_max is None else float(t_max),
+            lifetime_corrected=bool(self.recipe.get("lifetime_corrected", True)),
         )
         for dataset in datasets:
             dataset.metadata.setdefault("plot_domain", "time")

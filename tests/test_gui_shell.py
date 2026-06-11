@@ -286,7 +286,7 @@ def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplicat
     monkeypatch.setattr(
         window,
         "_grouped_time_domain_display_datasets",
-        lambda dataset=None: [
+        lambda dataset=None, **_kwargs: [
             MuonDataset(
                 time=np.array([0.0, 1.0]),
                 asymmetry=np.array([1.0, 0.9]),

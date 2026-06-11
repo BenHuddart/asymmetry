@@ -78,6 +78,7 @@ _LABEL_FIELDS: list[tuple[str, str]] = [
 _TIME_VIEW_FIELDS: list[tuple[str, str]] = [
     ("FB Asymmetry", "fb_asymmetry"),
     ("Individual Groups", "groups"),
+    ("Raw Counts", "raw_counts"),
 ]
 
 #: Map the frequency plot panel's x-unit tokens to ``core.fourier.units`` units.
@@ -562,6 +563,9 @@ class PlotPanel(QWidget):
             multi_suffix = "runs overlaid"
         elif getattr(self, "_current_time_view_mode", "fb_asymmetry") == "groups":
             domain = "Grouped time-domain"
+            multi_suffix = "runs"
+        elif getattr(self, "_current_time_view_mode", "fb_asymmetry") == "raw_counts":
+            domain = "Raw counts"
             multi_suffix = "runs"
         else:
             domain = "Time-domain F-B asymmetry"
@@ -1268,6 +1272,8 @@ class PlotPanel(QWidget):
         token = str(mode or "").strip().lower().replace(" ", "_")
         if token in {"groups", "group", "individual_groups", "grouped", "grouped_counts"}:
             return "groups"
+        if token in {"raw_counts", "raw", "counts", "raw_count"}:
+            return "raw_counts"
         return "fb_asymmetry"
 
     def _time_view_display_text(self, mode: str) -> str:

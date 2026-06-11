@@ -680,6 +680,7 @@ class MainWindow(QMainWindow):
         self._domain_button_group = QButtonGroup(self)
         self._domain_button_group.setExclusive(True)
         self._domain_buttons: list[QPushButton] = []
+        self._domain_buttons_by_token: dict[str, QPushButton] = {}
         _domain_qss = build_segmented_button_qss()
 
         def _domain_cluster(header: str, specs: list[tuple[str, str]]) -> QWidget:
@@ -703,6 +704,7 @@ class MainWindow(QMainWindow):
                 )
                 self._domain_button_group.addButton(btn)
                 self._domain_buttons.append(btn)
+                self._domain_buttons_by_token[token] = btn
                 row.addWidget(btn)
             column.addLayout(row)
             return container
@@ -710,7 +712,11 @@ class MainWindow(QMainWindow):
         self._main_toolbar.addWidget(
             _domain_cluster(
                 "Time domain",
-                [("F-B asymmetry", "fb_asymmetry"), ("Individual groups", "groups")],
+                [
+                    ("F-B asymmetry", "fb_asymmetry"),
+                    ("Individual groups", "groups"),
+                    ("Raw counts", "raw_counts"),
+                ],
             )
         )
         self._main_toolbar.addSeparator()
@@ -720,9 +726,15 @@ class MainWindow(QMainWindow):
                 [("FFT", "frequency"), ("MaxEnt", "maxent")],
             )
         )
-        self._domain_buttons[0].setChecked(True)
-        self._domain_buttons[3].setEnabled(False)
-        self._domain_buttons[3].setToolTip("Maximum-entropy spectra from grouped counts")
+        self._domain_buttons_by_token["fb_asymmetry"].setChecked(True)
+        self._domain_buttons_by_token["raw_counts"].setEnabled(False)
+        self._domain_buttons_by_token["raw_counts"].setToolTip(
+            "Per-group raw detector counts (no lifetime correction)"
+        )
+        self._domain_buttons_by_token["maxent"].setEnabled(False)
+        self._domain_buttons_by_token["maxent"].setToolTip(
+            "Maximum-entropy spectra from grouped counts"
+        )
 
         # Stretch spacer — pushes View / Bunch to the right edge
         _stretch = QWidget()
@@ -1544,17 +1556,19 @@ class MainWindow(QMainWindow):
                 self._plot_workspace.set_available_views(modes)
                 if self._plot_workspace.active_domain() == "time":
                     self._plot_workspace.set_active_view("fb_asymmetry")
-            self._domain_buttons[1].setEnabled(False)
+            self._domain_buttons_by_token["groups"].setEnabled(False)
+            self._domain_buttons_by_token["raw_counts"].setEnabled(False)
             self._refresh_maxent_domain_enabled()
             return
 
         target = self._current_dataset or (selected[0] if len(selected) == 1 else None)
         if target is not None and self._grouped_time_domain_display_datasets(target):
-            modes.append("groups")
+            modes.extend(["groups", "raw_counts"])
         if self._dataset_supports_maxent(target):
             modes.append("maxent")
 
-        self._domain_buttons[1].setEnabled("groups" in modes)
+        self._domain_buttons_by_token["groups"].setEnabled("groups" in modes)
+        self._domain_buttons_by_token["raw_counts"].setEnabled("raw_counts" in modes)
         self._refresh_maxent_domain_enabled()
 
         current_mode = None
@@ -1732,13 +1746,20 @@ class MainWindow(QMainWindow):
             if not targets:
                 return
 
+            time_view_mode = (
+                self._plot_panel.current_time_view_mode()
+                if hasattr(self._plot_panel, "current_time_view_mode")
+                else "fb_asymmetry"
+            )
             if (
-                hasattr(self._plot_panel, "current_time_view_mode")
-                and self._plot_panel.current_time_view_mode() == "groups"
+                time_view_mode in ("groups", "raw_counts")
                 and self._plot_workspace.active_domain() == "time"
                 and len(targets) == 1
             ):
-                grouped_targets = self._grouped_time_domain_display_datasets(targets[0])
+                grouped_targets = self._grouped_time_domain_display_datasets(
+                    targets[0],
+                    lifetime_corrected=time_view_mode != "raw_counts",
+                )
                 if grouped_targets and hasattr(
                     self._plot_panel, "plot_grouped_time_domain_subplots"
                 ):
@@ -3803,7 +3824,7 @@ class MainWindow(QMainWindow):
             return False
         if not hasattr(self._plot_panel, "current_time_view_mode"):
             return False
-        if self._plot_panel.current_time_view_mode() != "groups":
+        if self._plot_panel.current_time_view_mode() not in ("groups", "raw_counts"):
             return False
         return bool(self._grouped_time_domain_display_datasets())
 
@@ -3858,6 +3879,7 @@ class MainWindow(QMainWindow):
     _INSPECTOR_DOMAIN_CONFIG: dict[str, tuple[list[str], str]] = {
         "fb_asymmetry": (["fit", "fit_parameters"], "fit"),
         "groups": (["fit", "fit_parameters"], "fit"),
+        "raw_counts": (["fit", "fit_parameters"], "fit"),
         "frequency": (["fourier", "fit", "fit_parameters"], "fourier"),
         "maxent": (["fourier", "fit", "fit_parameters"], "fourier"),
         "reconstruction": (["fourier", "fit", "fit_parameters"], "fourier"),
@@ -5759,6 +5781,10 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(
                     f"Viewing individual groups for run {self._current_dataset.run_label}"
                 )
+            elif _mode == "raw_counts":
+                self.statusBar().showMessage(
+                    f"Viewing raw counts for run {self._current_dataset.run_label}"
+                )
             else:
                 self.statusBar().showMessage(f"Viewing run {self._current_dataset.run_label}")
 
@@ -5769,9 +5795,8 @@ class MainWindow(QMainWindow):
 
     def _sync_domain_buttons(self, view: str) -> None:
         """Update toolbar Domain button checked state to match *view*."""
-        _tokens = ("fb_asymmetry", "groups", "frequency", "maxent")
-        for idx, btn in enumerate(getattr(self, "_domain_buttons", [])):
-            btn.setChecked(_tokens[idx] == view)
+        for token, btn in getattr(self, "_domain_buttons_by_token", {}).items():
+            btn.setChecked(token == view)
 
     def _on_plot_workspace_view_changed(self, view: str) -> None:
         """Map top-level workspace tab changes onto the shared time plot panel state."""
@@ -5872,6 +5897,9 @@ class MainWindow(QMainWindow):
         return {
             "fb_asymmetry": RepresentationType.TIME_FB_ASYMMETRY,
             "groups": RepresentationType.TIME_GROUPS,
+            # Raw counts is the uncorrected display of the grouped
+            # representation; fits and trends share the TIME_GROUPS slot.
+            "raw_counts": RepresentationType.TIME_GROUPS,
             "frequency": RepresentationType.FREQ_FFT,
             "maxent": RepresentationType.FREQ_MAXENT,
         }.get(self._plot_workspace.active_view())
@@ -5928,7 +5956,9 @@ class MainWindow(QMainWindow):
         """
         if len(getattr(self, "_domain_buttons", [])) <= 3:
             return
-        self._domain_buttons[3].setEnabled(self._current_selection_supports_maxent())
+        self._domain_buttons_by_token["maxent"].setEnabled(
+            self._current_selection_supports_maxent()
+        )
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         """Show the ALC-mode tooltip on hover even while the button is disabled.
@@ -7568,6 +7598,7 @@ class MainWindow(QMainWindow):
         _domain_labels = {
             "fb_asymmetry": "F-B asymmetry",
             "groups": "individual groups",
+            "raw_counts": "raw counts",
             "frequency": "frequency",
         }
         domain = _domain_labels.get(
@@ -7698,8 +7729,14 @@ class MainWindow(QMainWindow):
     def _grouped_time_domain_display_datasets(
         self,
         dataset: MuonDataset | None = None,
+        *,
+        lifetime_corrected: bool = True,
     ) -> list[MuonDataset]:
-        """Return grouped time-domain display datasets for the active dataset."""
+        """Return grouped time-domain display datasets for the active dataset.
+
+        ``lifetime_corrected=False`` yields the Raw counts view's uncorrected
+        per-group histograms.
+        """
         source = self._current_dataset if dataset is None else dataset
         if source is None:
             return []
@@ -7707,7 +7744,10 @@ class MainWindow(QMainWindow):
         if source_dataset is None:
             return []
         try:
-            return build_grouped_time_domain_datasets(source_dataset)
+            return build_grouped_time_domain_datasets(
+                source_dataset,
+                lifetime_corrected=lifetime_corrected,
+            )
         except ValueError:
             return []
 
