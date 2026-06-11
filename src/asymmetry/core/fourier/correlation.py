@@ -166,20 +166,34 @@ def correlation_spectrum(
     if resolution <= 0.0 or not np.isfinite(resolution):
         return np.zeros(0, dtype=float), np.zeros(0, dtype=float)
 
+    # The diamagnetic muon line sits at γ_µ·B, and as A → 0 both radical lines
+    # collapse onto it. A candidate is only a genuine radical pair if its *lower*
+    # line ν₁₂ has cleared the diamagnetic line (the upper line is always higher
+    # still); below that the forward map just pairs the strong diamagnetic peak
+    # with itself and raises a spurious low-A artifact. Requiring ν₁₂ above the
+    # diamagnetic line is the WiMDA-faithful behaviour (WiMDA scans candidate
+    # frequencies starting above the diamagnetic line, Plot.pas i0, on a spectrum
+    # whose diamagnetic line has been excluded) and also removes the ν₁₂ → 0 dip
+    # (the lower line buried in DC/baseline).
+    diamag_mhz = G_MU_MHZ_PER_G * field
+    lower_floor = max(f_min, diamag_mhz + 2.0 * resolution)
+    resolvable = lambda nu12, nu34: (nu12 >= lower_floor) & (nu34 <= f_max) & np.isfinite(nu34)
+
     if a_axis is None:
         # ν₃₄ rises monotonically with A and ν₃₄ ≥ A/2 at high field, so
-        # A ≤ 2·ν₃₄ ≤ 2·f_max bounds the scan; trim to the contiguous prefix
-        # whose upper line stays within the spectrum's Nyquist (a partner beyond
-        # the data is unmeasurable — WiMDA's i2 ≤ nf guard).
+        # A ≤ 2·ν₃₄ ≤ 2·f_max bounds the scan; keep the contiguous band of
+        # couplings whose pair is resolvable (lower line above the diamagnetic
+        # line, upper line within the spectrum's Nyquist — WiMDA's i2 ≤ nf).
         grid = np.arange(resolution, 2.0 * f_max + resolution, resolution)
         nu12, nu34 = _pair_frequencies(field, grid)
-        samplable = np.isfinite(nu34) & (nu34 <= f_max)
+        samplable = resolvable(nu12, nu34)
         if not samplable.any():
             return np.zeros(0, dtype=float), np.zeros(0, dtype=float)
-        last = int(np.nonzero(samplable)[0][-1])
-        a_mhz = grid[: last + 1]
-        nu12 = nu12[: last + 1]
-        nu34 = nu34[: last + 1]
+        kept = np.nonzero(samplable)[0]
+        first, last = int(kept[0]), int(kept[-1])
+        a_mhz = grid[first : last + 1]
+        nu12 = nu12[first : last + 1]
+        nu34 = nu34[first : last + 1]
     else:
         a_mhz = np.asarray(a_axis, dtype=float)
         nu12, nu34 = _pair_frequencies(field, a_mhz)
@@ -187,13 +201,9 @@ def correlation_spectrum(
     s12 = np.interp(nu12, frequencies, spectrum, left=0.0, right=0.0)
     s34 = np.interp(nu34, frequencies, spectrum, left=0.0, right=0.0)
     corr = np.asarray(corr_fn(s12, s34, order), dtype=float)
-    # The lower line ν₁₂ dips through ~0 at a field-dependent coupling; there the
-    # forward map samples the unresolvable near-DC / baseline region and would
-    # raise a spurious peak unrelated to any radical. Suppress candidates whose
-    # lower partner is not separable from DC (matching WiMDA's scan starting
-    # above the diamagnetic line).
-    low_floor = max(f_min, 2.0 * resolution)
-    corr = np.where(nu12 >= low_floor, corr, 0.0)
+    # Zero any candidate whose pair is not resolvable (also covers an explicit
+    # a_axis, where the band trim above does not apply).
+    corr = np.where(resolvable(nu12, nu34), corr, 0.0)
     return a_mhz, corr
 
 

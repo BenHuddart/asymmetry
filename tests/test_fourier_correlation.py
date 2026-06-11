@@ -193,19 +193,37 @@ def test_correlation_spectrum_two_radicals_two_peaks() -> None:
     assert any(abs(p - a_hi) < 4.0 * df for p in peak_positions)
 
 
-def test_correlation_suppresses_near_dc_lower_line() -> None:
-    """A candidate whose lower line ν₁₂ dips to ~0 must not borrow DC/baseline power."""
+def test_correlation_suppresses_unresolvable_lower_line() -> None:
+    """Candidates whose lower line ν₁₂ has not cleared the diamagnetic line are zeroed."""
     field = 5000.0
+    diamag = field * GAMMA_MU_MHZ_PER_G
     freqs = np.arange(0.0, 300.0, 0.5)
-    # Strong low-frequency/baseline content near DC, nothing else.
-    power = np.exp(-0.5 * ((freqs - 0.5) / 1.0) ** 2)
+    # Only a (tall) diamagnetic line; no radical pair.
+    power = _line_spectrum(freqs, (diamag,))
+    # Explicit small-coupling axis whose pair straddles the diamagnetic line.
+    a_axis = np.linspace(0.5, 30.0, 60)
+    a_mhz, corr = correlation_spectrum(freqs, power, field_gauss=field, a_axis=a_axis)
+    nu12, _nu34 = _pair_frequencies(field, a_mhz)
+    assert np.all(nu12 < diamag)  # lower line sits on/below the diamagnetic line
+    assert np.all(corr == 0.0)  # ...so the diamagnetic self-pairing is suppressed
+
+
+def test_correlation_suppresses_diamagnetic_self_pairing() -> None:
+    """A tall diamagnetic line must not create a low-A peak that beats the radical."""
+    field = 2900.0
+    nu12, nu34 = breit_rabi_pair(field, CYCLOHEXADIENYL_A_MHZ)
+    diamag = field * GAMMA_MU_MHZ_PER_G
+    freqs = np.arange(0.0, 500.0, 0.5)
+    # Diamagnetic line 3x taller than the radical pair.
+    power = 3.0 * _line_spectrum(freqs, (diamag,)) + _line_spectrum(freqs, (nu12, nu34))
     a_axis, corr = correlation_spectrum(freqs, power, field_gauss=field)
-    nu12, _nu34 = _pair_frequencies(field, a_axis)
-    dip = int(np.argmin(nu12))
-    assert nu12[dip] < 1.0  # ν₁₂ genuinely dips into the near-DC region here
-    assert corr[dip] == 0.0  # ...and the spurious contribution is suppressed
-    # No spurious peak survives from pure low-frequency content.
-    assert float(np.max(corr)) == pytest.approx(0.0, abs=1e-9)
+    assert a_axis.size > 0
+    # The smallest kept candidate's lower line has cleared the diamagnetic line
+    # (WiMDA i0), and the dominant peak is the radical, not a self-pairing artifact.
+    lo_nu12, _ = _pair_frequencies(field, np.array([a_axis.min()]))
+    assert lo_nu12[0] >= diamag
+    df = a_axis[1] - a_axis[0]
+    assert _peak_x(a_axis, corr) == pytest.approx(CYCLOHEXADIENYL_A_MHZ, abs=3.0 * df)
 
 
 def test_correlation_spectrum_zero_field_is_empty() -> None:
