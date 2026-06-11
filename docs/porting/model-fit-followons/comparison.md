@@ -1,6 +1,6 @@
 # Comparison: Model-fit follow-ons vs Asymmetry surfaces
 
-Date: 2026-06-10. WiMDA source: `/Users/bhuddart/Source/WiMDA/src` (read
+Date: 2026-06-10. WiMDA source: `$WIMDA_SRC/src` (read
 directly; `__history/`/`__recovery/` ignored). Asymmetry worktree off
 `origin/main` `8e36d34` (PR #32 merged at `d64820c`).
 

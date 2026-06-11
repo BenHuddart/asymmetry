@@ -3,7 +3,7 @@
 Date: 2026-06-10. Branch: `study/wimda-parity-gap`.
 
 This is the consolidated record of a full sweep of the WiMDA source
-(`/Users/bhuddart/Source/WiMDA/src`, all `.pas` units, ignoring
+(`$WIMDA_SRC/src`, all `.pas` units, ignoring
 `__history/`/`__recovery/`) cross-referenced against the Asymmetry codebase
 as of main commit `474534e` (post wimda-fit-function-parity merge). It
 supersedes the WiMDA column of `docs/porting/comparison-matrix.md`, which

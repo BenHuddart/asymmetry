@@ -1,6 +1,6 @@
 # Comparison: WiMDA Model-layer functions & machinery vs Asymmetry
 
-Date: 2026-06-10. WiMDA source: `/Users/bhuddart/Source/WiMDA/src` (read
+Date: 2026-06-10. WiMDA source: `$WIMDA_SRC/src` (read
 directly; `__history/`/`__recovery/` ignored). Asymmetry at `main` 19f242b.
 
 Every formula below was transcribed from the Pascal, not lifted from the

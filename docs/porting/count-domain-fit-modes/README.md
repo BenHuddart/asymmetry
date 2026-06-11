@@ -39,7 +39,7 @@ a parallel one.
 
 ## Method
 
-WiMDA source read directly at `/Users/bhuddart/Source/WiMDA/src` (ignoring
+WiMDA source read directly at `$WIMDA_SRC/src` (ignoring
 `__history/`, `__recovery/`):
 
 - `FitTyps.pas:30` — the `Fitgrp` enum `(fgFBAsym, fgSelected, fgFB, fgAll,

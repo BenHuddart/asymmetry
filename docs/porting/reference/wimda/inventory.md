@@ -1,6 +1,6 @@
 # WiMDA feature inventory
 
-**Upstream:** `/Users/bhuddart/Source/WiMDA`  
+**Upstream:** `$WIMDA_SRC`  
 **Author of original:** Francis L. Pratt (ISIS) — see F. L. Pratt,
 *Physica B* 289-290, 710 (2000).  
 **Language:** Object Pascal (Delphi) + supporting DLLs  

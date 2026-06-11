@@ -30,7 +30,7 @@ project venv:
 
 ```bash
 cd ~/Documents/"WiMDA muon school"
-/Users/bhuddart/Source/Asymmetry/.venv/bin/python - <<'PY'
+.venv/bin/python - <<'PY'
 import h5py, glob
 from collections import defaultdict
 scans = defaultdict(list)

@@ -1,7 +1,7 @@
 # Frequency-domain finishers — comparison
 
 WiMDA → Asymmetry, feature by feature. Each section quotes the WiMDA Pascal
-(file:line, from `/Users/bhuddart/Source/WiMDA/src`, ignoring `__history/`,
+(file:line, from `$WIMDA_SRC/src`, ignoring `__history/`,
 `__recovery/`), states the Asymmetry target, and records any divergence with
 **both** behaviours stated. Parity of *functionality*, not implementation:
 modern numerics and physical correctness win where they tension with WiMDA.

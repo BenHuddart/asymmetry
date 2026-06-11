@@ -9,7 +9,7 @@ remaining gaps — time-domain reconstruction, ISIS pulse shape, ZF/LF + SpecBG,
 deadtime/phase calibration — verified against the WiMDA Pascal source, and
 states where Asymmetry will diverge.
 
-All WiMDA citations are to `/Users/bhuddart/Source/WiMDA/src/` (ignoring
+All WiMDA citations are to `$WIMDA_SRC/src/` (ignoring
 `__history/`, `__recovery/`). The Mantid `MaxentTools` numpy port
 (`~/Source/mantid/scripts/Muon/MaxentTools/`) is a GPL-3 verification oracle —
 read and run only, never copied.

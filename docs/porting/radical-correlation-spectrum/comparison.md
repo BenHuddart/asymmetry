@@ -3,7 +3,7 @@
 WiMDA → Asymmetry, feature by feature, for the muonium-radical correlation
 spectrum (WiMDA's `Corr` / `AvCorr` Fourier modes and the `rmatch` Breit–Rabi
 pair-matching). Each section quotes the WiMDA Pascal (file:line, from
-`/Users/bhuddart/Source/WiMDA/src`, ignoring `__history/`, `__recovery/`),
+`$WIMDA_SRC/src`, ignoring `__history/`, `__recovery/`),
 states the Asymmetry target, and records every divergence with **both**
 behaviours. Parity of *functionality*, not implementation: modern numerics and
 physical correctness win where they tension with WiMDA.

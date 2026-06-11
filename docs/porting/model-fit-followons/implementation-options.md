@@ -1,7 +1,7 @@
 # Implementation options & plan: Model-fit follow-ons
 
 Branch: `feat/model-fit-followons` (off `origin/main` `8e36d34`), worktree
-`/Users/bhuddart/Source/Asymmetry-model-fit-followons` with its **own**
+`../Asymmetry-model-fit-followons` with its **own**
 `.venv` (numpy 2.2.x). Each phase ends with `python tools/harness.py validate`
 green (worktree `.venv/bin/python`; GUI tests `QT_QPA_PLATFORM=offscreen`) and a
 milestone commit. **No push, no PR** until Ben asks.
@@ -227,7 +227,7 @@ PR #38 (the first pass, items 1–3 + two fixes) **merged to `main`**
 follow-ons that remain, after which the *model-fit-followons* project is DONE.
 
 - Base: `origin/main` (contains PR #38). Worktree
-  `/Users/bhuddart/Source/Asymmetry-model-fit-finish`, branch
+  `../Asymmetry-model-fit-finish`, branch
   `feat/model-fit-finish`, with its **own** `.venv` (numpy 2.2.x).
 - Verify `git branch --show-current == feat/model-fit-finish` before every
   commit; never touch the hub checkout.
