@@ -202,6 +202,17 @@ diagnostic + diamagnetic fit-and-subtract`.
 - `docs/porting/index.json` — study entry (this commit).
 
 ## Recorded follow-ons
+- **Tail-fit background in the Fourier input path** — **DELIVERED 2026-06-11**
+  (`feat/wave-a-strays`). The data-reduction-parity study built the tail-fit
+  estimator and named this study the owner of offering it on the FFT input;
+  the slice was inherited but not shipped during the two main phases. It is now
+  closed: the grouped Fourier path inherits the grouping's `tail_fit` mode and
+  subtracts the shared `apply_grouped_background_correction` estimate (no fourth
+  background path, no FFT-only control), verified bit-for-bit against the
+  time-domain reduction. The "which background option when" guidance is in the
+  Fourier user-guide page. See
+  [`data-reduction-parity/implementation-options.md`](../data-reduction-parity/implementation-options.md)
+  recorded follow-ons for the engine-side detail.
 - **Radical correlation spectrum** (Breit–Rabi `rmatch` → hyperfine axis) — **PROMOTED 2026-06-11** to its own study + plan, [`radical-correlation-spectrum`](../radical-correlation-spectrum/implementation-options.md) (branch `feat/radical-correlation-spectrum`); reuses `core/fitting/muonium.py._tf_levels` via the exact forward map (`A = ν₁₂+ν₃₄`).
 - **N₀-normalised single-histogram FFT input** — defer; interacts with count-domain PR #41.
 - **Per-detector FFT** and **FB t=0 extrapolation** — out of scope (rationale in comparison.md).

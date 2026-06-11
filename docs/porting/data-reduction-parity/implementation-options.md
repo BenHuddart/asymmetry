@@ -455,7 +455,17 @@ named.
   satisfies `reference_run`: `build_group_signal_dataset` resolves + groups +
   aligns the reference and subtracts it via `subtract_scaled_counts`, instead
   of the previous silent no-op outside the GUI.
-- (Phase 2/3 implementation note) The grouped *Fourier* input path keeps
-  its legacy continuous-source-only background gate for the *range/tail-fit*
-  modes; `reference_run` is now satisfied there (see above). Offering tail-fit
-  in the Fourier path remains a follow-on for `frequency-domain-finishers`.
+- **DONE** (`feat/wave-a-strays`, 2026-06-11) — Tail-fit in the grouped
+  *Fourier* input path. The mode-aware gate (`available_background_modes`)
+  already admitted `tail_fit`, and `fourier/grouped._apply_group_background_
+  correction` passed the grouping payload straight to the shared
+  `apply_grouped_background_correction`, so a `tail_fit` grouping mode flows
+  into the FFT input — verified bit-for-bit against the time-domain reduction's
+  tail fit on the same forward counts (`tests/test_fourier.py::
+  test_fourier_tail_fit_matches_grouping_side_fit`). Hardened: the per-group
+  value/range override is now gated to the `fixed`/`range` modes only (so a
+  stray `background_ranges` key cannot hijack `tail_fit`), and the tail-fit
+  time axis uses the alignment-reference t0 (`common_t0`) the grouped counts
+  are aligned to. Single source of truth — the FFT inherits the grouping
+  background; no separate FFT control. Owner was
+  `frequency-domain-finishers`; delivered here with the simulate-mode strays.

@@ -241,16 +241,22 @@ def _apply_group_background_correction(
         return counts, False, None
 
     payload = dict(grouping)
-    selected_value = _group_background_value_for_group(grouping, group_id)
-    selected_range = _group_background_range_for_group(grouping, group_id)
-    if selected_value is not None:
-        # Per-group values come from the time-domain reduction; subtract them
-        # verbatim regardless of how that reduction estimated them.
-        payload["background_fixed_values"] = [selected_value, selected_value]
-        payload["background_mode"] = "fixed"
-    elif selected_range is not None:
-        payload["background_ranges"] = [list(selected_range), list(selected_range)]
-        payload["background_mode"] = "range"
+    # Only the fixed/range modes carry a per-group value/range from the
+    # time-domain reduction. tail_fit re-fits each group's own counts here
+    # (the same Poisson estimator as the reduction), so it must NOT be
+    # overridden by stray background_values/background_ranges keys left in the
+    # grouping from an earlier mode.
+    if mode in ("fixed", "range"):
+        selected_value = _group_background_value_for_group(grouping, group_id)
+        selected_range = _group_background_range_for_group(grouping, group_id)
+        if selected_value is not None:
+            # Per-group values come from the time-domain reduction; subtract
+            # them verbatim regardless of how that reduction estimated them.
+            payload["background_fixed_values"] = [selected_value, selected_value]
+            payload["background_mode"] = "fixed"
+        elif selected_range is not None:
+            payload["background_ranges"] = [list(selected_range), list(selected_range)]
+            payload["background_mode"] = "range"
 
     last_good_bin = payload.get("last_good_bin")
     try:
@@ -352,7 +358,10 @@ def build_group_signal_dataset(
         counts,
         grouping=grouping,
         group_id=int(group_id),
-        t0_bin=int(grouping.get("t0_bin", common_t0)),
+        # ``counts`` is aligned to ``common_t0`` (apply_grouping_aligned), so the
+        # tail-fit time axis and the range fallback must use that reference, not
+        # the raw grouping t0 (which can differ when detectors stagger).
+        t0_bin=common_t0,
         bin_width=float(prepared_histograms[0].bin_width),
         metadata=run.metadata,
         source_file=source_file,
