@@ -276,6 +276,14 @@ frequencies) could anchor a future port, but the correlation Hamiltonian is
 distinct from the muonium line-shapes and should not be grafted onto them.
 Recorded as the natural follow-on; ships only if checkpoint-3 elects it.
 
+> **PROMOTED (2026-06-11).** This deferred follow-on is now its own study,
+> [`radical-correlation-spectrum`](../radical-correlation-spectrum/README.md)
+> (branch `feat/radical-correlation-spectrum`). It confirms the transcription
+> above against the Pascal source directly and reconciles the Breit-Rabi
+> relation across three sources: `_tf_levels` *is* the anchor (the study builds
+> the spectrum by the **exact forward map** `A = ν₁₂ + ν₃₄` rather than
+> transliterating `rmatch`'s approximate inverse), exactly as anticipated here.
+
 ---
 
 ## Reused-API reconciliation (no duplication)

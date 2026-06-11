@@ -242,6 +242,96 @@ def test_frequency_plot_panel_switches_between_mhz_and_field_units(
     assert x_max == pytest.approx(2.0 / (135.538817 * 1.0e-4), abs=1e-3)
 
 
+def test_fourier_panel_correlation_mode_reveals_controls(qapp: QApplication) -> None:
+    panel = FourierPanel()
+    # Controls are inert until the specialist mode is selected.
+    assert panel._correlation_field_edit.isEnabled() is False
+    assert panel._correlation_order_spin.isEnabled() is False
+
+    panel._correlation_radio.setChecked(True)
+    assert panel._current_display_mode() == "Correlation (radical)"
+    assert panel._correlation_field_edit.isEnabled() is True
+    assert panel._correlation_order_spin.isEnabled() is True
+
+    state = panel.get_state()
+    assert state["display"] == "Correlation (radical)"
+    assert state["correlation_order"] == 2  # WiMDA default
+    assert state["correlation_reference_field_gauss"] is None  # blank → auto
+
+
+def test_fourier_panel_correlation_state_roundtrips(qapp: QApplication) -> None:
+    panel = FourierPanel()
+    panel._correlation_radio.setChecked(True)
+    panel._correlation_field_edit.setText("2900")
+    panel._correlation_order_spin.setValue(3)
+    state = panel.get_state()
+    assert state["correlation_reference_field_gauss"] == pytest.approx(2900.0)
+
+    restored = FourierPanel()
+    restored.restore_state(state)
+    assert restored._current_display_mode() == "Correlation (radical)"
+    assert restored._correlation_order_spin.value() == 3
+    assert float(restored._correlation_field_edit.text()) == pytest.approx(2900.0)
+    assert restored._correlation_field_edit.isEnabled() is True
+
+
+def test_frequency_plot_panel_correlation_axis_locks_unit_selector(
+    qapp: QApplication,
+) -> None:
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+
+    correlation = MuonDataset(
+        time=np.array([100.0, 200.0, 514.4, 700.0]),
+        asymmetry=np.array([0.1, 0.2, 1.0, 0.1]),
+        error=np.zeros(4, dtype=float),
+        metadata={
+            "run_number": 11,
+            "plot_domain": "frequency",
+            "x_label": "Muon hyperfine coupling Aμ (MHz)",
+            "y_label": "Radical correlation (a.u.)",
+            "correlation_axis": True,
+        },
+    )
+    ordinary = MuonDataset(
+        time=np.array([0.0, 1.0, 2.0]),
+        asymmetry=np.array([1.0, 2.0, 1.5]),
+        error=np.zeros(3, dtype=float),
+        metadata={"run_number": 12, "plot_domain": "frequency", "y_label": "FFT Magnitude (a.u.)"},
+    )
+
+    # The user is viewing a normal FFT in Field (G) with the relative axis on.
+    panel.plot_dataset(ordinary)
+    panel._frequency_x_unit_combo.setCurrentText("Field (G)")
+    panel._frequency_axis_relative_check.setChecked(True)
+    assert panel._current_frequency_x_unit == "field_gauss"
+    assert panel._frequency_axis_relative_to_reference is True
+
+    # Switching to a correlation spectrum locks the axis to MHz and disables the
+    # field-unit selector, the relative checkbox, and the reference spin.
+    panel.plot_dataset(correlation)
+    assert panel._ax.get_xlabel() == "Muon hyperfine coupling Aμ (MHz)"
+    assert panel._frequency_axis_is_correlation is True
+    assert panel._frequency_x_unit_combo.isEnabled() is False
+    assert panel._frequency_axis_relative_check.isEnabled() is False
+    # The relative-axis checkbox must reflect the forced-off backing flag.
+    assert panel._frequency_axis_relative_check.isChecked() is False
+    assert panel._frequency_reference_spin.isEnabled() is False
+
+    # Switching back restores the user's Field (G) + relative selection exactly.
+    panel.plot_dataset(ordinary)
+    assert panel._frequency_axis_is_correlation is False
+    assert panel._frequency_x_unit_combo.isEnabled() is True
+    assert panel._current_frequency_x_unit == "field_gauss"
+    assert panel._ax.get_xlabel() == "Field (G)"
+    assert panel._frequency_axis_relative_to_reference is True
+    assert panel._frequency_axis_relative_check.isChecked() is True
+
+    # A project saved in this (restored) state persists the user's unit, not MHz.
+    assert panel.get_state()["frequency_x_unit"] == "field_gauss"
+
+
 def test_frequency_plot_panel_can_show_relative_field_axis(qapp: QApplication) -> None:
     panel = PlotPanel(domain="frequency")
     if not getattr(panel, "_has_mpl", False):
