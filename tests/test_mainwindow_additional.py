@@ -3921,6 +3921,70 @@ class TestPlotWorkspaceDomainPhase7:
         assert not mainwindow._raw_counts_action.isChecked()
         assert mainwindow._domain_buttons_by_token["groups"].isChecked()
 
+    def test_domain_click_heals_stale_workspace_availability(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Clicking a representation re-derives availability just-in-time.
+
+        Regression: the toolbar enable states and the workspace's allowed-view
+        set are written on different event paths; with a grouped dataset
+        current but a stale workspace set, clicking Individual groups silently
+        bounced back to F-B asymmetry (flaky, from-view-dependent selection).
+        """
+        mw = mainwindow
+        monkeypatch.setattr(mw, "_grouped_time_domain_available", lambda dataset=None: True)
+        ds = _make_dataset(8821, with_grouping=True)
+        mw._data_browser.add_dataset(ds)
+        mw._current_dataset = ds
+        # Simulate the stale state: workspace knows nothing beyond the base views.
+        mw._plot_workspace.set_available_views([])
+        assert not mw._plot_workspace.is_view_enabled("groups")
+
+        mw._on_domain_button_clicked("groups")
+        assert mw._plot_workspace.active_view() == "groups"
+
+    def test_maxent_click_with_stale_workspace_lands_on_maxent(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: a stale workspace set bounced a MaxEnt click cross-domain
+        into F-B asymmetry."""
+        mw = mainwindow
+        dataset = _make_fourier_ready_dataset(8822, with_grouping=True)
+        assert mw._dataset_supports_maxent(dataset) is True
+        mw._data_browser.add_dataset(dataset)
+        mw._on_dataset_selected(8822)
+        mw._plot_workspace.set_available_views([])  # stale: maxent missing
+        mw._domain_buttons_by_token["maxent"].setEnabled(True)
+
+        mw._on_domain_button_clicked("maxent")
+        assert mw._plot_workspace.active_view() == "maxent"
+
+    def test_disallowed_view_falls_back_within_its_domain(self, mainwindow: MainWindow) -> None:
+        """Regression: a disallowed frequency token fell back to fb_asymmetry,
+        dumping the user across domains."""
+        mw = mainwindow
+        mw._plot_workspace.set_available_views([])  # maxent not allowed
+        mw._plot_workspace.set_active_view("frequency")
+        mw._plot_workspace.set_active_view("maxent")
+        assert mw._plot_workspace.active_view() == "frequency"
+
+    def test_refresh_maxent_keeps_workspace_token_in_lockstep(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The view-change button refresh also updates the workspace token."""
+        mw = mainwindow
+        monkeypatch.setattr(mw, "_current_selection_supports_maxent", lambda: True)
+        mw._plot_workspace.set_available_views([])
+        assert not mw._plot_workspace.is_view_enabled("maxent")
+        mw._refresh_maxent_domain_enabled()
+        assert mw._plot_workspace.is_view_enabled("maxent")
+        assert mw._domain_buttons_by_token["maxent"].isEnabled()
+
+        monkeypatch.setattr(mw, "_current_selection_supports_maxent", lambda: False)
+        mw._refresh_maxent_domain_enabled()
+        assert not mw._plot_workspace.is_view_enabled("maxent")
+        assert not mw._domain_buttons_by_token["maxent"].isEnabled()
+
     def test_no_signal_on_same_view_click(self, mainwindow: MainWindow, qapp: QApplication) -> None:
         """Selecting the already-active view emits no active_view_changed signal."""
         emitted: list[str] = []

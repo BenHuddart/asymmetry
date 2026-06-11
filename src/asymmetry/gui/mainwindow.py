@@ -1585,52 +1585,54 @@ class MainWindow(QMainWindow):
         if not hasattr(self._plot_panel, "set_time_view_modes"):
             return
 
+        modes = self._sync_available_views()
+
+        if self._plot_workspace.active_domain() != "time":
+            return
+        current_mode = None
+        if hasattr(self._plot_panel, "current_time_view_mode"):
+            current_mode = self._plot_panel.current_time_view_mode()
+        active_view = current_mode if current_mode in modes else modes[0]
+        workspace_view = self._plot_workspace.active_view()
+        if workspace_view in modes:
+            active_view = workspace_view
+        self._plot_workspace.set_active_view(active_view)
+
+    def _sync_available_views(self) -> list[str]:
+        """Recompute view availability and apply it everywhere it surfaces.
+
+        This is the single writer for the workspace's enabled-view set and the
+        matching toolbar/menu enable states, so the two can never disagree —
+        a button click bouncing off a stale workspace set was the source of
+        "selecting a representation sometimes does nothing" flakiness.
+        Returns the available view tokens.
+        """
         # The integral scan needs only the F-B reduction, so like fb_asymmetry
         # it is always an available mode — including under multi-selection,
         # where building a field scan from the selected runs is its workflow.
         modes = ["fb_asymmetry", "integral_scan"]
         selected = list(self._data_browser.get_selected_datasets())
-        if len(selected) > 1 and self._overlay_enabled():
+        if not (len(selected) > 1 and self._overlay_enabled()):
+            # Overlaying several runs has no single run to transform, so the
+            # data-gated views are unavailable there.
+            target = self._current_dataset or (selected[0] if len(selected) == 1 else None)
+            if self._grouped_time_domain_available(target):
+                modes.extend(["groups", "raw_counts"])
+            if self._dataset_supports_maxent(target):
+                modes.append("maxent")
+
+        if hasattr(self._plot_panel, "set_time_view_modes"):
             current_mode = None
             if hasattr(self._plot_panel, "current_time_view_mode"):
                 current_mode = self._plot_panel.current_time_view_mode()
             self._plot_panel.set_time_view_modes(modes, current_mode=current_mode)
-            if hasattr(self._plot_workspace, "set_available_views"):
-                self._plot_workspace.set_available_views(modes)
-                if (
-                    self._plot_workspace.active_domain() == "time"
-                    and self._plot_workspace.active_view() not in modes
-                ):
-                    self._plot_workspace.set_active_view("fb_asymmetry")
-            self._domain_buttons_by_token["groups"].setEnabled(False)
-            self._raw_counts_action.setEnabled(False)
-            self._refresh_maxent_domain_enabled()
-            return
-
-        target = self._current_dataset or (selected[0] if len(selected) == 1 else None)
-        if self._grouped_time_domain_available(target):
-            modes.extend(["groups", "raw_counts"])
-        if self._dataset_supports_maxent(target):
-            modes.append("maxent")
+        if hasattr(self._plot_workspace, "set_available_views"):
+            self._plot_workspace.set_available_views(modes)
 
         self._domain_buttons_by_token["groups"].setEnabled("groups" in modes)
         self._raw_counts_action.setEnabled("raw_counts" in modes)
-        self._refresh_maxent_domain_enabled()
-
-        current_mode = None
-        if hasattr(self._plot_panel, "current_time_view_mode"):
-            current_mode = self._plot_panel.current_time_view_mode()
-        self._plot_panel.set_time_view_modes(modes, current_mode=current_mode)
-        if hasattr(self._plot_workspace, "set_available_views"):
-            self._plot_workspace.set_available_views(modes)
-            if self._plot_workspace.active_domain() != "time":
-                return
-            active_view = current_mode if current_mode in modes else modes[0]
-            if hasattr(self._plot_workspace, "active_view"):
-                workspace_view = self._plot_workspace.active_view()
-                if workspace_view in modes:
-                    active_view = workspace_view
-            self._plot_workspace.set_active_view(active_view)
+        self._domain_buttons_by_token["maxent"].setEnabled("maxent" in modes)
+        return modes
 
     def _selected_or_current_datasets(self) -> list[MuonDataset]:
         """Return selected datasets, or the current dataset when none are selected."""
@@ -5831,7 +5833,14 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f"Viewing run {self._current_dataset.run_label}")
 
     def _on_domain_button_clicked(self, view: str) -> None:
-        """Switch the workspace to *view* and keep the Domain buttons in sync."""
+        """Switch the workspace to *view* and keep the Domain buttons in sync.
+
+        Availability is re-derived just-in-time: enable states and the
+        workspace's allowed-view set are written on different event paths, so
+        at the moment of a click we trust the data, not whichever set was
+        refreshed last — otherwise the click can silently bounce.
+        """
+        self._sync_available_views()
         self._plot_workspace.set_active_view(view)
         self._sync_domain_buttons(self._plot_workspace.active_view())
 
@@ -6009,7 +6018,19 @@ class MainWindow(QMainWindow):
         button = getattr(self, "_domain_buttons_by_token", {}).get("maxent")
         if button is None:
             return
-        button.setEnabled(self._current_selection_supports_maxent())
+        supports = self._current_selection_supports_maxent()
+        button.setEnabled(supports)
+        # Keep the workspace's token in lockstep with the button: an enabled
+        # button whose token is missing from the workspace set would make the
+        # click bounce (historically all the way to F-B asymmetry).
+        if hasattr(self._plot_workspace, "enabled_views"):
+            enabled = set(self._plot_workspace.enabled_views())
+            if supports != ("maxent" in enabled):
+                if supports:
+                    enabled.add("maxent")
+                else:
+                    enabled.discard("maxent")
+                self._plot_workspace.set_available_views(sorted(enabled))
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         """Record inspector-dock closes into the per-representation memory.

@@ -134,7 +134,17 @@ class PlotWorkspacePanel(QWidget):
         if token not in self._VIEW_TOKENS:
             token = "fb_asymmetry"
         if token not in self._enabled_views:
-            token = "fb_asymmetry" if token != "frequency" else "frequency"
+            # Fall back within the requested domain: a disallowed frequency
+            # token must not dump the user into the time domain (and vice
+            # versa) — that read as the view selector "doing something random".
+            if token in self._FREQUENCY_VIEWS:
+                token = "frequency"
+            else:
+                token = (
+                    self._last_time_view
+                    if self._last_time_view in self._enabled_views
+                    else "fb_asymmetry"
+                )
 
         if token == self._active_view:
             # Ensure the stack is in sync even if no signal is needed.
