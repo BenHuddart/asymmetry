@@ -1955,11 +1955,15 @@ class TestMainWindowBasic:
         assert not buttons["integral_scan"].isChecked()
         assert not buttons["frequency"].isChecked()
         # Integral scan needs only the F-B reduction, so it is always enabled;
-        # MaxEnt needs a capable dataset; the raw-counts diagnostic lives in
-        # the View menu, not the toolbar, and needs grouped data.
+        # the data-gated entries (Individual groups, MaxEnt, the raw-counts
+        # diagnostic in the View menu) must start visibly disabled — not just
+        # become disabled on the first click/selection event.
+        assert buttons["fb_asymmetry"].isEnabled()
         assert buttons["integral_scan"].isEnabled()
-        assert "raw_counts" not in buttons
+        assert buttons["frequency"].isEnabled()
+        assert not buttons["groups"].isEnabled()
         assert not buttons["maxent"].isEnabled()
+        assert "raw_counts" not in buttons
         assert not mainwindow._raw_counts_action.isEnabled()
 
     def test_domain_button_click_changes_workspace_view(self, mainwindow: MainWindow) -> None:

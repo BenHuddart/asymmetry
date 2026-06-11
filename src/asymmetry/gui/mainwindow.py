@@ -532,6 +532,10 @@ class MainWindow(QMainWindow):
         # Surface the inspector deck for the initial representation (the app
         # lands in the default F-B view without firing a view-change signal).
         self._apply_inspector_for_domain(self._plot_workspace.active_view())
+        # Seed availability from the (empty) startup state: the data-gated
+        # buttons are constructed enabled and would otherwise look clickable
+        # until the first selection event runs the sync.
+        self._sync_available_views()
 
         # Check for SciPy availability and warn if using fallback
         from asymmetry.core.fitting.diffusion import is_scipy_available
