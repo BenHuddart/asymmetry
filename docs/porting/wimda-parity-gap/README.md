@@ -16,11 +16,27 @@ study-first pass (`docs/porting/<slug>/`, five-doc template) when it starts;
 the briefs in `projects/` are pre-studies that fix scope, size, phasing and
 integration direction.
 
+## Status (2026-06-11): Wave A COMPLETE
+
+All six Wave A projects shipped, with follow-on PRs, plus two emergent
+projects (exact asymmetry-error propagation #35; radical correlation
+spectrum #43) — PRs #32–#43. See
+[wave-a-closeout.md](wave-a-closeout.md) for the audit (status table, stray
+handoffs, Wave B brief revisions, collision watchlist) and
+[decision-record.md](decision-record.md) for the consolidated record of
+exclusions, deviations from WiMDA, and the reference-program bug ledger.
+Wave B briefs require the revisions listed in the closeout before launch;
+a collision-reconciliation session precedes Wave B.
+
 ## Documents
 
 - [comparison.md](comparison.md) — the consolidated WiMDA → Asymmetry gap
   inventory (the canonical record; supersedes the WiMDA column of
   `docs/porting/comparison-matrix.md`).
+- [decision-record.md](decision-record.md) — consolidated exclusions,
+  deviations, and reference-program bug ledger (compiled at Wave A closeout).
+- [wave-a-closeout.md](wave-a-closeout.md) — Wave A audit: status, stray
+  handoffs, Wave B impact, collision watchlist.
 - [implementation-options.md](implementation-options.md) — how the gaps were
   partitioned into projects; parallelisation (worktree) analysis and waves.
 - [test-data.md](test-data.md) — verification corpus mapped to projects.
