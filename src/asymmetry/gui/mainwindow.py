@@ -119,7 +119,10 @@ from asymmetry.core.transform import (
     prepare_histograms_with_deadtime,
     resolve_background_mode,
 )
-from asymmetry.core.transform.deadtime import calibrate_deadtime_from_histograms
+from asymmetry.core.transform.deadtime import (
+    calibrate_deadtime_from_histograms,
+    promote_deadtime_to_grouping,
+)
 from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
@@ -5166,16 +5169,35 @@ class MainWindow(QMainWindow):
             return
         run = self._current_dataset.run
         grouping = dict(run.grouping) if isinstance(run.grouping, dict) else {}
-        grouping["dead_time_us"] = list(self._maxent_fitted_deadtime[1])
-        grouping["deadtime_method"] = "maxent_fit"
-        grouping["deadtime_correction"] = True
+        fitted = list(self._maxent_fitted_deadtime[1])
+        # Route through the shared chokepoint so the MaxEnt calibration writes the
+        # grouping exactly like the count-fit promote (per-detector values,
+        # before/after, re-reduce message). The "maxent_fit" provenance label is
+        # kept — both labels are inert in reduction (only file-sourced deadtimes
+        # are distinguished), but the label records where the value came from.
+        change = promote_deadtime_to_grouping(
+            grouping,
+            fitted,
+            n_histograms=len(run.histograms),
+            method="maxent_fit",
+        )
         run.grouping = grouping
+        # MaxEnt fits one deadtime per detector, so summarise the change across
+        # all detectors (a single-detector readout would misreport when detector
+        # 0 fits ~0 but others do not).
+        before_vals = list(change["before"].values()) or [0.0]
+        after_vals = list(change["after"].values()) or [0.0]
+        before = sum(before_vals) / len(before_vals)
+        after = sum(after_vals) / len(after_vals)
         stamp = time.strftime("%Y-%m-%d %H:%M")
         self._maxent_panel.set_deadtime_text(
-            f"Applied to grouping deadtime · {stamp}.", can_apply=False
+            f"Applied to grouping deadtime: mean {before * 1000.0:.2f} → {after * 1000.0:.2f} ns "
+            f"across {len(after_vals)} detector(s) · {stamp}. Re-reduce the run to apply.",
+            can_apply=False,
         )
         self._set_fourier_status(
-            f"Applied fitted deadtime to run {run_number}'s grouping.", success=True
+            f"Applied fitted deadtime to run {run_number}'s grouping. Re-reduce the run to apply.",
+            success=True,
         )
         self._log_panel.log(f"Applied MaxEnt-fitted deadtime to run {run_number}.")
 

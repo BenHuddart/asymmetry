@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.transform import resolve_background_mode
 from asymmetry.gui.panels.fit_panel import GlobalFitTab
 
 #: Fit-target choices (label, mode key) shown in the count-domain selector.
@@ -111,7 +112,10 @@ class MultiGroupFitWindow(QWidget):
         exclude_layout.addWidget(self._exclude_min)
         exclude_layout.addWidget(QLabel("–"))
         exclude_layout.addWidget(self._exclude_max)
-        self._exclude_label = QLabel("Exclude (μs)")
+        # Relabelled from the bare "Exclude (μs)": the count fit *drops* these
+        # bins from the fit (a hard skip), unlike the MaxEnt de-weight window
+        # that keeps the FFT grid. The semantics differ; the labels now say so.
+        self._exclude_label = QLabel("Skip window (μs)")
         form.addRow(self._exclude_label, exclude_row)
 
         self._t0_check = QCheckBox("Fit t₀ offset")
@@ -159,6 +163,41 @@ class MultiGroupFitWindow(QWidget):
         promote_layout.addWidget(self._promote_additive)
         self._promote_label = QLabel("Calibrate")
         form.addRow(self._promote_label, promote_row)
+
+        # The α / t₀ / background promote siblings (suggest-only Send-to-Group):
+        # each writes a fitted count-domain calibration into the grouping with
+        # provenance, before/after, and a "re-reduce" message.
+        self._promote_alpha_btn = QPushButton("α")
+        self._promote_alpha_btn.setToolTip("Promote the fitted forward/backward α → grouping")
+        self._promote_alpha_btn.clicked.connect(lambda: self._active_tab().promote_count_alpha())
+        self._promote_t0_btn = QPushButton("t₀")
+        self._promote_t0_btn.setToolTip("Promote the fitted t₀ offset → grouping t0_bin")
+        self._promote_t0_btn.clicked.connect(lambda: self._active_tab().promote_count_t0())
+        self._promote_bg_btn = QPushButton("background")
+        self._promote_bg_btn.setToolTip(
+            "Promote the fitted flat background → grouping (fixed mode)"
+        )
+        self._promote_bg_btn.clicked.connect(lambda: self._active_tab().promote_count_background())
+        promote_row2 = QWidget()
+        promote_layout2 = QHBoxLayout(promote_row2)
+        promote_layout2.setContentsMargins(0, 0, 0, 0)
+        promote_layout2.addWidget(self._promote_alpha_btn)
+        promote_layout2.addWidget(self._promote_t0_btn)
+        promote_layout2.addWidget(self._promote_bg_btn)
+        form.addRow(QLabel(""), promote_row2)
+
+        # N3 interpretive guard: the count fit consumes raw counts, so a grouping
+        # background correction does NOT reach it. Surface that when active so a
+        # user does not fix the fit's background to zero and bias N0/α.
+        self._bg_active_note = QLabel(
+            "Note: this run has a grouping background correction. The count fit "
+            "reads raw counts, so its background term measures the full flat "
+            "background — do not fix it to zero."
+        )
+        self._bg_active_note.setWordWrap(True)
+        self._bg_active_note.setStyleSheet("color: palette(mid);")
+        self._bg_active_note.setVisible(False)
+        form.addRow(self._bg_active_note)
         return box
 
     def _on_promote_deadtime(self) -> None:
@@ -188,6 +227,9 @@ class MultiGroupFitWindow(QWidget):
             self._promote_btn,
             self._promote_additive,
             self._promote_label,
+            self._promote_alpha_btn,
+            self._promote_t0_btn,
+            self._promote_bg_btn,
         ):
             widget.setEnabled(count_mode)
 
@@ -216,10 +258,19 @@ class MultiGroupFitWindow(QWidget):
         """Update the active grouped-fit dataset shown by both surfaces."""
         for tab in self._grouped_tabs():
             tab.set_current_dataset(dataset)
+        self._update_background_note(dataset)
         if dataset is None:
             self._run_label = ""
             return
         self._run_label = str(getattr(dataset, "run_label", dataset.run_number))
+
+    def _update_background_note(self, dataset: MuonDataset | None) -> None:
+        """Show the N3 interpretive note when the run's grouping corrects background."""
+        grouping = getattr(getattr(dataset, "run", None), "grouping", None)
+        active = False
+        if isinstance(grouping, dict) and bool(grouping.get("background_correction", False)):
+            active = resolve_background_mode(grouping) != "none"
+        self._bg_active_note.setVisible(active)
 
     def set_member_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the member runs for the Batch grouped surface (the series)."""
@@ -286,6 +337,13 @@ class MultiGroupFitWindow(QWidget):
         return {
             "single": self._single_fit_tab.get_state(),
             "batch": self._batch_fit_tab.get_state(),
+            # NEW-R1: the count-fit skip window is a window-level control (shared
+            # by both surfaces), so it persists here rather than per-tab. It is
+            # the last exclusion that did not round-trip through the project.
+            "count_skip_window": [
+                float(self._exclude_min.value()),
+                float(self._exclude_max.value()),
+            ],
         }
 
     def restore_state(self, state: dict) -> None:
@@ -304,3 +362,16 @@ class MultiGroupFitWindow(QWidget):
         else:
             self._single_fit_tab.restore_state(state)
             self._batch_fit_tab.restore_state(state)
+        self._restore_count_skip_window(state.get("count_skip_window"))
+
+    def _restore_count_skip_window(self, window) -> None:
+        """Restore the persisted count-fit skip window (NEW-R1); absent → unchanged."""
+        if not isinstance(window, (list, tuple)) or len(window) < 2:
+            return
+        try:
+            lo, hi = float(window[0]), float(window[1])
+        except (TypeError, ValueError):
+            return
+        self._exclude_min.setValue(lo)
+        self._exclude_max.setValue(hi)
+        self._sync_count_fit_target()
