@@ -197,6 +197,12 @@ QScrollArea {
     border: none;
 }
 
+/* Inspector-deck scroll wrappers keep the dock-panel white background the
+   panels showed when they were direct dock children. */
+QScrollArea#inspectorScroll {
+    background-color: #ffffff;
+}
+
 /* ── Toolbar segmented-control and nav buttons ───────────────────────
    Styled per-widget via build_segmented_button_qss() / build_nav_button_qss()
    in styles/widgets.py.  Per-widget application is required because Qt's

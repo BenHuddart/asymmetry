@@ -32,12 +32,14 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QDockWidget,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QStackedWidget,
@@ -353,6 +355,45 @@ def _sync_grouping_keys(grouping: dict, payload: dict, keys: tuple[str, ...]) ->
             grouping[key] = payload.get(key)
         else:
             grouping.pop(key, None)
+
+
+class _InspectorStack(QStackedWidget):
+    """A QStackedWidget sized by its *current* page only.
+
+    QStackedWidget's size hints are the maximum over all pages, so a tall
+    hidden page (e.g. the multi-group fit surface) would impose its minimum
+    height on the whole main window even while the compact single-fit page is
+    showing — forcing the default window taller than small laptop screens.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        # Page swaps change the (current-page-derived) hints; tell the layout.
+        self.currentChanged.connect(lambda _index: self.updateGeometry())
+
+    def sizeHint(self):  # noqa: N802 — Qt override
+        current = self.currentWidget()
+        return current.sizeHint() if current is not None else super().sizeHint()
+
+    def minimumSizeHint(self):  # noqa: N802 — Qt override
+        current = self.currentWidget()
+        return current.minimumSizeHint() if current is not None else super().minimumSizeHint()
+
+
+def _inspector_scroll_area(content: QWidget) -> QScrollArea:
+    """Wrap an inspector dock's content so it scrolls instead of growing.
+
+    The deck is visible by default; without this, the tallest panel's minimum
+    height becomes the main window's minimum height, which cannot fit a
+    13-inch laptop screen. On large screens the content fills the dock exactly
+    as before; on small ones it scrolls.
+    """
+    area = QScrollArea()
+    area.setObjectName("inspectorScroll")  # bench.qss keeps the panel-white bg
+    area.setWidgetResizable(True)
+    area.setFrameShape(QFrame.Shape.NoFrame)
+    area.setWidget(content)
+    return area
 
 
 class MainWindow(QMainWindow):
@@ -1117,23 +1158,23 @@ class MainWindow(QMainWindow):
         # Bespoke ALC-mode build panel, swapped into the Fit dock when ALC mode
         # is on (see _sync_fit_dock_mode).
         self._alc_fit_panel = ALCFitPanel()
-        self._fit_stack = QStackedWidget(self)
+        self._fit_stack = _InspectorStack(self)
         self._fit_stack.addWidget(self._fit_panel)
         self._fit_stack.addWidget(self._multi_group_fit_window)
         self._fit_stack.addWidget(self._alc_fit_panel)
         self._dock_fit = QDockWidget("Fit", self)
-        self._dock_fit.setWidget(self._fit_stack)
+        self._dock_fit.setWidget(_inspector_scroll_area(self._fit_stack))
         self._dock_fit.setMinimumWidth(300)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit)
 
         # Right dock — spectrum controls (FFT / MaxEnt, tabbed with fit)
         self._fourier_panel = FourierPanel()
         self._maxent_panel = MaxEntPanel()
-        self._spectrum_stack = QStackedWidget(self)
+        self._spectrum_stack = _InspectorStack(self)
         self._spectrum_stack.addWidget(self._fourier_panel)
         self._spectrum_stack.addWidget(self._maxent_panel)
         self._dock_fourier = QDockWidget("Spectrum", self)
-        self._dock_fourier.setWidget(self._spectrum_stack)
+        self._dock_fourier.setWidget(_inspector_scroll_area(self._spectrum_stack))
         self._dock_fourier.setMinimumWidth(280)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fourier)
 
@@ -1141,11 +1182,11 @@ class MainWindow(QMainWindow):
         # mode the dock swaps to the bespoke scan view via _parameters_stack.
         self._fit_parameters_panel = FitParametersPanel()
         self._alc_scan_view = ALCScanView()
-        self._parameters_stack = QStackedWidget(self)
+        self._parameters_stack = _InspectorStack(self)
         self._parameters_stack.addWidget(self._fit_parameters_panel)
         self._parameters_stack.addWidget(self._alc_scan_view)
         self._dock_fit_parameters = QDockWidget("Parameters", self)
-        self._dock_fit_parameters.setWidget(self._parameters_stack)
+        self._dock_fit_parameters.setWidget(_inspector_scroll_area(self._parameters_stack))
         self._dock_fit_parameters.setMinimumWidth(320)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit_parameters)
         # Canonical inspector tab order, left to right: processing (Spectrum)
