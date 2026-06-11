@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +13,21 @@ pytestmark = [pytest.mark.io]
 from asymmetry.core.io import RootLoader, load
 
 uproot = pytest.importorskip("uproot")
+
+#: musrfit ships example ROOT files in its own source tree, which Asymmetry does
+#: not vendor. Point ``ASYMMETRY_MUSRFIT_DATA`` at ``<musrfit>/doc/examples/data``
+#: to run the reader-parity tests below; without it (e.g. in CI) they skip.
+_MUSRFIT_DATA_DIR = os.environ.get("ASYMMETRY_MUSRFIT_DATA")
+
+
+def _musrfit_example_file(name: str) -> Path:
+    """Resolve a musrfit example data file, skipping if the corpus is absent."""
+    if not _MUSRFIT_DATA_DIR:
+        pytest.skip("ASYMMETRY_MUSRFIT_DATA not set; musrfit reader-parity corpus unavailable")
+    path = Path(_MUSRFIT_DATA_DIR) / name
+    if not path.exists():
+        pytest.skip(f"musrfit example file not available: {name}")
+    return path
 
 
 def _write_musrroot_directory(path: Path) -> None:
@@ -244,9 +260,7 @@ def test_load_convenience_registers_root_loader(tmp_path) -> None:
 
 
 def test_load_musrfit_musrroot_folder_fixture() -> None:
-    path = Path("/Users/bhuddart/Source/musrfit/doc/examples/data/lem15_his_2994.root")
-    if not path.exists():
-        pytest.skip("musrfit ROOT fixture not available")
+    path = _musrfit_example_file("lem15_his_2994.root")
 
     ds = RootLoader().load(str(path))
 
@@ -266,9 +280,7 @@ def test_load_musrfit_musrroot_folder_fixture() -> None:
 
 def test_load_musrfit_musrroot_fixture_used_by_musrfit_histo_test() -> None:
     """Read the ROOT file referenced by musrfit's test-histo-MusrRoot.msr."""
-    path = Path("/Users/bhuddart/Source/musrfit/doc/examples/data/lem12_his_2466.root")
-    if not path.exists():
-        pytest.skip("musrfit ROOT fixture not available")
+    path = _musrfit_example_file("lem12_his_2466.root")
 
     ds = RootLoader().load(str(path))
 
