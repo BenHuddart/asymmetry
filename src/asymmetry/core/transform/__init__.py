@@ -52,6 +52,11 @@ from asymmetry.core.transform.integral import (
     integrate_curve,
     integrate_run,
 )
+from asymmetry.core.transform.promote import (
+    promote_alpha_to_grouping,
+    promote_background_to_grouping,
+    promote_t0_to_grouping,
+)
 from asymmetry.core.transform.rebin import (
     BINNING_MODES,
     binned_fb_asymmetry,
@@ -81,6 +86,9 @@ __all__ = [
     "has_resolved_deadtime",
     "parse_deadtime_calibration_text",
     "prepare_histograms_with_deadtime",
+    "promote_alpha_to_grouping",
+    "promote_background_to_grouping",
+    "promote_t0_to_grouping",
     "apply_grouping",
     "apply_grouping_aligned",
     "common_t0_for_groups",
