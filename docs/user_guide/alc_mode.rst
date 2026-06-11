@@ -174,6 +174,32 @@ The FWHM is derived from the fitted width per shape
 (:math:`\mathrm{FWHM} = 2\sqrt{2\ln 2}\,B_\mathrm{wid} \approx 2.355\,B_\mathrm{wid}`
 for a Gaussian; :math:`2\,B_\mathrm{wid}` for a Lorentzian).
 
+Repolarisation: a complementary route through parameter trending
+----------------------------------------------------------------
+
+For longitudinal-field **decoupling / repolarisation** measurements there are
+two complementary ways to reach the same physics, and they sit on opposite
+sides of the model boundary:
+
+* **The integral-asymmetry ALC scan** described here reduces each run to one
+  integrated number and fits a *phenomenological* baseline plus Gaussian or
+  Lorentzian peaks — the right tool for a **resonance** (an avoided level
+  crossing or QLCR dip) where you want the resonance field and width without
+  committing to a microscopic model.
+* **A time-domain parameter trend** fits a model to *each run's* spectrum,
+  trends a fitted quantity across the field, and fits a *physical* curve to that
+  trend. For the smooth repolarisation of isotropic muonium the
+  :ref:`MuRepolarisation <muonium-repolarisation>` model
+  (:doc:`parameter_trending`) extracts the hyperfine constant
+  :math:`A_\mathrm{hf}` directly from the field-decoupling shape — fit it to an
+  initial-asymmetry trend, or to a scan built with this mode's
+  integral-asymmetry observable.
+
+In short: use the ALC scan for sharp resonances read off model-free, and the
+``MuRepolarisation`` parameter trend for the broad decoupling curve when the
+hyperfine constant is the quantity you want. The integral-asymmetry observable
+built here feeds both.
+
 Saving and reopening
 --------------------
 

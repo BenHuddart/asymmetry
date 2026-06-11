@@ -34,14 +34,19 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
     ),
     "PowerLaw": (
         "Use near scale-invariant regimes or crossover windows where the observable follows a power law. "
-        "It is especially useful for phenomenological critical-like behavior without a full microscopic model."
+        "It is especially useful for phenomenological critical-like behavior without a full microscopic model. "
+        "When a width-like quantity rides on a background that adds in quadrature rather than linearly, use "
+        "PowerLawQuadBG (equivalently PowerLaw ⊕ Constant) instead of an additive constant."
     ),
     "PowerLawQuadBG": (
         "Use when a power-law signal combines with a constant background in quadrature, "
         "y = √((a·|x|ⁿ)² + BG²), as for width-like quantities (relaxation rates, linewidths) whose "
         "independent broadening channels add as squares. Unlike an additive constant, the curve "
         "saturates smoothly at BG where the power-law term is small; prefer PowerLaw with an additive "
-        "constant when the background is a genuine offset of the observable itself."
+        "constant when the background is a genuine offset of the observable itself. This fixed "
+        "component is exactly the composite PowerLaw ⊕ Constant (the quadrature combinator), with BG "
+        "mapping to the constant term and the power law's own additive constant fixed at 0; reach for "
+        "the ⊕ form when either side is a richer model than a bare power law or constant."
     ),
     "ExponentialDecay": (
         "Use for relaxation toward an asymptote with a characteristic x-scale τ. "

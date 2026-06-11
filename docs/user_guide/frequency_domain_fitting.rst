@@ -6,6 +6,10 @@ parameter-trending workflow used in the time domain to displayed Fourier
 spectra.  The V1 workflow fits the real-valued spectrum currently shown in the
 Frequency view.  It does not fit the complex FFT directly.
 
+The spectrum you fit can come from either quantitative estimator — the FFT or
+maximum entropy; pick one with :ref:`choosing-spectral-estimator`. (The Burg
+*Resolution* view is a line-count diagnostic, not a fit target.)
+
 Workflow
 --------
 

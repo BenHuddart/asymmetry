@@ -26,6 +26,7 @@ material.
    gui_usage
    project_files
    data_reduction/index
+   exclusions
 
 .. toctree::
    :maxdepth: 2
@@ -37,6 +38,7 @@ material.
    frequency_domain_fitting
    vector_polarization
    fitting
+   assessing_a_fit
    composite_models
    fit_wizard
    global_fit_wizard

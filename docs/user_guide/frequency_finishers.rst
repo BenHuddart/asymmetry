@@ -59,6 +59,8 @@ and cutoff are physical limits, not bugs — if a line vanishes past the cutoff,
 the pulse genuinely could not record it; reduce the pulse width only if you know
 it.
 
+.. _robust-baseline-offset:
+
 Robust baseline offset
 ----------------------
 
@@ -161,9 +163,12 @@ Its pathologies — why it is never the quantitative answer:
 
 Treat a Burg spectrum as a magnifying glass for spotting structure. Once you
 know how many lines are present and roughly where, measure them with a
-frequency-domain fit or with maximum entropy — those are the quantitative
-methods (Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy*, §15.5;
-Burg 1972).
+:doc:`frequency-domain fit <frequency_domain_fitting>` or with
+:doc:`maximum entropy <fourier_analysis>` — those are the quantitative methods.
+See :ref:`choosing-spectral-estimator` for where Burg sits among the three
+(Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy*, §15.5; Burg 1972).
+
+.. _diamagnetic-line-removal:
 
 Diamagnetic line removal
 ------------------------
@@ -183,6 +188,33 @@ independent calibration. *Pitfall:* the fit assumes a single damped cosine; if
 several lines overlap the diamagnetic frequency the subtraction is approximate —
 inspect the overlay, and prefer a full multi-line time-domain fit when the
 removal leaves visible residual.
+
+Fit-and-subtract or exclude the band?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Two mechanisms suppress the diamagnetic line, and they differ in what they cost
+the rest of the spectrum:
+
+- **Fit and subtract** removes the line *before* the transform by fitting a
+  damped cosine and subtracting only its oscillatory part. It leaves the
+  neighbouring frequency bins intact — nothing is blanked — and it reports the
+  fitted field as a by-product. **Prefer it** whenever a shifted line sits close
+  to the diamagnetic peak and you cannot afford to blank the region around it:
+  muoniated-radical and :math:`A_\mu`-coupling work (:doc:`radical_correlation`)
+  depends on the satellite structure that a band exclusion would erase, and the
+  fitted field is itself a useful calibration.
+- **Exclude the band** (the diamagnetic band in the exclusions table; see
+  :doc:`exclusions`) hard-zeroes a window of the displayed spectrum
+  centred on the Larmor frequency. It makes no assumption about the line shape,
+  so it is the **robust fallback** when the diamagnetic line is too strong or
+  too distorted to fit cleanly — and the fit-and-subtract path itself falls back
+  to nothing below a ~5 G seed field, where it silently has no line to lock onto.
+  The cost is the blanked window: any signal inside it is gone too, so keep the
+  half-width tight.
+
+In short: fit-and-subtract preserves data and yields the field, and is the
+default for correlation and shifted-line work; band exclusion is the
+assumption-free fallback for lines that will not fit.
 
 References
 ----------

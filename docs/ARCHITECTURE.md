@@ -391,6 +391,16 @@ reimplemented.
 | FT-10 | Guide single-spectrum time-domain fitting with a wizard that fingerprints the active dataset, compares a curated portfolio of supported composite models, and applies the chosen result back into the fit panel. |
 | FT-11 | Support grouped time-domain fitting: a **Single** tab fits one dataset's detector groups jointly; a **Batch** tab fits a multi-run series with the same grouped model, recording results as a ``FitSeries`` for parameter trending. Physics parameters are classified as ``Global`` (shared across runs), ``Local`` (per-run), or ``Fixed``; nuisance parameters (N₀, background, amplitude, relative_phase) are always per-(run, group). |
 
+**Registry naming.** Fit functions live in three name-keyed registries —
+`COMPONENTS` (composite time-domain basis functions), `MODELS` (single-channel
+models), and `PARAMETER_MODEL_COMPONENTS` (parameter-trend components) — that
+span different analysis domains, so a bare name does not identify which registry
+(or domain) a function belongs to. The Wave B `python-user-functions`
+registration facade, which builds the public registration API over exactly these
+dicts, is the place to formalise domain-distinguishing names; new registrations
+must present names that disambiguate the domain rather than relying on the
+registry a caller happens to reach for.
+
 ### 4.3.1 Grouped Time-Domain Boundary
 
 The grouped time-domain feature follows the same core/GUI split as all other
