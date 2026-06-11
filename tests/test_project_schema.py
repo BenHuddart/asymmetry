@@ -891,6 +891,18 @@ class TestFourierPanelState:
             "group_enabled_table": {1: True, 2: True},
             "group_phase_table": {1: 12.5, 2: -8.0},
             "group_auto_filled_ids": [],
+            "pulse_compensation": False,
+            "pulse_half_width_us": 0.0,
+            "pulse_max_gain": 25.0,
+            "baseline_mode": "none",
+            "baseline_kappa": 2.0,
+            "exclude_enabled": False,
+            "diamag_exclusion": False,
+            "diamag_half_width_mhz": 0.3,
+            "exclusion_ranges": [],
+            "remove_diamag": False,
+            "burg_order_min": 2,
+            "burg_order_max": 40,
         }
 
         panel2 = FourierPanel()
