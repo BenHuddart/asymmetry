@@ -87,6 +87,8 @@ and units displayed in the GUI, in fit reports, and in exported GLE
 figures all derive from this registry, so they are guaranteed to be
 consistent with what the model function actually expects.
 
+.. _fit-statistics:
+
 Fit Statistics
 --------------
 
@@ -123,6 +125,8 @@ minimum is a good description of the likelihood. For well-conditioned
 fits this is fine. For ill-conditioned problems — strongly correlated
 parameters, fits near a bound, multi-modal likelihoods — either bootstrap
 (see :ref:`monte-carlo-errors` below) or compute MINOS errors externally.
+
+.. _fit-residuals:
 
 Residuals
 ---------

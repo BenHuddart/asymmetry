@@ -28,6 +28,43 @@ Fourier spectra appear as ``nu0`` and ``fwhm`` in MHz, with derived field
 equivalents ``B0`` and ``Bwid`` for plotting or fitting spectral shifts and
 broadening directly against field, temperature, or run number.
 
+.. _trending-data-model:
+
+The trending data model
+-----------------------
+
+Everything trendable is a **FitSeries**. Whatever produced the numbers — a
+batch of single-run fits, a grouped multi-detector fit, a global cross-fit, a
+frequency-domain peak fit — the result lands in one container type, stored in
+the project's batch collection. A FitSeries holds the per-run fit summaries
+(:ref:`assessing-a-fit`: success, χ², reduced χ², parameter values and
+uncertainties) keyed by run, and that is exactly the structure the
+parameter-trending tools consume. There is no separate "trend object": to trend
+a quantity is to read a parameter out of a FitSeries across its runs.
+
+Two distinct paths *write* into this one container, by design:
+
+* **Results recursion** records the per-group rows of a model fit — each fitted
+  group's parameters become a row, so the series carries a parameter-versus-run
+  (or versus-group) curve ready to trend.
+* **The global summary** accumulates one row per fit from a cross-group or
+  global fit — the shared (global) parameters of each fit, gathered across a
+  run series.
+
+Both write FitSeries instances into the same collection; they differ only in
+*what* each row represents (per-group values versus per-fit global values), not
+in the container. This is why a grouped fit and a global fit both appear as
+selectable series in the panel and trend through identical machinery.
+
+The **Global Parameter Fit window** is a *transient view*, not a third
+container. It displays one ephemeral cross-group fit result and, today, stores
+its own view decorations (local model fits and plot annotations) under a
+separate project key rather than inside the FitSeries it is viewing — so those
+decorations can be orphaned if the backing fit is re-run. (Reconciliation
+Phase 5 moves the decorations into the FitSeries itself, keyed by batch id, so
+they survive with the data they annotate; the trend data model above is
+unchanged by that move.)
+
 Representation-Aware Trending
 ------------------------------
 
@@ -203,10 +240,14 @@ to override the default grouping.
    model = ParameterCompositeModel.from_expression("PowerLaw ⊕ Constant")
    print(model.formula_string())
 
-The identity ``PowerLaw ⊕ Constant`` :math:`\equiv` ``PowerLawQuadBG`` (with the
-power law's additive constant set to zero) is exact — the operator generalises
-the fixed :ref:`quadrature-background <quadrature-background>` component to any
-pair of basis models.
+The identity ``PowerLaw ⊕ Constant`` :math:`\equiv` ``PowerLawQuadBG`` is exact —
+the operator generalises the fixed
+:ref:`quadrature-background <quadrature-background>` component to any pair of
+basis models. The parameter mapping is direct: the composite's dedicated
+parameters are ``a``, ``n``, ``c_1`` (the power law's own additive constant) and
+``c_2`` (the constant term), so the monolith's ``BG`` maps to ``c_2`` while
+``c_1`` must be **fixed at 0** for the equivalence to hold — the
+``PowerLawQuadBG`` inner term carries no additive offset.
 
 *When to use this.* Reach for ``⊕`` whenever a fitted quantity is the quadrature
 sum of two contributions — most often a signal of interest riding on an
@@ -545,6 +586,8 @@ the observable itself rather than an independent broadening channel.
 This fixed component is the special case ``PowerLaw ⊕ Constant`` of the general
 quadrature combinator (above); reach for ``⊕`` when either side of the
 quadrature sum is a richer model than a bare power law or constant.
+
+.. _muonium-repolarisation:
 
 Muonium Repolarisation
 ----------------------

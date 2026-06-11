@@ -412,6 +412,19 @@ phases, **Send phases to fit** writes them back to the grouped fit. A provenance
 line records which direction the exchange went and when. (Phases are matched by
 group id, so the forward/backward mapping never gets crossed.)
 
+.. note::
+
+   **The FFT per-group phases and the MaxEnt fitted-phase exchange are separate
+   stores, by design.** The Fourier panel's per-group phase table (`FFT Phase
+   Modes`_, with its auto-estimate) and this MaxEnt exchange (which swaps phases
+   with the *grouped time-domain fit*) hold the same physical quantity — the
+   per-group detector phase — but do not feed each other: refining phases in
+   MaxEnt does not update the FFT phase table, and filling FFT phase estimates
+   does not seed MaxEnt. Keep them in sync by hand if you switch estimators on
+   the same run. A "use MaxEnt fitted phases" pull on the Fourier panel is a
+   plausible convenience and will be added on the first concrete request for it;
+   until then the two stores are independent.
+
 **Deadtime.** At a pulsed source the detectors lose counts at early times where
 the rate is highest, distorting the signal that carries the high-frequency
 information. **Fit deadtime** estimates a per-detector deadtime from the
@@ -440,21 +453,47 @@ is display-only and never alters the reconstructed spectrum.
 field G, density, with a parameter header); **Export log…** writes the per-cycle
 convergence trace and the final per-group phases, amplitudes, and backgrounds.
 
-Choosing FFT vs MaxEnt
------------------------
+.. _choosing-spectral-estimator:
 
-Use **FFT** when:
+Choosing a spectral estimator: FFT, MaxEnt, or Burg
+---------------------------------------------------
+
+Asymmetry offers three ways to turn a time-domain signal into a spectrum, and
+they answer different questions. The first two are quantitative measurements;
+the third is a diagnostic.
+
+Use the **FFT** for **speed and linearity**:
 
 * The signal-to-noise ratio is good
 * Fast, one-shot computation is what you need
-* You want a transform that maps directly onto the standard apodisation knobs
+* You want a linear transform that maps directly onto the standard apodisation
+  knobs, with amplitudes and areas you can trust
 
-Use **MaxEnt** when:
+Use **MaxEnt** for **pulsed-source resolution and per-group phase handling**:
 
-* The data is noisy or the usable time window is short
-* You need to pull a weak line out at higher effective resolution
-* You want the per-bin errors carried through the reconstruction
+* The data is noisy or the usable time window is short, and you need to pull a
+  weak line out at higher effective resolution
+* You are at a pulsed source and want the finite-pulse response folded into the
+  forward model (see `Pulsed sources: the pulse-shape response`_) rather than
+  fighting the high-frequency rolloff afterwards
+* You want one reconstruction that carries per-group phases and per-bin errors
+  through to the spectrum (see `Calibration: phases, deadtime, and ZF/LF mode`_)
 * You are willing to drive the iterative refinement and watch it converge
+
+Use **Burg** (the *Resolution (Burg)* display mode) only as a **line-splitting
+diagnostic**:
+
+* You want to ask "is that one line or two?" — the all-poles estimate resolves
+  close lines from a short window that collapse to a single FFT peak, and the
+  pole count hints at how many components a fit should include
+* You then read the count and rough positions and **measure** the lines with an
+  FFT/MaxEnt spectrum or a frequency-domain fit — never off the Burg curve
+  itself, whose peak heights are not amplitudes and which is prone to spurious
+  splitting and noise-dependent position bias
+
+The Burg method, its pole scan, and its pathologies are documented in
+:doc:`frequency_finishers`. Once you have a spectrum from any estimator, fit it
+quantitatively through :doc:`frequency_domain_fitting`.
 
 Practical Example
 -----------------
