@@ -27,7 +27,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QActionGroup, QIcon, QPixmap
+from PySide6.QtGui import QActionGroup, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDockWidget,
@@ -399,7 +399,18 @@ class MainWindow(QMainWindow):
         if icon is not None:
             self.setWindowIcon(icon)
 
-        self.resize(1400, 900)
+        # Prefer the spacious default, but never open larger than the screen —
+        # a 13-inch MacBook (e.g. 1280×832 logical) must get a layout that
+        # fits without manual resizing.
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            self.resize(
+                min(1400, max(960, available.width() - 24)),
+                min(900, max(640, available.height() - 24)),
+            )
+        else:
+            self.resize(1400, 900)
 
         self._settings = QSettings()
         self._last_open_dir = self._settings.value("io/last_open_dir", "", str)
@@ -1106,7 +1117,7 @@ class MainWindow(QMainWindow):
         self._fit_stack.addWidget(self._alc_fit_panel)
         self._dock_fit = QDockWidget("Fit", self)
         self._dock_fit.setWidget(self._fit_stack)
-        self._dock_fit.setMinimumWidth(320)
+        self._dock_fit.setMinimumWidth(300)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit)
 
         # Right dock — spectrum controls (FFT / MaxEnt, tabbed with fit)
@@ -1129,7 +1140,7 @@ class MainWindow(QMainWindow):
         self._parameters_stack.addWidget(self._alc_scan_view)
         self._dock_fit_parameters = QDockWidget("Parameters", self)
         self._dock_fit_parameters.setWidget(self._parameters_stack)
-        self._dock_fit_parameters.setMinimumWidth(340)
+        self._dock_fit_parameters.setMinimumWidth(320)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit_parameters)
         # Canonical inspector tab order, left to right: processing (Spectrum)
         # first, then Fit, then Parameters — the user works through the deck in
@@ -1176,7 +1187,10 @@ class MainWindow(QMainWindow):
         self._last_fit_chi2: float | None = None
 
         # Set compact-friendly defaults while keeping the central plot dominant.
-        self.resizeDocks([self._dock_data_browser], [360], Qt.Orientation.Horizontal)
+        # The width budget must leave the plot dominant on a 13-inch laptop
+        # (~1280 logical px): browser 330 + inspector deck 340 + plot ~600.
+        self.resizeDocks([self._dock_data_browser], [330], Qt.Orientation.Horizontal)
+        self.resizeDocks([self._dock_fit], [340], Qt.Orientation.Horizontal)
         self.resizeDocks([self._dock_log], [140], Qt.Orientation.Vertical)
 
         # Connect signals

@@ -162,7 +162,7 @@ class UIManager(QObject):
         self._dock_log.setVisible(defaults["log"])
         self._window.resizeDocks(
             [self._dock_data_browser, self._dock_fit],
-            [360, 360],
+            [330, 340],
             Qt.Orientation.Horizontal,
         )
         self._window.resizeDocks([self._dock_log], [140], Qt.Orientation.Vertical)
