@@ -7057,9 +7057,7 @@ class MainWindow(QMainWindow):
         # results series so model-fit outputs can themselves be trended.
         self._record_model_fit_results_series(parameter_name, groups, output)
 
-    def _cross_group_batch_id(
-        self, parameter_name: str, x_key: str, groups: object
-    ) -> str:
+    def _cross_group_batch_id(self, parameter_name: str, x_key: str, groups: object) -> str:
         """Return the deterministic ``modelfit-<digest>`` id for a cross-group fit.
 
         Derived from the logical key (parameter, x-key, sorted group ids) via a

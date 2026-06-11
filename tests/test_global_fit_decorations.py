@@ -112,16 +112,12 @@ def _local_model_fit() -> ParameterModelFit:
                 x_min=5.0,
                 x_max=25.0,
                 model=ParameterCompositeModel.from_expression("Linear"),
-                parameters=ParameterSet(
-                    [Parameter("m", value=0.1), Parameter("b", value=1.0)]
-                ),
+                parameters=ParameterSet([Parameter("m", value=0.1), Parameter("b", value=1.0)]),
                 result=ParameterModelFitResult(
                     success=True,
                     chi_squared=1.0,
                     reduced_chi_squared=0.5,
-                    parameters=ParameterSet(
-                        [Parameter("m", value=0.1), Parameter("b", value=1.0)]
-                    ),
+                    parameters=ParameterSet([Parameter("m", value=0.1), Parameter("b", value=1.0)]),
                     uncertainties={"m": 0.01, "b": 0.02},
                     message="Fit successful",
                 ),
@@ -244,9 +240,7 @@ def test_decorations_persist_in_series_extra_not_window_key(
         assert key not in window_key
 
 
-def test_legacy_window_state_migrates_to_series_extra(
-    mainwindow: MainWindow, tmp_path
-) -> None:
+def test_legacy_window_state_migrates_to_series_extra(mainwindow: MainWindow, tmp_path) -> None:
     """A legacy project (decorations inline in the window-state key, none on the
     series) loads with decorations visible, then migrates to the series' extra on
     the next save."""
@@ -352,8 +346,8 @@ def test_window_view_state_and_decorations_split(qapp: QApplication) -> None:
     """get_view_state holds prefs only; get_decorations holds the decoration
     subset; set_results clears decorations when the batch changes."""
     from asymmetry.gui.windows.global_parameter_fit_window import (
-        GlobalParameterFitWindow,
         _DECORATION_STATE_KEYS,
+        GlobalParameterFitWindow,
     )
 
     window = GlobalParameterFitWindow()
