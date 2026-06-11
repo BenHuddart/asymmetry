@@ -53,6 +53,17 @@ from asymmetry.gui.styles.widgets import apply_param_table_style
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
+#: Keys in :meth:`GlobalParameterFitWindow.get_state` that are *decorations* —
+#: trend-attached state (local model fits, plot annotations) that persists inside
+#: the owning ``FitSeries.extra`` rather than under the window-state project key.
+#: Everything else in the state dict is a view preference and stays in the key.
+_DECORATION_STATE_KEYS = (
+    "local_model_fits",
+    "plot_annotations",
+    "local_plot_annotations",
+    "suppressed_group_label_tags",
+)
+
 
 class GlobalParameterFitWindow(QMainWindow):
     """Display cross-group fit data, fitted model curves, and global/local values."""
@@ -65,6 +76,11 @@ class GlobalParameterFitWindow(QMainWindow):
         self._result: CrossGroupFitResult | None = None
         self._groups: list[ParameterGroupData] = []
         self._model = None
+        #: The ``modelfit-<digest>`` batch id of the fit currently displayed. The
+        #: window's *decorations* (local model fits, plot annotations) belong to
+        #: this series' ``extra`` rather than to a standalone project key, so they
+        #: cannot orphan when the backing fit is re-run or removed.
+        self._batch_id: str | None = None
         self._parameter_name: str | None = None
         self._x_key: str = "run"
         self._fit_x_min: float = float("nan")
@@ -479,9 +495,6 @@ class GlobalParameterFitWindow(QMainWindow):
             self._local_param_log_y = {str(k): bool(v) for k, v in raw_local_param_log.items()}
         else:
             self._local_param_log_y = {}
-        self._local_model_fits = self._deserialize_local_model_fits(
-            state.get("local_model_fits", {})
-        )
         fit_subplot_aspect = state.get("fit_subplot_aspect")
         try:
             if fit_subplot_aspect is not None:
@@ -506,18 +519,74 @@ class GlobalParameterFitWindow(QMainWindow):
             self._local_selected_y_names = []
             self._restored_local_selected_y = []
 
+        # Decorations may travel inline in a legacy window-state dict (older
+        # projects) or be applied separately from the owning series' ``extra``
+        # (current projects, via :meth:`restore_decorations`). Applying any keys
+        # present here keeps legacy projects loading unchanged.
+        self._apply_decoration_state(state)
+
+        self._sync_fit_scale_controls()
+        if self.has_result():
+            self._refresh_plot()
+            self._refresh_local_parameter_plots()
+
+    def _apply_decoration_state(self, state: dict) -> None:
+        """Restore the decoration keys (local model fits, annotations) from *state*.
+
+        Shared by :meth:`restore_state` (legacy inline dict) and
+        :meth:`restore_decorations` (the series-attached home). A missing key
+        resets that decoration to empty, matching the historical restore_state
+        behaviour, so callers pass a complete decoration dict.
+        """
+        self._local_model_fits = self._deserialize_local_model_fits(
+            state.get("local_model_fits", {})
+        )
         self._plot_annotations = self._deserialize_annotations(state.get("plot_annotations", []))
         self._local_plot_annotations = self._deserialize_annotations(
             state.get("local_plot_annotations", [])
         )
-
         suppressed = state.get("suppressed_group_label_tags", [])
         if isinstance(suppressed, list):
             self._suppressed_group_label_tags = {str(tag) for tag in suppressed}
         else:
             self._suppressed_group_label_tags = set()
 
-        self._sync_fit_scale_controls()
+    def get_view_state(self) -> dict[str, object]:
+        """Return the view-preference subset of :meth:`get_state`.
+
+        This is what persists under the ``global_parameter_fit_window_state``
+        project key. Decorations are excluded — they live in the owning series'
+        ``extra`` (see :meth:`get_decorations`).
+        """
+        return {
+            key: value
+            for key, value in self.get_state().items()
+            if key not in _DECORATION_STATE_KEYS
+        }
+
+    def get_decorations(self) -> dict[str, object]:
+        """Return the decoration subset of :meth:`get_state`.
+
+        These persist inside the displayed fit's ``FitSeries.extra`` keyed by
+        batch id, so they cannot orphan when the fit is re-run or removed.
+        """
+        full = self.get_state()
+        return {key: full[key] for key in _DECORATION_STATE_KEYS if key in full}
+
+    def has_decorations(self) -> bool:
+        """Return ``True`` when the window carries any user decorations."""
+        return bool(
+            self._local_model_fits
+            or self._plot_annotations
+            or self._local_plot_annotations
+            or self._suppressed_group_label_tags
+        )
+
+    def restore_decorations(self, state: object) -> None:
+        """Apply decorations loaded from the owning series' ``extra``."""
+        if not isinstance(state, dict):
+            return
+        self._apply_decoration_state(state)
         if self.has_result():
             self._refresh_plot()
             self._refresh_local_parameter_plots()
@@ -678,6 +747,10 @@ class GlobalParameterFitWindow(QMainWindow):
 
         self._refresh_local_parameter_plots()
 
+    def batch_id(self) -> str | None:
+        """Return the batch id of the displayed fit (decorations' owning series)."""
+        return self._batch_id
+
     def set_results(
         self,
         *,
@@ -688,7 +761,18 @@ class GlobalParameterFitWindow(QMainWindow):
         result: CrossGroupFitResult,
         fit_x_min: float = float("nan"),
         fit_x_max: float = float("nan"),
+        batch_id: str | None = None,
     ) -> None:
+        # Showing a *different* fit replaces the decoration context: the previous
+        # fit's local model fits and annotations belong to its own series and
+        # must not bleed onto the new one. A re-run of the *same* fit (matching
+        # batch id) keeps the live decorations so they follow the replacement.
+        if batch_id is not None and batch_id != self._batch_id:
+            self._local_model_fits = {}
+            self._plot_annotations = []
+            self._local_plot_annotations = []
+            self._suppressed_group_label_tags = set()
+        self._batch_id = batch_id
         self._parameter_name = parameter_name
         self._x_key = x_key
         self._groups = groups
