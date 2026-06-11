@@ -3946,9 +3946,7 @@ class GlobalFitTab(QWidget):
         bwd = result.group_results[backward]
         if "alpha" in fwd.parameters.names:
             raw_err = fwd.uncertainties.get("alpha")
-            alpha_err = (
-                float(raw_err) if raw_err is not None and np.isfinite(raw_err) else None
-            )
+            alpha_err = float(raw_err) if raw_err is not None and np.isfinite(raw_err) else None
             self._last_count_alpha = (float(fwd.parameters["alpha"].value), alpha_err)
         f_bg = (
             float(fwd.parameters["background"].value)

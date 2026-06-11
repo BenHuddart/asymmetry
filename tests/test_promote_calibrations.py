@@ -69,9 +69,7 @@ def test_promote_t0_rejects_nonpositive_bin_width():
 
 def test_promote_background_writes_fixed_pair_and_provenance():
     grouping = {}
-    out = promote_background_to_grouping(
-        grouping, forward=12.5, backward=11.0, reference_run=3039
-    )
+    out = promote_background_to_grouping(grouping, forward=12.5, backward=11.0, reference_run=3039)
     assert out["before"] == {"forward": 0.0, "backward": 0.0}
     assert out["after"] == {"forward": 12.5, "backward": 11.0}
     assert grouping["background_fixed_values"] == [12.5, 11.0]

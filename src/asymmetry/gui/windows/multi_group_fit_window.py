@@ -174,7 +174,9 @@ class MultiGroupFitWindow(QWidget):
         self._promote_t0_btn.setToolTip("Promote the fitted t₀ offset → grouping t0_bin")
         self._promote_t0_btn.clicked.connect(lambda: self._active_tab().promote_count_t0())
         self._promote_bg_btn = QPushButton("background")
-        self._promote_bg_btn.setToolTip("Promote the fitted flat background → grouping (fixed mode)")
+        self._promote_bg_btn.setToolTip(
+            "Promote the fitted flat background → grouping (fixed mode)"
+        )
         self._promote_bg_btn.clicked.connect(lambda: self._active_tab().promote_count_background())
         promote_row2 = QWidget()
         promote_layout2 = QHBoxLayout(promote_row2)
