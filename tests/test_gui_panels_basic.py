@@ -294,23 +294,42 @@ def test_frequency_plot_panel_correlation_axis_locks_unit_selector(
             "correlation_axis": True,
         },
     )
-    panel.plot_dataset(correlation)
-    assert panel._ax.get_xlabel() == "Muon hyperfine coupling Aμ (MHz)"
-    # The A_µ axis is a coupling, not γ_µ·B — the field-unit selector is locked.
-    assert panel._frequency_x_unit_combo.isEnabled() is False
-    assert panel._frequency_axis_is_correlation is True
-
-    # Switching back to an ordinary frequency spectrum re-enables the selector.
     ordinary = MuonDataset(
         time=np.array([0.0, 1.0, 2.0]),
         asymmetry=np.array([1.0, 2.0, 1.5]),
         error=np.zeros(3, dtype=float),
         metadata={"run_number": 12, "plot_domain": "frequency", "y_label": "FFT Magnitude (a.u.)"},
     )
+
+    # The user is viewing a normal FFT in Field (G) with the relative axis on.
+    panel.plot_dataset(ordinary)
+    panel._frequency_x_unit_combo.setCurrentText("Field (G)")
+    panel._frequency_axis_relative_check.setChecked(True)
+    assert panel._current_frequency_x_unit == "field_gauss"
+    assert panel._frequency_axis_relative_to_reference is True
+
+    # Switching to a correlation spectrum locks the axis to MHz and disables the
+    # field-unit selector, the relative checkbox, and the reference spin.
+    panel.plot_dataset(correlation)
+    assert panel._ax.get_xlabel() == "Muon hyperfine coupling Aμ (MHz)"
+    assert panel._frequency_axis_is_correlation is True
+    assert panel._frequency_x_unit_combo.isEnabled() is False
+    assert panel._frequency_axis_relative_check.isEnabled() is False
+    # The relative-axis checkbox must reflect the forced-off backing flag.
+    assert panel._frequency_axis_relative_check.isChecked() is False
+    assert panel._frequency_reference_spin.isEnabled() is False
+
+    # Switching back restores the user's Field (G) + relative selection exactly.
     panel.plot_dataset(ordinary)
     assert panel._frequency_axis_is_correlation is False
     assert panel._frequency_x_unit_combo.isEnabled() is True
-    assert panel._ax.get_xlabel() == "Frequency (MHz)"
+    assert panel._current_frequency_x_unit == "field_gauss"
+    assert panel._ax.get_xlabel() == "Field (G)"
+    assert panel._frequency_axis_relative_to_reference is True
+    assert panel._frequency_axis_relative_check.isChecked() is True
+
+    # A project saved in this (restored) state persists the user's unit, not MHz.
+    assert panel.get_state()["frequency_x_unit"] == "field_gauss"
 
 
 def test_frequency_plot_panel_can_show_relative_field_axis(qapp: QApplication) -> None:

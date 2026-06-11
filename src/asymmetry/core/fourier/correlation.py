@@ -29,7 +29,11 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from asymmetry.core.fitting.muonium import _tf_levels
+from asymmetry.core.fitting.muonium import (
+    G_E_MHZ_PER_G,
+    G_MU_MHZ_PER_G,
+    _tf_levels,
+)
 
 #: WiMDA's ``CorrOrder`` default (``FFTPar.dfm:817``).
 DEFAULT_CORR_ORDER = 2
@@ -51,29 +55,31 @@ def corr_fn(y1: ArrayLike, y2: ArrayLike, order: int = DEFAULT_CORR_ORDER) -> ND
     product = a * b
     if order <= 0:
         return product
-    both = (a > 0.0) & (b > 0.0)
-    # r and 1/r only evaluated where both are positive; elsewhere `product` is
-    # already zero (one factor vanished), matching WiMDA's `else` branch.
-    ratio = np.divide(a, b, out=np.ones_like(product), where=both)
-    inverse = np.divide(b, a, out=np.ones_like(product), where=both)
-    # A vanishing amplitude sends the ratio penalty to ∞ and the result to 0 —
-    # the intended "totally unequal pair is suppressed" limit, so the overflow
-    # is expected and silenced rather than warned.
-    with np.errstate(over="ignore", invalid="ignore"):
-        denom = np.power(ratio, order) + np.power(inverse, order)
-        weighted = 2.0 * product / denom
-    return np.where(both & np.isfinite(weighted), weighted, np.where(both, 0.0, product))
+    # When either amplitude vanishes the ratio penalty diverges and the weighted
+    # value is non-finite (inf/nan); falling back to `product` (which is 0 there)
+    # reproduces WiMDA's `else` branch. A diverging-but-finite penalty for a very
+    # unequal pair correctly drives the result toward 0. The divide/overflow are
+    # expected on those paths, so they are silenced rather than warned.
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        weighted = 2.0 * product / (np.power(a / b, order) + np.power(b / a, order))
+    return np.where(np.isfinite(weighted), weighted, product)
 
 
 def breit_rabi_pair(field_gauss: float, a_mhz: float) -> tuple[float, float]:
-    """Return the exact high-field Breit--Rabi pair ``(ν₁₂, ν₃₄)`` in MHz.
+    """Return the high-field Breit--Rabi pair ``(ν₁₂, ν₃₄)`` in MHz.
 
-    Thin wrapper over :func:`asymmetry.core.fitting.muonium._tf_levels` (textbook
-    eqn 4.54): for an isotropic muon--electron system with hyperfine coupling
-    ``a_mhz`` at transverse field ``field_gauss`` (Gauss), the two observable
-    high-field precession frequencies are ``ν₁₂ = |E₁−E₂|`` and
-    ``ν₃₄ = |E₃−E₄|``, and ``ν₁₂ + ν₃₄ = a_mhz`` exactly (eqn 4.65).  Reuses the
-    shared Breit--Rabi machinery -- the relation is not re-derived here.
+    Thin scalar wrapper over :func:`asymmetry.core.fitting.muonium._tf_levels`
+    (textbook eqn 4.54): for an isotropic muon--electron system with hyperfine
+    coupling ``a_mhz`` at transverse field ``field_gauss`` (Gauss), the two
+    observable high-field precession frequencies are ``ν₁₂ = |E₁−E₂|`` and
+    ``ν₃₄ = |E₃−E₄|``.  In the high-field (Paschen--Back) regime
+    ``a_mhz ≫ (g_e+g_µ)·field`` their sum equals ``a_mhz`` (eqn 4.65); off that
+    regime the sum departs from ``a_mhz`` (the *difference* tends to it instead).
+    What matters for the correlation spectrum is that these are the two
+    *observed* line positions, so a real pair peaks at its true ``a_mhz`` on the
+    coupling axis regardless of regime.  Reuses the shared Breit--Rabi machinery
+    -- the relation is not re-derived here.  :func:`_pair_frequencies` is the
+    array-valued form (pinned equal to this wrapper by tests).
     """
     _delta, e1, e2, e3, e4 = _tf_levels(float(field_gauss), float(a_mhz))
     return abs(e1 - e2), abs(e3 - e4)
@@ -82,14 +88,29 @@ def breit_rabi_pair(field_gauss: float, a_mhz: float) -> tuple[float, float]:
 def _pair_frequencies(
     field_gauss: float, a_axis: NDArray[np.float64]
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Vectorise :func:`breit_rabi_pair` over a hyperfine axis ``a_axis``."""
-    if a_axis.size == 0:
+    """Array-valued form of :func:`breit_rabi_pair` over a hyperfine axis.
+
+    Vectorised transcription of :func:`asymmetry.core.fitting.muonium._tf_levels`
+    (``w12``/``w34`` only) over ``a_axis`` -- the scalar ``_tf_levels`` cannot
+    take an array directly because of its ``A_hf > 0`` branch.  Pinned equal to
+    the scalar :func:`breit_rabi_pair` by tests; built on the same shared
+    ``G_E_MHZ_PER_G`` / ``G_MU_MHZ_PER_G`` constants.
+    """
+    a = np.asarray(a_axis, dtype=float)
+    if a.size == 0:
         empty = np.zeros(0, dtype=float)
         return empty, empty
-    pairs = [breit_rabi_pair(field_gauss, float(a)) for a in a_axis]
-    nu12 = np.fromiter((p[0] for p in pairs), dtype=float, count=len(pairs))
-    nu34 = np.fromiter((p[1] for p in pairs), dtype=float, count=len(pairs))
-    return nu12, nu34
+    with np.errstate(divide="ignore", invalid="ignore"):
+        x = np.where(a > 0.0, (G_E_MHZ_PER_G + G_MU_MHZ_PER_G) * field_gauss / a, 1.0e20)
+    x = np.clip(x, -1.0e20, 1.0e20)
+    d = (G_E_MHZ_PER_G - G_MU_MHZ_PER_G) / (G_E_MHZ_PER_G + G_MU_MHZ_PER_G)
+    root = np.sqrt(1.0 + x * x)
+    quarter = a / 4.0
+    e1 = quarter * (1.0 + 2.0 * d * x)
+    e2 = quarter * (-1.0 + 2.0 * root)
+    e3 = quarter * (1.0 - 2.0 * d * x)
+    e4 = quarter * (-1.0 - 2.0 * root)
+    return np.abs(e1 - e2), np.abs(e3 - e4)
 
 
 def correlation_spectrum(
@@ -103,11 +124,12 @@ def correlation_spectrum(
     """Build the muoniated-radical correlation spectrum from a power spectrum.
 
     For each candidate hyperfine coupling ``A`` on the output axis, obtain the
-    exact Breit--Rabi pair ``(ν₁₂, ν₃₄)`` (which sums to ``A``), linearly
-    interpolate the transverse-field power spectrum ``power`` at both
-    frequencies, and combine them with :func:`corr_fn`.  A genuine radical
-    line-pair produces a peak at its true ``A_µ``; everything else contributes
-    background.
+    Breit--Rabi line pair ``(ν₁₂, ν₃₄)`` that coupling would produce at this
+    field, linearly interpolate the transverse-field power spectrum ``power`` at
+    both frequencies, and combine them with :func:`corr_fn`.  A genuine radical
+    line-pair produces a peak at its true ``A_µ`` (the output axis is the
+    candidate coupling itself, so the peak lands at ``A_µ`` independent of the
+    high-field sum rule); everything else contributes background.
 
     Parameters
     ----------
@@ -145,14 +167,16 @@ def correlation_spectrum(
         return np.zeros(0, dtype=float), np.zeros(0, dtype=float)
 
     if a_axis is None:
-        # ν₃₄ ≥ A/2 at high field, so A ≤ 2·ν₃₄ ≤ 2·f_max bounds the scan.
+        # ν₃₄ rises monotonically with A and ν₃₄ ≥ A/2 at high field, so
+        # A ≤ 2·ν₃₄ ≤ 2·f_max bounds the scan; trim to the contiguous prefix
+        # whose upper line stays within the spectrum's Nyquist (a partner beyond
+        # the data is unmeasurable — WiMDA's i2 ≤ nf guard).
         grid = np.arange(resolution, 2.0 * f_max + resolution, resolution)
         nu12, nu34 = _pair_frequencies(field, grid)
-        valid = np.isfinite(nu12) & np.isfinite(nu34) & (nu34 <= f_max) & (nu12 >= f_min)
-        if not valid.any():
+        samplable = np.isfinite(nu34) & (nu34 <= f_max)
+        if not samplable.any():
             return np.zeros(0, dtype=float), np.zeros(0, dtype=float)
-        # Keep the contiguous samplable region (ν₃₄ rises monotonically with A).
-        last = int(np.nonzero(valid)[0][-1])
+        last = int(np.nonzero(samplable)[0][-1])
         a_mhz = grid[: last + 1]
         nu12 = nu12[: last + 1]
         nu34 = nu34[: last + 1]
@@ -162,8 +186,15 @@ def correlation_spectrum(
 
     s12 = np.interp(nu12, frequencies, spectrum, left=0.0, right=0.0)
     s34 = np.interp(nu34, frequencies, spectrum, left=0.0, right=0.0)
-    corr = corr_fn(s12, s34, order)
-    return a_mhz, np.asarray(corr, dtype=float)
+    corr = np.asarray(corr_fn(s12, s34, order), dtype=float)
+    # The lower line ν₁₂ dips through ~0 at a field-dependent coupling; there the
+    # forward map samples the unresolvable near-DC / baseline region and would
+    # raise a spurious peak unrelated to any radical. Suppress candidates whose
+    # lower partner is not separable from DC (matching WiMDA's scan starting
+    # above the diamagnetic line).
+    low_floor = max(f_min, 2.0 * resolution)
+    corr = np.where(nu12 >= low_floor, corr, 0.0)
+    return a_mhz, corr
 
 
 __all__ = [

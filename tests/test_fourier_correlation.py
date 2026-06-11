@@ -18,6 +18,7 @@ import pytest
 from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.fourier.correlation import (
     DEFAULT_CORR_ORDER,
+    _pair_frequencies,
     breit_rabi_pair,
     corr_fn,
     correlation_spectrum,
@@ -124,6 +125,16 @@ def test_breit_rabi_pair_sum_is_coupling(field: float, a_mhz: float) -> None:
     assert nu12 < nu34  # ν₁₂ is the lower line
 
 
+def test_vectorised_pair_matches_scalar_reference() -> None:
+    """The fast array form _pair_frequencies must equal the scalar breit_rabi_pair."""
+    for field in (1000.0, 2900.0, 15000.0):
+        a_axis = np.linspace(0.5, 1500.0, 400)
+        nu12, nu34 = _pair_frequencies(field, a_axis)
+        ref = [breit_rabi_pair(field, float(a)) for a in a_axis]
+        np.testing.assert_allclose(nu12, [r[0] for r in ref], rtol=1e-12, atol=1e-12)
+        np.testing.assert_allclose(nu34, [r[1] for r in ref], rtol=1e-12, atol=1e-12)
+
+
 def test_breit_rabi_pair_matches_wimda_rmatch_within_approximation() -> None:
     """The exact forward map agrees with WiMDA's approximate inverse.
 
@@ -180,6 +191,21 @@ def test_correlation_spectrum_two_radicals_two_peaks() -> None:
     df = a_axis[1] - a_axis[0]
     assert any(abs(p - a_lo) < 4.0 * df for p in peak_positions)
     assert any(abs(p - a_hi) < 4.0 * df for p in peak_positions)
+
+
+def test_correlation_suppresses_near_dc_lower_line() -> None:
+    """A candidate whose lower line ν₁₂ dips to ~0 must not borrow DC/baseline power."""
+    field = 5000.0
+    freqs = np.arange(0.0, 300.0, 0.5)
+    # Strong low-frequency/baseline content near DC, nothing else.
+    power = np.exp(-0.5 * ((freqs - 0.5) / 1.0) ** 2)
+    a_axis, corr = correlation_spectrum(freqs, power, field_gauss=field)
+    nu12, _nu34 = _pair_frequencies(field, a_axis)
+    dip = int(np.argmin(nu12))
+    assert nu12[dip] < 1.0  # ν₁₂ genuinely dips into the near-DC region here
+    assert corr[dip] == 0.0  # ...and the spurious contribution is suppressed
+    # No spurious peak survives from pure low-frequency content.
+    assert float(np.max(corr)) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_correlation_spectrum_zero_field_is_empty() -> None:

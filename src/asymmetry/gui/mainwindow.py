@@ -4772,6 +4772,20 @@ class MainWindow(QMainWindow):
                 reference_t0_bin=reference_t0_bin,
             )
 
+            if (
+                average_dataset is not None
+                and average_dataset.metadata.get("correlation_axis")
+                and np.asarray(average_dataset.asymmetry).size == 0
+            ):
+                # The correlation transform produced nothing (no transverse field,
+                # or no Breit–Rabi partner within the measured range): report why
+                # rather than appending an empty spectrum as a success.
+                self._set_fourier_status(
+                    "No correlation spectrum: the radical correlation needs a "
+                    "transverse field and a radical line pair within the measured "
+                    "frequency range. Check the correlation field and the spectrum."
+                )
+                return
             if average_dataset is not None:
                 averaged_display = average_dataset.asymmetry
                 averaged_error = average_dataset.error

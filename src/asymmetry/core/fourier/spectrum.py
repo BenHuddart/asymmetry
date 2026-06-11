@@ -366,6 +366,11 @@ def compute_average_group_spectrum(
     is_real_imag = canonical == "real_imag"
     is_burg = canonical == "burg"
     is_correlation = canonical == "correlation"
+    # "Derived" modes replace or bypass the standard averaged complex spectrum
+    # (entropy optimiser output, Burg all-poles, the correlation transform) and
+    # therefore skip post-FFT conditioning, which only makes sense on the
+    # canonical averaged frequency spectrum.  New derived modes opt in here.
+    is_derived_mode = is_entropy or is_burg or is_correlation
     # The correlation spectrum is built from a real amplitude channel sampled at
     # the Breit–Rabi pair frequencies; feed the FFT averaging an amplitude
     # display internally, then transform it after averaging.
@@ -482,7 +487,9 @@ def compute_average_group_spectrum(
     elif averaged_values:
         averaged_display, averaged_error = average_fourier_display_values(
             averaged_values,
-            estimate_error=config.estimate_average_error,
+            # Correlation discards the averaged error below (it carries no
+            # per-bin uncertainty), so don't spend the estimation pass for it.
+            estimate_error=config.estimate_average_error and not is_correlation,
         )
         if is_real_imag and imag_values:
             averaged_imag, _ = average_fourier_display_values(imag_values, estimate_error=False)
@@ -510,11 +517,11 @@ def compute_average_group_spectrum(
 
     # ── post-FFT conditioning (compensation → baseline → exclusions) ────
     # Operates on the canonical MHz axis; the plot panel converts to the
-    # display unit.  Entropy keeps its optimiser output untouched, and Burg is a
-    # raw all-poles diagnostic (it already inherits the time-domain preprocessing
-    # chain) — neither is post-conditioned.
+    # display unit.  Derived modes (entropy optimiser output, Burg all-poles, the
+    # correlation transform) are not post-conditioned: each replaces or bypasses
+    # the standard averaged complex spectrum this stage expects.
     conditioning = None
-    if not is_entropy and not is_burg and not is_correlation:
+    if not is_derived_mode:
         reference_mhz = _reference_frequency_mhz(run, first_group_dataset)
         exclusion_ranges = _resolve_exclusion_ranges(config, reference_mhz)
         pulse_half_width_us = config.pulse_half_width_us

@@ -168,6 +168,11 @@ class PlotPanel(QWidget):
         #: and must not be field-converted by the MHz/G/T selector.
         self._frequency_axis_is_correlation = False
         self._frequency_correlation_x_label = "Muon hyperfine coupling Aμ (MHz)"
+        #: Field-unit view stashed on entry to a correlation spectrum and
+        #: restored when leaving it, so the user's MHz/G/T + relative choice
+        #: survives the excursion.
+        self._frequency_axis_unit_before_correlation = "frequency_mhz"
+        self._frequency_axis_relative_before_correlation = False
         self._frequency_x_limits_by_unit: dict[str, tuple[float, float]] = {}
         #: Optional ``(run_number, time_us, signal)`` diamagnetic-fit overlay for
         #: the time view; only drawn when the displayed run matches ``run_number``.
@@ -1598,30 +1603,72 @@ class PlotPanel(QWidget):
 
         A muoniated-radical correlation spectrum's x-axis is the muon hyperfine
         coupling A_µ (MHz), not γ_µ·B, so the MHz/G/T field selector and the
-        applied-field reference are meaningless and disabled; the axis keeps its
-        own label from the dataset metadata.
+        applied-field reference are meaningless: they are forced to a plain MHz
+        absolute axis and disabled, and the axis keeps its own label from the
+        dataset metadata. On entry the user's unit + relative-reference choice is
+        stashed and on exit it is restored, so toggling the correlation mode does
+        not silently discard (or persist) the wrong field-unit view.
+
+        (Note: the frequency panel shows a single averaged spectrum at a time, so
+        keying off the active dataset is sufficient; mixed correlation/FFT
+        overlays are not produced by the current pipeline.)
         """
         is_correlation = bool(
             dataset is not None
             and isinstance(dataset.metadata, dict)
             and dataset.metadata.get("correlation_axis") is True
         )
-        self._frequency_axis_is_correlation = is_correlation
         if is_correlation:
             raw_label = dataset.metadata.get("x_label")
             if isinstance(raw_label, str) and raw_label.strip():
                 self._frequency_correlation_x_label = raw_label
-            # Force MHz passthrough (no field conversion) while a correlation
-            # spectrum is shown.
+
+        was_correlation = self._frequency_axis_is_correlation
+        if is_correlation == was_correlation:
+            return  # No transition; nothing to stash, restore, or re-sync.
+
+        if is_correlation:
+            # Entering: stash the field-unit view and force a plain MHz axis.
+            self._frequency_axis_unit_before_correlation = self._current_frequency_x_unit
+            self._frequency_axis_relative_before_correlation = (
+                self._frequency_axis_relative_to_reference
+            )
+            self._frequency_axis_is_correlation = True
             self._current_frequency_x_unit = "frequency_mhz"
             self._frequency_axis_relative_to_reference = False
+        else:
+            # Leaving: restore the stashed field-unit view.
+            self._frequency_axis_is_correlation = False
+            self._current_frequency_x_unit = self._frequency_axis_unit_before_correlation
+            self._frequency_axis_relative_to_reference = (
+                self._frequency_axis_relative_before_correlation
+            )
+        self._sync_frequency_axis_controls()
+
+    def _sync_frequency_axis_controls(self) -> None:
+        """Push the current unit / relative state onto the frequency-view widgets.
+
+        Keeps the unit combo, the relative-reference checkbox, and the reference
+        spin coherent with the backing state, and disables them while a
+        correlation (coupling) axis is shown.
+        """
+        is_correlation = self._frequency_axis_is_correlation
         if hasattr(self, "_frequency_x_unit_combo"):
-            if is_correlation:
-                with QSignalBlocker(self._frequency_x_unit_combo):
-                    idx = self._frequency_x_unit_combo.findData("frequency_mhz")
-                    if idx >= 0:
-                        self._frequency_x_unit_combo.setCurrentIndex(idx)
+            with QSignalBlocker(self._frequency_x_unit_combo):
+                idx = self._frequency_x_unit_combo.findData(self._current_frequency_x_unit)
+                if idx >= 0:
+                    self._frequency_x_unit_combo.setCurrentIndex(idx)
             self._frequency_x_unit_combo.setEnabled(not is_correlation)
+        if hasattr(self, "_frequency_axis_relative_check"):
+            with QSignalBlocker(self._frequency_axis_relative_check):
+                self._frequency_axis_relative_check.setChecked(
+                    self._frequency_axis_relative_to_reference
+                )
+            self._frequency_axis_relative_check.setEnabled(not is_correlation)
+        if hasattr(self, "_frequency_reference_spin"):
+            self._frequency_reference_spin.setEnabled(
+                not is_correlation and self._frequency_axis_relative_to_reference
+            )
 
     def update_frequency_reference(self, dataset: MuonDataset | None) -> None:
         """Public entry-point: sync the reference field from *dataset* metadata.
