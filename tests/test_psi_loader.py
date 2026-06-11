@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import struct
 from pathlib import Path
 
@@ -20,7 +21,21 @@ from asymmetry.core.transform import (
     prepare_histograms_with_deadtime,
 )
 
-MUSRFIT_EXAMPLE_DATA = Path("/Users/bhuddart/Source/musrfit/doc/examples/data")
+#: musrfit ships example PSI-BIN/MDU files in its own source tree, which
+#: Asymmetry does not vendor. Point ``ASYMMETRY_MUSRFIT_DATA`` at
+#: ``<musrfit>/doc/examples/data`` to run the reader-parity tests below; without
+#: it (e.g. in CI) they skip.
+_MUSRFIT_DATA_DIR = os.environ.get("ASYMMETRY_MUSRFIT_DATA")
+
+
+def _musrfit_example_file(name: str) -> Path:
+    """Resolve a musrfit example data file, skipping if the corpus is absent."""
+    if not _MUSRFIT_DATA_DIR:
+        pytest.skip("ASYMMETRY_MUSRFIT_DATA not set; musrfit reader-parity corpus unavailable")
+    path = Path(_MUSRFIT_DATA_DIR) / name
+    if not path.exists():
+        pytest.skip(f"musrfit example file not available: {name}")
+    return path
 
 
 def _write_psi_bin(
@@ -444,9 +459,7 @@ def test_load_psi_bin_preserves_individual_labeled_groups(tmp_path) -> None:
 
 def test_musrfit_bin_fixture_matches_musrfit_psi_reader_dump() -> None:
     """Compare a musrfit PSI-BIN example with musrfit's MuSR_td_PSI_bin reader."""
-    path = MUSRFIT_EXAMPLE_DATA / "deltat_pta_gpd_0423.bin"
-    if not path.exists():
-        pytest.skip("musrfit PSI-BIN fixture not available")
+    path = _musrfit_example_file("deltat_pta_gpd_0423.bin")
 
     ds = PsiLoader().load(str(path))
 
@@ -472,9 +485,7 @@ def test_musrfit_bin_fixture_matches_musrfit_psi_reader_dump() -> None:
 
 def test_musrfit_bin_multihistogram_fixture_matches_musrfit_psi_reader_dump() -> None:
     """Compare a five-histogram musrfit PSI-BIN example against musrfit output."""
-    path = MUSRFIT_EXAMPLE_DATA / "deltat_pta_gps_3110.bin"
-    if not path.exists():
-        pytest.skip("musrfit PSI-BIN fixture not available")
+    path = _musrfit_example_file("deltat_pta_gps_3110.bin")
 
     ds = PsiLoader().load(str(path))
 
@@ -497,9 +508,7 @@ def test_musrfit_bin_multihistogram_fixture_matches_musrfit_psi_reader_dump() ->
 
 def test_musrfit_mdu_fixture_matches_musrfit_psi_reader_dump() -> None:
     """Compare the musrfit PSI-MDU example with musrfit's MuSR_td_PSI_bin reader."""
-    path = MUSRFIT_EXAMPLE_DATA / "tdc_hifi_2014_00153.mdu"
-    if not path.exists():
-        pytest.skip("musrfit PSI-MDU fixture not available")
+    path = _musrfit_example_file("tdc_hifi_2014_00153.mdu")
 
     ds = PsiLoader().load(str(path))
 
@@ -607,9 +616,7 @@ def test_hal_layout_matches_musrfit_mdu_histogram_order() -> None:
     """
     from asymmetry.core.instrument import detect_instrument, get_instrument_layout
 
-    path = MUSRFIT_EXAMPLE_DATA / "tdc_hifi_2014_00153.mdu"
-    if not path.exists():
-        pytest.skip("musrfit PSI-MDU fixture not available")
+    path = _musrfit_example_file("tdc_hifi_2014_00153.mdu")
 
     ds = PsiLoader().load(str(path))
     n_hist = len(ds.run.histograms)

@@ -4,6 +4,7 @@ A Python toolkit for muon-spin spectroscopy (μSR) data reduction, fitting, and 
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#project-status)
 
 ## Overview
 
@@ -11,6 +12,14 @@ Asymmetry combines a pure-Python analysis library with a PySide6 desktop applica
 day-to-day μSR analysis: loading raw or reduced data, applying detector grouping and asymmetry
 transforms, fitting time-domain signals, exploring parameter trends, and saving full GUI sessions
 for later reuse.
+
+## Project status
+
+> **Asymmetry is alpha software under active development.** The core analysis engine and GUI
+> are usable for real μSR workflows and covered by an extensive test suite, but the project is
+> not yet feature-complete: behaviour, APIs, and the `.asymp` project format may still change
+> between releases, and some rough edges are expected. Validate results against an established
+> tool before relying on them for published work, and please report issues you hit.
 
 ## Main functionality
 
@@ -21,6 +30,8 @@ for later reuse.
 - **Time-domain fitting**: fit single datasets or simultaneous multi-dataset series using built-in
   μSR models and calculator-style composite expressions assembled with arithmetic operators and
   parentheses.
+- **Count-domain fitting**: fit raw forward/backward detector counts directly (single-histogram or
+  F+B), with deadtime, background, and double-pulse terms.
 - **Grouped time-domain fitting**: fit multiple detector groups jointly for Knight-shift, vortex-state,
   and geometry-sensitive observables. A **Single** tab fits one run's groups; a **Batch** tab fits a
   multi-run series with the same model, collecting results for parameter trending.
@@ -39,9 +50,12 @@ for later reuse.
 - **Derived composite parameters**: define expression-based parameters in the Fit Parameters panel
   with safe parsing and first-order uncertainty propagation (including covariance support when
   available).
-- **Fourier analysis**: compute WiMDA-style grouped FFT spectra with explicit
+- **Frequency-domain analysis**: compute grouped FFT spectra with explicit
   apodisation, selectable phase modes, per-run phase tables, and manual or
-  estimated phase correction workflows.
+  estimated phase correction; or reconstruct spectra with a maximum-entropy
+  solver, including pulsed-source response and deadtime handling.
+- **Simulation**: generate synthetic single- or multi-period count runs from a model, for testing,
+  teaching, and fit validation.
 - **Logbook and metadata handling**: inspect run metadata, build searchable run logbooks, and use
   metadata columns inside the GUI browser.
 - **Interactive GUI**: browse loaded runs, inspect plots, adjust grouping, run fits, trend fitted
@@ -222,6 +236,24 @@ git push origin v0.1.0
 ```
 
 Pre-release tags are also supported (for example `v0.1.0-rc.1`).
+
+## Acknowledgements and prior art
+
+Asymmetry stands on the shoulders of the established μSR analysis programs and reimplements
+analysis methods studied from them. Models, conventions, and algorithms were learned from these
+projects and the μSR literature, then **independently reimplemented** in Python — no source code
+was copied or translated. We gratefully acknowledge:
+
+- **WiMDA** — μSR data-analysis program by **Francis L. Pratt** (freely-available freeware; its
+  source is not published under an open licence). F. L. Pratt, *Physica B* **289–290**, 710 (2000).
+- **musrfit** — A. Suter and B. M. Wojek, *Physics Procedia* **30**, 69 (2012). Licensed under the
+  GNU GPL.
+- **Mantid** — *Nuclear Instruments and Methods A* **764**, 156 (2014). Licensed under the GNU GPLv3.
+
+Where a model or file format follows one of these tools, the source files cite it directly. See
+[NOTICE](NOTICE) for the full attribution statement, and `docs/porting/` for the study notes that
+underpin each reimplementation. Physical constants and model formulae are cited to the μSR
+literature (notably Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy: An Introduction*).
 
 ## Contributing
 
