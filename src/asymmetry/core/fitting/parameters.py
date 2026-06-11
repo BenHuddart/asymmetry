@@ -6,6 +6,10 @@ import re
 from dataclasses import dataclass
 
 _INDEXED_PARAM_RE = re.compile(r"^(.+)_([0-9]+)$")
+# Names safe to wrap in $...$ for matplotlib mathtext: bare symbols and
+# control sequences only. Free-text names (spaces, %, parentheses, …) make
+# mathtext raise at draw time and must stay plain.
+_MATHTEXT_SAFE_RE = re.compile(r"[A-Za-z0-9_\\]+")
 _GLE_CONTROL_WORD_RE = re.compile(r"^\\[A-Za-z]+$")
 # A trailing subscript group: braced (`_{...}`, allowing one nesting level
 # such as `_{\mathrm{cut}}`), a control word (`_\Delta`), or a bare token.
@@ -469,7 +473,15 @@ def get_param_info(name: str) -> ParamInfo:
     base_name, index = split_parameter_name(name)
     info = PARAM_INFO_REGISTRY.get(base_name)
     if info is None:
-        info = ParamInfo(base_name, base_name, base_name, f"${base_name}$", base_name)
+        # Mathtext-wrap the fallback only for clean symbol names. Free-text
+        # quantities (e.g. the integral scan's "Integral asymmetry (%)")
+        # would make matplotlib's mathtext parser raise at draw time; they
+        # render fine as plain text.
+        if _MATHTEXT_SAFE_RE.fullmatch(base_name):
+            latex = f"${base_name}$"
+        else:
+            latex = base_name
+        info = ParamInfo(base_name, base_name, base_name, latex, base_name)
     if index is None:
         return ParamInfo(
             name,

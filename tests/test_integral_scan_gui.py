@@ -700,3 +700,22 @@ def test_alc_scan_view_show_and_clear(qapp: QApplication):
     assert view.point_count() == 3
     view.clear()
     assert view.point_count() == 0
+
+
+def test_trend_panel_scan_quantity_ylabel_is_drawable(qapp: QApplication):
+    """Regression: the scan's free-text quantity name ('Integral asymmetry
+    (%)') was mathtext-wrapped by the trend panel's label formatter, and
+    matplotlib raised ValueError at draw time whenever the trend panel
+    refreshed with the scan series loaded (e.g. on entering the
+    integral-scan view)."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    from asymmetry.gui.panels.fit_parameters_panel import _format_plot_label
+
+    label = _format_plot_label("Integral asymmetry (%)")
+    figure = Figure()
+    canvas = FigureCanvasAgg(figure)
+    ax = figure.add_subplot(111)
+    ax.set_ylabel(label)
+    canvas.draw()  # raised ValueError (mathtext ParseException) before the fix
