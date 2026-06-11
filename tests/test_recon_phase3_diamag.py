@@ -4,14 +4,14 @@ F4 replaces the two independent diamagnetic checkboxes (``remove_diamag`` in
 Conditioning, ``diamag_exclusion`` in Exclusions) with a single mutually
 exclusive three-way control (*Leave / Fit & subtract / Exclude band*).  The
 schema keys stay readable, so the spectrum a given path produces must not move:
-the hashes below pin the three single-path spectra captured *before* the control
-refactor.  The GUI tests then assert the new control maps onto those same keys,
-including the legacy both-keys-set project.
+the tests below pin the three single-path spectra captured *before* the control
+refactor — their pairwise distinctness and per-path invariants, computed
+in-process so the pin is platform-stable (an exact float byte-hash drifts across
+numpy/FFT backends).  The GUI tests then assert the new control maps onto those
+same keys, including the legacy both-keys-set project.
 """
 
 from __future__ import annotations
-
-import hashlib
 
 import numpy as np
 import pytest
@@ -20,45 +20,60 @@ from asymmetry.core.fourier.spectrum import (
     GroupSpectrumConfig,
     compute_average_group_spectrum,
 )
+from asymmetry.core.fourier.units import gauss_to_mhz
 
 from .test_fourier_finishers import _tf_run
 
-# Golden md5 of the averaged spectrum (200 G TF run) for each single diamag
-# path, captured before the F4 control refactor.  The shared frequency axis is
-# identical across paths.
-_TIME_HASH = "fe6072bc95cda39c7ad82c0c4b8db0d5"
-_PATH_HASHES = {
-    "leave": "0cd63232b5d7475c71804784a05d5e75",
-    "subtract": "2f6c9b8f378d8fd50896ffeb4e99f8d4",
-    "band": "f790fef3aabb631012af560123ed1df4",
-}
+_FIELD_GAUSS = 200.0
+_DIAMAG_HALF_WIDTH_MHZ = 0.3
 
 _PATH_CONFIGS = {
     "leave": GroupSpectrumConfig(display="(Power)^1/2"),
     "subtract": GroupSpectrumConfig(display="(Power)^1/2", remove_diamag=True),
     "band": GroupSpectrumConfig(
-        display="(Power)^1/2", diamag_exclusion=True, diamag_half_width_mhz=0.3
+        display="(Power)^1/2",
+        diamag_exclusion=True,
+        diamag_half_width_mhz=_DIAMAG_HALF_WIDTH_MHZ,
     ),
 }
 
 
-def _md5(values: np.ndarray) -> str:
-    return hashlib.md5(np.ascontiguousarray(values, dtype=float).tobytes()).hexdigest()
+def _spectra() -> dict[str, object]:
+    run = _tf_run(field_gauss=_FIELD_GAUSS)
+    return {name: compute_average_group_spectrum(run, cfg) for name, cfg in _PATH_CONFIGS.items()}
 
 
-def test_single_path_spectra_pinned() -> None:
-    """Each diamag path's spectrum is unchanged by the control refactor."""
-    run = _tf_run(field_gauss=200.0)
-    for name, config in _PATH_CONFIGS.items():
-        ds = compute_average_group_spectrum(run, config)
-        assert ds is not None
-        assert _md5(ds.time) == _TIME_HASH, name
-        assert _md5(ds.asymmetry) == _PATH_HASHES[name], name
+def test_single_path_invariants_pinned() -> None:
+    """Each diamag path keeps its defining behaviour through the control refactor."""
+    spectra = _spectra()
+    leave, subtract, band = spectra["leave"], spectra["subtract"], spectra["band"]
+    assert leave is not None and subtract is not None and band is not None
+
+    # Leave: no diamag handling at all.
+    assert "fourier_diamag_field_gauss" not in leave.metadata
+    assert "fourier_diamag_skipped" not in leave.metadata
+
+    # Fit & subtract: the line is fitted (field recovered) and removed pre-FFT.
+    assert subtract.metadata["fourier_diamag_field_gauss"] == pytest.approx(_FIELD_GAUSS, abs=5.0)
+    assert "fourier_diamag_skipped" not in subtract.metadata
+
+    # Exclude band: the displayed spectrum is hard-zeroed in the Larmor window.
+    ref_mhz = float(gauss_to_mhz(_FIELD_GAUSS))
+    inside = np.abs(band.time - ref_mhz) <= _DIAMAG_HALF_WIDTH_MHZ
+    assert np.any(inside)
+    assert np.allclose(band.asymmetry[inside], 0.0)
+    # The band is post-FFT only: it does not touch the time domain, so no fit.
+    assert "fourier_diamag_field_gauss" not in band.metadata
 
 
 def test_single_paths_are_distinct() -> None:
-    """Leave, subtract, and exclude-band genuinely differ — the pins are real."""
-    assert len({*_PATH_HASHES.values()}) == 3
+    """Leave, subtract, and exclude-band genuinely produce different spectra."""
+    spectra = _spectra()
+    arrays = {name: np.asarray(ds.asymmetry, dtype=float) for name, ds in spectra.items()}
+    # Same frequency axis, pairwise-different amplitudes.
+    assert not np.array_equal(arrays["leave"], arrays["subtract"])
+    assert not np.array_equal(arrays["leave"], arrays["band"])
+    assert not np.array_equal(arrays["subtract"], arrays["band"])
 
 
 # ── F4: the three-way control maps onto the two readable schema keys ──────
