@@ -165,7 +165,7 @@ class UIManager(QObject):
             [330, 340],
             Qt.Orientation.Horizontal,
         )
-        self._window.resizeDocks([self._dock_log], [140], Qt.Orientation.Vertical)
+        self._window.resizeDocks([self._dock_log], [112], Qt.Orientation.Vertical)
 
     def build_stylesheet(self, scale: float) -> str:
         """Return the global stylesheet block for the requested scale."""

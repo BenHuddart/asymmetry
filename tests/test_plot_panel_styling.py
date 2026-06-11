@@ -65,18 +65,20 @@ class TestAxesStyling:
         assert color[1] == pytest.approx(1.0)
         assert color[2] == pytest.approx(1.0)
 
-    def test_spine_color_is_bench_plot_axis(self, panel, dataset) -> None:
+    def test_spines_use_open_frame_grammar(self, panel, dataset) -> None:
+        """Design handoff: left/bottom spines only, in BENCH PLOT_AXIS."""
         if not getattr(panel, "_has_mpl", False):
             pytest.skip("matplotlib not available")
         panel.plot_dataset(dataset)
         import matplotlib.colors as mcolors
 
         expected = mcolors.to_rgba(tokens.PLOT_AXIS)
-        for spine in panel._ax.spines.values():
-            actual = spine.get_edgecolor()
-            assert actual == pytest.approx(expected, abs=0.01), (
-                f"Spine {spine} colour {actual} != BENCH PLOT_AXIS {expected}"
-            )
+        for side in ("left", "bottom"):
+            spine = panel._ax.spines[side]
+            assert spine.get_visible()
+            assert spine.get_edgecolor() == pytest.approx(expected, abs=0.01)
+        for side in ("top", "right"):
+            assert not panel._ax.spines[side].get_visible()
 
     def test_axes_styled_after_clear(self, panel, dataset) -> None:
         if not getattr(panel, "_has_mpl", False):

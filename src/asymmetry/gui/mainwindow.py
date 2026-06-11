@@ -1264,7 +1264,7 @@ class MainWindow(QMainWindow):
         # (~1280 logical px): browser 330 + inspector deck 340 + plot ~600.
         self.resizeDocks([self._dock_data_browser], [330], Qt.Orientation.Horizontal)
         self.resizeDocks([self._dock_fit], [340], Qt.Orientation.Horizontal)
-        self.resizeDocks([self._dock_log], [140], Qt.Orientation.Vertical)
+        self.resizeDocks([self._dock_log], [112], Qt.Orientation.Vertical)
 
         # Connect signals
         self._data_browser.dataset_selected.connect(self._on_dataset_selected)

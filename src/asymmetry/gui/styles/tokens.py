@@ -43,6 +43,7 @@ SUCCESS_BORDER = "#cbe1cf"
 
 # Matplotlib plot chrome — used by styles/plots.py
 PLOT_AXIS = "#3a3c40"
+PLOT_TICK_MARK = "#8a8d92"
 PLOT_TICK_LABEL = "#56585b"
 PLOT_GRID = (0, 0, 0, 0.06)  # (r, g, b, alpha) tuple for mpl
 PLOT_ZERO_LINE = "#b0b3b7"

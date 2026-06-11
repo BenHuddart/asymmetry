@@ -10,17 +10,29 @@ from asymmetry.gui.styles import tokens
 
 
 def style_axes(ax: object) -> None:
-    """Apply BENCH spine, tick, grid, and background styling to one Axes."""
+    """Apply BENCH spine, tick, grid, and background styling to one Axes.
+
+    Matches the design-handoff plot grammar (prototype ``PlotSVG``): an OPEN
+    frame — left and bottom spines only — with small outward tick marks in a
+    lighter grey than their monospaced labels. The closed four-spine box and
+    the default tick treatment are most of what reads as "very matplotlib".
+    """
     try:
-        for spine in ax.spines.values():  # type: ignore[union-attr]
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)  # type: ignore[union-attr]
+        for side in ("left", "bottom"):
+            spine = ax.spines[side]  # type: ignore[union-attr]
             spine.set_color(tokens.PLOT_AXIS)
-            spine.set_linewidth(0.8)
+            spine.set_linewidth(1.0)
         ax.tick_params(  # type: ignore[union-attr]
-            colors=tokens.PLOT_TICK_LABEL,
-            labelcolor=tokens.PLOT_TICK_LABEL,
             which="both",
-            length=4,
+            direction="out",
+            length=3.5,
             width=0.8,
+            color=tokens.PLOT_TICK_MARK,
+            labelcolor=tokens.PLOT_TICK_LABEL,
+            labelsize=9,
+            labelfontfamily="IBM Plex Mono",
         )
         r, g, b, a = tokens.PLOT_GRID
         ax.grid(True, color=(r, g, b), alpha=a, linewidth=0.6)  # type: ignore[union-attr]
