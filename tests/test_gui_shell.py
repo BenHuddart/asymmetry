@@ -196,6 +196,9 @@ class _StubFourier(QWidget):
     def set_fft_status(self, message: str, *, success: bool = False) -> None:
         return
 
+    def set_background_hint(self, text: str | None) -> None:
+        return
+
 
 class _StubFitParams(QWidget):
     def set_fit_results(self, *_args, **_kwargs):

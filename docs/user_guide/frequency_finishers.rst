@@ -85,15 +85,13 @@ Frequency-range exclusions
 --------------------------
 
 The **Exclusions** table zeroes the spectrum inside up to ten symmetric
-:math:`(\text{centre} \pm \text{half-width})` windows. Two conveniences sit on
-top of the table:
+:math:`(\text{centre} \pm \text{half-width})` windows. A **PSI RF harmonics**
+convenience sits on top of the table: it fills the table with DC and the first
+five harmonics of 50.63 MHz — the radio-frequency pickup that contaminates PSI
+continuous-source spectra.
 
-- **Diamagnetic line.** Excludes a band centred on the muon Larmor frequency
-  :math:`\gamma_\mu B / 2\pi` for the run's applied field, suppressing the
-  unshifted diamagnetic peak so a weaker shifted line stands out.
-- **PSI RF harmonics.** Fills the table with DC and the first five harmonics of
-  50.63 MHz — the radio-frequency pickup that contaminates PSI continuous-source
-  spectra.
+The diamagnetic line has its own dedicated control (see
+:ref:`diamagnetic-line-removal` below), not a slot in this table.
 
 *When to use this.* Exclude a known artefact (RF pickup, a saturating
 diamagnetic line, a mains harmonic) that would otherwise dominate the plot or
@@ -174,13 +172,20 @@ Diamagnetic line removal
 ------------------------
 
 In a transverse field the unshifted diamagnetic muon line is often the largest
-feature and can bury a weaker shifted or radical line. **Remove diamagnetic
-signal** fits a single damped cosine,
+feature and can bury a weaker shifted or radical line. A single **Diamagnetic
+line** control offers three mutually exclusive choices — *Leave*, *Fit &
+subtract*, and *Exclude band*.
+
+Set it to **Fit & subtract** to fit a single damped cosine,
 :math:`s(t)=A\cos(2\pi(\nu t+\phi))\,e^{-\lambda t}+c`, to the time-domain signal
 *before* the FFT — seeding its frequency from the run's applied field so it locks
-onto the diamagnetic line — and subtracts the oscillatory part. The fitted
+onto the diamagnetic line — and subtract the oscillatory part. The fitted
 frequency, converted to field, is reported in the log and overlaid on the
-time-domain plot so you can judge the subtraction.
+time-domain plot so you can judge the subtraction. If the run has no transverse
+field (below a ~5 G seed) there is no line to lock onto: the fit is skipped and
+the panel status says so, leaving the spectrum unsubtracted. **Exclude band**
+hard-zeroes a band of half-width **Band half-width (MHz)** centred on the Larmor
+frequency after the FFT instead.
 
 *When to use this.* Turn it on to reveal a shifted line sitting close to the
 diamagnetic peak, or to read the applied field off the fitted frequency as an
