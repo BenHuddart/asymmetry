@@ -368,6 +368,11 @@ def compute_average_group_spectrum(
     burg_hit_boundary = False
     diamag_fields: list[float] = []
     diamag_fit_curve: tuple[np.ndarray, np.ndarray] | None = None
+    # Track the diamag-subtract outcome so a silent no-op (no transverse field,
+    # or a fit that did not converge) is disclosed rather than passing as a
+    # successful subtraction.
+    diamag_seed_fields: list[float | None] = []
+    diamag_fit_failed = False
     average_freqs: np.ndarray | None = None
     first_group_dataset: MuonDataset | None = None
     selected_names: list[str] = []
@@ -386,6 +391,7 @@ def compute_average_group_spectrum(
         )
         if config.remove_diamag:
             seed_field = reference_field_gauss(run, group_dataset)
+            diamag_seed_fields.append(seed_field)
             # Diamagnetic precession only exists in a transverse field; skip the
             # fit at (near-)zero field, where a bounded fit would otherwise lock
             # onto a spurious low frequency.
@@ -400,6 +406,8 @@ def compute_average_group_spectrum(
                             np.asarray(group_dataset.time, dtype=float),
                             diamag_fit.model(np.asarray(group_dataset.time, dtype=float)),
                         )
+                else:
+                    diamag_fit_failed = True
 
         if first_group_dataset is None:
             first_group_dataset = group_dataset
@@ -569,11 +577,29 @@ def compute_average_group_spectrum(
         metadata["fourier_burg_order"] = int(max(burg_orders))
         metadata["fourier_burg_hit_boundary"] = bool(burg_hit_boundary)
         metadata["fourier_diagnostic"] = True
-    if config.remove_diamag and diamag_fields:
-        metadata["fourier_diamag_field_gauss"] = float(np.mean(diamag_fields))
-        if diamag_fit_curve is not None:
-            metadata["fourier_diamag_fit_time_us"] = diamag_fit_curve[0].tolist()
-            metadata["fourier_diamag_fit_signal"] = diamag_fit_curve[1].tolist()
+    if config.remove_diamag:
+        n_requested = len(diamag_seed_fields)
+        n_subtracted = len(diamag_fields)
+        if diamag_fields:
+            metadata["fourier_diamag_field_gauss"] = float(np.mean(diamag_fields))
+            if diamag_fit_curve is not None:
+                metadata["fourier_diamag_fit_time_us"] = diamag_fit_curve[0].tolist()
+                metadata["fourier_diamag_fit_signal"] = diamag_fit_curve[1].tolist()
+        # Disclose any group the subtraction silently skipped (no transverse
+        # field, or a fit that did not converge) so a fully- or partly-
+        # unsubtracted spectrum is not mistaken for a clean removal.
+        if n_subtracted < n_requested:
+            if n_subtracted > 0:
+                metadata["fourier_diamag_skipped"] = (
+                    f"the diamagnetic fit was skipped for {n_requested - n_subtracted} "
+                    f"of {n_requested} groups"
+                )
+            elif diamag_fit_failed:
+                metadata["fourier_diamag_skipped"] = "the diamagnetic fit did not converge"
+            else:
+                metadata["fourier_diamag_skipped"] = (
+                    f"the applied field is below {_MIN_DIAMAG_FIELD_GAUSS:g} G"
+                )
     if conditioning is not None:
         if conditioning.cutoff_frequency_mhz is not None:
             metadata["fourier_compensation_cutoff_mhz"] = conditioning.cutoff_frequency_mhz

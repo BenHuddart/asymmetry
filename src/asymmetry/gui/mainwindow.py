@@ -3999,8 +3999,36 @@ class MainWindow(QMainWindow):
             and self._fourier_group_names_for_dataset(dataset)
         )
 
+    def _fourier_background_hint_for_dataset(self, dataset: MuonDataset | None) -> str | None:
+        """Return a label for the grouping background the FFT inherits, or ``None``.
+
+        Mirrors the Fourier input path's gate (``core/fourier/grouped.py``):
+        the background is applied pre-FFT only when the grouping has
+        ``background_correction`` on and the resolved mode is available for the
+        dataset. Surfaces the otherwise-invisible inheritance (F3).
+        """
+        run = getattr(dataset, "run", None)
+        grouping = getattr(run, "grouping", None) if run is not None else None
+        if not isinstance(grouping, dict) or not grouping.get("background_correction", False):
+            return None
+        mode = resolve_background_mode(grouping)
+        if mode == "none" or not self._dataset_allows_background_mode(dataset, mode):
+            return None
+        # reference_run is "available" everywhere but applies nothing unless a
+        # background run is actually configured; don't claim an inheritance the
+        # FFT input will not apply (grouped.py returns applied=False otherwise).
+        if mode == "reference_run" and not grouping.get("background_run"):
+            return None
+        return {
+            "fixed": "fixed offset",
+            "range": "range average",
+            "tail_fit": "tail-fit",
+            "reference_run": "reference run",
+        }.get(mode, mode)
+
     def _sync_fourier_panel_for_dataset(self, dataset: MuonDataset | None) -> None:
         """Refresh the Fourier group-phase table for the active run."""
+        self._fourier_panel.set_background_hint(self._fourier_background_hint_for_dataset(dataset))
         group_names = self._fourier_group_names_for_dataset(dataset)
         run_number = None if dataset is None else int(dataset.run_number)
         state = (
@@ -4843,9 +4871,25 @@ class MainWindow(QMainWindow):
             self._plot_workspace.set_active_view("frequency")
             self._show_panel("fourier")
             suffix = "s" if len(spectra) != 1 else ""
-            self._set_fourier_status(
-                f"Computed {len(spectra)} Fourier spectrum{suffix}.", success=True
+            # Disclose a fit-and-subtract that silently no-opped (e.g. below the
+            # 5 G seed field) so the spectrum is not mistaken for diamag-removed.
+            diamag_skipped = (
+                average_dataset.metadata.get("fourier_diamag_skipped")
+                if average_dataset is not None
+                else None
             )
+            if diamag_skipped:
+                message = (
+                    f"Computed {len(spectra)} Fourier spectrum{suffix}. "
+                    f"Diamagnetic subtraction skipped: {diamag_skipped} — "
+                    "spectrum left unsubtracted."
+                )
+                self._set_fourier_status(message)
+                self._log_panel.log(f"Diamagnetic subtraction skipped: {diamag_skipped}.")
+            else:
+                self._set_fourier_status(
+                    f"Computed {len(spectra)} Fourier spectrum{suffix}.", success=True
+                )
             self._log_panel.log(
                 f"Computed averaged grouped Fourier spectrum using {display.lower()} display."
             )

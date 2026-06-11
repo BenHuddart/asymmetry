@@ -385,10 +385,12 @@ Excluding a time window
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A laser flash, an RF burst, or a detector glitch can corrupt an interior stretch
-of the histogram. Set **Exclude from / to** (µs) to drop that window from the
-fit. The points are *de-weighted* (their error bars are inflated so they carry
-essentially no weight), not removed, so the time grid — and any frequency
-resolution derived from it — is unchanged. Leave the fields blank to disable.
+of the histogram. Set **De-weight from / to** (µs) to down-weight that window in
+the reconstruction. The points are *de-weighted* (their error bars are inflated
+so they carry essentially no weight), not removed, so the time grid — and any
+frequency resolution derived from it — is unchanged. This is why the control is
+named for de-weighting rather than exclusion (contrast the count fit's hard
+*Skip window*; see :doc:`exclusions`). Leave the fields blank to disable.
 
 Field axis
 ~~~~~~~~~~~
