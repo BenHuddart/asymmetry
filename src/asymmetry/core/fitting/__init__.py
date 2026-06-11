@@ -53,6 +53,7 @@ from asymmetry.core.fitting.grouped_time_domain import (
     build_grouped_time_domain_groups,
     fit_grouped_series,
     fit_grouped_time_domain,
+    grouped_time_domain_available,
 )
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.parameter_models import (
@@ -115,6 +116,7 @@ __all__ = [
     "rerank_global_fit_wizard_recommendation",
     "fit_grouped_time_domain",
     "fit_result_summary",
+    "grouped_time_domain_available",
     "sc",
     "muon_fluorine",
     "MODELS",

@@ -3816,8 +3816,8 @@ class TestPlotWorkspaceDomainPhase7:
         """Individual-groups toolbar button is disabled when no grouped data exists."""
         monkeypatch.setattr(
             mainwindow,
-            "_grouped_time_domain_display_datasets",
-            lambda _dataset=None, **_kwargs: [],
+            "_grouped_time_domain_available",
+            lambda dataset=None: False,
         )
         mainwindow._refresh_time_view_selector()
         assert not mainwindow._domain_buttons_by_token["groups"].isEnabled()
@@ -3829,8 +3829,8 @@ class TestPlotWorkspaceDomainPhase7:
         """Individual-groups toolbar button is enabled when grouped data is available."""
         monkeypatch.setattr(
             mainwindow,
-            "_grouped_time_domain_display_datasets",
-            lambda dataset=None, **_kwargs: [dataset or mainwindow._current_dataset],
+            "_grouped_time_domain_available",
+            lambda dataset=None: True,
         )
         time_arr = np.linspace(0, 8, 100)
         asym = np.zeros(100)
@@ -3870,6 +3870,7 @@ class TestPlotWorkspaceDomainPhase7:
             captured.setdefault("lifetime_corrected", flag_state["latest"])
 
         monkeypatch.setattr(mainwindow, "_grouped_time_domain_display_datasets", _fake_grouped)
+        monkeypatch.setattr(mainwindow, "_grouped_time_domain_available", lambda dataset=None: True)
         monkeypatch.setattr(mainwindow._plot_panel, "plot_grouped_time_domain_subplots", _fake_plot)
         mainwindow._current_dataset = ds
         mainwindow._refresh_time_view_selector()

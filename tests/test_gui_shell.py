@@ -283,6 +283,7 @@ def test_mainwindow_smoke_paths(monkeypatch: pytest.MonkeyPatch, qapp: QApplicat
     assert window._fit_panel.last_dataset.metadata["analysis_factor"] == 2
     assert all(d.metadata["analysis_factor"] == 2 for d in window._fit_panel.last_datasets)
 
+    monkeypatch.setattr(window, "_grouped_time_domain_available", lambda dataset=None: True)
     monkeypatch.setattr(
         window,
         "_grouped_time_domain_display_datasets",

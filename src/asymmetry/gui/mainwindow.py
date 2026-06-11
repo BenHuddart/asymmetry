@@ -55,6 +55,7 @@ from asymmetry.core.fitting import (
     fit_result_summary,
     fit_scan_baseline,
     fit_scan_model,
+    grouped_time_domain_available,
 )
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
@@ -1578,7 +1579,7 @@ class MainWindow(QMainWindow):
             return
 
         target = self._current_dataset or (selected[0] if len(selected) == 1 else None)
-        if target is not None and self._grouped_time_domain_display_datasets(target):
+        if self._grouped_time_domain_available(target):
             modes.extend(["groups", "raw_counts"])
         if self._dataset_supports_maxent(target):
             modes.append("maxent")
@@ -3842,7 +3843,7 @@ class MainWindow(QMainWindow):
             return False
         if self._plot_panel.current_time_view_mode() not in ("groups", "raw_counts"):
             return False
-        return bool(self._grouped_time_domain_display_datasets())
+        return self._grouped_time_domain_available()
 
     def _sync_fit_dock_mode(self) -> None:
         """Swap the fit dock between regular, grouped and ALC content."""
@@ -7779,6 +7780,19 @@ class MainWindow(QMainWindow):
             )
         except ValueError:
             return []
+
+    def _grouped_time_domain_available(self, dataset: MuonDataset | None = None) -> bool:
+        """Cheap probe: can the active dataset produce grouped time-domain views?
+
+        Used everywhere only the yes/no answer matters (toolbar button enable
+        state, fit-dock mode) — it runs on every selection update, including
+        per-mouse-motion fit-range drags, where building the full per-group
+        arrays via :meth:`_grouped_time_domain_display_datasets` is far too
+        expensive. The probe reads ``dataset.run`` directly: the rebinned
+        analysis copy shares the same run, which is all the build consumes.
+        """
+        source = self._current_dataset if dataset is None else dataset
+        return grouped_time_domain_available(source)
 
     def _grouped_display_lifetime_corrected(self) -> bool:
         """Whether the grouped display shows lifetime-corrected counts.
