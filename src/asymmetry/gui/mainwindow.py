@@ -44,8 +44,8 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QStackedWidget,
     QTabBar,
+    QTabWidget,
     QToolBar,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -144,13 +144,17 @@ from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.typography import header_font
-from asymmetry.gui.styles.widgets import build_segmented_button_qss
+from asymmetry.gui.styles.widgets import (
+    build_segmented_button_qss,
+    build_segmented_cell_qss,
+    build_segmented_container_qss,
+)
 from asymmetry.gui.ui_manager import (
     UI_SCALE_OPTIONS,
     UI_SCALE_SETTINGS_KEY,
     UIManager,
 )
+from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
@@ -720,39 +724,44 @@ class MainWindow(QMainWindow):
         self._domain_button_group.setExclusive(True)
         self._domain_buttons: list[QPushButton] = []
         self._domain_buttons_by_token: dict[str, QPushButton] = {}
-        _domain_qss = build_segmented_button_qss()
 
         def _domain_cluster(header: str, specs: list[tuple[str, str]]) -> QWidget:
+            # Design-handoff grammar: inline muted label + a JOINED segmented
+            # control (one shared border, 1px internal dividers) on a single
+            # toolbar row — not stacked captions over separate buttons.
             container = QWidget()
-            column = QVBoxLayout(container)
-            column.setContentsMargins(0, 0, 0, 0)
-            column.setSpacing(1)
-            heading = QLabel(header)
-            heading.setFont(header_font())
-            heading.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-            column.addWidget(heading)
-            row = QHBoxLayout()
+            row = QHBoxLayout(container)
             row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(0)
-            for label, token in specs:
+            row.setSpacing(6)
+            heading = QLabel(header)
+            heading.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+            row.addWidget(heading)
+            frame = QFrame()
+            frame.setStyleSheet(build_segmented_container_qss())
+            cells = QHBoxLayout(frame)
+            cells.setContentsMargins(0, 0, 0, 0)
+            cells.setSpacing(0)
+            for index, (label, token) in enumerate(specs):
                 btn = QPushButton(label)
                 btn.setCheckable(True)
-                btn.setStyleSheet(_domain_qss)
+                btn.setStyleSheet(
+                    build_segmented_cell_qss(first=index == 0, last=index == len(specs) - 1)
+                )
                 btn.clicked.connect(
                     lambda _checked=False, v=token: self._on_domain_button_clicked(v)
                 )
                 self._domain_button_group.addButton(btn)
                 self._domain_buttons.append(btn)
                 self._domain_buttons_by_token[token] = btn
-                row.addWidget(btn)
-            column.addLayout(row)
+                cells.addWidget(btn)
+            row.addWidget(frame)
             return container
 
         # The raw-counts view is a diagnostic, deliberately NOT a toolbar
         # representation — it lives under View → Diagnostics.
         self._main_toolbar.addWidget(
             _domain_cluster(
-                "Time domain",
+                "Time:",
                 [
                     ("F-B asymmetry", "fb_asymmetry"),
                     ("Individual groups", "groups"),
@@ -763,7 +772,7 @@ class MainWindow(QMainWindow):
         self._main_toolbar.addSeparator()
         self._main_toolbar.addWidget(
             _domain_cluster(
-                "Frequency domain",
+                "Frequency:",
                 [("FFT", "frequency"), ("MaxEnt", "maxent")],
             )
         )
@@ -1069,6 +1078,10 @@ class MainWindow(QMainWindow):
         """Create and dock all child panels, then connect inter-panel signals."""
         # Enable dock nesting for proper splitter behavior
         self.setDockNestingEnabled(True)
+        # Design-handoff grammar: the inspector deck's tabs sit at the TOP of
+        # the dock area (a 30px strip with underline tabs), not Qt's default
+        # bottom position.
+        self.setTabPosition(Qt.DockWidgetArea.RightDockWidgetArea, QTabWidget.TabPosition.North)
 
         # Central plot
         try:
@@ -1103,7 +1116,7 @@ class MainWindow(QMainWindow):
 
         # Left dock — data browser / logbook
         self._data_browser = DataBrowserPanel()
-        self._dock_data_browser = QDockWidget("DATA BROWSER", self)
+        self._dock_data_browser = QDockWidget("Data Browser", self)
         self._dock_data_browser.setWidget(self._data_browser)
         self._dock_data_browser.setMinimumWidth(220)
         self._dock_data_browser.setFeatures(
@@ -1111,6 +1124,10 @@ class MainWindow(QMainWindow):
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
             | QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
+        # Custom title bar REPLACES Qt's (never both — the doubled-header
+        # failure mode); windowTitle stays set for menus/floating chrome.
+        self._browser_dock_header = DockHeader("DATA BROWSER", self._dock_data_browser)
+        self._dock_data_browser.setTitleBarWidget(self._browser_dock_header)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._dock_data_browser)
 
         # Right dock — fit controls
@@ -1196,14 +1213,26 @@ class MainWindow(QMainWindow):
 
         # Bottom dock — log panel
         self._log_panel = LogPanel()
-        self._dock_log = QDockWidget("LOG", self)
+        self._dock_log = QDockWidget("Log", self)
         self._dock_log.setWidget(self._log_panel)
         self._dock_log.setMinimumHeight(96)
+        self._log_dock_header = DockHeader("LOG", self._dock_log)
+        self._dock_log.setTitleBarWidget(self._log_dock_header)
+        if hasattr(self._log_panel, "entry_count_changed"):
+            self._log_panel.entry_count_changed.connect(
+                lambda n: self._log_dock_header.set_meta(f"{n} entries")
+            )
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._dock_log)
 
         # ── Structured status bar ──────────────────────────────────────────
         _sb = self.statusBar()
         _sb.setContentsMargins(4, 0, 4, 0)
+
+        # Design-handoff status line: ● state · selection/view · cursor · χ²/ν.
+        self._status_state_label = QLabel("● Idle")
+        self._status_state_label.setFont(mono_font(10.5))
+        self._status_state_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        _sb.addPermanentWidget(self._status_state_label)
 
         self._status_sel_label = QLabel("")
         self._status_sel_label.setFont(mono_font(10.5))
@@ -1213,6 +1242,10 @@ class MainWindow(QMainWindow):
         self._status_coords_label.setFont(mono_font(10.5))
         self._status_coords_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         _sb.addPermanentWidget(self._status_coords_label)
+
+        self._status_chi2_label = QLabel("")
+        self._status_chi2_label.setFont(mono_font(10.5))
+        _sb.addPermanentWidget(self._status_chi2_label)
 
         self._last_fit_chi2: float | None = None
 
@@ -5977,6 +6010,7 @@ class MainWindow(QMainWindow):
             fit_function=fit_function,
         )
         self._last_fit_chi2 = float(fit_result.reduced_chi_squared)
+        self._set_status_chi2(self._last_fit_chi2)
         self._record_single_fit_slot(fit_result)
         self._log_panel.log(f"Fit completed: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}", tag="fit")
 
@@ -7038,6 +7072,7 @@ class MainWindow(QMainWindow):
             sum(payload[0].reduced_chi_squared for payload in successful_results) / n_datasets
         )
         self._last_fit_chi2 = float(avg_chi2r)
+        self._set_status_chi2(self._last_fit_chi2)
         self._log_panel.log(
             f"Batch fit completed: {n_datasets} datasets, average χ²ᵣ = {avg_chi2r:.3f}",
             tag="fit",
@@ -7696,6 +7731,16 @@ class MainWindow(QMainWindow):
         if domain:
             parts.append(f"{domain} view")
         self._status_sel_label.setText(" · ".join(parts))
+        # The browser dock header carries the selection count (design handoff).
+        if hasattr(self, "_browser_dock_header"):
+            self._browser_dock_header.set_meta(f"{n_sel} of {n_total} selected" if n_total else "")
+
+    def _set_status_chi2(self, value: float | None) -> None:
+        """Show the latest reduced χ² on the status bar (design handoff)."""
+        label = getattr(self, "_status_chi2_label", None)
+        if label is None:
+            return
+        label.setText("" if value is None else f"χ²/ν = {value:.2f}")
 
     def _on_cursor_coords_changed(self, x: object, y: object) -> None:
         """Update the status bar right label with the current cursor position."""

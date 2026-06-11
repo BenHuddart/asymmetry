@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.widgets import build_primary_button_qss
 
 
 class ALCFitPanel(QWidget):
@@ -97,6 +98,7 @@ class ALCFitPanel(QWidget):
         self._max_spin.editingFinished.connect(self._on_spin_committed)
 
         self._build_btn = QPushButton("Build Scan")
+        self._build_btn.setStyleSheet(build_primary_button_qss())
         self._build_btn.clicked.connect(self.build_requested.emit)
         layout.addWidget(self._build_btn)
 

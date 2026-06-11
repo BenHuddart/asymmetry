@@ -39,7 +39,7 @@ QMenuBar::item:selected {
 
 /* ── Status bar ─────────────────────────────────────────────────── */
 QStatusBar {
-    background-color: #fafaf9;
+    background-color: #f4f3f0;
     border-top: 1px solid #dedcd6;
     color: #67676b;
 }
@@ -124,7 +124,11 @@ QGroupBox::title {
     text-transform: uppercase;
 }
 
-/* ── Tabs ───────────────────────────────────────────────────────── */
+/* ── Tabs ───────────────────────────────────────────────────────────
+   Flat underline grammar from the design handoff: tabs are text on the
+   muted strip, the active tab gets a 2px accent underline — no boxes.
+   Applies to QTabWidget tab bars and the QMainWindow dock-area tab bars
+   (the inspector deck) alike. */
 QTabWidget::pane {
     border: 1px solid #dedcd6;
     background-color: #ffffff;
@@ -135,22 +139,22 @@ QTabBar {
 }
 
 QTabBar::tab {
-    background-color: #f4f3f0;
+    background-color: transparent;
     color: #67676b;
-    border: 1px solid #dedcd6;
-    border-bottom: none;
-    padding: 4px 12px;
-    margin-right: 1px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 5px 12px;
+    margin-right: 2px;
 }
 
 QTabBar::tab:selected {
-    background-color: #ffffff;
     color: #1c1d20;
+    font-weight: 600;
     border-bottom: 2px solid #1f4d8a;
 }
 
 QTabBar::tab:hover:!selected {
-    background-color: #ececea;
+    color: #1c1d20;
 }
 
 /* ── Text inputs (backgrounds/colours; borders managed by UIManager) */

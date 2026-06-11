@@ -5,6 +5,7 @@ from __future__ import annotations
 import html as _html
 from datetime import datetime
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
 
 from asymmetry.gui.styles import tokens
@@ -25,8 +26,12 @@ _TAG_COLOURS: dict[str, str] = {
 class LogPanel(QWidget):
     """Scrollable log with per-category tag colouring."""
 
+    #: Emitted with the running entry count (feeds the dock header's badge).
+    entry_count_changed = Signal(int)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._entry_count = 0
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -42,10 +47,18 @@ class LogPanel(QWidget):
         tag_html = self._tag_span(tag)
         msg_html = _html.escape(str(message))
         self._text.append(f"{ts_html}&nbsp;&nbsp;{tag_html}{msg_html}")
+        self._entry_count += 1
+        self.entry_count_changed.emit(self._entry_count)
+
+    def entry_count(self) -> int:
+        """Return the number of entries logged since the last clear."""
+        return self._entry_count
 
     def clear(self) -> None:
         """Clear all log entries."""
         self._text.clear()
+        self._entry_count = 0
+        self.entry_count_changed.emit(0)
 
     def to_plain_text(self) -> str:
         return self._text.toPlainText()
