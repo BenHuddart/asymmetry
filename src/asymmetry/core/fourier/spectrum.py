@@ -594,4 +594,5 @@ __all__ = [
     "compute_average_group_spectrum",
     "fourier_display_ylabel",
     "precompute_group_fourier_inputs",
+    "reference_field_gauss",
 ]
