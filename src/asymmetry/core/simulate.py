@@ -520,6 +520,81 @@ def simulate_run_from_group_signals(
     )
 
 
+#: Template metadata keys a synthetic run inherits (they parameterise models —
+#: precession frequencies, etc. — or label the run).
+_INHERITED_METADATA_KEYS = (
+    "instrument",
+    "temperature",
+    "field",
+    "field_state",
+    "field_direction",
+    "detector_orientation",
+)
+
+
+def _synthetic_run_grouping(template: Run, n_histograms: int) -> dict[str, Any]:
+    """Base grouping for a synthetic run: template grouping with deadtimes off.
+
+    The period payload (which can hold full per-detector histogram arrays for a
+    combined two-period template) is stripped before the deep copy, and the
+    deadtimes are zeroed — the synthetic counts carry no deadtime distortion, so
+    zero is the true instrument description. Callers add an ``alpha`` override or
+    a fresh period payload on top.
+    """
+    grouping: dict[str, Any] = copy.deepcopy(
+        {k: v for k, v in template.grouping.items() if k not in _PERIOD_KEYS}
+    )
+    grouping["deadtime_correction"] = False
+    grouping["dead_time_us"] = [0.0] * n_histograms
+    return grouping
+
+
+def _synthetic_run_metadata(
+    template: Run,
+    *,
+    number: int,
+    seed: int,
+    total_events: float,
+    background_per_bin: float,
+    title: str | None,
+    default_title: str,
+    simulation_metadata: Mapping[str, Any] | None,
+    extra_metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Identity + provenance metadata shared by every synthetic-run builder.
+
+    Carries the inherited template metadata plus the ``synthetic`` marker and a
+    ``simulation`` provenance block (seed, event budget, background, template
+    run/source, then any ``simulation_metadata`` the caller adds). This is the
+    single source of the synthetic-run identity contract.
+    """
+    provenance: dict[str, Any] = {
+        "seed": int(seed),
+        "total_events": float(total_events),
+        "background_per_bin": float(background_per_bin),
+        "template_run_number": template.run_number,
+        "template_source_file": template.source_file,
+    }
+    if simulation_metadata:
+        provenance.update(dict(simulation_metadata))
+
+    metadata: dict[str, Any] = {
+        key: template.metadata[key] for key in _INHERITED_METADATA_KEYS if key in template.metadata
+    }
+    metadata.update(
+        {
+            "run_number": number,
+            "run_label": f"SIM {number}",
+            "title": title if title is not None else default_title,
+            "synthetic": True,
+            "simulation": provenance,
+        }
+    )
+    if extra_metadata:
+        metadata.update(dict(extra_metadata))
+    return metadata
+
+
 def _sample_and_build_run(
     template: Run,
     expected: list[NDArray[np.float64]],
@@ -536,8 +611,10 @@ def _sample_and_build_run(
 
     Shared by :func:`simulate_run_from_group_signals` and
     :func:`simulate_double_pulse_run` so both carry the same provenance and
-    metadata (template run/source, detector orientation, deadtime zeroing). The
-    seeded sampling draws ``poisson(expected)`` per detector in detector order.
+    metadata (template run/source, detector orientation, deadtime zeroing) via
+    the shared :func:`_synthetic_run_grouping` / :func:`_synthetic_run_metadata`
+    contract. The seeded sampling draws ``poisson(expected)`` per detector in
+    detector order.
     """
     rng = np.random.default_rng(seed)
     histograms = [
@@ -551,43 +628,17 @@ def _sample_and_build_run(
         for hist, clean in zip(template.histograms, expected, strict=True)
     ]
 
-    # Filter the period payload (which can hold full per-detector histogram
-    # arrays for combined two-period templates) BEFORE deep-copying.
-    grouping = copy.deepcopy({k: v for k, v in template.grouping.items() if k not in _PERIOD_KEYS})
-    grouping["deadtime_correction"] = False
-    grouping["dead_time_us"] = [0.0] * len(histograms)
-
     number = template.run_number if run_number is None else int(run_number)
-    provenance: dict[str, Any] = {
-        "seed": int(seed),
-        "total_events": float(total_events),
-        "background_per_bin": float(background_per_bin),
-        "template_run_number": template.run_number,
-        "template_source_file": template.source_file,
-    }
-    if simulation_metadata:
-        provenance.update(dict(simulation_metadata))
-
-    metadata: dict[str, Any] = {
-        key: template.metadata[key]
-        for key in (
-            "instrument",
-            "temperature",
-            "field",
-            "field_state",
-            "field_direction",
-            "detector_orientation",
-        )
-        if key in template.metadata
-    }
-    metadata.update(
-        {
-            "run_number": number,
-            "run_label": f"SIM {number}",
-            "title": title if title is not None else default_title,
-            "synthetic": True,
-            "simulation": provenance,
-        }
+    grouping = _synthetic_run_grouping(template, len(histograms))
+    metadata = _synthetic_run_metadata(
+        template,
+        number=number,
+        seed=seed,
+        total_events=total_events,
+        background_per_bin=background_per_bin,
+        title=title,
+        default_title=default_title,
+        simulation_metadata=simulation_metadata,
     )
 
     return Run(
@@ -597,6 +648,75 @@ def _sample_and_build_run(
         grouping=grouping,
         source_file="",
     )
+
+
+def _bind_model_signal_percent(
+    model: Any,
+    params: Mapping[str, float],
+) -> tuple[Callable[[NDArray[np.float64]], NDArray[np.float64]], str]:
+    """Bind a model + parameters to an ``a(t)``-in-percent callable.
+
+    ``model`` is either a ``CompositeModel`` (its ``function`` bound with
+    ``params``) or a plain callable ``a(t, **params)`` returning the asymmetry
+    in percent — the same convention the fit panel uses. Returns the bound
+    callable and a human-readable expression for provenance.
+    """
+    params = dict(params)
+    if hasattr(model, "function") and callable(model.function):
+        base_fn = model.function
+
+        def signal_percent(t: NDArray[np.float64]) -> NDArray[np.float64]:
+            return np.asarray(base_fn(t, **params), dtype=float)
+
+        expression = model.formula_string() if hasattr(model, "formula_string") else repr(model)
+    elif callable(model):
+
+        def signal_percent(t: NDArray[np.float64]) -> NDArray[np.float64]:
+            return np.asarray(model(t, **params), dtype=float)
+
+        expression = getattr(model, "__name__", "custom callable")
+    else:
+        raise TypeError("model must be a CompositeModel or a callable a(t) in percent.")
+    return signal_percent, expression
+
+
+def _fb_group_signals_and_weights(
+    grouping: dict,
+    n_histograms: int,
+    *,
+    forward_signal: GroupSignal,
+    backward_signal: GroupSignal,
+    forward_gid: int,
+    backward_gid: int,
+    alpha: float,
+) -> tuple[dict[int, GroupSignal], dict[int, float]]:
+    """Forward/backward group signals and α-split weights for a template.
+
+    Backward-group detectors see ``−a(t)`` and forward-group (every
+    non-backward) detectors ``+a(t)``. The α split fixes the GROUP TOTALS at
+    F:B = α; each side's budget share is divided by its detector count so
+    unequal group sizes cannot skew the ratio (a per-detector weight alone
+    would give F/B = α·n_F/n_B). Shared by :func:`simulate_run` and the
+    per-period synthesis so both apply the identical balance.
+    """
+    det_groups = _detector_group_map(grouping, n_histograms)
+    group_ids = sorted(set(det_groups.values()))
+    n_backward = sum(1 for gid in det_groups.values() if gid == backward_gid)
+    n_forward = len(det_groups) - n_backward
+    group_signals: dict[int, GroupSignal] = {}
+    group_weights: dict[int, float] = {}
+    for gid in group_ids:
+        if gid == backward_gid:
+            group_signals[gid] = backward_signal
+            group_weights[gid] = 2.0 / (1.0 + alpha) / max(1, n_backward)
+        else:
+            group_signals[gid] = forward_signal
+            group_weights[gid] = 2.0 * alpha / (1.0 + alpha) / max(1, n_forward)
+    if forward_gid not in group_signals or backward_gid not in group_signals:
+        raise ValueError(
+            "Template grouping must assign detectors to both the forward and backward groups."
+        )
+    return group_signals, group_weights
 
 
 def simulate_run(
@@ -631,21 +751,7 @@ def simulate_run(
         raise ValueError("Simulation requires a template run with detector histograms.")
 
     params = dict(parameters or {})
-    if hasattr(model, "function") and callable(model.function):
-        base_fn = model.function
-
-        def signal_percent(t: NDArray[np.float64]) -> NDArray[np.float64]:
-            return np.asarray(base_fn(t, **params), dtype=float)
-
-        expression = model.formula_string() if hasattr(model, "formula_string") else repr(model)
-    elif callable(model):
-
-        def signal_percent(t: NDArray[np.float64]) -> NDArray[np.float64]:
-            return np.asarray(model(t, **params), dtype=float)
-
-        expression = getattr(model, "__name__", "custom callable")
-    else:
-        raise TypeError("model must be a CompositeModel or a callable a(t) in percent.")
+    signal_percent, expression = _bind_model_signal_percent(model, params)
 
     grouping = template.grouping if isinstance(template.grouping, dict) else {}
     forward_gid = int(grouping.get("forward_group", 1))
@@ -664,26 +770,15 @@ def simulate_run(
     def backward_signal(t: NDArray[np.float64]) -> NDArray[np.float64]:
         return -signal_percent(t) / 100.0
 
-    det_groups = _detector_group_map(grouping, len(template.histograms))
-    group_ids = sorted(set(det_groups.values()))
-    # The α split fixes the GROUP TOTALS at F:B = α; each side's budget share
-    # is divided by its detector count so unequal group sizes cannot skew the
-    # ratio (a per-detector weight alone would give F/B = α·n_F/n_B).
-    n_backward = sum(1 for gid in det_groups.values() if gid == backward_gid)
-    n_forward = len(det_groups) - n_backward
-    group_signals: dict[int, GroupSignal] = {}
-    group_weights: dict[int, float] = {}
-    for gid in group_ids:
-        if gid == backward_gid:
-            group_signals[gid] = backward_signal
-            group_weights[gid] = 2.0 / (1.0 + alpha) / max(1, n_backward)
-        else:
-            group_signals[gid] = forward_signal
-            group_weights[gid] = 2.0 * alpha / (1.0 + alpha) / max(1, n_forward)
-    if forward_gid not in group_signals or backward_gid not in group_signals:
-        raise ValueError(
-            "Template grouping must assign detectors to both the forward and backward groups."
-        )
+    group_signals, group_weights = _fb_group_signals_and_weights(
+        grouping,
+        len(template.histograms),
+        forward_signal=forward_signal,
+        backward_signal=backward_signal,
+        forward_gid=forward_gid,
+        backward_gid=backward_gid,
+        alpha=alpha,
+    )
 
     return simulate_run_from_group_signals(
         template,
@@ -698,6 +793,70 @@ def simulate_run(
             "model": expression,
             "parameters": {name: float(value) for name, value in params.items()},
             "alpha": float(alpha),
+        },
+    )
+
+
+def simulate_count_run(
+    template: Run,
+    model: Any,
+    parameters: Mapping[str, float] | None = None,
+    *,
+    total_events: float,
+    seed: int = 0,
+    background_per_bin: float = 0.0,
+    run_number: int | None = None,
+    title: str | None = None,
+) -> Run:
+    """Simulate per-group single-histogram count data (WiMDA evfactor path).
+
+    The count-domain counterpart of :func:`simulate_run`. Where ``simulate_run``
+    imprints the antisymmetric ``±a(t)`` of a forward/backward asymmetry
+    experiment, this imprints the **same** ``+a(t)`` on every detector group, so
+    each group is an independent single-histogram measurement
+
+        N_g(t) = N₀_g · exp(−t/τ_μ) · [1 + a(t)] + b        (t ≥ 0)
+
+    with no balancing backward detector — the non-FB convention WiMDA's
+    ``Simulate.pas`` evfactor branch (``nn = a(t)/ghists·evfactor·e^{−t/τ}``)
+    produces. The event budget is divided equally over the detectors (no α
+    split), so each group's ``N₀`` follows its detector count.
+
+    The result is fittable by :func:`asymmetry.core.fitting.count_domain.fit_single_histogram`
+    (``side="forward"`` on any group), recovering the generating ``N₀``, ``a(t)``
+    amplitude and flat background. Provenance records ``count_mode = True``. Use
+    :func:`simulate_run` when the data must instead exercise the α-free
+    forward/backward count fit (``fit_fb_alpha``), which needs the antisymmetric
+    pair.
+    """
+    if not template.histograms:
+        raise ValueError("Simulation requires a template run with detector histograms.")
+
+    params = dict(parameters or {})
+    signal_percent, expression = _bind_model_signal_percent(model, params)
+
+    def forward_signal(t: NDArray[np.float64]) -> NDArray[np.float64]:
+        return signal_percent(t) / 100.0
+
+    grouping = template.grouping if isinstance(template.grouping, dict) else {}
+    det_groups = _detector_group_map(grouping, len(template.histograms))
+    group_ids = sorted(set(det_groups.values()))
+    if not group_ids:
+        raise ValueError("Template grouping must assign detectors to at least one group.")
+    group_signals: dict[int, GroupSignal] = {gid: forward_signal for gid in group_ids}
+
+    return simulate_run_from_group_signals(
+        template,
+        group_signals,
+        total_events=total_events,
+        seed=seed,
+        background_per_bin=background_per_bin,
+        run_number=run_number,
+        title=title if title is not None else f"Simulated counts: {expression}",
+        simulation_metadata={
+            "model": expression,
+            "parameters": {name: float(value) for name, value in params.items()},
+            "count_mode": True,
         },
     )
 
@@ -802,6 +961,207 @@ def simulate_double_pulse_run(
             "model": expression,
             "parameters": {name: float(value) for name, value in params.items()},
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Two-period (red/green) synthesis
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PeriodSpec:
+    """One period's forward/backward signal for a two-period synthetic run.
+
+    Each period is an independent measurement: its own model (or the same model
+    with different parameters), event budget and α balance, all imprinted with
+    the standard forward/backward antisymmetry so the period reduces exactly
+    like a real single-period run. ``total_events`` and ``alpha`` fall back to
+    the run-level budget and the template grouping's balance when ``None``.
+    ``scale`` multiplies the whole signal amplitude (``0`` makes the period a
+    flat reference — the usual light-off / RF-off green — so G−R recovers the
+    other period); it keeps the model's own provenance intact rather than
+    wrapping it in an opaque closure.
+    """
+
+    model: Any
+    parameters: Mapping[str, float] | None = None
+    total_events: float | None = None
+    alpha: float | None = None
+    scale: float = 1.0
+    label: str = ""
+
+
+def simulate_two_period_run(
+    template: Run,
+    periods: list[PeriodSpec],
+    *,
+    total_events: float,
+    seed: int = 0,
+    background_per_bin: float = 0.0,
+    period_mode: PeriodMode | str = PeriodMode.RED,
+    run_number: int | None = None,
+    title: str | None = None,
+) -> Run:
+    """Simulate a two-period (red/green) run from per-period models.
+
+    Pulsed-source runs can be recorded in period mode (light-on/off, RF-on/off,
+    ALC steps): one file holds several period histograms. This synthesises the
+    two-period case — ``periods[0]`` is *red* (period 1), ``periods[1]`` *green*
+    (period 2) — through the same Poisson forward model as :func:`simulate_run`,
+    one independent draw per period from a single seeded generator (a fixed seed
+    reproduces both periods bit-for-bit).
+
+    The returned :class:`Run` carries the loader's two-period payload
+    (``period_histograms``, ``period_reduced``, ``period_good_frames``,
+    ``period_dead_time_us``, ``period_mode``) with ``run.histograms`` cloned from
+    the red period, so :func:`asymmetry.core.io.periods.select_period`, the
+    green∓red combinations in :func:`reduce_run_to_dataset`, and
+    :func:`degrade_run` all operate on it exactly as on a loaded period-mode
+    file. The NeXus writer still emits a single period (study decision); a
+    two-period synthetic run lives in-memory and through the project.
+    """
+    if not template.histograms:
+        raise ValueError("Simulation requires a template run with detector histograms.")
+    if len(periods) != 2:
+        raise ValueError("simulate_two_period_run needs exactly two PeriodSpecs (red, green).")
+    if not np.isfinite(total_events) or total_events <= 0:
+        raise ValueError("total_events must be a positive, finite event budget.")
+
+    grouping = template.grouping if isinstance(template.grouping, dict) else {}
+    forward_gid = int(grouping.get("forward_group", 1))
+    backward_gid = int(grouping.get("backward_group", 2))
+    default_alpha = grouping.get("alpha", 1.0)
+    try:
+        default_alpha = float(default_alpha)
+    except (TypeError, ValueError):
+        default_alpha = 1.0
+    good_frames = grouping.get("good_frames", 1.0)
+    try:
+        good_frames = float(good_frames)
+    except (TypeError, ValueError):
+        good_frames = 1.0
+    n_det = len(template.histograms)
+
+    # One generator draws red then green in order, so a fixed seed is
+    # reproducible and the two periods are independent.
+    rng = np.random.default_rng(seed)
+
+    # One deadtime-zeroed base copy (shared synthetic-run contract); the
+    # reduction grouping at the loader default α = 1 and the final run grouping
+    # both derive from it by shallow override, so each period reduces — and the
+    # synthetic counts (which carry no deadtime distortion) read back — exactly
+    # like a freshly loaded single-period run.
+    base_grouping = _synthetic_run_grouping(template, n_det)
+    reduce_grouping = {**base_grouping, "alpha": 1.0}
+
+    period_histograms: list[list[Histogram]] = []
+    period_reduced: list[tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]] = []
+    period_provenance: list[dict[str, Any]] = []
+    for spec in periods:
+        signal_percent, expression = _bind_model_signal_percent(spec.model, spec.parameters or {})
+        scale = float(spec.scale)
+
+        def forward_signal(
+            t: NDArray[np.float64],
+            _fn: Callable[[NDArray[np.float64]], NDArray[np.float64]] = signal_percent,
+            _scale: float = scale,
+        ) -> NDArray[np.float64]:
+            return _scale * _fn(t) / 100.0
+
+        def backward_signal(
+            t: NDArray[np.float64],
+            _fn: Callable[[NDArray[np.float64]], NDArray[np.float64]] = signal_percent,
+            _scale: float = scale,
+        ) -> NDArray[np.float64]:
+            return -_scale * _fn(t) / 100.0
+
+        alpha = default_alpha if spec.alpha is None else float(spec.alpha)
+        if not np.isfinite(alpha) or alpha <= 0:
+            raise ValueError("PeriodSpec.alpha must be positive and finite.")
+        group_signals, group_weights = _fb_group_signals_and_weights(
+            grouping,
+            n_det,
+            forward_signal=forward_signal,
+            backward_signal=backward_signal,
+            forward_gid=forward_gid,
+            backward_gid=backward_gid,
+            alpha=alpha,
+        )
+        events = total_events if spec.total_events is None else float(spec.total_events)
+        expected = expected_counts(
+            template,
+            group_signals,
+            total_events=events,
+            group_weights=group_weights,
+            background_per_bin=background_per_bin,
+        )
+        hists = [
+            Histogram(
+                counts=rng.poisson(clean).astype(float),
+                bin_width=float(hist.bin_width),
+                t0_bin=int(hist.t0_bin),
+                good_bin_start=int(hist.good_bin_start),
+                good_bin_end=int(hist.good_bin_end),
+            )
+            for hist, clean in zip(template.histograms, expected, strict=True)
+        ]
+        period_histograms.append(hists)
+        period_reduced.append(_reduce_histograms(hists, reduce_grouping))
+        period_provenance.append(
+            {
+                "model": expression,
+                "parameters": {
+                    name: float(value) for name, value in dict(spec.parameters or {}).items()
+                },
+                "alpha": float(alpha),
+                "scale": scale,
+                "total_events": float(events),
+                "label": spec.label,
+            }
+        )
+
+    run_grouping = {
+        **base_grouping,
+        "good_frames": good_frames,
+        "period_histograms": period_histograms,
+        "period_reduced": period_reduced,
+        "period_good_frames": [good_frames, good_frames],
+        "period_dead_time_us": [[0.0] * n_det, [0.0] * n_det],
+        "period_mode": str(period_mode),
+    }
+
+    number = template.run_number if run_number is None else int(run_number)
+    metadata = _synthetic_run_metadata(
+        template,
+        number=number,
+        seed=seed,
+        total_events=total_events,
+        background_per_bin=background_per_bin,
+        title=title,
+        default_title="Simulated two-period run",
+        simulation_metadata={"two_period": True, "periods": period_provenance},
+        extra_metadata={"period_count": 2},
+    )
+
+    # run.histograms mirror the red period (the loader convention for a combined
+    # two-period run); clone so later edits cannot alias the period payload.
+    histograms = [
+        Histogram(
+            counts=hist.counts.copy(),
+            bin_width=hist.bin_width,
+            t0_bin=hist.t0_bin,
+            good_bin_start=hist.good_bin_start,
+            good_bin_end=hist.good_bin_end,
+        )
+        for hist in period_histograms[0]
+    ]
+    return Run(
+        run_number=number,
+        histograms=histograms,
+        metadata=metadata,
+        grouping=run_grouping,
+        source_file="",
     )
 
 

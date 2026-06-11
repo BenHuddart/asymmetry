@@ -73,6 +73,44 @@ as real data would — the generating α is recorded in the file's
 deadtime distortion, so the file's deadtimes are correctly written as zero;
 do not enable deadtime correction for synthetic runs.
 
+Generation modes: asymmetry, counts and periods
+------------------------------------------------
+
+**When to use this.** The **Generation** dropdown chooses *what kind* of
+synthetic run to make. Leave it on the default for asymmetry work; switch it
+when you need raw single-histogram counts for a count-domain fit, or a
+red/green period structure.
+
+*Forward/backward asymmetry* (default) is the run described above: the
+antisymmetric :math:`\pm a(t)` split across the forward and backward groups,
+reduced to an asymmetry curve. This is what feeds the standard fit panel and
+the α-free forward/backward count fit, which needs the F/B pair to separate
+the balance :math:`\alpha` from the amplitude.
+
+*Count histograms (single-group)* imprints the **same** :math:`+a(t)` on every
+group, so each detector group is an independent single-histogram measurement
+
+.. math::
+
+   N_g(t) = N_{0,g}\, e^{-t/\tau_\mu} \left[1 + a(t)\right] + b,
+
+with no balancing backward detector. This is the data the **single-histogram**
+count fit expects — fit any one group and recover its :math:`N_0`, the
+amplitude inside :math:`a(t)`, and the flat background. Use it for LF/ZF
+single-detector work, or to manufacture a clean test case for the count-domain
+fit modes.
+
+*Two-period (red/green)* generates two period histograms in one run, the way a
+light-on/off or RF-on/off measurement is recorded. Red carries the full model;
+the **Green amplitude (×)** factor scales green's signal — leave it at
+:math:`0` for a flat reference period (the usual light-off case), so the
+green-minus-red combination :math:`G - R` recovers the red signal cleanly. Each
+period is an independent Poisson draw from one seed. The run lands in the Data
+Browser with the full red/green machinery: pick the period or the
+:math:`G \mp R` combination in the grouping dialog exactly as for a loaded
+period-mode file. Save-as-NeXus flattens a two-period run to its red period —
+period-mode synthetic runs live in memory and through the project, not on disk.
+
 Built-in instrument templates
 -----------------------------
 
@@ -249,6 +287,28 @@ scan family), badged and ready to plot or fit:
 
    ag = build_preset_runs("ag_zf_kt")[0]          # single run
    euo_scan = build_preset_runs("euo_tscan")      # five temperatures
+
+Count-mode and two-period synthesis have their own entry points. Count-mode
+returns a run whose per-group histograms feed the single-histogram count fit;
+two-period takes a :class:`~asymmetry.core.simulate.PeriodSpec` for red and
+green and returns the loadable red/green payload.
+
+.. code-block:: python
+
+   from asymmetry.core.simulate import (
+       PeriodSpec, simulate_count_run, simulate_two_period_run,
+   )
+
+   counts = simulate_count_run(template, model, params, total_events=40e6, seed=7)
+
+   # Red carries the full model; green a half-amplitude variant (scale=0 makes
+   # a flat reference period, so G−R recovers the red signal). Each period can
+   # instead pass its own model/parameters/alpha/total_events.
+   red = PeriodSpec(model, params)
+   green = PeriodSpec(model, params, scale=0.5)
+   periods = simulate_two_period_run(
+       template, [red, green], total_events=40e6, seed=7,
+   )
 
 Multi-group simulations (a different amplitude and phase per detector group —
 phases around a TF ring, for instance) use

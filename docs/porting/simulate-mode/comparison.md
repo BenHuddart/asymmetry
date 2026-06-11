@@ -31,8 +31,8 @@ muon-specific simulate UI, so WiMDA is the sole behavioural reference.
 | Signal | F: `(1 + 0.01·a(t))`, B: `(1 − 0.01·a(t))`, `a` in percent (lines 70–76) | Identical (models are percent-scale; core converts to fractional internally) |
 | Per-group t0 | `t = (i − tzero[g])·Δt` (lines 64–68) | Per-detector `Histogram.t0_bin` from the template (finer than WiMDA's per-group value) |
 | Sub-histograms | `multifactor` independent draws per stored histogram (lines 82–88) | One draw per physical detector histogram — Asymmetry stores raw detectors directly, so the multifactor layer is unnecessary; the statistics are identical (sum of independent Poissons) |
-| Double-pulse halving | Expected counts halved for `t < dpsep/2` (lines 78–79) | **Deferred** to `count-domain-fit-modes` (follow-on); Asymmetry has no double-pulse analysis mode yet, so simulated double-pulse data would be unfittable |
-| Non-FB count modes | `nn = a(t)/ghists · evfactor · e^{−t/τ}` (line 76) | **Deferred** to `count-domain-fit-modes` (no count-domain fitting exists yet) |
+| Double-pulse halving | Expected counts halved for `t < dpsep/2` (lines 78–79) | `simulate_double_pulse_run` (the two pulses carry the polarization at `t ± dpsep/2`, weighted `e^{∓dpsep/2τ}`); round-trips the double-pulse single-histogram fit (delivered with `count-domain-fit-modes`) |
+| Non-FB count modes | `nn = a(t)/ghists · evfactor · e^{−t/τ}` (line 76) | `simulate_count_run` (follow-on, [follow-ons.md](follow-ons.md)): the same `+a(t)` on every group as independent single-histogram counts, fittable by the PR #41 single-histogram mode |
 
 ## Divergences (both behaviours stated)
 
@@ -114,6 +114,10 @@ muon-specific simulate UI, so WiMDA is the sole behavioural reference.
 
 - **Sample-environment logs, event mode, extra instrument templates, PSI/ROOT
   writers** — see README scope rationale.
-- **Two-period simulation** — the writer emits one period
-  (`histogram_data_1`), as WiMDA does; multi-period synthesis is a recorded
-  follow-on for `count-domain-fit-modes`.
+- **Two-period NeXus *writing*** — the writer emits one period
+  (`histogram_data_1`), as WiMDA does. Two-period **synthesis** itself shipped
+  as the in-memory `simulate_two_period_run` (follow-on,
+  [follow-ons.md](follow-ons.md)): it builds the loader's two-period payload so
+  `select_period` and the green∓red combination work, but Save-as-NeXus still
+  flattens to the red period. Promoting period support into the writer (and the
+  loader round-trip) is the remaining deferral.

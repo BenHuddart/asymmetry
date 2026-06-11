@@ -12,9 +12,13 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.fitting.count_domain import fit_fb_alpha, fit_single_histogram
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.io.periods import select_period
 from asymmetry.core.simulate import (
     BUILTIN_TEMPLATES,
     GroupSignalSpec,
+    PeriodSpec,
     build_builtin_template,
     build_group_signals,
     build_run_from_detector_asymmetries,
@@ -23,11 +27,19 @@ from asymmetry.core.simulate import (
     group_specs_from_grouped_fit,
     poisson_asymmetry_errors,
     reduce_run_to_dataset,
+    simulate_count_run,
     simulate_multi_group_run,
     simulate_run,
     simulate_run_from_group_signals,
+    simulate_two_period_run,
 )
-from asymmetry.core.utils.constants import MUON_LIFETIME_US
+from asymmetry.core.utils.constants import MUON_LIFETIME_US, PeriodMode
+
+
+def _cos_model(t, A=20.0, freq=1.0, sigma=0.1):  # noqa: N803 (A is the conventional asymmetry symbol)
+    """A relaxing transverse-field cosine, asymmetry in percent."""
+    return A * np.cos(2.0 * np.pi * freq * t) * np.exp(-0.5 * (sigma * t) ** 2)
+
 
 N_BINS = 2000
 BIN_WIDTH = 0.016
@@ -571,6 +583,248 @@ class TestTwoPeriodHandling:
         # The derived run still reduces as the period the user was viewing.
         green_view = reduce_run_to_dataset(derived)
         assert float(green_view.asymmetry.mean()) == pytest.approx(-60.0, abs=3.0)
+
+
+class TestCountModeSimulation:
+    """Per-group single-histogram count synthesis (WiMDA evfactor path).
+
+    Verification-plan: count-mode synthetic data is fitted by the PR #41
+    single-histogram and α-free count-fit modes, recovering the generating
+    N0/A/background/α within errors.
+    """
+
+    def test_count_mode_imprints_forward_sign_on_every_group(self) -> None:
+        # Two detectors per group, so each group sums a believable count rate.
+        template = _template(n_det_per_group=2)
+        run = simulate_count_run(
+            template,
+            _cos_model,
+            {"A": 15.0, "freq": 2.0, "sigma": 0.08},
+            total_events=6.0e7,
+            seed=5,
+            background_per_bin=1.0,
+        )
+        assert run.metadata["simulation"]["count_mode"] is True
+        assert run.metadata["synthetic"] is True
+        assert "period_histograms" not in run.grouping
+
+    def test_single_histogram_round_trip(self) -> None:
+        template = _template(n_det_per_group=2)
+        run = simulate_count_run(
+            template,
+            _cos_model,
+            {"A": 15.0, "freq": 2.0, "sigma": 0.08},
+            total_events=6.0e7,
+            seed=5,
+            background_per_bin=1.0,
+        )
+        dataset = reduce_run_to_dataset(run)
+
+        # Both groups carry +A (single-histogram, no F/B antisymmetry): a
+        # forward-sign fit on either recovers the same positive amplitude.
+        for group_id in (1, 2):
+            params = ParameterSet(
+                [
+                    Parameter("N0", 5.0e4),
+                    Parameter("background", 1.0),
+                    Parameter("A", 14.0),
+                    Parameter("freq", 1.9),
+                    Parameter("sigma", 0.1),
+                ]
+            )
+            result = fit_single_histogram(
+                dataset, group_id, _cos_model, params, side="forward", cost="poisson"
+            )
+            assert result.success
+            assert result.reduced_chi_squared == pytest.approx(1.0, abs=0.25)
+            values = {p.name: p.value for p in result.parameters}
+            # A within three Poisson sigma of the generating 15 %.
+            assert abs(values["A"] - 15.0) < 3.0 * result.uncertainties["A"]
+            assert values["freq"] == pytest.approx(2.0, abs=1e-3)
+
+    def test_alpha_free_fb_round_trip(self) -> None:
+        # The α-free FB count fit needs the antisymmetric F/B pair, which the
+        # standard forward/backward generator (not count-mode) provides.
+        template = _template(n_det_per_group=2)
+        run = simulate_run(
+            template,
+            _cos_model,
+            {"A": 20.0, "freq": 1.5, "sigma": 0.1},
+            total_events=8.0e7,
+            seed=3,
+            alpha=1.2,
+            background_per_bin=2.0,
+        )
+        dataset = reduce_run_to_dataset(run)
+        params = ParameterSet(
+            [
+                Parameter("alpha", 1.0),
+                Parameter("N0", 5.0e4),
+                Parameter("background", 2.0),
+                Parameter("background_b", 2.0),
+                Parameter("A", 18.0),
+                Parameter("freq", 1.4),
+                Parameter("sigma", 0.1),
+            ]
+        )
+        result = fit_fb_alpha(dataset, 1, 2, _cos_model, params, cost="poisson")
+        shared = {p.name: p.value for p in result.shared_parameters}
+        assert shared["alpha"] == pytest.approx(1.2, abs=0.02)
+        assert shared["A"] == pytest.approx(20.0, abs=0.5)
+
+    def test_count_mode_deterministic(self) -> None:
+        template = _template(n_det_per_group=2)
+        kwargs = {"total_events": 3.0e7, "seed": 11, "background_per_bin": 0.5}
+        a = simulate_count_run(template, _cos_model, {"A": 12.0}, **kwargs)
+        b = simulate_count_run(template, _cos_model, {"A": 12.0}, **kwargs)
+        assert np.array_equal(a.histograms[0].counts, b.histograms[0].counts)
+
+
+class TestTwoPeriodSimulation:
+    """Two-period (red/green) synthesis through the Poisson forward model.
+
+    Verification-plan: the synthetic two-period run round-trips through
+    select_period and the green∓red combination with correct statistics.
+    """
+
+    def _run(self, *, mode=PeriodMode.RED, seed=7) -> Run:
+        template = _template(n_det_per_group=2)
+        red = PeriodSpec(_cos_model, {"A": 25.0, "freq": 1.0, "sigma": 0.05}, label="red")
+        green = PeriodSpec(_cos_model, {"A": 5.0, "freq": 1.0, "sigma": 0.05}, label="green")
+        return simulate_two_period_run(
+            template, [red, green], total_events=5.0e7, seed=seed, period_mode=mode
+        )
+
+    def test_carries_two_period_payload(self) -> None:
+        run = self._run()
+        for key in (
+            "period_histograms",
+            "period_reduced",
+            "period_good_frames",
+            "period_dead_time_us",
+            "period_mode",
+        ):
+            assert key in run.grouping
+        assert len(run.grouping["period_histograms"]) == 2
+        assert len(run.grouping["period_reduced"]) == 2
+        assert run.metadata["period_count"] == 2
+        assert run.metadata["simulation"]["two_period"] is True
+        # run.histograms mirror the red period (loader convention).
+        assert np.array_equal(
+            run.histograms[0].counts, run.grouping["period_histograms"][0][0].counts
+        )
+
+    def test_select_period_recovers_each_signal(self) -> None:
+        dataset = reduce_run_to_dataset(self._run())
+        red = select_period(dataset, "red")
+        green = select_period(dataset, "green")
+        # Each period reduces to its own generating signal; compare against the
+        # model on the same time axis over the first few oscillations (where
+        # the per-bin noise is small).
+        window = slice(0, 200)
+        red_truth = _cos_model(red.time[window], A=25.0, freq=1.0, sigma=0.05)
+        green_truth = _cos_model(green.time[window], A=5.0, freq=1.0, sigma=0.05)
+        assert np.max(np.abs(red.asymmetry[window] - red_truth)) < 2.0
+        assert np.max(np.abs(green.asymmetry[window] - green_truth)) < 2.0
+
+    def test_green_minus_red_combination(self) -> None:
+        run = self._run(mode=PeriodMode.GREEN_MINUS_RED)
+        combined = reduce_run_to_dataset(run)
+        # G − R = green − red ≈ (5 − 25)·cos over the same time axis.
+        window = slice(0, 200)
+        truth = _cos_model(combined.time[window], A=5.0 - 25.0, freq=1.0, sigma=0.05)
+        assert np.max(np.abs(combined.asymmetry[window] - truth)) < 3.0
+
+    def test_pull_statistics_are_unit_normal(self) -> None:
+        # Compare the sampled red reduction against the noise-free expectation:
+        # standardised residuals (A_sampled − A_true)/σ should be ~ N(0, 1).
+        template = _template(n_det_per_group=2)
+        spec = PeriodSpec(_cos_model, {"A": 20.0, "freq": 1.0, "sigma": 0.05})
+        run = simulate_two_period_run(template, [spec, spec], total_events=8.0e7, seed=21)
+        sampled = reduce_run_to_dataset(run)  # red by default
+
+        # Noise-free expectation: the exact forward model with no Poisson draw.
+        group_signals = {
+            1: lambda t: _cos_model(t, A=20.0, freq=1.0, sigma=0.05) / 100.0,
+            2: lambda t: -_cos_model(t, A=20.0, freq=1.0, sigma=0.05) / 100.0,
+        }
+        weights = {1: 1.0, 2: 1.0}
+        expected = expected_counts(
+            template, group_signals, total_events=8.0e7, group_weights=weights
+        )
+        truth = reduce_run_to_dataset(_run_from_expected(template, expected))
+
+        n = min(sampled.asymmetry.size, truth.asymmetry.size)
+        pulls = (sampled.asymmetry[:n] - truth.asymmetry[:n]) / sampled.error[:n]
+        assert abs(float(np.mean(pulls))) < 0.2
+        assert float(np.std(pulls)) == pytest.approx(1.0, abs=0.2)
+
+    def test_degrade_keeps_period_payload(self) -> None:
+        derived = degrade_run(self._run(), 0.25, seed=2)
+        assert len(derived.grouping["period_histograms"]) == 2
+        assert len(derived.grouping["period_reduced"]) == 2
+        assert derived.grouping["period_mode"] == str(PeriodMode.RED)
+
+    def test_deterministic(self) -> None:
+        a = self._run(seed=33)
+        b = self._run(seed=33)
+        assert np.array_equal(
+            a.grouping["period_histograms"][1][0].counts,
+            b.grouping["period_histograms"][1][0].counts,
+        )
+
+    def test_requires_exactly_two_periods(self) -> None:
+        template = _template()
+        spec = PeriodSpec(_cos_model, {"A": 10.0})
+        with pytest.raises(ValueError, match="exactly two"):
+            simulate_two_period_run(template, [spec], total_events=1.0e7)
+
+    def test_scale_zero_makes_flat_reference_and_keeps_provenance(self) -> None:
+        # A scale=0 green is a flat reference: G−R recovers the red signal, and
+        # the green provenance still records the real model + scale (not an
+        # opaque wrapper name).
+        template = _template(n_det_per_group=2)
+        red = PeriodSpec(_cos_model, {"A": 20.0, "freq": 1.0, "sigma": 0.05}, label="red")
+        green = PeriodSpec(
+            _cos_model, {"A": 20.0, "freq": 1.0, "sigma": 0.05}, scale=0.0, label="green"
+        )
+        run = simulate_two_period_run(
+            template,
+            [red, green],
+            total_events=6.0e7,
+            seed=9,
+            period_mode=PeriodMode.GREEN_MINUS_RED,
+        )
+        periods_prov = run.metadata["simulation"]["periods"]
+        assert periods_prov[1]["scale"] == 0.0
+        assert periods_prov[1]["model"] == "_cos_model"  # real model, not a wrapper
+
+        combined = reduce_run_to_dataset(run)
+        window = slice(0, 200)
+        # G − R = (0 − 20)·cos: green is flat, so the combination is −red.
+        truth = _cos_model(combined.time[window], A=-20.0, freq=1.0, sigma=0.05)
+        assert np.max(np.abs(combined.asymmetry[window] - truth)) < 2.0
+
+    def test_nexus_writer_emits_single_period(self, tmp_path) -> None:
+        # Study decision: the NeXus writer emits one period; a two-period
+        # synthetic run is in-memory only. Saving keeps the red period.
+        h5py = pytest.importorskip("h5py")
+        del h5py
+        from asymmetry.core.io import load
+        from asymmetry.core.io.nexus_writer import write_nexus_v1
+
+        run = self._run()
+        path = tmp_path / "sim_two_period.nxs"
+        write_nexus_v1(run, path)
+        reloaded = load(str(path))
+        loaded = reloaded[0] if isinstance(reloaded, list) else reloaded
+        # A single-period file: no per-period payload survives.
+        assert "period_histograms" not in (loaded.run.grouping or {})
+        # The saved counts are the red period.
+        assert np.array_equal(
+            np.rint(loaded.run.histograms[0].counts),
+            np.rint(run.grouping["period_histograms"][0][0].counts),
+        )
 
 
 class TestBunching:
