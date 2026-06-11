@@ -243,8 +243,16 @@ def precompute_group_fourier_inputs(
     return prepared_histograms, int(reference_t0_bin)
 
 
-def _reference_field_gauss(run: Run, dataset: MuonDataset | None) -> float | None:
-    """Return the run's applied field in Gauss, or ``None``."""
+def reference_field_gauss(run: Run, dataset: MuonDataset | None) -> float | None:
+    """Return the applied field in Gauss, or ``None`` if unavailable.
+
+    Resolves ``field`` from the **dataset metadata first, then the run
+    metadata** — the dataset (reduced) view overrides the raw run when both
+    carry a field. A missing or non-numeric ``field`` in one source falls
+    through to the next; if neither resolves, returns ``None``. This is the
+    single field resolver shared by the core Fourier pipeline and the GUI plot
+    panel (which converts the result to a display unit).
+    """
     sources: list[dict] = []
     if dataset is not None and isinstance(dataset.metadata, dict):
         sources.append(dataset.metadata)
@@ -261,7 +269,7 @@ def _reference_field_gauss(run: Run, dataset: MuonDataset | None) -> float | Non
 
 def _reference_frequency_mhz(run: Run, dataset: MuonDataset | None) -> float | None:
     """Return the muon Larmor frequency (MHz) at the applied field, or ``None``."""
-    field_gauss = _reference_field_gauss(run, dataset)
+    field_gauss = reference_field_gauss(run, dataset)
     if field_gauss is None:
         return None
     return float(gauss_to_mhz(field_gauss))
@@ -377,7 +385,7 @@ def compute_average_group_spectrum(
             background_reference_cache=background_reference_cache,
         )
         if config.remove_diamag:
-            seed_field = _reference_field_gauss(run, group_dataset)
+            seed_field = reference_field_gauss(run, group_dataset)
             # Diamagnetic precession only exists in a transverse field; skip the
             # fit at (near-)zero field, where a bounded fit would otherwise lock
             # onto a spurious low frequency.
@@ -478,7 +486,7 @@ def compute_average_group_spectrum(
     if is_correlation:
         correlation_field = config.correlation_reference_field_gauss
         if correlation_field is None:
-            correlation_field = _reference_field_gauss(run, first_group_dataset)
+            correlation_field = reference_field_gauss(run, first_group_dataset)
         a_axis, corr = correlation_spectrum(
             average_freqs,
             averaged_display,
