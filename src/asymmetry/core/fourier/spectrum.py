@@ -21,6 +21,7 @@ import numpy as np
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fourier.burg import burg_spectrum
 from asymmetry.core.fourier.conditioning import apply_spectrum_conditioning
+from asymmetry.core.fourier.correlation import DEFAULT_CORR_ORDER, correlation_spectrum
 from asymmetry.core.fourier.diamag import fit_and_subtract_diamagnetic
 from asymmetry.core.fourier.fft import (
     average_fourier_display_values,
@@ -54,6 +55,7 @@ _YLABELS: dict[str, str] = {
     "real_imag": "FFT Real + Imag (a.u.)",
     "burg": "Burg AR spectrum (a.u.)",
     "sin": "FFT Sin (a.u.)",
+    "correlation": "Radical correlation (a.u.)",
 }
 
 
@@ -103,6 +105,11 @@ class GroupSpectrumConfig:
     burg_order_max: int = 40
     #: Fit and subtract the diamagnetic line in the time domain before the FFT.
     remove_diamag: bool = False
+    #: Muoniated-radical correlation spectrum: transverse field (Gauss) used for
+    #: the Breit–Rabi pairing; ``None`` resolves from the run's applied field.
+    correlation_reference_field_gauss: float | None = None
+    #: ``CorrFn`` ratio-penalty order for the correlation spectrum.
+    correlation_order: int = DEFAULT_CORR_ORDER
 
     def to_dict(self) -> dict:
         """Return a JSON-serialisable ``fourier_config`` recipe block."""
@@ -135,6 +142,8 @@ class GroupSpectrumConfig:
             "burg_order_min": self.burg_order_min,
             "burg_order_max": self.burg_order_max,
             "remove_diamag": self.remove_diamag,
+            "correlation_reference_field_gauss": self.correlation_reference_field_gauss,
+            "correlation_order": self.correlation_order,
         }
 
     @classmethod
@@ -175,6 +184,10 @@ class GroupSpectrumConfig:
             burg_order_min=int(data.get("burg_order_min", 2)),
             burg_order_max=int(data.get("burg_order_max", 40)),
             remove_diamag=bool(data.get("remove_diamag", False)),
+            correlation_reference_field_gauss=_optional_float(
+                data.get("correlation_reference_field_gauss")
+            ),
+            correlation_order=int(data.get("correlation_order", DEFAULT_CORR_ORDER)),
         )
 
 
@@ -352,6 +365,11 @@ def compute_average_group_spectrum(
     canonical = canonical_fourier_display_mode(display)
     is_real_imag = canonical == "real_imag"
     is_burg = canonical == "burg"
+    is_correlation = canonical == "correlation"
+    # The correlation spectrum is built from a real amplitude channel sampled at
+    # the Breit–Rabi pair frequencies; feed the FFT averaging an amplitude
+    # display internally, then transform it after averaging.
+    value_display = "(Power)^1/2" if is_correlation else display
 
     if prepared_histograms is None or reference_t0_bin is None:
         prepared_histograms, reference_t0_bin = precompute_group_fourier_inputs(run)
@@ -451,7 +469,7 @@ def compute_average_group_spectrum(
             averaged_values.append(fourier_display_values(spectrum, display="Cos"))
             imag_values.append(fourier_display_values(spectrum, display="Sin"))
         else:
-            averaged_values.append(fourier_display_values(spectrum, display=display))
+            averaged_values.append(fourier_display_values(spectrum, display=value_display))
 
     if average_freqs is None:
         return None
@@ -471,13 +489,32 @@ def compute_average_group_spectrum(
     else:
         return None
 
+    # ── muoniated-radical correlation spectrum ──────────────────────────
+    # Transform the averaged amplitude spectrum onto a hyperfine-coupling (A_µ)
+    # axis via the exact Breit–Rabi forward map (correlate-the-averaged-spectrum;
+    # see comparison.md §4.1).  Replaces the frequency axis with the A_µ axis.
+    correlation_field: float | None = None
+    if is_correlation:
+        correlation_field = config.correlation_reference_field_gauss
+        if correlation_field is None:
+            correlation_field = _reference_field_gauss(run, first_group_dataset)
+        a_axis, corr = correlation_spectrum(
+            average_freqs,
+            averaged_display,
+            field_gauss=float(correlation_field or 0.0),
+            order=config.correlation_order,
+        )
+        average_freqs = a_axis
+        averaged_display = corr
+        averaged_error = np.zeros_like(corr)
+
     # ── post-FFT conditioning (compensation → baseline → exclusions) ────
     # Operates on the canonical MHz axis; the plot panel converts to the
     # display unit.  Entropy keeps its optimiser output untouched, and Burg is a
     # raw all-poles diagnostic (it already inherits the time-domain preprocessing
     # chain) — neither is post-conditioned.
     conditioning = None
-    if not is_entropy and not is_burg:
+    if not is_entropy and not is_burg and not is_correlation:
         reference_mhz = _reference_frequency_mhz(run, first_group_dataset)
         exclusion_ranges = _resolve_exclusion_ranges(config, reference_mhz)
         pulse_half_width_us = config.pulse_half_width_us
@@ -529,6 +566,14 @@ def compute_average_group_spectrum(
             "group_ids": list(selected),
         }
     )
+    if is_correlation:
+        # A_µ is a hyperfine coupling, not γ_µ·B — label it distinctly and flag
+        # it so the frequency-plot field-unit selector (MHz/G/T) does not apply.
+        metadata["x_label"] = "Muon hyperfine coupling Aμ (MHz)"
+        metadata["correlation_axis"] = True
+        metadata["fourier_diagnostic"] = True
+        if correlation_field:
+            metadata["fourier_correlation_field_gauss"] = float(correlation_field)
     if averaged_imag is not None:
         metadata["fourier_imag"] = np.asarray(averaged_imag, dtype=float).tolist()
     if is_burg and burg_orders:
