@@ -16,6 +16,7 @@ it does not.
 
    alpha_calibration
    backgrounds
+   background_ladder
    binning
    t0_search
    detector_exclusion

@@ -59,6 +59,8 @@ and cutoff are physical limits, not bugs — if a line vanishes past the cutoff,
 the pulse genuinely could not record it; reduce the pulse width only if you know
 it.
 
+.. _robust-baseline-offset:
+
 Robust baseline offset
 ----------------------
 
@@ -164,6 +166,8 @@ know how many lines are present and roughly where, measure them with a
 frequency-domain fit or with maximum entropy — those are the quantitative
 methods (Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy*, §15.5;
 Burg 1972).
+
+.. _diamagnetic-line-removal:
 
 Diamagnetic line removal
 ------------------------

@@ -26,6 +26,7 @@ material.
    gui_usage
    project_files
    data_reduction/index
+   exclusions
 
 .. toctree::
    :maxdepth: 2
