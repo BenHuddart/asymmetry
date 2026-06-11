@@ -129,6 +129,9 @@ _FOURIER_RECIPE_KEYS: tuple[str, ...] = (
     "diamag_exclusion",
     "diamag_half_width_mhz",
     "exclusion_ranges",
+    "remove_diamag",
+    "burg_order_min",
+    "burg_order_max",
 )
 
 

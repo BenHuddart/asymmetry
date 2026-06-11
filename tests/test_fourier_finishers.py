@@ -12,11 +12,18 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import Histogram, Run
+from asymmetry.core.fourier.burg import (
+    ar_power_spectrum,
+    burg_coefficients,
+    burg_spectrum,
+    fpe_order_scan,
+)
 from asymmetry.core.fourier.conditioning import (
     apply_spectrum_conditioning,
     pulse_compensation_gain,
     sigma_clip_baseline,
 )
+from asymmetry.core.fourier.diamag import fit_and_subtract_diamagnetic, fit_diamagnetic
 from asymmetry.core.fourier.spectrum import (
     GroupSpectrumConfig,
     compute_average_group_spectrum,
@@ -253,3 +260,162 @@ def test_baseline_metadata_recorded() -> None:
     assert "fourier_baseline" in ds.metadata
     assert "fourier_baseline_noise" in ds.metadata
     assert ds.metadata["fourier_baseline_noise"] >= 0.0
+
+
+# ── Burg all-poles diagnostic (Phase 2) ─────────────────────────────────
+
+
+def _peak_count(freqs: np.ndarray, values: np.ndarray, lo: float, hi: float) -> int:
+    mask = (freqs > lo) & (freqs < hi)
+    y = values[mask]
+    if y.size < 3:
+        return 0
+    threshold = y.max() * 0.05
+    interior = (y[1:-1] > y[:-2]) & (y[1:-1] > y[2:]) & (y[1:-1] > threshold)
+    return int(np.count_nonzero(interior))
+
+
+def test_burg_order_one_reflection_coefficient_oracle() -> None:
+    # The order-1 Burg reflection coefficient has a closed form over the
+    # forward/backward residuals — a direct check of the recursion's first step.
+    x = np.array([1.0, 2.0, 1.5, -0.5, -1.0, 0.5], dtype=float)
+    f = x[:-1]
+    b = x[1:]
+    expected = 2.0 * float(np.dot(f, b)) / float(np.dot(f, f) + np.dot(b, b))
+    coeffs, _power = burg_coefficients(x, 1)
+    assert coeffs[0] == pytest.approx(expected, abs=1e-12)
+
+
+def test_burg_recovers_known_ar2_process() -> None:
+    # x[n] = a1 x[n-1] + a2 x[n-2] + ε — Burg must recover (a1, a2).
+    rng = np.random.default_rng(11)
+    a1, a2 = 0.75, -0.5
+    n = 4000
+    x = np.zeros(n)
+    eps = rng.normal(0.0, 1.0, n)
+    for i in range(2, n):
+        x[i] = a1 * x[i - 1] + a2 * x[i - 2] + eps[i]
+    coeffs, _ = burg_coefficients(x, 2)
+    assert coeffs[0] == pytest.approx(a1, abs=0.05)
+    assert coeffs[1] == pytest.approx(a2, abs=0.05)
+
+
+def test_burg_resolves_doublet_that_fft_merges() -> None:
+    # Window short enough that the FFT cannot resolve a 0.25 MHz doublet, but
+    # Burg can. This is the characterisation quoted in the user docs.
+    rng = np.random.default_rng(3)
+    dt = 0.05
+    n = 48
+    t = np.arange(n) * dt
+    f1, f2 = 3.0, 3.25
+    fft_resolution = 1.0 / (n * dt)
+    assert fft_resolution > (f2 - f1)  # FFT genuinely cannot resolve the pair
+    signal = np.cos(2 * np.pi * f1 * t) + np.cos(2 * np.pi * f2 * t)
+    signal = signal + rng.normal(0.0, 0.05, n)
+    freqs = np.fft.rfftfreq(n * 4, d=dt)
+    fft_mag = np.abs(np.fft.rfft(signal, n=n * 4))
+    burg, _order, _hit = burg_spectrum(signal, freqs, dt, order_range=(2, 40))
+    assert _peak_count(freqs, fft_mag, 2.4, 3.85) == 1  # FFT merges the doublet
+    assert _peak_count(freqs, burg, 2.4, 3.85) >= 2  # Burg resolves it
+
+
+def test_burg_fpe_optimal_order_grows_with_line_count() -> None:
+    rng = np.random.default_rng(4)
+    dt = 0.05
+    t = np.arange(256) * dt
+
+    def best_order(freqs: list[float]) -> int:
+        sig = sum(np.cos(2 * np.pi * f * t) for f in freqs) + rng.normal(0.0, 0.3, t.size)
+        order, _ = fpe_order_scan(sig, range(2, 40))
+        return int(order)
+
+    one = best_order([2.0])
+    three = best_order([1.5, 3.0, 4.5])
+    assert three > one  # more lines → the FPE optimum prefers more poles
+
+
+def test_burg_spurious_peaks_at_excessive_order() -> None:
+    # Pushing the pole count far above the FPE optimum seeds spurious peaks
+    # across the baseline — the headline Burg pathology (Muon Spectroscopy
+    # §15.5). A single true line at an FPE-scale order gives one clean peak.
+    rng = np.random.default_rng(3)
+    dt = 0.05
+    n = 128
+    t = np.arange(n) * dt
+    signal = np.cos(2 * np.pi * 3.0 * t) + rng.normal(0.0, 0.1, n)
+    freqs = np.fft.rfftfreq(n * 4, d=dt)
+    a_low, p_low = burg_coefficients(signal, 8)
+    a_high, p_high = burg_coefficients(signal, 48)
+    low = ar_power_spectrum(a_low, p_low, freqs, dt)
+    high = ar_power_spectrum(a_high, p_high, freqs, dt)
+    low_peaks = _peak_count(freqs, low, 0.3, 9.7)
+    high_peaks = _peak_count(freqs, high, 0.3, 9.7)
+    assert low_peaks == 1  # FPE-scale order resolves the one true line
+    assert high_peaks > low_peaks  # excessive order invents spurious baseline peaks
+    assert high_peaks >= 5
+
+
+def test_burg_spectrum_mode_flags_diagnostic_metadata() -> None:
+    run = _tf_run(field_gauss=220.0)
+    ds = compute_average_group_spectrum(run, GroupSpectrumConfig(display="Resolution (Burg)"))
+    assert ds is not None
+    assert ds.metadata.get("fourier_diagnostic") is True
+    assert "fourier_burg_order" in ds.metadata
+    # Burg can carry a strong DC/baseline peak, so confirm the physical line
+    # within a window around the expected Larmor frequency.
+    expected_mhz = 220.0 * GAMMA_MU_MHZ_PER_G
+    window = np.abs(ds.time - expected_mhz) < 0.6
+    peak_mhz = float(ds.time[window][int(np.argmax(ds.asymmetry[window]))])
+    assert float(mhz_to_gauss(peak_mhz)) == pytest.approx(220.0, abs=10.0)
+
+
+def test_burg_boundary_warning_on_narrow_range() -> None:
+    rng = np.random.default_rng(5)
+    dt = 0.05
+    t = np.arange(256) * dt
+    signal = sum(np.cos(2 * np.pi * f * t) for f in (1.5, 3.0, 4.5)) + rng.normal(0.0, 0.3, t.size)
+    freqs = np.fft.rfftfreq(256, d=dt)
+    # A range that cannot contain the true optimum lands on a boundary.
+    _spec, best, hit = burg_spectrum(signal, freqs, dt, order_range=(2, 4))
+    assert hit is True
+    assert best in (2, 4)
+
+
+# ── diamagnetic fit-and-subtract (Phase 2) ──────────────────────────────
+
+
+def test_diamag_fit_recovers_field() -> None:
+    dt = 0.04
+    t = np.arange(400) * dt
+    field_gauss = 300.0
+    freq = field_gauss * GAMMA_MU_MHZ_PER_G
+    signal = 0.18 * np.cos(2 * np.pi * (freq * t + 0.1)) * np.exp(-0.05 * t) + 1.0
+    fit = fit_diamagnetic(t, signal, seed_frequency_mhz=freq * 1.02)
+    assert fit.success
+    assert fit.field_gauss == pytest.approx(field_gauss, abs=1.0)
+
+
+def test_diamag_subtract_flattens_line() -> None:
+    from asymmetry.core.data.dataset import MuonDataset
+
+    dt = 0.04
+    t = np.arange(400) * dt
+    field_gauss = 250.0
+    freq = field_gauss * GAMMA_MU_MHZ_PER_G
+    signal = 0.2 * np.cos(2 * np.pi * freq * t) * np.exp(-0.03 * t) + 1.0
+    ds = MuonDataset(time=t, asymmetry=signal, error=np.full(t.size, 0.01), metadata={})
+    cleaned, fit = fit_and_subtract_diamagnetic(ds, seed_field_gauss=field_gauss)
+    assert fit.success
+    # The oscillation is gone; only the constant offset remains.
+    assert float(np.std(cleaned.asymmetry - 1.0)) < 1e-3
+
+
+def test_diamag_field_reported_end_to_end() -> None:
+    field_gauss = 300.0
+    run = _tf_run(field_gauss=field_gauss, n=400)
+    ds = compute_average_group_spectrum(
+        run, GroupSpectrumConfig(display="(Power)^1/2", remove_diamag=True)
+    )
+    assert "fourier_diamag_field_gauss" in ds.metadata
+    assert ds.metadata["fourier_diamag_field_gauss"] == pytest.approx(field_gauss, abs=3.0)
+    assert "fourier_diamag_fit_signal" in ds.metadata

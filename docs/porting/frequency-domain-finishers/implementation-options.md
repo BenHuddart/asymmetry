@@ -207,6 +207,33 @@ diagnostic + diamagnetic fit-and-subtract`.
 - **Per-detector FFT** and **FB t=0 extrapolation** — out of scope (rationale in comparison.md).
 - **Field-axis probe override** (¹⁹F/¹H γ) — `units.py` already supports it; expose only if radical work lands.
 
+## Implementation status (both phases landed)
+
+Both phases are implemented and validate-green. Deviations from the plan, with
+rationale:
+
+- **Diamagnetic fit** uses `scipy.optimize.curve_fit` (not the iminuit engine)
+  for the one-off damped cosine: it is self-contained, and the fit is made
+  robust by normalising the signal to unit scale and bounding the frequency to a
+  window around the applied-field seed (the raw grouped-count signal is large and
+  has a growing noise envelope, which otherwise lets the fit alias to a spurious
+  high frequency). The fitted field is reported to the log and overlaid on the
+  time-domain plot via `plot_panel.set_diamagnetic_overlay`.
+- **Real+Imag** carries the imaginary quadrature in spectrum metadata
+  (`fourier_imag`) and overlays it on the frequency plot via
+  `plot_panel._overlay_fourier_imag`; the FFT preprocessing was extracted into
+  `fft.prepare_fft_time_signal` so the Burg path shares the exact same input as
+  the FFT (no parallel reimplementation).
+- **Burg** is wired as the `Resolution (Burg)` display mode; its global maximum
+  can sit on the DC/baseline peak, so the field-axis verification searches a
+  window around the expected Larmor line. The documented pathology that the
+  characterisation test pins is the proliferation of **spurious baseline peaks**
+  at excessive pole count (the most robust, deterministic signature of the
+  textbook "spurious splitting / baseline peaks" failure mode).
+
+Both follow-ons (radical correlation spectrum, N₀ single-histogram FFT) remain
+deferred as planned.
+
 ## Risks / watch-items
 - Conditioning must stay on the canonical MHz axis; the plot panel owns
   unit display. Don't double-convert.

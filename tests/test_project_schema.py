@@ -900,6 +900,9 @@ class TestFourierPanelState:
             "diamag_exclusion": False,
             "diamag_half_width_mhz": 0.3,
             "exclusion_ranges": [],
+            "remove_diamag": False,
+            "burg_order_min": 2,
+            "burg_order_max": 40,
         }
 
         panel2 = FourierPanel()

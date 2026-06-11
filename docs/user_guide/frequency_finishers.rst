@@ -121,6 +121,69 @@ masquerade as signal. When the robust baseline is active its noise estimate
 anchors the denominator. Use the peak S/N to judge whether a marginal line is
 real before committing to a frequency-domain fit.
 
+Burg all-poles pole scan (diagnostic)
+-------------------------------------
+
+The **Resolution (Burg)** display mode is a diagnostic, not a measurement. Where
+the FFT models the spectrum as a sum of sinusoids (an all-zeroes transform), the
+Burg method models it as an all-poles autoregressive process,
+
+.. math::
+
+   P(\nu) = \frac{P_m}{\left|1 - \sum_{k=1}^{m} a_k z^k\right|^2},
+   \qquad z = e^{2\pi i \nu \Delta t},
+
+with :math:`m` poles placed exactly where the data demand sharp lines. Because
+:math:`m` can be far smaller than the number of time points, the method resolves
+close lines from short windows that the FFT cannot. The pole count is chosen
+automatically by minimising the Final Prediction Error (FPE) over the scan range
+(default 2–40); if the optimum lands on an endpoint the log warns that the range
+is too narrow.
+
+What it is good for:
+
+- **Qualitative super-resolution.** On a window of 48 bins at 50 ns
+  (FFT resolution :math:`0.42` MHz), a :math:`0.25` MHz doublet collapses to a
+  single FFT peak but the Burg estimate shows two — a quick way to ask "is that
+  one line or two?" before committing to a fit.
+- **A line-count hint.** The FPE-optimal pole count rises with the number of
+  resolvable lines, so it suggests how many components a time-domain fit should
+  include.
+
+Its pathologies — why it is never the quantitative answer:
+
+- **Spurious splitting and baseline peaks.** Pushing the pole count well above
+  the FPE optimum splits strong lines and invents peaks in the baseline that are
+  not in the data. The peak heights are not amplitudes and the areas are not
+  populations.
+- **Noise-dependent bias and small position offsets.** The estimate shifts with
+  the noise realisation and nudges line positions; it carries no uncertainties.
+
+Treat a Burg spectrum as a magnifying glass for spotting structure. Once you
+know how many lines are present and roughly where, measure them with a
+frequency-domain fit or with maximum entropy — those are the quantitative
+methods (Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy*, §15.5;
+Burg 1972).
+
+Diamagnetic line removal
+------------------------
+
+In a transverse field the unshifted diamagnetic muon line is often the largest
+feature and can bury a weaker shifted or radical line. **Remove diamagnetic
+signal** fits a single damped cosine,
+:math:`s(t)=A\cos(2\pi(\nu t+\phi))\,e^{-\lambda t}+c`, to the time-domain signal
+*before* the FFT — seeding its frequency from the run's applied field so it locks
+onto the diamagnetic line — and subtracts the oscillatory part. The fitted
+frequency, converted to field, is reported in the log and overlaid on the
+time-domain plot so you can judge the subtraction.
+
+*When to use this.* Turn it on to reveal a shifted line sitting close to the
+diamagnetic peak, or to read the applied field off the fitted frequency as an
+independent calibration. *Pitfall:* the fit assumes a single damped cosine; if
+several lines overlap the diamagnetic frequency the subtraction is approximate —
+inspect the overlay, and prefer a full multi-line time-domain fit when the
+removal leaves visible residual.
+
 References
 ----------
 

@@ -19,7 +19,9 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.fourier.burg import burg_spectrum
 from asymmetry.core.fourier.conditioning import apply_spectrum_conditioning
+from asymmetry.core.fourier.diamag import fit_and_subtract_diamagnetic
 from asymmetry.core.fourier.fft import (
     average_fourier_display_values,
     canonical_fourier_display_mode,
@@ -29,6 +31,7 @@ from asymmetry.core.fourier.fft import (
     fourier_mode_uses_entropy_optimizer,
     fourier_mode_uses_phase_correction,
     optimize_phase_entropy,
+    prepare_fft_time_signal,
 )
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.units import gauss_to_mhz
@@ -46,6 +49,7 @@ _YLABELS: dict[str, str] = {
     "power_sqrt": "FFT (Power)^1/2 (a.u.)",
     "real": "FFT Real (a.u.)",
     "real_imag": "FFT Real + Imag (a.u.)",
+    "burg": "Burg AR spectrum (a.u.)",
     "sin": "FFT Sin (a.u.)",
 }
 
@@ -91,6 +95,11 @@ class GroupSpectrumConfig:
     #: When set, prepend a diamagnetic exclusion centred on the reference field.
     diamag_exclusion: bool = False
     diamag_half_width_mhz: float = 0.3
+    #: Burg all-poles pole-scan range (diagnostic "Resolution (Burg)" mode).
+    burg_order_min: int = 2
+    burg_order_max: int = 40
+    #: Fit and subtract the diamagnetic line in the time domain before the FFT.
+    remove_diamag: bool = False
 
     def to_dict(self) -> dict:
         """Return a JSON-serialisable ``fourier_config`` recipe block."""
@@ -120,6 +129,9 @@ class GroupSpectrumConfig:
             "exclusion_ranges": [[float(c), float(w)] for c, w in self.exclusion_ranges],
             "diamag_exclusion": self.diamag_exclusion,
             "diamag_half_width_mhz": self.diamag_half_width_mhz,
+            "burg_order_min": self.burg_order_min,
+            "burg_order_max": self.burg_order_max,
+            "remove_diamag": self.remove_diamag,
         }
 
     @classmethod
@@ -157,6 +169,9 @@ class GroupSpectrumConfig:
             exclusion_ranges=_coerce_exclusion_ranges(data.get("exclusion_ranges")),
             diamag_exclusion=bool(data.get("diamag_exclusion", False)),
             diamag_half_width_mhz=float(data.get("diamag_half_width_mhz", 0.3)),
+            burg_order_min=int(data.get("burg_order_min", 2)),
+            burg_order_max=int(data.get("burg_order_max", 40)),
+            remove_diamag=bool(data.get("remove_diamag", False)),
         )
 
 
@@ -325,7 +340,9 @@ def compute_average_group_spectrum(
     display = config.display
     apply_phase = fourier_mode_uses_phase_correction(display)
     is_entropy = fourier_mode_uses_entropy_optimizer(display)
-    is_real_imag = canonical_fourier_display_mode(display) == "real_imag"
+    canonical = canonical_fourier_display_mode(display)
+    is_real_imag = canonical == "real_imag"
+    is_burg = canonical == "burg"
 
     if prepared_histograms is None or reference_t0_bin is None:
         prepared_histograms, reference_t0_bin = precompute_group_fourier_inputs(run)
@@ -333,6 +350,10 @@ def compute_average_group_spectrum(
     averaged_values: list[np.ndarray] = []
     imag_values: list[np.ndarray] = []
     complex_spectra: list[np.ndarray] = []
+    burg_orders: list[int] = []
+    burg_hit_boundary = False
+    diamag_fields: list[float] = []
+    diamag_fit_curve: tuple[np.ndarray, np.ndarray] | None = None
     average_freqs: np.ndarray | None = None
     first_group_dataset: MuonDataset | None = None
     selected_names: list[str] = []
@@ -349,9 +370,48 @@ def compute_average_group_spectrum(
             prepared_histograms=prepared_histograms,
             background_reference_cache=background_reference_cache,
         )
+        if config.remove_diamag:
+            seed_field = _reference_field_gauss(run, group_dataset)
+            if seed_field is not None:
+                group_dataset, diamag_fit = fit_and_subtract_diamagnetic(
+                    group_dataset, seed_field_gauss=seed_field
+                )
+                if diamag_fit.success:
+                    diamag_fields.append(diamag_fit.field_gauss)
+                    if diamag_fit_curve is None:
+                        diamag_fit_curve = (
+                            np.asarray(group_dataset.time, dtype=float),
+                            diamag_fit.model(np.asarray(group_dataset.time, dtype=float)),
+                        )
+
         if first_group_dataset is None:
             first_group_dataset = group_dataset
         selected_names.append(group_names.get(group_id, f"Group {group_id}"))
+
+        if is_burg:
+            signal, dt = prepare_fft_time_signal(
+                group_dataset,
+                window=config.window,
+                t_min=config.t_min_us,
+                t_max=config.t_max_us,
+                subtract_average_signal=config.subtract_average_signal,
+                filter_start_us=config.filter_start_us,
+                filter_time_constant_us=config.filter_time_constant_us,
+            )
+            n_padded = len(signal) * max(config.padding, 1)
+            burg_freqs = np.fft.rfftfreq(n_padded, d=dt)
+            spec, best_order, hit_boundary = burg_spectrum(
+                signal,
+                burg_freqs,
+                dt,
+                order_range=(config.burg_order_min, config.burg_order_max),
+            )
+            if average_freqs is None:
+                average_freqs = burg_freqs
+            averaged_values.append(spec)
+            burg_orders.append(best_order)
+            burg_hit_boundary = burg_hit_boundary or hit_boundary
+            continue
 
         phase_degrees = 0.0
         group_t0_offset_us = 0.0
@@ -453,6 +513,15 @@ def compute_average_group_spectrum(
     )
     if averaged_imag is not None:
         metadata["fourier_imag"] = np.asarray(averaged_imag, dtype=float).tolist()
+    if is_burg and burg_orders:
+        metadata["fourier_burg_order"] = int(max(burg_orders))
+        metadata["fourier_burg_hit_boundary"] = bool(burg_hit_boundary)
+        metadata["fourier_diagnostic"] = True
+    if config.remove_diamag and diamag_fields:
+        metadata["fourier_diamag_field_gauss"] = float(np.mean(diamag_fields))
+        if diamag_fit_curve is not None:
+            metadata["fourier_diamag_fit_time_us"] = diamag_fit_curve[0].tolist()
+            metadata["fourier_diamag_fit_signal"] = diamag_fit_curve[1].tolist()
     if conditioning is not None:
         if conditioning.cutoff_frequency_mhz is not None:
             metadata["fourier_compensation_cutoff_mhz"] = conditioning.cutoff_frequency_mhz

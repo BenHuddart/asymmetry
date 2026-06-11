@@ -164,6 +164,8 @@ class PlotPanel(QWidget):
         self._frequency_axis_relative_to_reference = False
         self._frequency_reference_mhz: float | None = None
         self._frequency_x_limits_by_unit: dict[str, tuple[float, float]] = {}
+        #: Optional ``(time_us, signal)`` diamagnetic-fit overlay for the time view.
+        self._diamagnetic_overlay: tuple[np.ndarray, np.ndarray] | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
@@ -2820,6 +2822,50 @@ class PlotPanel(QWidget):
         self._update_export_enabled()
         self._connect_axis_limit_callbacks([self._ax])
 
+    def set_diamagnetic_overlay(
+        self, time_us: np.ndarray | None, signal: np.ndarray | None
+    ) -> None:
+        """Set (or clear) the diamagnetic-fit curve drawn on the time-domain view.
+
+        Passing ``None`` clears it. The overlay is redrawn on the next
+        :meth:`plot_dataset` call for a time-domain panel.
+        """
+        if time_us is None or signal is None:
+            self._diamagnetic_overlay = None
+        else:
+            self._diamagnetic_overlay = (
+                np.asarray(time_us, dtype=float),
+                np.asarray(signal, dtype=float),
+            )
+        if (
+            self._has_mpl
+            and self._current_dataset is not None
+            and not self._is_frequency_plot_panel()
+        ):
+            self.plot_dataset(self._current_dataset)
+
+    def _overlay_diamagnetic_fit(self) -> None:
+        """Draw the stored diamagnetic-fit curve on the time-domain axes."""
+        if (
+            not self._has_mpl
+            or self._diamagnetic_overlay is None
+            or self._is_frequency_plot_panel()
+        ):
+            return
+        time_us, signal = self._diamagnetic_overlay
+        finite = np.isfinite(time_us) & np.isfinite(signal)
+        if not np.any(finite):
+            return
+        self._ax.plot(
+            time_us[finite],
+            signal[finite],
+            "-",
+            color=tokens.WARN,
+            linewidth=1.5,
+            alpha=0.9,
+            label="Diamagnetic fit",
+        )
+
     def _overlay_fourier_imag(self, dataset: MuonDataset, time: np.ndarray) -> None:
         """Overlay the imaginary quadrature for the Real+Imag display mode.
 
@@ -2921,6 +2967,7 @@ class PlotPanel(QWidget):
             label=self._dataset_label_for(dataset),
         )
         self._overlay_fourier_imag(dataset, time)
+        self._overlay_diamagnetic_fit()
         x_label, y_label = self._axis_labels_for_dataset(dataset, self._current_polarization_axis)
         self._apply_axis_labels(x_label, y_label)
         self._set_alpha_label(self._single_dataset_alpha_label_text(dataset))

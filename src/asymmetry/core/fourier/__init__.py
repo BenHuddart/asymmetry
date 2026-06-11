@@ -1,5 +1,11 @@
 """Frequency-domain analysis: FFT, grouped inputs, and apodization."""
 
+from asymmetry.core.fourier.burg import (
+    ar_power_spectrum,
+    burg_coefficients,
+    burg_spectrum,
+    fpe_order_scan,
+)
 from asymmetry.core.fourier.conditioning import (
     apply_spectrum_conditioning,
     pulse_compensation_gain,
@@ -63,6 +69,10 @@ __all__ = [
     "apply_spectrum_conditioning",
     "pulse_compensation_gain",
     "sigma_clip_baseline",
+    "burg_spectrum",
+    "burg_coefficients",
+    "ar_power_spectrum",
+    "fpe_order_scan",
     "GroupSpectrumConfig",
     "compute_average_group_spectrum",
     "fourier_display_ylabel",

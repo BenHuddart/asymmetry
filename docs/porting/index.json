@@ -679,7 +679,7 @@
     {
       "slug": "frequency-domain-finishers",
       "feature_name": "Frequency-domain finishers: field-axis units, exclusion ranges, pulse-rolloff compensation, robust baseline, S/N readouts, real+imag, Burg pole scan, diamagnetic removal",
-      "status": "study",
+      "status": "implemented",
       "path": "docs/porting/frequency-domain-finishers",
       "references": [
         "WiMDA",
@@ -693,10 +693,10 @@
         "test_data": "docs/porting/frequency-domain-finishers/test-data.md",
         "verification_plan": "docs/porting/frequency-domain-finishers/verification-plan.md"
       },
-      "tests_path": null,
-      "src_path": null,
+      "tests_path": "tests/test_fourier_finishers.py",
+      "src_path": "src/asymmetry/core/fourier/conditioning.py",
       "updated": "2026-06-11",
-      "notes": "Wave A project 5 of wimda-parity-gap umbrella. Study + plan committed; awaiting go-ahead. Field-axis is VERIFY-ONLY (already built in plot_panel via FieldUnit). Reuses exclude_frequency_ranges (fft.py:422), pulse.py R(nu) for compensation, units.py, average_fourier_display_values. Divergences: pulse comp inverts parabola x Lorentzian R(nu) with cap-gain+node-cutoff guard (not WiMDA unbounded Gaussian); baseline iterative sigma-clip (WiMDA single-pass = 1 iteration). Burg = diagnostic display mode (Phase 2). Deferred: radical correlation spectrum, N0 single-histogram."
+      "notes": "Wave A project 5 of wimda-parity-gap umbrella. IMPLEMENTED (both phases, validate green). Phase 1: post-FFT conditioning in core/fourier/conditioning.py (pulse comp = 1/R(nu) from maxent/pulse.py capped+node-cutoff, NOT WiMDA unbounded Gaussian; iterative sigma-clip baseline, WiMDA single-pass=1 iter; exclusions wire exclude_frequency_ranges + diamag slot + PSI preset; Real+Imag overlay; S/N readout). Phase 2: core/fourier/burg.py all-poles diagnostic (memcof/evlmem/FPE, display mode 'Resolution (Burg)') + core/fourier/diamag.py time-domain fit-and-subtract (field write-back + time overlay). Field-axis verify-only (plot_panel FieldUnit). Deferred: radical correlation spectrum, N0 single-histogram."
     }
   ]
 }

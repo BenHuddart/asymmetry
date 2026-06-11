@@ -4354,6 +4354,32 @@ class MainWindow(QMainWindow):
         cache = self._frequency_cache(rep_type)
         cache[int(run_number)] = list(spectra)
 
+    def _report_fourier_diagnostics(self, spectrum: MuonDataset) -> None:
+        """Surface diamagnetic-fit and Burg diagnostics from a spectrum's metadata."""
+        metadata = spectrum.metadata if isinstance(spectrum.metadata, dict) else {}
+        diamag_field = metadata.get("fourier_diamag_field_gauss")
+        if diamag_field is not None:
+            self._log_panel.log(
+                f"Diamagnetic line fitted at B = {float(diamag_field):.1f} G; subtracted before FFT."
+            )
+            fit_time = metadata.get("fourier_diamag_fit_time_us")
+            fit_signal = metadata.get("fourier_diamag_fit_signal")
+            if (
+                fit_time is not None
+                and fit_signal is not None
+                and hasattr(self._plot_panel, "set_diamagnetic_overlay")
+            ):
+                self._plot_panel.set_diamagnetic_overlay(
+                    np.asarray(fit_time, dtype=float),
+                    np.asarray(fit_signal, dtype=float),
+                )
+        if metadata.get("fourier_burg_hit_boundary"):
+            order = metadata.get("fourier_burg_order")
+            self._log_panel.log(
+                f"Burg pole scan optimum ({order}) hit a scan boundary — widen the "
+                "pole range for a reliable order estimate."
+            )
+
     def _record_frequency_fft_recipe(
         self,
         run_number: int,
@@ -4729,6 +4755,9 @@ class MainWindow(QMainWindow):
                 ],
                 diamag_exclusion=bool(state.get("diamag_exclusion", False)),
                 diamag_half_width_mhz=float(state.get("diamag_half_width_mhz", 0.3)),
+                remove_diamag=bool(state.get("remove_diamag", False)),
+                burg_order_min=int(state.get("burg_order_min", 2)),
+                burg_order_max=int(state.get("burg_order_max", 40)),
             )
             average_dataset = compute_average_group_spectrum(
                 self._current_dataset.run,
@@ -4760,6 +4789,7 @@ class MainWindow(QMainWindow):
                         peak_signal_to_noise=peak_signal_to_noise,
                         group_count=len(selected_group_ids),
                     )
+                self._report_fourier_diagnostics(average_dataset)
                 spectra.append(average_dataset)
                 spectra_by_run[int(self._current_dataset.run_number)] = list(spectra)
                 self._record_frequency_fft_recipe(

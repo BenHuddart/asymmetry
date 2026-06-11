@@ -23,6 +23,8 @@ _DISPLAY_ALIASES = {
     "real": "real",
     "real+imag": "real_imag",
     "real_imag": "real_imag",
+    "resolution (burg)": "burg",
+    "burg": "burg",
     "sin": "sin",
 }
 _DISPLAY_MODES = frozenset(_DISPLAY_ALIASES.values())
@@ -99,6 +101,47 @@ def _subtract_average_signal(
     return values
 
 
+def prepare_fft_time_signal(
+    dataset: MuonDataset,
+    *,
+    window: str = "none",
+    t_min: float | None = None,
+    t_max: float | None = None,
+    subtract_average_signal: bool = True,
+    filter_start_us: float = 0.0,
+    filter_time_constant_us: float = 1.5,
+) -> tuple[NDArray[np.float64], float]:
+    """Return the preprocessed real time-domain signal and its bin width.
+
+    Applies the time crop, WiMDA-style average subtraction, and the apodisation
+    filter/window — the exact preprocessing :func:`fft_complex_asymmetry` feeds to
+    the FFT, so an all-poles (Burg) estimate can share the same input.  Returns
+    ``(signal, dt_us)``.
+    """
+    ds = dataset.time_range(t_min, t_max) if (t_min is not None or t_max is not None) else dataset
+
+    signal = ds.asymmetry.copy()
+    error = np.asarray(ds.error, dtype=np.float64) if ds.error is not None else None
+    dt = np.mean(np.diff(ds.time)) if len(ds.time) > 1 else 1.0
+
+    if subtract_average_signal:
+        signal = _subtract_average_signal(signal, error)
+
+    window_key = str(window).strip().lower()
+    if window_key in {"none", "gaussian", "lorentzian"}:
+        signal = apply_fft_filter(
+            signal,
+            np.asarray(ds.time, dtype=np.float64),
+            mode=window_key,
+            start_time_us=float(filter_start_us),
+            time_constant_us=float(filter_time_constant_us),
+        )
+    elif window_key != "none":
+        signal = apply_window(signal, window_key)
+
+    return signal, float(dt)
+
+
 def fft_complex_asymmetry(
     dataset: MuonDataset,
     window: str = "none",
@@ -144,26 +187,15 @@ def fft_complex_asymmetry(
     frequencies, spectrum
         Frequency axis (MHz) and the complex, optionally phase-rotated spectrum.
     """
-    ds = dataset.time_range(t_min, t_max) if (t_min is not None or t_max is not None) else dataset
-
-    signal = ds.asymmetry.copy()
-    error = np.asarray(ds.error, dtype=np.float64) if ds.error is not None else None
-    dt = np.mean(np.diff(ds.time)) if len(ds.time) > 1 else 1.0
-
-    if subtract_average_signal:
-        signal = _subtract_average_signal(signal, error)
-
-    window_key = str(window).strip().lower()
-    if window_key in {"none", "gaussian", "lorentzian"}:
-        signal = apply_fft_filter(
-            signal,
-            np.asarray(ds.time, dtype=np.float64),
-            mode=window_key,
-            start_time_us=float(filter_start_us),
-            time_constant_us=float(filter_time_constant_us),
-        )
-    elif window_key != "none":
-        signal = apply_window(signal, window_key)
+    signal, dt = prepare_fft_time_signal(
+        dataset,
+        window=window,
+        t_min=t_min,
+        t_max=t_max,
+        subtract_average_signal=subtract_average_signal,
+        filter_start_us=filter_start_us,
+        filter_time_constant_us=filter_time_constant_us,
+    )
 
     n = len(signal)
     n_padded = n * max(padding_factor, 1)
