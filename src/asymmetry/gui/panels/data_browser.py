@@ -393,7 +393,9 @@ class DataBrowserPanel(QWidget):
     # The comment rides as the Title cell's second line (see
     # _RowHighlightDelegate) instead of its own column, so long comments never
     # force horizontal scrolling.
-    _COLUMNS = ["Run", "Title", "𝑇 (K)", "𝐵 (G)"]
+    # Plain upright units per the design handoff's browser header (the RTF
+    # export re-italicises the physical symbols; see _rtf_header_cell).
+    _COLUMNS = ["Run", "Title", "T (K)", "B (G)"]
     _RUN_INFO_FIELD_LABELS = {
         "instrument": "Instrument",
         "run_label": "Run",
@@ -457,12 +459,14 @@ class DataBrowserPanel(QWidget):
 
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.resizeSection(0, 110)
+        header.resizeSection(0, 92)
         header.resizeSection(1, 200)
-        header.resizeSection(2, 60)
-        header.resizeSection(3, 60)
+        header.resizeSection(2, 52)
+        header.resizeSection(3, 52)
         self._table.setSortingEnabled(False)
-        self._table.horizontalHeader().setSortIndicatorShown(True)
+        # The indicator appears once the user actually sorts (see _sort_table);
+        # the design-handoff header row has no arrow at rest.
+        self._table.horizontalHeader().setSortIndicatorShown(False)
         self._table.horizontalHeader().setSectionsClickable(False)
         self._table.horizontalHeader().viewport().installEventFilter(self)
         self._table.viewport().installEventFilter(self)
@@ -1046,8 +1050,8 @@ class DataBrowserPanel(QWidget):
     def _resize_columns_to_content(self) -> None:
         self._table.resizeColumnsToContents()
         header = self._table.horizontalHeader()
-        minimums = {0: 90, 1: 145, 2: 60, 3: 60}
-        maximums = {0: 180, 1: 320, 2: 90, 3: 90}
+        minimums = {0: 78, 1: 145, 2: 48, 3: 48}
+        maximums = {0: 150, 1: 320, 2: 76, 3: 76}
         for col, min_width in minimums.items():
             size = header.sectionSize(col)
             if size < min_width:
@@ -1069,6 +1073,11 @@ class DataBrowserPanel(QWidget):
         ]
         self._table.setColumnCount(len(labels))
         self._table.setHorizontalHeaderLabels(labels)
+        # Numeric headers right-align over their right-aligned cells (T, B).
+        for col in (2, 3):
+            item = self._table.horizontalHeaderItem(col)
+            if item is not None:
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
     def _visible_extra_columns(self) -> list[str]:
         """Return extra columns that should appear beyond the fixed browser columns."""
@@ -1741,9 +1750,9 @@ class DataBrowserPanel(QWidget):
 
     def _rtf_header_cell(self, header: str) -> str:
         """Return RTF-formatted header text for export table cells."""
-        if header == "𝑇 (K)":
+        if header == "T (K)":
             return r"\i T\i0 (K)"
-        if header == "𝐵 (G)":
+        if header == "B (G)":
             return r"\i B\i0 (G)"
         return self._rtf_escape(header)
 
@@ -2296,6 +2305,7 @@ class DataBrowserPanel(QWidget):
         else:
             self._display_order = sorted_runs
 
+        self._table.horizontalHeader().setSortIndicatorShown(self._current_sort_column >= 0)
         self._table.horizontalHeader().setSortIndicator(
             self._current_sort_column, self._current_sort_order
         )

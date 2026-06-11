@@ -38,8 +38,17 @@ class DockHeader(QWidget):
         *,
         closable: bool = True,
         floatable: bool = True,
+        title_when_floating_only: bool = False,
         parent: QWidget | None = None,
     ) -> None:
+        """Build the header.
+
+        ``title_when_floating_only`` is for tabified deck docks: while docked,
+        the tab bar already names the pane, so painting the title again right
+        under it reads as a duplicate ("Fit" twice). The label is hidden while
+        docked and shown — tracking ``windowTitle`` — once the dock floats and
+        the tab bar is no longer there to identify it.
+        """
         super().__init__(parent)
         self._dock = dock
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -52,11 +61,20 @@ class DockHeader(QWidget):
         layout.setContentsMargins(8, 3, 4, 3)
         layout.setSpacing(4)
 
-        title_label = QLabel(title)
-        title_label.setFont(header_font())
-        title_label.setStyleSheet(f"color: {tokens.TEXT_MUTED}; background: transparent;")
-        layout.addWidget(title_label)
+        self._title_label = QLabel(title or dock.windowTitle().upper())
+        self._title_label.setFont(header_font())
+        self._title_label.setStyleSheet(f"color: {tokens.TEXT_MUTED}; background: transparent;")
+        layout.addWidget(self._title_label)
         layout.addStretch()
+
+        if title_when_floating_only:
+            self._title_label.setVisible(dock.isFloating())
+            dock.topLevelChanged.connect(self._title_label.setVisible)
+            # Deck dock titles change with context (Fit → ALC scan, Spectrum →
+            # Fourier/MaxEnt); mirror them so the floating header stays honest.
+            dock.windowTitleChanged.connect(
+                lambda text: self._title_label.setText(str(text).upper())
+            )
 
         self._meta_label = QLabel("")
         self._meta_label.setFont(mono_font(10.0))

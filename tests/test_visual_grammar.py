@@ -142,3 +142,41 @@ def test_status_bar_has_state_dot_and_chi2_slot(win: MainWindow) -> None:
     assert win._status_chi2_label.text() == "χ²/ν = 1.04"
     win._set_status_chi2(None)
     assert win._status_chi2_label.text() == ""
+
+
+def test_deck_docks_use_slim_title_bars(win: MainWindow, qapp: QApplication) -> None:
+    """Tabified deck docks show buttons-only headers while docked — the tab
+    strip above already names the pane, so no repeated 'Fit' title."""
+    for dock in (win._dock_fit, win._dock_fourier, win._dock_fit_parameters):
+        header = dock.titleBarWidget()
+        assert isinstance(header, DockHeader)
+        assert not header._title_label.isVisible()
+    # Floating restores the title (tracking windowTitle), since the tab bar
+    # is no longer there to identify the pane.
+    win._dock_fit.setFloating(True)
+    qapp.processEvents()
+    try:
+        assert win._dock_fit.titleBarWidget()._title_label.isVisible()
+        assert win._dock_fit.titleBarWidget()._title_label.text() == "FIT"
+    finally:
+        win._dock_fit.setFloating(False)
+
+
+def test_toolbar_cluster_captions_are_uppercase(win: MainWindow) -> None:
+    """Deliberate handoff deviation: stacked uppercase domain captions."""
+    from PySide6.QtWidgets import QLabel
+
+    texts = {label.text() for label in win._main_toolbar.findChildren(QLabel)}
+    assert "TIME DOMAIN" in texts
+    assert "FREQUENCY DOMAIN" in texts
+
+
+def test_browser_headers_match_handoff(win: MainWindow) -> None:
+    """Plain upright units, no resting sort arrow, slimmer numeric columns."""
+    browser = win._data_browser
+    assert browser._COLUMNS == ["Run", "Title", "T (K)", "B (G)"]
+    header = browser._table.horizontalHeader()
+    assert not header.isSortIndicatorShown()
+    assert header.sectionSize(0) <= 100
+    assert header.sectionSize(2) <= 60
+    assert header.sectionSize(3) <= 60

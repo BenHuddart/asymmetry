@@ -73,6 +73,8 @@ QHeaderView::section {
     border-right: 1px solid #dedcd6;
     border-bottom: 1px solid #dedcd6;
     padding: 3px 6px;
+    font-size: 10px;
+    font-weight: 600;
 }
 
 QHeaderView::section:last {

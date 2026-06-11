@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
     QTabBar,
     QTabWidget,
     QToolBar,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -144,6 +145,7 @@ from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.typography import header_font
 from asymmetry.gui.styles.widgets import (
     build_segmented_button_qss,
     build_segmented_cell_qss,
@@ -726,16 +728,19 @@ class MainWindow(QMainWindow):
         self._domain_buttons_by_token: dict[str, QPushButton] = {}
 
         def _domain_cluster(header: str, specs: list[tuple[str, str]]) -> QWidget:
-            # Design-handoff grammar: inline muted label + a JOINED segmented
-            # control (one shared border, 1px internal dividers) on a single
-            # toolbar row — not stacked captions over separate buttons.
+            # Deliberate deviation from the design handoff (Ben's call): a
+            # small uppercase caption ABOVE each cluster names the domain more
+            # clearly than an inline label. The control itself keeps the
+            # handoff's JOINED segmented grammar — one shared border, 1px
+            # internal dividers, outer corners only.
             container = QWidget()
-            row = QHBoxLayout(container)
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(6)
-            heading = QLabel(header)
+            column = QVBoxLayout(container)
+            column.setContentsMargins(0, 0, 0, 0)
+            column.setSpacing(1)
+            heading = QLabel(header.upper())
+            heading.setFont(header_font())
             heading.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-            row.addWidget(heading)
+            column.addWidget(heading)
             frame = QFrame()
             frame.setStyleSheet(build_segmented_container_qss())
             cells = QHBoxLayout(frame)
@@ -754,14 +759,14 @@ class MainWindow(QMainWindow):
                 self._domain_buttons.append(btn)
                 self._domain_buttons_by_token[token] = btn
                 cells.addWidget(btn)
-            row.addWidget(frame)
+            column.addWidget(frame)
             return container
 
         # The raw-counts view is a diagnostic, deliberately NOT a toolbar
         # representation — it lives under View → Diagnostics.
         self._main_toolbar.addWidget(
             _domain_cluster(
-                "Time:",
+                "Time domain",
                 [
                     ("F-B asymmetry", "fb_asymmetry"),
                     ("Individual groups", "groups"),
@@ -772,7 +777,7 @@ class MainWindow(QMainWindow):
         self._main_toolbar.addSeparator()
         self._main_toolbar.addWidget(
             _domain_cluster(
-                "Frequency:",
+                "Frequency domain",
                 [("FFT", "frequency"), ("MaxEnt", "maxent")],
             )
         )
@@ -1195,6 +1200,11 @@ class MainWindow(QMainWindow):
         # static order serves every representation.
         self.tabifyDockWidget(self._dock_fourier, self._dock_fit)
         self.tabifyDockWidget(self._dock_fit, self._dock_fit_parameters)
+        # Slim title bars for the deck: the tab strip above already names the
+        # active pane, so the docked header shows only the float/close buttons
+        # (no repeated "Fit"); the title text returns when the dock floats.
+        for deck_dock in (self._dock_fourier, self._dock_fit, self._dock_fit_parameters):
+            deck_dock.setTitleBarWidget(DockHeader("", deck_dock, title_when_floating_only=True))
 
         # The inspector deck is visible by default; the Spectrum dock joins it
         # only for frequency views. The constructor applies the deck for the

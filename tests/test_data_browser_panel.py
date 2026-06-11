@@ -1224,7 +1224,7 @@ def test_export_logbook_tsv_includes_hidden_rows_and_aligned_columns(
     expected_columns = 6
 
     assert non_empty_rows[0][:2] == ["Data Group", "Grouped Runs"]
-    assert non_empty_rows[1][:6] == ["Run", "Title", "𝑇 (K)", "𝐵 (G)", "Comment", "Orientation"]
+    assert non_empty_rows[1][:6] == ["Run", "Title", "T (K)", "B (G)", "Comment", "Orientation"]
     assert any(row[:2] == ["Data Group", "Ungrouped"] for row in non_empty_rows)
 
     for row in non_empty_rows:
