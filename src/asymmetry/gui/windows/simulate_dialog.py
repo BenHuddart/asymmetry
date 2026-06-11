@@ -13,8 +13,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import numpy as np
-from numpy.typing import NDArray
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -508,25 +506,17 @@ class SimulateDialog(_SimulateDialogBase):
     def _two_period_specs(self) -> list[PeriodSpec]:
         """Build red/green :class:`PeriodSpec`\\ s from the model and green scale.
 
-        Red carries the model as-is; green scales the whole signal by the
-        green-amplitude factor (0 → a flat reference period), so G−R recovers
-        the red signal.
+        Both periods share the model and parameters; green carries the
+        green-amplitude factor as its ``scale`` (0 → a flat reference period),
+        so G−R recovers the red signal. Using ``scale`` keeps the model's
+        provenance intact instead of wrapping it in an opaque closure.
         """
         params = dict(self._param_values)
-        red = PeriodSpec(self._model, params, label="red")
-
         green_factor = float(self._green_amp_spin.value())
-        base_fn = (
-            self._model.function
-            if hasattr(self._model, "function") and callable(self._model.function)
-            else self._model
-        )
-
-        def green_signal(t: NDArray[np.float64], **kw: float) -> NDArray[np.float64]:
-            return green_factor * np.asarray(base_fn(t, **kw), dtype=float)
-
-        green = PeriodSpec(green_signal, params, label="green")
-        return [red, green]
+        return [
+            PeriodSpec(self._model, params, label="red"),
+            PeriodSpec(self._model, params, scale=green_factor, label="green"),
+        ]
 
     def _on_save_nexus(self) -> None:
         self._save_generated_as_nexus("Save Synthetic Run")

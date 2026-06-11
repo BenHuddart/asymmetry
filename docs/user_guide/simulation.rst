@@ -301,10 +301,11 @@ green and returns the loadable red/green payload.
 
    counts = simulate_count_run(template, model, params, total_events=40e6, seed=7)
 
-   # Red carries the full model; green a half-amplitude variant (a flat
-   # reference is simply a model whose amplitude parameter is zero).
+   # Red carries the full model; green a half-amplitude variant (scale=0 makes
+   # a flat reference period, so G−R recovers the red signal). Each period can
+   # instead pass its own model/parameters/alpha/total_events.
    red = PeriodSpec(model, params)
-   green = PeriodSpec(model, params | {"asymmetry": params["asymmetry"] / 2})
+   green = PeriodSpec(model, params, scale=0.5)
    periods = simulate_two_period_run(
        template, [red, green], total_events=40e6, seed=7,
    )

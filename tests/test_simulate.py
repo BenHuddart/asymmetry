@@ -779,6 +779,32 @@ class TestTwoPeriodSimulation:
         with pytest.raises(ValueError, match="exactly two"):
             simulate_two_period_run(template, [spec], total_events=1.0e7)
 
+    def test_scale_zero_makes_flat_reference_and_keeps_provenance(self) -> None:
+        # A scale=0 green is a flat reference: G−R recovers the red signal, and
+        # the green provenance still records the real model + scale (not an
+        # opaque wrapper name).
+        template = _template(n_det_per_group=2)
+        red = PeriodSpec(_cos_model, {"A": 20.0, "freq": 1.0, "sigma": 0.05}, label="red")
+        green = PeriodSpec(
+            _cos_model, {"A": 20.0, "freq": 1.0, "sigma": 0.05}, scale=0.0, label="green"
+        )
+        run = simulate_two_period_run(
+            template,
+            [red, green],
+            total_events=6.0e7,
+            seed=9,
+            period_mode=PeriodMode.GREEN_MINUS_RED,
+        )
+        periods_prov = run.metadata["simulation"]["periods"]
+        assert periods_prov[1]["scale"] == 0.0
+        assert periods_prov[1]["model"] == "_cos_model"  # real model, not a wrapper
+
+        combined = reduce_run_to_dataset(run)
+        window = slice(0, 200)
+        # G − R = (0 − 20)·cos: green is flat, so the combination is −red.
+        truth = _cos_model(combined.time[window], A=-20.0, freq=1.0, sigma=0.05)
+        assert np.max(np.abs(combined.asymmetry[window] - truth)) < 2.0
+
     def test_nexus_writer_emits_single_period(self, tmp_path) -> None:
         # Study decision: the NeXus writer emits one period; a two-period
         # synthetic run is in-memory only. Saving keeps the red period.

@@ -520,6 +520,81 @@ def simulate_run_from_group_signals(
     )
 
 
+#: Template metadata keys a synthetic run inherits (they parameterise models —
+#: precession frequencies, etc. — or label the run).
+_INHERITED_METADATA_KEYS = (
+    "instrument",
+    "temperature",
+    "field",
+    "field_state",
+    "field_direction",
+    "detector_orientation",
+)
+
+
+def _synthetic_run_grouping(template: Run, n_histograms: int) -> dict[str, Any]:
+    """Base grouping for a synthetic run: template grouping with deadtimes off.
+
+    The period payload (which can hold full per-detector histogram arrays for a
+    combined two-period template) is stripped before the deep copy, and the
+    deadtimes are zeroed — the synthetic counts carry no deadtime distortion, so
+    zero is the true instrument description. Callers add an ``alpha`` override or
+    a fresh period payload on top.
+    """
+    grouping: dict[str, Any] = copy.deepcopy(
+        {k: v for k, v in template.grouping.items() if k not in _PERIOD_KEYS}
+    )
+    grouping["deadtime_correction"] = False
+    grouping["dead_time_us"] = [0.0] * n_histograms
+    return grouping
+
+
+def _synthetic_run_metadata(
+    template: Run,
+    *,
+    number: int,
+    seed: int,
+    total_events: float,
+    background_per_bin: float,
+    title: str | None,
+    default_title: str,
+    simulation_metadata: Mapping[str, Any] | None,
+    extra_metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Identity + provenance metadata shared by every synthetic-run builder.
+
+    Carries the inherited template metadata plus the ``synthetic`` marker and a
+    ``simulation`` provenance block (seed, event budget, background, template
+    run/source, then any ``simulation_metadata`` the caller adds). This is the
+    single source of the synthetic-run identity contract.
+    """
+    provenance: dict[str, Any] = {
+        "seed": int(seed),
+        "total_events": float(total_events),
+        "background_per_bin": float(background_per_bin),
+        "template_run_number": template.run_number,
+        "template_source_file": template.source_file,
+    }
+    if simulation_metadata:
+        provenance.update(dict(simulation_metadata))
+
+    metadata: dict[str, Any] = {
+        key: template.metadata[key] for key in _INHERITED_METADATA_KEYS if key in template.metadata
+    }
+    metadata.update(
+        {
+            "run_number": number,
+            "run_label": f"SIM {number}",
+            "title": title if title is not None else default_title,
+            "synthetic": True,
+            "simulation": provenance,
+        }
+    )
+    if extra_metadata:
+        metadata.update(dict(extra_metadata))
+    return metadata
+
+
 def _sample_and_build_run(
     template: Run,
     expected: list[NDArray[np.float64]],
@@ -536,8 +611,10 @@ def _sample_and_build_run(
 
     Shared by :func:`simulate_run_from_group_signals` and
     :func:`simulate_double_pulse_run` so both carry the same provenance and
-    metadata (template run/source, detector orientation, deadtime zeroing). The
-    seeded sampling draws ``poisson(expected)`` per detector in detector order.
+    metadata (template run/source, detector orientation, deadtime zeroing) via
+    the shared :func:`_synthetic_run_grouping` / :func:`_synthetic_run_metadata`
+    contract. The seeded sampling draws ``poisson(expected)`` per detector in
+    detector order.
     """
     rng = np.random.default_rng(seed)
     histograms = [
@@ -551,43 +628,17 @@ def _sample_and_build_run(
         for hist, clean in zip(template.histograms, expected, strict=True)
     ]
 
-    # Filter the period payload (which can hold full per-detector histogram
-    # arrays for combined two-period templates) BEFORE deep-copying.
-    grouping = copy.deepcopy({k: v for k, v in template.grouping.items() if k not in _PERIOD_KEYS})
-    grouping["deadtime_correction"] = False
-    grouping["dead_time_us"] = [0.0] * len(histograms)
-
     number = template.run_number if run_number is None else int(run_number)
-    provenance: dict[str, Any] = {
-        "seed": int(seed),
-        "total_events": float(total_events),
-        "background_per_bin": float(background_per_bin),
-        "template_run_number": template.run_number,
-        "template_source_file": template.source_file,
-    }
-    if simulation_metadata:
-        provenance.update(dict(simulation_metadata))
-
-    metadata: dict[str, Any] = {
-        key: template.metadata[key]
-        for key in (
-            "instrument",
-            "temperature",
-            "field",
-            "field_state",
-            "field_direction",
-            "detector_orientation",
-        )
-        if key in template.metadata
-    }
-    metadata.update(
-        {
-            "run_number": number,
-            "run_label": f"SIM {number}",
-            "title": title if title is not None else default_title,
-            "synthetic": True,
-            "simulation": provenance,
-        }
+    grouping = _synthetic_run_grouping(template, len(histograms))
+    metadata = _synthetic_run_metadata(
+        template,
+        number=number,
+        seed=seed,
+        total_events=total_events,
+        background_per_bin=background_per_bin,
+        title=title,
+        default_title=default_title,
+        simulation_metadata=simulation_metadata,
     )
 
     return Run(
@@ -927,12 +978,17 @@ class PeriodSpec:
     the standard forward/backward antisymmetry so the period reduces exactly
     like a real single-period run. ``total_events`` and ``alpha`` fall back to
     the run-level budget and the template grouping's balance when ``None``.
+    ``scale`` multiplies the whole signal amplitude (``0`` makes the period a
+    flat reference — the usual light-off / RF-off green — so G−R recovers the
+    other period); it keeps the model's own provenance intact rather than
+    wrapping it in an opaque closure.
     """
 
     model: Any
     parameters: Mapping[str, float] | None = None
     total_events: float | None = None
     alpha: float | None = None
+    scale: float = 1.0
     label: str = ""
 
 
@@ -980,37 +1036,45 @@ def simulate_two_period_run(
         default_alpha = float(default_alpha)
     except (TypeError, ValueError):
         default_alpha = 1.0
+    good_frames = grouping.get("good_frames", 1.0)
+    try:
+        good_frames = float(good_frames)
+    except (TypeError, ValueError):
+        good_frames = 1.0
     n_det = len(template.histograms)
 
     # One generator draws red then green in order, so a fixed seed is
     # reproducible and the two periods are independent.
     rng = np.random.default_rng(seed)
 
-    # Reduction grouping: the template grouping at the loader default α = 1,
-    # without the (here absent) period keys, so each period reduces like a
-    # freshly loaded single-period run.
-    reduce_grouping = {
-        k: v for k, v in copy.deepcopy(dict(grouping)).items() if k not in _PERIOD_KEYS
-    }
-    reduce_grouping["alpha"] = 1.0
+    # One deadtime-zeroed base copy (shared synthetic-run contract); the
+    # reduction grouping at the loader default α = 1 and the final run grouping
+    # both derive from it by shallow override, so each period reduces — and the
+    # synthetic counts (which carry no deadtime distortion) read back — exactly
+    # like a freshly loaded single-period run.
+    base_grouping = _synthetic_run_grouping(template, n_det)
+    reduce_grouping = {**base_grouping, "alpha": 1.0}
 
     period_histograms: list[list[Histogram]] = []
     period_reduced: list[tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]] = []
     period_provenance: list[dict[str, Any]] = []
     for spec in periods:
         signal_percent, expression = _bind_model_signal_percent(spec.model, spec.parameters or {})
+        scale = float(spec.scale)
 
         def forward_signal(
             t: NDArray[np.float64],
             _fn: Callable[[NDArray[np.float64]], NDArray[np.float64]] = signal_percent,
+            _scale: float = scale,
         ) -> NDArray[np.float64]:
-            return _fn(t) / 100.0
+            return _scale * _fn(t) / 100.0
 
         def backward_signal(
             t: NDArray[np.float64],
             _fn: Callable[[NDArray[np.float64]], NDArray[np.float64]] = signal_percent,
+            _scale: float = scale,
         ) -> NDArray[np.float64]:
-            return -_fn(t) / 100.0
+            return -_scale * _fn(t) / 100.0
 
         alpha = default_alpha if spec.alpha is None else float(spec.alpha)
         if not np.isfinite(alpha) or alpha <= 0:
@@ -1051,58 +1115,33 @@ def simulate_two_period_run(
                     name: float(value) for name, value in dict(spec.parameters or {}).items()
                 },
                 "alpha": float(alpha),
+                "scale": scale,
                 "total_events": float(events),
                 "label": spec.label,
             }
         )
 
-    good_frames = grouping.get("good_frames", 1.0)
-    try:
-        good_frames = float(good_frames)
-    except (TypeError, ValueError):
-        good_frames = 1.0
-
-    run_grouping = {k: v for k, v in copy.deepcopy(dict(grouping)).items() if k not in _PERIOD_KEYS}
-    run_grouping["deadtime_correction"] = False
-    run_grouping["dead_time_us"] = [0.0] * n_det
-    run_grouping["good_frames"] = good_frames
-    run_grouping["period_histograms"] = period_histograms
-    run_grouping["period_reduced"] = period_reduced
-    run_grouping["period_good_frames"] = [good_frames, good_frames]
-    run_grouping["period_dead_time_us"] = [[0.0] * n_det, [0.0] * n_det]
-    run_grouping["period_mode"] = str(period_mode)
+    run_grouping = {
+        **base_grouping,
+        "good_frames": good_frames,
+        "period_histograms": period_histograms,
+        "period_reduced": period_reduced,
+        "period_good_frames": [good_frames, good_frames],
+        "period_dead_time_us": [[0.0] * n_det, [0.0] * n_det],
+        "period_mode": str(period_mode),
+    }
 
     number = template.run_number if run_number is None else int(run_number)
-    provenance: dict[str, Any] = {
-        "seed": int(seed),
-        "total_events": float(total_events),
-        "background_per_bin": float(background_per_bin),
-        "template_run_number": template.run_number,
-        "template_source_file": template.source_file,
-        "two_period": True,
-        "periods": period_provenance,
-    }
-    metadata: dict[str, Any] = {
-        key: template.metadata[key]
-        for key in (
-            "instrument",
-            "temperature",
-            "field",
-            "field_state",
-            "field_direction",
-            "detector_orientation",
-        )
-        if key in template.metadata
-    }
-    metadata.update(
-        {
-            "run_number": number,
-            "run_label": f"SIM {number}",
-            "title": title if title is not None else "Simulated two-period run",
-            "synthetic": True,
-            "period_count": 2,
-            "simulation": provenance,
-        }
+    metadata = _synthetic_run_metadata(
+        template,
+        number=number,
+        seed=seed,
+        total_events=total_events,
+        background_per_bin=background_per_bin,
+        title=title,
+        default_title="Simulated two-period run",
+        simulation_metadata={"two_period": True, "periods": period_provenance},
+        extra_metadata={"period_count": 2},
     )
 
     # run.histograms mirror the red period (the loader convention for a combined
