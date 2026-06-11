@@ -119,6 +119,13 @@ def build_segmented_button_qss(
         f" QPushButton:checked {{ padding: 2px {padding_h}px; font-weight: 600;"
         f" background-color: {tokens.ACCENT_SOFT}; color: {tokens.ACCENT};"
         f" border-color: {tokens.ACCENT}; }}"
+        # A per-widget stylesheet replaces the global one entirely, so the
+        # disabled state must be styled here too — without it, data-gated
+        # segments (Individual groups / MaxEnt with no capable run) look
+        # identical to clickable ones. Recede into the toolbar surface.
+        f" QPushButton:disabled {{ padding: 2px {padding_h}px; font-weight: 600;"
+        f" background-color: {tokens.SURFACE_ALT}; color: {tokens.TEXT_DIM};"
+        f" border-color: {tokens.BORDER}; }}"
     )
 
 
