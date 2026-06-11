@@ -137,6 +137,45 @@ This means the Fourier spectrum shown in the GUI is tied directly to the
 current grouped analysis state, rather than being a generic transform of
 whatever line is currently plotted in the time-domain view.
 
+Background subtraction for the FFT input
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Because the FFT input is rebuilt from the current grouping, the background
+mode you set in the grouping dialog applies to the transform too — there is no
+separate FFT-only background control. A flat uncorrelated background matters
+here more than anywhere else: the grouped signal is lifetime-corrected by
+:math:`e^{t/\tau_\mu}` before the FFT, so a constant rate :math:`b` becomes a
+*growing* :math:`b\,e^{t/\tau_\mu}` ramp that dumps spurious power into the
+low-frequency bins. Subtracting :math:`b` at the count level, before the
+lifetime correction, removes that ramp and flattens the baseline.
+
+Which background option when:
+
+* **None** — the default, and the right choice at a pulsed source whenever the
+  flat rate is consistent with zero (the ISIS duty factor suppresses it to
+  "virtually unmeasurable", *Muon Spectroscopy* §14.3). Start here.
+* **Tail fit** — fits a muon exponential plus a flat rate to the late-time
+  counts and subtracts the flat part. This is the option for **pulsed data**,
+  where there is no pre-t0 region: the spectrum starts at the muon pulse, so
+  the background can only be read off the long counting tail. Asymmetry fits it
+  by Poisson maximum likelihood (correct for the few-count late-time bins) and
+  flags a result below two standard errors as consistent with zero — at ISIS
+  expect exactly that, with a significantly non-zero value being a diagnostic
+  (dark counts, light leaks, surviving upstream decays).
+* **Pre-t0 range** — averages a band of pre-trigger bins. The natural estimate
+  at a **continuous source**, where the muon arrives at a sharp prompt peak and
+  the bins before it measure the background directly. Unavailable for pulsed
+  files (no pre-t0 region to average).
+* **Fixed** — subtracts a per-group constant you supply, for when the level is
+  known independently.
+* **Reference run** — subtracts a separately measured reference (sample holder,
+  silver, laser-off) scaled by the good-frame ratio, for a *structured*
+  background rather than a flat rate.
+
+The same estimate is shared between the time-domain reduction and the FFT
+input, so the value the grouping dialog previews is exactly what the transform
+subtracts.
+
 FFT Phase Modes
 ~~~~~~~~~~~~~~~
 

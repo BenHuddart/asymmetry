@@ -392,6 +392,105 @@ def test_build_group_signal_dataset_applies_group_background_correction() -> Non
     assert backward.metadata["fourier_background_value"] == pytest.approx(21.0)
 
 
+def _pulsed_tail_fit_run(seed: int = 1, background_per_bin: float = 6.0) -> Run:
+    """An ISIS-style pulsed synthetic run with a flat uncorrelated background."""
+    from asymmetry.core.simulate import build_builtin_template, simulate_run
+
+    template = build_builtin_template("ideal_pulsed_fb")
+    run = simulate_run(
+        template,
+        lambda t: 20.0 * np.cos(2.0 * np.pi * 1.0 * t) * np.exp(-0.3 * t),
+        total_events=4.0e7,
+        seed=seed,
+        background_per_bin=background_per_bin,
+    )
+    run.grouping["background_correction"] = True
+    run.grouping["background_mode"] = "tail_fit"
+    return run
+
+
+def test_fourier_tail_fit_matches_grouping_side_fit() -> None:
+    # The Fourier-input tail fit must agree with the time-domain reduction's
+    # tail fit on the same forward grouped counts — the same Poisson estimator,
+    # the same data.
+    from asymmetry.core.transform.background import (
+        apply_grouped_background_correction,
+        fit_tail_background,
+    )
+    from asymmetry.core.transform.grouping import group_forward_backward
+
+    run = _pulsed_tail_fit_run()
+    grouping = run.grouping
+
+    forward = build_group_signal_dataset(run, 1, apply_lifetime_correction=True)
+    assert forward.metadata["fourier_background_corrected"] is True
+    fourier_value = forward.metadata["fourier_background_value"]
+
+    fb = group_forward_backward(run.histograms, grouping)
+    bin_width = float(run.histograms[0].bin_width)
+    direct = fit_tail_background(
+        fb.forward,
+        bin_width_us=bin_width,
+        t0_bin=int(grouping["t0_bin"]),
+        last_good_bin=int(grouping["last_good_bin"]),
+    )
+    assert direct.ok
+    assert fourier_value == pytest.approx(direct.rate_per_us * bin_width, rel=1e-9)
+
+    reduction = apply_grouped_background_correction(
+        fb.forward,
+        fb.backward,
+        grouping=grouping,
+        t0_bin=int(grouping["t0_bin"]),
+        bin_width_us=bin_width,
+        last_good_bin=int(grouping["last_good_bin"]),
+    )
+    assert reduction.method == "tail_fit"
+    assert fourier_value == pytest.approx(reduction.values[0], rel=1e-9)
+
+
+def test_fourier_tail_fit_improves_baseline() -> None:
+    # Subtracting the flat background before the lifetime correction removes the
+    # growing exp(t/tau) ramp it would otherwise become, cutting the spurious
+    # low-frequency (DC) power in the FFT input.
+    run = _pulsed_tail_fit_run()
+
+    corrected = build_group_signal_dataset(run, 1, center_signal=False)
+    run.grouping["background_correction"] = False
+    uncorrected = build_group_signal_dataset(run, 1, center_signal=False)
+
+    # The lifetime-corrected signal's offset (its DC component) is far smaller
+    # once the flat background is removed.
+    assert abs(float(np.mean(corrected.asymmetry))) < abs(float(np.mean(uncorrected.asymmetry)))
+
+
+def test_fourier_tail_fit_not_hijacked_by_stray_range_keys() -> None:
+    # tail_fit re-fits each group; a stray background_ranges key left from an
+    # earlier mode must not silently turn it into a range subtraction.
+    run = _pulsed_tail_fit_run()
+    run.grouping["background_ranges"] = [[0, 5], [0, 5]]
+
+    forward = build_group_signal_dataset(run, 1, apply_lifetime_correction=True)
+    assert forward.metadata["fourier_background_corrected"] is True
+    # A range over bins 0..5 (deep in the muon pulse) would subtract a huge
+    # value; the tail-fit rate is far smaller, so a mismatch proves the mode
+    # was not hijacked.
+    from asymmetry.core.transform.background import fit_tail_background
+    from asymmetry.core.transform.grouping import group_forward_backward
+
+    fb = group_forward_backward(run.histograms, run.grouping)
+    bin_width = float(run.histograms[0].bin_width)
+    direct = fit_tail_background(
+        fb.forward,
+        bin_width_us=bin_width,
+        t0_bin=int(run.grouping["t0_bin"]),
+        last_good_bin=int(run.grouping["last_good_bin"]),
+    )
+    assert forward.metadata["fourier_background_value"] == pytest.approx(
+        direct.rate_per_us * bin_width, rel=1e-9
+    )
+
+
 def test_maxent_wrapper_requires_run_with_histograms() -> None:
     # The Fourier-module wrapper delegates to asymmetry.core.maxent, which is
     # a grouped raw-count algorithm: datasets without a Run are rejected.
