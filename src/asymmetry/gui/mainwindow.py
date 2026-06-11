@@ -64,10 +64,10 @@ from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.fourier import (
     GroupSpectrumConfig,
     build_group_signal_dataset,
-    canonical_fourier_display_mode,
     compute_average_group_spectrum,
     estimate_fft_phase,
     fft_complex_asymmetry,
+    fourier_display_ylabel,
     fourier_mode_uses_phase_correction,
 )
 from asymmetry.core.io import resolve_background_reference
@@ -4295,19 +4295,12 @@ class MainWindow(QMainWindow):
         return resolved
 
     def _fourier_display_ylabel(self, display: str) -> str:
-        """Return a display-specific y-axis label for FFT plots."""
-        return {
-            "cos": "FFT Cos (a.u.)",
-            "imaginary": "FFT Imaginary (a.u.)",
-            "magnitude": "FFT Magnitude (a.u.)",
-            "phase_corrected": "FFT Phase-Corrected (a.u.)",
-            "phase_opt_real": "FFT phaseOptReal (a.u.)",
-            "phase_spectrum": "FFT Phase Spectrum (deg)",
-            "power": "FFT Power (a.u.)",
-            "power_sqrt": "FFT (Power)^1/2 (a.u.)",
-            "real": "FFT Real (a.u.)",
-            "sin": "FFT Sin (a.u.)",
-        }.get(canonical_fourier_display_mode(display), "FFT (a.u.)")
+        """Return a display-specific y-axis label for FFT plots.
+
+        Delegates to the single core label map so the GUI and the recipe-computed
+        spectrum metadata never drift (covers Real+Imag and Burg too).
+        """
+        return fourier_display_ylabel(display)
 
     def _build_fourier_value_dataset(
         self,
@@ -4358,21 +4351,24 @@ class MainWindow(QMainWindow):
         """Surface diamagnetic-fit and Burg diagnostics from a spectrum's metadata."""
         metadata = spectrum.metadata if isinstance(spectrum.metadata, dict) else {}
         diamag_field = metadata.get("fourier_diamag_field_gauss")
-        if diamag_field is not None:
-            self._log_panel.log(
-                f"Diamagnetic line fitted at B = {float(diamag_field):.1f} G; subtracted before FFT."
-            )
+        run_number = metadata.get("run_number")
+        if hasattr(self._plot_panel, "set_diamagnetic_overlay"):
             fit_time = metadata.get("fourier_diamag_fit_time_us")
             fit_signal = metadata.get("fourier_diamag_fit_signal")
-            if (
-                fit_time is not None
-                and fit_signal is not None
-                and hasattr(self._plot_panel, "set_diamagnetic_overlay")
-            ):
+            if diamag_field is not None and fit_time is not None and fit_signal is not None:
+                self._log_panel.log(
+                    f"Diamagnetic line fitted at B = {float(diamag_field):.1f} G; "
+                    "subtracted before FFT."
+                )
                 self._plot_panel.set_diamagnetic_overlay(
                     np.asarray(fit_time, dtype=float),
                     np.asarray(fit_signal, dtype=float),
+                    run_number=int(run_number) if run_number is not None else None,
                 )
+            else:
+                # No diamagnetic removal this run — clear any prior overlay so it
+                # cannot linger on a later plot.
+                self._plot_panel.set_diamagnetic_overlay(None, None)
         if metadata.get("fourier_burg_hit_boundary"):
             order = metadata.get("fourier_burg_order")
             self._log_panel.log(

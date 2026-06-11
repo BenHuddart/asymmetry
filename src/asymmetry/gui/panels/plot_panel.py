@@ -164,8 +164,9 @@ class PlotPanel(QWidget):
         self._frequency_axis_relative_to_reference = False
         self._frequency_reference_mhz: float | None = None
         self._frequency_x_limits_by_unit: dict[str, tuple[float, float]] = {}
-        #: Optional ``(time_us, signal)`` diamagnetic-fit overlay for the time view.
-        self._diamagnetic_overlay: tuple[np.ndarray, np.ndarray] | None = None
+        #: Optional ``(run_number, time_us, signal)`` diamagnetic-fit overlay for
+        #: the time view; only drawn when the displayed run matches ``run_number``.
+        self._diamagnetic_overlay: tuple[int | None, np.ndarray, np.ndarray] | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
@@ -2823,17 +2824,24 @@ class PlotPanel(QWidget):
         self._connect_axis_limit_callbacks([self._ax])
 
     def set_diamagnetic_overlay(
-        self, time_us: np.ndarray | None, signal: np.ndarray | None
+        self,
+        time_us: np.ndarray | None,
+        signal: np.ndarray | None,
+        *,
+        run_number: int | None = None,
     ) -> None:
         """Set (or clear) the diamagnetic-fit curve drawn on the time-domain view.
 
-        Passing ``None`` clears it. The overlay is redrawn on the next
+        Passing ``None`` for the arrays clears it. The overlay is tagged with
+        *run_number* and only drawn while that run is displayed, so it never
+        lingers on an unrelated run; it is redrawn on the next
         :meth:`plot_dataset` call for a time-domain panel.
         """
         if time_us is None or signal is None:
             self._diamagnetic_overlay = None
         else:
             self._diamagnetic_overlay = (
+                None if run_number is None else int(run_number),
                 np.asarray(time_us, dtype=float),
                 np.asarray(signal, dtype=float),
             )
@@ -2845,14 +2853,25 @@ class PlotPanel(QWidget):
             self.plot_dataset(self._current_dataset)
 
     def _overlay_diamagnetic_fit(self) -> None:
-        """Draw the stored diamagnetic-fit curve on the time-domain axes."""
+        """Draw the stored diamagnetic-fit curve on the time-domain axes.
+
+        Only drawn when the overlay's run matches the displayed dataset, so a
+        fit from a previous run never shows on an unrelated one.
+        """
         if (
             not self._has_mpl
             or self._diamagnetic_overlay is None
             or self._is_frequency_plot_panel()
         ):
             return
-        time_us, signal = self._diamagnetic_overlay
+        overlay_run, time_us, signal = self._diamagnetic_overlay
+        current_run = (
+            int(self._current_dataset.run_number)
+            if self._current_dataset is not None and self._current_dataset.run_number is not None
+            else None
+        )
+        if overlay_run is not None and overlay_run != current_run:
+            return
         finite = np.isfinite(time_us) & np.isfinite(signal)
         if not np.any(finite):
             return

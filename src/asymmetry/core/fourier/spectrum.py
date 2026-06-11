@@ -38,6 +38,9 @@ from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import common_t0_for_groups
 
+#: Minimum applied field (Gauss) for a diamagnetic fit to be attempted.
+_MIN_DIAMAG_FIELD_GAUSS = 5.0
+
 _YLABELS: dict[str, str] = {
     "cos": "FFT Cos (a.u.)",
     "imaginary": "FFT Imaginary (a.u.)",
@@ -280,13 +283,19 @@ def _reference_frequency_mhz(run: Run, dataset: MuonDataset | None) -> float | N
 def _resolve_exclusion_ranges(
     config: GroupSpectrumConfig, reference_mhz: float | None
 ) -> list[tuple[float, float]]:
-    """Return the active exclusion ranges, prepending the diamag slot if asked."""
-    if not config.exclude_enabled:
+    """Return the active exclusion ranges, prepending the diamag slot if asked.
+
+    The diamagnetic slot and the manual ranges are independent: either can be
+    active on its own (the GUI happens to gate them together, but a programmatic
+    config need not).
+    """
+    if not config.exclude_enabled and not config.diamag_exclusion:
         return []
     ranges: list[tuple[float, float]] = []
     if config.diamag_exclusion and reference_mhz is not None:
         ranges.append((float(reference_mhz), float(config.diamag_half_width_mhz)))
-    ranges.extend((float(c), float(w)) for c, w in config.exclusion_ranges)
+    if config.exclude_enabled:
+        ranges.extend((float(c), float(w)) for c, w in config.exclusion_ranges)
     return ranges
 
 
@@ -372,7 +381,10 @@ def compute_average_group_spectrum(
         )
         if config.remove_diamag:
             seed_field = _reference_field_gauss(run, group_dataset)
-            if seed_field is not None:
+            # Diamagnetic precession only exists in a transverse field; skip the
+            # fit at (near-)zero field, where a bounded fit would otherwise lock
+            # onto a spurious low frequency.
+            if seed_field is not None and abs(seed_field) > _MIN_DIAMAG_FIELD_GAUSS:
                 group_dataset, diamag_fit = fit_and_subtract_diamagnetic(
                     group_dataset, seed_field_gauss=seed_field
                 )
@@ -461,9 +473,11 @@ def compute_average_group_spectrum(
 
     # ── post-FFT conditioning (compensation → baseline → exclusions) ────
     # Operates on the canonical MHz axis; the plot panel converts to the
-    # display unit.  Entropy mode keeps its optimiser output untouched.
+    # display unit.  Entropy keeps its optimiser output untouched, and Burg is a
+    # raw all-poles diagnostic (it already inherits the time-domain preprocessing
+    # chain) — neither is post-conditioned.
     conditioning = None
-    if not is_entropy:
+    if not is_entropy and not is_burg:
         reference_mhz = _reference_frequency_mhz(run, first_group_dataset)
         exclusion_ranges = _resolve_exclusion_ranges(config, reference_mhz)
         pulse_half_width_us = config.pulse_half_width_us
@@ -485,8 +499,12 @@ def compute_average_group_spectrum(
         averaged_display = conditioning.display
         averaged_error = conditioning.error
         if averaged_imag is not None:
+            # Keep the imaginary quadrature on the same footing as the real
+            # channel so the Real+Imag overlay shares one zero reference.
             if conditioning.gain is not None:
                 averaged_imag = averaged_imag * conditioning.gain
+            if conditioning.baseline:
+                averaged_imag = averaged_imag - conditioning.baseline
             if exclusion_ranges:
                 averaged_imag = exclude_frequency_ranges(
                     average_freqs, averaged_imag, exclusion_ranges

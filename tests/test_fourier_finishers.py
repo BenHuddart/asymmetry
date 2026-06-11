@@ -419,3 +419,83 @@ def test_diamag_field_reported_end_to_end() -> None:
     assert "fourier_diamag_field_gauss" in ds.metadata
     assert ds.metadata["fourier_diamag_field_gauss"] == pytest.approx(field_gauss, abs=3.0)
     assert "fourier_diamag_fit_signal" in ds.metadata
+
+
+def test_diamag_skipped_at_zero_field() -> None:
+    # A zero-field run carries no diamagnetic precession; the fit must be skipped
+    # rather than locking a bounded fit onto a spurious low frequency.
+    run = _tf_run(field_gauss=200.0)
+    run.metadata["field"] = 0.0
+    ds = compute_average_group_spectrum(
+        run, GroupSpectrumConfig(display="(Power)^1/2", remove_diamag=True)
+    )
+    assert "fourier_diamag_field_gauss" not in ds.metadata
+
+
+# ── code-review regression guards ───────────────────────────────────────
+
+
+def test_burg_is_not_post_conditioned() -> None:
+    # Pulse compensation / baseline must NOT touch the raw Burg diagnostic, even
+    # if left enabled from a prior FFT mode.
+    run = _tf_run(field_gauss=220.0)
+    plain = compute_average_group_spectrum(run, GroupSpectrumConfig(display="Resolution (Burg)"))
+    conditioned = compute_average_group_spectrum(
+        run,
+        GroupSpectrumConfig(
+            display="Resolution (Burg)",
+            pulse_compensation=True,
+            pulse_half_width_us=0.05,
+            baseline_mode="sigma_clip",
+        ),
+    )
+    assert np.array_equal(plain.asymmetry, conditioned.asymmetry)
+    assert "fourier_compensation_cutoff_mhz" not in conditioned.metadata
+    assert "fourier_baseline" not in conditioned.metadata
+
+
+def test_diamag_exclusion_independent_of_exclude_enabled() -> None:
+    # The diamagnetic exclusion slot works on its own, without the manual
+    # exclude-ranges flag.
+    field_gauss = 100.0
+    run = _tf_run(field_gauss=field_gauss)
+    ds = compute_average_group_spectrum(
+        run,
+        GroupSpectrumConfig(
+            display="(Power)^1/2",
+            exclude_enabled=False,
+            diamag_exclusion=True,
+            diamag_half_width_mhz=0.3,
+        ),
+    )
+    ref_mhz = field_gauss * GAMMA_MU_MHZ_PER_G
+    inside = np.abs(ds.time - ref_mhz) <= 0.3
+    assert np.any(inside)
+    assert np.all(ds.asymmetry[inside] == 0.0)
+
+
+def test_diamag_overlay_is_run_gated(qapp) -> None:
+    from types import SimpleNamespace
+
+    from asymmetry.gui.panels.plot_panel import PlotPanel
+
+    panel = PlotPanel(domain="time")
+    t = np.linspace(0.0, 8.0, 64)
+    signal = np.cos(t)
+    panel.set_diamagnetic_overlay(t, signal, run_number=1)  # no current dataset → no redraw
+
+    calls: list[object] = []
+    panel._ax = SimpleNamespace(plot=lambda *a, **k: calls.append(k.get("label")))
+    panel._has_mpl = True
+
+    panel._current_dataset = SimpleNamespace(run_number=2)
+    panel._overlay_diamagnetic_fit()
+    assert "Diamagnetic fit" not in calls  # overlay from run 1 not drawn on run 2
+
+    panel._current_dataset = SimpleNamespace(run_number=1)
+    panel._overlay_diamagnetic_fit()
+    assert "Diamagnetic fit" in calls  # drawn on the matching run
+
+    panel._current_dataset = None
+    panel.set_diamagnetic_overlay(None, None)
+    assert panel._diamagnetic_overlay is None
