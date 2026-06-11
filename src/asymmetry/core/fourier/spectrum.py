@@ -577,27 +577,29 @@ def compute_average_group_spectrum(
         metadata["fourier_burg_order"] = int(max(burg_orders))
         metadata["fourier_burg_hit_boundary"] = bool(burg_hit_boundary)
         metadata["fourier_diagnostic"] = True
-    if config.remove_diamag and diamag_fields:
-        metadata["fourier_diamag_field_gauss"] = float(np.mean(diamag_fields))
-        if diamag_fit_curve is not None:
-            metadata["fourier_diamag_fit_time_us"] = diamag_fit_curve[0].tolist()
-            metadata["fourier_diamag_fit_signal"] = diamag_fit_curve[1].tolist()
-    elif config.remove_diamag:
-        # Fit-and-subtract was requested but no group produced a subtraction.
-        # Record why so the GUI can disclose the silent fallback rather than
-        # implying the line was removed.
-        max_seed = max(
-            (abs(f) for f in diamag_seed_fields if f is not None),
-            default=None,
-        )
-        if diamag_fit_failed:
-            metadata["fourier_diamag_skipped"] = "the diamagnetic fit did not converge"
-        else:
-            metadata["fourier_diamag_skipped"] = (
-                f"the applied field is below {_MIN_DIAMAG_FIELD_GAUSS:g} G"
-                if max_seed is None or max_seed <= _MIN_DIAMAG_FIELD_GAUSS
-                else "no transverse field was found for the run"
-            )
+    if config.remove_diamag:
+        n_requested = len(diamag_seed_fields)
+        n_subtracted = len(diamag_fields)
+        if diamag_fields:
+            metadata["fourier_diamag_field_gauss"] = float(np.mean(diamag_fields))
+            if diamag_fit_curve is not None:
+                metadata["fourier_diamag_fit_time_us"] = diamag_fit_curve[0].tolist()
+                metadata["fourier_diamag_fit_signal"] = diamag_fit_curve[1].tolist()
+        # Disclose any group the subtraction silently skipped (no transverse
+        # field, or a fit that did not converge) so a fully- or partly-
+        # unsubtracted spectrum is not mistaken for a clean removal.
+        if n_subtracted < n_requested:
+            if n_subtracted > 0:
+                metadata["fourier_diamag_skipped"] = (
+                    f"the diamagnetic fit was skipped for {n_requested - n_subtracted} "
+                    f"of {n_requested} groups"
+                )
+            elif diamag_fit_failed:
+                metadata["fourier_diamag_skipped"] = "the diamagnetic fit did not converge"
+            else:
+                metadata["fourier_diamag_skipped"] = (
+                    f"the applied field is below {_MIN_DIAMAG_FIELD_GAUSS:g} G"
+                )
     if conditioning is not None:
         if conditioning.cutoff_frequency_mhz is not None:
             metadata["fourier_compensation_cutoff_mhz"] = conditioning.cutoff_frequency_mhz

@@ -4014,6 +4014,11 @@ class MainWindow(QMainWindow):
         mode = resolve_background_mode(grouping)
         if mode == "none" or not self._dataset_allows_background_mode(dataset, mode):
             return None
+        # reference_run is "available" everywhere but applies nothing unless a
+        # background run is actually configured; don't claim an inheritance the
+        # FFT input will not apply (grouped.py returns applied=False otherwise).
+        if mode == "reference_run" and not grouping.get("background_run"):
+            return None
         return {
             "fixed": "fixed offset",
             "range": "range average",

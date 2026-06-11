@@ -168,6 +168,12 @@ def test_background_hint_helper_reflects_grouping(qapp) -> None:
         run.grouping["background_correction"] = True
         run.grouping["background_mode"] = "tail_fit"
         assert window._fourier_background_hint_for_dataset(dataset) == "tail-fit"
+        # reference_run "available" everywhere but applies nothing without a run.
+        run.grouping["background_mode"] = "reference_run"
+        run.grouping.pop("background_run", None)
+        assert window._fourier_background_hint_for_dataset(dataset) is None
+        run.grouping["background_run"] = 1234
+        assert window._fourier_background_hint_for_dataset(dataset) == "reference run"
     finally:
         window.close()
 
