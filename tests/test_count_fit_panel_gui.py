@@ -250,6 +250,106 @@ def test_single_fit_emits_overlay_for_target_group(qapp, fb_dataset):
     assert set(overlays[0]) == {forward}
 
 
+def test_promote_alpha_after_fb_fit_writes_grouping(qapp, fb_dataset):
+    """F7: a finished F+B fit's α promotes into the grouping with count_fit provenance."""
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(1)  # fb
+    tab = window._single_fit_tab
+    tab._run_count_domain_fit()
+    assert tab._last_count_alpha is not None
+
+    promoted = []
+    window.count_grouping_promoted.connect(lambda dataset: promoted.append(dataset))
+    window._promote_alpha_btn.click()
+
+    grouping = fb_dataset.run.grouping
+    assert grouping["alpha"] == pytest.approx(1.25, abs=0.05)
+    assert grouping["alpha_method"] == "count_fit"
+    assert grouping["alpha_reference_run"] == fb_dataset.run_number
+    assert len(promoted) == 1
+
+
+def test_promote_alpha_without_fb_fit_shows_hint(qapp, fb_dataset):
+    """Promoting α without a forward/backward fit reports a hint, not a mutation."""
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(2)  # single — no α produced
+    window._promote_alpha_btn.click()
+    assert "Forward + Backward" in window._single_fit_tab._result_text.toPlainText()
+    assert "alpha_method" not in fb_dataset.run.grouping
+
+
+def test_promote_t0_after_fit_writes_t0_bin_and_discloses_residual(qapp, fb_dataset):
+    """F5: a fitted t₀ offset promotes to t0_bin; the residual is disclosed."""
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(2)  # single
+    window._t0_check.setChecked(True)
+    tab = window._single_fit_tab
+    tab._run_count_domain_fit()
+    assert tab._last_count_t0_us is not None
+
+    window._promote_t0_btn.click()
+    grouping = fb_dataset.run.grouping
+    assert grouping["t0_method"] == "count_fit"
+    text = tab._result_text.toPlainText()
+    assert "residual" in text.lower()
+    assert "run-wide" in text
+
+
+def test_promote_background_after_fb_fit_sets_fixed_mode(qapp, fb_dataset):
+    """N3: fitted flat backgrounds promote to grouping fixed mode."""
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(1)  # fb
+    tab = window._single_fit_tab
+    tab._run_count_domain_fit()
+    assert tab._last_count_bg is not None
+
+    window._promote_bg_btn.click()
+    grouping = fb_dataset.run.grouping
+    assert grouping["background_mode"] == "fixed"
+    assert grouping["background_method"] == "count_fit"
+    assert len(grouping["background_fixed_values"]) == 2
+
+
+def test_background_active_note_visibility_tracks_grouping(qapp, fb_dataset):
+    """N3 guard: the count-fit note appears only when grouping background is on."""
+    # isHidden() reflects the explicit visibility flag without a shown ancestor
+    # (isVisible() is always False until the top-level window is shown).
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    assert window._bg_active_note.isHidden()
+
+    fb_dataset.run.grouping["background_correction"] = True
+    fb_dataset.run.grouping["background_mode"] = "tail_fit"
+    window.set_dataset(fb_dataset)
+    assert not window._bg_active_note.isHidden()
+
+
+def test_skip_window_label_is_relabelled(qapp):
+    """F8: the count-fit exclude control is relabelled to encode its semantics."""
+    window = MultiGroupFitWindow()
+    assert window._exclude_label.text() == "Skip window (μs)"
+
+
+def test_count_skip_window_round_trips_through_state(qapp):
+    """NEW-R1: the count-fit skip window persists and restores via window state."""
+    window = MultiGroupFitWindow()
+    window._exclude_min.setValue(2.5)
+    window._exclude_max.setValue(4.0)
+    state = window.get_state()
+    assert state["count_skip_window"] == [2.5, 4.0]
+
+    restored = MultiGroupFitWindow()
+    restored.restore_state(state)
+    assert restored._exclude_min.value() == pytest.approx(2.5)
+    assert restored._exclude_max.value() == pytest.approx(4.0)
+    # The restored window pushes the skip window down to its tabs.
+    assert restored._single_fit_tab._count_exclude == (2.5, 4.0)
+
+
 def test_promote_uses_dedicated_signal_not_a_fit_none(qapp, fb_dataset):
     """Promote emits count_grouping_promoted, never a fit-shaped None on the fit signal."""
     window = MultiGroupFitWindow()
