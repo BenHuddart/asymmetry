@@ -64,10 +64,10 @@ from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.fourier import (
     GroupSpectrumConfig,
     build_group_signal_dataset,
-    canonical_fourier_display_mode,
     compute_average_group_spectrum,
     estimate_fft_phase,
     fft_complex_asymmetry,
+    fourier_display_ylabel,
     fourier_mode_uses_phase_correction,
 )
 from asymmetry.core.io import resolve_background_reference
@@ -4299,19 +4299,12 @@ class MainWindow(QMainWindow):
         return resolved
 
     def _fourier_display_ylabel(self, display: str) -> str:
-        """Return a display-specific y-axis label for FFT plots."""
-        return {
-            "cos": "FFT Cos (a.u.)",
-            "imaginary": "FFT Imaginary (a.u.)",
-            "magnitude": "FFT Magnitude (a.u.)",
-            "phase_corrected": "FFT Phase-Corrected (a.u.)",
-            "phase_opt_real": "FFT phaseOptReal (a.u.)",
-            "phase_spectrum": "FFT Phase Spectrum (deg)",
-            "power": "FFT Power (a.u.)",
-            "power_sqrt": "FFT (Power)^1/2 (a.u.)",
-            "real": "FFT Real (a.u.)",
-            "sin": "FFT Sin (a.u.)",
-        }.get(canonical_fourier_display_mode(display), "FFT (a.u.)")
+        """Return a display-specific y-axis label for FFT plots.
+
+        Delegates to the single core label map so the GUI and the recipe-computed
+        spectrum metadata never drift (covers Real+Imag and Burg too).
+        """
+        return fourier_display_ylabel(display)
 
     def _build_fourier_value_dataset(
         self,
@@ -4357,6 +4350,35 @@ class MainWindow(QMainWindow):
         """Cache computed frequency spectra for one run-number context."""
         cache = self._frequency_cache(rep_type)
         cache[int(run_number)] = list(spectra)
+
+    def _report_fourier_diagnostics(self, spectrum: MuonDataset) -> None:
+        """Surface diamagnetic-fit and Burg diagnostics from a spectrum's metadata."""
+        metadata = spectrum.metadata if isinstance(spectrum.metadata, dict) else {}
+        diamag_field = metadata.get("fourier_diamag_field_gauss")
+        run_number = metadata.get("run_number")
+        if hasattr(self._plot_panel, "set_diamagnetic_overlay"):
+            fit_time = metadata.get("fourier_diamag_fit_time_us")
+            fit_signal = metadata.get("fourier_diamag_fit_signal")
+            if diamag_field is not None and fit_time is not None and fit_signal is not None:
+                self._log_panel.log(
+                    f"Diamagnetic line fitted at B = {float(diamag_field):.1f} G; "
+                    "subtracted before FFT."
+                )
+                self._plot_panel.set_diamagnetic_overlay(
+                    np.asarray(fit_time, dtype=float),
+                    np.asarray(fit_signal, dtype=float),
+                    run_number=int(run_number) if run_number is not None else None,
+                )
+            else:
+                # No diamagnetic removal this run — clear any prior overlay so it
+                # cannot linger on a later plot.
+                self._plot_panel.set_diamagnetic_overlay(None, None)
+        if metadata.get("fourier_burg_hit_boundary"):
+            order = metadata.get("fourier_burg_order")
+            self._log_panel.log(
+                f"Burg pole scan optimum ({order}) hit a scan boundary — widen the "
+                "pole range for a reliable order estimate."
+            )
 
     def _record_frequency_fft_recipe(
         self,
@@ -4720,6 +4742,22 @@ class MainWindow(QMainWindow):
                 t_max_us=fourier_t_max_us,
                 selected_group_ids=list(selected_group_ids),
                 group_phase_degrees=group_phase_degrees,
+                pulse_compensation=bool(state.get("pulse_compensation", False)),
+                pulse_half_width_us=float(state.get("pulse_half_width_us", 0.0)),
+                pulse_max_gain=float(state.get("pulse_max_gain", 25.0)),
+                baseline_mode=str(state.get("baseline_mode", "none")),
+                baseline_kappa=float(state.get("baseline_kappa", 2.0)),
+                exclude_enabled=bool(state.get("exclude_enabled", False)),
+                exclusion_ranges=[
+                    (float(pair[0]), float(pair[1]))
+                    for pair in state.get("exclusion_ranges", [])
+                    if isinstance(pair, (list, tuple)) and len(pair) == 2
+                ],
+                diamag_exclusion=bool(state.get("diamag_exclusion", False)),
+                diamag_half_width_mhz=float(state.get("diamag_half_width_mhz", 0.3)),
+                remove_diamag=bool(state.get("remove_diamag", False)),
+                burg_order_min=int(state.get("burg_order_min", 2)),
+                burg_order_max=int(state.get("burg_order_max", 40)),
             )
             average_dataset = compute_average_group_spectrum(
                 self._current_dataset.run,
@@ -4738,7 +4776,12 @@ class MainWindow(QMainWindow):
                         out=np.zeros_like(averaged_display),
                         where=averaged_error > 0.0,
                     )
-                    peak_signal_to_noise = float(np.nanmax(sn)) if sn.size else 0.0
+                    # Exclude the DC bin from the peak search: the average-signal
+                    # subtraction leaves a near-zero error there that can spike S/N.
+                    if sn.size > 1:
+                        sn = sn[1:]
+                    finite_sn = sn[np.isfinite(sn)]
+                    peak_signal_to_noise = float(np.max(finite_sn)) if finite_sn.size else 0.0
                     self._fourier_panel.set_average_summary(
                         mean_error=float(np.nanmean(averaged_error))
                         if averaged_error.size
@@ -4746,6 +4789,7 @@ class MainWindow(QMainWindow):
                         peak_signal_to_noise=peak_signal_to_noise,
                         group_count=len(selected_group_ids),
                     )
+                self._report_fourier_diagnostics(average_dataset)
                 spectra.append(average_dataset)
                 spectra_by_run[int(self._current_dataset.run_number)] = list(spectra)
                 self._record_frequency_fft_recipe(

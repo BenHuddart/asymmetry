@@ -32,6 +32,7 @@ material.
    :caption: Time-domain analysis
 
    fourier_analysis
+   frequency_finishers
    frequency_domain_fitting
    vector_polarization
    fitting

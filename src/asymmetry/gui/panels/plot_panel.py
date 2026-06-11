@@ -164,6 +164,9 @@ class PlotPanel(QWidget):
         self._frequency_axis_relative_to_reference = False
         self._frequency_reference_mhz: float | None = None
         self._frequency_x_limits_by_unit: dict[str, tuple[float, float]] = {}
+        #: Optional ``(run_number, time_us, signal)`` diamagnetic-fit overlay for
+        #: the time view; only drawn when the displayed run matches ``run_number``.
+        self._diamagnetic_overlay: tuple[int | None, np.ndarray, np.ndarray] | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
@@ -2820,6 +2823,95 @@ class PlotPanel(QWidget):
         self._update_export_enabled()
         self._connect_axis_limit_callbacks([self._ax])
 
+    def set_diamagnetic_overlay(
+        self,
+        time_us: np.ndarray | None,
+        signal: np.ndarray | None,
+        *,
+        run_number: int | None = None,
+    ) -> None:
+        """Set (or clear) the diamagnetic-fit curve drawn on the time-domain view.
+
+        Passing ``None`` for the arrays clears it. The overlay is tagged with
+        *run_number* and only drawn while that run is displayed, so it never
+        lingers on an unrelated run; it is redrawn on the next
+        :meth:`plot_dataset` call for a time-domain panel.
+        """
+        if time_us is None or signal is None:
+            self._diamagnetic_overlay = None
+        else:
+            self._diamagnetic_overlay = (
+                None if run_number is None else int(run_number),
+                np.asarray(time_us, dtype=float),
+                np.asarray(signal, dtype=float),
+            )
+        if (
+            self._has_mpl
+            and self._current_dataset is not None
+            and not self._is_frequency_plot_panel()
+        ):
+            self.plot_dataset(self._current_dataset)
+
+    def _overlay_diamagnetic_fit(self) -> None:
+        """Draw the stored diamagnetic-fit curve on the time-domain axes.
+
+        Only drawn when the overlay's run matches the displayed dataset, so a
+        fit from a previous run never shows on an unrelated one.
+        """
+        if (
+            not self._has_mpl
+            or self._diamagnetic_overlay is None
+            or self._is_frequency_plot_panel()
+        ):
+            return
+        overlay_run, time_us, signal = self._diamagnetic_overlay
+        current_run = (
+            int(self._current_dataset.run_number)
+            if self._current_dataset is not None and self._current_dataset.run_number is not None
+            else None
+        )
+        if overlay_run is not None and overlay_run != current_run:
+            return
+        finite = np.isfinite(time_us) & np.isfinite(signal)
+        if not np.any(finite):
+            return
+        self._ax.plot(
+            time_us[finite],
+            signal[finite],
+            "-",
+            color=tokens.WARN,
+            linewidth=1.5,
+            alpha=0.9,
+            label="Diamagnetic fit",
+        )
+
+    def _overlay_fourier_imag(self, dataset: MuonDataset, time: np.ndarray) -> None:
+        """Overlay the imaginary quadrature for the Real+Imag display mode.
+
+        The averaged spectrum carries the imag channel in
+        ``metadata["fourier_imag"]``; the primary trace is the real part.
+        """
+        if not self._has_mpl or not isinstance(dataset.metadata, dict):
+            return
+        imag = dataset.metadata.get("fourier_imag")
+        if imag is None:
+            return
+        imag_arr = np.asarray(imag, dtype=float)
+        if imag_arr.size != np.asarray(time).size:
+            return
+        finite = np.isfinite(time) & np.isfinite(imag_arr)
+        if not np.any(finite):
+            return
+        self._ax.plot(
+            np.asarray(time)[finite],
+            imag_arr[finite],
+            "-",
+            color="C1",
+            linewidth=1.2,
+            alpha=0.85,
+            label="Imag",
+        )
+
     def plot_dataset(self, dataset: MuonDataset) -> None:
         """Plot a dataset, optionally rebinned according to the bunch factor.
 
@@ -2893,6 +2985,8 @@ class PlotPanel(QWidget):
             ecolor=point_color,
             label=self._dataset_label_for(dataset),
         )
+        self._overlay_fourier_imag(dataset, time)
+        self._overlay_diamagnetic_fit()
         x_label, y_label = self._axis_labels_for_dataset(dataset, self._current_polarization_axis)
         self._apply_axis_labels(x_label, y_label)
         self._set_alpha_label(self._single_dataset_alpha_label_text(dataset))

@@ -45,6 +45,8 @@ _PHASE_MODE_LABELS = (
     "Sin",
     "Phase",
     "phaseOptReal",
+    "Real+Imag",
+    "Resolution (Burg)",
 )
 
 _LEGACY_DISPLAY_TO_MODE = {
@@ -55,11 +57,19 @@ _LEGACY_DISPLAY_TO_MODE = {
     "phaseoptreal": "phaseOptReal",
     "power": "(Power)^1/2",
     "real": "Phase",
+    "real+imag": "Real+Imag",
+    "real_imag": "Real+Imag",
+    "burg": "Resolution (Burg)",
 }
 
 _PHASE_ACTIVE_COLOR = tokens.ACCENT
 _PHASE_INACTIVE_COLOR = tokens.TEXT_MUTED
 _PHASE_AUTOFILLED_COLOR = tokens.OK
+
+#: Number of editable frequency-exclusion rows (matches WiMDA's ten slots).
+_MAX_EXCLUSION_ROWS = 10
+#: PSI continuous-source RF fundamental for the harmonics preset.
+_PSI_RF_FUNDAMENTAL_MHZ = 50.63
 
 
 def _latex_html(latex: str, *, render_latex_images: bool) -> str:
@@ -116,6 +126,21 @@ def _build_fourier_mode_info_html(render_latex_images: bool) -> str:
             "Finds the two-parameter linear phase c\u2080\u202f+\u202fc\u2081\u00b7i/N that makes the "
             "real spectrum most compact and non-negative. Does not use the manual phase, t0 offset, or "
             "phase table. Requires iminuit.",
+        ),
+        (
+            "Real+Imag",
+            (r"C(f)=\Re\{F(f)\}", r"S(f)=\Im\{F(f)\}"),
+            "Overlays the cosine (real) and sine (imaginary) quadratures on one axis. A "
+            "correctly phased absorption line is purely real with a flat imaginary part, so "
+            "residual structure in the imaginary channel flags an imperfect phase correction.",
+        ),
+        (
+            "Resolution (Burg) \u2014 diagnostic",
+            r"P(\nu)=\dfrac{P_m}{\left|1-\sum_{k=1}^{m}a_k z^k\right|^2}",
+            "All-poles autoregressive super-resolution. Diagnostic only: it qualitatively "
+            "resolves close lines from short windows and the FPE-optimal pole count hints at the "
+            "line count, but it can split strong peaks and seed spurious baseline peaks, and "
+            "carries no uncertainties. Use frequency-domain fitting or MaxEnt for quantitative results.",
         ),
     ]
 
@@ -203,12 +228,23 @@ class FourierPanel(QWidget):
         self._cos_radio = QRadioButton("Cos")
         self._sin_radio = QRadioButton("Sin")
         self._phase_mode_radio = QRadioButton("Phase")
+        self._real_imag_radio = QRadioButton("Real+Imag")
         self._phase_opt_real_radio = QRadioButton("phaseOptReal")
         self._phase_opt_real_radio.setStyleSheet(
             f"QRadioButton {{ color: {tokens.ACCENT}; font-weight: 600; padding-bottom: 2px; }}"
         )
         self._phase_opt_real_radio.setMinimumHeight(
             self._phase_opt_real_radio.sizeHint().height() + 4
+        )
+        self._burg_radio = QRadioButton("Resolution (Burg) — diagnostic")
+        self._burg_radio.setStyleSheet(
+            f"QRadioButton {{ color: {tokens.WARN}; font-weight: 600; padding-bottom: 2px; }}"
+        )
+        self._burg_radio.setToolTip(
+            "Burg all-poles super-resolution. Diagnostic only: qualitatively "
+            "resolves close lines and hints at the line count, but can split "
+            "strong peaks and carries no uncertainties. Use fitting or MaxEnt "
+            "for quantitative results."
         )
         self._power_sqrt_radio.setChecked(True)
 
@@ -222,7 +258,9 @@ class FourierPanel(QWidget):
             self._cos_radio,
             self._sin_radio,
             self._phase_mode_radio,
+            self._real_imag_radio,
             self._phase_opt_real_radio,
+            self._burg_radio,
         ):
             self._phase_mode_button_group.addButton(button)
             mode_column_layout.addWidget(button)
@@ -342,6 +380,9 @@ class FourierPanel(QWidget):
         fft_settings_layout.addLayout(fft_settings_form)
         content_layout.addWidget(fft_settings_group)
 
+        content_layout.addWidget(self._build_conditioning_group())
+        content_layout.addWidget(self._build_exclusions_group())
+
         # Action buttons
         self._fft_btn = QPushButton("Compute FFT")
         content_layout.addWidget(self._fft_btn)
@@ -368,13 +409,188 @@ class FourierPanel(QWidget):
         self._cos_radio.toggled.connect(self._update_phase_controls_enabled)
         self._sin_radio.toggled.connect(self._update_phase_controls_enabled)
         self._phase_mode_radio.toggled.connect(self._update_phase_controls_enabled)
+        self._real_imag_radio.toggled.connect(self._update_phase_controls_enabled)
         self._phase_opt_real_radio.toggled.connect(self._update_phase_controls_enabled)
+        self._burg_radio.toggled.connect(self._update_phase_controls_enabled)
+        self._burg_radio.toggled.connect(self._update_conditioning_enabled)
         self._phase_mode_info_btn.clicked.connect(self._show_phase_mode_info)
         self._phase_spin.editingFinished.connect(self._normalize_phase_line_edits)
         self._t0_offset_spin.editingFinished.connect(self._normalize_phase_line_edits)
         self._update_phase_table_enabled(self._use_phase_table_check.isChecked())
         self._update_filter_controls_enabled()
         self._update_phase_controls_enabled()
+
+    # ── conditioning + exclusions sections ─────────────────────────────
+
+    def _build_conditioning_group(self) -> QGroupBox:
+        """Build the pulse-compensation + baseline conditioning section."""
+        group = QGroupBox("Conditioning")
+        form = QFormLayout(group)
+
+        self._pulse_comp_check = QCheckBox("Pulse-response compensation")
+        self._pulse_comp_check.setToolTip(
+            "Divide the spectrum by the ISIS pulse amplitude R(f) to undo the "
+            "high-frequency rolloff. Capped and cut off at the pulse node."
+        )
+        form.addRow(self._pulse_comp_check)
+
+        self._pulse_width_edit = QLineEdit("")
+        self._pulse_width_edit.setPlaceholderText("auto (from metadata)")
+        self._pulse_width_edit.setFont(mono_font(11.0))
+        self._pulse_width_edit.setValidator(QDoubleValidator(0.0, 10.0, 6, self))
+        form.addRow("Pulse half-width (μs):", self._pulse_width_edit)
+
+        self._pulse_max_gain_edit = QLineEdit("25")
+        self._pulse_max_gain_edit.setFont(mono_font(11.0))
+        self._pulse_max_gain_edit.setValidator(QDoubleValidator(1.0, 1000.0, 3, self))
+        form.addRow("Max gain:", self._pulse_max_gain_edit)
+
+        self._baseline_mode_combo = QComboBox()
+        self._baseline_mode_combo.addItem("None", userData="none")
+        self._baseline_mode_combo.addItem("Robust σ-clip", userData="sigma_clip")
+        self._baseline_mode_combo.addItem("WiMDA single-pass", userData="wimda")
+        form.addRow("Baseline offset:", self._baseline_mode_combo)
+
+        self._baseline_kappa_edit = QLineEdit("2")
+        self._baseline_kappa_edit.setFont(mono_font(11.0))
+        self._baseline_kappa_edit.setValidator(QDoubleValidator(0.5, 10.0, 3, self))
+        form.addRow("Clip κ (σ):", self._baseline_kappa_edit)
+
+        self._remove_diamag_check = QCheckBox("Remove diamagnetic signal")
+        self._remove_diamag_check.setToolTip(
+            "Fit and subtract a damped cosine at the diamagnetic line before the "
+            "FFT, and report the fitted field."
+        )
+        form.addRow(self._remove_diamag_check)
+
+        self._burg_order_min_spin = QSpinBox()
+        self._burg_order_min_spin.setRange(1, 200)
+        self._burg_order_min_spin.setValue(2)
+        self._burg_order_max_spin = QSpinBox()
+        self._burg_order_max_spin.setRange(1, 200)
+        self._burg_order_max_spin.setValue(40)
+        burg_row = QWidget()
+        burg_layout = QHBoxLayout(burg_row)
+        burg_layout.setContentsMargins(0, 0, 0, 0)
+        burg_layout.addWidget(self._burg_order_min_spin)
+        burg_layout.addWidget(QLabel("to"))
+        burg_layout.addWidget(self._burg_order_max_spin)
+        burg_layout.addStretch()
+        form.addRow("Burg pole scan:", burg_row)
+
+        self._pulse_comp_check.toggled.connect(self._update_conditioning_enabled)
+        self._baseline_mode_combo.currentIndexChanged.connect(self._update_conditioning_enabled)
+        self._update_conditioning_enabled()
+        return group
+
+    def _build_exclusions_group(self) -> QGroupBox:
+        """Build the frequency-range exclusions section."""
+        group = QGroupBox("Exclusions")
+        layout = QVBoxLayout(group)
+
+        self._exclude_enabled_check = QCheckBox("Exclude frequency ranges")
+        layout.addWidget(self._exclude_enabled_check)
+
+        self._diamag_exclusion_check = QCheckBox("Diamagnetic line (at reference field)")
+        self._diamag_exclusion_check.setToolTip(
+            "Also exclude a band centred on γ_μ·B for the run's applied field."
+        )
+        layout.addWidget(self._diamag_exclusion_check)
+
+        diamag_form = QFormLayout()
+        self._diamag_width_edit = QLineEdit("0.3")
+        self._diamag_width_edit.setFont(mono_font(11.0))
+        self._diamag_width_edit.setValidator(QDoubleValidator(0.0, 100.0, 4, self))
+        diamag_form.addRow("Diamag half-width (MHz):", self._diamag_width_edit)
+        layout.addLayout(diamag_form)
+
+        self._exclusion_table = QTableWidget(_MAX_EXCLUSION_ROWS, 2)
+        self._exclusion_table.setHorizontalHeaderLabels(["Centre (MHz)", "Half-width (MHz)"])
+        apply_param_table_style(self._exclusion_table)
+        self._exclusion_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Stretch
+        )
+        self._exclusion_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch
+        )
+        self._exclusion_table.verticalHeader().setVisible(False)
+        self._exclusion_table.setMinimumHeight(150)
+        for row in range(_MAX_EXCLUSION_ROWS):
+            for col in range(2):
+                self._exclusion_table.setItem(row, col, QTableWidgetItem(""))
+        layout.addWidget(self._exclusion_table)
+
+        self._psi_preset_btn = QPushButton("PSI RF harmonics")
+        self._psi_preset_btn.setToolTip("Fill DC + 50.63 MHz × 1–5.")
+        self._psi_preset_btn.clicked.connect(self._apply_psi_harmonics_preset)
+        layout.addWidget(self._psi_preset_btn)
+
+        self._exclude_enabled_check.toggled.connect(self._update_exclusion_enabled)
+        self._diamag_exclusion_check.toggled.connect(self._update_exclusion_enabled)
+        self._update_exclusion_enabled()
+        return group
+
+    def _update_conditioning_enabled(self) -> None:
+        pulse_on = self._pulse_comp_check.isChecked()
+        self._pulse_width_edit.setEnabled(pulse_on)
+        self._pulse_max_gain_edit.setEnabled(pulse_on)
+        baseline_on = str(self._baseline_mode_combo.currentData() or "none") != "none"
+        self._baseline_kappa_edit.setEnabled(baseline_on)
+        burg_on = self._burg_radio.isChecked()
+        self._burg_order_min_spin.setEnabled(burg_on)
+        self._burg_order_max_spin.setEnabled(burg_on)
+
+    def _update_exclusion_enabled(self) -> None:
+        enabled = self._exclude_enabled_check.isChecked()
+        self._diamag_exclusion_check.setEnabled(enabled)
+        self._diamag_width_edit.setEnabled(enabled and self._diamag_exclusion_check.isChecked())
+        self._exclusion_table.setEnabled(enabled)
+        self._psi_preset_btn.setEnabled(enabled)
+
+    def _apply_psi_harmonics_preset(self) -> None:
+        """Fill the exclusion table with DC + 50.63 MHz harmonics 1–5."""
+        centres = [0.0, *(_PSI_RF_FUNDAMENTAL_MHZ * h for h in range(1, 6))]
+        width = 0.5
+        self._exclude_enabled_check.setChecked(True)
+        for row in range(_MAX_EXCLUSION_ROWS):
+            centre_text = f"{centres[row]:g}" if row < len(centres) else ""
+            width_text = f"{width:g}" if row < len(centres) else ""
+            self._exclusion_table.setItem(row, 0, QTableWidgetItem(centre_text))
+            self._exclusion_table.setItem(row, 1, QTableWidgetItem(width_text))
+        self._update_exclusion_enabled()
+
+    def exclusion_ranges(self) -> list[tuple[float, float]]:
+        """Return the editable ``(centre, half-width)`` exclusion ranges."""
+        ranges: list[tuple[float, float]] = []
+        for row in range(self._exclusion_table.rowCount()):
+            centre_item = self._exclusion_table.item(row, 0)
+            width_item = self._exclusion_table.item(row, 1)
+            centre_text = centre_item.text().strip() if centre_item else ""
+            width_text = width_item.text().strip() if width_item else ""
+            if not centre_text or not width_text:
+                continue
+            try:
+                centre = float(centre_text)
+                width = float(width_text)
+            except ValueError:
+                continue
+            if width > 0.0:
+                ranges.append((centre, width))
+        return ranges
+
+    def _set_exclusion_ranges(self, ranges: list) -> None:
+        for row in range(_MAX_EXCLUSION_ROWS):
+            if (
+                row < len(ranges)
+                and isinstance(ranges[row], (list, tuple))
+                and len(ranges[row]) == 2
+            ):
+                centre, width = ranges[row]
+                self._exclusion_table.setItem(row, 0, QTableWidgetItem(f"{float(centre):g}"))
+                self._exclusion_table.setItem(row, 1, QTableWidgetItem(f"{float(width):g}"))
+            else:
+                self._exclusion_table.setItem(row, 0, QTableWidgetItem(""))
+                self._exclusion_table.setItem(row, 1, QTableWidgetItem(""))
 
     def set_fft_status(self, message: str, *, success: bool = False) -> None:
         """Set the status label below the Compute FFT button."""
@@ -397,8 +613,12 @@ class FourierPanel(QWidget):
             return "Sin"
         if self._phase_mode_radio.isChecked():
             return "Phase"
+        if self._real_imag_radio.isChecked():
+            return "Real+Imag"
         if self._phase_opt_real_radio.isChecked():
             return "phaseOptReal"
+        if self._burg_radio.isChecked():
+            return "Resolution (Burg)"
         return "(Power)^1/2"
 
     def _current_filter_mode(self) -> str:
@@ -455,7 +675,9 @@ class FourierPanel(QWidget):
         self._cos_radio.setChecked(mode == "Cos")
         self._sin_radio.setChecked(mode == "Sin")
         self._phase_mode_radio.setChecked(mode == "Phase")
+        self._real_imag_radio.setChecked(mode == "Real+Imag")
         self._phase_opt_real_radio.setChecked(mode == "phaseOptReal")
+        self._burg_radio.setChecked(mode == "Resolution (Burg)")
 
     def _update_filter_controls_enabled(self) -> None:
         enabled = self._current_filter_mode() != "none"
@@ -721,6 +943,18 @@ class FourierPanel(QWidget):
             "group_enabled_table": self.group_enabled_table(),
             "group_phase_table": self.group_phase_table(),
             "group_auto_filled_ids": sorted(self.group_auto_filled_ids()),
+            "pulse_compensation": self._pulse_comp_check.isChecked(),
+            "pulse_half_width_us": self._parse_float_text(self._pulse_width_edit.text(), 0.0),
+            "pulse_max_gain": self._parse_float_text(self._pulse_max_gain_edit.text(), 25.0),
+            "baseline_mode": str(self._baseline_mode_combo.currentData() or "none"),
+            "baseline_kappa": self._parse_float_text(self._baseline_kappa_edit.text(), 2.0),
+            "exclude_enabled": self._exclude_enabled_check.isChecked(),
+            "diamag_exclusion": self._diamag_exclusion_check.isChecked(),
+            "diamag_half_width_mhz": self._parse_float_text(self._diamag_width_edit.text(), 0.3),
+            "exclusion_ranges": [[c, w] for c, w in self.exclusion_ranges()],
+            "remove_diamag": self._remove_diamag_check.isChecked(),
+            "burg_order_min": self._burg_order_min_spin.value(),
+            "burg_order_max": self._burg_order_max_spin.value(),
         }
 
     def restore_state(self, state: dict) -> None:
@@ -789,6 +1023,40 @@ class FourierPanel(QWidget):
             if group_names:
                 self._auto_filled_group_ids = set(parsed_auto_filled)
                 self.set_group_definitions(group_names, parsed_phases, parsed_enabled)
+        self._pulse_comp_check.setChecked(bool(state.get("pulse_compensation", False)))
+        pulse_width = state.get("pulse_half_width_us", 0.0)
+        self._pulse_width_edit.setText(
+            self._format_float_text(self._parse_float_text(pulse_width, 0.0))
+            if self._parse_float_text(pulse_width, 0.0) > 0.0
+            else ""
+        )
+        self._pulse_max_gain_edit.setText(
+            self._format_float_text(self._parse_float_text(state.get("pulse_max_gain", 25.0), 25.0))
+        )
+        baseline_idx = self._baseline_mode_combo.findData(str(state.get("baseline_mode", "none")))
+        if baseline_idx >= 0:
+            self._baseline_mode_combo.setCurrentIndex(baseline_idx)
+        self._baseline_kappa_edit.setText(
+            self._format_float_text(self._parse_float_text(state.get("baseline_kappa", 2.0), 2.0))
+        )
+        self._exclude_enabled_check.setChecked(bool(state.get("exclude_enabled", False)))
+        self._diamag_exclusion_check.setChecked(bool(state.get("diamag_exclusion", False)))
+        self._diamag_width_edit.setText(
+            self._format_float_text(
+                self._parse_float_text(state.get("diamag_half_width_mhz", 0.3), 0.3)
+            )
+        )
+        exclusion_ranges = state.get("exclusion_ranges", [])
+        if isinstance(exclusion_ranges, (list, tuple)):
+            self._set_exclusion_ranges(list(exclusion_ranges))
+        self._remove_diamag_check.setChecked(bool(state.get("remove_diamag", False)))
+        try:
+            self._burg_order_min_spin.setValue(int(state.get("burg_order_min", 2)))
+            self._burg_order_max_spin.setValue(int(state.get("burg_order_max", 40)))
+        except (TypeError, ValueError):
+            pass
+        self._update_conditioning_enabled()
+        self._update_exclusion_enabled()
         self._normalize_phase_line_edits()
         self._update_filter_controls_enabled()
         self._update_phase_controls_enabled()
