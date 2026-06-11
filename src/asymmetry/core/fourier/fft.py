@@ -26,6 +26,8 @@ _DISPLAY_ALIASES = {
     "resolution (burg)": "burg",
     "burg": "burg",
     "sin": "sin",
+    "correlation": "correlation",
+    "correlation (radical)": "correlation",
 }
 _DISPLAY_MODES = frozenset(_DISPLAY_ALIASES.values())
 

@@ -903,6 +903,8 @@ class TestFourierPanelState:
             "remove_diamag": False,
             "burg_order_min": 2,
             "burg_order_max": 40,
+            "correlation_reference_field_gauss": None,
+            "correlation_order": 2,
         }
 
         panel2 = FourierPanel()
