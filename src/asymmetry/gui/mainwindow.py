@@ -167,6 +167,12 @@ _PLOT_DECIMATION_SETTINGS_KEY = "plot/enable_decimation"
 _MAXENT_WARN_PEAK_MATRIX_BYTES = 1 * 1024**3
 _MAXENT_WARN_TOTAL_MATRIX_BYTES = 8 * 1024**3
 
+# The Global Parameter Fit window's decorations (local model fits + plot
+# annotations) persist under this key inside the owning ``modelfit-<digest>``
+# FitSeries' ``extra`` — not as a standalone top-level project key — so they
+# travel with the series and cannot orphan when the fit is re-run or removed.
+_GLOBAL_FIT_DECORATIONS_EXTRA_KEY = "global_fit_decorations"
+
 # ALC-mode toggle tooltips. The enabled text describes the feature; the disabled
 # text tells the user how to reach it (the toggle is only valid in the F-B view).
 _ALC_TOOLTIP_ENABLED = (
@@ -7020,6 +7026,13 @@ class MainWindow(QMainWindow):
         fit_x_max = getattr(output, "fit_x_max", float("nan"))
         if fit_result is None or model is None:
             return
+        batch_id = self._cross_group_batch_id(parameter_name, x_key, groups)
+        prev_batch_id = self._global_parameter_fit_window.batch_id()
+        # Switching to a different fit: persist the outgoing fit's decorations to
+        # its own series first, before set_results clears them, so switching back
+        # to it restores them even without an intervening save.
+        if prev_batch_id is not None and prev_batch_id != batch_id:
+            self._sync_global_fit_decorations_to_series()
         self._global_parameter_fit_window.set_results(
             parameter_name=parameter_name,
             x_key=x_key,
@@ -7028,7 +7041,13 @@ class MainWindow(QMainWindow):
             result=fit_result,
             fit_x_min=fit_x_min,
             fit_x_max=fit_x_max,
+            batch_id=batch_id,
         )
+        # Then load any decorations previously stamped on the incoming fit's
+        # series; a re-run of the same fit keeps the window's live decorations
+        # (set_results leaves them untouched when the batch matches).
+        if batch_id != prev_batch_id:
+            self._restore_global_fit_decorations(batch_id)
         self._global_parameter_fit_window.show()
         self._global_parameter_fit_window.raise_()
         self._global_parameter_fit_window.activateWindow()
@@ -7037,6 +7056,23 @@ class MainWindow(QMainWindow):
         # Item 3: record the per-group local + global outputs as a trendable
         # results series so model-fit outputs can themselves be trended.
         self._record_model_fit_results_series(parameter_name, groups, output)
+
+    def _cross_group_batch_id(
+        self, parameter_name: str, x_key: str, groups: object
+    ) -> str:
+        """Return the deterministic ``modelfit-<digest>`` id for a cross-group fit.
+
+        Derived from the logical key (parameter, x-key, sorted group ids) via a
+        stable digest so re-running the same fit — this session or after a
+        save/reload — yields the same id (Python's built-in ``hash()`` is salted
+        per process and would not be stable). The Global Parameter Fit window
+        keys its decorations by this id so they round-trip attached to the series.
+        """
+        group_seq = groups if isinstance(groups, (list, tuple)) else []
+        group_ids = "|".join(sorted(str(getattr(g, "group_id", "")) for g in group_seq))
+        logical_key = f"{parameter_name}::{x_key}::{group_ids}"
+        digest = hashlib.sha1(logical_key.encode("utf-8")).hexdigest()[:12]
+        return f"modelfit-{digest}"
 
     def _record_model_fit_results_series(
         self, parameter_name: str, groups: object, output: object
@@ -7116,21 +7152,22 @@ class MainWindow(QMainWindow):
             other_axis: 0.0,
         }
 
-        group_ids = "|".join(sorted(str(getattr(g, "group_id", "")) for g in groups))
-        logical_key = f"{parameter_name}::{x_key}::{group_ids}"
-        # Derive the batch id deterministically from the logical key so re-running
-        # the same fit — in this session or after a save/reload — yields the same
-        # id and add_batch replaces the prior results series rather than
-        # duplicating it (Python's built-in hash() is salted per process and
-        # would not be stable across sessions).
-        digest = hashlib.sha1(logical_key.encode("utf-8")).hexdigest()[:12]
-        batch_id = f"modelfit-{digest}"
+        batch_id = self._cross_group_batch_id(parameter_name, x_key, groups)
+        digest = batch_id[len("modelfit-") :]
+        # Carry the owning series' decorations (local model fits, plot
+        # annotations stamped into ``extra``) across a re-run: add_batch replaces
+        # the series in place, so without this the decorations would be dropped
+        # from the persisted store on every re-run. The live window keeps them in
+        # memory regardless; this keeps the serialized home consistent too.
+        existing = self._project_model.batch(batch_id)
+        preserved_extra = dict(existing.extra) if existing is not None else None
         self._add_results_series(
             batch_id,
             rep_type,
             f"Model fit: {parameter_name} vs {x_key}",
             member_run_numbers,
             results_by_run,
+            extra=preserved_extra,
         )
 
         # Item D — accumulate this fit's shared globals into a singleton
@@ -7228,6 +7265,8 @@ class MainWindow(QMainWindow):
         label: str,
         member_run_numbers: list[int],
         results_by_run: dict[int, dict],
+        *,
+        extra: dict | None = None,
     ) -> None:
         """Register a model-less (computed) results ``FitSeries`` in the project.
 
@@ -7235,6 +7274,8 @@ class MainWindow(QMainWindow):
         cross-fit Global summary, single-fit ranges): a deterministic ``batch_id``
         means re-running replaces rather than duplicates, and ``canonical_model
         =None`` makes the series computed (persists, refresh-safe, trendable).
+        Pass *extra* to carry trend-attached state (e.g. the Global Parameter Fit
+        window's decorations) across a re-run that replaces the series in place.
         """
         self._project_model.add_batch(
             FitSeries(
@@ -7246,6 +7287,7 @@ class MainWindow(QMainWindow):
                 canonical_model=None,
                 param_roles={},
                 results_by_run=dict(results_by_run),
+                extra=extra,
             )
         )
 
@@ -7883,8 +7925,11 @@ class MainWindow(QMainWindow):
                 "fit_ui_state": frequency_fit_state.get("fit_ui_state", {}),
             },
             "fit_parameters_state": self._fit_parameters_panel.get_state(),
+            # View preferences only (log axes, plot mode, …). The window's
+            # decorations live in the owning series' ``extra`` — see
+            # _sync_global_fit_decorations_to_series below.
             "global_parameter_fit_window_state": (
-                self._global_parameter_fit_window.get_state()
+                self._global_parameter_fit_window.get_view_state()
                 if self._global_parameter_fit_window is not None
                 else None
             ),
@@ -7905,11 +7950,52 @@ class MainWindow(QMainWindow):
         # Stamp the current ALC analysis onto its scan series before the model is
         # serialised, so the baseline/peaks/options travel with the saved scan.
         self._sync_alc_series_extra()
+        # Likewise stamp the Global Parameter Fit window's decorations into the
+        # owning fit's series so they persist attached to it (not orphaned under
+        # a standalone key).
+        self._sync_global_fit_decorations_to_series()
         # Recipe-only representation/batch state (v6).  Frequency spectra are
         # recomputed from these recipes on load; the array snapshot above is a
         # transitional fallback removed in cleanup.
         self._project_model.write_to_project_state(project_state)
         return project_state
+
+    def _sync_global_fit_decorations_to_series(self) -> None:
+        """Stamp the Global Parameter Fit window's decorations into its series.
+
+        The displayed fit's decorations (local model fits, plot annotations) are
+        written into the owning ``modelfit-<digest>`` series' ``extra`` under
+        :data:`_GLOBAL_FIT_DECORATIONS_EXTRA_KEY`, so they persist attached to
+        that series rather than under a standalone top-level key where they could
+        orphan. Called at save time, mirroring :meth:`_sync_alc_series_extra`.
+        """
+        window = self._global_parameter_fit_window
+        if window is None:
+            return
+        batch_id = window.batch_id()
+        if not batch_id:
+            return
+        series = self._project_model.batch(batch_id)
+        if series is None:
+            return
+        extra = dict(series.extra)
+        if window.has_decorations():
+            extra[_GLOBAL_FIT_DECORATIONS_EXTRA_KEY] = window.get_decorations()
+        else:
+            extra.pop(_GLOBAL_FIT_DECORATIONS_EXTRA_KEY, None)
+        series.extra = extra
+
+    def _restore_global_fit_decorations(self, batch_id: str | None) -> None:
+        """Apply decorations stored on *batch_id*'s series into the window."""
+        window = self._global_parameter_fit_window
+        if window is None or not batch_id:
+            return
+        series = self._project_model.batch(batch_id)
+        if series is None:
+            return
+        deco = series.extra.get(_GLOBAL_FIT_DECORATIONS_EXTRA_KEY)
+        if isinstance(deco, dict):
+            window.restore_decorations(deco)
 
     def _sync_alc_series_extra(self) -> None:
         """Write the ALC scan view's analysis state into the scan series' ``extra``."""
@@ -8312,6 +8398,7 @@ class MainWindow(QMainWindow):
             ):
                 if self._global_parameter_fit_window is None:
                     self._global_parameter_fit_window = GlobalParameterFitWindow(self)
+                batch_id = self._cross_group_batch_id(parameter_name, str(x_key), groups)
                 self._global_parameter_fit_window.set_results(
                     parameter_name=parameter_name,
                     x_key=str(x_key),
@@ -8320,11 +8407,18 @@ class MainWindow(QMainWindow):
                     result=fit_result,
                     fit_x_min=float(fit_x_min),
                     fit_x_max=float(fit_x_max),
+                    batch_id=batch_id,
                 )
+                # View preferences (and, for legacy projects, inline decorations)
+                # come from the window-state key. Decorations from the new home
+                # (the owning series' ``extra``) are applied afterwards and win
+                # when present — so a migrated project shows them, and a not-yet-
+                # migrated legacy project keeps the inline ones restore_state set.
                 if isinstance(global_parameter_fit_window_state, dict):
                     self._global_parameter_fit_window.restore_state(
                         global_parameter_fit_window_state
                     )
+                self._restore_global_fit_decorations(batch_id)
                 self._global_parameter_fit_window.show()
                 self._global_parameter_fit_window.raise_()
                 self._global_parameter_fit_window.activateWindow()
