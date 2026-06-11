@@ -57,13 +57,16 @@ in the container. This is why a grouped fit and a global fit both appear as
 selectable series in the panel and trend through identical machinery.
 
 The **Global Parameter Fit window** is a *transient view*, not a third
-container. It displays one ephemeral cross-group fit result and, today, stores
-its own view decorations (local model fits and plot annotations) under a
-separate project key rather than inside the FitSeries it is viewing — so those
-decorations can be orphaned if the backing fit is re-run. (Reconciliation
-Phase 5 moves the decorations into the FitSeries itself, keyed by batch id, so
-they survive with the data they annotate; the trend data model above is
-unchanged by that move.)
+container. It displays one ephemeral cross-group fit result; its *decorations*
+(the per-parameter local model fits and free-floating plot annotations you add
+in the window) are stored inside the FitSeries it is viewing — keyed by batch
+id, in the series' ``extra`` — rather than under a separate project key. They
+therefore travel with the data they annotate and reappear whenever the window
+shows that fit again, including across a project save/reload, and can no longer
+be orphaned when the fit is re-run. View *preferences* (log axes, plot mode,
+show-components) are not decorations: they are remembered per window, not per
+fit. Legacy projects that stored decorations under the old window-state key
+still load, and migrate to the new home on the next save.
 
 Representation-Aware Trending
 ------------------------------

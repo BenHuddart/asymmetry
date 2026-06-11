@@ -1731,8 +1731,13 @@ class TestMainWindowProjectState:
         window = mw_module.MainWindow()
 
         class _StateWindow:
-            def get_state(self):
+            # The window-state key now carries view preferences only; decorations
+            # live in the owning series' extra (synced via batch_id()).
+            def get_view_state(self):
                 return {"fit_share_x": True}
+
+            def batch_id(self):
+                return None
 
         window._global_parameter_fit_window = _StateWindow()
         state = window.collect_project_state()
