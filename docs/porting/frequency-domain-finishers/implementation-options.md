@@ -202,7 +202,7 @@ diagnostic + diamagnetic fit-and-subtract`.
 - `docs/porting/index.json` — study entry (this commit).
 
 ## Recorded follow-ons
-- **Radical correlation spectrum** (Breit–Rabi `rmatch` → hyperfine axis) — defer; reuse `core/fitting/muonium.py` relations when promoted.
+- **Radical correlation spectrum** (Breit–Rabi `rmatch` → hyperfine axis) — **PROMOTED 2026-06-11** to its own study + plan, [`radical-correlation-spectrum`](../radical-correlation-spectrum/implementation-options.md) (branch `feat/radical-correlation-spectrum`); reuses `core/fitting/muonium.py._tf_levels` via the exact forward map (`A = ν₁₂+ν₃₄`).
 - **N₀-normalised single-histogram FFT input** — defer; interacts with count-domain PR #41.
 - **Per-detector FFT** and **FB t=0 extrapolation** — out of scope (rationale in comparison.md).
 - **Field-axis probe override** (¹⁹F/¹H γ) — `units.py` already supports it; expose only if radical work lands.

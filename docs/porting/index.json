@@ -718,6 +718,33 @@
       "src_path": "src/asymmetry/core/fourier/conditioning.py",
       "updated": "2026-06-11",
       "notes": "Wave A project 5 of wimda-parity-gap umbrella. IMPLEMENTED (both phases, validate green). Phase 1: post-FFT conditioning in core/fourier/conditioning.py (pulse comp = 1/R(nu) from maxent/pulse.py capped+node-cutoff, NOT WiMDA unbounded Gaussian; iterative sigma-clip baseline, WiMDA single-pass=1 iter; exclusions wire exclude_frequency_ranges + diamag slot + PSI preset; Real+Imag overlay; S/N readout). Phase 2: core/fourier/burg.py all-poles diagnostic (memcof/evlmem/FPE, display mode 'Resolution (Burg)') + core/fourier/diamag.py time-domain fit-and-subtract (field write-back + time overlay). Field-axis verify-only (plot_panel FieldUnit). Deferred: radical correlation spectrum, N0 single-histogram."
+    },
+    {
+      "slug": "radical-correlation-spectrum",
+      "feature_name": "Muoniated-radical correlation spectrum (WiMDA Corr/AvCorr + rmatch Breit–Rabi pair-matching)",
+      "status": "study",
+      "path": "docs/porting/radical-correlation-spectrum",
+      "references": [
+        "WiMDA",
+        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)",
+        "McKenzie, Annu. Rep. Prog. Chem. Sect. C 109, 65 (2013)",
+        "Pratt, Physica B 289-290, 710 (2000)",
+        "Blundell et al., Nat. Rev. Methods Primers 1, 89 (2021)"
+      ],
+      "docs": {
+        "readme": "docs/porting/radical-correlation-spectrum/README.md",
+        "comparison": "docs/porting/radical-correlation-spectrum/comparison.md",
+        "implementation_options": "docs/porting/radical-correlation-spectrum/implementation-options.md",
+        "test_data": "docs/porting/radical-correlation-spectrum/test-data.md",
+        "verification_plan": "docs/porting/radical-correlation-spectrum/verification-plan.md"
+      },
+      "tests_path": "tests/test_fourier_correlation.py",
+      "src_path": "src/asymmetry/core/fourier/correlation.py",
+      "depends_on": [
+        "frequency-domain-finishers"
+      ],
+      "updated": "2026-06-11",
+      "notes": "Promotion of frequency-domain-finishers comparison.md §9 (deferred follow-on). Verified vs WiMDA Pascal (Plot.pas rmatch 515-523, w12/w34 525-551, CorrFn 1387-1394, Corr/AvCorr loop 2149-2230; FFTPar CorrField/CorrOrder). Physics reconciled across THREE sources to machine precision: textbook eqn 4.54/4.65 (A=nu12+nu34 high-TF) == McKenzie eqns 6-8 (A_mu=nu43-nu12, her nu12 signed-negative) == muonium.py _tf_levels w12+w34. Decisions: exact Breit-Rabi forward map via muonium.py (NOT rmatch's approximate inverse w/ 5th-sig-fig rounded constants); build as derived display mode through compute_average_group_spectrum like Burg; badged specialist radio; A_mu coupling axis (MHz) excluded from field-unit selector; reference-field + CorrOrder(=2) controls; correlate-the-averaged-spectrum (AvCorr-like, documented divergence). Synthetic-first verification (cyclohexadienyl A_mu=514.4(1) MHz). User docs MUST teach radical-uSR + TF-vs-ALC complementarity (ALC already shipped PR #23, NOT touched). STUDY+PLAN committed; awaiting go-ahead to implement."
     }
   ]
 }
