@@ -30,6 +30,17 @@ machinery for in-batch co-adding.
   `apply_grouping_aligned` or require equality).
 - Co-subtract with correct error propagation (variances add) and a guard
   against negative expected counts.
+  - **F9 (collision reconciliation) — build co-subtract ON the existing
+    chokepoints, not beside them.** The count-level subtraction primitive
+    `subtract_scaled_counts` (`core/transform/background.py`) and the single
+    reference-run resolution home `resolve_background_reference`
+    (`core/io/__init__.py`) already exist and are shared by the reduction and
+    grouped-Fourier paths. Co-subtract (and "Subtract reference run…") must
+    route through them — reusing the same error propagation and the same
+    reference-resolution / frame-scale logic — rather than introducing a
+    parallel second implementation. This is a standing programme decision
+    recorded in the reconciliation study (`../reconciliation-study.md`, F9) and
+    the Wave A closeout; nothing else reconciles it until this project starts.
 - Rewire the Data Browser data-group co-add path onto the new kernel
   (existing `.asymp` data-groups keep working — migration note in study).
 - Expose "Subtract run…" as a browser action.

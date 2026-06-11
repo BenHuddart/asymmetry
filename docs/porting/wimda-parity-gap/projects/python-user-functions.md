@@ -27,6 +27,15 @@ callback; FORTRAN calling-convention variant).
   `register_parameter_component(...)` wrapping the existing
   `ComponentDefinition` / `ParameterModelComponentDefinition` registries
   (both are plain dicts — the seam already exists).
+  - **N4 (collision reconciliation) — registration must present
+    domain-distinguishing names.** These registries (`COMPONENTS`, `MODELS`,
+    `PARAMETER_MODEL_COMPONENTS`) span different analysis domains and are keyed
+    by bare name, so a name alone does not identify a function's domain. The
+    reconciliation study (`../reconciliation-study.md`, N4) **defers the naming
+    formalisation to this project** as its natural home — the facade built here
+    is where domain-distinguishing names should be required at registration,
+    rather than churning every existing import now. See the two-line note in
+    `docs/ARCHITECTURE.md` §4.3.
 - A discovery mechanism (design choice for the study):
   user-functions directory (`~/.asymmetry/user_functions/*.py`) imported at
   startup, and/or `importlib.metadata` entry points for packaged plugins.
