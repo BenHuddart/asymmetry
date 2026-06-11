@@ -396,7 +396,16 @@ class FourierPanel(QWidget):
         content_layout.addWidget(fft_settings_group)
 
         content_layout.addWidget(self._build_conditioning_group())
+        content_layout.addWidget(self._build_diamag_group())
         content_layout.addWidget(self._build_exclusions_group())
+
+        # Read-only hint: the grouping's pre-FFT background correction is
+        # inherited by the Fourier input (F3) and is otherwise invisible here.
+        self._background_hint_label = QLabel("")
+        self._background_hint_label.setWordWrap(True)
+        self._background_hint_label.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
+        self.set_background_hint(None)
+        content_layout.addWidget(self._background_hint_label)
 
         # Action buttons
         self._fft_btn = QPushButton("Compute FFT")
@@ -473,13 +482,6 @@ class FourierPanel(QWidget):
         self._baseline_kappa_edit.setValidator(QDoubleValidator(0.5, 10.0, 3, self))
         form.addRow("Clip κ (σ):", self._baseline_kappa_edit)
 
-        self._remove_diamag_check = QCheckBox("Remove diamagnetic signal")
-        self._remove_diamag_check.setToolTip(
-            "Fit and subtract a damped cosine at the diamagnetic line before the "
-            "FFT, and report the fitted field."
-        )
-        form.addRow(self._remove_diamag_check)
-
         self._burg_order_min_spin = QSpinBox()
         self._burg_order_min_spin.setRange(1, 200)
         self._burg_order_min_spin.setValue(2)
@@ -521,6 +523,44 @@ class FourierPanel(QWidget):
         self._update_conditioning_enabled()
         return group
 
+    def _build_diamag_group(self) -> QGroupBox:
+        """Build the single three-way diamagnetic-line control (F4).
+
+        One mutually-exclusive choice replaces the two former checkboxes
+        (time-domain fit-and-subtract in Conditioning, post-FFT band exclusion
+        in Exclusions). Both ``.asymp`` keys (``remove_diamag`` /
+        ``diamag_exclusion``) stay readable; :meth:`get_state` derives them from
+        the selected mode and they remain mutually exclusive.
+        """
+        group = QGroupBox("Diamagnetic line")
+        form = QFormLayout(group)
+
+        self._diamag_mode_combo = QComboBox()
+        self._diamag_mode_combo.addItem("Leave", userData="leave")
+        self._diamag_mode_combo.addItem("Fit & subtract", userData="subtract")
+        self._diamag_mode_combo.addItem("Exclude band", userData="band")
+        self._diamag_mode_combo.setToolTip(
+            "Leave: no diamagnetic handling.\n"
+            "Fit & subtract: fit a damped cosine at the diamagnetic line and "
+            "subtract it before the FFT, reporting the fitted field (preferred "
+            "for correlation / Aμ work, falls back to nothing below 5 G).\n"
+            "Exclude band: hard-zero a band centred on γ_μ·B after the FFT — the "
+            "robust fallback for lines too strong or distorted to fit."
+        )
+        form.addRow("Diamagnetic line:", self._diamag_mode_combo)
+
+        self._diamag_width_edit = QLineEdit("0.3")
+        self._diamag_width_edit.setFont(mono_font(11.0))
+        self._diamag_width_edit.setValidator(QDoubleValidator(0.0, 100.0, 4, self))
+        self._diamag_width_edit.setToolTip(
+            "Half-width of the excluded band, centred on γ_μ·B (used by 'Exclude band')."
+        )
+        form.addRow("Band half-width (MHz):", self._diamag_width_edit)
+
+        self._diamag_mode_combo.currentIndexChanged.connect(self._update_diamag_controls_enabled)
+        self._update_diamag_controls_enabled()
+        return group
+
     def _build_exclusions_group(self) -> QGroupBox:
         """Build the frequency-range exclusions section."""
         group = QGroupBox("Exclusions")
@@ -528,19 +568,6 @@ class FourierPanel(QWidget):
 
         self._exclude_enabled_check = QCheckBox("Exclude frequency ranges")
         layout.addWidget(self._exclude_enabled_check)
-
-        self._diamag_exclusion_check = QCheckBox("Diamagnetic line (at reference field)")
-        self._diamag_exclusion_check.setToolTip(
-            "Also exclude a band centred on γ_μ·B for the run's applied field."
-        )
-        layout.addWidget(self._diamag_exclusion_check)
-
-        diamag_form = QFormLayout()
-        self._diamag_width_edit = QLineEdit("0.3")
-        self._diamag_width_edit.setFont(mono_font(11.0))
-        self._diamag_width_edit.setValidator(QDoubleValidator(0.0, 100.0, 4, self))
-        diamag_form.addRow("Diamag half-width (MHz):", self._diamag_width_edit)
-        layout.addLayout(diamag_form)
 
         self._exclusion_table = QTableWidget(_MAX_EXCLUSION_ROWS, 2)
         self._exclusion_table.setHorizontalHeaderLabels(["Centre (MHz)", "Half-width (MHz)"])
@@ -564,7 +591,6 @@ class FourierPanel(QWidget):
         layout.addWidget(self._psi_preset_btn)
 
         self._exclude_enabled_check.toggled.connect(self._update_exclusion_enabled)
-        self._diamag_exclusion_check.toggled.connect(self._update_exclusion_enabled)
         self._update_exclusion_enabled()
         return group
 
@@ -583,10 +609,20 @@ class FourierPanel(QWidget):
 
     def _update_exclusion_enabled(self) -> None:
         enabled = self._exclude_enabled_check.isChecked()
-        self._diamag_exclusion_check.setEnabled(enabled)
-        self._diamag_width_edit.setEnabled(enabled and self._diamag_exclusion_check.isChecked())
         self._exclusion_table.setEnabled(enabled)
         self._psi_preset_btn.setEnabled(enabled)
+
+    def _update_diamag_controls_enabled(self) -> None:
+        """Enable the band half-width only for the 'Exclude band' mode."""
+        self._diamag_width_edit.setEnabled(self._diamag_mode() == "band")
+
+    def _diamag_mode(self) -> str:
+        """Return the selected diamagnetic mode: ``leave`` / ``subtract`` / ``band``."""
+        return str(self._diamag_mode_combo.currentData() or "leave")
+
+    def _set_diamag_mode(self, mode: str) -> None:
+        index = self._diamag_mode_combo.findData(mode)
+        self._diamag_mode_combo.setCurrentIndex(index if index >= 0 else 0)
 
     def _apply_psi_harmonics_preset(self) -> None:
         """Fill the exclusion table with DC + 50.63 MHz harmonics 1–5."""
@@ -632,6 +668,17 @@ class FourierPanel(QWidget):
             else:
                 self._exclusion_table.setItem(row, 0, QTableWidgetItem(""))
                 self._exclusion_table.setItem(row, 1, QTableWidgetItem(""))
+
+    def set_background_hint(self, text: str | None) -> None:
+        """Show the inherited grouping-background state above the FFT button (F3).
+
+        ``text`` is the resolved mode description (e.g. ``"tail-fit"``) or
+        ``None`` when no grouping background correction is active.
+        """
+        if text:
+            self._background_hint_label.setText(f"Background: {text}, inherited from grouping")
+        else:
+            self._background_hint_label.setText("Background: off")
 
     def set_fft_status(self, message: str, *, success: bool = False) -> None:
         """Set the status label below the Compute FFT button."""
@@ -993,10 +1040,10 @@ class FourierPanel(QWidget):
             "baseline_mode": str(self._baseline_mode_combo.currentData() or "none"),
             "baseline_kappa": self._parse_float_text(self._baseline_kappa_edit.text(), 2.0),
             "exclude_enabled": self._exclude_enabled_check.isChecked(),
-            "diamag_exclusion": self._diamag_exclusion_check.isChecked(),
+            "diamag_exclusion": self._diamag_mode() == "band",
             "diamag_half_width_mhz": self._parse_float_text(self._diamag_width_edit.text(), 0.3),
             "exclusion_ranges": [[c, w] for c, w in self.exclusion_ranges()],
-            "remove_diamag": self._remove_diamag_check.isChecked(),
+            "remove_diamag": self._diamag_mode() == "subtract",
             "burg_order_min": self._burg_order_min_spin.value(),
             "burg_order_max": self._burg_order_max_spin.value(),
             "correlation_reference_field_gauss": (
@@ -1090,7 +1137,6 @@ class FourierPanel(QWidget):
             self._format_float_text(self._parse_float_text(state.get("baseline_kappa", 2.0), 2.0))
         )
         self._exclude_enabled_check.setChecked(bool(state.get("exclude_enabled", False)))
-        self._diamag_exclusion_check.setChecked(bool(state.get("diamag_exclusion", False)))
         self._diamag_width_edit.setText(
             self._format_float_text(
                 self._parse_float_text(state.get("diamag_half_width_mhz", 0.3), 0.3)
@@ -1099,7 +1145,22 @@ class FourierPanel(QWidget):
         exclusion_ranges = state.get("exclusion_ranges", [])
         if isinstance(exclusion_ranges, (list, tuple)):
             self._set_exclusion_ranges(list(exclusion_ranges))
-        self._remove_diamag_check.setChecked(bool(state.get("remove_diamag", False)))
+        # Map the two legacy booleans onto the single three-way control. Both
+        # readable; fit-and-subtract wins when a legacy project set both, with
+        # the band half-width preserved (and noted) rather than discarded.
+        remove_diamag = bool(state.get("remove_diamag", False))
+        diamag_exclusion = bool(state.get("diamag_exclusion", False))
+        if remove_diamag:
+            self._set_diamag_mode("subtract")
+            if diamag_exclusion:
+                self.set_fft_status(
+                    "Loaded with both diamagnetic paths set; using Fit & subtract "
+                    "(the band half-width is kept)."
+                )
+        elif diamag_exclusion:
+            self._set_diamag_mode("band")
+        else:
+            self._set_diamag_mode("leave")
         try:
             self._burg_order_min_spin.setValue(int(state.get("burg_order_min", 2)))
             self._burg_order_max_spin.setValue(int(state.get("burg_order_max", 40)))
@@ -1120,6 +1181,7 @@ class FourierPanel(QWidget):
             pass
         self._update_conditioning_enabled()
         self._update_exclusion_enabled()
+        self._update_diamag_controls_enabled()
         self._normalize_phase_line_edits()
         self._update_filter_controls_enabled()
         self._update_phase_controls_enabled()
