@@ -187,3 +187,21 @@ parallel to nothing else.
 | 3 — frequency-panel UX | M | ∥ 2, 4 |
 | 4 — docs package | M | ∥ 2, 3 (land after 2) |
 | 5 — trending decorations | M | after 2 + 3 |
+
+## Programme completion
+
+All five phases are merged; the collision-reconciliation programme is complete.
+
+| Phase | PR |
+|---|---|
+| 1 — mechanical UNIFYs (N1, N2, F2, F12) | [#48](https://github.com/BenHuddart/asymmetry/pull/48) |
+| 2 — calibration promote family + count-fit surface | [#50](https://github.com/BenHuddart/asymmetry/pull/50) |
+| 3 — frequency-panel UX (F4, F3-hint, F8-part) | [#49](https://github.com/BenHuddart/asymmetry/pull/49) |
+| 4 — documentation package | [#47](https://github.com/BenHuddart/asymmetry/pull/47) |
+| 5 — trending decorations into FitSeries (F10-unify) | [#51](https://github.com/BenHuddart/asymmetry/pull/51) |
+
+The study companion ([reconciliation-study.md](reconciliation-study.md)) merged
+as [#46](https://github.com/BenHuddart/asymmetry/pull/46). The one deferred item
+— F10's full stateless-window refactor — keeps its trigger recorded in the study
+(§5): the next time the Global Parameter Fit window's data contract has to change
+anyway. Wave B (fit-workflow-diagnostics first) is unblocked.
