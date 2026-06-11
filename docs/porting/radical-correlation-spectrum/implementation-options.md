@@ -124,6 +124,22 @@ See [verification-plan.md](verification-plan.md). Gates: Breit–Rabi identity;
 synthetic cyclohexadienyl peak at A_µ; `rmatch`/`CorrFn` oracle; no regression in
 other Fourier/MaxEnt modes; project round-trip; docs harness + style review.
 
+## Implementation status (all three phases landed)
+
+- **Phase 1 (core):** `core/fourier/correlation.py` (`corr_fn`, `breit_rabi_pair`,
+  `correlation_spectrum`); `correlation` display alias in `fft.py`; the derived
+  mode + `correlation_reference_field_gauss`/`correlation_order` recipe keys in
+  `spectrum.py`; `tests/test_fourier_correlation.py` (32 tests).
+- **Phase 2 (GUI):** badged "Correlation (radical) — specialist" radio + revealed
+  reference-field / order controls in `fourier_panel.py`; config wiring in
+  `mainwindow.py`; correlation-axis lock of the field-unit selector + distinct
+  x-label in `plot_panel.py`; recipe keys added to `core/project/schema.py`
+  whitelist; GUI tests in `tests/test_gui_panels_basic.py`.
+- **Phase 3 (docs):** `docs/user_guide/radical_correlation.rst` (pedagogical page
+  + mandatory TF-vs-ALC complementarity subsection, cross-referencing
+  `alc_mode`), added to the user-guide toctree.
+- All phases `validate`-green.
+
 ## Recorded follow-ons (not in scope this sitting)
 
 - **True per-group `AvCorr`** (per-group `CorrFn` then average) for bit-parity
