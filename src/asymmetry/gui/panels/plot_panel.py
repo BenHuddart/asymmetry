@@ -440,8 +440,11 @@ class PlotPanel(QWidget):
         # ── Row 1: frequency-specific controls (surfaceAlt tinted second row) ──
         if self._is_frequency_plot_panel():
             row1_widget = QWidget()
+            row1_widget.setObjectName("plotFrequencyRow")
+            # Scope to the container: a bare QWidget selector would cascade
+            # the border/background onto every child label and combo.
             row1_widget.setStyleSheet(
-                f"QWidget {{ background-color: {tokens.SURFACE_ALT};"
+                f"QWidget#plotFrequencyRow {{ background-color: {tokens.SURFACE_ALT};"
                 f" border-top: 1px solid {tokens.BORDER}; }}"
             )
             row1 = QHBoxLayout(row1_widget)
@@ -491,8 +494,9 @@ class PlotPanel(QWidget):
     def _create_plot_header(self) -> QWidget:
         """Return the title strip shown above the canvas."""
         widget = QWidget()
+        widget.setObjectName("plotHeaderStrip")
         widget.setStyleSheet(
-            f"QWidget {{ background-color: {tokens.SURFACE_ALT};"
+            f"QWidget#plotHeaderStrip {{ background-color: {tokens.SURFACE_ALT};"
             f" border-bottom: 1px solid {tokens.BORDER}; }}"
         )
         row = QHBoxLayout(widget)
@@ -504,7 +508,7 @@ class PlotPanel(QWidget):
         title_font.setPointSizeF(11.0)
         title_font.setWeight(title_font.Weight.DemiBold)
         self._header_title_label.setFont(title_font)
-        self._header_title_label.setStyleSheet(f"color: {tokens.TEXT}; border: none;")
+        self._header_title_label.setStyleSheet(f"color: {tokens.TEXT};")
         row.addWidget(self._header_title_label, 1)
 
         self._header_meta_label = QLabel()
@@ -512,7 +516,7 @@ class PlotPanel(QWidget):
         self._header_meta_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-        self._header_meta_label.setStyleSheet(f"color: {tokens.TEXT_MUTED}; border: none;")
+        self._header_meta_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         row.addWidget(self._header_meta_label)
 
         self._update_plot_header()
@@ -521,8 +525,9 @@ class PlotPanel(QWidget):
     def _create_plot_footer(self) -> QWidget:
         """Return the control bar shown below the canvas."""
         widget = QWidget()
+        widget.setObjectName("plotFooterStrip")
         widget.setStyleSheet(
-            f"QWidget {{ background-color: {tokens.SURFACE_ALT};"
+            f"QWidget#plotFooterStrip {{ background-color: {tokens.SURFACE_ALT};"
             f" border-top: 1px solid {tokens.BORDER}; }}"
         )
         row = QHBoxLayout(widget)

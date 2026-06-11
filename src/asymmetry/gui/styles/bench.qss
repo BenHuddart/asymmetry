@@ -19,6 +19,8 @@ QToolBar {
     border: none;
     border-bottom: 1px solid #dedcd6;
     spacing: 4px;
+    padding-top: 3px;
+    padding-bottom: 4px;
 }
 
 QMenuBar {

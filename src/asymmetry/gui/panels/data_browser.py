@@ -459,7 +459,7 @@ class DataBrowserPanel(QWidget):
 
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.resizeSection(0, 92)
+        header.resizeSection(0, 86)
         header.resizeSection(1, 200)
         header.resizeSection(2, 52)
         header.resizeSection(3, 52)
@@ -1050,7 +1050,7 @@ class DataBrowserPanel(QWidget):
     def _resize_columns_to_content(self) -> None:
         self._table.resizeColumnsToContents()
         header = self._table.horizontalHeader()
-        minimums = {0: 78, 1: 145, 2: 48, 3: 48}
+        minimums = {0: 72, 1: 145, 2: 48, 3: 48}
         maximums = {0: 150, 1: 320, 2: 76, 3: 76}
         for col, min_width in minimums.items():
             size = header.sectionSize(col)

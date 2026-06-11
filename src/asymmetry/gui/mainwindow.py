@@ -736,7 +736,7 @@ class MainWindow(QMainWindow):
             container = QWidget()
             column = QVBoxLayout(container)
             column.setContentsMargins(0, 0, 0, 0)
-            column.setSpacing(1)
+            column.setSpacing(2)
             heading = QLabel(header.upper())
             heading.setFont(header_font())
             heading.setStyleSheet(f"color: {tokens.TEXT_MUTED};")

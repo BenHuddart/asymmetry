@@ -230,6 +230,18 @@ QAbstractSpinBox::up-arrow {{
 QAbstractSpinBox::down-arrow {{
     image: url({_SPIN_DOWN_ARROW_ICON});
 }}
+QComboBox::drop-down {{
+    width: {spin_button_width}px;
+    border-left: 1px solid {t.BORDER};
+    background-color: palette(button);
+    border-top-right-radius: {border_radius}px;
+    border-bottom-right-radius: {border_radius}px;
+}}
+QComboBox::down-arrow {{
+    width: {spin_arrow_size}px;
+    height: {spin_arrow_size}px;
+    image: url({_SPIN_DOWN_ARROW_ICON});
+}}
 QTableWidget::item {{
     padding: {table_padding_v}px {table_padding_h}px;
 }}
