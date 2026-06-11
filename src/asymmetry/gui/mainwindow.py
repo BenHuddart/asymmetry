@@ -400,16 +400,19 @@ class MainWindow(QMainWindow):
         if icon is not None:
             self.setWindowIcon(icon)
 
-        # Prefer the spacious default, but never open larger than the screen —
-        # a 13-inch MacBook (e.g. 1280×832 logical) must get a layout that
-        # fits without manual resizing.
+        # Prefer the spacious default, capped at ~90% of the available screen
+        # so the window opens comfortably *windowed* (never wall-to-wall) on a
+        # 13-inch MacBook, and centred rather than wherever the WM drops it.
         screen = self.screen() or QGuiApplication.primaryScreen()
         if screen is not None:
             available = screen.availableGeometry()
             self.resize(
-                max(640, min(1400, available.width() - 24)),
-                max(480, min(900, available.height() - 24)),
+                max(640, min(1400, round(available.width() * 0.92))),
+                max(480, min(900, round(available.height() * 0.86))),
             )
+            frame = self.frameGeometry()
+            frame.moveCenter(available.center())
+            self.move(frame.topLeft())
         else:
             self.resize(1400, 900)
 
