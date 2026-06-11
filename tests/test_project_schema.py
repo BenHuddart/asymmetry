@@ -2183,6 +2183,10 @@ class TestMainWindowProjectState:
         monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParamsClear)
 
         window = mw_module.MainWindow()
+        # The inspector deck is visible by default; close both docks so the
+        # restore path's re-show is observable.
+        window._dock_fit.close()
+        window._dock_fit_parameters.close()
         assert window._dock_fit.isHidden()
         assert window._dock_fit_parameters.isHidden()
 

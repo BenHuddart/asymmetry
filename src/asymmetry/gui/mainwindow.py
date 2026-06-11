@@ -469,6 +469,11 @@ class MainWindow(QMainWindow):
         self._applying_view_mode = False
         self._syncing_bunch_context = False
         self._applying_inspector_domain = False
+        # Per-representation memory of inspector tabs the user closed: view
+        # token → dock keys. Closed tabs stay closed when the user returns to
+        # that representation; reopening (View menu or any programmatic show)
+        # clears the flag. Reset layout clears the whole memory.
+        self._inspector_closed_docks: dict[str, set[str]] = {}
 
         self._setup_menus()
         self._create_toolbars()
@@ -477,6 +482,9 @@ class MainWindow(QMainWindow):
         self._connect_actions()
         self._ui_manager.restore_settings()
         self._restore_plot_ranges_from_settings()
+        # Surface the inspector deck for the initial representation (the app
+        # lands in the default F-B view without firing a view-change signal).
+        self._apply_inspector_for_domain(self._plot_workspace.active_view())
         # The app can land in the default F-B view without firing a view-change
         # signal, so seed the ALC-mode toggle's enabled state from the view now.
         self._refresh_alc_mode_enabled()
@@ -590,7 +598,9 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction("Show Data", self._on_show_data)
         view_menu.addAction("Show Fit", self._on_fit)
-        view_menu.addAction("Show Fourier", self._on_fourier)
+        # Disabled while the active representation has no spectrum-processing
+        # tab (time-domain views); see _apply_inspector_for_domain.
+        self._show_fourier_action = view_menu.addAction("Show Fourier", self._on_fourier)
         view_menu.addAction("Show Fit Parameters", self._on_fit_parameters)
         view_menu.addAction("Show Log", self._on_show_log)
 
@@ -630,9 +640,9 @@ class MainWindow(QMainWindow):
         self._main_toolbar.addAction("Export logbook", self._on_export_logbook)
         self._main_toolbar.addSeparator()
         self._main_toolbar.addAction("Grouping", self._on_grouping_current)
-        self._main_toolbar.addAction("Fit", self._on_fit)
-        self._main_toolbar.addAction("FFT", self._on_fourier)
-        self._main_toolbar.addAction("Params", self._on_fit_parameters)
+        # Fit / Fourier / Parameters live in the right-hand inspector deck
+        # (visible by default, per-representation; see
+        # _apply_inspector_for_domain) and are recoverable from the View menu.
         self._global_parameter_fit_toolbar_action = self._main_toolbar.addAction(
             "Global Fit", self._on_global_parameter_fit
         )
@@ -1097,7 +1107,6 @@ class MainWindow(QMainWindow):
         self._dock_fourier.setWidget(self._spectrum_stack)
         self._dock_fourier.setMinimumWidth(280)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fourier)
-        self.tabifyDockWidget(self._dock_fit, self._dock_fourier)
 
         # Right dock — fitted parameter trends (tabbed with fit/fourier). In ALC
         # mode the dock swaps to the bespoke scan view via _parameters_stack.
@@ -1110,12 +1119,23 @@ class MainWindow(QMainWindow):
         self._dock_fit_parameters.setWidget(self._parameters_stack)
         self._dock_fit_parameters.setMinimumWidth(340)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit_parameters)
+        # Canonical inspector tab order, left to right: processing (Spectrum)
+        # first, then Fit, then Parameters — the user works through the deck in
+        # that order. Time-domain views simply hide the Spectrum tab, so one
+        # static order serves every representation.
+        self.tabifyDockWidget(self._dock_fourier, self._dock_fit)
         self.tabifyDockWidget(self._dock_fit, self._dock_fit_parameters)
 
-        # Analysis docks are opened on demand from toolbar/menu actions.
-        self._dock_fit.hide()
+        # The inspector deck is visible by default; the Spectrum dock joins it
+        # only for frequency views. The constructor applies the deck for the
+        # initial representation via _apply_inspector_for_domain once the rest
+        # of the window state exists.
         self._dock_fourier.hide()
-        self._dock_fit_parameters.hide()
+        self._dock_fit.raise_()
+        # Track user closes (the dock X button) per representation so each view
+        # remembers which tabs the user dismissed (see eventFilter).
+        for dock in (self._dock_fit, self._dock_fourier, self._dock_fit_parameters):
+            dock.installEventFilter(self)
         # Gate the FitSeries browser highlight on Parameters dock visibility.
         self._dock_fit_parameters.visibilityChanged.connect(
             self._on_parameters_dock_visibility_changed
@@ -1310,7 +1330,14 @@ class MainWindow(QMainWindow):
         self._ui_manager.bind_actions()
 
     def _show_panel(self, panel_key: str) -> None:
-        """Show a panel in the standard dock layout."""
+        """Show a panel in the standard dock layout.
+
+        Showing an inspector tab — from the View menu or programmatically —
+        clears its closed-tab memory for the active representation.
+        """
+        if panel_key in ("fit", "fourier", "fit_parameters") and hasattr(self, "_plot_workspace"):
+            view = self._plot_workspace.active_view()
+            self._inspector_closed_docks.get(view, set()).discard(panel_key)
         self._ui_manager.show_panel(panel_key)
 
     def _normalize_vector_axis(self, axis: object) -> str | None:
@@ -3821,48 +3848,62 @@ class MainWindow(QMainWindow):
             if hasattr(self._plot_panel, "get_fit_range"):
                 t_min, t_max = self._plot_panel.get_fit_range()
             self._alc_fit_panel.set_fit_range_display(t_min, t_max)
-            for dock in (self._dock_fit, self._dock_fit_parameters):
-                dock.show()
-                dock.raise_()
+            for panel_key in ("fit", "fit_parameters"):
+                self._show_panel(panel_key)
 
-    # Maps each toolbar domain token to (ordered visible dock keys, default raised key).
-    # Fourier is hidden in the groups domain; mgfit is surfaced by swapping _fit_stack.
+    # Maps each workspace view token to (ordered visible dock keys, default
+    # raised key). Spectrum processing (fourier) appears only for frequency
+    # views and always first, so the deck reads processing → fit → parameters
+    # left to right; mgfit is surfaced by swapping _fit_stack.
     _INSPECTOR_DOMAIN_CONFIG: dict[str, tuple[list[str], str]] = {
-        "fb_asymmetry": (["fit", "fourier", "fit_parameters"], "fit"),
+        "fb_asymmetry": (["fit", "fit_parameters"], "fit"),
         "groups": (["fit", "fit_parameters"], "fit"),
         "frequency": (["fourier", "fit", "fit_parameters"], "fourier"),
         "maxent": (["fourier", "fit", "fit_parameters"], "fourier"),
+        "reconstruction": (["fourier", "fit", "fit_parameters"], "fourier"),
     }
 
+    def _inspector_dock_map(self) -> dict[str, QDockWidget]:
+        """Return the inspector deck's dock-key → dock widget map."""
+        return {
+            "fit": self._dock_fit,
+            "fourier": self._dock_fourier,
+            "fit_parameters": self._dock_fit_parameters,
+        }
+
     def _apply_inspector_for_domain(self, view: str) -> None:
-        """Show/hide/raise the right inspector docks for *view* and sync the fit stack."""
+        """Show/hide/raise the right inspector docks for *view* and sync the fit stack.
+
+        Tabs the user closed while in *view* stay closed (per-representation
+        memory); tabs that do not belong to *view*'s deck are hidden even when
+        floating, and re-shown — still floating — when a deck that includes
+        them becomes active again.
+        """
         config = self._INSPECTOR_DOMAIN_CONFIG.get(view)
         if config is None:
             return
 
         visible_keys, default_key = config
-        dock_map = {
-            "fit": self._dock_fit,
-            "fourier": self._dock_fourier,
-            "fit_parameters": self._dock_fit_parameters,
-        }
-        visible_set = set(visible_keys)
+        dock_map = self._inspector_dock_map()
+        visible_set = set(visible_keys) - self._inspector_closed_docks.get(view, set())
 
         self._applying_inspector_domain = True
         try:
             for key, dock in dock_map.items():
-                if dock.isFloating():
-                    continue
-                if key in visible_set:
-                    dock.show()
-                else:
-                    dock.hide()
+                dock.setVisible(key in visible_set)
 
-            default_dock = dock_map[default_key]
-            if not default_dock.isFloating():
-                default_dock.raise_()
+            raise_key = default_key if default_key in visible_set else None
+            if raise_key is None:
+                raise_key = next((key for key in visible_keys if key in visible_set), None)
+            if raise_key is not None and not dock_map[raise_key].isFloating():
+                dock_map[raise_key].raise_()
         finally:
             self._applying_inspector_domain = False
+
+        # The View-menu recovery entry for the Spectrum tab only makes sense
+        # where the deck has one.
+        if hasattr(self, "_show_fourier_action"):
+            self._show_fourier_action.setEnabled("fourier" in set(visible_keys))
 
         # Sync _fit_stack page: groups domain surfaces mgfit when grouped data is present,
         # all other domains revert to single-fit so the dock title reads "Fit".
@@ -3902,7 +3943,7 @@ class MainWindow(QMainWindow):
 
     def _on_fourier(self) -> None:
         """Show and raise the Fourier dock panel."""
-        self._sync_spectrum_panel_for_view("frequency")
+        self._sync_spectrum_panel_for_view()
         self._show_panel("fourier")
         if self._current_dataset is not None:
             self._sync_fourier_panel_for_dataset(self._current_dataset)
@@ -5622,7 +5663,9 @@ class MainWindow(QMainWindow):
 
     def _reset_layout(self) -> None:
         """Reset dock panels to the default compact-friendly layout."""
+        self._inspector_closed_docks.clear()
         self._ui_manager.reset_layout()
+        self._apply_inspector_for_domain(self._plot_workspace.active_view())
 
     def _on_dataset_selected(self, run_number: int) -> None:
         """Handle dataset selection from data browser."""
@@ -5893,6 +5936,10 @@ class MainWindow(QMainWindow):
         Qt suppresses tooltips for disabled widgets, but the disabled state is
         precisely when the user needs the "switch to F-B view" hint, so we render
         the help event ourselves.
+
+        Also records inspector-dock closes (the dock X button sends a Close
+        event; programmatic hide() does not) into the per-representation
+        closed-tab memory consumed by _apply_inspector_for_domain.
         """
         if (
             event.type() == QEvent.Type.ToolTip
@@ -5901,6 +5948,16 @@ class MainWindow(QMainWindow):
         ):
             QToolTip.showText(event.globalPos(), self._alc_mode_action.toolTip(), obj)
             return True
+        if (
+            event.type() == QEvent.Type.Close
+            and not self._applying_inspector_domain
+            and hasattr(self, "_dock_fit_parameters")
+        ):
+            for key, dock in self._inspector_dock_map().items():
+                if obj is dock:
+                    view = self._plot_workspace.active_view()
+                    self._inspector_closed_docks.setdefault(view, set()).add(key)
+                    break
         return super().eventFilter(obj, event)
 
     @staticmethod

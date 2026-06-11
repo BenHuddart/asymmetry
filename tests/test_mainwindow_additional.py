@@ -1384,8 +1384,10 @@ class TestMainWindowBasic:
         labels = [btn.text() for btn in mainwindow._domain_buttons]
         assert labels == ["F-B asymmetry", "Individual groups", "FFT", "MaxEnt"]
 
-    def test_on_fit_shows_fit_dock(self, mainwindow: MainWindow) -> None:
-        """Fit action should unhide the fit dock if it starts hidden."""
+    def test_on_fit_reshows_closed_fit_dock(self, mainwindow: MainWindow) -> None:
+        """The fit dock is visible by default; Fit re-shows it after a close."""
+        assert not mainwindow._dock_fit.isHidden()
+        mainwindow._dock_fit.close()
         assert mainwindow._dock_fit.isHidden()
         mainwindow._on_fit()
         assert not mainwindow._dock_fit.isHidden()
@@ -1752,8 +1754,10 @@ class TestMainWindowBasic:
         mainwindow._on_fourier()
         assert not mainwindow._dock_fourier.isHidden()
 
-    def test_on_fit_parameters_shows_params_dock(self, mainwindow: MainWindow) -> None:
-        """Fit Parameters action should unhide the dock if it starts hidden."""
+    def test_on_fit_parameters_reshows_closed_params_dock(self, mainwindow: MainWindow) -> None:
+        """The params dock is visible by default; the action re-shows it after a close."""
+        assert not mainwindow._dock_fit_parameters.isHidden()
+        mainwindow._dock_fit_parameters.close()
         assert mainwindow._dock_fit_parameters.isHidden()
         mainwindow._on_fit_parameters()
         assert not mainwindow._dock_fit_parameters.isHidden()
@@ -1917,14 +1921,15 @@ class TestMainWindowBasic:
         assert state["view_modes_state"]["modes"][0]["x_min"] == pytest.approx(0.25)
         assert state["view_modes_state"]["modes"][0]["x_max"] == pytest.approx(7.5)
 
-    def test_toolbar_grouping_before_fit(self, mainwindow: MainWindow) -> None:
-        """Toolbar should expose Grouping action before Fit for discoverability."""
+    def test_toolbar_omits_inspector_panel_actions(self, mainwindow: MainWindow) -> None:
+        """Fit/FFT/Params live in the right-hand inspector deck, not the toolbar."""
         toolbar = mainwindow.findChild(QToolBar)
         assert toolbar is not None
         texts = [action.text() for action in toolbar.actions()]
         assert "Grouping" in texts
-        assert "Fit" in texts
-        assert texts.index("Grouping") < texts.index("Fit")
+        assert "Fit" not in texts
+        assert "FFT" not in texts
+        assert "Params" not in texts
 
     def test_toolbar_has_domain_segmented_control(self, mainwindow: MainWindow) -> None:
         """Toolbar should expose four Domain buttons (Time 2 + Frequency 2)."""
