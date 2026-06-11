@@ -191,12 +191,14 @@ def test_show_panel_clears_closed_tab_memory(qapp: QApplication, win: MainWindow
     assert win._dock_fit_parameters.isVisible()
 
 
-def test_show_fourier_menu_action_disabled_in_time_views(win: MainWindow) -> None:
-    """The Spectrum recovery entry is only enabled where the deck has the tab."""
+def test_fourier_menu_actions_disabled_in_time_views(win: MainWindow) -> None:
+    """Both Fourier menu entries are only enabled where the deck has the tab."""
     _switch_domain(win, "fb_asymmetry")
     assert not win._show_fourier_action.isEnabled()
+    assert not win._fourier_analysis_action.isEnabled()
     _switch_domain(win, "frequency")
     assert win._show_fourier_action.isEnabled()
+    assert win._fourier_analysis_action.isEnabled()
 
 
 # ── Unknown domain token is a no-op ──────────────────────────────────────────

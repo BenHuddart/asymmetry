@@ -253,6 +253,24 @@ class _RowHighlightDelegate(QStyledItemDelegate):
             font.setPointSizeF(max(7.0, size * 0.85))
         return font
 
+    def _line_metrics(self, base: QFont) -> tuple[QFont, QFontMetrics, QFontMetrics]:
+        """Return (comment font, title metrics, comment metrics), cached per font.
+
+        paint() runs per cell per frame; constructing QFontMetrics there makes
+        scrolling measurably jankier, and the base font only changes on a UI
+        scale change.
+        """
+        cache = getattr(self, "_metrics_cache", None)
+        if cache is None:
+            cache = self._metrics_cache = {}
+        key = base.key()
+        entry = cache.get(key)
+        if entry is None:
+            comment_font = self._comment_font(base)
+            entry = (comment_font, QFontMetrics(base), QFontMetrics(comment_font))
+            cache[key] = entry
+        return entry
+
     def _draw_two_line_cell(self, painter, opt, index) -> None:
         """Draw title over muted smaller-text comment inside ``opt.rect``.
 
@@ -263,10 +281,7 @@ class _RowHighlightDelegate(QStyledItemDelegate):
         title = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         rect = opt.rect.adjusted(4, self._TWO_LINE_PAD, -4, -self._TWO_LINE_PAD)
 
-        title_font = QFont(opt.font)
-        comment_font = self._comment_font(opt.font)
-        title_fm = QFontMetrics(title_font)
-        comment_fm = QFontMetrics(comment_font)
+        comment_font, title_fm, comment_fm = self._line_metrics(opt.font)
 
         title_color = opt.palette.color(QPalette.ColorRole.Text)
         foreground = index.data(Qt.ItemDataRole.ForegroundRole)
@@ -276,7 +291,7 @@ class _RowHighlightDelegate(QStyledItemDelegate):
             title_color = foreground
 
         painter.save()
-        painter.setFont(title_font)
+        painter.setFont(opt.font)
         painter.setPen(title_color)
         painter.drawText(
             QRect(rect.left(), rect.top(), rect.width(), title_fm.height()),
@@ -302,9 +317,8 @@ class _RowHighlightDelegate(QStyledItemDelegate):
         if self._cell_comment(index):
             opt = QStyleOptionViewItem(option)
             self.initStyleOption(opt, index)
-            title_h = QFontMetrics(opt.font).height()
-            comment_h = QFontMetrics(self._comment_font(opt.font)).height()
-            hint.setHeight(title_h + comment_h + 2 * self._TWO_LINE_PAD)
+            _, title_fm, comment_fm = self._line_metrics(opt.font)
+            hint.setHeight(title_fm.height() + comment_fm.height() + 2 * self._TWO_LINE_PAD)
         return hint
 
     def paint(self, painter, option, index):
@@ -734,8 +748,6 @@ class DataBrowserPanel(QWidget):
                     self._add_dataset_row(dataset, indent=False)
 
         self._updating_table = False
-        # Rows whose Title cell carries a comment get a two-line height.
-        self._table.resizeRowsToContents()
         self._apply_row_visibility()
         self._restore_selection_by_keys(selected_keys)
 
@@ -868,6 +880,8 @@ class DataBrowserPanel(QWidget):
         if title or comment:
             title_item.setToolTip("\n".join(part for part in (title, comment) if part))
         self._table.setItem(row, 1, title_item)
+        if comment.strip():
+            self._table.setRowHeight(row, self._two_line_row_height())
 
         provenance_tip = self._derived_run_tooltip(meta)
         if provenance_tip:
@@ -1015,6 +1029,19 @@ class DataBrowserPanel(QWidget):
             )
         self._on_selection_changed()
         return True
+
+    def _two_line_row_height(self) -> int:
+        """Row height for a title+comment cell, cached per table font."""
+        font = self._table.font()
+        font_key = font.key()
+        cached = getattr(self, "_two_line_height_cache", None)
+        if cached is not None and cached[0] == font_key:
+            return cached[1]
+        title_h = QFontMetrics(font).height()
+        comment_h = QFontMetrics(_RowHighlightDelegate._comment_font(font)).height()
+        height = title_h + comment_h + 2 * _RowHighlightDelegate._TWO_LINE_PAD
+        self._two_line_height_cache = (font_key, height)
+        return height
 
     def _resize_columns_to_content(self) -> None:
         self._table.resizeColumnsToContents()
@@ -2616,6 +2643,10 @@ class DataBrowserPanel(QWidget):
         ]
         selected_group_ids = self._get_selected_group_ids()
         return {
+            # Version 2: the Comment column was removed (comments ride on the
+            # Title cell), so indices >= 4 shifted down by one. restore_state
+            # migrates version-1 indices.
+            "column_layout": 2,
             "sort_column": self._current_sort_column,
             "sort_order": "ascending"
             if self._current_sort_order == Qt.SortOrder.AscendingOrder
@@ -2633,11 +2664,33 @@ class DataBrowserPanel(QWidget):
         }
 
     def restore_state(self, state: dict) -> None:
+        try:
+            layout_version = int(state.get("column_layout", 1))
+        except (TypeError, ValueError):
+            layout_version = 1
+        # Layout v1 had Comment as column 4; v2 removed it, shifting extras
+        # down by one. Migrate legacy indices so old projects don't filter or
+        # sort against the wrong column (a stale Comment filter would hide
+        # every row).
+        legacy_comment_col = 4
+
         self._column_filters = {}
         for col_str, values in state.get("filters", {}).items():
-            self._column_filters[int(col_str)] = set(values)
+            col = int(col_str)
+            if layout_version < 2:
+                if col == legacy_comment_col:
+                    continue
+                if col > legacy_comment_col:
+                    col -= 1
+            self._column_filters[col] = set(values)
 
-        self._current_sort_column = int(state.get("sort_column", -1))
+        sort_column = int(state.get("sort_column", -1))
+        if layout_version < 2:
+            if sort_column == legacy_comment_col:
+                sort_column = -1
+            elif sort_column > legacy_comment_col:
+                sort_column -= 1
+        self._current_sort_column = sort_column
         sort_order_str = state.get("sort_order", "ascending")
         self._current_sort_order = (
             Qt.SortOrder.AscendingOrder

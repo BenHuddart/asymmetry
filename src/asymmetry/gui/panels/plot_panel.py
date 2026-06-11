@@ -1272,7 +1272,7 @@ class PlotPanel(QWidget):
         token = str(mode or "").strip().lower().replace(" ", "_")
         if token in {"groups", "group", "individual_groups", "grouped", "grouped_counts"}:
             return "groups"
-        if token in {"raw_counts", "raw", "counts", "raw_count"}:
+        if token in {"raw_counts", "raw", "raw_count"}:
             return "raw_counts"
         return "fb_asymmetry"
 
@@ -1890,6 +1890,19 @@ class PlotPanel(QWidget):
         axis_key = self._axis_key_for_dataset(dataset, axis_override=axis_override)
         return run_number, axis_key
 
+    @staticmethod
+    def _is_raw_counts_dataset(dataset: MuonDataset | None) -> bool:
+        """True for grouped datasets built without lifetime correction.
+
+        Stored grouped/count fit overlays are on the lifetime-corrected scale,
+        so they must not be drawn against raw-count curves (they diverge by
+        e^(t/τ), ~38× at 8 μs).
+        """
+        return (
+            dataset is not None
+            and dataset.metadata.get("grouped_time_domain_lifetime_corrected") is False
+        )
+
     def _fit_curve_for_dataset(
         self,
         dataset: MuonDataset | None,
@@ -1897,6 +1910,8 @@ class PlotPanel(QWidget):
         axis_override: str | None = None,
     ) -> tuple | None:
         """Return best-matching fit curve payload for *dataset*."""
+        if self._is_raw_counts_dataset(dataset):
+            return None
         storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
         if storage_key is not None:
             fit_data = self._fit_curves_by_key.get(storage_key)
@@ -1932,6 +1947,8 @@ class PlotPanel(QWidget):
         axis_override: str | None = None,
     ) -> list[tuple[str, object]]:
         """Return best-matching additive component curves for *dataset*."""
+        if self._is_raw_counts_dataset(dataset):
+            return []
         storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
         if storage_key is not None:
             components = self._fit_components_by_key.get(storage_key)
@@ -2383,7 +2400,12 @@ class PlotPanel(QWidget):
         ordered_keys: list[str] = []
         grouped_x_ranges: list[tuple[float, float]] = []
         for idx, dataset in enumerate(datasets):
+            # Raw and corrected builds share synthetic run numbers but live on
+            # very different y scales; qualify the key so pinned y-limits from
+            # one mode are not applied to the other.
             axis_key = str(dataset.run_number)
+            if self._is_raw_counts_dataset(dataset):
+                axis_key += ":raw"
             ordered_keys.append(axis_key)
             ax = self._figure.add_subplot(len(datasets), 1, idx + 1, sharex=shared_ax)
             style_axes(ax)

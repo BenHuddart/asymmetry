@@ -1527,3 +1527,23 @@ def test_export_headers_keep_comment_column(qapp: QApplication) -> None:
     headers = panel._active_column_headers()
     assert headers[: len(panel._COLUMNS)] == panel._COLUMNS
     assert headers[len(panel._COLUMNS)] == "Comment"
+
+
+def test_restore_state_migrates_legacy_column_indices(qapp: QApplication) -> None:
+    """V1 states (Comment as column 4) migrate: Comment filter/sort dropped,
+    extra-column indices shift down by one."""
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(731))
+
+    panel.restore_state({"sort_column": 5, "filters": {"4": ["ok"], "5": ["rod"]}})
+    assert panel._column_filters == {4: {"rod"}}
+    assert panel._current_sort_column == 4
+
+    # A v1 sort on the Comment column itself is dropped entirely.
+    panel.restore_state({"sort_column": 4, "filters": {}})
+    assert panel._current_sort_column == -1
+
+    # V2 states pass through unchanged.
+    panel.restore_state({"column_layout": 2, "sort_column": 4, "filters": {"4": ["rod"]}})
+    assert panel._column_filters == {4: {"rod"}}
+    assert panel._current_sort_column == 4

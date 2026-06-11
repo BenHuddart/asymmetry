@@ -406,8 +406,8 @@ class MainWindow(QMainWindow):
         if screen is not None:
             available = screen.availableGeometry()
             self.resize(
-                min(1400, max(960, available.width() - 24)),
-                min(900, max(640, available.height() - 24)),
+                max(640, min(1400, available.width() - 24)),
+                max(480, min(900, available.height() - 24)),
             )
         else:
             self.resize(1400, 900)
@@ -588,7 +588,9 @@ class MainWindow(QMainWindow):
         # Analysis
         analysis_menu = mb.addMenu("&Analysis")
         analysis_menu.addAction("&Fit", self._on_fit)
-        analysis_menu.addAction("F&ourier", self._on_fourier)
+        # Gated alongside View → Show Fourier: disabled while the active
+        # representation's deck has no spectrum tab (time-domain views).
+        self._fourier_analysis_action = analysis_menu.addAction("F&ourier", self._on_fourier)
         analysis_menu.addAction("Fit &Parameters", self._on_fit_parameters)
         analysis_menu.addAction("Grouping...", self._on_grouping_current)
         self._global_parameter_fit_action = analysis_menu.addAction(
@@ -3936,10 +3938,14 @@ class MainWindow(QMainWindow):
         finally:
             self._applying_inspector_domain = False
 
-        # The View-menu recovery entry for the Spectrum tab only makes sense
-        # where the deck has one.
-        if hasattr(self, "_show_fourier_action"):
-            self._show_fourier_action.setEnabled("fourier" in set(visible_keys))
+        # The Fourier menu entries only make sense where the deck has a
+        # spectrum tab — otherwise the dock they open would be reclaimed on
+        # the next view switch.
+        fourier_available = "fourier" in visible_keys
+        for action_name in ("_show_fourier_action", "_fourier_analysis_action"):
+            action = getattr(self, action_name, None)
+            if action is not None:
+                action.setEnabled(fourier_available)
 
         # Sync _fit_stack page: groups domain surfaces mgfit when grouped data is present,
         # all other domains revert to single-fit so the dock title reads "Fit".
@@ -5968,11 +5974,10 @@ class MainWindow(QMainWindow):
         as the ALC toggle, so it is refreshed alongside
         :meth:`_refresh_alc_mode_enabled`.
         """
-        if len(getattr(self, "_domain_buttons", [])) <= 3:
+        button = getattr(self, "_domain_buttons_by_token", {}).get("maxent")
+        if button is None:
             return
-        self._domain_buttons_by_token["maxent"].setEnabled(
-            self._current_selection_supports_maxent()
-        )
+        button.setEnabled(self._current_selection_supports_maxent())
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         """Show the ALC-mode tooltip on hover even while the button is disabled.
@@ -6129,8 +6134,9 @@ class MainWindow(QMainWindow):
             )
 
         if entries and hasattr(self, "_dock_fit_parameters"):
-            self._dock_fit_parameters.show()
-            self._dock_fit_parameters.raise_()
+            # Route through _show_panel so the per-representation closed-tab
+            # memory is cleared — the app is deliberately surfacing the dock.
+            self._show_panel("fit_parameters")
         elif not entries and hasattr(self._data_browser, "set_highlighted_runs"):
             # No series remain — ensure the browser highlight is cleared.
             self._data_browser.set_highlighted_runs(set())
@@ -6407,9 +6413,8 @@ class MainWindow(QMainWindow):
         self._log_panel.log(f"Built integral scan '{series.label}' ({scan.n_points} points).")
 
         # Bring the freshly-built scan into view: raise the Parameters dock
-        # (the ALC scan view) over the Fit dock.
-        self._dock_fit_parameters.show()
-        self._dock_fit_parameters.raise_()
+        # (the ALC scan view) over the Fit dock, clearing any closed-tab memory.
+        self._show_panel("fit_parameters")
 
     # x-axis key → (display label, derivative unit label).
     _ALC_X_LABELS = {"field": "B (G)", "temperature": "T (K)", "run": "Run"}
@@ -7025,7 +7030,11 @@ class MainWindow(QMainWindow):
             )
 
         self._plot_panel.set_global_fits(fit_curves)
-        if hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
+        if not self._grouped_display_lifetime_corrected():
+            # The fit ran on lifetime-corrected counts; keep the Raw counts
+            # display raw — the overlay shows in the Individual groups view.
+            self._render_current_selection_plot()
+        elif hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
             self._plot_panel.plot_grouped_time_domain_subplots(grouped_datasets)
         self._log_panel.log(f"Grouped time-domain fit completed: {len(grouped_datasets)} groups")
         self.statusBar().showMessage(
@@ -7060,7 +7069,9 @@ class MainWindow(QMainWindow):
             )
 
         self._plot_panel.set_global_fits(fit_payloads)
-        if hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
+        if not self._grouped_display_lifetime_corrected():
+            self._render_current_selection_plot()
+        elif hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
             self._plot_panel.plot_grouped_time_domain_subplots(grouped_datasets)
 
     def _on_count_fit_completed(self, dataset, payload) -> None:
@@ -7100,7 +7111,11 @@ class MainWindow(QMainWindow):
             return
 
         self._plot_panel.set_global_fits(fit_curves)
-        if hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
+        if not self._grouped_display_lifetime_corrected():
+            # Overlays are on the corrected scale; the Raw counts display
+            # stays raw and shows them when the user switches to groups.
+            self._render_current_selection_plot()
+        elif hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
             self._plot_panel.plot_grouped_time_domain_subplots(grouped_datasets)
         self._log_panel.log(f"Count-domain fit overlaid on {len(fit_curves)} group(s).")
 
@@ -7764,6 +7779,16 @@ class MainWindow(QMainWindow):
             )
         except ValueError:
             return []
+
+    def _grouped_display_lifetime_corrected(self) -> bool:
+        """Whether the grouped display shows lifetime-corrected counts.
+
+        False only in the Raw counts view; grouped fits always run on the
+        corrected counts, so their overlays match only the corrected display.
+        """
+        if hasattr(self._plot_panel, "current_time_view_mode"):
+            return self._plot_panel.current_time_view_mode() != "raw_counts"
+        return True
 
     # ── project save / open ────────────────────────────────────────────
 
