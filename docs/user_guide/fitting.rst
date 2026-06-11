@@ -87,6 +87,8 @@ and units displayed in the GUI, in fit reports, and in exported GLE
 figures all derive from this registry, so they are guaranteed to be
 consistent with what the model function actually expects.
 
+.. _fit-statistics:
+
 Fit Statistics
 --------------
 

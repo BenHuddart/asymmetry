@@ -38,6 +38,7 @@ material.
    frequency_domain_fitting
    vector_polarization
    fitting
+   assessing_a_fit
    composite_models
    fit_wizard
    global_fit_wizard

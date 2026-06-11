@@ -213,6 +213,8 @@ simulation: drawing :math:`\mathrm{Poisson}(f k)` from the recorded
 genuinely longer measurement. Use it for qualitative "more statistics"
 sketches only — never for quantitative sensitivity claims.
 
+.. _pull-diagnostic:
+
 Validating error bars: the pull distribution
 ---------------------------------------------
 
