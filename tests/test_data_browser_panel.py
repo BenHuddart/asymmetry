@@ -1261,7 +1261,7 @@ def test_row_highlight_delegate_covers_whole_table(qapp: QApplication) -> None:
 
 
 def test_group_header_count_in_last_column(qapp: QApplication) -> None:
-    """Group header row shows right-aligned 'N runs' count in col 4; col 1 is blank."""
+    """Group header row shows right-aligned 'N runs' count in col 3; col 1 is blank."""
     panel = DataBrowserPanel()
     panel.add_dataset(_dataset(601))
     panel.add_dataset(_dataset(602))
@@ -1279,7 +1279,7 @@ def test_group_header_count_in_last_column(qapp: QApplication) -> None:
     assert col1_item is not None
     assert col1_item.text() == ""
 
-    count_item = panel._table.item(header_row, 4)
+    count_item = panel._table.item(header_row, 3)
     assert count_item is not None
     assert count_item.text() == "2 runs"
     assert count_item.textAlignment() & Qt.AlignmentFlag.AlignRight
@@ -1307,7 +1307,7 @@ def test_group_header_count_singular(qapp: QApplication) -> None:
     for row in range(panel._table.rowCount()):
         item = panel._table.item(row, 0)
         if item is not None and isinstance(item.data(Qt.ItemDataRole.UserRole), str):
-            count_item = panel._table.item(row, 4)
+            count_item = panel._table.item(row, 3)
             assert count_item is not None
             assert count_item.text() == "1 run"
             break
@@ -1475,3 +1475,55 @@ def test_release_does_not_drop_a_used_run_number(qapp):
     # A number already claimed by a dataset must not be released back.
     panel.release_derived_run_number(number)
     assert panel.next_derived_run_number() != number
+
+
+# ── Two-line title cells (title + comment) ──────────────────────────────────
+
+
+def test_title_cell_carries_comment_role_and_tooltip(qapp: QApplication) -> None:
+    """The comment rides on the Title cell instead of its own column."""
+    from asymmetry.gui.panels.data_browser import _COMMENT_ROLE
+
+    panel = DataBrowserPanel()
+    ds = _dataset(701)
+    ds.metadata["title"] = "EuO powder"
+    ds.metadata["comment"] = "ZF cooldown, careful with degausser"
+    panel.add_dataset(ds)
+
+    assert panel._table.columnCount() == len(panel._COLUMNS)
+    assert "Comment" not in panel._COLUMNS
+
+    title_item = panel._table.item(0, 1)
+    assert title_item is not None
+    assert title_item.text() == "EuO powder"
+    assert title_item.data(_COMMENT_ROLE) == "ZF cooldown, careful with degausser"
+    assert "EuO powder" in title_item.toolTip()
+    assert "ZF cooldown" in title_item.toolTip()
+
+
+def test_rows_with_comment_are_taller_than_rows_without(qapp: QApplication) -> None:
+    """Two-line title cells get a two-line row height."""
+    panel = DataBrowserPanel()
+    with_comment = _dataset(711)
+    with_comment.metadata["comment"] = "long descriptive comment"
+    without_comment = _dataset(712)
+    without_comment.metadata["comment"] = ""
+    panel.add_dataset(with_comment)
+    panel.add_dataset(without_comment)
+
+    rows = {}
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is not None:
+            rows[item.data(Qt.ItemDataRole.UserRole)] = row
+
+    assert panel._table.rowHeight(rows[711]) > panel._table.rowHeight(rows[712])
+
+
+def test_export_headers_keep_comment_column(qapp: QApplication) -> None:
+    """The logbook export keeps Comment as its own column."""
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(721))
+    headers = panel._active_column_headers()
+    assert headers[: len(panel._COLUMNS)] == panel._COLUMNS
+    assert headers[len(panel._COLUMNS)] == "Comment"

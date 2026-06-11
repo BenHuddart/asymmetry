@@ -20,7 +20,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QBrush, QColor, QFont, QPalette
+from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -55,6 +55,10 @@ _LOG_TEMPERATURE_FOREGROUND = QColor(176, 36, 36)
 _GROUP_FIELD_REL_TOL = 1e-4
 _GROUP_HEADER_BACKGROUND = QColor(tokens.GROUP_HEADER_BG)
 _GROUP_MEMBER_BACKGROUND = QColor(tokens.GROUP_MEMBER_BG)
+#: Item-data role carrying the run comment shown as the Title cell's second line.
+_COMMENT_ROLE = Qt.ItemDataRole.UserRole + 1
+#: Column index of the two-line Title cell.
+_TITLE_COLUMN = 1
 # Soft red tint used to mark runs that belong to the active fit series in
 # the trend panel.  Red is the FitSeries brand colour (ACCENT_RED_SOFT).
 _SERIES_HIGHLIGHT_BACKGROUND = QColor(tokens.ACCENT_RED_SOFT)
@@ -213,6 +217,10 @@ class _RowHighlightDelegate(QStyledItemDelegate):
     The delegate strips State_Selected and State_HasFocus from the option copy
     before calling super().paint() so that QSS selection-background-color and
     ::item:focus rules never override the custom backgrounds above.
+
+    The Title column renders two lines when the run carries a comment: the
+    title on top, the comment in smaller muted text underneath (replacing the
+    old Comment column, which forced horizontal scrolling).
     """
 
     _SENTINEL = "group:"
@@ -223,7 +231,81 @@ class _RowHighlightDelegate(QStyledItemDelegate):
     _ACCENT = QColor(tokens.ACCENT)
     _ACCENT_SOFT = QColor(31, 77, 138, 102)  # 40 % accent
     _WHITE = QColor("white")
+    _COMMENT_COLOR = QColor(tokens.TEXT_MUTED)
     _CLEAR_FLAGS = QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_HasFocus
+    #: Vertical padding around the two text lines of a title+comment cell.
+    _TWO_LINE_PAD = 3
+
+    @staticmethod
+    def _cell_comment(index) -> str:
+        """Return the comment carried by a Title cell ('' elsewhere)."""
+        if index.column() != _TITLE_COLUMN:
+            return ""
+        comment = index.data(_COMMENT_ROLE)
+        return str(comment).strip() if isinstance(comment, str) else ""
+
+    @staticmethod
+    def _comment_font(base: QFont) -> QFont:
+        """Return the smaller font used for the comment line."""
+        font = QFont(base)
+        size = font.pointSizeF()
+        if size > 0:
+            font.setPointSizeF(max(7.0, size * 0.85))
+        return font
+
+    def _draw_two_line_cell(self, painter, opt, index) -> None:
+        """Draw title over muted smaller-text comment inside ``opt.rect``.
+
+        ``opt`` must already be initStyleOption()-initialised; the background
+        is the caller's responsibility.
+        """
+        comment = self._cell_comment(index)
+        title = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        rect = opt.rect.adjusted(4, self._TWO_LINE_PAD, -4, -self._TWO_LINE_PAD)
+
+        title_font = QFont(opt.font)
+        comment_font = self._comment_font(opt.font)
+        title_fm = QFontMetrics(title_font)
+        comment_fm = QFontMetrics(comment_font)
+
+        title_color = opt.palette.color(QPalette.ColorRole.Text)
+        foreground = index.data(Qt.ItemDataRole.ForegroundRole)
+        if isinstance(foreground, QBrush):
+            title_color = foreground.color()
+        elif isinstance(foreground, QColor):
+            title_color = foreground
+
+        painter.save()
+        painter.setFont(title_font)
+        painter.setPen(title_color)
+        painter.drawText(
+            QRect(rect.left(), rect.top(), rect.width(), title_fm.height()),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            title_fm.elidedText(title, Qt.TextElideMode.ElideRight, rect.width()),
+        )
+        painter.setFont(comment_font)
+        painter.setPen(self._COMMENT_COLOR)
+        painter.drawText(
+            QRect(
+                rect.left(),
+                rect.top() + title_fm.height(),
+                rect.width(),
+                comment_fm.height(),
+            ),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            comment_fm.elidedText(comment, Qt.TextElideMode.ElideRight, rect.width()),
+        )
+        painter.restore()
+
+    def sizeHint(self, option, index):  # noqa: N802 — Qt override
+        hint = super().sizeHint(option, index)
+        if self._cell_comment(index):
+            opt = QStyleOptionViewItem(option)
+            self.initStyleOption(opt, index)
+            title_h = QFontMetrics(opt.font).height()
+            comment_h = QFontMetrics(self._comment_font(opt.font)).height()
+            hint.setHeight(title_h + comment_h + 2 * self._TWO_LINE_PAD)
+        return hint
 
     def paint(self, painter, option, index):
         table = self.parent()
@@ -234,6 +316,7 @@ class _RowHighlightDelegate(QStyledItemDelegate):
             and col0.data(Qt.ItemDataRole.UserRole).startswith(self._SENTINEL)
         )
         is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        has_comment = bool(self._cell_comment(index))
 
         if is_selected:
             is_focused = index.row() == table.currentRow()
@@ -259,7 +342,12 @@ class _RowHighlightDelegate(QStyledItemDelegate):
                 pal.setColor(QPalette.ColorRole.Text, self._WHITE)
                 opt.palette = pal
 
-            table.style().drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, table)
+            if has_comment:
+                self._draw_two_line_cell(painter, opt, index)
+            else:
+                table.style().drawControl(
+                    QStyle.ControlElement.CE_ItemViewItem, opt, painter, table
+                )
 
             # Left-edge bar on column 0 for member / run rows only
             if not is_header and index.column() == 0:
@@ -269,6 +357,12 @@ class _RowHighlightDelegate(QStyledItemDelegate):
                     QRect(option.rect.left(), option.rect.top(), bar_width, option.rect.height()),
                     bar_color,
                 )
+        elif has_comment:
+            opt = QStyleOptionViewItem(option)
+            self.initStyleOption(opt, index)
+            if opt.backgroundBrush.style() != Qt.BrushStyle.NoBrush:
+                painter.fillRect(option.rect, opt.backgroundBrush)
+            self._draw_two_line_cell(painter, opt, index)
         else:
             super().paint(painter, option, index)
 
@@ -282,7 +376,10 @@ class DataBrowserPanel(QWidget):
     get_info_requested = Signal(int)
     grouping_requested = Signal(int)
 
-    _COLUMNS = ["Run", "Title", "𝑇 (K)", "𝐵 (G)", "Comment"]
+    # The comment rides as the Title cell's second line (see
+    # _RowHighlightDelegate) instead of its own column, so long comments never
+    # force horizontal scrolling.
+    _COLUMNS = ["Run", "Title", "𝑇 (K)", "𝐵 (G)"]
     _RUN_INFO_FIELD_LABELS = {
         "instrument": "Instrument",
         "run_label": "Run",
@@ -347,10 +444,9 @@ class DataBrowserPanel(QWidget):
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.resizeSection(0, 110)
-        header.resizeSection(1, 145)
+        header.resizeSection(1, 200)
         header.resizeSection(2, 60)
         header.resizeSection(3, 60)
-        header.resizeSection(4, 155)
         self._table.setSortingEnabled(False)
         self._table.horizontalHeader().setSortIndicatorShown(True)
         self._table.horizontalHeader().setSectionsClickable(False)
@@ -638,6 +734,8 @@ class DataBrowserPanel(QWidget):
                     self._add_dataset_row(dataset, indent=False)
 
         self._updating_table = False
+        # Rows whose Title cell carries a comment get a two-line height.
+        self._table.resizeRowsToContents()
         self._apply_row_visibility()
         self._restore_selection_by_keys(selected_keys)
 
@@ -661,15 +759,15 @@ class DataBrowserPanel(QWidget):
         run_item.setBackground(_GROUP_HEADER_BACKGROUND)
         self._table.setItem(row, 0, run_item)
 
-        # Cols 1–3: blank
-        for col in range(1, min(4, self._table.columnCount())):
+        # Cols 1–2 (Title, T): blank
+        for col in range(1, min(3, self._table.columnCount())):
             blank = QTableWidgetItem("")
             blank.setFlags(blank.flags() & ~Qt.ItemFlag.ItemIsEditable)
             blank.setBackground(_GROUP_HEADER_BACKGROUND)
             self._table.setItem(row, col, blank)
 
-        # Col 4 (Comment): right-aligned member count in muted mono
-        if self._table.columnCount() > 4:
+        # Last base column (B): right-aligned member count in muted mono
+        if self._table.columnCount() > 3:
             n = len(group.member_run_numbers)
             count_text = f"{n} run" if n == 1 else f"{n} runs"
             count_item = QTableWidgetItem(count_text)
@@ -678,10 +776,10 @@ class DataBrowserPanel(QWidget):
             count_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             count_item.setForeground(QColor(tokens.TEXT_MUTED))
             count_item.setBackground(_GROUP_HEADER_BACKGROUND)
-            self._table.setItem(row, 4, count_item)
+            self._table.setItem(row, 3, count_item)
 
-        # Extra columns beyond the fixed five: blank
-        for col in range(5, self._table.columnCount()):
+        # Extra columns beyond the fixed four: blank
+        for col in range(len(self._COLUMNS), self._table.columnCount()):
             blank = QTableWidgetItem("")
             blank.setFlags(blank.flags() & ~Qt.ItemFlag.ItemIsEditable)
             blank.setBackground(_GROUP_HEADER_BACKGROUND)
@@ -762,8 +860,13 @@ class DataBrowserPanel(QWidget):
         self._table.setItem(row, 0, run_item)
 
         title = str(meta.get("title", ""))
+        comment = str(meta.get("comment", ""))
         title_item = QTableWidgetItem(title)
         title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        # The comment renders as the cell's second line (see _RowHighlightDelegate).
+        title_item.setData(_COMMENT_ROLE, comment)
+        if title or comment:
+            title_item.setToolTip("\n".join(part for part in (title, comment) if part))
         self._table.setItem(row, 1, title_item)
 
         provenance_tip = self._derived_run_tooltip(meta)
@@ -786,10 +889,6 @@ class DataBrowserPanel(QWidget):
         field_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._table.setItem(row, 3, field_item)
 
-        comment = str(meta.get("comment", ""))
-        comment_item = QTableWidgetItem(comment)
-        comment_item.setFlags(comment_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self._table.setItem(row, 4, comment_item)
         for i, field_key in enumerate(self._visible_extra_columns(), start=len(self._COLUMNS)):
             value = self._value_for_extra_column(dataset, field_key)
             item = QTableWidgetItem(value)
@@ -920,8 +1019,8 @@ class DataBrowserPanel(QWidget):
     def _resize_columns_to_content(self) -> None:
         self._table.resizeColumnsToContents()
         header = self._table.horizontalHeader()
-        minimums = {0: 90, 1: 145, 2: 60, 3: 60, 4: 155}
-        maximums = {0: 180, 1: 260, 2: 90, 3: 90, 4: 320}
+        minimums = {0: 90, 1: 145, 2: 60, 3: 60}
+        maximums = {0: 180, 1: 320, 2: 90, 3: 90}
         for col, min_width in minimums.items():
             size = header.sectionSize(col)
             if size < min_width:
@@ -1672,11 +1771,13 @@ class DataBrowserPanel(QWidget):
         return "".join(escaped)
 
     def _active_column_headers(self) -> list[str]:
-        """Return visible/active data-browser column headers."""
-        headers: list[str] = []
-        for col in range(self._table.columnCount()):
-            header_item = self._table.horizontalHeaderItem(col)
-            headers.append(header_item.text() if header_item is not None else "")
+        """Return logbook-export column headers.
+
+        The browser shows comments inline under the title, but the export
+        keeps Comment as its own column after the base columns.
+        """
+        headers = list(self._COLUMNS) + ["Comment"]
+        headers.extend(self._extra_column_header(key) for key in self._visible_extra_columns())
         return headers
 
     def _export_sections(self) -> list[tuple[str, list[int]]]:
