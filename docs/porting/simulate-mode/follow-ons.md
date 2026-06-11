@@ -123,13 +123,46 @@ Asymmetry now also simulates from **built-in idealised instrument templates**
 analogue of either, nor of the multi-group per-phase ring or the in-GUI
 pull-distribution diagnostic.
 
+## Delivered later (Wave A strays, 2026-06-11)
+
+The three count-domain-owned simulation modes the original deferral named all
+landed once the count-domain fit modes existed (`feat/wave-a-strays`, off
+`main`). Decisions settled with Ben at that session's checkpoint: two-period
+runs stay **in-memory only** (the NeXus writer keeps emitting one period);
+count-mode covers **per-group single-histogram count synthesis** for the PR #41
+fits.
+
+- **Double-pulse simulation** — `simulate_double_pulse_run` (shipped with
+  `count-domain-fit-modes` itself; round-trips the double-pulse single-histogram
+  fit).
+- **Count-mode simulation** — `simulate_count_run` (`core/simulate.py`): imprints
+  the **same** `+a(t)` on every detector group as independent single-histogram
+  counts (`N₀·e^{−t/τ}(1+a)+b`), the modern equivalent of WiMDA's `evfactor`
+  non-FB branch. Round-trips through `fit_single_histogram` (recovers N₀, A,
+  background; `tests/test_simulate.py::TestCountModeSimulation`). The α-free
+  `fit_fb_alpha` is fed by the existing antisymmetric `simulate_run` (it needs
+  the F/B pair), verified in the same class.
+- **Two-period simulation** — `simulate_two_period_run` + `PeriodSpec`
+  (`core/simulate.py`): per-period model/parameters/α/event-budget, sampled from
+  one seeded generator. Emits the loader's two-period payload
+  (`period_histograms`/`period_reduced`/`period_good_frames`/
+  `period_dead_time_us`/`period_mode`) with `run.histograms` cloned from red, so
+  `select_period`, the green∓red combination in `reduce_run_to_dataset`, and
+  `degrade_run` all work; pulls are unit-normal (`TestTwoPeriodSimulation`).
+- **Simulate dialog** — a single additive **Generation** combo (forward/backward
+  asymmetry · count histograms · two-period red/green) plus a green-amplitude
+  factor shown only for two-period (0 → a flat reference period, so G−R recovers
+  the red signal).
+
 ## Still deferred (unchanged)
 
 - **Deadtime-distortion injection** (simulate the non-paralyzable count loss,
   write real deadtimes, exercise the correction end-to-end) — re-confirmed
-  deferred this session.
-- **Double-pulse, two-period and count-mode simulation** — owned by
-  `count-domain-fit-modes`.
+  deferred.
+- **NeXus two-period writer** — a two-period synthetic run is in-memory only;
+  Save-as-NeXus emits the red period (the writer's `histogram_data_1`), matching
+  WiMDA. Promoting period support into the writer + loader round-trip is a future
+  follow-on.
 - **Event-mode simulation; sample-environment logs; PSI/ROOT writers.**
 
 ## Possible next follow-ons (new)

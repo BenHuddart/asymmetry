@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import numpy as np
+from numpy.typing import NDArray
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -41,9 +43,12 @@ from asymmetry.core.io.nexus_writer import write_nexus_v1
 from asymmetry.core.simulate import (
     BUILTIN_TEMPLATES,
     GroupSignalSpec,
+    PeriodSpec,
     build_builtin_template,
+    simulate_count_run,
     simulate_multi_group_run,
     simulate_run,
+    simulate_two_period_run,
     total_events_of,
 )
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
@@ -230,6 +235,29 @@ class SimulateDialog(_SimulateDialogBase):
         layout.addWidget(self._param_table)
 
         controls = QFormLayout()
+        self._mode_combo = QComboBox()
+        # (label, userData) — userData is the generation mode key.
+        self._mode_combo.addItem("Forward/backward asymmetry", "fb")
+        self._mode_combo.setItemData(
+            0, "±a(t) on the F/B groups — the standard asymmetry run.", Qt.ItemDataRole.ToolTipRole
+        )
+        self._mode_combo.addItem("Count histograms (single-group)", "count")
+        self._mode_combo.setItemData(
+            1,
+            "+a(t) on every group as independent single-histogram counts, for "
+            "the count-domain fit modes.",
+            Qt.ItemDataRole.ToolTipRole,
+        )
+        self._mode_combo.addItem("Two-period (red/green)", "two_period")
+        self._mode_combo.setItemData(
+            2,
+            "Two period histograms (red = full signal, green scaled) for the "
+            "red/green reduction and G∓R combination.",
+            Qt.ItemDataRole.ToolTipRole,
+        )
+        self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        controls.addRow("Generation:", self._mode_combo)
+
         self._events_spin = QDoubleSpinBox()
         self._events_spin.setRange(0.01, 1.0e5)
         self._events_spin.setDecimals(2)
@@ -242,6 +270,19 @@ class SimulateDialog(_SimulateDialogBase):
         self._background_spin.setDecimals(3)
         self._background_spin.setValue(0.0)
         controls.addRow("Background (counts/bin/detector):", self._background_spin)
+
+        self._green_amp_spin = QDoubleSpinBox()
+        self._green_amp_spin.setRange(0.0, 2.0)
+        self._green_amp_spin.setDecimals(2)
+        self._green_amp_spin.setSingleStep(0.1)
+        self._green_amp_spin.setValue(0.0)
+        self._green_amp_spin.setToolTip(
+            "Green-period signal as a fraction of the model amplitude. 0 makes "
+            "green a flat reference (the usual light-off / RF-off period), so "
+            "G−R recovers the red signal."
+        )
+        self._green_amp_row_label = QLabel("Green amplitude (×):")
+        controls.addRow(self._green_amp_row_label, self._green_amp_spin)
 
         seed_row = QHBoxLayout()
         self._seed_check = QCheckBox("Fixed seed")
@@ -282,6 +323,7 @@ class SimulateDialog(_SimulateDialogBase):
         # purely by the absence of a loaded run.
         self._generate_button.setEnabled(self._template_combo.count() > 0)
         self._on_template_changed()
+        self._on_mode_changed()
 
     # ------------------------------------------------------------------
     # Template / model / parameters
@@ -301,6 +343,12 @@ class SimulateDialog(_SimulateDialogBase):
             if ds.run_number == data and ds.run is not None:
                 return ds.run
         return None
+
+    def _on_mode_changed(self) -> None:
+        """Show the green-amplitude control only for the two-period mode."""
+        two_period = str(self._mode_combo.currentData()) == "two_period"
+        self._green_amp_row_label.setVisible(two_period)
+        self._green_amp_spin.setVisible(two_period)
 
     def _on_template_changed(self) -> None:
         template = self._current_template()
@@ -410,28 +458,75 @@ class SimulateDialog(_SimulateDialogBase):
             return
         self._param_values = self._table_parameters()
         seed = self._resolve_seed()
+        events = self._events_spin.value() * 1.0e6
+        background = self._background_spin.value()
+        mode = str(self._mode_combo.currentData())
         run_number = self._next_run_number()
         try:
-            run = simulate_run(
-                template,
-                self._model,
-                self._param_values,
-                total_events=self._events_spin.value() * 1.0e6,
-                seed=seed,
-                background_per_bin=self._background_spin.value(),
-                run_number=run_number,
-            )
+            if mode == "count":
+                run = simulate_count_run(
+                    template,
+                    self._model,
+                    self._param_values,
+                    total_events=events,
+                    seed=seed,
+                    background_per_bin=background,
+                    run_number=run_number,
+                )
+            elif mode == "two_period":
+                run = simulate_two_period_run(
+                    template,
+                    self._two_period_specs(),
+                    total_events=events,
+                    seed=seed,
+                    background_per_bin=background,
+                    run_number=run_number,
+                )
+            else:
+                run = simulate_run(
+                    template,
+                    self._model,
+                    self._param_values,
+                    total_events=events,
+                    seed=seed,
+                    background_per_bin=background,
+                    run_number=run_number,
+                )
         except (TypeError, ValueError) as exc:
             QMessageBox.warning(self, "Generate Synthetic Run", str(exc))
             self._release_run_number(run_number)
             return
         self._last_run = run
         self._save_button.setEnabled(True)
+        mode_note = {"count": " count histograms", "two_period": " two-period"}.get(mode, "")
         self._status_label.setText(
-            f"Generated SIM {run.run_number} from run {template.run_number} "
+            f"Generated SIM {run.run_number}{mode_note} from run {template.run_number} "
             f"({self._events_spin.value():g} MEv, seed {seed})."
         )
         self.run_generated.emit(run)
+
+    def _two_period_specs(self) -> list[PeriodSpec]:
+        """Build red/green :class:`PeriodSpec`\\ s from the model and green scale.
+
+        Red carries the model as-is; green scales the whole signal by the
+        green-amplitude factor (0 → a flat reference period), so G−R recovers
+        the red signal.
+        """
+        params = dict(self._param_values)
+        red = PeriodSpec(self._model, params, label="red")
+
+        green_factor = float(self._green_amp_spin.value())
+        base_fn = (
+            self._model.function
+            if hasattr(self._model, "function") and callable(self._model.function)
+            else self._model
+        )
+
+        def green_signal(t: NDArray[np.float64], **kw: float) -> NDArray[np.float64]:
+            return green_factor * np.asarray(base_fn(t, **kw), dtype=float)
+
+        green = PeriodSpec(green_signal, params, label="green")
+        return [red, green]
 
     def _on_save_nexus(self) -> None:
         self._save_generated_as_nexus("Save Synthetic Run")
