@@ -45,7 +45,6 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QTabBar,
     QToolBar,
-    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -176,13 +175,6 @@ _MAXENT_WARN_TOTAL_MATRIX_BYTES = 8 * 1024**3
 # travel with the series and cannot orphan when the fit is re-run or removed.
 _GLOBAL_FIT_DECORATIONS_EXTRA_KEY = "global_fit_decorations"
 
-# ALC-mode toggle tooltips. The enabled text describes the feature; the disabled
-# text tells the user how to reach it (the toggle is only valid in the F-B view).
-_ALC_TOOLTIP_ENABLED = (
-    "Integral-asymmetry field scan (ALC / repolarisation / QLCR). "
-    "Available for the Forward-Backward asymmetry representation."
-)
-_ALC_TOOLTIP_DISABLED = "Switch to the F-B asymmetry view to use ALC mode."
 _MAXENT_WARN_TOTAL_OBSERVATIONS = 500_000
 
 
@@ -470,7 +462,6 @@ class MainWindow(QMainWindow):
         self._project_model = ProjectModel()
         self._next_batch_index = 1
         self._next_scan_index = 1
-        self._alc_mode = False
         #: Per-run data for the current ALC scan (fractional value + metadata),
         #: re-rendered when the scan-view x-axis / derivative options change.
         self._alc_scan_points: list[dict] = []
@@ -541,9 +532,6 @@ class MainWindow(QMainWindow):
         # Surface the inspector deck for the initial representation (the app
         # lands in the default F-B view without firing a view-change signal).
         self._apply_inspector_for_domain(self._plot_workspace.active_view())
-        # The app can land in the default F-B view without firing a view-change
-        # signal, so seed the ALC-mode toggle's enabled state from the view now.
-        self._refresh_alc_mode_enabled()
 
         # Check for SciPy availability and warn if using fallback
         from asymmetry.core.fitting.diffusion import is_scipy_available
@@ -718,36 +706,14 @@ class MainWindow(QMainWindow):
             "Global Fit", self._on_global_parameter_fit
         )
         self._global_parameter_fit_toolbar_action.setEnabled(False)
-        # ALC mode: integral-asymmetry field scan. Enabled only for the F-B
-        # asymmetry representation (see _on_plot_workspace_view_changed).
-        self._alc_mode_action = self._main_toolbar.addAction("ALC mode")
-        self._alc_mode_action.setCheckable(True)
-        self._alc_mode_action.setEnabled(False)
-        self._alc_mode_action.setToolTip(_ALC_TOOLTIP_ENABLED)
-        self._alc_mode_action.toggled.connect(self._on_alc_mode_toggled)
-        # Make the active state unmistakable: when checked, the button turns the
-        # ALC/FitSeries red. Styled on the specific tool button so the other
-        # toolbar buttons keep their native look.
-        alc_button = self._main_toolbar.widgetForAction(self._alc_mode_action)
-        if alc_button is not None:
-            alc_button.setStyleSheet(
-                "QToolButton { padding: 4px 8px; border-radius: 3px; }"
-                f"QToolButton:hover {{ background-color: {tokens.SURFACE_HI}; }}"
-                f"QToolButton:checked {{ background-color: {tokens.ACCENT_RED}; "
-                "color: #ffffff; font-weight: 700; }"
-                f"QToolButton:checked:hover {{ background-color: {tokens.ACCENT_RED}; }}"
-            )
-            # A disabled QToolButton swallows hover events, so Qt won't show its
-            # tooltip — yet the disabled state is exactly when the user needs the
-            # "switch to F-B view" hint. Filter the help event to show it anyway.
-            alc_button.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
-            alc_button.installEventFilter(self)
-        self._alc_mode_button = alc_button
         self._main_toolbar.addSeparator()
 
-        # Domain → representation segmented control, grouped 2 + 2 under
-        # "Time" and "Frequency" headers.  One exclusive group spans all four
-        # buttons so only a single representation is ever active.
+        # Domain → representation segmented control under "Time" and
+        # "Frequency" headers.  One exclusive group spans all buttons so only
+        # a single representation is ever active.  The integral-asymmetry
+        # field scan (ALC / repolarisation / QLCR) is a representation here,
+        # not a mode toggle: it owns its inspector deck (scan build → scan
+        # results) like the frequency views own theirs.
         self._domain_button_group = QButtonGroup(self)
         self._domain_button_group.setExclusive(True)
         self._domain_buttons: list[QPushButton] = []
@@ -788,6 +754,7 @@ class MainWindow(QMainWindow):
                 [
                     ("F-B asymmetry", "fb_asymmetry"),
                     ("Individual groups", "groups"),
+                    ("Integral scan", "integral_scan"),
                 ],
             )
         )
@@ -799,6 +766,10 @@ class MainWindow(QMainWindow):
             )
         )
         self._domain_buttons_by_token["fb_asymmetry"].setChecked(True)
+        self._domain_buttons_by_token["integral_scan"].setToolTip(
+            "Integral-asymmetry field scan (ALC / repolarisation / QLCR): "
+            "integrate the F-B asymmetry over the fit window for each selected run"
+        )
         self._domain_buttons_by_token["maxent"].setEnabled(False)
         self._domain_buttons_by_token["maxent"].setToolTip(
             "Maximum-entropy spectra from grouped counts"
@@ -1616,7 +1587,10 @@ class MainWindow(QMainWindow):
         if not hasattr(self._plot_panel, "set_time_view_modes"):
             return
 
-        modes = ["fb_asymmetry"]
+        # The integral scan needs only the F-B reduction, so like fb_asymmetry
+        # it is always an available mode — including under multi-selection,
+        # where building a field scan from the selected runs is its workflow.
+        modes = ["fb_asymmetry", "integral_scan"]
         selected = list(self._data_browser.get_selected_datasets())
         if len(selected) > 1 and self._overlay_enabled():
             current_mode = None
@@ -1625,7 +1599,10 @@ class MainWindow(QMainWindow):
             self._plot_panel.set_time_view_modes(modes, current_mode=current_mode)
             if hasattr(self._plot_workspace, "set_available_views"):
                 self._plot_workspace.set_available_views(modes)
-                if self._plot_workspace.active_domain() == "time":
+                if (
+                    self._plot_workspace.active_domain() == "time"
+                    and self._plot_workspace.active_view() not in modes
+                ):
                     self._plot_workspace.set_active_view("fb_asymmetry")
             self._domain_buttons_by_token["groups"].setEnabled(False)
             self._raw_counts_action.setEnabled(False)
@@ -2256,9 +2233,6 @@ class MainWindow(QMainWindow):
 
         # Update selected datasets for global fitting
         self._update_selected_datasets()
-        # Loading runs into the already-active F-B view doesn't fire a view
-        # change, so re-evaluate the ALC-mode toggle against the current view.
-        self._refresh_alc_mode_enabled()
 
         # Update status message
         if successful > 0:
@@ -3926,22 +3900,16 @@ class MainWindow(QMainWindow):
         else:
             self._dock_fit.setWindowTitle("Fit")  # inspector tab label — title case per spec
 
-    def _on_alc_mode_toggled(self, checked: bool) -> None:
-        """Enter/leave ALC mode: swap the Fit and Parameters docks accordingly."""
-        if checked and self._active_representation_type() != RepresentationType.TIME_FB_ASYMMETRY:
-            # Guard: ALC mode is only valid for the F-B asymmetry representation.
-            self._alc_mode_action.setChecked(False)
-            return
-        self._alc_mode = bool(checked)
-        self._sync_fit_dock_mode()
-        if self._alc_mode:
-            # Echo the current integration window and surface the docks.
-            t_min, t_max = (None, None)
-            if hasattr(self._plot_panel, "get_fit_range"):
-                t_min, t_max = self._plot_panel.get_fit_range()
-            self._alc_fit_panel.set_fit_range_display(t_min, t_max)
-            for panel_key in ("fit", "fit_parameters"):
-                self._show_panel(panel_key)
+    @property
+    def _alc_mode(self) -> bool:
+        """True while the Integral scan representation is active.
+
+        The old standalone ALC toggle became the ``integral_scan`` view; this
+        property keeps the dock-mode and persistence code reading one flag.
+        """
+        if not hasattr(self, "_plot_workspace"):
+            return False
+        return self._plot_workspace.active_view() == "integral_scan"
 
     # Maps each workspace view token to (ordered visible dock keys, default
     # raised key). Spectrum processing (fourier) appears only for frequency
@@ -3949,6 +3917,9 @@ class MainWindow(QMainWindow):
     # left to right; mgfit is surfaced by swapping _fit_stack.
     _INSPECTOR_DOMAIN_CONFIG: dict[str, tuple[list[str], str]] = {
         "fb_asymmetry": (["fit", "fit_parameters"], "fit"),
+        # Integral scan: Fit dock shows the scan-build panel, Parameters the
+        # scan view (page swaps in _sync_fit_dock_mode).
+        "integral_scan": (["fit", "fit_parameters"], "fit"),
         "groups": (["fit", "fit_parameters"], "fit"),
         "raw_counts": (["fit", "fit_parameters"], "fit"),
         "frequency": (["fourier", "fit", "fit_parameters"], "fourier"),
@@ -5923,11 +5894,15 @@ class MainWindow(QMainWindow):
             self._sync_frequency_plot_for_current_dataset()
         self._sync_domain_buttons(view)
         self._sync_raw_counts_action(view)
+        if view == "integral_scan":
+            # Echo the current integration window into the scan-build panel
+            # before the deck surfaces it.
+            t_min, t_max = (None, None)
+            if hasattr(self._plot_panel, "get_fit_range"):
+                t_min, t_max = self._plot_panel.get_fit_range()
+            self._alc_fit_panel.set_fit_range_display(t_min, t_max)
         self._apply_inspector_for_domain(view)
         self._update_status_selection()
-        # ALC mode is only valid for the F-B asymmetry view; keep the toggle's
-        # enabled state in sync and auto-exit ALC mode when the user leaves it.
-        self._refresh_alc_mode_enabled()
         # FFT <-> MaxEnt is a view change within the frequency domain (no
         # active_domain_changed), so re-evaluate the MaxEnt button here too or it
         # stays stale-disabled when the dataset actually supports MaxEnt.
@@ -5999,6 +5974,9 @@ class MainWindow(QMainWindow):
             return None
         return {
             "fb_asymmetry": RepresentationType.TIME_FB_ASYMMETRY,
+            # The integral scan integrates the F-B asymmetry; it shares that
+            # representation's slots (the scan itself is a FitSeries).
+            "integral_scan": RepresentationType.TIME_FB_ASYMMETRY,
             "groups": RepresentationType.TIME_GROUPS,
             # Raw counts is the uncorrected display of the grouped
             # representation; fits and trends share the TIME_GROUPS slot.
@@ -6006,29 +5984,6 @@ class MainWindow(QMainWindow):
             "frequency": RepresentationType.FREQ_FFT,
             "maxent": RepresentationType.FREQ_MAXENT,
         }.get(self._plot_workspace.active_view())
-
-    def _refresh_alc_mode_enabled(self) -> None:
-        """Sync the ALC-mode toggle's enabled state with the active representation.
-
-        ALC mode (integral-asymmetry field scan) is meaningful only for the
-        Forward-Backward asymmetry representation, and is enabled there
-        regardless of how many runs are selected — the "need two runs" rule is
-        enforced at build time in :meth:`_on_scan_requested`, not on the toggle.
-
-        Driving the flag off the active representation (rather than only the
-        view-change signal) keeps it correct on every path that lands in the F-B
-        view without firing that signal: startup, loading runs into the default
-        view, and project restore. When the view is not F-B the toggle is
-        disabled, its tooltip explains how to reach it, and any active ALC mode
-        is exited.
-        """
-        if not hasattr(self, "_alc_mode_action"):
-            return
-        is_fb = self._active_representation_type() == RepresentationType.TIME_FB_ASYMMETRY
-        self._alc_mode_action.setEnabled(is_fb)
-        self._alc_mode_action.setToolTip(_ALC_TOOLTIP_ENABLED if is_fb else _ALC_TOOLTIP_DISABLED)
-        if not is_fb and self._alc_mode_action.isChecked():
-            self._alc_mode_action.setChecked(False)  # fires _on_alc_mode_toggled(False)
 
     def _current_selection_supports_maxent(self) -> bool:
         """Whether the active selection/dataset can produce MaxEnt spectra.
@@ -6053,9 +6008,7 @@ class MainWindow(QMainWindow):
         the frequency *domain*, so switching between them emits
         ``active_view_changed`` but not ``active_domain_changed`` -- without this
         the button could stay stale-disabled in the FFT view even though the
-        current dataset supports MaxEnt. This is the same stale-enable-flag class
-        as the ALC toggle, so it is refreshed alongside
-        :meth:`_refresh_alc_mode_enabled`.
+        current dataset supports MaxEnt.
         """
         button = getattr(self, "_domain_buttons_by_token", {}).get("maxent")
         if button is None:
@@ -6063,23 +6016,12 @@ class MainWindow(QMainWindow):
         button.setEnabled(self._current_selection_supports_maxent())
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        """Show the ALC-mode tooltip on hover even while the button is disabled.
+        """Record inspector-dock closes into the per-representation memory.
 
-        Qt suppresses tooltips for disabled widgets, but the disabled state is
-        precisely when the user needs the "switch to F-B view" hint, so we render
-        the help event ourselves.
-
-        Also records inspector-dock closes (the dock X button sends a Close
-        event; programmatic hide() does not) into the per-representation
-        closed-tab memory consumed by _apply_inspector_for_domain.
+        The dock X button sends a Close event; programmatic hide() does not —
+        so this captures exactly the user closes consumed by
+        _apply_inspector_for_domain.
         """
-        if (
-            event.type() == QEvent.Type.ToolTip
-            and obj is getattr(self, "_alc_mode_button", None)
-            and not obj.isEnabled()
-        ):
-            QToolTip.showText(event.globalPos(), self._alc_mode_action.toolTip(), obj)
-            return True
         if (
             event.type() == QEvent.Type.Close
             and not self._applying_inspector_domain
@@ -7709,6 +7651,7 @@ class MainWindow(QMainWindow):
         n_total = len(all_ds)
         _domain_labels = {
             "fb_asymmetry": "F-B asymmetry",
+            "integral_scan": "integral scan",
             "groups": "individual groups",
             "raw_counts": "raw counts",
             "frequency": "frequency",
@@ -8249,11 +8192,6 @@ class MainWindow(QMainWindow):
 
     def _restore_alc_scan(self) -> None:
         """Rebuild the ALC scan + analysis from the persisted computed series."""
-        # restore_state sets the workspace view without firing the view-change
-        # signal, so sync the toggle's enabled state to the restored view here —
-        # before any early return — so an F-B restore enables it even when no
-        # ALC scan was saved.
-        self._refresh_alc_mode_enabled()
         series = next(
             (
                 batch
@@ -8287,15 +8225,15 @@ class MainWindow(QMainWindow):
                     self._on_fit_peaks()
         finally:
             self._alc_loading = False
-        # Resume ALC mode if it was active at save time and the restored view is
-        # F-B asymmetry. The enabled flag was already synced at the top of this
-        # method; here we only re-check the toggle. (It just swaps docks with no
-        # re-render, so the restored scan + overlays survive.)
+        # Resume the integral-scan view if it was active at save time and the
+        # restored view is in the F-B family. New projects persist the view
+        # token directly in the workspace state; this also maps legacy saves
+        # (toolbar-toggle era, mode_active=True with an fb_asymmetry view).
         if (
             series.extra.get("mode_active")
             and self._active_representation_type() == RepresentationType.TIME_FB_ASYMMETRY
         ):
-            self._alc_mode_action.setChecked(True)
+            self._plot_workspace.set_active_view("integral_scan")
 
     def _alc_points_from_series(self, series) -> list[dict]:
         """Reconstruct per-run scan points from the series + loaded run metadata."""

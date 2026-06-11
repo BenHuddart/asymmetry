@@ -17,13 +17,24 @@ class PlotWorkspacePanel(QWidget):
     active_domain_changed = Signal(str)
     active_view_changed = Signal(str)
 
-    _VIEW_TOKENS = ("fb_asymmetry", "groups", "raw_counts", "reconstruction", "frequency", "maxent")
+    _VIEW_TOKENS = (
+        "fb_asymmetry",
+        "integral_scan",
+        "groups",
+        "raw_counts",
+        "reconstruction",
+        "frequency",
+        "maxent",
+    )
     #: View tokens that resolve to the frequency-domain plot panel.
     _FREQUENCY_VIEWS = frozenset({"frequency", "maxent"})
+    #: Views needing only the F-B reduction, so they are always available
+    #: (callers add data-gated views like ``groups`` via set_available_views).
+    _ALWAYS_ENABLED_VIEWS = frozenset({"fb_asymmetry", "integral_scan", "frequency"})
     #: Primary time-domain data views eligible to be the time-view fallback
     #: (the reconstruction overlay and the raw-counts view are diagnostics,
     #: deliberately excluded — "back to time domain" lands on real data views).
-    _PRIMARY_TIME_VIEWS = frozenset({"fb_asymmetry", "groups"})
+    _PRIMARY_TIME_VIEWS = frozenset({"fb_asymmetry", "integral_scan", "groups"})
 
     def __init__(
         self,
@@ -36,7 +47,7 @@ class PlotWorkspacePanel(QWidget):
         self._time_panel = time_panel
         self._frequency_panel = frequency_panel
         self._last_time_view = "fb_asymmetry"
-        self._enabled_views: set[str] = {"fb_asymmetry", "frequency"}
+        self._enabled_views: set[str] = set(self._ALWAYS_ENABLED_VIEWS)
         self._active_view = "fb_asymmetry"
 
         layout = QVBoxLayout(self)
@@ -90,12 +101,13 @@ class PlotWorkspacePanel(QWidget):
     def set_available_views(self, views: list[str]) -> None:
         """Update the set of enabled views.
 
-        ``fb_asymmetry`` and ``frequency`` are always available.  Callers add
-        ``groups`` when grouped-time-domain data is ready to plot.  If the
-        currently active view becomes unavailable the workspace falls back to
-        the last known time view (or ``fb_asymmetry``).
+        ``fb_asymmetry``, ``integral_scan`` and ``frequency`` are always
+        available (they need only the F-B reduction).  Callers add ``groups``
+        when grouped-time-domain data is ready to plot.  If the currently
+        active view becomes unavailable the workspace falls back to the last
+        known time view (or ``fb_asymmetry``).
         """
-        enabled: set[str] = {"fb_asymmetry", "frequency"}
+        enabled: set[str] = set(self._ALWAYS_ENABLED_VIEWS)
         for token in views:
             normalized = str(token).strip().lower()
             if normalized in self._VIEW_TOKENS:

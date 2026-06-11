@@ -78,95 +78,68 @@ def _ds(
 
 
 def _enter_alc(mw: MainWindow, monkeypatch) -> None:
-    monkeypatch.setattr(mw, "_active_representation_type", lambda: _FB)
-    mw._alc_mode_action.setChecked(True)
+    """Enter the integral-scan representation (the old ALC mode toggle)."""
+    mw._plot_workspace.set_active_view("integral_scan")
 
 
-# --- toggle + dock swap ------------------------------------------------------
+# --- view + dock swap --------------------------------------------------------
 
 
-def test_alc_toggle_swaps_docks(mainwindow: MainWindow, monkeypatch):
+def test_alc_view_swaps_docks(mainwindow: MainWindow, monkeypatch):
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
     assert mw._alc_mode is True
     assert mw._fit_stack.currentWidget() is mw._alc_fit_panel
     assert mw._parameters_stack.currentWidget() is mw._alc_scan_view
 
-    mw._alc_mode_action.setChecked(False)
+    mw._plot_workspace.set_active_view("fb_asymmetry")
     assert mw._alc_mode is False
     assert mw._parameters_stack.currentWidget() is mw._fit_parameters_panel
     assert mw._fit_stack.currentWidget() is mw._fit_panel
 
 
-def test_alc_toggle_guarded_to_fb_representation(mainwindow: MainWindow, monkeypatch):
+def test_alc_view_reachable_from_frequency(mainwindow: MainWindow):
+    # As a representation, the integral scan is one click away from any view.
     mw = mainwindow
-    monkeypatch.setattr(mw, "_active_representation_type", lambda: RepresentationType.FREQ_FFT)
-    mw._alc_mode_action.setChecked(True)
-    assert mw._alc_mode is False
-    assert mw._alc_mode_action.isChecked() is False  # guard reverted it
-
-
-def test_alc_action_enabled_in_default_fb_view(mainwindow: MainWindow):
-    # The app opens in the F-B asymmetry view, where ALC mode applies, so the
-    # toggle is enabled at startup — no view-switch workaround needed.
-    assert mainwindow._plot_workspace.active_view() == "fb_asymmetry"
-    assert mainwindow._alc_mode_action.isEnabled() is True
-
-
-def test_alc_enabled_predicate_tracks_representation(mainwindow: MainWindow, monkeypatch):
-    # Enabled iff the active representation is F-B asymmetry, regardless of how
-    # many runs are selected (the fixture has none). The two-run requirement is
-    # enforced at build time, not on the toggle.
-    mw = mainwindow
-    cases = {
-        RepresentationType.TIME_FB_ASYMMETRY: True,
-        RepresentationType.TIME_GROUPS: False,
-        RepresentationType.FREQ_FFT: False,
-        RepresentationType.FREQ_MAXENT: False,
-    }
-    for rep, expected in cases.items():
-        monkeypatch.setattr(mw, "_active_representation_type", lambda rep=rep: rep)
-        mw._refresh_alc_mode_enabled()
-        assert mw._alc_mode_action.isEnabled() is expected
-        expected_tip = (
-            mw_module._ALC_TOOLTIP_ENABLED if expected else mw_module._ALC_TOOLTIP_DISABLED
-        )
-        assert mw._alc_mode_action.toolTip() == expected_tip
-
-
-def test_alc_toggle_enabled_state_follows_view_change(mainwindow: MainWindow):
-    # Switching views drives the enabled flag through the real signal path.
-    mw = mainwindow
-    mw._plot_workspace.set_active_view("fb_asymmetry")
-    assert mw._alc_mode_action.isEnabled() is True
     mw._plot_workspace.set_active_view("frequency")
-    assert mw._alc_mode_action.isEnabled() is False
-    mw._plot_workspace.set_active_view("fb_asymmetry")
-    assert mw._alc_mode_action.isEnabled() is True
+    mw._plot_workspace.set_active_view("integral_scan")
+    assert mw._alc_mode is True
+    assert mw._fit_stack.currentWidget() is mw._alc_fit_panel
 
 
-def test_alc_disabled_button_shows_tooltip_via_event_filter(mainwindow: MainWindow, monkeypatch):
-    # Qt suppresses tooltips on disabled widgets; the event filter renders the
-    # "switch to F-B view" hint itself when the button is disabled, and defers to
-    # default handling when it is enabled.
-    from PySide6.QtCore import QEvent, QPoint
-    from PySide6.QtGui import QHelpEvent
+def test_integral_scan_button_present_and_enabled(mainwindow: MainWindow):
+    # The integral scan is a Time-cluster representation, always available
+    # (it needs only the F-B reduction); the two-run rule is enforced at
+    # build time, not on the button.
+    assert mainwindow._plot_workspace.active_view() == "fb_asymmetry"
+    btn = mainwindow._domain_buttons_by_token["integral_scan"]
+    assert btn.isEnabled()
+    assert not btn.isChecked()
 
+
+def test_integral_scan_button_checked_state_tracks_view(mainwindow: MainWindow):
+    # Switching views drives the checked state through the real signal path.
     mw = mainwindow
-    if mw._alc_mode_button is None:
-        pytest.skip("toolbar provides no widget for the ALC action")
+    btn = mw._domain_buttons_by_token["integral_scan"]
+    mw._plot_workspace.set_active_view("integral_scan")
+    assert btn.isChecked()
+    mw._plot_workspace.set_active_view("frequency")
+    assert not btn.isChecked()
+    mw._plot_workspace.set_active_view("integral_scan")
+    assert btn.isChecked()
 
-    monkeypatch.setattr(mw, "_active_representation_type", lambda: RepresentationType.FREQ_FFT)
-    mw._refresh_alc_mode_enabled()
-    assert mw._alc_mode_action.isEnabled() is False
-    disabled_event = QHelpEvent(QEvent.Type.ToolTip, QPoint(1, 1), QPoint(1, 1))
-    assert mw.eventFilter(mw._alc_mode_button, disabled_event) is True
 
-    monkeypatch.setattr(mw, "_active_representation_type", lambda: _FB)
-    mw._refresh_alc_mode_enabled()
-    assert mw._alc_mode_action.isEnabled() is True
-    enabled_event = QHelpEvent(QEvent.Type.ToolTip, QPoint(1, 1), QPoint(1, 1))
-    assert mw.eventFilter(mw._alc_mode_button, enabled_event) is False
+def test_integral_scan_is_remembered_as_time_view(mainwindow: MainWindow, monkeypatch):
+    # The integral scan is a primary time view: leaving for the frequency
+    # domain and coming "back to time" lands on it again (unlike the
+    # raw-counts / reconstruction diagnostics).
+    mw = mainwindow
+    _enter_alc(mw, monkeypatch)
+    mw._plot_workspace.set_active_view("frequency")
+    assert mw._alc_mode is False
+    mw._plot_workspace.set_active_domain("time")
+    assert mw._plot_workspace.active_view() == "integral_scan"
+    assert mw._alc_mode is True
 
 
 # --- build + render ----------------------------------------------------------
@@ -571,9 +544,8 @@ def test_alc_persistence_round_trip(mainwindow: MainWindow, monkeypatch):
     for ds in datasets:
         mw2._data_browser.add_dataset(ds)
     mw2._project_model.add_batch(FitSeries.from_dict(saved))
-    # Make ALC mode resumable (FB active) so the restored scan becomes visible.
-    mw2._alc_mode_action.setEnabled(True)
-    monkeypatch.setattr(mw2, "_active_representation_type", lambda: _FB)
+    # The fresh window opens in the F-B view, so the saved mode_active flag
+    # resumes the integral-scan representation on restore.
     mw2._restore_alc_scan()
 
     assert {p["run"] for p in mw2._alc_scan_points} == {11, 12, 13, 14, 15}
@@ -581,7 +553,8 @@ def test_alc_persistence_round_trip(mainwindow: MainWindow, monkeypatch):
     assert len(mw2._alc_scan_view.peak_specs()) == 1
     assert mw2._alc_corrected_scan is not None  # baseline re-fit on load
     assert mw2._alc_scan_view._fit_curve is not None  # peak overlay re-fit
-    assert mw2._alc_mode is True  # ALC mode resumed
+    assert mw2._alc_mode is True  # integral-scan view resumed
+    assert mw2._plot_workspace.active_view() == "integral_scan"
 
 
 def test_alc_analysis_state_is_json_serialisable(qapp: QApplication):

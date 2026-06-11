@@ -1380,9 +1380,15 @@ class TestMainWindowBasic:
         self,
         mainwindow: MainWindow,
     ) -> None:
-        """The toolbar Domain buttons should expose the 2+2 Time/Frequency views."""
+        """The toolbar Domain buttons should expose the 3+2 Time/Frequency views."""
         labels = [btn.text() for btn in mainwindow._domain_buttons]
-        assert labels == ["F-B asymmetry", "Individual groups", "FFT", "MaxEnt"]
+        assert labels == [
+            "F-B asymmetry",
+            "Individual groups",
+            "Integral scan",
+            "FFT",
+            "MaxEnt",
+        ]
 
     def test_on_fit_reshows_closed_fit_dock(self, mainwindow: MainWindow) -> None:
         """The fit dock is visible by default; Fit re-shows it after a close."""
@@ -1932,20 +1938,24 @@ class TestMainWindowBasic:
         assert "Params" not in texts
 
     def test_toolbar_has_domain_segmented_control(self, mainwindow: MainWindow) -> None:
-        """Toolbar should expose four Domain buttons (Time 2 + Frequency 2)."""
+        """Toolbar should expose five Domain buttons (Time 3 + Frequency 2)."""
         assert hasattr(mainwindow, "_domain_buttons")
         assert [btn.text() for btn in mainwindow._domain_buttons] == [
             "F-B asymmetry",
             "Individual groups",
+            "Integral scan",
             "FFT",
             "MaxEnt",
         ]
         buttons = mainwindow._domain_buttons_by_token
         assert buttons["fb_asymmetry"].isChecked()
         assert not buttons["groups"].isChecked()
+        assert not buttons["integral_scan"].isChecked()
         assert not buttons["frequency"].isChecked()
+        # Integral scan needs only the F-B reduction, so it is always enabled;
         # MaxEnt needs a capable dataset; the raw-counts diagnostic lives in
         # the View menu, not the toolbar, and needs grouped data.
+        assert buttons["integral_scan"].isEnabled()
         assert "raw_counts" not in buttons
         assert not buttons["maxent"].isEnabled()
         assert not mainwindow._raw_counts_action.isEnabled()

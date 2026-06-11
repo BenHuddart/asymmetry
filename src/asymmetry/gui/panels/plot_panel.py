@@ -1268,7 +1268,12 @@ class PlotPanel(QWidget):
         self._redraw_current_view()
 
     def _normalize_time_view_mode(self, mode: object) -> str:
-        """Normalize a stored time-view token to a supported internal key."""
+        """Normalize a stored time-view token to a supported internal key.
+
+        The integral-scan representation plots the F-B asymmetry (with the
+        fit-range acting as the integration window), so it maps onto the
+        ``fb_asymmetry`` plot mode.
+        """
         token = str(mode or "").strip().lower().replace(" ", "_")
         if token in {"groups", "group", "individual_groups", "grouped", "grouped_counts"}:
             return "groups"
