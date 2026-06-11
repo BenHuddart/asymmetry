@@ -2064,6 +2064,14 @@ class GlobalFitTab(QWidget):
         self._count_dpsep_fit = False  # locate dpsep by a coarse->fine scan
         self._last_count_dt0: float | None = None
         self._last_count_group: int | None = None
+        # Fitted calibrations captured for the α/t0/background promote paths
+        # (siblings of the deadtime DT0 promote). Each is suggest-only.
+        self._last_count_alpha: tuple[float, float | None] | None = None
+        self._last_count_t0_us: float | None = None
+        self._last_count_bg: tuple[float | None, float | None] | None = None
+        self._last_count_cal_group: int | None = None
+        self._last_count_bin_width: float | None = None
+        self._last_count_ref_run: int | None = None
         self._fit_blocked = False
         self._fit_block_reason = ""
         self._composite_model = self._default_composite_model()
@@ -2392,7 +2400,14 @@ class GlobalFitTab(QWidget):
 
     def set_current_dataset(self, dataset: MuonDataset | None) -> None:
         """Set the active dataset used by grouped time-domain mode."""
+        previous = self._current_dataset
         self._current_dataset = dataset
+        # A captured count-fit calibration belongs to the run it was fitted on.
+        # When the active run changes, drop the captures so a promote button
+        # cannot write one run's fitted α/t0/background/DT0 into another run's
+        # grouping (with that run's number recorded as the reference).
+        if previous is not dataset:
+            self._clear_count_calibrations()
         # Invalidate the grouped-context memo whenever the active dataset
         # changes (its grouped groups depend only on this dataset).
         self._grouped_context_cache = None
@@ -3822,6 +3837,7 @@ class GlobalFitTab(QWidget):
             return
         fwd = result.group_results[forward]
         self._store_count_deadtime(fwd, forward)
+        self._store_count_fb_extras(dataset, result, forward, backward)
         alpha = fwd.parameters["alpha"].value
         alpha_err = fwd.uncertainties.get("alpha")
         rows = [self._count_param_row(fwd, name) for name in fwd.parameters.names]
@@ -3847,6 +3863,7 @@ class GlobalFitTab(QWidget):
             self._result_text.setHtml(error_html(result.message or "Single-histogram fit failed"))
             return
         self._store_count_deadtime(result, group_id)
+        self._store_count_single_extras(dataset, result, group_id)
         rows = [self._count_param_row(result, name) for name in result.parameters.names]
         detail = (
             f"χ²/ν = {result.reduced_chi_squared:.4f} (cost: {self._count_fit_cost})<br>"
@@ -3906,6 +3923,194 @@ class GlobalFitTab(QWidget):
         else:
             self._last_count_dt0 = None
             self._last_count_group = None
+
+    def _clear_count_calibrations(self) -> None:
+        """Drop every captured count-fit calibration (DT0/α/t0/background)."""
+        self._last_count_dt0 = None
+        self._last_count_group = None
+        self._last_count_alpha = None
+        self._last_count_t0_us = None
+        self._last_count_bg = None
+        self._last_count_cal_group = None
+        self._last_count_bin_width = None
+        self._last_count_ref_run = None
+
+    def _reset_count_extras(self, dataset, group_id: int) -> None:
+        """Clear the α/t0/background calibration cache and record the context."""
+        self._last_count_alpha = None
+        self._last_count_t0_us = None
+        self._last_count_bg = None
+        self._last_count_cal_group = int(group_id)
+        self._last_count_bin_width = self._count_bin_width(dataset)
+        self._last_count_ref_run = (
+            int(dataset.run_number) if dataset is not None and dataset.run is not None else None
+        )
+
+    @staticmethod
+    def _finite_or_none(value) -> float | None:
+        """Coerce to a finite float, or ``None`` for missing/NaN/inf values.
+
+        Captured calibrations feed a write into the grouping; a degenerate fit
+        returning NaN/inf must not be promotable (it would corrupt the grouping
+        and crash the integer t0_bin conversion).
+        """
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if np.isfinite(number) else None
+
+    @staticmethod
+    def _count_bin_width(dataset) -> float | None:
+        run = getattr(dataset, "run", None)
+        histograms = getattr(run, "histograms", None) if run is not None else None
+        if not histograms:
+            return None
+        try:
+            return float(histograms[0].bin_width)
+        except (TypeError, ValueError, AttributeError, IndexError):
+            return None
+
+    def _store_count_fb_extras(self, dataset, result, forward: int, backward: int) -> None:
+        """Capture α / t0 / per-side background from a forward/backward count fit."""
+        self._reset_count_extras(dataset, forward)
+        fwd = result.group_results[forward]
+        bwd = result.group_results[backward]
+        if "alpha" in fwd.parameters.names:
+            alpha = self._finite_or_none(fwd.parameters["alpha"].value)
+            if alpha is not None:
+                self._last_count_alpha = (
+                    alpha,
+                    self._finite_or_none(fwd.uncertainties.get("alpha")),
+                )
+        f_bg = (
+            self._finite_or_none(fwd.parameters["background"].value)
+            if "background" in fwd.parameters.names
+            else None
+        )
+        b_bg = (
+            self._finite_or_none(bwd.parameters["background_b"].value)
+            if "background_b" in bwd.parameters.names
+            else None
+        )
+        if f_bg is not None or b_bg is not None:
+            self._last_count_bg = (f_bg, b_bg)
+        shared = getattr(result, "shared_parameters", None)
+        if shared is not None and "t0" in shared:
+            self._last_count_t0_us = self._finite_or_none(shared["t0"].value)
+
+    def _store_count_single_extras(self, dataset, result, group_id: int) -> None:
+        """Capture t0 / background from a single-histogram count fit (no α here)."""
+        self._reset_count_extras(dataset, group_id)
+        params = result.parameters
+        if "t0" in params.names:
+            self._last_count_t0_us = self._finite_or_none(params["t0"].value)
+        if "background" in params.names:
+            value = self._finite_or_none(params["background"].value)
+            if value is not None:
+                # The single fit targets one side; promote only that side's value.
+                self._last_count_bg = (
+                    (value, None) if self._count_single_side == "forward" else (None, value)
+                )
+
+    def promote_count_alpha(self) -> None:
+        """Promote the last forward/backward fitted α into the grouping (F7)."""
+        from asymmetry.core.transform.promote import promote_alpha_to_grouping
+
+        grouping = self._promote_target_grouping()
+        if grouping is None:
+            return
+        if self._last_count_alpha is None:
+            self._result_text.setText(
+                "Run a Forward + Backward (free α) count fit first, then promote α."
+            )
+            return
+        alpha, alpha_err = self._last_count_alpha
+        change = promote_alpha_to_grouping(
+            grouping, alpha, alpha_error=alpha_err, reference_run=self._last_count_ref_run
+        )
+        self._announce_promote(
+            "Detector balance α promoted to grouping",
+            f"α: {change['before']['alpha']:.5g} → {change['after']['alpha']:.5g} "
+            "(method: count_fit). Re-reduce the run to apply.",
+        )
+
+    def promote_count_t0(self) -> None:
+        """Promote the last fitted count-fit t₀ offset into the grouping t0_bin (F5)."""
+        from asymmetry.core.transform.promote import promote_t0_to_grouping
+
+        grouping = self._promote_target_grouping()
+        if grouping is None:
+            return
+        if self._last_count_t0_us is None:
+            self._result_text.setText(
+                "Run a count fit with the t₀ offset nuisance enabled first, then promote t₀."
+            )
+            return
+        bin_width = self._last_count_bin_width
+        if not bin_width or bin_width <= 0.0:
+            self._result_text.setText("Promote needs the run's bin width to convert t₀ to bins.")
+            return
+        change = promote_t0_to_grouping(
+            grouping,
+            self._last_count_t0_us,
+            bin_width_us=bin_width,
+            reference_run=self._last_count_ref_run,
+            group_id=self._last_count_cal_group,
+        )
+        residual_ns = change["residual_us"] * 1000.0
+        self._announce_promote(
+            "Time-zero promoted to grouping",
+            f"t0_bin: {change['before']['t0_bin']} → {change['after']['t0_bin']} "
+            "(fitted t₀ applied run-wide; t0_bin is a single run-level index). "
+            f"Sub-bin residual {residual_ns:+.2f} ns is not representable in the "
+            "integer t0_bin. Re-reduce the run to apply.",
+        )
+
+    def promote_count_background(self) -> None:
+        """Promote the last fitted flat count background into the grouping (N3)."""
+        from asymmetry.core.transform.promote import promote_background_to_grouping
+
+        grouping = self._promote_target_grouping()
+        if grouping is None:
+            return
+        if self._last_count_bg is None:
+            self._result_text.setText(
+                "Run a count fit with a free background first, then promote the background."
+            )
+            return
+        forward, backward = self._last_count_bg
+        change = promote_background_to_grouping(
+            grouping, forward=forward, backward=backward, reference_run=self._last_count_ref_run
+        )
+        before, after = change["before"], change["after"]
+        self._announce_promote(
+            "Flat background promoted to grouping (fixed mode)",
+            f"Forward: {before['forward']:.5g} → {after['forward']:.5g} · "
+            f"Backward: {before['backward']:.5g} → {after['backward']:.5g}. "
+            "Re-reduce the run to apply.",
+        )
+
+    def _promote_target_grouping(self) -> dict | None:
+        """Return the active run's grouping dict for a promote, or ``None``.
+
+        Emits a guidance message into the result box when there is no usable
+        run, mirroring the deadtime promote's preconditions.
+        """
+        dataset = self._current_dataset
+        if dataset is None or dataset.run is None or not dataset.run.histograms:
+            self._result_text.setText("Promote needs the active run with detector histograms.")
+            return None
+        if not isinstance(dataset.run.grouping, dict):
+            dataset.run.grouping = {}
+        return dataset.run.grouping
+
+    def _announce_promote(self, title: str, detail: str) -> None:
+        """Render a success banner for a calibration promote and notify the host."""
+        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._result_text.setHtml(success_html(title, detail=detail))
+        if self._current_dataset is not None:
+            self.count_grouping_promoted.emit(self._current_dataset)
 
     def _count_param_row(self, fit_result, name: str) -> str:
         value = fit_result.parameters[name].value

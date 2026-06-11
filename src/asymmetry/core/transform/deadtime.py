@@ -234,13 +234,14 @@ DEADTIME_MODEL_TERM_NAMES: tuple[str, ...] = ("DT1", "C2", "C3", "C4")
 
 def promote_deadtime_to_grouping(
     grouping: dict,
-    dead_time_us_value: float,
+    dead_time_us_value: float | list[float] | tuple[float, ...] | np.ndarray,
     *,
     n_histograms: int,
     detector_indices: list[int] | None = None,
     additive: bool = False,
     model: str | None = None,
     extra_terms: dict[str, float] | None = None,
+    method: str = "value",
 ) -> dict[str, dict[int, float]]:
     """Write a fitted deadtime (μs) into the grouping correction (WiMDA Send-to-Group).
 
@@ -249,7 +250,15 @@ def promote_deadtime_to_grouping(
     reduction applies it. ``additive`` accumulates onto the existing value
     (WiMDA's ``DTmodelChanges``) instead of replacing it; ``detector_indices``
     restricts the write to the fitted group's detectors (default: all). The
-    correction is enabled and the method marked ``value``.
+    correction is enabled and the ``deadtime_method`` marked ``value`` by
+    default; pass ``method`` to record a different provenance label (e.g.
+    ``"maxent_fit"`` for the MaxEnt calibration route).
+
+    ``dead_time_us_value`` is either a single deadtime broadcast to every target
+    detector (the count-fit DT₀ case) or a per-detector sequence — one value per
+    detector index — for calibrators that fit each detector independently (the
+    MaxEnt route). A per-detector sequence aligns to detector index ``i``;
+    targets beyond its length get ``0.0``.
 
     For a polynomial or power-law count-loss fit, pass the loss ``model`` and its
     higher-order ``extra_terms`` (``DT1``/``C2``/``C3``/``C4``). The dominant
@@ -278,19 +287,42 @@ def promote_deadtime_to_grouping(
     else:
         targets = [int(i) for i in detector_indices if 0 <= int(i) < n]
 
-    dt = float(dead_time_us_value)
+    incoming = _coerce_deadtime_value(dead_time_us_value, n)
     before = {i: values[i] for i in targets}
     for i in targets:
+        dt = incoming[i]
         values[i] = values[i] + dt if additive else dt
     after = {i: values[i] for i in targets}
 
     grouping["dead_time_us"] = values
     grouping["deadtime_correction"] = True
-    grouping["deadtime_method"] = "value"
+    grouping["deadtime_method"] = str(method)
 
     if model is not None or extra_terms:
         _promote_deadtime_model_terms(grouping, model, extra_terms, additive=additive)
     return {"before": before, "after": after}
+
+
+def _coerce_deadtime_value(
+    dead_time_us_value: float | list[float] | tuple[float, ...] | np.ndarray,
+    n: int,
+) -> list[float]:
+    """Return one deadtime per detector index in ``[0, n)``.
+
+    A scalar is broadcast to every detector; a sequence aligns by index and
+    pads short tails with ``0.0`` so per-detector calibrations (MaxEnt) and the
+    scalar count-fit DT₀ share one write path.
+    """
+    if isinstance(dead_time_us_value, (list, tuple, np.ndarray)):
+        seq = list(dead_time_us_value)
+        result = [0.0] * n
+        for i in range(min(len(seq), n)):
+            try:
+                result[i] = float(seq[i])
+            except (TypeError, ValueError):
+                result[i] = 0.0
+        return result
+    return [float(dead_time_us_value)] * n
 
 
 def _promote_deadtime_model_terms(

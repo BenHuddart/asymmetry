@@ -98,11 +98,13 @@ Window and nuisance flexibility
 Three optional controls refine the fit window without splitting the run; each
 is off by default and, when off, leaves the fit numerically unchanged.
 
-* **Exclude (μs)** — drop an interior window of bins from the fit. Set the two
-  fields so the upper bound exceeds the lower; the bins inside are removed
+* **Skip window (μs)** — drop an interior window of bins from the fit. Set the
+  two fields so the upper bound exceeds the lower; the bins inside are removed
   (endpoints inclusive). Use it to reject a laser or RF artefact, a spike, or
   any localized corruption — the fitted parameters then match what the clean
-  data alone would give, where leaving the artefact in pulls the amplitude.
+  data alone would give, where leaving the artefact in pulls the amplitude. The
+  label distinguishes this *drop* from the MaxEnt *de-weight* window of the same
+  units (see :doc:`exclusions`).
 * **Fit t₀ offset** — add a free time-zero offset that shifts the model time
   axis. Enable it when a small time-zero error is suspected; on clean data it
   recovers an offset consistent with zero and changes nothing else.
@@ -165,6 +167,34 @@ Count loss and double pulse
      and the best χ² wins. This recovers dpsep robustly without depending on a
      near-truth start. With the separation at its true value the model fits
      cleanly (χ²ᵣ ≈ 1); a wrong separation visibly degrades the fit.
+
+Promoting α, t₀ and the background
+----------------------------------
+
+The deadtime promote above is one of a family: the same suggest-only
+Send-to-Group pattern promotes the other fitted calibrations into the grouping,
+each reporting before/after and a *Re-reduce the run to apply* message. Like
+deadtime, α and t₀ are per-sample, per-setup calibrations — α "needs to be
+determined for each sample", and the analysis time-zero "is the beginning of
+the spin dynamics" — so a value fitted from the run's own counts is a
+legitimate calibration to persist.
+
+* **Promote α** writes the free-α forward/backward balance into the grouping
+  with ``alpha_method="count_fit"`` provenance. This is the statistically best
+  of the four α routes — see :doc:`data_reduction/alpha_calibration`. Available
+  after a *Forward + Backward (free α)* fit.
+* **Promote t₀** converts the fitted continuous time-zero offset (μs) to the
+  nearest integer ``t0_bin`` via the bin width and **discloses the sub-bin
+  residual** the integer index cannot represent. The fitted t₀ is per group but
+  ``t0_bin`` is a single run-level index, so the promote applies the fitted
+  group's value run-wide and says so. Available after a fit with **Fit t₀
+  offset** enabled.
+* **Promote background** writes the fitted flat count background into the
+  grouping's *fixed* background mode as a ``[forward, backward]`` pair. Because
+  the count fit reads **raw counts**, this background term measures the *full*
+  flat rate — if the grouping already corrects the background, the fit still
+  sees it, so do not fix the fit's background to zero (the panel notes this when
+  a grouping background correction is active).
 
 Worked example — α from a TF calibration run
 --------------------------------------------

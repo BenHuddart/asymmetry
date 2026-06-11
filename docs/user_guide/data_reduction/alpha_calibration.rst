@@ -34,6 +34,7 @@ Data in hand                  Method
 Weak-TF calibration run       **Diamagnetic** (preferred whenever TF data exist)
 Only relaxing LF/ZF runs      **General** — needs *visible* relaxation
 Quick TF cross-check          **Count ratio** (Mantid ``AlphaCalc`` convention)
+Most demanding work           **Count-fit α** (free count-fit parameter)
 ============================  ====================================================
 
 The standard workflow is the WiMDA/ISIS one: take a weak transverse-field
@@ -121,6 +122,35 @@ percent, which is an order of magnitude larger than the statistical
 uncertainty of a good calibration. The reported bootstrap uncertainty does
 not include this bias.
 
+Count-fit α
+-----------
+
+The three estimators above are *reduction-time* methods on the grouping
+dialog. A fourth route lives in the **Multi-Group Fit** window: the
+forward/backward count fit with the balance free (*Forward + Backward
+(free α)* target) recovers :math:`\alpha` as a parameter of a full count-level
+fit. The model fits the raw forward and backward histograms simultaneously
+with :math:`\alpha` parameterised as :math:`\sqrt{\alpha}`, under the Poisson
+likelihood, and reports the full :math:`(\alpha, \text{amplitude})`
+covariance — so the strong α–amplitude correlation of a TF run is estimated
+*with* the physics rather than before it. This is the WiMDA manual's "most
+accurate way" to determine :math:`\alpha`.
+
+*When to use this.* The most demanding calibrations, and any case where α and
+the oscillation amplitude are strongly correlated (precessing TF data): the
+joint fit propagates that correlation into the reported uncertainty, which the
+reduction-time estimators cannot. It needs a physics model for the run, so it
+is heavier than the one-click dialog estimators — reach for it when the extra
+rigour matters, and use the diamagnetic estimator for routine T20
+calibrations.
+
+Once the fit converges, **Promote α** writes the fitted balance into the
+grouping with ``alpha_method="count_fit"`` provenance and a reference-run
+record, the same keys the dialog estimators write — so the reduction picks it
+up on the next re-reduce. The promote is suggest-only and reports the
+before/after value; see :doc:`../count_domain_fitting` for the count-fit
+controls and the sibling t₀/background promotes.
+
 Uncertainties
 -------------
 
@@ -135,9 +165,10 @@ bias, nor systematic effects such as a mis-set t0 or an uncorrected
 background.
 
 For the most demanding work, :math:`\alpha` can instead be treated as a free
-parameter of a count-level fit (the WiMDA manual's "most accurate way");
-that fitting mode is planned as part of the count-domain fit modes and is
-not part of the reduction-time estimators described here.
+parameter of a count-level fit (the WiMDA manual's "most accurate way"). That
+route is the **Count-fit α** section above; its uncertainty comes from the fit
+covariance, including the α–amplitude correlation, rather than the bootstrap
+used by the reduction-time estimators here.
 
 **References**
 

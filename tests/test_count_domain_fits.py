@@ -668,6 +668,26 @@ def test_promote_deadtime_defaults_to_all_detectors():
     assert out["after"] == {0: 0.02, 1: 0.02, 2: 0.02}
 
 
+def test_promote_deadtime_per_detector_list_and_method():
+    """A per-detector sequence aligns by index; ``method`` records provenance."""
+    grouping = {}
+    out = promote_deadtime_to_grouping(
+        grouping, [0.012, 0.018], n_histograms=2, method="maxent_fit"
+    )
+    assert out["before"] == {0: 0.0, 1: 0.0}
+    assert out["after"] == {0: 0.012, 1: 0.018}
+    assert grouping["dead_time_us"] == [0.012, 0.018]
+    assert grouping["deadtime_method"] == "maxent_fit"
+    assert grouping["deadtime_correction"] is True
+
+
+def test_promote_deadtime_short_list_pads_with_zero():
+    """A sequence shorter than the detector count leaves the tail untouched."""
+    grouping = {}
+    out = promote_deadtime_to_grouping(grouping, [0.02], n_histograms=3)
+    assert out["after"] == {0: 0.02, 1: 0.0, 2: 0.0}
+
+
 def test_promote_deadtime_carries_polynomial_terms():
     """A polynomial/power-law promotion records the model + higher-order terms."""
     grouping = {"dead_time_us": [0.0, 0.0]}
