@@ -712,6 +712,7 @@ class MainWindow(QMainWindow):
         # Setup
         setup_menu = mb.addMenu("&Setup")
         setup_menu.addAction("GLE Setup…", self._on_gle_setup)
+        setup_menu.addAction("User Functions…", self._on_user_functions)
 
         # Help
         help_menu = mb.addMenu("&Help")
@@ -1255,6 +1256,7 @@ class MainWindow(QMainWindow):
                 lambda n: self._log_dock_header.set_meta(f"{n} entries")
             )
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._dock_log)
+        self._log_user_function_report()
 
         # ── Structured status bar ──────────────────────────────────────────
         _sb = self.statusBar()
@@ -6109,6 +6111,33 @@ class MainWindow(QMainWindow):
         """Open the GLE executable configuration dialog."""
         dialog = GleSetupDialog(self)
         dialog.exec()
+
+    def _on_user_functions(self) -> None:
+        """Show the user-function load report (Setup → User Functions…)."""
+        from asymmetry.gui.windows.user_functions_dialog import UserFunctionsDialog
+
+        dialog = UserFunctionsDialog(self)
+        dialog.exec()
+
+    def _log_user_function_report(self) -> None:
+        """Surface the startup user-function load report in the log panel.
+
+        Discovery itself runs in ``app.main()`` before the window exists (and
+        never crashes on bad plugin code); here the outcome becomes visible —
+        a summary line plus one line per failed source.
+        """
+        from asymmetry.core.plugins import last_load_report
+
+        report = last_load_report()
+        if report is None or not report.sources:
+            return
+        self._log_panel.log(report.summary(), tag="user-fn")
+        for source in report.failures:
+            self._log_panel.log(
+                f"User function source '{source.name}' failed: {source.error} "
+                "(details: Setup → User Functions…)",
+                tag="user-fn",
+            )
 
     def _on_about(self) -> None:
         """Show the About dialog with version information."""

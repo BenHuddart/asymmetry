@@ -96,3 +96,116 @@ def test_global_fit_restore_and_fit_block_with_missing_user_component(qapp):
     text = tab._result_text.toPlainText()
     assert "missing user function" in text
     assert "UserGoneDecay" in text
+
+
+# ── provenance badges and the load-report dialog ───────────────────────────
+
+
+@pytest.fixture
+def _registry_snapshot():
+    from asymmetry.core.fitting import component_docs
+    from asymmetry.core.fitting.composite import COMPONENTS
+    from asymmetry.core.fitting.models import MODELS
+    from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
+
+    doc_dicts = (
+        "FIT_COMPONENT_APPLICABILITY",
+        "FIT_COMPONENT_REFERENCES",
+        "PARAMETER_MODEL_APPLICABILITY",
+        "PARAMETER_MODEL_REFERENCES",
+    )
+    registries = (COMPONENTS, MODELS, PARAMETER_MODEL_COMPONENTS)
+    saved = [dict(reg) for reg in registries]
+    saved_docs = {name: dict(getattr(component_docs, name)) for name in doc_dicts}
+    yield
+    for reg, snapshot in zip(registries, saved, strict=True):
+        reg.clear()
+        reg.update(snapshot)
+    for name, snapshot in saved_docs.items():
+        live = getattr(component_docs, name)
+        live.clear()
+        live.update(snapshot)
+
+
+def _register_badged_component():
+    from asymmetry.core.fitting.user_functions import register_component
+
+    return register_component(
+        "UserBadgeDecay",
+        lambda t, A: A * np.exp(-np.asarray(t, dtype=float)),
+        ["A"],
+        domain="time",
+        description="Badge test component",
+        formula_template="{A}*exp(-t)",
+        applicability="Badge-test applicability text.",
+    )
+
+
+def test_builder_picker_badges_user_components(qapp, _registry_snapshot):
+    from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
+
+    _register_badged_component()
+    dialog = FitFunctionBuilderDialog(domain="time")
+    selector = dialog._component_selector
+    assert "UserBadgeDecay" in selector._user_components
+    assert "user" in selector._menu_label("UserBadgeDecay")
+    assert selector._menu_label("Keren") == "Keren"
+    # The badge is display-only: selecting still inserts the bare name.
+    selector.setCurrentText("UserBadgeDecay")
+    assert selector.currentText() == "UserBadgeDecay"
+    # The user component lands in its own "User" submenu of the picker.
+    from asymmetry.gui.panels.fit_function_builder import _build_components_by_category
+
+    assert "UserBadgeDecay" in _build_components_by_category("time")["User"]
+    dialog.deleteLater()
+
+
+def test_component_info_html_carries_user_provenance(qapp, _registry_snapshot):
+    from asymmetry.core.fitting.composite import COMPONENTS
+    from asymmetry.gui.widgets.component_info_dialog import build_component_info_html
+
+    definition = _register_badged_component()
+    html_text = build_component_info_html(definition, render_latex_images=False)
+    assert "User function" in html_text
+    assert "Badge-test applicability text." in html_text
+
+    builtin_html = build_component_info_html(COMPONENTS["Keren"], render_latex_images=False)
+    assert "User function" not in builtin_html
+
+
+def test_user_functions_dialog_reports_sources(qapp, _registry_snapshot, tmp_path):
+    from asymmetry.core.plugins import load_user_functions
+    from asymmetry.gui.windows.user_functions_dialog import UserFunctionsDialog, _report_html
+
+    (tmp_path / "good.py").write_text(
+        """
+import numpy as np
+from asymmetry.core.fitting.user_functions import register_component
+
+register_component(
+    "UserDialogDecay",
+    lambda t, A: A * np.exp(-np.asarray(t, dtype=float)),
+    ["A"],
+    domain="time",
+    description="Dialog test component",
+    formula_template="{A}*exp(-t)",
+)
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "broken.py").write_text("raise RuntimeError('kaboom')\n", encoding="utf-8")
+
+    report = load_user_functions(tmp_path)
+    html_text = _report_html(report)
+    assert "UserDialogDecay" in html_text
+    assert "broken.py" in html_text
+    assert "kaboom" in html_text
+
+    dialog = UserFunctionsDialog()
+    dialog.deleteLater()
+
+
+def test_user_functions_dialog_handles_no_report(qapp):
+    from asymmetry.gui.windows.user_functions_dialog import _report_html
+
+    assert "No user functions" in _report_html(None)

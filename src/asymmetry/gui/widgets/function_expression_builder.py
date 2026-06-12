@@ -36,12 +36,17 @@ class ComponentSelectorButton(QPushButton):
         component_pool: list[str],
         components_by_category: dict[str, list[str]],
         parent: QWidget | None = None,
+        *,
+        user_components: frozenset[str] = frozenset(),
     ) -> None:
         super().__init__(parent)
         self._component_pool = sorted(component_pool)
         self._components_by_category = {
             key: list(value) for key, value in components_by_category.items()
         }
+        #: Names carrying the "user" provenance badge in the menu (the badge is
+        #: display-only; inserted expression tokens stay the bare name).
+        self._user_components = frozenset(user_components)
         self._current_text = self._component_pool[0] if self._component_pool else ""
         self._set_display_text(self._current_text or "Select function")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -77,7 +82,7 @@ class ComponentSelectorButton(QPushButton):
         menu = QMenu(self)
         regular_components = self._components_by_category.get("General", [])
         for name in regular_components:
-            action = menu.addAction(name)
+            action = menu.addAction(self._menu_label(name))
             action.triggered.connect(lambda _checked=False, n=name: self.setCurrentText(n))
 
         # Preserve the caller-provided category order (the panel passes a dict
@@ -91,9 +96,12 @@ class ComponentSelectorButton(QPushButton):
         for category in submenu_categories:
             submenu = menu.addMenu(category)
             for name in self._components_by_category[category]:
-                action = submenu.addAction(name)
+                action = submenu.addAction(self._menu_label(name))
                 action.triggered.connect(lambda _checked=False, n=name: self.setCurrentText(n))
         return menu
+
+    def _menu_label(self, name: str) -> str:
+        return f"{name}\u2002\u00b7 user" if name in self._user_components else name
 
 
 class ExpressionTextEdit(QPlainTextEdit):
@@ -258,6 +266,11 @@ class FunctionExpressionBuilderDialog(QDialog):
         self._component_selector = ComponentSelectorButton(
             self._component_names,
             self._components_by_category,
+            user_components=frozenset(
+                name
+                for name, definition in self._component_definitions.items()
+                if getattr(definition, "user", False)
+            ),
         )
         self._insert_component_button = QPushButton("Insert Function")
         self._insert_component_button.clicked.connect(self._insert_selected_component)

@@ -355,6 +355,7 @@ def _build_component_info_html_cached(
         row_payload,
         physics_payload,
         references_payload,
+        is_user,
     ) = cache_key
 
     rows = ""
@@ -407,8 +408,15 @@ def _build_component_info_html_cached(
             references_html += f"<li>{html.escape(entry)}</li>"
         references_html += "</ul>"
 
+    provenance_html = ""
+    if is_user:
+        provenance_html = (
+            "<p><i>User function — registered from a plugin (Setup → User functions…).</i></p>"
+        )
+
     return (
         f"<h2>{html.escape(name)}</h2>"
+        f"{provenance_html}"
         "<h3>Model Expression</h3>"
         f"{_equation_html(proxy, render_latex_images=render_latex_images)}"
         "<h3>Parameters</h3>"
@@ -444,6 +452,7 @@ def build_component_info_html(
         tuple(row_payload),
         _physics_payload(component.name),
         _references_payload(component),
+        bool(getattr(component, "user", False)),
     )
     return _build_component_info_html_cached(cache_key, render_latex_images=render_latex_images)
 
