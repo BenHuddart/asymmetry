@@ -54,6 +54,15 @@ class ParameterModelComponentDefinition:
     scopes: tuple[str, ...] = ("common",)
     #: For centred-peak components, FWHM = ``fwhm_factor * Bwid`` (None otherwise).
     fwhm_factor: float | None = None
+    #: ``True`` for components registered through the user-function facade
+    #: (:mod:`asymmetry.core.fitting.user_functions`); see
+    #: ``ComponentDefinition.user``.
+    user: bool = False
+
+
+#: Recognised scope tokens for :attr:`ParameterModelComponentDefinition.scopes`
+#: (see :func:`component_names_for_x`).
+SCOPES: tuple[str, ...] = ("common", "field", "temperature")
 
 
 def _constant(x: NDArray, c: float) -> NDArray[np.float64]:

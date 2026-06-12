@@ -86,6 +86,15 @@ class ComponentDefinition:
     #: model is piecewise-constant in, or a hyperfine constant that is known).
     #: The GUI pre-checks the fix box; the user can always free them.
     fixed_params: tuple[str, ...] = ()
+    #: ``True`` for components registered through the user-function facade
+    #: (:mod:`asymmetry.core.fitting.user_functions`). Provenance is keyed off
+    #: this flag — picker badges and the docs-enforcement exemptions — never
+    #: off name lists.
+    user: bool = False
+    #: ``True`` for the per-instance placeholder definitions that stand in for
+    #: a user component referenced by a project but not currently registered.
+    #: Placeholders evaluate to zero and are never inserted into ``COMPONENTS``.
+    missing: bool = False
 
 
 def _exp_component(t: NDArray, A: float, Lambda: float) -> NDArray[np.float64]:
