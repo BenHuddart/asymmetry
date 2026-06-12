@@ -1,4 +1,11 @@
-# Project brief: negative-muon-analysis (DEFERRED)
+# Project brief: negative-muon-analysis (DEFERRED — SUPERSEDED)
+
+> **Superseded (2026-06-12) by the full study + implementation plan at
+> [`../../negative-muon-analysis/`](../../negative-muon-analysis/README.md).**
+> That study is the promotion of this brief, with a scope changed by decision:
+> **API-only** (no GUI), **work-in-progress** framing, and a literature-anchored
+> lifetime table. Where the two differ, the new study wins. This brief is kept
+> for history only.
 
 Umbrella: `wimda-parity-gap` · **Deferred** (decision 2026-06-10) — not in
 the parallel batch · Size L if promoted · adapt, don't port
