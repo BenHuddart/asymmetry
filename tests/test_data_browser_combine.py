@@ -93,6 +93,7 @@ def test_subtract_action_uses_picker(monkeypatch):
     panel._subtract_reference_run(301)
     combined = next(rn for rn in panel._combined_datasets if panel._combined_signs.get(rn) == -1)
     assert panel._combined_datasets[combined] == [301, 302]
+    assert set(panel._get_selected_run_numbers()) == {combined}
     # Sources are hidden under the combined row.
     assert 301 not in panel._datasets
     assert 302 not in panel._datasets

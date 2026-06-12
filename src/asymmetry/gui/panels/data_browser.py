@@ -2618,6 +2618,7 @@ class DataBrowserPanel(QWidget):
 
         self._display_order.insert(insert_index, combined_rn)
         self._rebuild_table()
+        self.select_runs({combined_rn})
 
     def _subtract_reference_run(self, sample_rn: int) -> None:
         """Subtract a chosen reference run from *sample_rn* (study RA3/RA4).
@@ -2670,6 +2671,7 @@ class DataBrowserPanel(QWidget):
 
         self._display_order.insert(insert_index, combined_rn)
         self._rebuild_table()
+        self.select_runs({combined_rn})
 
     def _reference_subtraction_candidates(self, sample_rn: int) -> list[int]:
         """Loaded, non-combined runs (with histograms) usable as a reference."""
