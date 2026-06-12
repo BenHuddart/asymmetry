@@ -17,6 +17,43 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 
+class FitCancelledError(RuntimeError):
+    """Raised when a fit is cancelled cooperatively via a ``cancel_callback``.
+
+    Mirrors :class:`~asymmetry.core.maxent.engine.MaxEntCancelledError`. A cancelled
+    fit records **no** result: the partially-minimised state is discarded entirely,
+    so callers must let this propagate and not pack a :class:`FitResult` from it.
+    """
+
+
+#: Poll the cancel callback once every this many cost-function evaluations. A flag
+#: read is nanoseconds against a microsecond model evaluation, so this is small
+#: enough to abort even short fits (which converge in tens of calls) while keeping
+#: the poll off the very hottest path; between-fit checks in series/global loops
+#: guarantee a clean stop regardless.
+_CANCEL_POLL_INTERVAL = 8
+
+
+def _make_cancel_guard(cancel_callback: Callable[[], bool] | None) -> Callable[[], None]:
+    """Return a guard that raises :class:`FitCancelledError` when cancellation is set.
+
+    The returned callable is invoked inside the cost function; it polls
+    ``cancel_callback`` every :data:`_CANCEL_POLL_INTERVAL` calls (in-fit abort
+    granularity). A ``None`` callback yields a no-op guard.
+    """
+    if cancel_callback is None:
+        return lambda: None
+
+    counter = {"n": 0}
+
+    def guard() -> None:
+        counter["n"] += 1
+        if counter["n"] % _CANCEL_POLL_INTERVAL == 0 and bool(cancel_callback()):
+            raise FitCancelledError("Fit cancelled.")
+
+    return guard
+
+
 def _minuit_status_message(minuit, *, success_message: str, failure_prefix: str) -> str:
     if getattr(minuit, "valid", False):
         return success_message
@@ -182,6 +219,7 @@ class FitEngine:
         t_max: float | None = None,
         method: str = "migrad",
         minos: bool = False,
+        cancel_callback: Callable[[], bool] | None = None,
     ) -> FitResult:
         """Run a single-dataset fit.
 
@@ -233,9 +271,11 @@ class FitEngine:
 
         # Create model wrapper that accepts free parameters
         param_names = [p.name for p in free]
+        cancel_guard = _make_cancel_guard(cancel_callback)
 
         def model_wrapper(t, *args):
             """Model wrapper for iminuit."""
+            cancel_guard()
             kw = {**fixed_kw, **dict(zip(param_names, args))}
             for follower, main in followers.items():
                 kw[follower] = kw[main]
@@ -348,6 +388,7 @@ class FitEngine:
         minuit_tol: float | None = None,
         initial_step_sizes: dict[str, float] | None = None,
         minos: bool = False,
+        cancel_callback: Callable[[], bool] | None = None,
     ) -> tuple[dict[str, FitResult], ParameterSet]:
         """Simultaneous fit of multiple datasets with shared and local parameters.
 
@@ -431,6 +472,7 @@ class FitEngine:
                     t_max=t_max,
                     method=method,
                     minos=minos,
+                    cancel_callback=cancel_callback,
                 )
             return results, fitted_global
 
@@ -500,8 +542,11 @@ class FitEngine:
             1e-12,
         )
 
+        cancel_guard = _make_cancel_guard(cancel_callback)
+
         def model_wrapper(t_all, *args):
             """Model wrapper that applies appropriate parameters to each dataset section."""
+            cancel_guard()
             result = np.zeros_like(t_all)
             offset = 0
 
@@ -591,6 +636,10 @@ class FitEngine:
             minos_errors_raw = drive_minuit(
                 m, method=method, migrad_kwargs=migrad_kwargs, minos=minos
             )
+        except FitCancelledError:
+            # A cancelled fit records nothing — let it propagate past the generic
+            # failure handler so no partial result is built.
+            raise
         except Exception as e:
             # If fitting fails, return error results
             error_result = FitResult(

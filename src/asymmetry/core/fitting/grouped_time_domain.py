@@ -9,7 +9,7 @@ domain.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Hashable
+from collections.abc import Callable, Hashable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,7 +17,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.engine import FitEngine, FitResult
+from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.global_search.heuristics import (
     is_amplitude_parameter,
     is_background_parameter,
@@ -498,6 +498,7 @@ def fit_grouped_time_domain(
     method: str = "migrad",
     max_calls: int = 10000,
     minos: bool = False,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> GroupedTimeDomainFitResult:
     """Fit one shared polarization model across several grouped count traces.
 
@@ -603,6 +604,7 @@ def fit_grouped_time_domain(
         method=method,
         max_calls=max_calls,
         minos=minos,
+        cancel_callback=cancel_callback,
     )
 
     group_results = {
@@ -753,6 +755,8 @@ def fit_grouped_series(
     t_max: float | None = None,
     method: str = "migrad",
     max_calls: int = 10000,
+    minos: bool = False,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> GroupedSeriesFitResult:
     """Fit a series of grouped runs with one of three member relationships.
 
@@ -819,6 +823,8 @@ def fit_grouped_series(
             t_max=t_max,
             method=method,
             max_calls=max_calls,
+            minos=minos,
+            cancel_callback=cancel_callback,
         )
     return _fit_grouped_series_global(
         members,
@@ -831,6 +837,8 @@ def fit_grouped_series(
         t_max=t_max,
         method=method,
         max_calls=max_calls,
+        minos=minos,
+        cancel_callback=cancel_callback,
     )
 
 
@@ -847,6 +855,8 @@ def _fit_grouped_series_independent(
     t_max: float | None,
     method: str,
     max_calls: int,
+    minos: bool = False,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> GroupedSeriesFitResult:
     """Run one independent grouped joint fit per member run (no cross-run sharing)."""
     member_results: dict[int, FitResult] = {}
@@ -854,6 +864,10 @@ def _fit_grouped_series_independent(
     member_group_id: dict[int, Hashable] = {}
     messages: list[str] = []
     for raw_run, groups in members.items():
+        # Cooperative cancel between member fits (the minimum abort granularity): a
+        # cancelled series records nothing and the loop stops cleanly here.
+        if cancel_callback is not None and bool(cancel_callback()):
+            raise FitCancelledError("Fit cancelled.")
         run = int(raw_run)
         run_initial = initial_params.get(run, {})
         result = fit_grouped_time_domain(
@@ -867,6 +881,8 @@ def _fit_grouped_series_independent(
             t_max=t_max,
             method=method,
             max_calls=max_calls,
+            minos=minos,
+            cancel_callback=cancel_callback,
         )
         messages.append(f"run {run}: {result.message}")
         for index, group in enumerate(groups, start=1):
@@ -901,6 +917,8 @@ def _fit_grouped_series_global(
     t_max: float | None,
     method: str,
     max_calls: int,
+    minos: bool = False,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> GroupedSeriesFitResult:
     """Fit every ``(run, group)`` simultaneously, sharing physics across all runs."""
     temporary_datasets: list[MuonDataset] = []
@@ -970,6 +988,8 @@ def _fit_grouped_series_global(
         t_max=t_max,
         method=method,
         max_calls=max_calls,
+        minos=minos,
+        cancel_callback=cancel_callback,
     )
 
     member_results = {

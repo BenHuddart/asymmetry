@@ -31,7 +31,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.engine import FitResult, _minuit_status_message, drive_minuit
+from asymmetry.core.fitting.engine import (
+    FitResult,
+    _make_cancel_guard,
+    _minuit_status_message,
+    drive_minuit,
+)
 from asymmetry.core.fitting.grouped_time_domain import (
     GroupedTimeDomainFitResult,
     build_count_group,
@@ -405,21 +410,35 @@ def _raw_model(lifetime_corrected_model: Callable[..., NDArray]) -> Callable[...
 # --- iminuit driver ---------------------------------------------------------
 
 
-def _solve(free: list[Parameter], total_cost: Callable[..., float], *, minos: bool = False):
+def _solve(
+    free: list[Parameter],
+    total_cost: Callable[..., float],
+    *,
+    minos: bool = False,
+    cancel_callback: Callable[[], bool] | None = None,
+):
     """Minimise ``total_cost`` over the free parameters and return the Minuit object.
 
     When ``minos`` is true, the shared :func:`drive_minuit` seam runs ``m.minos()``
     after migrad + explicit HESSE; the asymmetric intervals live on ``m.merrors`` and
     are read back by :func:`_result_from_minuit`. This is the count-domain end of the
     one-helper-three-sites MINOS contract (α especially, with its α–amplitude
-    correlation context).
+    correlation context). A ``cancel_callback`` aborts the fit cooperatively from the
+    cost function (raising :class:`FitCancelledError`); a cancelled fit returns no
+    result, so callers must let it propagate.
     """
     from iminuit import Minuit
 
-    total_cost.errordef = 1.0  # Cash and sqrt-N chi-square both use errordef = 1
+    guard = _make_cancel_guard(cancel_callback)
+
+    def cost(*args) -> float:
+        guard()
+        return total_cost(*args)
+
+    cost.errordef = 1.0  # Cash and sqrt-N chi-square both use errordef = 1
     names = [p.name for p in free]
     initial = [p.value for p in free]
-    m = Minuit(total_cost, *initial, name=names)
+    m = Minuit(cost, *initial, name=names)
     for i, p in enumerate(free):
         lo = p.min if p.min != -_INF else m.limits[i][0]
         hi = p.max if p.max != _INF else m.limits[i][1]
@@ -611,6 +630,7 @@ def fit_single_histogram(
     t_max: float | None = None,
     exclude: tuple[float, float] | None = None,
     minos: bool = False,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> FitResult:
     """Fit one detector group's raw counts (the musrfit fittype-0 analogue).
 
@@ -714,7 +734,7 @@ def fit_single_histogram(
     def total_cost(*args) -> float:
         return _cost_value(counts, predict(args), cost)
 
-    m = _solve(free, total_cost, minos=minos)
+    m = _solve(free, total_cost, minos=minos, cancel_callback=cancel_callback)
     model_values = predict([m.values[i] for i in range(len(free_names))])
     return _result_from_minuit(
         m,
@@ -745,6 +765,7 @@ def fit_fb_alpha(
     t_max: float | None = None,
     exclude: tuple[float, float] | None = None,
     minos: bool = False,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> GroupedTimeDomainFitResult:
     """Simultaneously fit forward and backward counts with the balance alpha free.
 
@@ -797,6 +818,7 @@ def fit_fb_alpha(
                 t_min=t_min,
                 t_max=t_max,
                 exclude=exclude,
+                cancel_callback=cancel_callback,
             ),
             cost_of=lambda result: sum(gr.chi_squared for gr in result.group_results.values()),
         )
@@ -889,7 +911,7 @@ def fit_fb_alpha(
     # MINOS runs on the fixed-dpsep solve below (the common case). When dpsep is
     # free it is located by the non-smooth grid scan above, where a likelihood-walk
     # interval is not well defined, so that path stays HESSE-only.
-    m = _solve(free, total_cost, minos=minos)
+    m = _solve(free, total_cost, minos=minos, cancel_callback=cancel_callback)
     fitted = [m.values[i] for i in range(len(free_names))]
     model_f = predict_f(fitted)
     model_b = predict_b(fitted)

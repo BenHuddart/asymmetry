@@ -10,7 +10,12 @@ from asymmetry.core.fitting.composite_parameters import (
     FunctionSpec,
     validate_composite_expression,
 )
-from asymmetry.core.fitting.engine import FitEngine
+from asymmetry.core.fitting.engine import (
+    FitCancelledError,
+    FitEngine,
+    FitResult,
+    drive_minuit,
+)
 from asymmetry.core.fitting.field_scan import (
     ScanBaselineResult,
     as_composite_model,
@@ -86,6 +91,9 @@ from asymmetry.core.fitting.spectral import (
 
 __all__ = [
     "FitEngine",
+    "FitResult",
+    "FitCancelledError",
+    "drive_minuit",
     "SelectionMetric",
     "SpectrumFingerprint",
     "CandidateTemplate",
