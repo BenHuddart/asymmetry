@@ -19,10 +19,10 @@ def test_inno_installer_uses_selected_windows_defaults() -> None:
     assert "CloseApplicationsFilter={#AppExeName}" in iss_text
     assert "RestartApplications=yes" in iss_text
     assert 'Name: "desktopicon"' in iss_text
-    assert 'Tasks: desktopicon' in iss_text
+    assert "Tasks: desktopicon" in iss_text
     assert 'Description: "{cm:LaunchProgram,{#AppName}}"' in iss_text
-    assert 'SetupIconFile={#IconFile}' in iss_text
-    assert 'UninstallDisplayIcon={app}\\{#IconName}' in iss_text
+    assert "SetupIconFile={#IconFile}" in iss_text
+    assert "UninstallDisplayIcon={app}\\{#IconName}" in iss_text
     assert 'DestName: "{#IconName}"' in iss_text
     assert 'Type: filesandordirs; Name: "{app}"' in iss_text
 
