@@ -8438,14 +8438,19 @@ class MainWindow(QMainWindow):
             for dataset in source_datasets:
                 _append_dataset_entry(dataset)
 
-        # Combined dataset definitions.
-        combined_datasets = [
-            {
+        # Combined dataset definitions. The optional "operation" field is
+        # written only for reference subtractions, so co-add entries round-trip
+        # byte-for-byte as before (additive schema; no version bump).
+        combined_signs = getattr(self._data_browser, "_combined_signs", {})
+        combined_datasets = []
+        for crn, src_runs in self._data_browser._combined_datasets.items():
+            entry = {
                 "combined_run_number": int(crn),
                 "source_run_numbers": [int(r) for r in src_runs],
             }
-            for crn, src_runs in self._data_browser._combined_datasets.items()
-        ]
+            if combined_signs.get(crn, 1) == -1:
+                entry["operation"] = "subtract_reference"
+            combined_datasets.append(entry)
 
         plot_state = self._plot_panel.get_state()
         plot_state["fit_curve"] = None
@@ -8869,10 +8874,16 @@ class MainWindow(QMainWindow):
         for combined_info in state.get("combined_datasets", []):
             old_id = combined_info.get("combined_run_number")
             src_runs = combined_info.get("source_run_numbers", [])
+            sign = -1 if combined_info.get("operation") == "subtract_reference" else 1
             if all(rn in loaded_run_numbers for rn in src_runs):
-                new_id = self._data_browser.add_combined_dataset(src_runs)
+                new_id = self._data_browser.add_combined_dataset(src_runs, sign=sign)
                 if new_id is not None and old_id is not None:
                     combined_id_map[int(old_id)] = new_id
+                elif new_id is None:
+                    self._log_panel.log(
+                        f"WARNING: Could not recreate combined dataset {src_runs}; "
+                        "the source runs are no longer compatible (e.g. missing histograms)."
+                    )
             else:
                 missing = [rn for rn in src_runs if rn not in loaded_run_numbers]
                 self._log_panel.log(

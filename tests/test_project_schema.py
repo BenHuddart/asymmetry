@@ -628,10 +628,20 @@ def _set_default_ui_scale():
 
 
 def _make_dataset(run_number: int = 42) -> MuonDataset:
-    from asymmetry.core.data.dataset import Run
+    from asymmetry.core.data.dataset import Histogram, Run
 
     t = np.linspace(0, 10, 100)
-    run = Run(run_number=run_number, source_file=f"/data/run{run_number}.nxs")
+    # Histogram-level co-add (combine_runs) needs real detector histograms; the
+    # former curve-mean co-add operated on the reduced curve alone.
+    histograms = [
+        Histogram(counts=np.full(100, 100.0), bin_width=0.1, good_bin_end=99),
+        Histogram(counts=np.full(100, 80.0), bin_width=0.1, good_bin_end=99),
+    ]
+    run = Run(
+        run_number=run_number,
+        histograms=histograms,
+        source_file=f"/data/run{run_number}.nxs",
+    )
     run.metadata["field"] = 100.0
     return MuonDataset(
         time=t,
