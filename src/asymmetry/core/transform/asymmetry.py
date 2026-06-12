@@ -123,6 +123,42 @@ def compute_asymmetry_with_count_errors(
     return asym, err
 
 
+def slice_to_good_window(
+    asymmetry: NDArray[np.float64],
+    error: NDArray[np.float64],
+    grouping: dict,
+    *,
+    common_t0: int,
+    bin_width: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Slice reduced arrays to the grouping's good-bin window and build the axis.
+
+    The shared tail of every F-B reduction: clip ``asymmetry``/``error`` to the
+    inclusive ``[first_good_bin, last_good_bin]`` window (falling back to the
+    full range when the window is degenerate) and form the time axis in
+    microseconds, measured from ``common_t0``. Used by both the loader-style
+    reduction (:func:`asymmetry.core.simulate._reduce_histograms`) and the
+    run-arithmetic subtraction reduction so the two agree by construction.
+    """
+    size = int(asymmetry.size)
+    try:
+        first_good = max(0, int(grouping.get("first_good_bin", 0)))
+    except (TypeError, ValueError):
+        first_good = 0
+    try:
+        last_good = int(grouping.get("last_good_bin", size - 1))
+    except (TypeError, ValueError):
+        last_good = size - 1
+    last_good = min(last_good, size - 1)
+    if first_good > last_good:
+        first_good, last_good = 0, size - 1
+
+    asymmetry = asymmetry[first_good : last_good + 1]
+    error = error[first_good : last_good + 1]
+    time = (np.arange(asymmetry.size, dtype=float) + first_good - int(common_t0)) * float(bin_width)
+    return time, asymmetry, error
+
+
 def estimate_alpha(
     forward: NDArray[np.float64],
     backward: NDArray[np.float64],

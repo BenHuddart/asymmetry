@@ -39,7 +39,7 @@ from asymmetry.core.io.periods import (
     combine_period_asymmetry,
     select_period_histograms,
 )
-from asymmetry.core.transform.asymmetry import compute_asymmetry
+from asymmetry.core.transform.asymmetry import compute_asymmetry, slice_to_good_window
 from asymmetry.core.transform.grouping import (
     group_forward_backward,
     resolve_group_indices,
@@ -1508,23 +1508,10 @@ def _reduce_histograms(
     asymmetry = asymmetry * 100.0
     error = error * 100.0
 
-    try:
-        first_good = max(0, int(grouping.get("first_good_bin", 0)))
-    except (TypeError, ValueError):
-        first_good = 0
-    try:
-        last_good = int(grouping.get("last_good_bin", asymmetry.size - 1))
-    except (TypeError, ValueError):
-        last_good = asymmetry.size - 1
-    last_good = min(last_good, asymmetry.size - 1)
-    if first_good > last_good:
-        first_good, last_good = 0, asymmetry.size - 1
-
-    asymmetry = asymmetry[first_good : last_good + 1]
-    error = error[first_good : last_good + 1]
     bin_width = float(histograms[0].bin_width) if histograms else 1.0
-    time = (np.arange(asymmetry.size, dtype=float) + first_good - fb.common_t0) * bin_width
-    return time, asymmetry, error
+    return slice_to_good_window(
+        asymmetry, error, grouping, common_t0=fb.common_t0, bin_width=bin_width
+    )
 
 
 def reduce_run_to_dataset(run: Run) -> MuonDataset:

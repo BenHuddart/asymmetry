@@ -3722,6 +3722,71 @@ class TestMainWindowBasic:
         assert restored_1.run.grouping["alpha"] == pytest.approx(2.5)
         assert restored_2.run.grouping["alpha"] == pytest.approx(2.5)
 
+    def test_subtraction_combined_dataset_round_trips(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A reference-subtraction row persists its operation and rebuilds as
+        a subtraction (additive ``operation`` field; co-add unaffected)."""
+        source_1 = tmp_path / "run_8421.nxs"
+        source_2 = tmp_path / "run_8422.nxs"
+        source_1.write_bytes(b"")
+        source_2.write_bytes(b"")
+        ds1 = _make_dataset(8421, with_grouping=True)
+        ds2 = _make_dataset(8422, with_grouping=True)
+        assert ds1.run is not None and ds2.run is not None
+        ds1.run.source_file = str(source_1)
+        ds2.run.source_file = str(source_2)
+        ds1.metadata["source_file"] = str(source_1)
+        ds2.metadata["source_file"] = str(source_2)
+        ds1.run.grouping["good_frames"] = 1000.0
+        ds2.run.grouping["good_frames"] = 2000.0
+        mainwindow._data_browser.add_dataset(ds1)
+        mainwindow._data_browser.add_dataset(ds2)
+        combined_rn = mainwindow._data_browser.add_combined_dataset([8421, 8422], sign=-1)
+        assert combined_rn is not None
+        assert mainwindow._data_browser._combined_signs[combined_rn] == -1
+
+        state = mainwindow.collect_project_state()
+        entry = next(
+            e for e in state["combined_datasets"] if e["source_run_numbers"] == [8421, 8422]
+        )
+        assert entry["operation"] == "subtract_reference"
+
+        project_path = tmp_path / "subtract.asymp"
+        save_project(state, project_path)
+        loaded_state = load_project(project_path)
+        restored = MainWindow()
+
+        def _fake_load_file(path: str) -> MuonDataset:
+            rn = 8421 if "8421" in path else 8422
+            loaded = _make_dataset(rn, with_grouping=True)
+            assert loaded.run is not None
+            loaded.run.source_file = path
+            loaded.run.grouping["good_frames"] = 1000.0 if rn == 8421 else 2000.0
+            loaded.metadata["source_file"] = path
+            return loaded
+
+        monkeypatch.setattr(
+            mw_module.QMessageBox,
+            "question",
+            lambda *a, **k: mw_module.QMessageBox.StandardButton.No,
+        )
+
+        monkeypatch.setattr(restored, "_load_file", _fake_load_file)
+        restored.restore_project_state(loaded_state, str(project_path))
+
+        restored_combined = [
+            rn for rn, sign in restored._data_browser._combined_signs.items() if sign == -1
+        ]
+        assert len(restored_combined) == 1
+        rebuilt = restored._data_browser.get_dataset(restored_combined[0])
+        assert rebuilt is not None
+        assert rebuilt.metadata["combination"]["method"] == "subtract_reference"
+        assert rebuilt.metadata["combination"]["reference_scale"] == pytest.approx(0.5)
+
 
 class TestPerRunGoodFramesNormaliser:
     """``good_frames`` is the per-run dead-time normaliser and must never be

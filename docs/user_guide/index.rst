@@ -21,6 +21,7 @@ material.
    grouping_calibration
    logbook
    data_processing
+   run_arithmetic
    detector_grouping
    simulation
    gui_usage
