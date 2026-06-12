@@ -42,7 +42,11 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterModelComponentDefinition,
 )
 from asymmetry.core.fitting.parameters import get_param_info
-from asymmetry.core.fitting.registration import RESERVED_NAMES, insert_definition
+from asymmetry.core.fitting.registration import (
+    REGISTRY_NAME_RE,
+    RESERVED_NAMES,
+    insert_definition,
+)
 
 __all__ = [
     "UserFunctionError",
@@ -70,7 +74,6 @@ _PROBE_GRIDS: dict[str, np.ndarray] = {
     "parameter": np.linspace(1e-3, 300.0, 257),
 }
 
-_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 _TEMPLATE_PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
 
 #: Collector hooked by :mod:`asymmetry.core.plugins` during discovery so the
@@ -100,7 +103,7 @@ def _all_registered_names() -> dict[str, str]:
 
 def _check_name(name: object) -> str:
     """Apply the N4 name rules: grammar atom, not reserved, globally unique."""
-    if not isinstance(name, str) or not _IDENTIFIER_RE.fullmatch(name):
+    if not isinstance(name, str) or not REGISTRY_NAME_RE.fullmatch(name):
         raise UserFunctionError(
             f"Invalid component name {name!r}: names must match "
             "[A-Za-z_][A-Za-z0-9_]* so they can appear in fit expressions."
@@ -129,7 +132,7 @@ def _check_params(
         )
     params = [str(p) for p in param_names]
     for pname in params:
-        if not _IDENTIFIER_RE.fullmatch(pname):
+        if not REGISTRY_NAME_RE.fullmatch(pname):
             raise UserFunctionError(
                 f"{name}: invalid parameter name {pname!r} (must be a valid identifier)."
             )

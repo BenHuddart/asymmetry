@@ -12,7 +12,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from asymmetry.core.fitting import component_docs
 from asymmetry.core.fitting.component_docs import (
     get_component_applicability,
     get_component_references,
@@ -30,28 +29,12 @@ from asymmetry.core.fitting.user_functions import (
     register_parameter_component,
 )
 
-_DOC_DICTS = (
-    "FIT_COMPONENT_APPLICABILITY",
-    "FIT_COMPONENT_REFERENCES",
-    "PARAMETER_MODEL_APPLICABILITY",
-    "PARAMETER_MODEL_REFERENCES",
-)
-
 
 @pytest.fixture(autouse=True)
-def _registry_snapshot():
-    """Snapshot and restore every registry a user registration can mutate."""
-    registries = (COMPONENTS, MODELS, PARAMETER_MODEL_COMPONENTS)
-    saved = [dict(reg) for reg in registries]
-    saved_docs = {name: dict(getattr(component_docs, name)) for name in _DOC_DICTS}
+def _registry_snapshot(registry_snapshot):
+    """Every test here may register user functions; isolate via the shared
+    ``registry_snapshot`` fixture from conftest."""
     yield
-    for reg, snapshot in zip(registries, saved, strict=True):
-        reg.clear()
-        reg.update(snapshot)
-    for name, snapshot in saved_docs.items():
-        live = getattr(component_docs, name)
-        live.clear()
-        live.update(snapshot)
 
 
 def _stretched(t, A, tau, alpha):

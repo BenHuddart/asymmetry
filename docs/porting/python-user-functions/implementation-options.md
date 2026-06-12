@@ -198,3 +198,41 @@ footnote section. Physics citation: A. Keren, Phys. Rev. B **50**, 10039
   refused project-local channel (§4) is the only place this bit.
 - **Hot reload**: restart picks up changes; the load-report dialog names
   the directory to make that loop obvious.
+
+## 9. Code-review outcome (2026-06-12, high effort)
+
+Fixed: an uncaught `CompositeModel.from_dict` in
+`MultiGroupSimulateDialog.__init__` crashed the dialog when a persisted
+simulate seed referenced an uninstalled user component (now falls back to
+the default model — simulating a zero placeholder would silently generate
+wrong data); the name-grammar regex deduplicated onto
+`registration.REGISTRY_NAME_RE`; the registry-snapshot test fixture
+hoisted to `tests/conftest.py::registry_snapshot`.
+
+Recorded follow-ons (deliberately not churned):
+
+- **Strict `from_dict` on recoverable caches.** Several pre-existing
+  sites deserialize models strictly and skip on `ValueError`: single-fit
+  seed inheritance (`fit_panel.py` `_existing_single_fit…`), wizard
+  candidate templates (`fit_wizard.py`/`global_fit_wizard.py`),
+  simulate-state restore (`simulate_dialog.py`), and the
+  `ParameterCompositeModel` trend-state restores. With a missing user
+  component these silently drop *recomputable* state (recommendation
+  caches, seeds) — acceptable, and safer than loading placeholders, which
+  those flows would then fit or simulate as silent zeros. Revisit only if
+  a user-visible loss is reported.
+- **`canonical_model_matches`** falls back to raw dict equality for
+  models referencing missing components (normalisation unavailable);
+  identical dicts still compare equal, so trending divergence detection
+  is unaffected for the round-trip case.
+- **New fit entry points must check `missing_component_names`.** Today
+  every reachable fit path is guarded (SingleFitTab `_run_fit`; all
+  GlobalFitTab paths dispatch through the guarded `_run_global_fit`;
+  wizard/multi-group flows cannot receive placeholder models because
+  their deserializers are strict). A future core-level guard (e.g. in the
+  grouped-fit drivers) would make this structural.
+- **`plugins.py` reentrancy/accumulation.** `_active_collector` is a
+  module global (single-threaded startup only) and synthetic plugin
+  modules accumulate in `sys.modules` across repeated
+  `load_user_functions` calls — harmless at one call per session; revisit
+  with hot reload.

@@ -142,3 +142,36 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if not (set(m.name for m in item.iter_markers()) & type_markers):
             item.add_marker(pytest.mark.unit)
+
+
+@pytest.fixture
+def registry_snapshot() -> Iterator[None]:
+    """Snapshot and restore every registry a user-function registration mutates.
+
+    Opt-in fixture for tests that call ``register_component`` /
+    ``register_parameter_component`` (directly or via plugin discovery), so
+    user registrations never leak into other tests' view of the fit-function
+    registries or the component-documentation dicts.
+    """
+    from asymmetry.core.fitting import component_docs
+    from asymmetry.core.fitting.composite import COMPONENTS
+    from asymmetry.core.fitting.models import MODELS
+    from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
+
+    doc_dict_names = (
+        "FIT_COMPONENT_APPLICABILITY",
+        "FIT_COMPONENT_REFERENCES",
+        "PARAMETER_MODEL_APPLICABILITY",
+        "PARAMETER_MODEL_REFERENCES",
+    )
+    registries = (COMPONENTS, MODELS, PARAMETER_MODEL_COMPONENTS)
+    saved = [dict(registry) for registry in registries]
+    saved_docs = {name: dict(getattr(component_docs, name)) for name in doc_dict_names}
+    yield
+    for registry, snapshot in zip(registries, saved, strict=True):
+        registry.clear()
+        registry.update(snapshot)
+    for name, snapshot in saved_docs.items():
+        live = getattr(component_docs, name)
+        live.clear()
+        live.update(snapshot)

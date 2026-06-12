@@ -102,29 +102,9 @@ def test_global_fit_restore_and_fit_block_with_missing_user_component(qapp):
 
 
 @pytest.fixture
-def _registry_snapshot():
-    from asymmetry.core.fitting import component_docs
-    from asymmetry.core.fitting.composite import COMPONENTS
-    from asymmetry.core.fitting.models import MODELS
-    from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
-
-    doc_dicts = (
-        "FIT_COMPONENT_APPLICABILITY",
-        "FIT_COMPONENT_REFERENCES",
-        "PARAMETER_MODEL_APPLICABILITY",
-        "PARAMETER_MODEL_REFERENCES",
-    )
-    registries = (COMPONENTS, MODELS, PARAMETER_MODEL_COMPONENTS)
-    saved = [dict(reg) for reg in registries]
-    saved_docs = {name: dict(getattr(component_docs, name)) for name in doc_dicts}
+def _registry_snapshot(registry_snapshot):
+    """Alias of the shared conftest ``registry_snapshot`` fixture."""
     yield
-    for reg, snapshot in zip(registries, saved, strict=True):
-        reg.clear()
-        reg.update(snapshot)
-    for name, snapshot in saved_docs.items():
-        live = getattr(component_docs, name)
-        live.clear()
-        live.update(snapshot)
 
 
 def _register_badged_component():
@@ -209,3 +189,26 @@ def test_user_functions_dialog_handles_no_report(qapp):
     from asymmetry.gui.windows.user_functions_dialog import _report_html
 
     assert "No user functions" in _report_html(None)
+
+
+def test_multi_group_simulate_seed_with_missing_component_falls_back(qapp):
+    """A persisted simulate seed referencing an uninstalled user component
+    must not crash the dialog; it falls back to the default model (simulating
+    a zero-valued placeholder would silently generate wrong data)."""
+    from asymmetry.gui.windows.simulate_dialog import MultiGroupSimulateDialog
+    from tests.test_simulate_dialog import _ring_template_run
+
+    seed = {
+        "model": {
+            "component_names": ["UserGoneDecay"],
+            "operators": [],
+            "open_parentheses": [0],
+            "close_parentheses": [0],
+            "fraction_groups": [],
+        },
+        "base_parameters": {},
+        "specs": [],
+    }
+    dialog = MultiGroupSimulateDialog(_ring_template_run(4), seed=seed)
+    assert dialog._model.component_names == ["Oscillatory"]
+    dialog.deleteLater()

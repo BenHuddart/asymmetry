@@ -562,8 +562,18 @@ class MultiGroupSimulateDialog(_SimulateDialogBase):
         self.setWindowTitle("Generate Multi-Group Run")
         self._template = template
 
+        seed_model: CompositeModel | None = None
         if seed and isinstance(seed.get("model"), dict):
-            self._model = CompositeModel.from_dict(seed["model"])
+            try:
+                seed_model = CompositeModel.from_dict(seed["model"])
+            except ValueError:
+                # E.g. the seed references a user component that is not
+                # registered in this session; simulating with a zero-valued
+                # placeholder would silently generate wrong data, so fall
+                # back to the default model instead.
+                seed_model = None
+        if seed_model is not None:
+            self._model = seed_model
             self._base_values = dict(seed.get("base_parameters", {}))
         else:
             # A multi-group ring needs a phase-capable polarisation; the
