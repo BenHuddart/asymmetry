@@ -204,6 +204,30 @@ background file, no schema break.**
   text for the current dataset (or all datasets' latest fits) — the closest WiMDA
   `.fit` analogue, generated from the structured records. No automatic writes.
 
+## Final UX decisions (settled with Ben, 2026-06-12)
+
+- **MINOS display:** inline in the parameter-table value cell — `value ± σ` (HESSE)
+  normally, switching to `value +hi / −lo` when MINOS errors are present (extend the
+  existing `_ValueUncertaintyDelegate`). Result-summary text gains the asymmetric
+  rows. α shows its α–amplitude correlation context.
+- **MINOS trigger:** a pre-fit toggle ("Asymmetric errors (MINOS)") near the Fit
+  button; when on, the fit runs MINOS for all free params as part of the fit, on a
+  worker so Stop + progress apply uniformly across single/grouped/global/count.
+- **Abort:** in-fit (cost-function raise) **and** between-member checks.
+- **Chain-seeding = Auto by default, order-key driven.** API exposes four modes:
+  `per_run_seed`, `average_seed`, `chain_previous`, `auto`. `auto` chooses
+  **chain_previous** when the members carry a usable temperature/field order key
+  spanning a real range over **≥3 members** (an ordered scan); otherwise
+  **average_seed**. Per-member divergence falls back to the average/table seed for
+  the next member. Auto **logs its choice and reason** to the `LogPanel` (never
+  silent). GUI override: a menu-bar **Batch seeding** submenu (radio: Auto [default]
+  · Per-run seed · Average seed · Chain from previous run); the selection persists
+  with the project (additive key). Rationale: chaining wins on ordered scans
+  (especially Tc-crossings, per the textbook) and is harmful on unordered/repeat
+  collections where a diverged member poisons the chain — so Auto gates on the order
+  key. The try-then-measure alternative was rejected as too heavy (runs the batch
+  up to twice).
+
 ## Rejected / deferred
 
 - **External append-only log file** — rejected; `.asymp` already holds the

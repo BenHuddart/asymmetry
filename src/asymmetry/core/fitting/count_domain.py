@@ -31,7 +31,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.engine import FitResult, _minuit_status_message
+from asymmetry.core.fitting.engine import FitResult, _minuit_status_message, drive_minuit
 from asymmetry.core.fitting.grouped_time_domain import (
     GroupedTimeDomainFitResult,
     build_count_group,
@@ -405,8 +405,15 @@ def _raw_model(lifetime_corrected_model: Callable[..., NDArray]) -> Callable[...
 # --- iminuit driver ---------------------------------------------------------
 
 
-def _solve(free: list[Parameter], total_cost: Callable[..., float]):
-    """Minimise ``total_cost`` over the free parameters and return the Minuit object."""
+def _solve(free: list[Parameter], total_cost: Callable[..., float], *, minos: bool = False):
+    """Minimise ``total_cost`` over the free parameters and return the Minuit object.
+
+    When ``minos`` is true, the shared :func:`drive_minuit` seam runs ``m.minos()``
+    after migrad + explicit HESSE; the asymmetric intervals live on ``m.merrors`` and
+    are read back by :func:`_result_from_minuit`. This is the count-domain end of the
+    one-helper-three-sites MINOS contract (α especially, with its α–amplitude
+    correlation context).
+    """
     from iminuit import Minuit
 
     total_cost.errordef = 1.0  # Cash and sqrt-N chi-square both use errordef = 1
@@ -417,7 +424,7 @@ def _solve(free: list[Parameter], total_cost: Callable[..., float]):
         lo = p.min if p.min != -_INF else m.limits[i][0]
         hi = p.max if p.max != _INF else m.limits[i][1]
         m.limits[i] = (lo, hi)
-    m.migrad(iterate=5, use_simplex=True)
+    drive_minuit(m, migrad_kwargs={"iterate": 5, "use_simplex": True}, minos=minos)
     return m
 
 
@@ -445,8 +452,13 @@ def _result_from_minuit(
     """
     keep = set(keep_params) if keep_params is not None else None
     link_followers = followers or {}
+    # MINOS intervals (when run) live on m.merrors keyed by the free parameter name;
+    # empty when MINOS was not requested. A display-only overlay — the symmetric
+    # HESSE errors below are unchanged.
+    merrors = getattr(m, "merrors", None)
     result_params = ParameterSet()
     uncertainties: dict[str, float] = {}
+    minos_errors: dict[str, tuple[float, float]] = {}
     for p in params:
         if keep is not None and p.name not in keep:
             continue
@@ -457,6 +469,13 @@ def _result_from_minuit(
             result_params.add(Parameter(name=p.name, value=m.values[idx], min=p.min, max=p.max))
             if m.errors[idx] is not None:
                 uncertainties[p.name] = float(m.errors[idx])
+            if merrors is not None:
+                try:
+                    merror = merrors[source]
+                except (KeyError, TypeError):
+                    merror = None
+                if merror is not None and getattr(merror, "is_valid", False):
+                    minos_errors[p.name] = (float(merror.lower), float(merror.upper))
         else:
             result_params.add(Parameter(name=p.name, value=p.value, fixed=True))
 
@@ -487,6 +506,8 @@ def _result_from_minuit(
             m, success_message=success_message, failure_prefix=failure_prefix
         ),
         function_calls=int(getattr(m, "nfcn", 0) or 0),
+        dof=ndata - nfree,
+        minos_errors=minos_errors or None,
     )
 
 
@@ -589,6 +610,7 @@ def fit_single_histogram(
     t_min: float | None = None,
     t_max: float | None = None,
     exclude: tuple[float, float] | None = None,
+    minos: bool = False,
 ) -> FitResult:
     """Fit one detector group's raw counts (the musrfit fittype-0 analogue).
 
@@ -692,7 +714,7 @@ def fit_single_histogram(
     def total_cost(*args) -> float:
         return _cost_value(counts, predict(args), cost)
 
-    m = _solve(free, total_cost)
+    m = _solve(free, total_cost, minos=minos)
     model_values = predict([m.values[i] for i in range(len(free_names))])
     return _result_from_minuit(
         m,
@@ -722,6 +744,7 @@ def fit_fb_alpha(
     t_min: float | None = None,
     t_max: float | None = None,
     exclude: tuple[float, float] | None = None,
+    minos: bool = False,
 ) -> GroupedTimeDomainFitResult:
     """Simultaneously fit forward and backward counts with the balance alpha free.
 
@@ -863,7 +886,10 @@ def fit_fb_alpha(
             counts_b, predict_b(args), cost
         )
 
-    m = _solve(free, total_cost)
+    # MINOS runs on the fixed-dpsep solve below (the common case). When dpsep is
+    # free it is located by the non-smooth grid scan above, where a likelihood-walk
+    # interval is not well defined, so that path stays HESSE-only.
+    m = _solve(free, total_cost, minos=minos)
     fitted = [m.values[i] for i in range(len(free_names))]
     model_f = predict_f(fitted)
     model_b = predict_b(fitted)

@@ -234,7 +234,9 @@ def test_global_fit_all_local_reuses_single_fit_path(monkeypatch: pytest.MonkeyP
 
     captured_calls: list[tuple[int, str]] = []
 
-    def _fake_fit(self, dataset, _model_fn, parameters, t_min=None, t_max=None, method="migrad"):
+    def _fake_fit(
+        self, dataset, _model_fn, parameters, t_min=None, t_max=None, method="migrad", minos=False
+    ):
         captured_calls.append((int(dataset.run_number), method))
         return FitResult(
             success=True,

@@ -7,7 +7,7 @@ without scipy dependencies (important for Python 3.13+ compatibility).
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -52,6 +52,76 @@ def _clamp_minuit_step_size(step: float, lower: float, upper: float) -> float:
     return float(max(clipped, 1e-8))
 
 
+def drive_minuit(
+    m,
+    *,
+    method: str = "migrad",
+    migrad_kwargs: dict | None = None,
+    run_hesse: bool = True,
+    minos: bool = False,
+    minos_parameters: Sequence[str] | None = None,
+) -> dict[str, tuple[float, float]] | None:
+    """Drive a constructed, limit-set Minuit through minimisation and report MINOS.
+
+    The single shared minimiser-drive seam (W13): the three minimiser sites in the
+    codebase (:meth:`FitEngine.fit`, :meth:`FitEngine.global_fit`, and the
+    count-domain ``_solve``) all route their migrad/simplex call through here so the
+    *explicit HESSE* refinement and *opt-in MINOS* behaviour are defined once.
+
+    ``m`` must already have its cost function, parameter names, and limits set; this
+    function owns only the post-construction drive. ``migrad_kwargs`` is forwarded to
+    ``m.migrad``/``m.simplex`` so each caller keeps its own ncall/iterate/use_simplex
+    tuning. An explicit ``m.hesse()`` is run after a valid minimisation (migrad's
+    EDM-time covariance is approximate; HESSE improves covariance fidelity and gives
+    MINOS an accurate starting point).
+
+    When ``minos`` is true and the fit is valid, ``m.minos()`` scans every free
+    parameter (or just ``minos_parameters``) and the signed asymmetric offsets
+    ``{name: (lower, upper)}`` (``lower < 0 < upper``) are returned for every scan
+    that succeeded (``MError.is_valid``). A whole-scan failure or any parameter whose
+    individual scan is invalid simply yields no asymmetric entry for it — the caller
+    keeps the symmetric HESSE σ for that parameter. Returns ``None`` when MINOS was
+    not requested, the fit is invalid, or no scan produced a valid interval.
+    """
+    migrad_kwargs = dict(migrad_kwargs or {})
+    if method == "simplex":
+        m.simplex(**migrad_kwargs)
+    else:
+        m.migrad(**migrad_kwargs)
+
+    if run_hesse and getattr(m, "valid", False):
+        try:
+            m.hesse()
+        except Exception:
+            # HESSE is a fidelity refinement, not a correctness requirement; a
+            # back-end that rejects it leaves the migrad covariance in place.
+            pass
+
+    if not minos or not getattr(m, "valid", False):
+        return None
+
+    try:
+        if minos_parameters:
+            m.minos(*minos_parameters)
+        else:
+            m.minos()
+    except (RuntimeError, ValueError):
+        # MINOS can fail wholesale (non-quadratic blow-up, call-limit); fall back
+        # to the symmetric HESSE errors the caller already has.
+        return None
+
+    names = list(minos_parameters) if minos_parameters else list(m.parameters)
+    out: dict[str, tuple[float, float]] = {}
+    for name in names:
+        try:
+            merror = m.merrors[name]
+        except (KeyError, TypeError):
+            continue
+        if merror is not None and getattr(merror, "is_valid", False):
+            out[name] = (float(merror.lower), float(merror.upper))
+    return out or None
+
+
 @dataclass
 class FitResult:
     """Container for the outcome of a fit."""
@@ -70,6 +140,15 @@ class FitResult:
     hessian_calls: int = 0
     edm: float | None = None
     covariance_accurate: bool = False
+    #: Degrees of freedom ν = N_data − N_free for this (sub)fit. Used by the χ²
+    #: quality verdict; 0 means "unknown" and callers fall back to inference.
+    dof: int = 0
+    #: Opt-in MINOS asymmetric 1σ intervals, ``{param: (lower, upper)}`` with
+    #: ``lower < 0 < upper`` (iminuit's signed offsets). ``None`` when MINOS was
+    #: not requested or every scan failed. A *display-only* overlay — the
+    #: symmetric HESSE :attr:`uncertainties` are unchanged and remain the value
+    #: every downstream surface (trends, export, propagation, promote) consumes.
+    minos_errors: dict[str, tuple[float, float]] | None = None
 
 
 class FitEngine:
@@ -102,6 +181,7 @@ class FitEngine:
         t_min: float | None = None,
         t_max: float | None = None,
         method: str = "migrad",
+        minos: bool = False,
     ) -> FitResult:
         """Run a single-dataset fit.
 
@@ -175,15 +255,14 @@ class FitEngine:
             if p.max != float("inf"):
                 m.limits[i] = (m.limits[i][0], p.max)
 
-        # Run minimization
-        if method == "simplex":
-            m.simplex()
-        else:
-            m.migrad()
+        # Run minimization (migrad/simplex + explicit HESSE + opt-in MINOS) through
+        # the shared drive seam.
+        minos_errors_raw = drive_minuit(m, method=method, minos=minos)
 
         # Pack results
         result_params = ParameterSet()
         uncertainties: dict[str, float] = {}
+        minos_errors: dict[str, tuple[float, float]] = {}
 
         for p in parameters:
             # Linking wins over fix (matching WiMDA): a follower always tracks its
@@ -207,6 +286,10 @@ class FitEngine:
                 )
                 if main_err is not None:
                     uncertainties[p.name] = main_err
+                # A follower inherits its main's MINOS interval by the same delta
+                # method (∂follower/∂main = 1) that carries its symmetric error.
+                if minos_errors_raw and main_name in minos_errors_raw:
+                    minos_errors[p.name] = minos_errors_raw[main_name]
             elif p.fixed:
                 result_params.add(Parameter(name=p.name, value=p.value, link_group=p.link_group))
             else:
@@ -219,6 +302,8 @@ class FitEngine:
                 )
                 if m.errors[idx] is not None:
                     uncertainties[p.name] = m.errors[idx]
+                if minos_errors_raw and p.name in minos_errors_raw:
+                    minos_errors[p.name] = minos_errors_raw[p.name]
 
         ndata = len(ds.time)
         nfree = len(free)
@@ -240,6 +325,8 @@ class FitEngine:
                 success_message="Fit successful",
                 failure_prefix="Fit failed",
             ),
+            dof=ndata - nfree,
+            minos_errors=minos_errors or None,
         )
 
     # --- global fit -----------------------------------------------------
@@ -260,6 +347,7 @@ class FitEngine:
         minuit_strategy: int | None = None,
         minuit_tol: float | None = None,
         initial_step_sizes: dict[str, float] | None = None,
+        minos: bool = False,
     ) -> tuple[dict[str, FitResult], ParameterSet]:
         """Simultaneous fit of multiple datasets with shared and local parameters.
 
@@ -342,6 +430,7 @@ class FitEngine:
                     t_min=t_min,
                     t_max=t_max,
                     method=method,
+                    minos=minos,
                 )
             return results, fitted_global
 
@@ -487,16 +576,21 @@ class FitEngine:
                 if step_size > 0.0:
                     m.errors[i] = step_size
 
-        # Run minimization with error handling
+        # Run minimization with error handling, through the shared drive seam so the
+        # joint fit gains explicit HESSE + opt-in MINOS on the same footing as the
+        # single-fit path.
+        if method == "simplex":
+            migrad_kwargs = {"ncall": max_calls}
+        else:
+            migrad_kwargs = {
+                "ncall": max_calls,
+                "iterate": max(1, int(migrad_iterations)),
+                "use_simplex": bool(use_simplex_rescue),
+            }
         try:
-            if method == "simplex":
-                m.simplex(ncall=max_calls)
-            else:
-                m.migrad(
-                    ncall=max_calls,
-                    iterate=max(1, int(migrad_iterations)),
-                    use_simplex=bool(use_simplex_rescue),
-                )
+            minos_errors_raw = drive_minuit(
+                m, method=method, migrad_kwargs=migrad_kwargs, minos=minos
+            )
         except Exception as e:
             # If fitting fails, return error results
             error_result = FitResult(
@@ -542,6 +636,10 @@ class FitEngine:
             # Build result parameter set for this dataset
             result_params = ParameterSet()
             uncertainties = {}
+            # MINOS intervals are keyed in the joint problem by the global name and
+            # the per-dataset local name ``f"{pname}_{run}"``; map both back to the
+            # plain per-dataset parameter name.
+            minos_errors: dict[str, tuple[float, float]] = {}
 
             # Add global parameters
             for pname in global_params:
@@ -549,6 +647,8 @@ class FitEngine:
                 result_params.add(Parameter(name=pname, value=p.value, fixed=p.fixed))
                 if pname in global_uncertainties:
                     uncertainties[pname] = global_uncertainties[pname]
+                if minos_errors_raw and pname in minos_errors_raw:
+                    minos_errors[pname] = minos_errors_raw[pname]
 
             # Add local parameters
             for pname in local_params:
@@ -561,6 +661,9 @@ class FitEngine:
                     result_params.add(Parameter(name=pname, value=value, min=p.min, max=p.max))
                     if m.errors[idx] is not None:
                         uncertainties[pname] = m.errors[idx]
+                    joint_name = f"{pname}_{ds.run_number}"
+                    if minos_errors_raw and joint_name in minos_errors_raw:
+                        minos_errors[pname] = minos_errors_raw[joint_name]
 
             # Add fixed parameters to result
             for pname, value in fixed_params[ds.run_number].items():
@@ -620,6 +723,8 @@ class FitEngine:
                 hessian_calls=hessian_calls,
                 edm=edm_value,
                 covariance_accurate=covariance_accurate,
+                dof=ndata - nfree,
+                minos_errors=minos_errors or None,
             )
 
         return results, fitted_global

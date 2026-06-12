@@ -497,6 +497,7 @@ def fit_grouped_time_domain(
     t_max: float | None = None,
     method: str = "migrad",
     max_calls: int = 10000,
+    minos: bool = False,
 ) -> GroupedTimeDomainFitResult:
     """Fit one shared polarization model across several grouped count traces.
 
@@ -601,6 +602,7 @@ def fit_grouped_time_domain(
         t_max=t_max,
         method=method,
         max_calls=max_calls,
+        minos=minos,
     )
 
     group_results = {
