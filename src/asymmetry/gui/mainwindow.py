@@ -4839,7 +4839,7 @@ class MainWindow(QMainWindow):
     def _refresh_spectral_moments(self) -> None:
         """Re-evaluate eligibility and recompute moments for the active spectrum."""
         widgets = self._spectral_moments_widgets()
-        if not widgets:
+        if not widgets or not hasattr(self._frequency_plot_panel, "active_spectrum_for_moments"):
             return
         active = self._active_moments_widget()
         for widget in widgets.values():
@@ -4899,6 +4899,8 @@ class MainWindow(QMainWindow):
 
     def _compute_and_show_moments(self, widget) -> None:
         """Compute moments for the active spectrum and refresh readout + overlay."""
+        if not hasattr(self._frequency_plot_panel, "active_spectrum_for_moments"):
+            return
         accessor = self._frequency_plot_panel.active_spectrum_for_moments()
         if accessor is None:
             return
@@ -4953,7 +4955,11 @@ class MainWindow(QMainWindow):
             return
         rep_type = self._active_frequency_rep_type()
         selected = [int(ds.run_number) for ds in self._data_browser.get_selected_datasets()]
-        active_ds = self._frequency_plot_panel.current_frequency_dataset()
+        active_ds = (
+            self._frequency_plot_panel.current_frequency_dataset()
+            if hasattr(self._frequency_plot_panel, "current_frequency_dataset")
+            else None
+        )
         if not selected and active_ds is not None:
             selected = [int(getattr(active_ds, "run_number", 0))]
         member_runs: list[int] = []
