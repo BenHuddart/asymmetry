@@ -148,13 +148,13 @@ strictly one-dimensional or not strictly ballistic.
 Parameters
 ~~~~~~~~~~
 
-============  ====================  =========  ===================================================
-Name          Symbol                Unit       Description
-============  ====================  =========  ===================================================
-``A``         :math:`A`             MHz        Coupling amplitude.
-``D_hop``     :math:`D_{\mathrm{hop}}` μs⁻¹    Ballistic hopping rate.
-``B_LF``      :math:`B_{LF}`        G          Longitudinal field (independent variable).
-============  ====================  =========  ===================================================
+============  ========================  =========  ===================================================
+Name          Symbol                    Unit       Description
+============  ========================  =========  ===================================================
+``A``         :math:`A`                 MHz        Coupling amplitude.
+``D_hop``     :math:`D_{\mathrm{hop}}`  μs⁻¹       Ballistic hopping rate.
+``B_LF``      :math:`B_{LF}`            G          Longitudinal field (independent variable).
+============  ========================  =========  ===================================================
 
 Choosing dimensionality
 -----------------------
