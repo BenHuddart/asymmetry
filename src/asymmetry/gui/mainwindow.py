@@ -1292,9 +1292,7 @@ class MainWindow(QMainWindow):
                 self._on_moments_cutoff_dragged
             )
         for _rep, _widget in self._spectral_moments_widgets().items():
-            _widget.settings_changed.connect(
-                lambda w=_widget: self._on_moments_settings_changed(w)
-            )
+            _widget.settings_changed.connect(lambda w=_widget: self._on_moments_settings_changed(w))
             _widget.send_to_trend_requested.connect(
                 lambda w=_widget: self._on_moments_send_to_trend(w)
             )
@@ -4846,9 +4844,7 @@ class MainWindow(QMainWindow):
         active = self._active_moments_widget()
         for widget in widgets.values():
             if widget is not active:
-                widget.set_eligible(
-                    False, "Switch to this representation to take its moments."
-                )
+                widget.set_eligible(False, "Switch to this representation to take its moments.")
         if active is None:
             self._frequency_plot_panel.clear_moments_overlay()
             return
@@ -4858,9 +4854,7 @@ class MainWindow(QMainWindow):
             active.set_eligible(False, "No lineshape-faithful spectrum is active.")
             self._frequency_plot_panel.clear_moments_overlay()
             return
-        eligible, reason = self._moment_eligibility(
-            self._active_frequency_rep_type(), dataset
-        )
+        eligible, reason = self._moment_eligibility(self._active_frequency_rep_type(), dataset)
         if not eligible:
             active.set_eligible(False, reason)
             self._frequency_plot_panel.clear_moments_overlay()
@@ -4945,9 +4939,7 @@ class MainWindow(QMainWindow):
         the same recipe replaces its series rather than duplicating it; a
         different selection or recipe is a different series.
         """
-        recipe_key = "|".join(
-            f"{k}={recipe[k]}" for k in sorted(recipe) if k != "range_mhz"
-        )
+        recipe_key = "|".join(f"{k}={recipe[k]}" for k in sorted(recipe) if k != "range_mhz")
         rng = recipe.get("range_mhz")
         recipe_key += "|range=" + ("full" if rng is None else f"{rng[0]:.6g},{rng[1]:.6g}")
         member_key = ",".join(str(r) for r in sorted(runs))

@@ -24,9 +24,7 @@ from asymmetry.core.fourier.moments import (
 from asymmetry.core.fourier.units import FieldUnit, convert
 
 # Load the hyphen-named porting oracle module by path.
-_ORACLE_PATH = (
-    Path(__file__).parent / "porting" / "spectral-moments" / "wimda_oracle.py"
-)
+_ORACLE_PATH = Path(__file__).parent / "porting" / "spectral-moments" / "wimda_oracle.py"
 _spec = importlib.util.spec_from_file_location("_wimda_moments_oracle", _ORACLE_PATH)
 assert _spec and _spec.loader
 wimda_oracle = importlib.util.module_from_spec(_spec)
@@ -149,9 +147,7 @@ def test_tight_range_excludes_satellite_and_symmetrises():
     amp = _gaussian(x, 0.0, 5.0, 1.0) + _gaussian(x, 25.0, 6.0, 0.35)
     full = spectrum_moments(x, amp, x_range=None, cutoff_fraction=0.0, uncertainty="none")
     # Restrict to the main line only: skew/beta collapse toward 0.
-    tight = spectrum_moments(
-        x, amp, x_range=(-20.0, 12.0), cutoff_fraction=0.0, uncertainty="none"
-    )
+    tight = spectrum_moments(x, amp, x_range=(-20.0, 12.0), cutoff_fraction=0.0, uncertainty="none")
     assert abs(tight.skewness_g1) < abs(full.skewness_g1)
     assert abs(tight.beta) < abs(full.beta)
     assert tight.b_rms_mean < full.b_rms_mean
@@ -175,12 +171,24 @@ def test_bootstrap_errors_finite_and_shrink_with_signal():
     x = np.linspace(-60.0, 60.0, 2001)
     amp = _gaussian(x, 0.0, 8.0)
     noisy = spectrum_moments(
-        x, amp, x_range=None, cutoff_fraction=0.05,
-        errors=0.05 * np.ones_like(x), uncertainty="bootstrap", n_bootstrap=128, seed=3,
+        x,
+        amp,
+        x_range=None,
+        cutoff_fraction=0.05,
+        errors=0.05 * np.ones_like(x),
+        uncertainty="bootstrap",
+        n_bootstrap=128,
+        seed=3,
     )
     clean = spectrum_moments(
-        x, amp, x_range=None, cutoff_fraction=0.05,
-        errors=0.005 * np.ones_like(x), uncertainty="bootstrap", n_bootstrap=128, seed=3,
+        x,
+        amp,
+        x_range=None,
+        cutoff_fraction=0.05,
+        errors=0.005 * np.ones_like(x),
+        uncertainty="bootstrap",
+        n_bootstrap=128,
+        seed=3,
     )
     assert math.isfinite(noisy.b_ave_err) and noisy.b_ave_err > 0
     assert clean.b_ave_err < noisy.b_ave_err  # less noise → tighter error
@@ -192,8 +200,14 @@ def test_bootstrap_exposes_b_pk_fragility():
     x = np.linspace(-60.0, 60.0, 1201)
     amp = _gaussian(x, 0.0, 30.0)  # very broad / flat top
     m = spectrum_moments(
-        x, amp, x_range=None, cutoff_fraction=0.2,
-        errors=0.1 * np.ones_like(x), uncertainty="bootstrap", n_bootstrap=128, seed=5,
+        x,
+        amp,
+        x_range=None,
+        cutoff_fraction=0.2,
+        errors=0.1 * np.ones_like(x),
+        uncertainty="bootstrap",
+        n_bootstrap=128,
+        seed=5,
     )
     assert m.b_pk_err > m.b_ave_err  # peak hops; mean is well-determined
     assert math.isfinite(m.beta_err) and m.beta_err > 0  # beta inherits the peak
@@ -203,8 +217,12 @@ def test_bootstrap_is_deterministic_under_seed():
     x = np.linspace(-60.0, 60.0, 1001)
     amp = _gaussian(x, 0.0, 8.0)
     kw = dict(
-        x_range=None, cutoff_fraction=0.05, errors=0.05 * np.ones_like(x),
-        uncertainty="bootstrap", n_bootstrap=64, seed=7,
+        x_range=None,
+        cutoff_fraction=0.05,
+        errors=0.05 * np.ones_like(x),
+        uncertainty="bootstrap",
+        n_bootstrap=64,
+        seed=7,
     )
     a = spectrum_moments(x, amp, **kw)
     b = spectrum_moments(x, amp, **kw)
@@ -216,8 +234,12 @@ def test_propagate_gives_integral_errors_and_nan_for_peak():
     x = np.linspace(-60.0, 60.0, 2001)
     amp = _gaussian(x, 0.0, 8.0)
     m = spectrum_moments(
-        x, amp, x_range=None, cutoff_fraction=0.05,
-        errors=0.05 * np.ones_like(x), uncertainty="propagate",
+        x,
+        amp,
+        x_range=None,
+        cutoff_fraction=0.05,
+        errors=0.05 * np.ones_like(x),
+        uncertainty="propagate",
     )
     assert math.isfinite(m.b_ave_err) and m.b_ave_err > 0
     assert math.isfinite(m.b_rms_mean_err)
@@ -307,8 +329,13 @@ def test_trend_row_has_fit_summary_shape():
     m = spectrum_moments(x, amp, x_range=None, cutoff_fraction=0.0, uncertainty="none")
     row = moments_trend_row(m, run_number=1234, run_label="R1234", field=3000.0, temperature=5.0)
     assert set(row) == {
-        "success", "parameters", "uncertainties", "run_number", "run_label",
-        "field", "temperature",
+        "success",
+        "parameters",
+        "uncertainties",
+        "run_number",
+        "run_label",
+        "field",
+        "temperature",
     }
     assert row["success"] is True
     assert "B_rms_mean" in row["parameters"] and "beta" in row["parameters"]
