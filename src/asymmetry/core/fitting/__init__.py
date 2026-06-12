@@ -10,7 +10,12 @@ from asymmetry.core.fitting.composite_parameters import (
     FunctionSpec,
     validate_composite_expression,
 )
-from asymmetry.core.fitting.engine import FitEngine
+from asymmetry.core.fitting.engine import (
+    FitCancelledError,
+    FitEngine,
+    FitResult,
+    drive_minuit,
+)
 from asymmetry.core.fitting.field_scan import (
     ScanBaselineResult,
     as_composite_model,
@@ -18,6 +23,7 @@ from asymmetry.core.fitting.field_scan import (
     fit_scan_model,
     parameter_set_for_model,
 )
+from asymmetry.core.fitting.fit_log import FitLog, enrich_summary_provenance
 from asymmetry.core.fitting.fit_quality import FitQuality, assess_fit_quality
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
@@ -45,15 +51,18 @@ from asymmetry.core.fitting.global_fit_wizard import (
 from asymmetry.core.fitting.grouped_time_domain import (
     GROUP_NUISANCE_PARAMS,
     GROUPED_SERIES_RELATIONSHIPS,
+    GROUPED_SERIES_SEEDING,
     GroupedSeriesFitResult,
     GroupedTimeDomainFitResult,
     GroupedTimeDomainGroup,
+    SeedingRecommendation,
     build_grouped_count_model,
     build_grouped_time_domain_datasets,
     build_grouped_time_domain_groups,
     fit_grouped_series,
     fit_grouped_time_domain,
     grouped_time_domain_available,
+    recommend_grouped_series_seeding,
 )
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.parameter_models import (
@@ -86,6 +95,9 @@ from asymmetry.core.fitting.spectral import (
 
 __all__ = [
     "FitEngine",
+    "FitResult",
+    "FitCancelledError",
+    "drive_minuit",
     "SelectionMetric",
     "SpectrumFingerprint",
     "CandidateTemplate",
@@ -97,6 +109,9 @@ __all__ = [
     "GlobalFitWizardRecommendation",
     "GROUP_NUISANCE_PARAMS",
     "GROUPED_SERIES_RELATIONSHIPS",
+    "GROUPED_SERIES_SEEDING",
+    "SeedingRecommendation",
+    "recommend_grouped_series_seeding",
     "build_grouped_count_model",
     "build_grouped_time_domain_datasets",
     "build_grouped_time_domain_groups",
@@ -137,6 +152,8 @@ __all__ = [
     "ParameterModelFitResult",
     "ErrorMode",
     "FitQuality",
+    "FitLog",
+    "enrich_summary_provenance",
     "apply_error_mode",
     "assess_fit_quality",
     "effective_range_bounds",
