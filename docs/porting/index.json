@@ -22,7 +22,7 @@
       "tests_path": "tests/test_transforms.py",
       "src_path": "src/asymmetry/core/transform/asymmetry.py",
       "updated": "2026-06-10",
-      "notes": "Follow-on from the simulate-mode verification suite (verification \u00a72). compute_asymmetry shipped Mantid AsymmetryCalc's independent-N/D error (1+A\u00b2)/(F+B), which over-estimates \u03c3_A by (1+A\u00b2)/(1-A\u00b2) vs exact Poisson 4\u03b1\u00b2FB(F+B)/(F+\u03b1B)\u2074 = (1-A\u00b2)/(F+B). Derivation verified analytically + Monte Carlo; oracle: Mantid is the outlier, WiMDA/musrfit/textbook use 1-A\u00b2. Measured fit impact: amplitude \u03c3 +3.2%, \u03c7\u00b2\u1d63 biased low. IMPLEMENTED (Option A): compute_asymmetry now uses 2|\u03b1|\u221a(FB(F+B))/(F+\u03b1B)\u00b2 with one-sided F\u00b7B=0 bins kept at the 1.0 no-information sentinel. Tests updated: test_transforms \u221a2->1.0 pin (renamed) + 3 new exact-form unit tests; TestRefitRecovery chi2r re-centred on 1.0. Other 'recompute' tests derive expected error by calling compute_asymmetry and stayed green. validate green (2000 passed). compute_asymmetry_with_count_errors and the simulate builder already used the exact form."
+      "notes": "Follow-on from the simulate-mode verification suite (verification §2). compute_asymmetry shipped Mantid AsymmetryCalc's independent-N/D error (1+A²)/(F+B), which over-estimates σ_A by (1+A²)/(1-A²) vs exact Poisson 4α²FB(F+B)/(F+αB)⁴ = (1-A²)/(F+B). Derivation verified analytically + Monte Carlo; oracle: Mantid is the outlier, WiMDA/musrfit/textbook use 1-A². Measured fit impact: amplitude σ +3.2%, χ²ᵣ biased low. IMPLEMENTED (Option A): compute_asymmetry now uses 2|α|√(FB(F+B))/(F+αB)² with one-sided F·B=0 bins kept at the 1.0 no-information sentinel. Tests updated: test_transforms √2->1.0 pin (renamed) + 3 new exact-form unit tests; TestRefitRecovery chi2r re-centred on 1.0. Other 'recompute' tests derive expected error by calling compute_asymmetry and stayed green. validate green (2000 passed). compute_asymmetry_with_count_errors and the simulate builder already used the exact form."
     },
     {
       "slug": "muonium-triplet",
@@ -42,7 +42,7 @@
       "tests_path": "tests/test_muonium.py",
       "src_path": "src/asymmetry/core/fitting/muonium.py",
       "updated": "2026-06-10",
-      "notes": "Follow-on from link-groups (PR #27). IMPLEMENTED: faithful ports of WiMDA TFMuonium/LowTFMuonium/ZFmuonium as undamped components MuoniumTF/MuoniumLowTF/MuoniumZF (composed with *Exponential like Oscillatory). Conventions: leading amplitude A (standard chain-amplitude), hyperfine A_hf (avoids the A clash), ZF anisotropy D_mu (bare D is a Redfield param), field in Gauss via existing g_mu/g_e constants, phase in radians, central diamagnetic line a separate OscillatoryField. TWO findings: (1) positive-frequency convention \u2014 TFMuonium uses signed w12 (lower satellite at -phase) while LowTFMuonium negates it; the port uses |w| so all lines share +phase. (2) These do NOT meet a CdS chi2~1.3 bar (chi2~22 vs 1.35 for independent lines) because (field,A_hf) is over-determined and the chi2 landscape is razor-sharp; WiMDA's own docx routes CdS to three independent lines = link groups. So scope = GENERAL genuine-muonium feature, verified by self-consistency (recover A_hf at chi2~1) + WiMDA arithmetic, NOT the CdS corpus. CdS stays with link groups."
+      "notes": "Follow-on from link-groups (PR #27). IMPLEMENTED: faithful ports of WiMDA TFMuonium/LowTFMuonium/ZFmuonium as undamped components MuoniumTF/MuoniumLowTF/MuoniumZF (composed with *Exponential like Oscillatory). Conventions: leading amplitude A (standard chain-amplitude), hyperfine A_hf (avoids the A clash), ZF anisotropy D_mu (bare D is a Redfield param), field in Gauss via existing g_mu/g_e constants, phase in radians, central diamagnetic line a separate OscillatoryField. TWO findings: (1) positive-frequency convention — TFMuonium uses signed w12 (lower satellite at -phase) while LowTFMuonium negates it; the port uses |w| so all lines share +phase. (2) These do NOT meet a CdS chi2~1.3 bar (chi2~22 vs 1.35 for independent lines) because (field,A_hf) is over-determined and the chi2 landscape is razor-sharp; WiMDA's own docx routes CdS to three independent lines = link groups. So scope = GENERAL genuine-muonium feature, verified by self-consistency (recover A_hf at chi2~1) + WiMDA arithmetic, NOT the CdS corpus. CdS stays with link groups."
     },
     {
       "slug": "link-groups",
@@ -105,7 +105,7 @@
       "tests_path": null,
       "src_path": null,
       "updated": "2026-05-15",
-      "notes": "WiMDA-first implementation complete. musrfit comparison pass done 2026-05-15. Phase family investigation done 2026-05-15. Dangerous naming collisions documented: musrfit \u2018phase\u2019 = WiMDA \u2018Phase Spectrum\u2019; musrfit \u2018real\u2019 = WiMDA \u2018Phase\u2019; musrfit \u2018power\u2019 = |F|^2 != WiMDA \u2018(Power)^1/2\u2019 = |F|. Phase family conclusion: musrfit uses linear c0+c1 ONLY inside phaseOptReal optimizer; all manual/CLI paths use constant c0 only. Do NOT expose c1 as a user control; implement as optimizer backend only. t0_offset_us already covers the physical timing-slope case. Recommended follow-on: (1) phaseOptReal mode with entropy optimizer using c0+c1 backend, (2) N0 normalization for single-histogram inputs, (3) range-based background subtraction, (4) Tesla unit, (5) imag/real+imag output modes. musrfit qualitative apodization levels explicitly rejected in favour of WiMDA explicit tau/start. Per-detector FFT deferred."
+      "notes": "WiMDA-first implementation complete. musrfit comparison pass done 2026-05-15. Phase family investigation done 2026-05-15. Dangerous naming collisions documented: musrfit ‘phase’ = WiMDA ‘Phase Spectrum’; musrfit ‘real’ = WiMDA ‘Phase’; musrfit ‘power’ = |F|^2 != WiMDA ‘(Power)^1/2’ = |F|. Phase family conclusion: musrfit uses linear c0+c1 ONLY inside phaseOptReal optimizer; all manual/CLI paths use constant c0 only. Do NOT expose c1 as a user control; implement as optimizer backend only. t0_offset_us already covers the physical timing-slope case. Recommended follow-on: (1) phaseOptReal mode with entropy optimizer using c0+c1 backend, (2) N0 normalization for single-histogram inputs, (3) range-based background subtraction, (4) Tesla unit, (5) imag/real+imag output modes. musrfit qualitative apodization levels explicitly rejected in favour of WiMDA explicit tau/start. Per-detector FFT deferred."
     },
     {
       "slug": "multi-group-time-domain-fitting",
@@ -169,7 +169,7 @@
       "tests_path": null,
       "src_path": null,
       "updated": "2026-06-05",
-      "notes": "Promotes candidate slug maxent-spectrum. Study pass done 2026-06-05. Four implementations found across references, three distinct methods: (1) MULTIMAX lineage = WiMDA Wimdamax.pas AND Mantid MuonMaxent/MaxentTools (same FORTRAN ancestor, near-identical \u2014 implement ONCE, never offer as separate user choices); (2) Mantid generic MaxEnt-v1 (Skilling-Bryan, PosNeg entropy, complex images \u2014 genuinely different but Mantid's muon GUI dropped it in v3.12; do not expose as second engine, keep core seam engine-shaped); (3) WiMDA src/MaxEnt.pas is Burg all-poles MEM, NOT MaxEnt \u2014 excluded, naming hazard. musrfit has NO MaxEnt (roadmap item only; its PFTPhaseCorrection entropy code is FFT phase correction). WARNING: WiMDA's own FEATURE_MAP/SYMBOL_MAP 'maxent-spectrum' entries point at the Burg code and miss Wimdamax.pas entirely \u2014 do not navigate by them. Mantid MaxentTools is GPL-3: usable as verification oracle, must not be copied into MIT Asymmetry. Decision: port MULTIMAX with WiMDA as behavioral contract, Mantid numpy port as oracle."
+      "notes": "Promotes candidate slug maxent-spectrum. Study pass done 2026-06-05. Four implementations found across references, three distinct methods: (1) MULTIMAX lineage = WiMDA Wimdamax.pas AND Mantid MuonMaxent/MaxentTools (same FORTRAN ancestor, near-identical — implement ONCE, never offer as separate user choices); (2) Mantid generic MaxEnt-v1 (Skilling-Bryan, PosNeg entropy, complex images — genuinely different but Mantid's muon GUI dropped it in v3.12; do not expose as second engine, keep core seam engine-shaped); (3) WiMDA src/MaxEnt.pas is Burg all-poles MEM, NOT MaxEnt — excluded, naming hazard. musrfit has NO MaxEnt (roadmap item only; its PFTPhaseCorrection entropy code is FFT phase correction). WARNING: WiMDA's own FEATURE_MAP/SYMBOL_MAP 'maxent-spectrum' entries point at the Burg code and miss Wimdamax.pas entirely — do not navigate by them. Mantid MaxentTools is GPL-3: usable as verification oracle, must not be copied into MIT Asymmetry. Decision: port MULTIMAX with WiMDA as behavioral contract, Mantid numpy port as oracle."
     },
     {
       "slug": "minos-error-analysis",
@@ -244,7 +244,7 @@
         "verification_plan": "docs/porting/simulate-mode/verification-plan.md"
       },
       "updated": "2026-06-10",
-      "notes": "Promoted from candidate (tier now, score 16) under the wimda-parity-gap umbrella, Wave A project 8. Candidate docs preserved at docs/porting/simulate-mode/candidate/ (same-slug promotion: the structural harness requires unique slugs, so the candidates/ entry is replaced rather than kept, unlike maxent-spectrum->maxent). Study pass done 2026-06-10 against WiMDA Simulate.pas + DegradeStats.pas (Pascal read directly; brief verified). Decisions (Ben, 2026-06-10): loaded-run template required; persistence via saved NeXus file (no schema change); degrade -> new derived run (not in-place); minimal standalone NeXus V1 writer (not template-copy; works for PSI .bin templates); dialog seeds model+params from current fit else builder; core takes per-group signal specs, v1 dialog is F/B alpha-split; deadtimes written as zeros + optional flat background (default 0). Key divergences from WiMDA (all documented in comparison.md): Poisson draws of expected counts with numpy PCG64 + first-class seed (WiMDA: unseeded Delphi RNG); pre-t0 bins = background only (WiMDA: unphysical growing exponential); degrade = exact binomial thinning for f<1 (WiMDA: Poisson(k*f), over-dispersed); exact time_zero (WiMDA: quantised to whole microseconds). Double-pulse halving, count-mode simulation, two-period output deferred to count-domain-fit-modes. IMPLEMENTED 2026-06-10 (4 phases, validate green, 53 new tests): core/simulate.py (simulate_run, simulate_run_from_group_signals, degrade_run, expected_counts, reduce_run_to_dataset, promoted archetype builders), core/io/nexus_writer.py (write_nexus_v1, works for PSI .bin templates), SimulateDialog + Data Browser Degrade Statistics action + provenance badging, docs/user_guide/simulation.rst. Verified: round-trip refit recovery, 100-seed pull distribution ~ N(0,1), degrade 1/sqrt(f) error scaling, corpus round trips (nickel HDF5 + EuO PSI .bin). FINDING for follow-up: compute_asymmetry's error formula treats F+-aB as independent ((1+A^2) form), over-estimating sigma_A by (1+A^2)/(1-A^2) vs exact Poisson propagation \u2014 chi2_r centres below 1 against known truth; affects all fits; recorded as follow-on in implementation-options.md."
+      "notes": "Promoted from candidate (tier now, score 16) under the wimda-parity-gap umbrella, Wave A project 8. Candidate docs preserved at docs/porting/simulate-mode/candidate/ (same-slug promotion: the structural harness requires unique slugs, so the candidates/ entry is replaced rather than kept, unlike maxent-spectrum->maxent). Study pass done 2026-06-10 against WiMDA Simulate.pas + DegradeStats.pas (Pascal read directly; brief verified). Decisions (Ben, 2026-06-10): loaded-run template required; persistence via saved NeXus file (no schema change); degrade -> new derived run (not in-place); minimal standalone NeXus V1 writer (not template-copy; works for PSI .bin templates); dialog seeds model+params from current fit else builder; core takes per-group signal specs, v1 dialog is F/B alpha-split; deadtimes written as zeros + optional flat background (default 0). Key divergences from WiMDA (all documented in comparison.md): Poisson draws of expected counts with numpy PCG64 + first-class seed (WiMDA: unseeded Delphi RNG); pre-t0 bins = background only (WiMDA: unphysical growing exponential); degrade = exact binomial thinning for f<1 (WiMDA: Poisson(k*f), over-dispersed); exact time_zero (WiMDA: quantised to whole microseconds). Double-pulse halving, count-mode simulation, two-period output deferred to count-domain-fit-modes. IMPLEMENTED 2026-06-10 (4 phases, validate green, 53 new tests): core/simulate.py (simulate_run, simulate_run_from_group_signals, degrade_run, expected_counts, reduce_run_to_dataset, promoted archetype builders), core/io/nexus_writer.py (write_nexus_v1, works for PSI .bin templates), SimulateDialog + Data Browser Degrade Statistics action + provenance badging, docs/user_guide/simulation.rst. Verified: round-trip refit recovery, 100-seed pull distribution ~ N(0,1), degrade 1/sqrt(f) error scaling, corpus round trips (nickel HDF5 + EuO PSI .bin). FINDING for follow-up: compute_asymmetry's error formula treats F+-aB as independent ((1+A^2) form), over-estimating sigma_A by (1+A^2)/(1-A^2) vs exact Poisson propagation — chi2_r centres below 1 against known truth; affects all fits; recorded as follow-on in implementation-options.md."
     },
     {
       "slug": "maxent-spectrum",
@@ -460,7 +460,7 @@
     },
     {
       "slug": "lem-depth-profiling",
-      "feature_name": "LEM depth-profiling helpers (implant-energy \u2192 depth conversion)",
+      "feature_name": "LEM depth-profiling helpers (implant-energy → depth conversion)",
       "status": "candidate",
       "tier": "later",
       "score": 6,
@@ -676,7 +676,7 @@
     },
     {
       "slug": "count-domain-fit-modes",
-      "feature_name": "Count-domain fit modes (\u03b1-free F+B, single-histogram, exclude range, fittable t0/baseline, count-loss in fit, double pulse)",
+      "feature_name": "Count-domain fit modes (α-free F+B, single-histogram, exclude range, fittable t0/baseline, count-loss in fit, double pulse)",
       "status": "implemented",
       "path": "docs/porting/count-domain-fit-modes",
       "references": [
@@ -741,7 +741,7 @@
     },
     {
       "slug": "radical-correlation-spectrum",
-      "feature_name": "Muoniated-radical correlation spectrum (WiMDA Corr/AvCorr + rmatch Breit\u2013Rabi pair-matching)",
+      "feature_name": "Muoniated-radical correlation spectrum (WiMDA Corr/AvCorr + rmatch Breit–Rabi pair-matching)",
       "status": "implemented",
       "path": "docs/porting/radical-correlation-spectrum",
       "references": [
@@ -764,7 +764,31 @@
         "frequency-domain-finishers"
       ],
       "updated": "2026-06-11",
-      "notes": "Promotion of frequency-domain-finishers comparison.md \u00a79 (deferred follow-on). Verified vs WiMDA Pascal (Plot.pas rmatch 515-523, w12/w34 525-551, CorrFn 1387-1394, Corr/AvCorr loop 2149-2230; FFTPar CorrField/CorrOrder). Physics reconciled across THREE sources to machine precision: textbook eqn 4.54/4.65 (A=nu12+nu34 high-TF) == McKenzie eqns 6-8 (A_mu=nu43-nu12, her nu12 signed-negative) == muonium.py _tf_levels w12+w34. Decisions: exact Breit-Rabi forward map via muonium.py (NOT rmatch's approximate inverse w/ 5th-sig-fig rounded constants); build as derived display mode through compute_average_group_spectrum like Burg; badged specialist radio; A_mu coupling axis (MHz) excluded from field-unit selector; reference-field + CorrOrder(=2) controls; correlate-the-averaged-spectrum (AvCorr-like, documented divergence). Synthetic-first verification (cyclohexadienyl A_mu=514.4(1) MHz). User docs MUST teach radical-uSR + TF-vs-ALC complementarity (ALC already shipped PR #23, NOT touched). IMPLEMENTED (3 phases): core/fourier/correlation.py + spectrum.py derived mode + fft.py alias (P1); badged GUI radio + reference-field/order controls + A\u03bc-axis field-unit lock + schema recipe keys (P2); user-guide page docs/user_guide/radical_correlation.rst with TF-vs-ALC subsection (P3). validate green 2328 passed."
+      "notes": "Promotion of frequency-domain-finishers comparison.md §9 (deferred follow-on). Verified vs WiMDA Pascal (Plot.pas rmatch 515-523, w12/w34 525-551, CorrFn 1387-1394, Corr/AvCorr loop 2149-2230; FFTPar CorrField/CorrOrder). Physics reconciled across THREE sources to machine precision: textbook eqn 4.54/4.65 (A=nu12+nu34 high-TF) == McKenzie eqns 6-8 (A_mu=nu43-nu12, her nu12 signed-negative) == muonium.py _tf_levels w12+w34. Decisions: exact Breit-Rabi forward map via muonium.py (NOT rmatch's approximate inverse w/ 5th-sig-fig rounded constants); build as derived display mode through compute_average_group_spectrum like Burg; badged specialist radio; A_mu coupling axis (MHz) excluded from field-unit selector; reference-field + CorrOrder(=2) controls; correlate-the-averaged-spectrum (AvCorr-like, documented divergence). Synthetic-first verification (cyclohexadienyl A_mu=514.4(1) MHz). User docs MUST teach radical-uSR + TF-vs-ALC complementarity (ALC already shipped PR #23, NOT touched). IMPLEMENTED (3 phases): core/fourier/correlation.py + spectrum.py derived mode + fft.py alias (P1); badged GUI radio + reference-field/order controls + Aμ-axis field-unit lock + schema recipe keys (P2); user-guide page docs/user_guide/radical_correlation.rst with TF-vs-ALC subsection (P3). validate green 2328 passed."
+    },
+    {
+      "slug": "fit-workflow-diagnostics",
+      "feature_name": "Fit-workflow diagnostics: MINOS asymmetric errors, χ² quality band, chain-seeding, mid-fit abort, persistent fit record",
+      "status": "study",
+      "path": "docs/porting/fit-workflow-diagnostics",
+      "references": [
+        "WiMDA",
+        "musrfit",
+        "Mantid",
+        "iminuit",
+        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
+      ],
+      "docs": {
+        "readme": "docs/porting/fit-workflow-diagnostics/README.md",
+        "comparison": "docs/porting/fit-workflow-diagnostics/comparison.md",
+        "implementation_options": "docs/porting/fit-workflow-diagnostics/implementation-options.md",
+        "test_data": "docs/porting/fit-workflow-diagnostics/test-data.md",
+        "verification_plan": "docs/porting/fit-workflow-diagnostics/verification-plan.md"
+      },
+      "tests_path": null,
+      "src_path": null,
+      "updated": "2026-06-12",
+      "notes": "Wave B. Absorbs the minos-error-analysis candidate. MINOS=display-only overlay (additive FitResult.minos_errors + 'uncertainties_asymmetric' summary key; downstream surfaces stay symmetric HESSE by design). One shared engine.py drive helper (migrad + opt-in MINOS; explicit HESSE only pre-MINOS on simplex since migrad already runs HESSE) from all three minimiser sites (FitEngine.fit, global_fit, count_domain._solve). fit_quality already an EXACT WiMDA port (chi2.cdf==Gammp); wired through result_summary + every surface (W7 'quality' key), R fixed 0.95. Chain-seeding ('chain from previous run', distinct from warm_start_source) passes through normalize_to_grouped_contract (W5); Auto order-key default. Abort mirrors MaxEnt contract: core cancel_callback + FitCancelledError, in-fit raise + between-member checks, nothing recorded on abort (W6). FitLog REFRAMED (Ben 2026-06-12): no append-file; .asymp already stores latest-fit-per-dataset (FitSlot.result) + latest batch (FitSeries.results_by_run) = WiMDA's overwrite .fit/.bfit snapshots; enrich those records additively + Qt-free fit_log.py formatter + on-demand export only (W14). Follow-ons: in-batch co-add, fgAll Poisson cost-factory unification, provenance keys at recording sites, worker mixin."
     }
   ]
 }

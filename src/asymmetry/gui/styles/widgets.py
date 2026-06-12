@@ -216,6 +216,50 @@ def success_html(label: str, *, detail: str | None = None) -> str:
     return html
 
 
+#: Colour per χ² verdict. ``good`` = green; ``poor`` (χ² too high) = error red;
+#: ``overdone`` (χ² suspiciously low — overestimated errors / over-flexible model)
+#: = accent, reading as "suspicious", not "bad". Mirrors WiMDA's green/chocolate/
+#: purple scheme onto the Asymmetry palette.
+_FIT_VERDICT_COLOURS = {"good": tokens.OK, "poor": tokens.ERROR, "overdone": tokens.ACCENT}
+
+
+def fit_quality_chip_html(quality: dict | None) -> str:
+    """Return an inline coloured verdict chip for a ``quality`` summary dict.
+
+    ``quality`` is the additive ``"quality"`` key from
+    :func:`~asymmetry.core.fitting.result_summary.fit_result_summary` (verdict +
+    target band). Returns an empty string when no verdict is available.
+    """
+    if not quality or not quality.get("verdict"):
+        return ""
+    verdict = str(quality["verdict"])
+    colour = _FIT_VERDICT_COLOURS.get(verdict, tokens.TEXT_MUTED)
+    return f' · <span style="color:{colour};font-weight:600;">{verdict}</span>'
+
+
+def fit_quality_tooltip(quality: dict | None) -> str:
+    """Return a teaching tooltip explaining the χ² verdict and target band."""
+    if not quality or not quality.get("verdict"):
+        return ""
+    verdict = str(quality["verdict"])
+    low = quality.get("band_low")
+    high = quality.get("band_high")
+    confidence = quality.get("confidence")
+    dof = quality.get("dof")
+    lines = [f"Fit quality: {verdict}."]
+    if low is not None and high is not None and confidence is not None:
+        pct = int(round(float(confidence) * 100))
+        band = f"{float(low):.3f}–{float(high):.3f}"
+        nu = f" (ν = {int(dof)})" if dof is not None else ""
+        lines.append(f"A good fit's χ²ᵣ falls in [{band}] at {pct}%{nu}.")
+    lines.append(
+        "“overdone” reproduces the data better than the errors allow — usually "
+        "overestimated errors or an over-flexible model; “poor” is worse than the "
+        "errors allow."
+    )
+    return " ".join(lines)
+
+
 def info_html(label: str) -> str:
     """Return rich-text HTML for an informational status line (accent colour)."""
     return f'<span style="color:{tokens.ACCENT};">{label}</span>'

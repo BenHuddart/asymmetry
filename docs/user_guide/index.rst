@@ -40,6 +40,7 @@ material.
    vector_polarization
    fitting
    assessing_a_fit
+   fit_workflow_diagnostics
    composite_models
    fit_wizard
    global_fit_wizard
