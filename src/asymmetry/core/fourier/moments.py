@@ -83,6 +83,8 @@ class SpectrumMoments:
     skewness_err: float = float("nan")
     skewness_g1_err: float = float("nan")
     beta_err: float = float("nan")
+    #: Peak amplitude inside the window (the cutoff reference); ``NaN`` if empty.
+    window_peak_amplitude: float = float("nan")
     #: Extraction provenance: range, cutoff, unit, mode, uncertainty seed/method.
     recipe: dict[str, Any] = field(default_factory=dict)
 
@@ -145,7 +147,12 @@ def _parabolic_peak(x: NDArray[np.float64], amp: NDArray[np.float64], ipk: int) 
     if a >= 0.0:  # not a downward parabola → no meaningful maximum
         return None
     vertex_n = -b / (2.0 * a)
-    return vertex_n * dx + x0
+    vertex = vertex_n * dx + x0
+    # Clamp to the fitted five-point span: a near-flat parabola can place the
+    # vertex far outside the points it was fitted to, which is unphysical for a
+    # peak. WiMDA leaves this unclamped (divergence D8); we bound it.
+    span_lo, span_hi = float(x[lo]), float(x[hi - 1])
+    return min(max(vertex, span_lo), span_hi)
 
 
 def _moment_scalars(
@@ -204,6 +211,7 @@ def _moment_scalars(
         "beta": beta,
         "n_sample": float(p.size),
         "peak_refined": 1.0 if refined is not None else 0.0,
+        "window_peak": peak_amp,
     }
 
 
@@ -407,12 +415,16 @@ def spectrum_moments(
         return _empty(recipe)
 
     errs: dict[str, float] = dict.fromkeys(_BOOTSTRAP_KEYS, float("nan"))
-    have_sigma = sig is not None and np.any(sig > 0.0)
+    # Sanitise the error array before it reaches the noise model: a stray
+    # negative or non-finite σ (a derived/subtracted spectrum, a bad loader) would
+    # make ``rng.normal(0, σ)`` raise; clamp such points to zero (unperturbed).
+    sig_safe = None if sig is None else np.where(np.isfinite(sig) & (sig > 0.0), sig, 0.0)
+    have_sigma = sig_safe is not None and bool(np.any(sig_safe > 0.0))
     if uncertainty != "none" and have_sigma:
         if uncertainty == "bootstrap":
-            errs = _bootstrap_errors(xa, ya, sig, cutoff_fraction, n_bootstrap, seed)
+            errs = _bootstrap_errors(xa, ya, sig_safe, cutoff_fraction, n_bootstrap, seed)
         else:
-            errs = _propagate_errors(xa, ya, sig, cutoff_fraction, base)
+            errs = _propagate_errors(xa, ya, sig_safe, cutoff_fraction, base)
 
     return SpectrumMoments(
         b_pk=base["b_pk"],
@@ -433,6 +445,7 @@ def spectrum_moments(
         skewness_err=errs["skewness"],
         skewness_g1_err=errs["skewness_g1"],
         beta_err=errs["beta"],
+        window_peak_amplitude=base["window_peak"],
         recipe=recipe,
     )
 

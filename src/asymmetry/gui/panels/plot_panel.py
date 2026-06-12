@@ -3831,7 +3831,10 @@ class PlotPanel(QWidget):
 
     def current_frequency_dataset(self) -> MuonDataset | None:
         """Return the active frequency-domain dataset, or ``None``."""
-        if not self._is_frequency_plot_panel():
+        # ``_current_datasets`` and the overlay state only exist when matplotlib
+        # is available (they are set up in the canvas try-block); guard so a
+        # headless / no-mpl panel degrades to "no spectrum" instead of raising.
+        if not self._has_mpl or not self._is_frequency_plot_panel():
             return None
         if self._current_datasets:
             return self._current_datasets[0]
@@ -3876,7 +3879,7 @@ class PlotPanel(QWidget):
         line is drawn at ``peak_amplitude · cutoff_fraction``. Drawn only on the
         frequency panel.
         """
-        if not self._is_frequency_plot_panel():
+        if not self._has_mpl or not self._is_frequency_plot_panel():
             return
         self._moments_window_mhz = (
             None if window_mhz is None else (float(window_mhz[0]), float(window_mhz[1]))
@@ -3890,10 +3893,11 @@ class PlotPanel(QWidget):
 
     def clear_moments_overlay(self) -> None:
         """Hide the moment window/cutoff overlay."""
+        if not self._has_mpl:
+            return
         self._moments_overlay_visible = False
         self._clear_moments_artists()
-        if self._has_mpl:
-            self._canvas.draw_idle()
+        self._canvas.draw_idle()
 
     def _clear_moments_artists(self) -> None:
         for artist in (*self._moments_span_artists, *self._moments_cutoff_artists):

@@ -194,6 +194,34 @@ def test_live_settings_persist_in_fourier_state(window):
     assert fresh.moments_widget.range_mhz() == (25.0, 55.0)
 
 
+def test_resending_in_a_different_unit_replaces_not_duplicates(window):
+    from asymmetry.core.fourier.units import FieldUnit
+
+    _activate_fft_spectrum(window, [1, 2])
+    widget = window._fourier_panel.moments_widget
+    window._on_moments_send_to_trend(widget)
+    first = [b.batch_id for b in _moments_batches(window)]
+    # Same selection + window, different display unit → still one series.
+    widget._unit = FieldUnit.MHZ
+    window._on_moments_send_to_trend(widget)
+    second = [b.batch_id for b in _moments_batches(window)]
+    assert first == second
+    assert len(second) == 1
+
+
+def test_non_overlapping_spectrum_resets_window_to_full():
+    from asymmetry.gui.panels.spectral_moments_widget import SpectralMomentsWidget
+
+    w = SpectralMomentsWidget()
+    w.set_spectrum_bounds(20.0, 60.0)
+    w.set_range_mhz(40.0, 55.0)  # a window inside run A
+    # Switch to a run whose spectrum does not overlap [40,55].
+    w.set_spectrum_bounds(100.0, 200.0)
+    lo, hi = w.range_mhz()
+    assert lo < hi  # not inverted
+    assert (lo, hi) == (100.0, 200.0)  # fell back to the new full extent
+
+
 def test_no_schema_version_bump():
     assert CURRENT_SCHEMA_VERSION == 8
 

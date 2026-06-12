@@ -4828,6 +4828,11 @@ class MainWindow(QMainWindow):
             return True, ""
         meta = getattr(dataset, "metadata", {}) or {}
         display = str(meta.get("fourier_display", ""))
+        # Canonicalise the stored display label, tolerating either the label
+        # (e.g. "Phase"/"phaseOptReal") or an already-canonical key. (A reuse of
+        # fourier_mode_uses_phase_correction was considered but rejected: those
+        # predicates raise on a canonical-key input, narrowing robustness —
+        # recorded as a follow-on in comparison.md.)
         try:
             canonical = canonical_fourier_display_mode(display)
         except (ValueError, TypeError):
@@ -4863,7 +4868,7 @@ class MainWindow(QMainWindow):
         freq_mhz = accessor[0]
         if freq_mhz.size:
             active.set_spectrum_bounds(float(np.min(freq_mhz)), float(np.max(freq_mhz)))
-        self._compute_and_show_moments(active)
+        self._compute_and_show_moments(active, accessor=accessor)
 
     def _compute_moments_for(self, widget, freq_mhz, amplitude, errors):
         """Run the core on one spectrum using *widget*'s recipe; return moments."""
@@ -4887,30 +4892,27 @@ class MainWindow(QMainWindow):
             mode=self._active_frequency_rep_type().value,
         )
 
-    def _moments_window_peak(self, freq_mhz, amplitude, range_mhz) -> float | None:
-        """Return the peak amplitude inside the window (for the cutoff line)."""
-        if amplitude.size == 0:
-            return None
-        if range_mhz is None:
-            return float(np.max(amplitude))
-        lo, hi = sorted(range_mhz)
-        mask = (freq_mhz >= lo) & (freq_mhz <= hi)
-        return float(np.max(amplitude[mask])) if np.any(mask) else None
+    def _compute_and_show_moments(self, widget, accessor=None) -> None:
+        """Compute moments for the active spectrum and refresh readout + overlay.
 
-    def _compute_and_show_moments(self, widget) -> None:
-        """Compute moments for the active spectrum and refresh readout + overlay."""
-        if not hasattr(self._frequency_plot_panel, "active_spectrum_for_moments"):
-            return
-        accessor = self._frequency_plot_panel.active_spectrum_for_moments()
+        *accessor* (the W15 ``(x, amplitude, errors, unit)`` tuple) is reused when
+        the caller already fetched it, avoiding a second full-spectrum copy.
+        """
+        if accessor is None:
+            if not hasattr(self._frequency_plot_panel, "active_spectrum_for_moments"):
+                return
+            accessor = self._frequency_plot_panel.active_spectrum_for_moments()
         if accessor is None:
             return
         freq_mhz, amplitude, errors, _unit = accessor
         moments = self._compute_moments_for(widget, freq_mhz, amplitude, errors)
         widget.show_moments(moments)
-        range_mhz = widget.range_mhz()
-        peak = self._moments_window_peak(freq_mhz, amplitude, range_mhz)
+        # The cutoff line sits at peak·fraction; reuse the kernel's window peak so
+        # the drawn line cannot drift from the computed cutoff (NaN → no line).
+        peak = moments.window_peak_amplitude
+        peak = float(peak) if np.isfinite(peak) else None
         self._frequency_plot_panel.set_moments_overlay(
-            window_mhz=range_mhz,
+            window_mhz=widget.range_mhz(),
             cutoff_fraction=widget.cutoff_fraction(),
             peak_amplitude=peak,
             visible=True,
@@ -4941,7 +4943,12 @@ class MainWindow(QMainWindow):
         the same recipe replaces its series rather than duplicating it; a
         different selection or recipe is a different series.
         """
-        recipe_key = "|".join(f"{k}={recipe[k]}" for k in sorted(recipe) if k != "range_mhz")
+        # The display *unit* is excluded from the identity: it only changes how
+        # the same moments are expressed, so re-sending the same selection in a
+        # different unit replaces the series (latest values win) rather than
+        # forking a second, unit-mismatched series for the same runs.
+        skip = {"range_mhz", "unit"}
+        recipe_key = "|".join(f"{k}={recipe[k]}" for k in sorted(recipe) if k not in skip)
         rng = recipe.get("range_mhz")
         recipe_key += "|range=" + ("full" if rng is None else f"{rng[0]:.6g},{rng[1]:.6g}")
         member_key = ",".join(str(r) for r in sorted(runs))

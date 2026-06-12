@@ -246,6 +246,52 @@ def test_propagate_gives_integral_errors_and_nan_for_peak():
     assert math.isnan(m.b_pk_err)  # parabolic peak not linearly propagated
 
 
+def test_bootstrap_tolerates_negative_or_nonfinite_sigma():
+    # A stray negative / non-finite per-point error must not crash the noise model
+    # (rng.normal would raise on a negative scale); such points are unperturbed.
+    x = np.linspace(-60.0, 60.0, 1001)
+    amp = _gaussian(x, 0.0, 8.0)
+    errors = 0.05 * np.ones_like(x)
+    errors[10] = -1.0
+    errors[20] = np.inf
+    m = spectrum_moments(
+        x,
+        amp,
+        x_range=None,
+        cutoff_fraction=0.05,
+        errors=errors,
+        uncertainty="bootstrap",
+        n_bootstrap=64,
+        seed=2,
+    )
+    assert math.isfinite(m.b_ave_err) and m.b_ave_err >= 0
+
+
+def test_window_peak_amplitude_exposed():
+    x = np.linspace(-60.0, 60.0, 1001)
+    amp = 3.0 * _gaussian(x, 0.0, 8.0)
+    m = spectrum_moments(x, amp, x_range=None, cutoff_fraction=0.0, uncertainty="none")
+    assert m.window_peak_amplitude == pytest.approx(3.0, rel=1e-3)
+
+
+def test_parabolic_peak_is_clamped_to_the_fitted_span():
+    # Property: the refined peak never escapes the five-point window it was fit to,
+    # however ragged the local shape (relevant under bootstrap resampling).
+    from asymmetry.core.fourier.moments import _parabolic_peak
+
+    rng = np.random.default_rng(0)
+    x = np.arange(11, dtype=float)
+    for _ in range(200):
+        amp = rng.random(11)
+        ipk = int(np.argmax(amp))
+        if not (2 <= ipk <= 8):
+            continue
+        peak = _parabolic_peak(x, amp, ipk)
+        if peak is None:
+            continue
+        assert x[ipk - 2] - 1e-9 <= peak <= x[ipk + 2] + 1e-9
+
+
 def test_no_errors_yields_nan_uncertainties():
     x = np.linspace(-60.0, 60.0, 1001)
     amp = _gaussian(x, 0.0, 8.0)

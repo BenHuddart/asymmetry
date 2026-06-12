@@ -67,10 +67,21 @@ A 5-point quadratic least-squares fit around `ipk`, evaluated at its vertex:
 
 Guarded by `(index < n − nexpts/2) and (index > nexpts/2)` (with `nexpts = 5`,
 `nexpts div 2 = 2`): **if the discrete peak is within 2 bins of either end, the
-parabolic step is skipped** and `B_pk` stays the discrete peak. We reproduce this
-exactly (vertex of the 5-point LSQ parabola, edge guard, fall back to the
-discrete bin), and re-derive the closed-form normal-equation solution rather than
-copying WiMDA's hand-unrolled `m1…m6` accumulators.
+parabolic step is skipped** and `B_pk` stays the discrete peak. We re-derive the
+closed-form normal-equation solution (the oracle keeps WiMDA's hand-unrolled
+`m1…m6` accumulators as an independent cross-check) with two deliberate
+divergences:
+
+- **Edge guard (geometrically exact).** We require all five points to exist,
+  `2 ≤ ipk ≤ n−3` (0-based). WiMDA's 1-based `index > 2 … index < n−2` is one bin
+  stricter at the low edge; the difference only changes whether the *third* bin
+  refines or falls back to the discrete peak, and is folded into the
+  consistent-indexing divergence D1.
+- **Vertex clamp (D8).** A near-flat 5-point fit can place the parabolic vertex
+  far outside the points it was fitted to — unphysical for a peak. We clamp the
+  vertex to the fitted five-point span `[B[ipk−2], B[ipk+2]]`. WiMDA leaves it
+  unclamped; on a clean peak the vertex is well inside the span and the two
+  agree, so the oracle test is unaffected.
 
 ### 1.4 Window + cutoff mask (lines 227–229, 258–260)
 
@@ -206,10 +217,40 @@ vortex-lattice-like lineshape in [verification-plan.md](verification-plan.md).
 | D4 | single-spectrum moments carry **no** error (`errsread=false`) | real per-moment uncertainties (propagation/bootstrap, step-3) | "we should do better than WiMDA" |
 | D5 | MaxEnt spectrum only | MaxEnt **and** phase-corrected real FFT (eligibility-gated) | both are lineshape-faithful; broadens applicability |
 | D6 | field axis hard-wired to Gauss | field-default Gauss + `G/T/MHz` selector, unit recorded | flexibility; `α`,`β` invariant, `B_*` rescale |
+| D7 | discrete peak over the whole MaxEnt spectrum | discrete peak (and cutoff reference) over the analysis *range* | keeps cutoff threshold + `B_pk` self-consistent with the windowed moments; an out-of-range line can't set the threshold |
+| D8 | parabolic vertex unclamped | vertex clamped to the fitted five-point span | a near-flat fit can throw the vertex far outside its own points; physical correctness over WiMDA equivalence |
 
 WiMDA's commented-out analytic error block (`Moments.pas:195–217`, the
 `errsread` branch) is a useful precedent for D4 — it does standard linear
 propagation of per-point errors through `m0…m3`. We document it in
-implementation-options.md as the linear-propagation reference and decide
-propagation-vs-bootstrap at step-3.
-</content>
+implementation-options.md as the linear-propagation reference; the chosen method
+is bootstrap-primary (see [README.md](README.md) §"Implementation choices").
+
+## 5. Recorded follow-ons (out of scope here)
+
+From the high-effort code review (2026-06-12); deferred rather than churned:
+
+- **MaxEnt multi-run send.** "Send to trend" computes moments only for selected
+  runs whose spectrum is already cached. FFT spectra are pre-computable across a
+  selection ("Apply settings to selected runs"), but MaxEnt reconstructions are
+  per-run and lazy, so a multi-run MaxEnt send currently records only the runs
+  whose reconstruction exists (the status line reports the skipped count). A
+  batch-reconstruct-then-send action would close this; it needs the MaxEnt engine
+  and is out of scope for moments.
+- **Field-scan windows.** The analysis window is in absolute field/frequency, so
+  a single window suits a temperature scan (line roughly fixed) but can exclude
+  runs in a *field* scan where the line moves run-to-run; those runs report an
+  empty window and are skipped. A per-run / relative-to-line window is a possible
+  later enhancement.
+- **Shared `value ± error` formatter.** `_format_value_error` duplicates the
+  pattern in several GUI sites (`fit_panel`, `grouping_dialog`, …); a shared util
+  would consolidate them — a repo-wide cleanup, not this feature's job.
+- **Moments-capability protocol.** The plot-panel moments API is reached through
+  `hasattr` capability checks; a typed `Protocol`/`supports_moments()` would make
+  the contract total. Deferred as a cross-cutting refactor.
+- **Eligibility predicate reuse.** The FFT eligibility gate canonicalises the
+  stored display label itself rather than calling
+  `fourier_mode_uses_phase_correction` / `…_entropy_optimizer`, because those
+  predicates *raise* on an already-canonical key and so would narrow robustness
+  to the exact stored form. Reusing them cleanly would mean teaching them to
+  accept either form — a small `fft.py` change left for a future pass.

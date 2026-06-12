@@ -201,7 +201,11 @@ class SpectralMomentsWidget(QGroupBox):
         if self._range_mhz is None:
             self._range_mhz = (lo, hi)
         else:  # clamp an existing window into the new spectrum
-            self._range_mhz = (max(lo, self._range_mhz[0]), min(hi, self._range_mhz[1]))
+            clamped_lo = max(lo, self._range_mhz[0])
+            clamped_hi = min(hi, self._range_mhz[1])
+            # A non-overlapping new spectrum would invert the window; fall back to
+            # the full extent rather than analysing a back-to-front/empty range.
+            self._range_mhz = (clamped_lo, clamped_hi) if clamped_lo < clamped_hi else (lo, hi)
         self._refresh_range_spins()
 
     def set_range_mhz(self, lo_mhz: float, hi_mhz: float, *, emit: bool = False) -> None:
