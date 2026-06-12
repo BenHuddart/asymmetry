@@ -2618,6 +2618,7 @@ class DataBrowserPanel(QWidget):
 
         self._display_order.insert(insert_index, combined_rn)
         self._rebuild_table()
+        self.select_runs({combined_rn})
 
     def _subtract_reference_run(self, sample_rn: int) -> None:
         """Subtract a chosen reference run from *sample_rn* (study RA3/RA4).
@@ -2670,6 +2671,7 @@ class DataBrowserPanel(QWidget):
 
         self._display_order.insert(insert_index, combined_rn)
         self._rebuild_table()
+        self.select_runs({combined_rn})
 
     def _reference_subtraction_candidates(self, sample_rn: int) -> list[int]:
         """Loaded, non-combined runs (with histograms) usable as a reference."""
@@ -2840,9 +2842,11 @@ class DataBrowserPanel(QWidget):
         if not combined_items:
             return
 
+        restored_run_numbers: list[int] = []
         for rn in combined_items:
             insert_index = self._display_index_for_run(rn)
             source_datasets = self._combined_source_datasets.get(rn, [])
+            restored_run_numbers.extend(int(ds.run_number) for ds in source_datasets)
             group_id = self._run_to_group.get(rn)
             group = self._groups.get(group_id) if group_id is not None else None
 
@@ -2878,6 +2882,8 @@ class DataBrowserPanel(QWidget):
                         self._display_order.insert(insert_index + offset, source_rn)
 
         self._rebuild_table()
+        if restored_run_numbers:
+            self.select_runs(set(restored_run_numbers))
 
     # ------------------------------------------------------------------
     # Project state

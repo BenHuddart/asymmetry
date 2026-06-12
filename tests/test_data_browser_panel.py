@@ -294,14 +294,8 @@ def test_context_menu_shows_separate_for_combined_dataset(qapp: QApplication) ->
     )
     panel._coadd_selected()
 
-    # Select the combined dataset row
-    for row in range(panel._table.rowCount()):
-        item = panel._table.item(row, 0)
-        if item:
-            rn = item.data(Qt.ItemDataRole.UserRole)
-            if rn in panel._combined_datasets:
-                panel._table.selectRow(row)
-                break
+    combined_rn = next(iter(panel._combined_datasets))
+    panel.select_runs({combined_rn})
 
     menu = panel._create_table_context_menu()
 
@@ -583,6 +577,43 @@ def test_coadd_inserts_at_first_selected_position(qapp: QApplication) -> None:
     assert panel._combined_datasets[rn_at_row_1] == [62, 63]
 
 
+def test_coadd_selects_newly_created_run(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset_with_run(64))
+    panel.add_dataset(_dataset_with_run(65))
+
+    panel._table.selectRow(0)
+    idx = panel._table.model().index(1, 0)
+    panel._table.selectionModel().select(
+        idx, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    )
+
+    panel._coadd_selected()
+
+    combined_runs = [rn for rn in panel._datasets if rn < 0]
+    assert len(combined_runs) == 1
+    assert set(panel._get_selected_run_numbers()) == {combined_runs[0]}
+
+
+def test_separate_combined_selects_restored_runs(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset_with_run(66))
+    panel.add_dataset(_dataset_with_run(67))
+
+    panel._table.selectRow(0)
+    idx = panel._table.model().index(1, 0)
+    panel._table.selectionModel().select(
+        idx, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    )
+    panel._coadd_selected()
+
+    combined_rn = next(rn for rn in panel._datasets if rn < 0)
+    panel.select_runs({combined_rn})
+    panel._separate_combined()
+
+    assert set(panel._get_selected_run_numbers()) == {66, 67}
+
+
 def test_coadded_temperature_from_log_uses_event_weighted_average(
     qapp: QApplication,
 ) -> None:
@@ -651,8 +682,8 @@ def test_separate_inserts_at_combined_dataset_position(qapp: QApplication) -> No
     panel._coadd_selected()
 
     # Now we should have: combined (row 0), d3 (row 1)
-    # Select the combined dataset
-    panel._table.selectRow(0)
+    combined_rn = next(iter(panel._combined_datasets))
+    panel.select_runs({combined_rn})
     panel._separate_combined()
 
     # After separation, we should have: d1 (row 0), d2 (row 1), d3 (row 2)
