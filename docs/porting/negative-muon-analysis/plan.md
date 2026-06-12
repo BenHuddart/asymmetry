@@ -19,9 +19,11 @@ negative-muon-analysis` on branch `feat/negative-muon-analysis`, using its
 
 ## 0. Phasing
 
-Five phases, each a **separate implementation session** with its own
-validate-green + high-effort code-review + fix, then (final phase or per Ben)
-rebase + push + PR. Phases are ordered; later phases depend on earlier.
+Five phases, each a **separate implementation session**. Every phase ends with
+validate-green + high-effort code-review + fix, then a **commit on the feature
+branch** — **no push and no PR per phase**. Push the branch and open a single PR
+**only after all phases have closed out**. Phases are ordered; later phases
+depend on earlier. Each phase rebases onto `origin/main` at its start.
 
 | Phase | Deliverable | New/edited files |
 |-------|-------------|------------------|
@@ -645,9 +647,11 @@ Page outline:
 ## 8. Ready-to-paste implementation-session prompt (Phase 1)
 
 > Copy the block below into a fresh session to execute **Phase 1**. For later
-> phases, reuse it changing the phase number and the "execute" line; the FINAL
-> STAGE (review → rebase → push → PR) is **pre-authorised by Ben** and applies to
-> whichever phase is the last you run in a session, or per Ben's instruction.
+> phases, reuse it changing the phase number, the "READ FIRST" phase pointer, and
+> the "EXECUTE" line. **Workflow (Ben):** every phase ends with code-review + fix
+> + a commit on this feature branch — **no push, no PR per phase**. Push the
+> branch and open one PR only after the **final** phase closes out (that final
+> push+PR is pre-authorised).
 
 ```
 Implement Phase 1 of the negative-muon-analysis plan (API-only, work-in-progress).
@@ -690,14 +694,14 @@ BINDING RULES:
 - No GUI: do NOT register anything in COMPONENTS or MODELS. core/negmu must not
   import asymmetry.gui or Qt.
 
-FINAL STAGE (pre-authorised by Ben):
-1. Run /code-review at HIGH effort on the diff; fix every confirmed finding.
-2. git fetch origin && git rebase origin/main.
-3. python tools/harness.py validate  (must be green) and
-   python tools/harness.py docs     (must build).
-4. Commit, push the branch, and open a PR titled
-   "feat(negmu): Phase 1 — μ⁻ capture-lifetime API (element table, model, fit, simulate)"
-   with a body summarising the phase, the WIP/experimental status, and a note
-   that later phases (F+B+ratio, Set-as-BG, μ⁻SR, docs) follow per the plan.
-   Do NOT enable auto-merge. Report the PR URL.
+END-OF-PHASE STAGE (commit only — do NOT push or open a PR):
+1. python tools/harness.py validate  (must be green) and
+   python tools/harness.py docs      (must build).
+2. Run /code-review at HIGH effort on the diff; fix every confirmed finding,
+   then re-run validate to confirm still green.
+3. Commit on this feature branch (feat/negative-muon-analysis) with a message
+   like "feat(negmu): Phase 1 — μ⁻ capture-lifetime API (element table, model,
+   fit, simulate)" summarising the phase and the WIP/experimental status.
+4. Do NOT push and do NOT open a PR. Ben pushes + opens one PR after the final
+   phase. Report what landed and that Phase 2 is next.
 ```
