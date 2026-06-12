@@ -1348,6 +1348,15 @@ class CompositeModel:
             fraction_groups=fraction_groups,
         )
 
+    def parameter_mapping(self) -> list[dict[str, str]]:
+        """Return per-component maps of local parameter name → unique fit name.
+
+        One dict per entry of :attr:`components`, in the same order.  Copies
+        are returned so callers (e.g. the RRF frequency-offset wrapper) cannot
+        mutate the model's internal mapping.
+        """
+        return [dict(mapping) for mapping in self._param_mappings]
+
     def component_expression_string(self) -> str:
         """Return the builder-facing expression using component names."""
         return build_component_expression(
