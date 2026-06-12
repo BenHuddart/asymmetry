@@ -457,14 +457,36 @@ class TestMainWindowFourier:
         assert "freq_fft" in entry["representations"]
         assert "fourier_config" in entry["representations"]["freq_fft"]["recipe"]
 
-        # Simulate reload: drop the in-memory cache and recompute from recipe.
+        # Simulate reload: drop the in-memory cache and restore recipe state.
         mainwindow._frequency_spectra_by_run = {}
         mainwindow._restore_frequency_representations(state)
-        recomputed = mainwindow._frequency_spectra_by_run[8820][0]
+        # Lazy contract: restore loads recipes only; nothing is recomputed
+        # until first view, which rebuilds the identical spectrum on demand.
+        assert 8820 not in mainwindow._frequency_spectra_by_run
+        spectra = mainwindow._ensure_frequency_spectra_for_run(8820, RepresentationType.FREQ_FFT)
+        assert spectra, "first view should recompute the spectrum from its recipe"
+        recomputed = spectra[0]
+        # And the cache is now warm for subsequent views.
+        assert 8820 in mainwindow._frequency_spectra_by_run
 
         np.testing.assert_allclose(recomputed.time, generated.time)
         np.testing.assert_allclose(recomputed.asymmetry, generated.asymmetry)
         np.testing.assert_allclose(recomputed.error, generated.error)
+
+    def test_restored_recipe_computes_on_first_view(self, mainwindow: MainWindow) -> None:
+        """The frequency-plot sync computes a restored run's FFT on demand."""
+        dataset = _make_fourier_ready_dataset(8821, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8821)
+        mainwindow._on_compute_fourier()
+        state = mainwindow.collect_project_state()
+
+        mainwindow._frequency_spectra_by_run = {}
+        mainwindow._restore_frequency_representations(state)
+        assert 8821 not in mainwindow._frequency_spectra_by_run
+
+        mainwindow._sync_frequency_plot_for_run(8821)
+        assert 8821 in mainwindow._frequency_spectra_by_run
 
     def test_apply_fourier_settings_to_selected_runs(
         self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch

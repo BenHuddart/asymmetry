@@ -27,7 +27,7 @@ from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QEventLoop, QObject, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QActionGroup, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -156,6 +157,7 @@ from asymmetry.gui.styles.widgets import (
     build_segmented_cell_qss,
     build_segmented_container_qss,
 )
+from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.ui_manager import (
     UI_SCALE_OPTIONS,
     UI_SCALE_SETTINGS_KEY,
@@ -433,9 +435,17 @@ class MainWindow(QMainWindow):
     * Fourier transform output (cached spectra are now saved when computed)
     """
 
+    #: Log messages produced off the GUI thread; auto-connection makes the
+    #: delivery queued, so background workers never touch the log widget.
+    _background_log = Signal(str)
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Asymmetry — μSR Data Analysis")
+
+        #: All background work goes through this runner (see gui/tasks.py);
+        #: closeEvent shuts it down so no live thread outlasts the window.
+        self._tasks = TaskRunner(self)
 
         self.compact_mode = False
 
@@ -609,7 +619,13 @@ class MainWindow(QMainWindow):
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
         detail_parts = [f"{key}={value}" for key, value in fields.items() if value is not None]
         detail_text = f" ({', '.join(detail_parts)})" if detail_parts else ""
-        self._log_panel.log(f"PERF {event}: {elapsed_ms:.1f} ms{detail_text}")
+        message = f"PERF {event}: {elapsed_ms:.1f} ms{detail_text}"
+        if QThread.currentThread() is self.thread():
+            self._log_panel.log(message)
+        else:
+            # Timed code (e.g. _load_file) may run on a TaskRunner worker;
+            # the widget must only ever be touched from the GUI thread.
+            self._background_log.emit(message)
 
     # ── menus ──────────────────────────────────────────────────────────
 
@@ -1247,6 +1263,7 @@ class MainWindow(QMainWindow):
 
         # Bottom dock — log panel
         self._log_panel = LogPanel()
+        self._background_log.connect(self._log_panel.log)
         self._dock_log = QDockWidget("Log", self)
         self._dock_log.setWidget(self._log_panel)
         self._dock_log.setMinimumHeight(96)
@@ -2242,6 +2259,82 @@ class MainWindow(QMainWindow):
         batch = getattr(self._data_browser, "batch_updates", None)
         return batch() if callable(batch) else nullcontext()
 
+    def _load_paths_with_progress(self, paths: list[str]) -> dict[str, object]:
+        """Read data files on a worker thread behind a cancellable progress dialog.
+
+        Returns ``{path: LoadResult | Exception}`` in *paths* order; on cancel
+        the mapping simply stops at the last completed file (already-loaded
+        results are kept). A nested event loop keeps this method synchronous
+        for its callers while the GUI stays painted and the Cancel button live.
+        File I/O is the only thing that runs off-thread — all dataset
+        bookkeeping stays with the caller on the GUI thread.
+        """
+        if not paths:
+            return {}
+
+        dialog = QProgressDialog("Loading data files…", "Cancel", 0, len(paths), self)
+        dialog.setWindowTitle("Loading Data")
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        # Don't flash a dialog for loads that finish quickly.
+        dialog.setMinimumDuration(400)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+
+        def task(worker, paths=tuple(paths)):
+            results: dict[str, object] = {}
+            total = len(paths)
+            for index, path in enumerate(paths):
+                if worker.is_cancelled():
+                    # Return the partial results instead of raising: files
+                    # already read should still reach the browser.
+                    break
+                worker.progress.emit(index, total, Path(path).name)
+                try:
+                    results[path] = self._load_file(path)
+                except Exception as exc:
+                    results[path] = exc
+            return results
+
+        loop = QEventLoop()
+        outcome: dict[str, object] = {}
+
+        def on_progress(current: int, total: int, name: str) -> None:
+            dialog.setValue(current)
+            dialog.setLabelText(f"Loading {name} ({current + 1}/{total})…")
+
+        def on_finished(results: object) -> None:
+            outcome["results"] = results
+            loop.quit()
+
+        def on_error(message: str) -> None:
+            outcome["error"] = message
+            loop.quit()
+
+        worker = self._tasks.start(
+            task,
+            on_progress=on_progress,
+            on_finished=on_finished,
+            on_error=on_error,
+            on_cancelled=loop.quit,
+        )
+        dialog.canceled.connect(worker.cancel)
+        loop.exec()
+        was_cancelled = dialog.wasCanceled()
+        dialog.close()
+        dialog.deleteLater()
+
+        if "error" in outcome:
+            self._log_panel.log(f"ERROR loading files: {outcome['error']}")
+            return {}
+        results = outcome.get("results")
+        if not isinstance(results, dict):
+            return {}
+        if was_cancelled and len(results) < len(paths):
+            self._log_panel.log(
+                f"File loading cancelled after {len(results)} of {len(paths)} file(s)."
+            )
+        return results
+
     def _load_files(self, paths: list[str]) -> None:
         """Load multiple data files."""
         started_at = time.perf_counter()
@@ -2254,82 +2347,94 @@ class MainWindow(QMainWindow):
         auto_grouping_attempts = 0
         auto_grouping_applied = 0
 
+        # Duplicate handling happens up-front so every prompt is answered
+        # before the background load starts — no modal dialogs mid-load.
+        paths_to_load: list[str] = []
+        overwrite_paths: set[str] = set()
+        for path in paths:
+            if self._is_source_file_loaded(path):
+                if not overwrite_existing_to_all:
+                    overwrite_choice = self._prompt_overwrite_existing_dataset(path)
+                    if overwrite_choice == QMessageBox.StandardButton.No:
+                        self._log_panel.log(f"Skipped already-loaded file: {path}")
+                        continue
+                    if overwrite_choice == QMessageBox.StandardButton.YesToAll:
+                        overwrite_existing_to_all = True
+                overwrite_paths.add(path)
+            paths_to_load.append(path)
+
+        # File I/O runs on a worker thread; everything below stays on the
+        # GUI thread (dialog prompts, grouping, browser/plot updates).
+        loaded_by_path = self._load_paths_with_progress(paths_to_load)
+
         with self._browser_batch():
-            for path in paths:
-                should_overwrite_existing = False
-                if self._is_source_file_loaded(path):
-                    if not overwrite_existing_to_all:
-                        overwrite_choice = self._prompt_overwrite_existing_dataset(path)
-                        if overwrite_choice == QMessageBox.StandardButton.No:
-                            self._log_panel.log(f"Skipped already-loaded file: {path}")
-                            continue
-                        if overwrite_choice == QMessageBox.StandardButton.YesToAll:
-                            overwrite_existing_to_all = True
-                    should_overwrite_existing = True
+            for path in paths_to_load:
+                if path not in loaded_by_path:
+                    break  # load was cancelled before reaching this file
 
-                try:
-                    loaded = self._load_file(path)
-                    if loaded is None:
-                        continue
-
-                    datasets = loaded if isinstance(loaded, list) else [loaded]
-                    if not datasets:
-                        continue
-
-                    if should_overwrite_existing:
-                        removed = self._remove_datasets_for_source_file(path)
-                        self._log_panel.log(
-                            f"Updated file {path} (replaced {removed} existing dataset(s))."
-                        )
-
-                    for dataset in datasets:
-                        # Offer to apply field extracted from comment when available.
-                        apply_choice = self._maybe_apply_comment_field(
-                            dataset,
-                            path,
-                            apply_comment_field_to_all,
-                        )
-                        if apply_choice == "cancel":
-                            self._log_panel.log("File loading cancelled by user")
-                            break
-                        if apply_choice == "yes_to_all":
-                            apply_comment_field_to_all = True
-
-                        if auto_grouping_payload is not None:
-                            auto_grouping_attempts += 1
-                            grouping_payload = dict(auto_grouping_payload)
-                            # good_frames and its period companions are measured
-                            # per-run normalisers; they must come from each dataset's
-                            # own loader metadata, never be inherited from the
-                            # template run, or the dead-time correction diverges.
-                            for per_run_key in self._PER_RUN_NORMALISER_KEYS:
-                                grouping_payload.pop(per_run_key, None)
-                            active_axis = None
-                            if hasattr(self._plot_panel, "get_current_polarization_axis"):
-                                active_axis = self._normalize_vector_axis(
-                                    self._plot_panel.get_current_polarization_axis()
-                                )
-                            if active_axis in {"P_x", "P_y", "P_z"}:
-                                grouping_payload["vector_axis"] = active_axis
-
-                            applied, _ = self._apply_grouping_settings_to_dataset(
-                                dataset, grouping_payload
-                            )
-                            if applied:
-                                auto_grouping_applied += 1
-
-                        self._data_browser.add_dataset(dataset)
-                        if dataset:
-                            last_dataset = dataset
-                            successful += 1
-                    else:
-                        self._log_panel.log(f"Loaded {path}", tag="load")
-                        continue
-
-                    break
-                except Exception as e:
-                    self._log_panel.log(f"ERROR loading {path}: {e}")
+                loaded = loaded_by_path[path]
+                if isinstance(loaded, Exception):
+                    self._log_panel.log(f"ERROR loading {path}: {loaded}")
                     failed += 1
+                    continue
+                if loaded is None:
+                    continue
+
+                datasets = loaded if isinstance(loaded, list) else [loaded]
+                if not datasets:
+                    continue
+
+                if path in overwrite_paths:
+                    removed = self._remove_datasets_for_source_file(path)
+                    self._log_panel.log(
+                        f"Updated file {path} (replaced {removed} existing dataset(s))."
+                    )
+
+                for dataset in datasets:
+                    # Offer to apply field extracted from comment when available.
+                    apply_choice = self._maybe_apply_comment_field(
+                        dataset,
+                        path,
+                        apply_comment_field_to_all,
+                    )
+                    if apply_choice == "cancel":
+                        self._log_panel.log("File loading cancelled by user")
+                        break
+                    if apply_choice == "yes_to_all":
+                        apply_comment_field_to_all = True
+
+                    if auto_grouping_payload is not None:
+                        auto_grouping_attempts += 1
+                        grouping_payload = dict(auto_grouping_payload)
+                        # good_frames and its period companions are measured
+                        # per-run normalisers; they must come from each dataset's
+                        # own loader metadata, never be inherited from the
+                        # template run, or the dead-time correction diverges.
+                        for per_run_key in self._PER_RUN_NORMALISER_KEYS:
+                            grouping_payload.pop(per_run_key, None)
+                        active_axis = None
+                        if hasattr(self._plot_panel, "get_current_polarization_axis"):
+                            active_axis = self._normalize_vector_axis(
+                                self._plot_panel.get_current_polarization_axis()
+                            )
+                        if active_axis in {"P_x", "P_y", "P_z"}:
+                            grouping_payload["vector_axis"] = active_axis
+
+                        applied, _ = self._apply_grouping_settings_to_dataset(
+                            dataset, grouping_payload
+                        )
+                        if applied:
+                            auto_grouping_applied += 1
+
+                    self._data_browser.add_dataset(dataset)
+                    if dataset:
+                        last_dataset = dataset
+                        successful += 1
+                else:
+                    self._log_panel.log(f"Loaded {path}", tag="load")
+                    continue
+
+                break
 
         # Select the last successfully loaded run in the browser: this drives
         # the standard selection pipeline (_on_dataset_selected), which stores
@@ -4710,25 +4815,68 @@ class MainWindow(QMainWindow):
         representation.cache_datasets([spectrum])
 
     def _restore_frequency_representations(self, state: dict) -> None:
-        """Rebuild FFT spectra from recipes (authoritative over stored arrays).
+        """Load recipe state; spectra are recomputed lazily on first view.
 
-        Reads the v6 ``representations``/``batches`` into the project model,
-        recomputes each FrequencyFFT spectrum from its recipe using the loaded
-        runs, and refreshes the in-memory plot cache.  Runs that cannot be
+        Reads the v6 ``representations``/``batches`` into the project model.
+        Recipes are *not* recomputed here: a project with many runs used to
+        recompute every FFT before the window became responsive, almost all of
+        it for runs the user may never view this session.
+        :meth:`_ensure_frequency_spectra_for_run` rebuilds each spectrum from
+        its recipe the first time something needs it. Runs that cannot be
         recomputed keep whatever the legacy array fallback restored.
         """
         self._project_model = ProjectModel.from_project_state(state)
-        runs_by_number: dict[int, object] = {}
-        if hasattr(self._data_browser, "get_all_datasets"):
-            for dataset in self._data_browser.get_all_datasets():
-                if dataset.run is not None:
-                    runs_by_number[int(dataset.run_number)] = dataset.run
-        self._project_model.recompute_all(runs_by_number)
         for run_number, container in self._project_model.datasets.items():
             for rep_type in (RepresentationType.FREQ_FFT, RepresentationType.FREQ_MAXENT):
                 representation = container.get(rep_type)
                 if representation is not None and representation.primary is not None:
                     self._frequency_cache(rep_type)[int(run_number)] = [representation.primary]
+
+    def _ensure_frequency_spectra_for_run(
+        self,
+        run_number: int | None,
+        rep_type: RepresentationType,
+    ) -> list:
+        """Return spectra for *run_number*, computing from its recipe on demand.
+
+        The lazy counterpart of the old recompute-everything-on-load: a cache
+        miss with a stored recipe recomputes just that run's spectrum (an FFT —
+        milliseconds). MaxEnt keeps its explicit-run-only contract
+        (``recompute_on_load`` is false), so a missing MaxEnt spectrum stays
+        missing until the user runs it.
+        """
+        if run_number is None:
+            return []
+        run_number = int(run_number)
+        cache = self._frequency_cache(rep_type)
+        spectra = list(cache.get(run_number, []))
+        if spectra:
+            return spectra
+
+        container = self._project_model.datasets.get(run_number)
+        representation = container.get(rep_type) if container is not None else None
+        if representation is None or not representation.recompute_on_load:
+            return []
+        dataset = (
+            self._data_browser.get_dataset(run_number)
+            if hasattr(self._data_browser, "get_dataset")
+            else None
+        )
+        run = getattr(dataset, "run", None)
+        if run is None:
+            return []
+        started_at = time.perf_counter()
+        try:
+            representation.invalidate()
+            representation.ensure_computed(run)
+        except Exception:  # noqa: BLE001 - a bad recipe must not break view sync
+            representation.invalidate()
+            return []
+        if representation.primary is None:
+            return []
+        cache[run_number] = [representation.primary]
+        self._log_perf_event("lazy_spectrum_recompute", started_at, run=run_number)
+        return [representation.primary]
 
     def _serialize_frequency_spectra_state(self) -> dict[str, list[dict[str, object]]]:
         """Return a serializable snapshot of cached Fourier spectra."""
@@ -4833,7 +4981,7 @@ class MainWindow(QMainWindow):
             return
 
         rep_type = self._active_frequency_rep_type()
-        spectra = list(self._frequency_cache(rep_type).get(int(run_number), []))
+        spectra = self._ensure_frequency_spectra_for_run(int(run_number), rep_type)
         if not spectra:
             self._frequency_plot_panel.clear()
             if preserved_x_limits is not None and preserved_y_limits is not None:
@@ -5054,7 +5202,7 @@ class MainWindow(QMainWindow):
         results_by_run: dict[int, dict] = {}
         skipped: list[int] = []
         for run_number in selected:
-            spectra = self._frequency_cache(rep_type).get(int(run_number), [])
+            spectra = self._ensure_frequency_spectra_for_run(int(run_number), rep_type)
             dataset = spectra[0] if spectra else None
             if dataset is None:
                 skipped.append(run_number)
@@ -8221,7 +8369,7 @@ class MainWindow(QMainWindow):
                 run_number = int(source.run_number)
             except (TypeError, ValueError):
                 continue
-            spectra = list(self._frequency_cache(rep_type).get(run_number, []))
+            spectra = self._ensure_frequency_spectra_for_run(run_number, rep_type)
             if not spectra:
                 missing_run_numbers.append(run_number)
                 continue
@@ -8822,7 +8970,20 @@ class MainWindow(QMainWindow):
                     resolved_paths[rn] = candidate
 
         # ── load source files ──────────────────────────────────────────
-        loaded_file_cache: dict[str, object] = {}
+        # Prefetch every unique source file on a worker thread (progress
+        # dialog + cancel); the per-dataset loop below then resolves from
+        # this cache. Values are LoadResult or Exception — a cached failure
+        # is re-raised per referencing dataset for the same per-run warning
+        # the synchronous path produced, without re-reading the file.
+        unique_paths: list[str] = []
+        for ds_info in datasets_info:
+            resolved = resolved_paths.get(ds_info.get("run_number"))
+            if resolved and resolved not in unique_paths:
+                unique_paths.append(resolved)
+        prefetched = self._load_paths_with_progress(unique_paths)
+        loaded_file_cache: dict[str, object] = {
+            path: prefetched.get(path, RuntimeError("file load cancelled")) for path in unique_paths
+        }
         combined_id_map: dict[int, int] = {}
         with self._browser_batch():
             for ds_info in datasets_info:
@@ -8834,9 +8995,7 @@ class MainWindow(QMainWindow):
 
                 resolved = resolved_paths.get(rn)
                 if not resolved:
-                    self._log_panel.log(
-                        f"WARNING: Source file not found: {source_file}; skipping."
-                    )
+                    self._log_panel.log(f"WARNING: Source file not found: {source_file}; skipping.")
                     continue
 
                 try:
@@ -8845,6 +9004,8 @@ class MainWindow(QMainWindow):
                     else:
                         loaded_obj = self._load_file(resolved)
                         loaded_file_cache[resolved] = loaded_obj
+                    if isinstance(loaded_obj, Exception):
+                        raise loaded_obj
 
                     if loaded_obj is None:
                         continue
@@ -8873,9 +9034,7 @@ class MainWindow(QMainWindow):
                     if dataset is None:
                         overrides = ds_info.get("grouping_overrides")
                         persisted_mapping = (
-                            overrides.get("period_mapping")
-                            if isinstance(overrides, dict)
-                            else None
+                            overrides.get("period_mapping") if isinstance(overrides, dict) else None
                         )
                         period_candidates = [cand for cand in candidates if cand is not None]
                         if persisted_mapping and len(period_candidates) >= 2:
@@ -8888,14 +9047,12 @@ class MainWindow(QMainWindow):
                                 )
                             except (ValueError, TypeError) as exc:
                                 self._log_panel.log(
-                                    f"WARNING: Run {rn} period mapping could not be "
-                                    f"rebuilt: {exc}"
+                                    f"WARNING: Run {rn} period mapping could not be rebuilt: {exc}"
                                 )
 
                     if dataset is None:
                         self._log_panel.log(
-                            f"WARNING: Run {rn} not found in loaded file {source_file}; "
-                            "skipping."
+                            f"WARNING: Run {rn} not found in loaded file {source_file}; skipping."
                         )
                         continue
                     if int(dataset.run_number) in loaded_run_numbers:
@@ -9238,6 +9395,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Stop background work and save plot axis ranges before closing."""
+        # All TaskRunner work (file loads, fits, …): cancel, quit and wait.
+        if getattr(self, "_tasks", None) is not None:
+            self._tasks.shutdown()
         # The MaxEnt thread is parented to this window: letting the window be
         # destroyed while it runs aborts the process (QThread::~QThread calls
         # qFatal). Request cooperative cancellation and wait for the worker.

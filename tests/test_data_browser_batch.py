@@ -125,9 +125,11 @@ def test_batch_defers_active_sort_to_flush():
             panel.add_dataset(_dataset(rn))
 
     assert panel._display_order == [100, 200, 300]
-    assert [
-        int(panel._table.item(row, 0).text()) for row in range(panel._table.rowCount())
-    ] == [100, 200, 300]
+    assert [int(panel._table.item(row, 0).text()) for row in range(panel._table.rowCount())] == [
+        100,
+        200,
+        300,
+    ]
 
 
 def test_nested_batches_flush_once(monkeypatch):

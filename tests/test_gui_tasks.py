@@ -71,10 +71,10 @@ def test_error_emits_message_not_finished():
 
 
 def test_cooperative_cancel_generic_and_custom_exception():
-    class EngineCancelled(Exception):
+    class EngineCancelledError(Exception):
         pass
 
-    for raise_type in (TaskCancelledError, EngineCancelled):
+    for raise_type in (TaskCancelledError, EngineCancelledError):
         runner = TaskRunner()
         cancelled: list[bool] = []
         started = threading.Event()
@@ -88,7 +88,7 @@ def test_cooperative_cancel_generic_and_custom_exception():
         worker = runner.start(
             fn,
             on_cancelled=lambda: cancelled.append(True),
-            cancel_exceptions=(EngineCancelled,),
+            cancel_exceptions=(EngineCancelledError,),
         )
         assert started.wait(10.0)
         worker.cancel()
