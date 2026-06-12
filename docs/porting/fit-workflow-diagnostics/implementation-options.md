@@ -257,3 +257,32 @@ background file, no schema break.**
   refinement on top of the existing per-member Initial Values dialog; recorded, not
   built. Auto's non-chain branch therefore falls back to independent seeds, a
   documented divergence from the brief's "Auto → average".
+
+## Code-review findings (high effort) — triage
+
+Fixed in the review-fix commit:
+
+- **Redundant explicit HESSE.** `drive_minuit` ran `m.hesse()` after every fit, but
+  migrad already runs HESSE as its terminal step — so the call duplicated work and
+  perturbed the migrad symmetric σ at the ~1e-5 level between MINOS-on and MINOS-off
+  (breaking the "σ unchanged whether MINOS runs" invariant). Now the explicit HESSE
+  runs only when MINOS follows a *simplex* fit (simplex computes no Hessian); the
+  migrad symmetric errors are bit-identical with or without MINOS.
+
+Refuted (not bugs):
+
+- "Count fits don't forward `minos`/`cancel_callback` to `_solve`" — both `_solve`
+  call sites do forward them (verified; the count-domain MINOS test passes).
+- "`FitEngine.fit` / grouped paths don't catch `FitCancelledError`" — propagation is
+  the intended contract: the GUI workers catch it and emit `cancelled`, recording
+  nothing; non-worker callers never pass a `cancel_callback`, so they never raise.
+
+Recorded as follow-ons (out of scope for this diff):
+
+- A `BaseFitWorker` mixin to share the `cancel()`/`cancelled`/`FitCancelledError`
+  boilerplate across the three fit workers (and align with the MaxEnt worker).
+- Move `_grouped_series_order_key` (temperature/field metadata extraction) into core
+  beside `recommend_grouped_series_seeding`, so the metadata key names live in one
+  place rather than split GUI/core.
+- Log when chain-seeding falls back to a provided value for a parameter missing from
+  the previous fit (observability; currently silent per-parameter).

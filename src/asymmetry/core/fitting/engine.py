@@ -108,9 +108,10 @@ def drive_minuit(
     ``m`` must already have its cost function, parameter names, and limits set; this
     function owns only the post-construction drive. ``migrad_kwargs`` is forwarded to
     ``m.migrad``/``m.simplex`` so each caller keeps its own ncall/iterate/use_simplex
-    tuning. An explicit ``m.hesse()`` is run after a valid minimisation (migrad's
-    EDM-time covariance is approximate; HESSE improves covariance fidelity and gives
-    MINOS an accurate starting point).
+    tuning. migrad already runs HESSE as its final step, so the symmetric errors and
+    covariance need no extra work; an explicit ``m.hesse()`` is run only when MINOS
+    follows a *simplex* fit (simplex computes no Hessian, which MINOS requires). The
+    migrad symmetric errors are therefore bit-identical whether or not MINOS follows.
 
     When ``minos`` is true and the fit is valid, ``m.minos()`` scans every free
     parameter (or just ``minos_parameters``) and the signed asymmetric offsets
@@ -126,16 +127,20 @@ def drive_minuit(
     else:
         m.migrad(**migrad_kwargs)
 
-    if run_hesse and getattr(m, "valid", False):
+    if not minos or not getattr(m, "valid", False):
+        return None
+
+    # MINOS needs a valid Hessian. migrad already runs HESSE as its final step, so on
+    # the migrad path the covariance is HESSE-quality and we add nothing — keeping the
+    # symmetric errors bit-identical whether or not MINOS follows. simplex computes no
+    # Hessian, so MINOS there gets an explicit HESSE first.
+    if run_hesse and method == "simplex":
         try:
             m.hesse()
         except Exception:
             # HESSE is a fidelity refinement, not a correctness requirement; a
-            # back-end that rejects it leaves the migrad covariance in place.
+            # back-end that rejects it leaves the simplex state in place.
             pass
-
-    if not minos or not getattr(m, "valid", False):
-        return None
 
     try:
         if minos_parameters:
