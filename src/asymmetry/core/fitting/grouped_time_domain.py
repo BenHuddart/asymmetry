@@ -832,9 +832,7 @@ def _chained_initial_from_member(
         fitted_names = set(group_result.parameters.names)
         carried = {
             p.name: (
-                float(group_result.parameters[p.name].value)
-                if p.name in fitted_names
-                else p.value
+                float(group_result.parameters[p.name].value) if p.name in fitted_names else p.value
             )
             for p in seed
         }

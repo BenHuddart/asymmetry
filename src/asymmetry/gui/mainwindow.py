@@ -3967,7 +3967,11 @@ class MainWindow(QMainWindow):
     def _on_set_batch_seeding(self, mode: str) -> None:
         """Apply the chosen batch-series seeding mode to the fit panel."""
         self._fit_panel.set_batch_seeding_mode(mode)
-        labels = {"auto": "Auto", "as_provided": "Independent seeds", "chain": "Chain from previous run"}
+        labels = {
+            "auto": "Auto",
+            "as_provided": "Independent seeds",
+            "chain": "Chain from previous run",
+        }
         self._log_panel.log(f"Batch seeding: {labels.get(mode, mode)}", tag="fit")
 
     def _collect_latest_fit_records(self) -> list[tuple[str, dict]]:

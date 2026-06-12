@@ -53,7 +53,9 @@ def _provided_group_seed() -> ParameterSet:
 
 
 def _series_initial(runs) -> dict:
-    return {run: {"forward": _provided_group_seed(), "backward": _provided_group_seed()} for run in runs}
+    return {
+        run: {"forward": _provided_group_seed(), "backward": _provided_group_seed()} for run in runs
+    }
 
 
 def _fake_member_factory(received: dict):
@@ -207,9 +209,7 @@ def test_failed_member_resets_chain_to_provided(monkeypatch):
             message="ok" if success else "failed",
         )
 
-    monkeypatch.setattr(
-        "asymmetry.core.fitting.grouped_time_domain.fit_grouped_time_domain", _fake
-    )
+    monkeypatch.setattr("asymmetry.core.fitting.grouped_time_domain.fit_grouped_time_domain", _fake)
     members = {10: _two_groups(10), 11: _two_groups(11), 12: _two_groups(12)}
     fit_grouped_series(
         "individual",
