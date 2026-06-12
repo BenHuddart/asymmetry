@@ -280,6 +280,18 @@ def main() -> None:
         if icon is not None:
             app.setWindowIcon(icon)
 
+    # Discover user functions before the main window is built so plugin
+    # components are in the registries when the pickers first render. The
+    # loader confines plugin failures to its report (surfaced in the log
+    # panel and Setup → User Functions…); the blanket guard here only covers
+    # discovery infrastructure itself — startup must never fail on user code.
+    try:
+        from asymmetry.core.plugins import load_user_functions
+
+        load_user_functions()
+    except Exception:
+        pass
+
     if MainWindow is None:
         from asymmetry.gui.mainwindow import MainWindow as _MainWindow
 

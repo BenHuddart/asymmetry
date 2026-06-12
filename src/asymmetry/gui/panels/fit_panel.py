@@ -1838,6 +1838,15 @@ class SingleFitTab(QWidget):
             self._result_label.setText("ERROR: No function defined")
             return
 
+        missing = getattr(self._composite_model, "missing_component_names", ())
+        if missing:
+            self._result_label.setText(
+                "ERROR: the model requires missing user function(s): "
+                f"{', '.join(missing)}. Register them (Setup → User functions…) "
+                "and reload the project."
+            )
+            return
+
         # Build parameter set from table
         try:
             parameters = self._parameter_set_from_table()
@@ -2024,11 +2033,25 @@ class SingleFitTab(QWidget):
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):
             try:
-                self._set_composite_model(CompositeModel.from_dict(composite_data))
+                # Unregistered names (a user function whose plugin is not
+                # installed) materialise as named zero-valued placeholders so
+                # the saved model is never silently replaced; only structurally
+                # malformed data falls back to the default model.
+                restored = CompositeModel.from_dict(composite_data, allow_missing=True)
             except ValueError:
                 self._set_composite_model(
                     CompositeModel(["Exponential", "Constant"], operators=["+"])
                 )
+            else:
+                self._set_composite_model(restored)
+                if restored.missing_component_names:
+                    names = ", ".join(restored.missing_component_names)
+                    self._result_label.setText(
+                        f"<b>Missing user function(s):</b> {names}.<br>"
+                        "The saved model is preserved (missing components plot as "
+                        "zero) but cannot be fitted until they are registered — "
+                        "see Setup → User functions…"
+                    )
 
         params_data = {p["name"]: p for p in state.get("parameters", [])}
         normalized_state_values = _normalized_model_param_values(
@@ -3515,6 +3538,15 @@ class GlobalFitTab(QWidget):
 
     def _run_global_fit(self) -> None:
         """Execute global fit on all datasets."""
+        missing = getattr(self._composite_model, "missing_component_names", ())
+        if missing:
+            self._result_text.setText(
+                "Error: the model requires missing user function(s): "
+                f"{', '.join(missing)}. Register them (Setup → User functions…) "
+                "and reload the project."
+            )
+            return
+
         if self.is_grouped_time_domain_mode():
             self._run_grouped_time_domain_fit()
             return
@@ -5131,11 +5163,23 @@ class GlobalFitTab(QWidget):
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):
             try:
-                self._set_composite_model(CompositeModel.from_dict(composite_data))
+                # As in the single-fit tab: unregistered (user) component names
+                # degrade to named placeholders rather than silently replacing
+                # the saved model.
+                restored = CompositeModel.from_dict(composite_data, allow_missing=True)
             except ValueError:
                 self._set_composite_model(
                     CompositeModel(["Exponential", "Constant"], operators=["+"])
                 )
+            else:
+                self._set_composite_model(restored)
+                if restored.missing_component_names:
+                    names = ", ".join(restored.missing_component_names)
+                    self._result_text.setText(
+                        f"Missing user function(s): {names}. The saved model is "
+                        "preserved (missing components plot as zero) but cannot be "
+                        "fitted until they are registered — see Setup → User functions…"
+                    )
 
         params_data = {p["name"]: p for p in state.get("parameters", [])}
         normalized_state_values = _normalized_model_param_values(

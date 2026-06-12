@@ -612,3 +612,35 @@ def get_component_references(component_name: str, kind: str | None = None) -> tu
     if component_name in FIT_COMPONENT_REFERENCES:
         return FIT_COMPONENT_REFERENCES[component_name]
     return PARAMETER_MODEL_REFERENCES.get(component_name, ())
+
+
+def register_component_documentation(
+    component_name: str,
+    *,
+    kind: str,
+    applicability: str = "",
+    references: tuple[str, ...] = (),
+) -> None:
+    """Insert documentation for a facade-registered user component.
+
+    ``kind`` is ``"fit"`` or ``"parameter_model"`` (the same registry kinds the
+    lookup functions disambiguate by). Empty values are not inserted, so the
+    lookups fall back to the generic placeholder text — acceptable for user
+    components, which the docs-enforcement tests exempt by their ``user`` flag.
+    """
+    if kind == "fit":
+        applicability_dict, references_dict = (
+            FIT_COMPONENT_APPLICABILITY,
+            FIT_COMPONENT_REFERENCES,
+        )
+    elif kind == "parameter_model":
+        applicability_dict, references_dict = (
+            PARAMETER_MODEL_APPLICABILITY,
+            PARAMETER_MODEL_REFERENCES,
+        )
+    else:
+        raise ValueError(f"Unknown documentation kind {kind!r}")
+    if applicability:
+        applicability_dict[component_name] = str(applicability)
+    if references:
+        references_dict[component_name] = tuple(str(ref) for ref in references)
