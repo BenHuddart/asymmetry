@@ -66,11 +66,12 @@ RRF_ROTATION_COMPONENTS: dict[str, tuple[str, str]] = {
     "OscillatoryField": ("field", "Gauss"),
 }
 
-#: Component categories whose members oscillate; presence outside the
-#: rotation registry is an error rather than a silent pass-through.
-_OSCILLATING_CATEGORIES = frozenset(
-    {"Oscillation", "Muonium", "Nuclear dipolar", "Frequency Domain"}
-)
+#: Component categories whose members are pure (non-precessing) envelopes and
+#: may pass through the offset untouched.  The check is default-closed: any
+#: component outside the rotation registry AND outside this set raises, so a
+#: plugin component in a new category fails loudly instead of being silently
+#: left in the lab frame (the WiMDA ledger-item-4 trap).
+_ENVELOPE_CATEGORIES = frozenset({"Relaxation", "Kubo-Toyabe", "Background"})
 
 
 class UnsupportedRRFComponentError(ValueError):
@@ -104,23 +105,18 @@ def rrf_frequency_offsets(model: CompositeModel, frequency_mhz: float) -> dict[s
 
     offset_by_unit = {"MHz": freq, "Gauss": float(mhz_to_gauss(freq))}
     offsets: dict[str, float] = {}
-    # The unique-name mapping is the composite's own (component-local name →
-    # qualified fit-parameter name); read-only access keeps this module from
-    # touching composite.py, which the plugin-API project also extends.
-    mappings = model._param_mappings  # noqa: SLF001
-    for component, mapping in zip(model.components, mappings, strict=True):
+    for component, mapping in zip(model.components, model.parameter_mapping(), strict=True):
         spec = RRF_ROTATION_COMPONENTS.get(component.name)
         if spec is None:
-            if component.category in _OSCILLATING_CATEGORIES:
+            if component.category not in _ENVELOPE_CATEGORIES:
                 raise UnsupportedRRFComponentError(component.name)
             continue
         local_name, unit = spec
         offsets[mapping[local_name]] = offset_by_unit[unit]
     if not offsets:
-        raise UnsupportedRRFComponentError(
-            "(none)"
-            if not model.component_names
-            else f"no rotation component in '{model.component_expression_string()}'"
+        raise ValueError(
+            f"Composite '{model.component_expression_string()}' contains no rotation "
+            "component to offset; add Oscillatory/OscillatoryField or fit without RRF."
         )
     return offsets
 

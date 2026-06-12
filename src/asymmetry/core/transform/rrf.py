@@ -93,10 +93,7 @@ class RRFCurve:
         """The phase-free envelope |z|; Rician-biased where |z| ≲ σ."""
         return np.hypot(self.real, self.imag)
 
-    @property
-    def magnitude_error(self) -> NDArray[np.float64]:
-        """First-order error on |z|; unreliable where |z| ≲ σ (Rician bias)."""
-        mag = self.magnitude
+    def _magnitude_error_for(self, mag: NDArray[np.float64]) -> NDArray[np.float64]:
         floor = np.finfo(float).tiny
         safe = np.where(mag > floor, mag, 1.0)
         err = (
@@ -108,6 +105,11 @@ class RRFCurve:
         fallback = np.sqrt(0.5 * (np.square(self.real_error) + np.square(self.imag_error)))
         return np.where(mag > floor, err, fallback)
 
+    @property
+    def magnitude_error(self) -> NDArray[np.float64]:
+        """First-order error on |z|; unreliable where |z| ≲ σ (Rician bias)."""
+        return self._magnitude_error_for(self.magnitude)
+
     def component(self, name: str) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Return ``(values, errors)`` for ``"real"``, ``"imag"`` or ``"magnitude"``."""
         key = str(name).strip().lower()
@@ -116,7 +118,8 @@ class RRFCurve:
         if key == "imag":
             return self.imag, self.imag_error
         if key == "magnitude":
-            return self.magnitude, self.magnitude_error
+            mag = self.magnitude
+            return mag, self._magnitude_error_for(mag)
         raise ValueError(f"Unknown RRF component {name!r}; expected one of {_COMPONENTS}.")
 
     def frame_label(self, component: str = "real") -> str:
@@ -205,40 +208,16 @@ def _fir_kernel(dt_us: float, bandwidth_mhz: float, n_bins: int) -> NDArray[np.f
     return np.asarray(kernel, dtype=np.float64)
 
 
-def _normalised_convolution(
-    values: NDArray,
-    variances: NDArray[np.float64],
+def _filtered(
+    values: NDArray[np.float64],
     finite: NDArray[np.bool_],
     kernel: NDArray[np.float64],
-) -> tuple[NDArray, NDArray[np.float64], NDArray[np.float64]]:
-    """Convolve with NaN-aware renormalisation.
-
-    Returns the filtered values, filtered variances, and the kernel coverage
-    (fraction of kernel mass that landed on finite bins; 1 in the interior of
-    a fully finite signal because the kernel is DC-normalised).
-    """
-    if kernel.size == 1:
-        coverage = finite.astype(np.float64)
-        return (
-            np.where(finite, values, 0.0),
-            np.where(finite, variances, 0.0),
-            coverage,
-        )
+    safe_coverage: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """One NaN-aware renormalised convolution pass (kernel already > 1 tap)."""
     from scipy.signal import fftconvolve
 
-    weights = finite.astype(np.float64)
-    coverage = fftconvolve(weights, kernel, mode="same")
-    coverage = np.clip(coverage, 0.0, None)
-    safe = np.where(coverage > 1e-12, coverage, 1.0)
-    if np.iscomplexobj(values):
-        num = fftconvolve(np.where(finite, values.real, 0.0), kernel, mode="same") + (
-            1j * fftconvolve(np.where(finite, values.imag, 0.0), kernel, mode="same")
-        )
-    else:
-        num = fftconvolve(np.where(finite, values, 0.0), kernel, mode="same")
-    var = fftconvolve(np.where(finite, variances, 0.0), np.square(kernel), mode="same")
-    var = np.clip(var, 0.0, None)
-    return num / safe, var / np.square(safe), coverage
+    return fftconvolve(np.where(finite, values, 0.0), kernel, mode="same") / safe_coverage
 
 
 def rrf_demodulate(
@@ -355,13 +334,35 @@ def _demodulate_fir(
     finite = np.isfinite(a) & np.isfinite(e) & np.isfinite(t)
     carrier = np.exp(-1j * theta)
     z = 2.0 * a * carrier
-    # Per-quadrature input variances: Re scales with 2cosθ, Im with 2sinθ.
-    var_re = np.square(2.0 * e * np.cos(theta))
-    var_im = np.square(2.0 * e * np.sin(theta))
+    # Per-quadrature input variances: Re scales with 2cosθ, Im with 2sinθ —
+    # both already held in the carrier (cosθ = Re, −sinθ = Im; sign squares
+    # away). An all-zero error array (model overlays) skips the variance
+    # convolutions entirely.
+    has_errors = bool(np.any(e[finite] != 0.0)) if np.any(finite) else False
+    if has_errors:
+        var_re = np.square(2.0 * e * carrier.real)
+        var_im = np.square(2.0 * e * carrier.imag)
 
     kernel = _fir_kernel(dt, bandwidth, t.size)
-    z_f, var_re_f, coverage = _normalised_convolution(z, var_re, finite, kernel)
-    _, var_im_f, _ = _normalised_convolution(z.imag, var_im, finite, kernel)
+    if kernel.size == 1:
+        coverage = finite.astype(np.float64)
+        z_f = np.where(finite, z, 0.0)
+        var_re_f = np.where(finite, var_re, 0.0) if has_errors else np.zeros_like(t)
+        var_im_f = np.where(finite, var_im, 0.0) if has_errors else np.zeros_like(t)
+    else:
+        from scipy.signal import fftconvolve
+
+        coverage = np.clip(fftconvolve(finite.astype(np.float64), kernel, mode="same"), 0.0, None)
+        safe = np.where(coverage > 1e-12, coverage, 1.0)
+        z_f = _filtered(z.real, finite, kernel, safe) + 1j * _filtered(z.imag, finite, kernel, safe)
+        if has_errors:
+            kernel_sq = np.square(kernel)
+            safe_sq = np.square(safe)
+            var_re_f = np.clip(_filtered(var_re, finite, kernel_sq, safe_sq), 0.0, None)
+            var_im_f = np.clip(_filtered(var_im, finite, kernel_sq, safe_sq), 0.0, None)
+        else:
+            var_re_f = np.zeros_like(t)
+            var_im_f = np.zeros_like(t)
 
     half = kernel.size // 2
     valid = coverage >= _MIN_KERNEL_COVERAGE

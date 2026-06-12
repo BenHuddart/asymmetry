@@ -25,8 +25,8 @@ NU = 30.0  # MHz
 LAM = 0.3
 
 
-def _dataset(field_gauss: float = 2213.0) -> MuonDataset:
-    t = np.arange(0.0, 8.0, 0.004)
+def _dataset(field_gauss: float = 2213.0, dt: float = 0.004) -> MuonDataset:
+    t = np.arange(0.0, 8.0, dt)
     envelope = 25.0 * np.exp(-LAM * t)
     run = Run(
         run_number=4242,
@@ -131,15 +131,40 @@ class TestTransform:
     def test_fit_curve_overlay_demodulated_in_step(self, panel):
         dataset = _dataset()
         _enable_rrf(panel)
+        shown = rrf_display_dataset(panel, dataset)
         t_fit = dataset.time
         y_fit = 25.0 * np.exp(-LAM * t_fit) * np.cos(2.0 * np.pi * NU * t_fit)
-        out = rrf_display_fit_curve(panel, (t_fit, y_fit, "fit"))
+        out = rrf_display_fit_curve(panel, (t_fit, y_fit, "fit"), shown)
         assert out is not None
         _, y_out, label = out
         assert label == "fit"
         ok = np.isfinite(y_out)
         envelope = 25.0 * np.exp(-LAM * t_fit)
         np.testing.assert_allclose(y_out[ok], envelope[ok], rtol=5e-3, atol=0.05)
+
+    def test_fit_curve_untouched_when_data_not_transformed(self, panel):
+        # Pairing rule: the overlay transforms iff the displayed dataset did.
+        _enable_rrf(panel)
+        t_fit = np.linspace(0.0, 8.0, 100)
+        y_fit = np.cos(2.0 * np.pi * NU * t_fit)
+        raw = _dataset()  # NOT passed through rrf_display_dataset
+        out = rrf_display_fit_curve(panel, (t_fit, y_fit, "fit"), raw)
+        assert out == (t_fit, y_fit, "fit")
+
+    def test_fit_curve_uses_data_resolved_bandwidth(self, panel):
+        # An Auto bandwidth resolved on a coarse data grid must be reused on
+        # the (finer) overlay grid, not re-resolved — otherwise the two
+        # curves are filtered differently (aliased-image regime).
+        dataset = _dataset(dt=0.016)  # fs = 62.5 MHz: image folds to 2.5 MHz
+        _enable_rrf(panel)
+        shown = rrf_display_dataset(panel, dataset)
+        assert shown.metadata["rrf_bandwidth_mhz"] == pytest.approx(1.75)
+        t_fit = np.arange(0.0, 8.0, 0.001)  # much finer grid
+        y_fit = 25.0 * np.exp(-LAM * t_fit) * np.cos(2.0 * np.pi * NU * t_fit)
+        out = rrf_display_fit_curve(panel, (t_fit, y_fit, "fit"), shown)
+        ok = np.isfinite(out[1])
+        envelope = 25.0 * np.exp(-LAM * t_fit)
+        np.testing.assert_allclose(out[1][ok], envelope[ok], rtol=2e-2, atol=0.3)
 
     def test_plot_dataset_draws_envelope_and_badge(self, panel):
         dataset = _dataset()
@@ -221,10 +246,15 @@ class TestPersistence:
             restored.deleteLater()
 
     def test_restore_tolerates_absence_and_junk(self, panel):
+        # Enable first: restoring a state saved WITHOUT the key must reset
+        # RRF rather than keep the stale frame (pre-feature projects).
+        _enable_rrf(panel)
+        assert panel._rrf_controls.is_active()
         state = panel.get_state()
         state.pop("rrf", None)
         panel.restore_state(state)
         assert not panel._rrf_controls.is_active()
+        assert panel._rrf_controls._freq_spin.value() == 0.0
 
         state["rrf"] = {"enabled": "maybe", "frequency_mhz": "soup", "display_unit": 7}
         panel.restore_state(state)

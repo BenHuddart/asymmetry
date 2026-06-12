@@ -1515,6 +1515,28 @@ class PlotPanel(QWidget):
             run=dataset.run,
         )
 
+    def _raw_fit_seed_range(self, datasets: list[MuonDataset | None]) -> tuple[float, float] | None:
+        """Default fit-range seed from the *untransformed* analysis time axes.
+
+        The RRF display trims the filter-edge region off the drawn arrays;
+        seeding the fit range from those would silently exclude raw early-time
+        bins from fits that always consume raw data.
+        """
+        lows: list[float] = []
+        highs: list[float] = []
+        for dataset in datasets:
+            base = self.get_analysis_dataset(dataset)
+            if base is None:
+                continue
+            tt = self._convert_frequency_axis_for_display(np.asarray(base.time, dtype=float))
+            tt = tt[np.isfinite(tt)]
+            if tt.size:
+                lows.append(float(tt.min()))
+                highs.append(float(tt.max()))
+        if not lows:
+            return None
+        return min(lows), max(highs)
+
     def _is_frequency_domain_dataset(self, dataset: MuonDataset | None) -> bool:
         """Return True when *dataset* carries frequency-domain plot metadata."""
         if dataset is None:
@@ -2242,6 +2264,7 @@ class PlotPanel(QWidget):
         # Handoff plot grammar: y = 0 reference line under the data (it is
         # excluded from autoscaling, so positive-only data never stretches).
         draw_zero_line(ax)
+        self._rrf_frame_drawn = None
         all_times: list[np.ndarray] = []
         all_asym: list[np.ndarray] = []
         all_err: list[np.ndarray] = []
@@ -2299,7 +2322,7 @@ class PlotPanel(QWidget):
             )
 
             fit_to_plot = self._fit_curve_for_dataset(dataset, axis_override=axis_key)
-            fit_to_plot = rrf_display_fit_curve(self, fit_to_plot)
+            fit_to_plot = rrf_display_fit_curve(self, fit_to_plot, analysis_dataset)
             if fit_to_plot is not None:
                 t_fit, y_fit, fit_label = fit_to_plot
                 fit_color = self._fit_line_color_for_dataset(
@@ -2319,6 +2342,7 @@ class PlotPanel(QWidget):
         _, y_label = self._axis_labels_for_dataset(datasets[0] if datasets else None, axis_key)
         ax.set_ylabel(y_label)
         self._apply_x_axis_decimation_indicator(ax)
+        rrf_draw_badge(self, ax)
         if all_times:
             return (
                 np.concatenate(all_times),
@@ -2398,8 +2422,15 @@ class PlotPanel(QWidget):
             self._limits_initialized = True
 
         if vector_x_ranges and (self._fit_x_min is None or self._fit_x_max is None):
-            self._fit_x_min = min(lo for lo, _ in vector_x_ranges)
-            self._fit_x_max = max(hi for _, hi in vector_x_ranges)
+            seed = self._raw_fit_seed_range(
+                [ds for axis_datasets in datasets_by_axis.values() for ds in axis_datasets]
+            )
+            if seed is None:
+                seed = (
+                    min(lo for lo, _ in vector_x_ranges),
+                    max(hi for _, hi in vector_x_ranges),
+                )
+            self._fit_x_min, self._fit_x_max = seed
 
         if self._current_polarization_axis in self._subplot_axes_by_polarization:
             y_limits = self._y_limits_by_polarization.get(self._current_polarization_axis)
@@ -2488,10 +2519,13 @@ class PlotPanel(QWidget):
             self._limits_initialized = True
 
         if grouped_x_ranges and (self._fit_x_min is None or self._fit_x_max is None):
-            fit_min = min(lo for lo, _ in grouped_x_ranges)
-            fit_max = max(hi for _, hi in grouped_x_ranges)
-            self._fit_x_min = float(fit_min)
-            self._fit_x_max = float(fit_max)
+            seed = self._raw_fit_seed_range(list(datasets))
+            if seed is None:
+                seed = (
+                    min(lo for lo, _ in grouped_x_ranges),
+                    max(hi for _, hi in grouped_x_ranges),
+                )
+            self._fit_x_min, self._fit_x_max = seed
 
         self._sync_y_controls_with_visible_axis()
         self._update_y_limit_controls_for_axis(self._current_polarization_axis)
@@ -2844,6 +2878,7 @@ class PlotPanel(QWidget):
         self._grouped_time_subplot_datasets = []
         self._set_alpha_label(None)
         self._decimation_applied_for_current_view = False
+        self._rrf_frame_drawn = None
         self._current_dataset = datasets[-1]
         self._current_datasets = list(datasets)
         self._update_plot_header()
@@ -2910,7 +2945,7 @@ class PlotPanel(QWidget):
 
             # Overlay fit curve in same colour; excluded from legend by "_" prefix.
             fit_to_plot = self._fit_curve_for_dataset(dataset)
-            fit_to_plot = rrf_display_fit_curve(self, fit_to_plot)
+            fit_to_plot = rrf_display_fit_curve(self, fit_to_plot, analysis_dataset)
             if fit_to_plot is not None:
                 t_fit, y_fit, fit_label = fit_to_plot
                 fit_color = self._fit_line_color_for_dataset(
@@ -2959,12 +2994,15 @@ class PlotPanel(QWidget):
                 self._y_max.setValue(y_max + ypad)
                 self._limits_initialized = True
 
-            # Set fit range to span all datasets.
-            all_t_min = float(self._last_plot_time.min())
-            all_t_max = float(self._last_plot_time.max())
+            # Set fit range to span all datasets (raw axes — see _raw_fit_seed_range).
             if self._fit_x_min is None or self._fit_x_max is None:
-                self._fit_x_min = all_t_min
-                self._fit_x_max = all_t_max
+                seed = self._raw_fit_seed_range(list(datasets))
+                if seed is None:
+                    seed = (
+                        float(self._last_plot_time.min()),
+                        float(self._last_plot_time.max()),
+                    )
+                self._fit_x_min, self._fit_x_max = seed
         else:
             self._last_plot_time = None
             self._last_plot_asymmetry = None
@@ -3008,11 +3046,13 @@ class PlotPanel(QWidget):
         ):
             self.plot_dataset(self._current_dataset)
 
-    def _overlay_diamagnetic_fit(self) -> None:
+    def _overlay_diamagnetic_fit(self, analysis_dataset: MuonDataset | None = None) -> None:
         """Draw the stored diamagnetic-fit curve on the time-domain axes.
 
         Only drawn when the overlay's run matches the displayed dataset, so a
-        fit from a previous run never shows on an unrelated one.
+        fit from a previous run never shows on an unrelated one.  When the
+        display is in the rotating frame the curve passes through the same
+        demodulation pipeline as the data.
         """
         if (
             not self._has_mpl
@@ -3021,6 +3061,9 @@ class PlotPanel(QWidget):
         ):
             return
         overlay_run, time_us, signal = self._diamagnetic_overlay
+        shown = rrf_display_fit_curve(self, (time_us, signal, "Diamagnetic fit"), analysis_dataset)
+        if shown is not None:
+            time_us, signal, _ = shown
         current_run = (
             int(self._current_dataset.run_number)
             if self._current_dataset is not None and self._current_dataset.run_number is not None
@@ -3083,6 +3126,7 @@ class PlotPanel(QWidget):
         self._ensure_single_axis_mode()
         self._grouped_time_subplot_datasets = []
         self._decimation_applied_for_current_view = False
+        self._rrf_frame_drawn = None
         # Store the original dataset
         self._current_dataset = dataset
         self._current_datasets = [dataset]
@@ -3143,14 +3187,14 @@ class PlotPanel(QWidget):
             label=self._dataset_label_for(dataset),
         )
         self._overlay_fourier_imag(dataset, time)
-        self._overlay_diamagnetic_fit()
+        self._overlay_diamagnetic_fit(analysis_dataset)
         x_label, y_label = self._axis_labels_for_dataset(dataset, self._current_polarization_axis)
         self._apply_axis_labels(x_label, y_label)
         self._set_alpha_label(self._single_dataset_alpha_label_text(dataset))
 
         # Re-plot fit curve if it exists (check both single and global fits)
         fit_to_plot = self._fit_curve_for_dataset(dataset)
-        fit_to_plot = rrf_display_fit_curve(self, fit_to_plot)
+        fit_to_plot = rrf_display_fit_curve(self, fit_to_plot, analysis_dataset)
 
         if fit_to_plot is not None:
             t_fit, y_fit, fit_label = fit_to_plot
@@ -3191,11 +3235,11 @@ class PlotPanel(QWidget):
             self._y_max.setValue(y_max + y_padding)
             self._limits_initialized = True
 
-        data_x_min = float(time.min())
-        data_x_max = float(time.max())
         if self._fit_x_min is None or self._fit_x_max is None:
-            self._fit_x_min = data_x_min
-            self._fit_x_max = data_x_max
+            seed = self._raw_fit_seed_range([dataset])
+            if seed is None:
+                seed = (float(time.min()), float(time.max()))
+            self._fit_x_min, self._fit_x_max = seed
 
         self._draw_fit_range_artists()
 
@@ -3769,6 +3813,25 @@ class PlotPanel(QWidget):
 
         if source_time.size == target_time.size:
             return source_mask.copy()
+
+        # The RRF display slices the filter-edge region off the analysis
+        # dataset; the recorded trim restores the cheap projection paths.
+        trim = (
+            analysis_dataset.metadata.get("rrf_trim")
+            if isinstance(analysis_dataset.metadata, dict)
+            else None
+        )
+        if isinstance(trim, (list, tuple)) and len(trim) == 3:
+            start, stop, pre_size = (int(v) for v in trim)
+            if stop - start == target_time.size and 0 <= start <= stop <= pre_size:
+                if source_mask.size == pre_size:
+                    return source_mask[start:stop].copy()
+                pre_bunch = int(self._bunch_factor.value()) if hasattr(self, "_bunch_factor") else 1
+                if pre_bunch > 1 and source_mask.size >= pre_size * pre_bunch:
+                    folded = (
+                        source_mask[: pre_size * pre_bunch].reshape(pre_size, pre_bunch).any(axis=1)
+                    )
+                    return folded[start:stop]
 
         bunch_factor = int(self._bunch_factor.value()) if hasattr(self, "_bunch_factor") else 1
         if bunch_factor > 1 and source_time.size >= target_time.size:
@@ -4659,6 +4722,7 @@ class PlotPanel(QWidget):
 
             rn = dataset.run_number
             fit_data = self._fit_curve_for_dataset(dataset)
+            fit_data = rrf_display_fit_curve(self, fit_data, analysis)
 
             t_fit = None
             y_fit = None
@@ -4666,6 +4730,12 @@ class PlotPanel(QWidget):
             if fit_data is not None:
                 t_fit, y_fit, fit_label = fit_data
             component_data = self._fit_components_for_dataset(dataset)
+            if t_fit is not None and component_data:
+                wrapped_components = []
+                for name, y_vals in component_data:
+                    shown = rrf_display_fit_curve(self, (t_fit, y_vals, name), analysis)
+                    wrapped_components.append((name, shown[1] if shown is not None else y_vals))
+                component_data = wrapped_components
 
             label_text = self._dataset_label_for(dataset)
 

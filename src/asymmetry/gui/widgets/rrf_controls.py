@@ -18,7 +18,7 @@ tolerates absence (W1).
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSignalBlocker, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -29,7 +29,8 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fourier.units import FieldUnit, convert
+from asymmetry.core.fourier.spectrum import reference_field_gauss
+from asymmetry.core.fourier.units import FieldUnit, convert, gauss_to_mhz
 from asymmetry.core.transform.rrf import rrf_demodulate, rrf_demodulate_values
 
 __all__ = [
@@ -62,6 +63,7 @@ class RRFControls(QWidget):
         super().__init__(plot_panel)
         self._panel = plot_panel
         self._active_view_token: str = "fb_asymmetry"
+        self._current_unit = FieldUnit.MHZ
 
         self._enable_check = QCheckBox("Rotating frame")
         self._enable_check.setToolTip(
@@ -179,28 +181,38 @@ class RRFControls(QWidget):
         }
 
     def set_state(self, state: object) -> None:
-        """Restore from ``plot_state["rrf"]``; tolerates absence and junk."""
+        """Restore from ``plot_state["rrf"]``.
+
+        Absence or junk restores the defaults (RRF off, ν₀ cleared): a state
+        saved without the key means "raw display", and silently keeping the
+        previous session's frame would demodulate the restored project at a
+        stale frequency.
+        """
         if not isinstance(state, dict):
-            return
-        widgets = (
-            self._enable_check,
-            self._freq_spin,
-            self._unit_combo,
-            self._phase_spin,
-            self._bandwidth_spin,
-            self._component_combo,
-        )
-        previous = [w.blockSignals(True) for w in widgets]
+            state = {}
+        blockers = [
+            QSignalBlocker(w)
+            for w in (
+                self._enable_check,
+                self._freq_spin,
+                self._unit_combo,
+                self._phase_spin,
+                self._bandwidth_spin,
+                self._component_combo,
+            )
+        ]
         try:
             unit = FieldUnit.coerce(state.get("display_unit"), default=FieldUnit.MHZ)
             if unit not in {u for _, u in _UNIT_CHOICES}:
                 unit = FieldUnit.MHZ
             idx = self._unit_combo.findData(unit.value)
             self._unit_combo.setCurrentIndex(max(idx, 0))
+            self._current_unit = unit
 
             freq_mhz = _safe_float(state.get("frequency_mhz"), default=0.0)
-            if freq_mhz > 0.0:
-                self._freq_spin.setValue(float(convert(freq_mhz, FieldUnit.MHZ, unit)))
+            self._freq_spin.setValue(
+                float(convert(freq_mhz, FieldUnit.MHZ, unit)) if freq_mhz > 0.0 else 0.0
+            )
 
             self._phase_spin.setValue(_safe_float(state.get("phase_deg"), default=0.0))
 
@@ -214,8 +226,7 @@ class RRFControls(QWidget):
 
             self._enable_check.setChecked(bool(state.get("enabled", False)))
         finally:
-            for widget, prev in zip(widgets, previous, strict=True):
-                widget.blockSignals(prev)
+            del blockers
         self._sync_field_enabled()
         self.refresh_visibility()
 
@@ -263,40 +274,34 @@ class RRFControls(QWidget):
         if checked and self._freq_spin.value() <= 0.0:
             seed = self._field_seed_mhz()
             if seed is not None and seed > 0.0:
-                self._freq_spin.blockSignals(True)
-                self._freq_spin.setValue(float(convert(seed, FieldUnit.MHZ, self._display_unit())))
-                self._freq_spin.blockSignals(False)
+                with QSignalBlocker(self._freq_spin):
+                    self._freq_spin.setValue(
+                        float(convert(seed, FieldUnit.MHZ, self._display_unit()))
+                    )
         self._sync_field_enabled()
         self._emit_changed()
 
     def _field_seed_mhz(self) -> float | None:
-        """ν₀ = γ_μB/2π from the current run's field metadata, if present."""
+        """ν₀ = γ_μB/2π from the run's field metadata, via the shared resolver."""
         dataset = getattr(self._panel, "_current_dataset", None)
         if dataset is None:
             return None
-        field = None
-        if isinstance(getattr(dataset, "metadata", None), dict):
-            field = dataset.metadata.get("field")
-        run = getattr(dataset, "run", None)
-        if field is None and run is not None and isinstance(run.metadata, dict):
-            field = run.metadata.get("field")
-        try:
-            field_gauss = float(field)
-        except (TypeError, ValueError):
+        field_gauss = reference_field_gauss(getattr(dataset, "run", None), dataset)
+        if field_gauss is None or not np.isfinite(field_gauss) or field_gauss <= 0.0:
             return None
-        if not np.isfinite(field_gauss) or field_gauss <= 0.0:
-            return None
-        return float(convert(field_gauss, FieldUnit.GAUSS, FieldUnit.MHZ))
+        return float(gauss_to_mhz(field_gauss))
 
     def _on_unit_changed(self) -> None:
-        # Convert the displayed number so the physical ν₀ is unchanged.
+        # Convert the displayed number so the physical ν₀ is unchanged. The
+        # previous unit is tracked explicitly — inferring it from "the other
+        # combo entry" breaks the moment a third unit (Tesla) joins.
         new_unit = self._display_unit()
-        old_unit = FieldUnit.GAUSS if new_unit is FieldUnit.MHZ else FieldUnit.MHZ
+        old_unit = self._current_unit
+        self._current_unit = new_unit
         value = self._freq_spin.value()
-        if value > 0.0:
-            self._freq_spin.blockSignals(True)
-            self._freq_spin.setValue(float(convert(value, old_unit, new_unit)))
-            self._freq_spin.blockSignals(False)
+        if value > 0.0 and new_unit is not old_unit:
+            with QSignalBlocker(self._freq_spin):
+                self._freq_spin.setValue(float(convert(value, old_unit, new_unit)))
         self._emit_changed()
 
     def _emit_changed(self) -> None:
@@ -349,7 +354,11 @@ def rrf_display_dataset(plot_panel: object, dataset: MuonDataset | None) -> Muon
     if controls is None:
         return dataset
     metadata = dataset.metadata if isinstance(dataset.metadata, dict) else {}
-    if str(metadata.get("plot_domain", "")).strip().lower() == "frequency":
+    is_frequency = getattr(plot_panel, "_is_frequency_domain_dataset", None)
+    if callable(is_frequency):
+        if is_frequency(dataset):
+            return dataset
+    elif str(metadata.get("plot_domain", "")).strip().lower() == "frequency":
         return dataset
     if metadata.get("x_label"):
         # Derived plots (integral scan, reconstruction views) plot something
@@ -367,12 +376,23 @@ def rrf_display_dataset(plot_panel: object, dataset: MuonDataset | None) -> Muon
     # Trim the filter-edge region by slicing (the panel's limit init uses
     # plain .min()/.max(), which NaN edges would poison); interior holes keep
     # NaN, matching how non-finite bins behave on the raw display.
-    sel = slice(int(valid_idx[0]), int(valid_idx[-1]) + 1)
+    start, stop = int(valid_idx[0]), int(valid_idx[-1]) + 1
+    sel = slice(start, stop)
     values, errors = curve.component(controls.component())
     values = np.where(curve.valid, values, np.nan)[sel]
     errors = np.where(curve.valid, errors, np.nan)[sel]
+    frame_label = curve.frame_label(controls.component())
     new_metadata = dict(metadata)
-    new_metadata["rrf_frame"] = curve.frame_label(controls.component())
+    new_metadata["rrf_frame"] = frame_label
+    # The resolved demodulation parameters: overlays (fit curves, model
+    # components) must use exactly these — re-resolving an "Auto" bandwidth
+    # on a differently-sampled overlay grid would filter the two curves
+    # differently. The trim record restores the cheap mask-projection paths.
+    new_metadata["rrf_frequency_mhz"] = float(curve.frequency_mhz)
+    new_metadata["rrf_phase_deg"] = float(curve.phase_deg)
+    new_metadata["rrf_bandwidth_mhz"] = float(curve.bandwidth_mhz)
+    new_metadata["rrf_trim"] = [start, stop, int(np.asarray(dataset.time).size)]
+    plot_panel._rrf_frame_drawn = frame_label  # noqa: SLF001 — badge handshake
     return MuonDataset(
         time=np.asarray(dataset.time, dtype=float)[sel],
         asymmetry=np.asarray(values, dtype=float),
@@ -385,17 +405,28 @@ def rrf_display_dataset(plot_panel: object, dataset: MuonDataset | None) -> Muon
 def rrf_display_fit_curve(
     plot_panel: object,
     fit_to_plot: tuple | None,
+    analysis_dataset: MuonDataset | None,
 ) -> tuple | None:
     """Demodulate a stored fit-curve overlay through the same pipeline.
 
     The model curve must transform with the data or the overlay turns into
     the fast lab-frame oscillation on top of a slow envelope — the WiMDA
-    comparison-ledger item 4 trap.  Invalid bins become NaN (matplotlib
+    comparison-ledger item 4 trap.  The overlay transforms exactly when the
+    *displayed* dataset did, with the parameters recorded on it (so an
+    "Auto" bandwidth resolved on the data grid is not re-resolved on the
+    overlay's, typically finer, grid).  Invalid bins become NaN (matplotlib
     breaks the line there).
     """
     if fit_to_plot is None:
         return None
-    controls = _active_controls(plot_panel)
+    metadata = (
+        analysis_dataset.metadata
+        if analysis_dataset is not None and isinstance(analysis_dataset.metadata, dict)
+        else {}
+    )
+    if not metadata.get("rrf_frame"):
+        return fit_to_plot
+    controls = getattr(plot_panel, "_rrf_controls", None)
     if controls is None:
         return fit_to_plot
     t_fit, y_fit, label = fit_to_plot
@@ -403,9 +434,11 @@ def rrf_display_fit_curve(
         curve = rrf_demodulate_values(
             np.asarray(t_fit, dtype=float),
             np.asarray(y_fit, dtype=float),
-            **controls.demodulation_kwargs(),
+            frequency_mhz=float(metadata["rrf_frequency_mhz"]),
+            phase_deg=float(metadata.get("rrf_phase_deg", 0.0)),
+            bandwidth_mhz=float(metadata["rrf_bandwidth_mhz"]),
         )
-    except ValueError:
+    except (KeyError, TypeError, ValueError):
         return fit_to_plot
     values, _ = curve.component(controls.component())
     return (
@@ -416,27 +449,26 @@ def rrf_display_fit_curve(
 
 
 def rrf_draw_badge(plot_panel: object, ax: object) -> None:
-    """Draw the self-describing frame badge on the axes, if RRF is active.
+    """Draw the self-describing frame badge on the axes.
 
-    Anchored top-right inside the axes so every figure export carries the
-    frame; styled to the muted tick-label grey of the BENCH plot grammar.
+    The badge reflects what was *actually drawn*: ``rrf_display_dataset``
+    flags the frame label on the panel when (and only when) it transformed a
+    curve in the current draw cycle, and the draw paths clear the flag on
+    entry — so a declined transform (degenerate grid, all-invalid filter)
+    never mislabels raw data as rotating-frame.  Anchored top-right inside
+    the axes so every figure export carries the frame; styled to the muted
+    tick-label grey of the BENCH plot grammar.
     """
-    controls = _active_controls(plot_panel)
-    if controls is None:
+    label = getattr(plot_panel, "_rrf_frame_drawn", None)
+    if not label:
         return
-    parts = [f"frame: ν₀ = {controls.frequency_mhz():g} MHz"]
-    if controls.phase_deg():
-        parts.append(f"φ = {controls.phase_deg():g}°")
-    component = controls.component()
-    if component != "real":
-        parts.append({"imag": "quadrature", "magnitude": "magnitude"}.get(component, component))
     try:
         from asymmetry.gui.styles import tokens
 
         ax.text(
             0.985,
             0.985,
-            ", ".join(parts),
+            str(label),
             transform=ax.transAxes,
             ha="right",
             va="top",

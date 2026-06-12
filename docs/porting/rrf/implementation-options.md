@@ -130,7 +130,43 @@ existing multi-run overlay feature; nothing RRF uses it (naming directive).
 (matching the post-#51 view-prefs pattern). Frequency is stored in MHz
 regardless of the display unit.
 
-## D. Out-of-scope records
+## D. Code-review record (2026-06-12, high effort)
+
+Seven-angle review over the branch diff. Fixed in the review-fixes commit:
+export fit curve/components left lab-frame next to demodulated data; default
+fit range seeded from the trimmed display axis (all four draw paths — fits
+always seed from the raw analysis axes now); stale RRF surviving a restore
+of pre-feature state (`set_state` resets to defaults on absence); the
+fit-overlay transform re-resolving an "Auto" bandwidth on its own (finer)
+grid — overlays now transform iff the displayed dataset did, with the
+parameters recorded on it; the frame badge drawn from controls state rather
+than from what was actually transformed, and missing entirely on the
+vector/grouped subplot paths; the diamagnetic-fit overlay drawn raw on
+demodulated axes; the RRF trim defeating the cheap mask-projection path
+(`rrf_trim` metadata fast path added); the oscillating-component guard
+flipped default-closed (unknown categories raise — plugin safety); the
+no-rotation error no longer abuses `UnsupportedRRFComponentError.name`;
+duplicate FFT convolutions and a zero-variance fast path in the filter;
+`CompositeModel.parameter_mapping()` public accessor replacing the private
+read; tracked display unit (Tesla-proof); `QSignalBlocker` everywhere;
+ν₀ seeding through the shared `reference_field_gauss` resolver.
+
+Deferred as follow-ons (recorded, not churned):
+
+- **Demodulation caching on pan/zoom** — every viewport nudge re-runs the
+  FFT pipeline per dataset (~100 ms on a 4×10⁵-bin HAL run). A memoised
+  curve keyed on (dataset, bunch, frame parameters), invalidated by
+  `rrf_changed`, is the fix; needs care with the panel's existing
+  decimation/viewport machinery.
+- **`_safe_float` consolidation** — fourth private float-coercion helper in
+  the codebase (mainwindow, schema, nexus); hoist one into `core/utils`.
+- **Panel-level workspace-view seam** — mainwindow pokes
+  `_plot_panel._rrf_controls` directly; a `set_active_workspace_view(token)`
+  on the panel would give future view-gated widgets one channel.
+- **Shared synthetic-signal test helper** — the damped-cosine builder is
+  repeated across the three RRF test files.
+
+## E. Out-of-scope records
 
 - Per-detector / per-group RRF (Rainford's mapping of N detectors onto a
   quadrature pair; Mantid's exact-rotation path becomes available then).

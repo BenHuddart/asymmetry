@@ -76,8 +76,25 @@ class TestOffsets:
 
     def test_no_rotation_component_raises(self):
         model = CompositeModel.from_expression("Exponential")
-        with pytest.raises(UnsupportedRRFComponentError):
+        with pytest.raises(ValueError, match="no rotation component"):
             rrf_frequency_offsets(model, 25.0)
+
+    def test_unknown_category_fails_closed(self):
+        # Default-closed guard: a component outside both the rotation
+        # registry and the known-envelope categories (e.g. a future plugin
+        # category) must raise rather than silently stay in the lab frame.
+        import dataclasses
+
+        from asymmetry.core.fitting.composite import COMPONENTS
+
+        original = COMPONENTS["Exponential"]
+        COMPONENTS["Exponential"] = dataclasses.replace(original, category="User plugin")
+        try:
+            model = CompositeModel.from_expression("Oscillatory * Exponential")
+            with pytest.raises(UnsupportedRRFComponentError, match="Exponential"):
+                rrf_frequency_offsets(model, 25.0)
+        finally:
+            COMPONENTS["Exponential"] = original
 
     def test_invalid_frequency_raises(self):
         model = CompositeModel.from_expression("Oscillatory * Exponential")
