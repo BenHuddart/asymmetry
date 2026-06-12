@@ -332,3 +332,28 @@ class TestHandoffPlotGrammar:
         for text in texts:
             assert "IBM Plex Mono" in str(text.get_fontfamily())
             assert text.get_fontsize() == pytest.approx(9.0)
+
+
+def _offset_dataset():
+    from asymmetry.core.data.dataset import MuonDataset
+
+    t = np.linspace(0.0, 10.0, 100)
+    counts = 1000.0 + 200.0 * np.sin(t)
+    return MuonDataset(
+        time=t,
+        asymmetry=counts,
+        error=np.full_like(t, 5.0),
+        metadata={"run_number": 7},
+    )
+
+
+class TestZeroLineAutoscale:
+    def test_zero_line_does_not_anchor_positive_data_to_zero(self, panel) -> None:
+        """Regression: axhline registered y=0 in the data limits, so grouped
+        counts (~N0, far from zero) autoscaled to include 0 and squashed the
+        signal. The reference line must stay out of autoscale."""
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(_offset_dataset())
+        y_min, _y_max = panel._ax.get_ylim()
+        assert y_min > 400.0, f"y-axis anchored toward zero: ylim starts at {y_min}"

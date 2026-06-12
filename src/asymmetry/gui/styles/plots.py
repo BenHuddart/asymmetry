@@ -9,16 +9,6 @@ from __future__ import annotations
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import register_matplotlib_fonts
 
-_FONTS_REGISTERED = False
-
-
-def _ensure_fonts() -> None:
-    """Lazily register the bundled mono face with matplotlib, once."""
-    global _FONTS_REGISTERED
-    if not _FONTS_REGISTERED:
-        register_matplotlib_fonts()
-        _FONTS_REGISTERED = True
-
 
 def style_axes(ax: object) -> None:
     """Apply BENCH spine, tick, grid, and background styling to one Axes.
@@ -28,7 +18,7 @@ def style_axes(ax: object) -> None:
     lighter grey than their monospaced labels. The closed four-spine box and
     the default tick treatment are most of what reads as "very matplotlib".
     """
-    _ensure_fonts()
+    register_matplotlib_fonts()
     try:
         for side in ("top", "right"):
             ax.spines[side].set_visible(False)  # type: ignore[union-attr]
@@ -44,8 +34,14 @@ def style_axes(ax: object) -> None:
             color=tokens.PLOT_TICK_MARK,
             labelcolor=tokens.PLOT_TICK_LABEL,
             labelsize=9,
-            labelfontfamily="IBM Plex Mono",
         )
+        try:
+            # labelfontfamily needs matplotlib >= 3.8; the project supports
+            # 3.7, where ticks simply keep the default face. Kept separate so
+            # a rejected kwarg cannot abort the styling that follows.
+            ax.tick_params(which="both", labelfontfamily="IBM Plex Mono")  # type: ignore[union-attr]
+        except (TypeError, ValueError):
+            pass
         r, g, b, a = tokens.PLOT_GRID
         ax.grid(True, color=(r, g, b), alpha=a, linewidth=0.6)  # type: ignore[union-attr]
         ax.set_axisbelow(True)  # type: ignore[union-attr]
@@ -62,16 +58,28 @@ def style_axes(ax: object) -> None:
 
 
 def draw_zero_line(ax: object) -> None:
-    """Draw the handoff's y = 0 reference line (excluded from autoscaling).
+    """Draw the handoff's y = 0 reference line, excluded from autoscaling.
 
-    Invisible-by-construction on positive-only data (it coincides with the
-    bottom spine or sits outside the view), so callers can apply it from a
+    ``axhline`` registers its y-value in the data limits, which would anchor
+    positive-only plots (grouped counts ≈ N0) to zero and squash the signal.
+    Building the Line2D by hand and attaching it via ``add_artist`` keeps it
+    out of the autoscale computation entirely, so callers can apply it from a
     shared rendering chokepoint without per-domain branching.
     """
     try:
-        ax.axhline(  # type: ignore[union-attr]
-            0.0, color=tokens.PLOT_ZERO_LINE, linewidth=0.8, zorder=1.5
+        from matplotlib import lines as mlines
+
+        # x in axes-fraction (always spans the full width), y in data coords.
+        transform = ax.get_yaxis_transform(which="grid")  # type: ignore[union-attr]
+        line = mlines.Line2D(
+            [0.0, 1.0],
+            [0.0, 0.0],
+            transform=transform,
+            color=tokens.PLOT_ZERO_LINE,
+            linewidth=0.8,
+            zorder=1.5,
         )
+        ax.add_artist(line)  # type: ignore[union-attr]
     except Exception:
         pass
 
@@ -92,7 +100,7 @@ def style_legend(legend: object) -> None:
     """
     if legend is None:
         return
-    _ensure_fonts()
+    register_matplotlib_fonts()
     try:
         frame = legend.get_frame()  # type: ignore[union-attr]
         r, g, b, a = tokens.PLOT_LEGEND_BG

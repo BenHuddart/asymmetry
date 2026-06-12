@@ -1067,6 +1067,18 @@ class DataBrowserPanel(QWidget):
         (_user_sized_columns), so their layout is never stomped by a load.
         """
         if self._user_sized_columns:
+            # The user owns the layout — but a brand-new extra section still
+            # arrives at Qt's default width and needs its initial sizing.
+            self._auto_sizing_columns = True
+            try:
+                header = self._table.horizontalHeader()
+                default_size = header.defaultSectionSize()
+                for col in range(len(self._COLUMNS), self._table.columnCount()):
+                    if header.sectionSize(col) == default_size:
+                        hint = self._table.sizeHintForColumn(col)
+                        header.resizeSection(col, max(120, min(320, hint)))
+            finally:
+                self._auto_sizing_columns = False
             return
         self._auto_sizing_columns = True
         try:
@@ -1127,7 +1139,10 @@ class DataBrowserPanel(QWidget):
         """
         super().resizeEvent(event)
         if not self._user_sized_columns:
-            QTimer.singleShot(0, self._fit_title_column_auto)
+            # The context argument cancels the pending timer if the panel is
+            # destroyed first — without it the callback fires against a
+            # deleted C++ object (RuntimeError in tests/shutdown).
+            QTimer.singleShot(0, self, self._fit_title_column_auto)
 
     def _fit_title_column_auto(self) -> None:
         """Flag-guarded fit used by the deferred resize hook."""
@@ -1138,6 +1153,33 @@ class DataBrowserPanel(QWidget):
             self._fit_title_column()
         finally:
             self._auto_sizing_columns = False
+
+    def changeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        """Re-apply two-line row heights when fonts change.
+
+        The heights are explicit pixels computed from the table font at
+        rebuild time; a font change (UI scale) would otherwise leave the
+        comment line clipped until the next rebuild.
+        """
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.ApplicationFontChange):
+            self._two_line_height_cache = None
+            self._reapply_two_line_heights()
+
+    def _reapply_two_line_heights(self) -> None:
+        """Reset the explicit two-line heights from the current table font."""
+        if not hasattr(self, "_table"):
+            return
+        height: int | None = None
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, _TITLE_COLUMN)
+            if item is None:
+                continue
+            comment = item.data(_COMMENT_ROLE)
+            if isinstance(comment, str) and comment.strip():
+                if height is None:
+                    height = self._two_line_row_height()
+                self._table.setRowHeight(row, height)
 
     def _refresh_column_headers(self) -> None:
         """Apply base and dynamic column labels to the table header."""

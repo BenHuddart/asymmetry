@@ -1593,6 +1593,13 @@ def test_user_column_drag_stops_the_auto_fit(qapp: QApplication) -> None:
     panel.add_dataset(_dataset(785409))
     QApplication.processEvents()
     assert header.sectionSize(1) == 99
+    # A brand-new extra section still gets its initial sizing (clamped to
+    # the 120-320 band) even though the user owns the rest of the layout.
+    panel.add_extra_column("instrument")
+    QApplication.processEvents()
+    extra_col = panel._table.columnCount() - 1
+    assert 120 <= header.sectionSize(extra_col) <= 320
+    assert header.sectionSize(1) == 99  # user's Title width untouched
     panel.close()
 
 

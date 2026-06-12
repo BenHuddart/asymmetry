@@ -142,6 +142,45 @@ def test_status_bar_has_state_dot_and_chi2_slot(win: MainWindow) -> None:
     assert win._status_chi2_label.text() == "χ²/ν = 1.04"
     win._set_status_chi2(None)
     assert win._status_chi2_label.text() == ""
+    win._set_status_state("Computing MaxEnt…")
+    assert win._status_state_label.text() == "● Computing MaxEnt…"
+    win._set_status_state("Idle")
+    assert win._status_state_label.text() == "● Idle"
+
+
+def test_cursor_coords_do_not_duplicate_chi2(win: MainWindow) -> None:
+    """χ²/ν lives in its own label; the coords read-out must not repeat it."""
+    win._last_fit_chi2 = 1.23
+    win._on_cursor_coords_changed(3.4, 12.8)
+    assert "χ²" not in win._status_coords_label.text()
+
+
+def test_clear_all_state_resets_chi2(win: MainWindow) -> None:
+    win._set_status_chi2(2.5)
+    win._clear_all_state()
+    assert win._status_chi2_label.text() == ""
+    assert win._last_fit_chi2 is None
+
+
+def test_sync_available_views_preserves_reconstruction(win: MainWindow, qapp: QApplication) -> None:
+    """Regression: the availability rewrite dropped the result-backed
+    reconstruction token on every domain click, killing the MaxEnt panel's
+    reconstruction toggle."""
+    import numpy as np
+
+    from asymmetry.core.data.dataset import MuonDataset
+
+    t = np.linspace(0, 8, 50)
+    ds = MuonDataset(
+        time=t,
+        asymmetry=np.zeros(50),
+        error=np.ones(50) * 0.01,
+        metadata={"run_number": 4242},
+    )
+    win._current_dataset = ds
+    win._maxent_reconstruction_datasets = lambda run_number: [ds] if int(run_number) == 4242 else []
+    win._sync_available_views()
+    assert win._plot_workspace.is_view_enabled("reconstruction")
 
 
 def test_deck_docks_use_slim_title_bars(win: MainWindow, qapp: QApplication) -> None:

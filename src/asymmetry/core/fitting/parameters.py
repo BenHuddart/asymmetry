@@ -6,10 +6,11 @@ import re
 from dataclasses import dataclass
 
 _INDEXED_PARAM_RE = re.compile(r"^(.+)_([0-9]+)$")
-# Names safe to wrap in $...$ for matplotlib mathtext: bare symbols and
-# control sequences only. Free-text names (spaces, %, parentheses, …) make
-# mathtext raise at draw time and must stay plain.
-_MATHTEXT_SAFE_RE = re.compile(r"[A-Za-z0-9_\\]+")
+# Names safe to wrap in $...$ for matplotlib mathtext: bare alphanumeric
+# symbols only. Free-text names (spaces, %, parentheses) and anything with
+# backslashes (a stray/incomplete control sequence still raises at draw
+# time) must stay plain.
+_MATHTEXT_SAFE_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 _GLE_CONTROL_WORD_RE = re.compile(r"^\\[A-Za-z]+$")
 # A trailing subscript group: braced (`_{...}`, allowing one nesting level
 # such as `_{\mathrm{cut}}`), a control word (`_\Delta`), or a bare token.

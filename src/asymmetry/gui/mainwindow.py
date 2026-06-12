@@ -1436,7 +1436,11 @@ class MainWindow(QMainWindow):
         Showing an inspector tab — from the View menu or programmatically —
         clears its closed-tab memory for the active representation.
         """
-        if panel_key in ("fit", "fourier", "fit_parameters") and hasattr(self, "_plot_workspace"):
+        if (
+            hasattr(self, "_dock_fit_parameters")
+            and hasattr(self, "_plot_workspace")
+            and panel_key in self._inspector_dock_map()
+        ):
             view = self._plot_workspace.active_view()
             self._inspector_closed_docks.get(view, set()).discard(panel_key)
         self._ui_manager.show_panel(panel_key)
@@ -1669,6 +1673,11 @@ class MainWindow(QMainWindow):
                 modes.extend(["groups", "raw_counts"])
             if self._dataset_supports_maxent(target):
                 modes.append("maxent")
+            # The reconstruction view is result-backed (enabled by the MaxEnt
+            # worker); rewriting the set without it would kill the panel's
+            # reconstruction toggle and bounce an active reconstruction view.
+            if target is not None and self._maxent_reconstruction_datasets(int(target.run_number)):
+                modes.append("reconstruction")
 
         if hasattr(self._plot_panel, "set_time_view_modes"):
             current_mode = None
@@ -2276,12 +2285,19 @@ class MainWindow(QMainWindow):
                 self._log_panel.log(f"ERROR loading {path}: {e}")
                 failed += 1
 
-        # Plot the last successfully loaded dataset and make it current — it
-        # IS what the user now sees, and availability (Individual groups /
-        # MaxEnt / raw counts) is derived from the current dataset.
+        # Select the last successfully loaded run in the browser: this drives
+        # the standard selection pipeline (_on_dataset_selected), which stores
+        # the OUTGOING dataset's Fourier/MaxEnt panel state before switching —
+        # assigning _current_dataset directly would attribute the old panel
+        # state to the new run — and then plots and syncs availability.
         if last_dataset:
-            self._plot_panel.plot_dataset(last_dataset)
-            self._current_dataset = last_dataset
+            run_number = int(last_dataset.run_number)
+            if hasattr(self._data_browser, "select_runs"):
+                self._data_browser.select_runs({run_number})
+            if self._current_dataset is None or int(self._current_dataset.run_number) != run_number:
+                # Stub browsers (tests) may not drive the selection signals.
+                self._plot_panel.plot_dataset(last_dataset)
+                self._current_dataset = last_dataset
 
         # Update selected datasets for global fitting
         self._update_selected_datasets()
@@ -5511,6 +5527,7 @@ class MainWindow(QMainWindow):
         self._maxent_thread.finished.connect(self._maxent_thread.deleteLater)
         self._maxent_panel.set_busy(True)
         self._set_fourier_status(f"Computing MaxEnt spectrum for run {run_number}...")
+        self._set_status_state("Computing MaxEnt…")
         self._maxent_thread.start()
 
     def _on_cancel_maxent(self) -> None:
@@ -5619,6 +5636,7 @@ class MainWindow(QMainWindow):
 
     def _cleanup_maxent_thread(self) -> None:
         """Clear MaxEnt worker state after the thread exits."""
+        self._set_status_state("Idle")
         self._maxent_panel.set_busy(False)
         self._maxent_thread = None
         self._maxent_worker = None
@@ -7728,6 +7746,8 @@ class MainWindow(QMainWindow):
             "groups": "individual groups",
             "raw_counts": "raw counts",
             "frequency": "frequency",
+            "maxent": "MaxEnt",
+            "reconstruction": "reconstruction",
         }
         domain = _domain_labels.get(
             self._plot_workspace.active_view() if hasattr(self, "_plot_workspace") else "",
@@ -7754,6 +7774,12 @@ class MainWindow(QMainWindow):
             return
         label.setText("" if value is None else f"χ²/ν = {value:.2f}")
 
+    def _set_status_state(self, text: str) -> None:
+        """Update the status-bar state dot (● Idle / ● Computing …)."""
+        label = getattr(self, "_status_state_label", None)
+        if label is not None:
+            label.setText(f"● {text}")
+
     def _on_cursor_coords_changed(self, x: object, y: object) -> None:
         """Update the status bar right label with the current cursor position."""
         if not hasattr(self, "_status_coords_label"):
@@ -7765,9 +7791,9 @@ class MainWindow(QMainWindow):
         if domain == "frequency":
             text = f"ν = {float(x):.3f} MHz  |F| = {float(y):.4g}"
         else:
+            # χ²/ν lives in its own permanent label (_status_chi2_label);
+            # appending it here would show it twice.
             text = f"x = {float(x):.3f} μs  y = {float(y):.2f} %"
-            if self._last_fit_chi2 is not None:
-                text += f"  χ²/ν = {self._last_fit_chi2:.3f}"
         self._status_coords_label.setText(text)
 
     def _get_fit_dataset(self, dataset):
@@ -8317,6 +8343,10 @@ class MainWindow(QMainWindow):
             and self._active_representation_type() == RepresentationType.TIME_FB_ASYMMETRY
         ):
             self._plot_workspace.set_active_view("integral_scan")
+            # Surface the restored scan: the deck raises the build tab by
+            # default, but the object of interest is the scan view in the
+            # Parameters dock (the old toggle path raised it last too).
+            self._show_panel("fit_parameters")
 
     def _alc_points_from_series(self, series) -> list[dict]:
         """Reconstruct per-run scan points from the series + loaded run metadata."""
@@ -8751,6 +8781,8 @@ class MainWindow(QMainWindow):
     def _clear_all_state(self) -> None:
         """Reset every panel to its empty initial state."""
         self._current_dataset = None
+        self._last_fit_chi2 = None
+        self._set_status_chi2(None)
         self._frequency_spectra_by_run = {}
         self._frequency_spectra_by_rep = {
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,

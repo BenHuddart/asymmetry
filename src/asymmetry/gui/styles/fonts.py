@@ -32,19 +32,27 @@ def mono_font(point_size: float = 11.0, weight: QFont.Weight = QFont.Weight.Norm
     return font
 
 
+_MPL_FONTS_REGISTERED = False
+
+
 def register_matplotlib_fonts() -> None:
     """Register the bundled IBM Plex Mono TTFs with matplotlib's font manager.
 
-    Idempotent and Qt-free, so plot-styling helpers can call it lazily —
-    tick/legend text resolves the face even when a figure is created without
-    the full application startup (tests, scripts).
+    Truly idempotent (module-level once-guard — ``addfont`` itself appends
+    duplicate entries) and Qt-free, so plot-styling helpers can call it on
+    every use: tick/legend text resolves the face even when a figure is
+    created without the full application startup (tests, scripts).
     """
+    global _MPL_FONTS_REGISTERED
+    if _MPL_FONTS_REGISTERED:
+        return
     try:
         from matplotlib import font_manager
     except ImportError:
         return
     for ttf in sorted(_FONTS_DIR.glob("IBMPlexMono-*.ttf")):
         font_manager.fontManager.addfont(str(ttf))
+    _MPL_FONTS_REGISTERED = True
 
 
 def configure_plot_fonts() -> None:
