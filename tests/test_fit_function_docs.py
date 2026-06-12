@@ -25,8 +25,18 @@ CATEGORY_PAGES: dict[str, str] = {
 }
 
 
+def _builtin_components() -> dict[str, object]:
+    """The components the documentation policy applies to.
+
+    User components (registered through the user-function facade) are exempt
+    **by their ``user`` flag** — never by name list — since plugin authors
+    cannot add pages to the shipped documentation.
+    """
+    return {name: definition for name, definition in COMPONENTS.items() if not definition.user}
+
+
 def test_every_component_category_has_a_documentation_page() -> None:
-    categories = {definition.category for definition in COMPONENTS.values()}
+    categories = {definition.category for definition in _builtin_components().values()}
     unmapped = categories - set(CATEGORY_PAGES)
     assert not unmapped, (
         f"Component categories without a documentation page: {sorted(unmapped)}. "
@@ -37,7 +47,7 @@ def test_every_component_category_has_a_documentation_page() -> None:
         assert (DOCS_DIR / page).is_file(), f"Missing documentation page {page}"
 
 
-@pytest.mark.parametrize("name", sorted(COMPONENTS))
+@pytest.mark.parametrize("name", sorted(_builtin_components()))
 def test_component_documented_in_its_category_page(name: str) -> None:
     definition = COMPONENTS[name]
     page = DOCS_DIR / CATEGORY_PAGES[definition.category]
@@ -52,7 +62,7 @@ def test_component_documented_in_its_category_page(name: str) -> None:
 def test_every_component_has_explicit_applicability_text() -> None:
     from asymmetry.core.fitting.component_docs import FIT_COMPONENT_APPLICABILITY
 
-    missing = [name for name in COMPONENTS if name not in FIT_COMPONENT_APPLICABILITY]
+    missing = [name for name in _builtin_components() if name not in FIT_COMPONENT_APPLICABILITY]
     assert not missing, (
         f"Components without explicit applicability text (falling back to the generic "
         f"placeholder): {missing}. Add a physically motivated entry to "

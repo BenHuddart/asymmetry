@@ -15,6 +15,7 @@ from scipy import integrate
 from scipy.special import erfcx, j0, sici
 
 from asymmetry.core.fitting.parameters import ParamInfo, param_info_map
+from asymmetry.core.fitting.registration import insert_definition
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
 
@@ -782,7 +783,11 @@ MODELS: dict[str, ModelDefinition] = {}
 
 
 def _register(name: str, desc: str, fn: Callable, params: list[str], defaults: dict) -> None:
-    MODELS[name] = ModelDefinition(name, desc, fn, params, defaults, param_info_map(params))
+    insert_definition(
+        MODELS,
+        ModelDefinition(name, desc, fn, params, defaults, param_info_map(params)),
+        registry_label="MODELS",
+    )
 
 
 _register(

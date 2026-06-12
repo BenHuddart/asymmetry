@@ -55,6 +55,7 @@ material.
    :caption: Fit functions
 
    fit_functions/index
+   user_functions
 
 .. toctree::
    :maxdepth: 2
