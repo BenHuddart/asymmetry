@@ -9398,6 +9398,10 @@ class MainWindow(QMainWindow):
         # All TaskRunner work (file loads, fits, …): cancel, quit and wait.
         if getattr(self, "_tasks", None) is not None:
             self._tasks.shutdown()
+        # Fit-panel worker threads (single / batch / count-domain fits).
+        fit_panel = getattr(self, "_fit_panel", None)
+        if fit_panel is not None and hasattr(fit_panel, "shutdown_workers"):
+            fit_panel.shutdown_workers()
         # The MaxEnt thread is parented to this window: letting the window be
         # destroyed while it runs aborts the process (QThread::~QThread calls
         # qFatal). Request cooperative cancellation and wait for the worker.

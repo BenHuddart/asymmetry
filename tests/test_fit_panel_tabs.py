@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -19,7 +20,7 @@ from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QMessageBox, Q
 
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.engine import FitCancelledError, FitResult
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     CandidateTemplate,
@@ -275,6 +276,7 @@ def test_single_fit_requires_dataset(qapp: QApplication) -> None:
     tab = SingleFitTab()
     tab._current_dataset = None
     tab._run_fit()
+    assert tab.wait_for_fit()
     assert "No dataset selected" in tab._result_label.text()
 
 
@@ -412,6 +414,7 @@ def test_single_fit_invalid_value_shows_error(qapp: QApplication, dataset: MuonD
     # Corrupt first value cell.
     tab._param_table.item(0, 1).setText("not-a-number")
     tab._run_fit()
+    assert tab.wait_for_fit()
 
     assert "Invalid value" in tab._result_label.text()
 
@@ -441,6 +444,7 @@ def test_single_fit_success_emits_and_updates_table(
     tab.fit_completed.connect(lambda res, curve: emitted.update({"res": res, "curve": curve}))
 
     tab._run_fit()
+    assert tab.wait_for_fit()
 
     assert "Fit failed" not in tab._result_label.text()
     assert "χ²" in tab._result_label.text()
@@ -494,7 +498,7 @@ def test_single_fit_uses_dataset_object_it_was_given(
 
     captured = {}
 
-    def _fit(captured_dataset, model_fn, parameters, *, minos=False):
+    def _fit(captured_dataset, model_fn, parameters, *, minos=False, cancel_callback=None):
         captured["dataset"] = captured_dataset
         captured["model_fn"] = model_fn
         captured["n_points"] = len(captured_dataset.time)
@@ -511,9 +515,39 @@ def test_single_fit_uses_dataset_object_it_was_given(
     tab._fit_engine = SimpleNamespace(fit=_fit)
 
     tab._run_fit()
+    assert tab.wait_for_fit()
 
     assert captured["dataset"] is rebinned
     assert captured["n_points"] == len(rebinned.time)
+
+
+def test_single_fit_stop_button_cancels_worker(qapp: QApplication, dataset: MuonDataset) -> None:
+    """Stop swaps in for Fit during a worker fit and cancels it cooperatively."""
+    tab = SingleFitTab()
+    tab.set_dataset(dataset)
+
+    def _fit(ds, model_fn, parameters, *, minos=False, cancel_callback=None):
+        # Spin until the GUI requests cancellation, like a long migrad would
+        # between cancel polls; then honour the cooperative contract.
+        while not cancel_callback():
+            time.sleep(0.005)
+        raise FitCancelledError("Fit cancelled.")
+
+    tab._fit_engine = SimpleNamespace(fit=_fit)
+
+    tab._run_fit()
+    # Busy state: Stop replaces the Fit button while the worker runs.
+    assert tab._fit_btn.isHidden()
+    assert not tab._stop_btn.isHidden()
+
+    tab._on_stop_fit()
+    assert tab.wait_for_fit()
+
+    assert "cancelled" in tab._result_label.text().lower()
+    assert not tab._fit_btn.isHidden()
+    assert tab._stop_btn.isHidden()
+    # Nothing recorded from a cancelled fit.
+    assert tab._last_fit_result is None
 
 
 def test_global_tab_set_datasets_states(qapp: QApplication, dataset: MuonDataset) -> None:
@@ -2936,6 +2970,7 @@ def test_single_fit_link_column_feeds_the_fit(qapp: QApplication) -> None:
         _set_row_link_group(tab, name, 1)
 
     tab._run_fit()
+    assert tab.wait_for_fit()
 
     # The two followers ended exactly equal to their group main.
     assert _row_value(tab, "Lambda_4") == _row_value(tab, "Lambda_2")

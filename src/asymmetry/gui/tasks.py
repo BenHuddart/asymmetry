@@ -76,6 +76,48 @@ class TaskWorker(QObject):
             self.finished.emit(result)
 
 
+class _TaskRelay(QObject):
+    """GUI-thread relay between a worker's signals and plain-Python callbacks.
+
+    A signal connected to a bare function, lambda or ``functools.partial``
+    has no receiver QObject, so Qt delivers it DIRECTLY — the callback runs
+    on the worker thread. Routing through this relay's bound methods (it
+    lives on the GUI thread) makes every delivery queued, so caller
+    callbacks may safely touch widgets.
+    """
+
+    def __init__(
+        self,
+        parent: QObject,
+        *,
+        on_finished: Callable[[object], None] | None,
+        on_error: Callable[[str], None] | None,
+        on_cancelled: Callable[[], None] | None,
+        on_progress: Callable[[int, int, str], None] | None,
+    ) -> None:
+        super().__init__(parent)
+        self._on_finished = on_finished
+        self._on_error = on_error
+        self._on_cancelled = on_cancelled
+        self._on_progress = on_progress
+
+    def finished(self, result: object) -> None:
+        if self._on_finished is not None:
+            self._on_finished(result)
+
+    def error(self, message: str) -> None:
+        if self._on_error is not None:
+            self._on_error(message)
+
+    def cancelled(self) -> None:
+        if self._on_cancelled is not None:
+            self._on_cancelled()
+
+    def progress(self, current: int, total: int, message: str) -> None:
+        if self._on_progress is not None:
+            self._on_progress(current, total, message)
+
+
 class TaskRunner(QObject):
     """Owns background tasks for one window; create it parented to the window.
 
@@ -116,20 +158,26 @@ class TaskRunner(QObject):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
 
-        if on_progress is not None:
-            worker.progress.connect(on_progress)
-        if on_finished is not None:
-            worker.finished.connect(on_finished)
-        if on_error is not None:
-            worker.error.connect(on_error)
-        if on_cancelled is not None:
-            worker.cancelled.connect(on_cancelled)
+        # All caller callbacks go through a GUI-thread relay: connecting a
+        # plain callable directly would run it on the worker thread.
+        relay = _TaskRelay(
+            self,
+            on_finished=on_finished,
+            on_error=on_error,
+            on_cancelled=on_cancelled,
+            on_progress=on_progress,
+        )
+        worker.progress.connect(relay.progress)
+        worker.finished.connect(relay.finished)
+        worker.error.connect(relay.error)
+        worker.cancelled.connect(relay.cancelled)
 
         for terminal in (worker.finished, worker.error, worker.cancelled):
             terminal.connect(thread.quit)
             # Processed by the worker thread's event loop just before it quits;
             # after the loop is gone a deleteLater would never run.
             terminal.connect(worker.deleteLater)
+        thread.finished.connect(relay.deleteLater)
         # Bound-method slot on a GUI-thread QObject => queued connection, so
         # bookkeeping never mutates _live from the worker thread.
         thread.finished.connect(self._on_thread_finished)

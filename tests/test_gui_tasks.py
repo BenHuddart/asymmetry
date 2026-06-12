@@ -118,6 +118,37 @@ def test_progress_signals_arrive_in_order():
     runner.shutdown()
 
 
+def test_plain_callable_callbacks_run_on_gui_thread():
+    """Lambdas/closures passed as callbacks must be relayed to the GUI thread.
+
+    A signal connected directly to a bare callable has no receiver QObject and
+    is delivered in the emitting (worker) thread — the classic cross-thread
+    widget-access bug. TaskRunner's relay must prevent it by construction.
+    """
+    runner = TaskRunner()
+    gui_thread = QThread.currentThread()
+    callback_threads: list[QThread] = []
+    done: list[object] = []
+
+    def fn(worker: TaskWorker):
+        worker.progress.emit(1, 1, "tick")
+        return "ok"
+
+    runner.start(
+        fn,
+        on_progress=lambda *_: callback_threads.append(QThread.currentThread()),
+        on_finished=lambda result: (
+            callback_threads.append(QThread.currentThread()),
+            done.append(result),
+        ),
+    )
+    _wait_until(lambda: bool(done) and runner.active_count == 0)
+
+    assert done == ["ok"]
+    assert callback_threads and all(t is gui_thread for t in callback_threads)
+    runner.shutdown()
+
+
 def test_shutdown_cancels_running_task():
     runner = TaskRunner()
     started = threading.Event()

@@ -58,6 +58,7 @@ def test_fb_count_fit_runs_and_recovers_alpha(qapp, fb_dataset):
     captured = []
     window.count_fit_completed.connect(lambda dataset, payload: captured.append(payload["result"]))
     window._single_fit_tab._run_count_domain_fit()
+    assert window._single_fit_tab.wait_for_fit()
 
     assert len(captured) == 1
     result = captured[0]
@@ -77,6 +78,7 @@ def test_single_count_fit_runs_and_emits(qapp, fb_dataset):
     captured = []
     window.count_fit_completed.connect(lambda dataset, payload: captured.append(payload["result"]))
     window._single_fit_tab._run_count_domain_fit()
+    assert window._single_fit_tab.wait_for_fit()
     assert len(captured) == 1
     assert "N0" in captured[0].parameters.names
 
@@ -179,6 +181,7 @@ def test_promote_after_deadtime_fit_writes_grouping(qapp, fb_dataset):
     window._deadtime_check.setChecked(True)
     tab = window._single_fit_tab
     tab._run_count_domain_fit()
+    assert tab.wait_for_fit()
     assert tab._last_count_dt0 is not None
     window._on_promote_deadtime()
     grouping = fb_dataset.run.grouping
@@ -207,6 +210,7 @@ def test_fb_double_pulse_target_runs_via_dpsep_control(qapp):
     captured = []
     window.count_fit_completed.connect(lambda dataset, payload: captured.append(payload["result"]))
     window._single_fit_tab._run_count_domain_fit()
+    assert window._single_fit_tab.wait_for_fit()
 
     assert len(captured) == 1 and captured[0].success
     assert captured[0].group_results[1].parameters["alpha"].value == pytest.approx(1.2, abs=0.05)
@@ -223,6 +227,7 @@ def test_fb_fit_emits_overlay_for_both_banks(qapp, fb_dataset):
         lambda dataset, payload: overlays.append(payload["overlays"])
     )
     window._single_fit_tab._run_count_domain_fit()
+    assert window._single_fit_tab.wait_for_fit()
 
     assert len(overlays) == 1
     forward, backward = window._single_fit_tab._count_fb_groups(fb_dataset)
@@ -244,6 +249,7 @@ def test_single_fit_emits_overlay_for_target_group(qapp, fb_dataset):
         lambda dataset, payload: overlays.append(payload["overlays"])
     )
     window._single_fit_tab._run_count_domain_fit()
+    assert window._single_fit_tab.wait_for_fit()
 
     forward, _backward = window._single_fit_tab._count_fb_groups(fb_dataset)
     assert len(overlays) == 1
@@ -257,6 +263,7 @@ def test_promote_alpha_after_fb_fit_writes_grouping(qapp, fb_dataset):
     window._target_combo.setCurrentIndex(1)  # fb
     tab = window._single_fit_tab
     tab._run_count_domain_fit()
+    assert tab.wait_for_fit()
     assert tab._last_count_alpha is not None
 
     promoted = []
@@ -277,6 +284,7 @@ def test_switching_run_clears_captured_calibrations(qapp, fb_dataset):
     window._target_combo.setCurrentIndex(1)  # fb
     tab = window._single_fit_tab
     tab._run_count_domain_fit()
+    assert tab.wait_for_fit()
     assert tab._last_count_alpha is not None
 
     other = MuonDataset(
@@ -311,6 +319,7 @@ def test_promote_t0_after_fit_writes_t0_bin_and_discloses_residual(qapp, fb_data
     window._t0_check.setChecked(True)
     tab = window._single_fit_tab
     tab._run_count_domain_fit()
+    assert tab.wait_for_fit()
     assert tab._last_count_t0_us is not None
 
     window._promote_t0_btn.click()
@@ -328,6 +337,7 @@ def test_promote_background_after_fb_fit_sets_fixed_mode(qapp, fb_dataset):
     window._target_combo.setCurrentIndex(1)  # fb
     tab = window._single_fit_tab
     tab._run_count_domain_fit()
+    assert tab.wait_for_fit()
     assert tab._last_count_bg is not None
 
     window._promote_bg_btn.click()
@@ -381,6 +391,7 @@ def test_promote_uses_dedicated_signal_not_a_fit_none(qapp, fb_dataset):
     window._deadtime_check.setChecked(True)
     tab = window._single_fit_tab
     tab._run_count_domain_fit()
+    assert tab.wait_for_fit()
 
     fit_payloads = []
     promoted = []
