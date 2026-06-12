@@ -41,9 +41,7 @@
     </StandardDirectory>
 
     <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
-      <Component Id="AppFilesComponent">
-        <Files Source="$(var.DistDir)\**" />
-      </Component>
+      <Files Source="$(var.DistDir)\**" />
     </ComponentGroup>
 
     <Component Id="Shortcuts" Directory="INSTALLFOLDER" Guid="{2B3C4D5E-6F70-8190-B2C3-D4E5F6071829}">
