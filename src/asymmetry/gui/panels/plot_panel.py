@@ -372,6 +372,8 @@ class PlotPanel(QWidget):
             self._decimation_applied_for_current_view = False
             self._decimation_points_shown = 0
             self._decimation_points_total = 0
+            #: Chip Text artist per axis id; cleared on every view reset.
+            self._decimation_chip_artists: dict[int, object] = {}
             self._max_render_points_per_trace = 4000
             self._viewport_refresh_pending = False
             self._viewport_refresh_in_progress = False
@@ -990,6 +992,25 @@ class PlotPanel(QWidget):
                 if callable(color_getter):
                     return str(color_getter())
         return self._x_axis_label_color(ax)
+
+    def _reset_decimation_view_state(self) -> None:
+        """Reset per-view decimation tracking: flag, chip counters, chip artists.
+
+        Removing and clearing the chip artists here (every plot path resets
+        before drawing) keeps the per-axis dict from accumulating entries for
+        axes that ``clf()`` has already destroyed.
+        """
+        self._decimation_applied_for_current_view = False
+        self._decimation_points_shown = 0
+        self._decimation_points_total = 0
+        artists = getattr(self, "_decimation_chip_artists", None)
+        if artists:
+            for artist in artists.values():
+                try:
+                    artist.remove()
+                except (ValueError, NotImplementedError):
+                    pass  # the axis was already cleared/destroyed
+            artists.clear()
 
     @staticmethod
     def _format_point_count(count: int) -> str:
@@ -1666,6 +1687,8 @@ class PlotPanel(QWidget):
         time: np.ndarray,
         mask: np.ndarray,
         values: np.ndarray | None = None,
+        *,
+        visible_indices: np.ndarray | None = None,
     ) -> np.ndarray:
         """Return bounded sample indices for display-only errorbar rendering.
 
@@ -1673,9 +1696,11 @@ class PlotPanel(QWidget):
         of noisy data (a min-max envelope would exaggerate the noise).
         Frequency-domain spectra use min-max bucketing on *values* instead:
         a stride can drop a narrow spectral peak entirely, and the peaks are
-        the physics.
+        the physics. Callers that already computed the viewport's
+        ``visible_indices`` pass them in to avoid a second full-array scan.
         """
-        visible_indices = self._visible_plot_indices(time, mask)
+        if visible_indices is None:
+            visible_indices = self._visible_plot_indices(time, mask)
         if visible_indices.size <= 0:
             return visible_indices
         if not self.decimation_enabled():
@@ -1702,23 +1727,34 @@ class PlotPanel(QWidget):
         values: np.ndarray,
         max_points: int,
     ) -> np.ndarray:
-        """Keep the min and max sample of each display bucket (extrema survive)."""
+        """Keep the min and max sample of each display bucket (extrema survive).
+
+        Vectorised: the visible values are NaN-padded into a
+        ``(n_buckets, bucket_len)`` grid and reduced per row — a Python loop
+        over ~2000 buckets would cost tens of ms per trace per pan tick.
+        """
         n = int(visible_indices.size)
         n_buckets = max(1, max_points // 2)
-        edges = (np.arange(n_buckets + 1, dtype=np.int64) * n) // n_buckets
-        y = values[visible_indices]
-        keep: list[int] = [0, n - 1]
-        for bucket in range(n_buckets):
-            lo, hi = int(edges[bucket]), int(edges[bucket + 1])
-            if hi <= lo:
-                continue
-            segment = y[lo:hi]
-            try:
-                keep.append(lo + int(np.nanargmin(segment)))
-                keep.append(lo + int(np.nanargmax(segment)))
-            except ValueError:
-                continue  # all-NaN bucket
-        return visible_indices[np.unique(np.asarray(keep, dtype=np.int64))]
+        bucket_len = -(-n // n_buckets)  # ceil; >= 2 because n > max_points
+        pad = n_buckets * bucket_len - n
+        y = np.asarray(values, dtype=float)[visible_indices]
+        padded = np.concatenate([y, np.full(pad, np.nan)]) if pad else y
+        grid = padded.reshape(n_buckets, bucket_len)
+        nan_mask = np.isnan(grid)
+        # Real values always beat the ±inf sentinels, so argmin/argmax can
+        # never select padding except in all-NaN rows, which are dropped.
+        mins = np.argmin(np.where(nan_mask, np.inf, grid), axis=1)
+        maxs = np.argmax(np.where(nan_mask, -np.inf, grid), axis=1)
+        valid = ~nan_mask.all(axis=1)
+        offsets = np.arange(n_buckets, dtype=np.int64) * bucket_len
+        keep = np.concatenate(
+            [
+                np.asarray([0, n - 1], dtype=np.int64),
+                (offsets + mins)[valid],
+                (offsets + maxs)[valid],
+            ]
+        )
+        return visible_indices[np.unique(keep)]
 
     def _plot_errorbar_masked(
         self,
@@ -1731,18 +1767,16 @@ class PlotPanel(QWidget):
     ) -> int:
         """Plot a masked errorbar series using bounded display density."""
         visible_indices = self._visible_plot_indices(time, mask)
-        indices = self._decimated_plot_indices(time, mask, values=asymmetry)
+        indices = self._decimated_plot_indices(
+            time, mask, values=asymmetry, visible_indices=visible_indices
+        )
         if indices.size <= 0:
             return 0
         if self.decimation_enabled() and indices.size < visible_indices.size:
             self._decimation_applied_for_current_view = True
         # Per-view totals feed the corner chip ("4.0k of 1.2M pts").
-        self._decimation_points_shown = int(getattr(self, "_decimation_points_shown", 0)) + int(
-            indices.size
-        )
-        self._decimation_points_total = int(getattr(self, "_decimation_points_total", 0)) + int(
-            visible_indices.size
-        )
+        self._decimation_points_shown += int(indices.size)
+        self._decimation_points_total += int(visible_indices.size)
 
         ax.errorbar(
             time[indices],
@@ -1853,9 +1887,7 @@ class PlotPanel(QWidget):
         self._last_plot_asymmetry = None
         self._last_plot_error = None
         self._last_low_count_mask = None
-        self._decimation_applied_for_current_view = False
-        self._decimation_points_shown = 0
-        self._decimation_points_total = 0
+        self._reset_decimation_view_state()
         self._fit_x_min = None
         self._fit_x_max = None
         if self._is_frequency_plot_panel():
@@ -2447,7 +2479,8 @@ class PlotPanel(QWidget):
 
         _, y_label = self._axis_labels_for_dataset(datasets[0] if datasets else None, axis_key)
         ax.set_ylabel(y_label)
-        self._apply_x_axis_decimation_indicator(ax)
+        # Decimation chip: applied by the caller once every axis is drawn —
+        # the chip counters are still accumulating while subplots render.
         rrf_draw_badge(self, ax)
         if all_times:
             return (
@@ -2470,9 +2503,7 @@ class PlotPanel(QWidget):
 
         self._set_alpha_label(None)
         self._grouped_time_subplot_datasets = []
-        self._decimation_applied_for_current_view = False
-        self._decimation_points_shown = 0
-        self._decimation_points_total = 0
+        self._reset_decimation_view_state()
         self._vector_subplot_datasets = {k: list(v) for k, v in datasets_by_axis.items() if v}
         self._current_datasets = list(self._vector_subplot_datasets.get(order[0], []))
         self._current_dataset = self._current_datasets[-1] if self._current_datasets else None
@@ -2509,12 +2540,15 @@ class PlotPanel(QWidget):
                 ax.set_xlabel(x_label)
             else:
                 ax.tick_params(labelbottom=False)
-            self._apply_x_axis_decimation_indicator(ax)
             if idx == 0:
                 style_legend(ax.legend())
             if t is not None:
                 last_arrays = (t, a, e, low)
                 vector_x_ranges.append((float(np.min(t)), float(np.max(t))))
+
+        # One chip on the bottom axis, after every subplot's points are
+        # counted — applying per axis mid-loop would show partial totals.
+        self._apply_x_axis_decimation_indicator(ax)
 
         self._last_plot_time = last_arrays[0]
         self._last_plot_asymmetry = last_arrays[1]
@@ -2565,9 +2599,7 @@ class PlotPanel(QWidget):
         self._figure.clf()
         self._subplot_axes_by_polarization = {}
         self._vector_subplot_datasets = {}
-        self._decimation_applied_for_current_view = False
-        self._decimation_points_shown = 0
-        self._decimation_points_total = 0
+        self._reset_decimation_view_state()
         self._grouped_time_subplot_datasets = list(datasets)
         self._current_datasets = list(datasets)
         self._current_dataset = datasets[-1]
@@ -2608,11 +2640,14 @@ class PlotPanel(QWidget):
                 ax.set_xlabel(x_label)
             else:
                 ax.tick_params(labelbottom=False)
-            self._apply_x_axis_decimation_indicator(ax)
             style_legend(ax.legend(loc="upper right"))
             if t is not None:
                 last_arrays = (t, a, e, low)
                 grouped_x_ranges.append((float(np.min(t)), float(np.max(t))))
+
+        # One chip on the bottom axis, after every subplot's points are
+        # counted — applying per axis mid-loop would show partial totals.
+        self._apply_x_axis_decimation_indicator(ax)
 
         self._current_polarization_axis = ordered_keys[0] if ordered_keys else None
         self._last_plot_time = last_arrays[0]
@@ -2987,9 +3022,7 @@ class PlotPanel(QWidget):
         self._ensure_single_axis_mode()
         self._grouped_time_subplot_datasets = []
         self._set_alpha_label(None)
-        self._decimation_applied_for_current_view = False
-        self._decimation_points_shown = 0
-        self._decimation_points_total = 0
+        self._reset_decimation_view_state()
         self._rrf_frame_drawn = None
         self._current_dataset = datasets[-1]
         self._current_datasets = list(datasets)
@@ -3237,9 +3270,7 @@ class PlotPanel(QWidget):
 
         self._ensure_single_axis_mode()
         self._grouped_time_subplot_datasets = []
-        self._decimation_applied_for_current_view = False
-        self._decimation_points_shown = 0
-        self._decimation_points_total = 0
+        self._reset_decimation_view_state()
         self._rrf_frame_drawn = None
         # Store the original dataset
         self._current_dataset = dataset

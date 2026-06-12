@@ -3075,3 +3075,23 @@ class TestDecimationStrategies:
         # All gaps equal except possibly the appended final point.
         gaps = np.diff(indices)
         assert np.all(gaps[:-1] == gaps[0])
+
+    def test_minmax_bucketing_tolerates_nan_runs(self, qapp: QApplication) -> None:
+        """All-NaN buckets are dropped; mixed buckets never select a NaN."""
+        panel = PlotPanel(domain="frequency")
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        n = 50_000
+        freq = np.linspace(0.0, 25.0, n)
+        amplitude = np.sin(freq * 3.0)
+        amplitude[10_000:20_000] = np.nan  # a dead stretch spanning many buckets
+        mask = np.ones(n, dtype=bool)
+        panel._max_render_points_per_trace = 1000
+
+        indices = panel._decimated_plot_indices(freq, mask, values=amplitude)
+
+        assert indices.size > 0
+        kept = amplitude[indices]
+        # Endpoints are always kept and are finite here; interior picks must
+        # never come from the NaN stretch.
+        assert np.all(np.isfinite(kept))

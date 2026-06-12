@@ -575,7 +575,14 @@ class MainWindow(QMainWindow):
         env_value = os.environ.get(_PERF_LOGGING_ENV_VAR)
         if env_value is not None:
             return _coerce_bool(env_value, default=False)
-        return _coerce_bool(self._settings.value(_PERF_LOGGING_SETTINGS_KEY), default=False)
+        if QThread.currentThread() is not self.thread():
+            # QSettings instances must not be shared across threads; timed
+            # code on a worker (e.g. _load_file) uses the last value the GUI
+            # thread read instead of touching self._settings.
+            return bool(getattr(self, "_perf_logging_cached", False))
+        value = _coerce_bool(self._settings.value(_PERF_LOGGING_SETTINGS_KEY), default=False)
+        self._perf_logging_cached = value
+        return value
 
     def _plot_decimation_is_enabled(self) -> bool:
         """Return whether plot display decimation is enabled."""
@@ -2271,6 +2278,13 @@ class MainWindow(QMainWindow):
         """
         if not paths:
             return {}
+        if getattr(self, "_bulk_load_active", False):
+            # The nested event loop below dispatches user input before the
+            # modal dialog becomes visible (minimumDuration), so a second
+            # File→Open / drop could re-enter here; refuse it.
+            self._log_panel.log("A file load is already in progress; ignoring the new request.")
+            return {}
+        self._bulk_load_active = True
 
         dialog = QProgressDialog("Loading data files…", "Cancel", 0, len(paths), self)
         dialog.setWindowTitle("Loading Data")
@@ -2317,8 +2331,16 @@ class MainWindow(QMainWindow):
             on_error=on_error,
             on_cancelled=loop.quit,
         )
-        dialog.canceled.connect(worker.cancel)
-        loop.exec()
+        # A receiver-less callable runs in the EMITTER's thread — the GUI
+        # thread here — so the cancel flag is set immediately. Connecting the
+        # worker's bound method instead would QUEUE the call to the worker
+        # thread, whose event loop is blocked inside the task until it
+        # finishes: Cancel would never be delivered mid-load.
+        dialog.canceled.connect(lambda: worker.cancel())
+        try:
+            loop.exec()
+        finally:
+            self._bulk_load_active = False
         was_cancelled = dialog.wasCanceled()
         dialog.close()
         dialog.deleteLater()
@@ -4766,6 +4788,11 @@ class MainWindow(QMainWindow):
         """Cache computed frequency spectra for one run-number context."""
         cache = self._frequency_cache(rep_type)
         cache[int(run_number)] = list(spectra)
+        # An explicit compute supersedes a remembered lazy-recompute failure.
+        failures = getattr(self, "_lazy_recompute_failures", None)
+        if failures:
+            resolved = rep_type or self._active_frequency_rep_type()
+            failures.discard((int(run_number), resolved))
 
     def _report_fourier_diagnostics(self, spectrum: MuonDataset) -> None:
         """Surface diamagnetic-fit and Burg diagnostics from a spectrum's metadata."""
@@ -4826,11 +4853,21 @@ class MainWindow(QMainWindow):
         recomputed keep whatever the legacy array fallback restored.
         """
         self._project_model = ProjectModel.from_project_state(state)
+        self._lazy_recompute_failures = set()
         for run_number, container in self._project_model.datasets.items():
             for rep_type in (RepresentationType.FREQ_FFT, RepresentationType.FREQ_MAXENT):
                 representation = container.get(rep_type)
-                if representation is not None and representation.primary is not None:
+                if representation is None:
+                    continue
+                if representation.primary is not None:
                     self._frequency_cache(rep_type)[int(run_number)] = [representation.primary]
+                elif representation.recompute_on_load and representation.recipe:
+                    # Recipes are authoritative over the transitional legacy
+                    # array snapshot (restored just before this): drop the
+                    # snapshot so the first view recomputes from the recipe
+                    # against the freshly loaded, override-applied run —
+                    # exactly what the eager path used to guarantee.
+                    self._frequency_cache(rep_type).pop(int(run_number), None)
 
     def _ensure_frequency_spectra_for_run(
         self,
@@ -4843,7 +4880,10 @@ class MainWindow(QMainWindow):
         miss with a stored recipe recomputes just that run's spectrum (an FFT —
         milliseconds). MaxEnt keeps its explicit-run-only contract
         (``recompute_on_load`` is false), so a missing MaxEnt spectrum stays
-        missing until the user runs it.
+        missing until the user runs it. A recipe that fails to recompute is
+        logged and remembered so view syncs don't retry it forever; an
+        explicit recompute (Compute FFT) clears the marker via
+        :meth:`_store_frequency_spectra_for_run`.
         """
         if run_number is None:
             return []
@@ -4852,30 +4892,42 @@ class MainWindow(QMainWindow):
         spectra = list(cache.get(run_number, []))
         if spectra:
             return spectra
+        failures = getattr(self, "_lazy_recompute_failures", None)
+        if failures is None:
+            failures = set()
+            self._lazy_recompute_failures = failures
+        if (run_number, rep_type) in failures:
+            return []
 
         container = self._project_model.datasets.get(run_number)
         representation = container.get(rep_type) if container is not None else None
         if representation is None or not representation.recompute_on_load:
             return []
-        dataset = (
-            self._data_browser.get_dataset(run_number)
-            if hasattr(self._data_browser, "get_dataset")
-            else None
-        )
-        run = getattr(dataset, "run", None)
-        if run is None:
-            return []
-        started_at = time.perf_counter()
-        try:
-            representation.invalidate()
-            representation.ensure_computed(run)
-        except Exception:  # noqa: BLE001 - a bad recipe must not break view sync
-            representation.invalidate()
-            return []
+        if representation.primary is None:
+            dataset = (
+                self._data_browser.get_dataset(run_number)
+                if hasattr(self._data_browser, "get_dataset")
+                else None
+            )
+            run = getattr(dataset, "run", None)
+            if run is None:
+                return []
+            started_at = time.perf_counter()
+            try:
+                representation.ensure_computed(run)
+            except Exception as exc:  # noqa: BLE001 - a bad recipe must not break view sync
+                representation.invalidate()
+                failures.add((run_number, rep_type))
+                self._log_panel.log(
+                    f"WARNING: could not recompute the saved "
+                    f"{self._frequency_status_name(rep_type)} spectrum for run "
+                    f"{run_number} from its recipe: {exc}"
+                )
+                return []
+            self._log_perf_event("lazy_spectrum_recompute", started_at, run=run_number)
         if representation.primary is None:
             return []
         cache[run_number] = [representation.primary]
-        self._log_perf_event("lazy_spectrum_recompute", started_at, run=run_number)
         return [representation.primary]
 
     def _serialize_frequency_spectra_state(self) -> dict[str, list[dict[str, object]]]:
@@ -8981,6 +9033,12 @@ class MainWindow(QMainWindow):
             if resolved and resolved not in unique_paths:
                 unique_paths.append(resolved)
         prefetched = self._load_paths_with_progress(unique_paths)
+        if len(prefetched) < len(unique_paths):
+            self._log_panel.log(
+                "WARNING: project loading was cancelled before all data files were "
+                f"read ({len(prefetched)} of {len(unique_paths)}). The project is "
+                "PARTIALLY loaded — saving it now would drop the missing runs."
+            )
         loaded_file_cache: dict[str, object] = {
             path: prefetched.get(path, RuntimeError("file load cancelled")) for path in unique_paths
         }
@@ -9331,6 +9389,7 @@ class MainWindow(QMainWindow):
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
             RepresentationType.FREQ_MAXENT: {},
         }
+        self._lazy_recompute_failures = set()
         self._maxent_state_by_run = {}
         self._maxent_panel_state_by_run = {}
         self._fourier_group_phase_state_by_run = {}
@@ -9395,6 +9454,13 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Stop background work and save plot axis ranges before closing."""
+        # A bulk load's nested event loop is on the stack: destroying the
+        # window underneath it would leave the resumed frame touching dead
+        # widgets. The progress dialog's Cancel is the supported way out.
+        if getattr(self, "_bulk_load_active", False):
+            self.statusBar().showMessage("Cancel or finish the file load before closing.")
+            event.ignore()
+            return
         # All TaskRunner work (file loads, fits, …): cancel, quit and wait.
         if getattr(self, "_tasks", None) is not None:
             self._tasks.shutdown()
