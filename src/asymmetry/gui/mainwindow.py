@@ -67,12 +67,15 @@ from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.fourier import (
     GroupSpectrumConfig,
     build_group_signal_dataset,
+    canonical_fourier_display_mode,
     compute_average_group_spectrum,
     estimate_fft_phase,
     fft_complex_asymmetry,
     fourier_display_ylabel,
     fourier_mode_uses_phase_correction,
 )
+from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
+from asymmetry.core.fourier.units import FieldUnit, convert
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
     combine_mapped_periods,
@@ -1280,6 +1283,19 @@ class MainWindow(QMainWindow):
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         if hasattr(self._frequency_plot_panel, "fit_range_changed"):
             self._frequency_plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
+        # Spectral-moments overlay drags + per-widget controls.
+        if hasattr(self._frequency_plot_panel, "moments_window_changed"):
+            self._frequency_plot_panel.moments_window_changed.connect(
+                self._on_moments_window_dragged
+            )
+            self._frequency_plot_panel.moments_cutoff_changed.connect(
+                self._on_moments_cutoff_dragged
+            )
+        for _rep, _widget in self._spectral_moments_widgets().items():
+            _widget.settings_changed.connect(lambda w=_widget: self._on_moments_settings_changed(w))
+            _widget.send_to_trend_requested.connect(
+                lambda w=_widget: self._on_moments_send_to_trend(w)
+            )
         if hasattr(self._plot_panel, "cursor_coords_changed"):
             self._plot_panel.cursor_coords_changed.connect(self._on_cursor_coords_changed)
         if hasattr(self._fit_panel, "fit_range_edit_committed"):
@@ -4732,6 +4748,7 @@ class MainWindow(QMainWindow):
                     preserved_y_limits[0],
                     preserved_y_limits[1],
                 )
+            self._refresh_spectral_moments()
             return
 
         rep_type = self._active_frequency_rep_type()
@@ -4748,6 +4765,7 @@ class MainWindow(QMainWindow):
             self._set_fourier_status(
                 f"No {self._frequency_status_name(rep_type)} computed for run {run_number}."
             )
+            self._refresh_spectral_moments()
             return
 
         if len(spectra) == 1:
@@ -4774,6 +4792,243 @@ class MainWindow(QMainWindow):
                 self._fit_panel.set_domain("frequency")
             self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
             self._set_frequency_fit_datasets_for_selection()
+        self._refresh_spectral_moments()
+
+    # ── spectral moments ───────────────────────────────────────────────────
+
+    def _spectral_moments_widgets(self) -> dict:
+        """Return ``{rep_type: SpectralMomentsWidget}`` for the hosting panels."""
+        widgets: dict = {}
+        fourier = getattr(self, "_fourier_panel", None)
+        maxent = getattr(self, "_maxent_panel", None)
+        if fourier is not None and hasattr(fourier, "moments_widget"):
+            widgets[RepresentationType.FREQ_FFT] = fourier.moments_widget
+        if maxent is not None and hasattr(maxent, "moments_widget"):
+            widgets[RepresentationType.FREQ_MAXENT] = maxent.moments_widget
+        return widgets
+
+    def _active_moments_widget(self):
+        """Return the moments widget for the active frequency representation."""
+        return self._spectral_moments_widgets().get(self._active_frequency_rep_type())
+
+    def _moment_eligibility(self, rep_type, dataset) -> tuple[bool, str]:
+        """Return ``(eligible, reason)`` for taking moments of *dataset*.
+
+        Only lineshape-faithful spectra qualify: the MaxEnt reconstruction and the
+        phase-corrected real FFT modes. Power, magnitude, phase, Burg and
+        correlation modes are squared/diagnostic lineshapes that bias B_rms and
+        the skewness, so they are greyed out.
+        """
+        reason = (
+            "Moments need a lineshape-faithful spectrum — the MaxEnt "
+            "reconstruction or the phase-corrected real FFT. Power, magnitude, "
+            "phase, Burg and correlation modes bias B_rms and skewness."
+        )
+        if rep_type == RepresentationType.FREQ_MAXENT:
+            return True, ""
+        meta = getattr(dataset, "metadata", {}) or {}
+        display = str(meta.get("fourier_display", ""))
+        # Canonicalise the stored display label, tolerating either the label
+        # (e.g. "Phase"/"phaseOptReal") or an already-canonical key. (A reuse of
+        # fourier_mode_uses_phase_correction was considered but rejected: those
+        # predicates raise on a canonical-key input, narrowing robustness —
+        # recorded as a follow-on in comparison.md.)
+        try:
+            canonical = canonical_fourier_display_mode(display)
+        except (ValueError, TypeError):
+            canonical = display
+        if canonical in ("phase_corrected", "phase_opt_real"):
+            return True, ""
+        return False, reason
+
+    def _refresh_spectral_moments(self) -> None:
+        """Re-evaluate eligibility and recompute moments for the active spectrum."""
+        widgets = self._spectral_moments_widgets()
+        if not widgets or not hasattr(self._frequency_plot_panel, "active_spectrum_for_moments"):
+            return
+        active = self._active_moments_widget()
+        for widget in widgets.values():
+            if widget is not active:
+                widget.set_eligible(False, "Switch to this representation to take its moments.")
+        if active is None:
+            self._frequency_plot_panel.clear_moments_overlay()
+            return
+        accessor = self._frequency_plot_panel.active_spectrum_for_moments()
+        dataset = self._frequency_plot_panel.current_frequency_dataset()
+        if accessor is None or dataset is None:
+            active.set_eligible(False, "No lineshape-faithful spectrum is active.")
+            self._frequency_plot_panel.clear_moments_overlay()
+            return
+        eligible, reason = self._moment_eligibility(self._active_frequency_rep_type(), dataset)
+        if not eligible:
+            active.set_eligible(False, reason)
+            self._frequency_plot_panel.clear_moments_overlay()
+            return
+        active.set_eligible(True)
+        freq_mhz = accessor[0]
+        if freq_mhz.size:
+            active.set_spectrum_bounds(float(np.min(freq_mhz)), float(np.max(freq_mhz)))
+        self._compute_and_show_moments(active, accessor=accessor)
+
+    def _compute_moments_for(self, widget, freq_mhz, amplitude, errors):
+        """Run the core on one spectrum using *widget*'s recipe; return moments."""
+        unit = widget.unit()
+        x = np.asarray(convert(freq_mhz, FieldUnit.MHZ, unit), dtype=float)
+        range_mhz = widget.range_mhz()
+        x_range = None
+        if range_mhz is not None:
+            lo = float(convert(range_mhz[0], FieldUnit.MHZ, unit))
+            hi = float(convert(range_mhz[1], FieldUnit.MHZ, unit))
+            x_range = (lo, hi)
+        method = "bootstrap" if errors is not None else "none"
+        return spectrum_moments(
+            x,
+            amplitude,
+            x_range=x_range,
+            cutoff_fraction=widget.cutoff_fraction(),
+            errors=errors,
+            uncertainty=method,
+            unit=unit.value,
+            mode=self._active_frequency_rep_type().value,
+        )
+
+    def _compute_and_show_moments(self, widget, accessor=None) -> None:
+        """Compute moments for the active spectrum and refresh readout + overlay.
+
+        *accessor* (the W15 ``(x, amplitude, errors, unit)`` tuple) is reused when
+        the caller already fetched it, avoiding a second full-spectrum copy.
+        """
+        if accessor is None:
+            if not hasattr(self._frequency_plot_panel, "active_spectrum_for_moments"):
+                return
+            accessor = self._frequency_plot_panel.active_spectrum_for_moments()
+        if accessor is None:
+            return
+        freq_mhz, amplitude, errors, _unit = accessor
+        moments = self._compute_moments_for(widget, freq_mhz, amplitude, errors)
+        widget.show_moments(moments)
+        # The cutoff line sits at peak·fraction; reuse the kernel's window peak so
+        # the drawn line cannot drift from the computed cutoff (NaN → no line).
+        peak = moments.window_peak_amplitude
+        peak = float(peak) if np.isfinite(peak) else None
+        self._frequency_plot_panel.set_moments_overlay(
+            window_mhz=widget.range_mhz(),
+            cutoff_fraction=widget.cutoff_fraction(),
+            peak_amplitude=peak,
+            visible=True,
+        )
+
+    def _on_moments_settings_changed(self, widget) -> None:
+        if widget is self._active_moments_widget() and widget.is_eligible():
+            self._compute_and_show_moments(widget)
+
+    def _on_moments_window_dragged(self, lo_mhz: float, hi_mhz: float) -> None:
+        widget = self._active_moments_widget()
+        if widget is None or not widget.is_eligible():
+            return
+        widget.set_range_mhz(lo_mhz, hi_mhz)
+        self._compute_and_show_moments(widget)
+
+    def _on_moments_cutoff_dragged(self, fraction: float) -> None:
+        widget = self._active_moments_widget()
+        if widget is None or not widget.is_eligible():
+            return
+        widget.set_cutoff_fraction(fraction)
+        self._compute_and_show_moments(widget)
+
+    def _spectral_moments_batch_id(self, rep_type, recipe: dict, runs: list[int]) -> str:
+        """Deterministic ``moments-<digest>`` id from the recipe + member set.
+
+        Mirrors :meth:`_cross_group_batch_id`: re-sending the same selection with
+        the same recipe replaces its series rather than duplicating it; a
+        different selection or recipe is a different series.
+        """
+        # The display *unit* is excluded from the identity: it only changes how
+        # the same moments are expressed, so re-sending the same selection in a
+        # different unit replaces the series (latest values win) rather than
+        # forking a second, unit-mismatched series for the same runs.
+        skip = {"range_mhz", "unit"}
+        recipe_key = "|".join(f"{k}={recipe[k]}" for k in sorted(recipe) if k not in skip)
+        rng = recipe.get("range_mhz")
+        recipe_key += "|range=" + ("full" if rng is None else f"{rng[0]:.6g},{rng[1]:.6g}")
+        member_key = ",".join(str(r) for r in sorted(runs))
+        logical = f"{rep_type.value}::{recipe_key}::{member_key}"
+        digest = hashlib.sha1(logical.encode("utf-8")).hexdigest()[:12]
+        return f"moments-{digest}"
+
+    def _on_moments_send_to_trend(self, widget) -> None:
+        """Record moments for the selected runs as a computed trend series (F10)."""
+        if not widget.is_eligible():
+            return
+        rep_type = self._active_frequency_rep_type()
+        selected = [int(ds.run_number) for ds in self._data_browser.get_selected_datasets()]
+        active_ds = (
+            self._frequency_plot_panel.current_frequency_dataset()
+            if hasattr(self._frequency_plot_panel, "current_frequency_dataset")
+            else None
+        )
+        if not selected and active_ds is not None:
+            selected = [int(getattr(active_ds, "run_number", 0))]
+        member_runs: list[int] = []
+        results_by_run: dict[int, dict] = {}
+        skipped: list[int] = []
+        for run_number in selected:
+            spectra = self._frequency_cache(rep_type).get(int(run_number), [])
+            dataset = spectra[0] if spectra else None
+            if dataset is None:
+                skipped.append(run_number)
+                continue
+            eligible, _reason = self._moment_eligibility(rep_type, dataset)
+            if not eligible:
+                skipped.append(run_number)
+                continue
+            freq_mhz = np.asarray(getattr(dataset, "time", []), dtype=float)
+            amplitude = np.asarray(getattr(dataset, "asymmetry", []), dtype=float)
+            if freq_mhz.size == 0 or freq_mhz.shape != amplitude.shape:
+                skipped.append(run_number)
+                continue
+            err = getattr(dataset, "error", None)
+            errors = None if err is None else np.asarray(err, dtype=float)
+            if errors is not None and errors.shape != freq_mhz.shape:
+                errors = None
+            moments = self._compute_moments_for(widget, freq_mhz, amplitude, errors)
+            if moments.n_sample == 0:
+                skipped.append(run_number)
+                continue
+            meta = getattr(dataset, "metadata", {}) or {}
+            row = moments_trend_row(
+                moments,
+                run_number=int(run_number),
+                run_label=str(meta.get("run_label") or run_number),
+                field=getattr(dataset, "field", None),
+                temperature=getattr(dataset, "temperature", None),
+            )
+            member_runs.append(int(run_number))
+            results_by_run[int(run_number)] = row
+        if not member_runs:
+            self._set_fourier_status(
+                "Spectral moments: no eligible spectrum in the selection to send."
+            )
+            return
+        recipe = widget.recipe()
+        recipe = {**recipe, "rep_type": rep_type.value}
+        batch_id = self._spectral_moments_batch_id(rep_type, recipe, member_runs)
+        existing = self._project_model.batch(batch_id)
+        extra = dict(existing.extra) if existing is not None else {}
+        extra["moments_recipe"] = recipe
+        self._add_results_series(
+            batch_id,
+            rep_type,
+            f"Spectral moments ({self._frequency_status_name(rep_type)})",
+            member_runs,
+            results_by_run,
+            extra=extra,
+        )
+        self._refresh_trend_panel()
+        note = f"Spectral moments sent to trend: {len(member_runs)} run(s)."
+        if skipped:
+            note += f" Skipped {len(skipped)} without an eligible spectrum."
+        self._set_fourier_status(note)
 
     def _sync_frequency_plot_for_current_dataset(self) -> None:
         """Render the cached frequency spectra for the current dataset selection."""

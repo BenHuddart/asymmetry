@@ -160,6 +160,9 @@ class PlotPanel(QWidget):
     overlay_toggled = Signal(bool)
     time_view_changed = Signal(str)
     cursor_coords_changed = Signal(object, object)  # (x: float|None, y: float|None)
+    #: Spectral-moments overlay drags (frequency panel): window in canonical MHz.
+    moments_window_changed = Signal(float, float)
+    moments_cutoff_changed = Signal(float)  # new cutoff fraction in [0, 1)
 
     def __init__(self, parent: QWidget | None = None, *, domain: str = "time") -> None:
         super().__init__(parent)
@@ -243,6 +246,17 @@ class PlotPanel(QWidget):
             self._active_fit_handle: str | None = None
             self._active_fit_axis = None
             self._drag_started = False
+
+            # Spectral-moments overlay state (frequency panel only). The window
+            # is held in canonical absolute MHz; the cutoff line sits at
+            # ``peak · cutoff_fraction`` in amplitude.
+            self._moments_window_mhz: tuple[float, float] | None = None
+            self._moments_cutoff_fraction: float = 0.0
+            self._moments_peak_amp: float | None = None
+            self._moments_overlay_visible: bool = False
+            self._moments_span_artists: list[object] = []
+            self._moments_cutoff_artists: list[object] = []
+            self._active_moments_handle: str | None = None
 
             # Add plot limit controls toolbar
             self._create_limit_controls()
@@ -3813,10 +3827,190 @@ class PlotPanel(QWidget):
         if emit_signal:
             self.fit_range_changed.emit(self._fit_x_min, self._fit_x_max)
 
+    # ── spectral-moments overlay (frequency panel) ──────────────────────────
+
+    def current_frequency_dataset(self) -> MuonDataset | None:
+        """Return the active frequency-domain dataset, or ``None``."""
+        # ``_current_datasets`` and the overlay state only exist when matplotlib
+        # is available (they are set up in the canvas try-block); guard so a
+        # headless / no-mpl panel degrades to "no spectrum" instead of raising.
+        if not self._has_mpl or not self._is_frequency_plot_panel():
+            return None
+        if self._current_datasets:
+            return self._current_datasets[0]
+        return self._current_dataset
+
+    def active_spectrum_for_moments(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, str] | None:
+        """W15 accessor: ``(x, amplitude, errors, x_unit)`` for the active spectrum.
+
+        ``x`` is the canonical **absolute MHz** axis (the unit-invariant the
+        moments feature works in) and ``x_unit`` is ``"mhz"``; the caller converts
+        to its chosen field unit. Returns ``None`` when no spectrum is shown or the
+        active spectrum is a correlation axis (a hyperfine coupling, not a field).
+        """
+        if not self._is_frequency_plot_panel() or self._frequency_axis_is_correlation:
+            return None
+        ds = self.current_frequency_dataset()
+        if ds is None:
+            return None
+        x = np.asarray(getattr(ds, "time", []), dtype=float)
+        y = np.asarray(getattr(ds, "asymmetry", []), dtype=float)
+        if x.size == 0 or x.shape != y.shape:
+            return None
+        err = getattr(ds, "error", None)
+        err_arr = None if err is None else np.asarray(err, dtype=float)
+        if err_arr is not None and err_arr.shape != x.shape:
+            err_arr = None
+        return x, y, err_arr, "mhz"
+
+    def set_moments_overlay(
+        self,
+        *,
+        window_mhz: tuple[float, float] | None,
+        cutoff_fraction: float,
+        peak_amplitude: float | None,
+        visible: bool,
+    ) -> None:
+        """Show/update the moment window + cutoff line on the spectrum plot.
+
+        *window_mhz* is the analysis window in canonical absolute MHz; the cutoff
+        line is drawn at ``peak_amplitude · cutoff_fraction``. Drawn only on the
+        frequency panel.
+        """
+        if not self._has_mpl or not self._is_frequency_plot_panel():
+            return
+        self._moments_window_mhz = (
+            None if window_mhz is None else (float(window_mhz[0]), float(window_mhz[1]))
+        )
+        self._moments_cutoff_fraction = float(cutoff_fraction)
+        self._moments_peak_amp = None if peak_amplitude is None else float(peak_amplitude)
+        self._moments_overlay_visible = bool(visible) and self._moments_window_mhz is not None
+        self._draw_moments_artists()
+        if self._has_mpl:
+            self._canvas.draw_idle()
+
+    def clear_moments_overlay(self) -> None:
+        """Hide the moment window/cutoff overlay."""
+        if not self._has_mpl:
+            return
+        self._moments_overlay_visible = False
+        self._clear_moments_artists()
+        self._canvas.draw_idle()
+
+    def _clear_moments_artists(self) -> None:
+        for artist in (*self._moments_span_artists, *self._moments_cutoff_artists):
+            try:
+                artist.remove()
+            except NotImplementedError:
+                continue
+            except Exception:
+                continue
+        self._moments_span_artists = []
+        self._moments_cutoff_artists = []
+
+    def _moments_window_display(self) -> tuple[float, float] | None:
+        """Return the moment window converted to the current display axis."""
+        if self._moments_window_mhz is None:
+            return None
+        unit = self._current_frequency_x_unit
+        relative = self._frequency_axis_relative_to_reference
+        lo = self._convert_canonical_mhz_to_display_limit(
+            self._moments_window_mhz[0], unit=unit, relative=relative
+        )
+        hi = self._convert_canonical_mhz_to_display_limit(
+            self._moments_window_mhz[1], unit=unit, relative=relative
+        )
+        return (min(lo, hi), max(lo, hi))
+
+    def _draw_moments_artists(self) -> None:
+        """Draw the moment window span + handles and the cutoff line."""
+        if not self._has_mpl or not self._is_frequency_plot_panel():
+            return
+        self._clear_moments_artists()
+        if not self._moments_overlay_visible or self._frequency_axis_is_correlation:
+            return
+        window = self._moments_window_display()
+        if window is None:
+            return
+        # Reuse the established fit-range span grammar for visual consistency.
+        span, left_line, right_line = draw_fit_range_span(self._ax, window[0], window[1])
+        self._moments_span_artists.extend([span, left_line, right_line])
+        if self._moments_peak_amp is not None and self._moments_cutoff_fraction > 0.0:
+            level = self._moments_peak_amp * self._moments_cutoff_fraction
+            cutoff_line = self._ax.axhline(
+                level, color=right_line.get_color(), alpha=0.45, linestyle=":", linewidth=1.2
+            )
+            self._moments_cutoff_artists.append(cutoff_line)
+
+    def _detect_moments_handle_hit(self, event) -> str | None:
+        """Return ``"min"``/``"max"``/``"cutoff"`` for a moment handle near the cursor."""
+        if (
+            not self._moments_overlay_visible
+            or self._moments_window_mhz is None
+            or event.inaxes is not self._ax
+            or event.x is None
+            or event.y is None
+        ):
+            return None
+        window = self._moments_window_display()
+        if window is None:
+            return None
+        handle = nearest_handle(
+            self._ax,
+            [(window[0], "min"), (window[1], "max")],
+            event.x,
+            tolerance_px=8.0,
+        )
+        if handle is not None:
+            return handle
+        if self._moments_peak_amp is not None and self._moments_cutoff_fraction > 0.0:
+            level = self._moments_peak_amp * self._moments_cutoff_fraction
+            level_px = self._ax.transData.transform((0.0, level))[1]
+            if abs(event.y - level_px) <= 6.0:
+                return "cutoff"
+        return None
+
+    def _drag_moments_handle(self, event) -> None:
+        """Apply a moment-handle drag, updating state and emitting the change."""
+        if self._active_moments_handle == "cutoff":
+            if (
+                event.ydata is None
+                or self._moments_peak_amp is None
+                or self._moments_peak_amp <= 0.0
+            ):
+                return
+            fraction = float(min(max(event.ydata / self._moments_peak_amp, 0.0), 0.99))
+            self._moments_cutoff_fraction = fraction
+            self._draw_moments_artists()
+            self._canvas.draw_idle()
+            self.moments_cutoff_changed.emit(fraction)
+            return
+        if event.xdata is None or self._moments_window_mhz is None:
+            return
+        canonical = self._convert_display_limit_to_canonical_mhz(
+            float(event.xdata),
+            unit=self._current_frequency_x_unit,
+            relative=self._frequency_axis_relative_to_reference,
+        )
+        lo, hi = self._moments_window_mhz
+        if self._active_moments_handle == "min":
+            lo = canonical
+        else:
+            hi = canonical
+        self._moments_window_mhz = (lo, hi)
+        self._draw_moments_artists()
+        self._canvas.draw_idle()
+        self.moments_window_changed.emit(min(lo, hi), max(lo, hi))
+
     def _draw_fit_range_artists(self) -> None:
         """Draw highlight and edge handles for the selected fit range."""
         if not self._has_mpl:
             return
+        # The frequency panel has no time-domain fit range, but it does carry the
+        # moments overlay; redraw it here so it survives every plot rebuild.
+        self._draw_moments_artists()
         if self._is_frequency_plot_panel():
             return
         self._clear_fit_range_artists()
@@ -3935,6 +4129,12 @@ class PlotPanel(QWidget):
             self._drag_started = False
             return
 
+        moments_handle = self._detect_moments_handle_hit(event)
+        if moments_handle is not None:
+            self._active_moments_handle = moments_handle
+            self._drag_started = False
+            return
+
         ann_idx = self._detect_annotation_hit(event)
         if ann_idx is not None:
             self._active_annotation_idx = ann_idx
@@ -3953,6 +4153,10 @@ class PlotPanel(QWidget):
                 self._set_fit_range(event.xdata, self._fit_x_max, emit_signal=True, redraw=True)
             else:
                 self._set_fit_range(self._fit_x_min, event.xdata, emit_signal=True, redraw=True)
+
+        if self._active_moments_handle is not None and event.inaxes is self._ax:
+            self._drag_started = True
+            self._drag_moments_handle(event)
 
         if (
             self._active_annotation_idx is not None
@@ -3973,6 +4177,7 @@ class PlotPanel(QWidget):
         if (
             self._active_fit_handle is None
             and self._active_annotation_idx is None
+            and self._active_moments_handle is None
             and event.inaxes == self._ax
             and event.xdata is not None
             and event.ydata is not None
@@ -3996,6 +4201,11 @@ class PlotPanel(QWidget):
 
             if not was_drag and event.button == 1:
                 self._prompt_handle_value_edit(handle)
+
+        if self._active_moments_handle is not None:
+            self._active_moments_handle = None
+            self._drag_started = False
+            return
 
         if self._active_annotation_idx is None:
             return

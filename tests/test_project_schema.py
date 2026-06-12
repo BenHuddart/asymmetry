@@ -905,6 +905,7 @@ class TestFourierPanelState:
             "burg_order_max": 40,
             "correlation_reference_field_gauss": None,
             "correlation_order": 2,
+            "moments": {"unit": "gauss", "range_mhz": None, "cutoff_fraction": 0.0},
         }
 
         panel2 = FourierPanel()

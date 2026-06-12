@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.maxent import MaxEntConfig
+from asymmetry.gui.panels.spectral_moments_widget import SpectralMomentsWidget
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.widgets import apply_param_table_style, build_primary_button_qss
@@ -347,6 +348,11 @@ class MaxEntPanel(QWidget):
         diagnostics_layout.addWidget(self._diagnostics_label)
         content_layout.addWidget(diagnostics_group)
 
+        # Spectral moments over the MaxEnt reconstruction (the canonical input);
+        # the same widget class as the Fourier panel, wired by the host.
+        self._moments_widget = SpectralMomentsWidget()
+        content_layout.addWidget(self._moments_widget)
+
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
         content_layout.addWidget(self._status_label)
@@ -535,7 +541,14 @@ class MaxEntPanel(QWidget):
             "selected_group_ids": self.selected_group_ids(),
             "group_enabled_table": self.group_enabled_table(),
             "group_phase_degrees": self.group_phase_table(),
+            # Additive, namespaced moments sub-dict (no schema bump; W1).
+            "moments": self._moments_widget.get_state(),
         }
+
+    @property
+    def moments_widget(self) -> SpectralMomentsWidget:
+        """The spectral-moments control hosted under the reconstruction."""
+        return self._moments_widget
 
     def show_reconstruction_enabled(self) -> bool:
         """Return whether the reconstruction overlay toggle is checked."""
@@ -585,6 +598,7 @@ class MaxEntPanel(QWidget):
         """Restore panel controls from a saved dict."""
         if not isinstance(state, dict):
             return
+        self._moments_widget.restore_state(state.get("moments"))
         # ``None``/absent means "auto" (engine derives the grid from the data);
         # the spin box cannot represent that, so leave it unchanged rather
         # than silently pinning a hard-coded value into the next recipe.
