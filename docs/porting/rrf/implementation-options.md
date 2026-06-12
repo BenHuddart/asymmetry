@@ -19,13 +19,13 @@ re-deriving error propagation, and labels can be self-describing.
 
 | Option | For | Against |
 |---|---|---|
-| **Windowed-sinc FIR (Hamming), zero-phase, odd taps — chosen** | designed stopband (≤ −53 dB at the image), keeps the time grid, linear phase = no envelope shape distortion beyond the stated bandwidth | inter-bin correlation over the filter support (documented; display-only) |
+| **Windowed-sinc FIR (Blackman), zero-phase, odd taps — chosen** | designed stopband (≤ −74 dB at the image), keeps the time grid, linear phase = no envelope shape distortion beyond the stated bandwidth | inter-bin correlation over the filter support (documented; display-only) |
 | Decimating mean (musrfit packing) | trivially decorrelated output errors, fewer points | sinc response: −13 dB first sidelobe lets image ripple through; coarse grid fights the plot's own rebin control |
 | WiMDA running box | exact WiMDA parity | same sinc response *and* correlated output; kept as the named comparison mode only |
 
 Default single-sided cutoff: ν₀/2 MHz (between any plausible envelope
 bandwidth and the image at ≈ 2ν₀), exposed in the GUI as "Bandwidth (MHz)".
-Tap count from the cutoff and bin width via the standard Hamming
+Tap count from the cutoff and bin width via the standard Blackman
 transition-width relation, clamped to the data length; `scipy.signal.firwin`
 (scipy is already a core dependency). Non-finite input bins are masked out of
 the convolution rather than poisoning the neighbourhood.
@@ -81,7 +81,14 @@ changes the meaning of fitted phases. The wrapper's docstring states that
 fitted phases remain lab-frame.
 
 GUI exposure of the wrapper is a recorded follow-on (it needs fit-panel
-surface, off-limits this wave).
+surface, off-limits this wave). **Follow-on (Ben, 2026-06-12): an
+engine-level `frequency_offset` argument** is the natural eventual home once
+fit-workflow-diagnostics releases `engine.py` — the wrapper is therefore
+split so the reusable pieces survive that migration: the rotation-component
+registry and a pure `rrf_frequency_offsets(model, frequency_mhz) ->
+dict[param, offset]` resolver are separate from the thin callable wrapper,
+and an engine argument (or the fit panel) can consume the same resolver
+without re-deriving parameter semantics.
 
 ## C. GUI integration
 

@@ -120,9 +120,9 @@ Implementation round (after study):
 
 | Question | Decision |
 |---|---|
-| Low-pass design | Windowed-sinc FIR (Hamming, odd taps, zero-phase, `scipy.signal.firwin`), GUI bandwidth = single-sided cutoff in MHz, default ν₀/2 clamped below the image; decimating mean rejected as primary (sinc sidelobes, coarse grid) but effectively available via WiMDA mode comparisons. |
+| Low-pass design | Windowed-sinc FIR (Blackman, odd taps, zero-phase, `scipy.signal.firwin`), GUI bandwidth = single-sided cutoff in MHz, default ν₀/2 clamped below the image; decimating mean rejected as primary (sinc sidelobes, coarse grid) but effectively available via WiMDA mode comparisons. |
 | Demodulated errors | Exact per-point propagation σ²ᵢ = Σₖ h²ₖ·(2σ)²·{cos², sin²} through the filter; inter-bin correlation length ≈ filter support, stated in the curve metadata and docs; the demodulated curve is never offered to the fit layer. |
-| Fit-offset parameterisation | Registry of rotation components (`Oscillatory` → `frequency` MHz; `OscillatoryField` → `field` Gauss) + a `CompositeModel` wrapper adding ν₀ (or its Gauss equivalent) to the mapped unique parameters; fitted frequencies are rotating-frame offsets δν; unsupported oscillating components (muonium, Bessel, F-μ-F families) fail loudly. |
+| Fit-offset parameterisation | Registry of rotation components (`Oscillatory` → `frequency` MHz; `OscillatoryField` → `field` Gauss) + a `CompositeModel` wrapper adding ν₀ (or its Gauss equivalent) to the mapped unique parameters; fitted frequencies are rotating-frame offsets δν; unsupported oscillating components (muonium, Bessel, F-μ-F families) fail loudly. Follow-up flagged: an engine-level `frequency_offset` argument once `engine.py` is free this wave — the registry/resolver split keeps that migration cheap. |
 | Annotation & export | In-axes badge "frame: ν₀ = … MHz" (+ φ when non-zero) drawn on the plot so figure exports are self-describing; data exports carry frame parameters in the curve label/header. |
 
 ## Scope

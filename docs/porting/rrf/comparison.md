@@ -11,7 +11,7 @@ image, and what happens to the error bars.
 | Input | FB asymmetry (one real signal) | asymmetry (one real signal) | lab-frame quadrature pair (two histograms) | FB asymmetry (one real signal) |
 | Demodulation | ×2·cos(ωt+φ) | ×2·cos(ωt+φ) | exact rotation of (Re, Im) | ×2·e^{−i(ωt+φ)}, complex |
 | Image at ν+ν₀ | imperfectly nulled by box width | aliased by packing | none (exact rotation) | suppressed by designed low-pass |
-| Filter | running box average, default width one image period | decimating mean ("RRF packing") | none | windowed-sinc FIR (Hamming), documented cutoff |
+| Filter | running box average, default width one image period | decimating mean ("RRF packing") | none | windowed-sinc FIR (Blackman), documented cutoff |
 | Output | in-phase only | in-phase only | in-phase + quadrature | Real / Imag / Magnitude (complex in core) |
 | Errors | ×|2cos|, then *linear* average over box | quadrature with √2 = ⟨(2cosθ)²⟩^{1/2} factor | untouched | exact per-point propagation through demod + FIR, correlation documented |
 | Edges | output zeroed within half a box of each edge | partial pack dropped | n/a | filter edge region flagged (shortened valid range) |
@@ -26,16 +26,20 @@ an equal-amplitude image at ν + ν₀. WiMDA's box average is a low-pass with
 transfer function sinc(πfW) (box width W): it has nulls at f = k/W, so its
 default W = 1/(ν₀ + ν_field) places the *first null exactly on the image*
 when ν₀ is tuned to the applied field — a genuinely clever default. But the
-null is a single point: detune ν₀ off the field (the normal use — you detune
-to create a visible beat), broaden the line, or change W, and the image leaks
-through the sinc sidelobes (first sidelobe −13 dB ≈ 22% amplitude) as a fast
-ripple superimposed on the envelope. musrfit's decimating mean has the same
+null is a single point, and a conditional one: the *discretized* box
+(`trunc(RRFbin/tres) div 2` half-width) only realises it when an integer
+number of image periods fits the box, so even on-field the null depends on
+the bin width cooperating (demonstrated in `tests/test_rrf_transform.py`).
+Detune ν₀ off the field (the normal use — you detune to create a visible
+beat), broaden the line, or change W, and the image leaks through the sinc
+sidelobes (first sidelobe −13 dB ≈ 22% amplitude) as a fast ripple
+superimposed on the envelope. musrfit's decimating mean has the same
 sinc response sampled coarsely, plus aliasing of the residual ripple onto the
 packed grid.
 
 Complex demodulation keeps both quadratures, so the image is a clean spectral
 line at ν + ν₀ that a windowed-sinc FIR with cutoff ≪ ν + ν₀ removes by
-design (Hamming sidelobes ≤ −53 dB) rather than by hoping a null lands on it.
+design (Blackman stopband ≤ −74 dB) rather than by hoping a null lands on it.
 The verification plan quantifies the residual ripple of both methods on the
 same synthetic data; the figure belongs in the user guide.
 

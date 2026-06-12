@@ -4,14 +4,16 @@ Numbered checks; each lands as a pytest beside the behaviour it protects
 unless marked docs-only.
 
 1. **Envelope exactness (core).** Demodulation at exactly the generating
-   frequency and phase returns the generating relaxation envelope in Re to
-   numerical precision (rtol ~1e-10 on noiseless data) inside the valid
-   range; Im ≈ 0. Magnitude equals the envelope regardless of φ error.
+   frequency and phase returns the generating relaxation envelope in Re
+   inside the valid range, exact up to the filter's stopband leakage of the
+   image (Blackman −74 dB → residual ≲ 2×10⁻⁴ of the initial amplitude on
+   noiseless data); Im ≈ 0 at the same level. Magnitude equals the envelope
+   regardless of φ error.
 2. **Beat correctness (core).** Detuned by δ, the demodulated signal
    oscillates at δ (cross-check by zero-crossing count or FFT peak) with the
    undistorted envelope in magnitude.
 3. **Image suppression (core + docs).** On identical synthetic data, peak
-   residual at ν + ν₀ for the FIR path is below the Hamming stopband
+   residual at ν + ν₀ for the FIR path is below the Blackman stopband
    prediction; the WiMDA mode shows the expected sinc leakage when the box
    width is detuned from the image period. The numbers go into the user-guide
    comparison; the test asserts the FIR bound and that WiMDA-mode output
