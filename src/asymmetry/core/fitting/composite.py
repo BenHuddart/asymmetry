@@ -1198,8 +1198,44 @@ def build_component_expression(
     return " ".join(parts)
 
 
+def _missing_component_function(t: NDArray, **_params: float) -> NDArray[np.float64]:
+    """Zero-valued stand-in evaluation for a missing user component."""
+    return np.zeros_like(np.asarray(t, dtype=float))
+
+
+def placeholder_component_definition(name: str) -> ComponentDefinition:
+    """Return a named placeholder for an unregistered (user) component.
+
+    Used when a project references a component that is not registered in this
+    session (typically a user function whose plugin is not installed): the
+    model still opens with its original expression — the placeholder evaluates
+    to zero and is flagged ``missing`` so fitting can be blocked with a clear
+    message instead of the model being silently dropped. Placeholders are
+    per-instance and are **never** inserted into ``COMPONENTS``.
+    """
+    return ComponentDefinition(
+        name=name,
+        description=f"Missing user function '{name}' (not registered in this session)",
+        function=_missing_component_function,
+        param_names=[],
+        param_defaults={},
+        param_info={},
+        formula_template="0",
+        latex_equation="",
+        category="User",
+        domain="time",
+        user=True,
+        missing=True,
+    )
+
+
 class CompositeModel:
-    """A flat composite model built from baseline-free components."""
+    """A flat composite model built from baseline-free components.
+
+    ``allow_missing`` lets a model materialise even when some component names
+    are not registered (see :func:`placeholder_component_definition`); callers
+    that fit or edit the model must check :attr:`missing_component_names`.
+    """
 
     def __init__(
         self,
@@ -1208,12 +1244,14 @@ class CompositeModel:
         open_parentheses: list[int] | None = None,
         close_parentheses: list[int] | None = None,
         fraction_groups: list[tuple[int, int]] | None = None,
+        *,
+        allow_missing: bool = False,
     ) -> None:
         if not component_names:
             raise ValueError("Composite model must contain at least one component")
 
         missing = [name for name in component_names if name not in COMPONENTS]
-        if missing:
+        if missing and not allow_missing:
             raise ValueError(f"Unknown component(s): {missing}")
 
         if operators is None:
@@ -1254,7 +1292,11 @@ class CompositeModel:
         self._fraction_param_number_by_component = self._build_fraction_param_number_map()
         self._fraction_term_number_by_component = self._build_fraction_term_number_map()
         self._fraction_group_by_component = self._build_fraction_group_component_map()
-        self.components = [COMPONENTS[name] for name in component_names]
+        self.missing_component_names: tuple[str, ...] = tuple(missing)
+        self.components = [
+            COMPONENTS[name] if name in COMPONENTS else placeholder_component_definition(name)
+            for name in component_names
+        ]
         self._uses_parentheses = any(self.open_parentheses) or any(self.close_parentheses)
         # Keep legacy amplitude-sharing behavior for flat expressions.
         self._share_chain_amplitude = not self._uses_parentheses
@@ -1507,6 +1549,9 @@ class CompositeModel:
             open_parentheses=open_parentheses,
             close_parentheses=close_parentheses,
             fraction_groups=[*self.fraction_groups, (0, len(self.component_names) - 1)],
+            # Rebuilding from an existing instance: its names were already
+            # vetted (possibly as placeholders), so never re-raise here.
+            allow_missing=True,
         )
 
     def domains(self) -> set[str]:
@@ -1517,8 +1562,12 @@ class CompositeModel:
         time- and frequency-domain components (e.g. restored from a project
         saved before domain filtering existed) and should be surfaced to the
         user rather than silently fitted.
+
+        Missing-component placeholders are skipped: their domain is unknowable,
+        and the missing-ness itself is surfaced separately (fit blocking via
+        :attr:`missing_component_names`).
         """
-        return {component.domain for component in self.components}
+        return {component.domain for component in self.components if not component.missing}
 
     def fixed_by_default_params(self) -> set[str]:
         """Unique parameter names that should start fixed in a fit.
@@ -2036,8 +2085,15 @@ class CompositeModel:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> CompositeModel:
-        """Construct a CompositeModel from serialized data."""
+    def from_dict(cls, data: dict, *, allow_missing: bool = False) -> CompositeModel:
+        """Construct a CompositeModel from serialized data.
+
+        With ``allow_missing=True``, component names that are not registered
+        materialise as named zero-valued placeholders instead of raising —
+        the degrade path for projects referencing user functions that are not
+        installed in this session (the original names round-trip unchanged
+        through :meth:`to_dict`).
+        """
         component_names = data.get("component_names")
         operators = data.get("operators")
         open_parentheses = data.get("open_parentheses")
@@ -2074,4 +2130,5 @@ class CompositeModel:
             open_parentheses=open_parentheses,
             close_parentheses=close_parentheses,
             fraction_groups=[(start, end) for start, end in (fraction_groups or [])],
+            allow_missing=allow_missing,
         )

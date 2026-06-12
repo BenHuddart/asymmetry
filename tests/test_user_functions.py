@@ -457,3 +457,59 @@ def test_top_level_lazy_exports():
     assert asymmetry.load_user_functions is load_user_functions
     with pytest.raises(AttributeError):
         asymmetry.not_a_real_attribute  # noqa: B018
+
+
+# ── named-placeholder degrade (W1) ─────────────────────────────────────────
+
+
+def _missing_model_dict() -> dict:
+    return {
+        "component_names": ["UserGoneDecay", "Constant"],
+        "operators": ["+"],
+        "open_parentheses": [0, 0],
+        "close_parentheses": [0, 0],
+        "fraction_groups": [],
+    }
+
+
+def test_from_dict_strict_still_raises_for_unknown_components():
+    with pytest.raises(ValueError, match="Unknown component"):
+        CompositeModel.from_dict(_missing_model_dict())
+
+
+def test_placeholder_degrade_round_trips_and_evaluates_to_zero():
+    data = _missing_model_dict()
+    model = CompositeModel.from_dict(data, allow_missing=True)
+
+    assert model.missing_component_names == ("UserGoneDecay",)
+    assert model.to_dict() == data  # original names preserved bit-identically
+    assert "UserGoneDecay" not in COMPONENTS  # never registered
+
+    t = np.linspace(0.0, 10.0, 21)
+    constant = CompositeModel(["Constant"])
+    np.testing.assert_array_equal(
+        model.function(t, **model.param_defaults),
+        constant.function(t, **constant.param_defaults),
+    )
+    # The placeholder's unknowable domain must not poison the domain check.
+    assert model.domains() == {"time"}
+
+
+def test_placeholder_model_goes_live_once_plugin_returns():
+    data = _missing_model_dict()
+    degraded = CompositeModel.from_dict(data, allow_missing=True)
+    assert degraded.missing_component_names
+
+    register_component(
+        "UserGoneDecay",
+        lambda t, A: A * np.exp(-np.asarray(t, dtype=float)),
+        ["A"],
+        domain="time",
+        description="Restored plugin component",
+        formula_template="{A}*exp(-t)",
+    )
+    live = CompositeModel.from_dict(data, allow_missing=True)
+    assert live.missing_component_names == ()
+    t = np.linspace(0.0, 5.0, 11)
+    out = live.function(t, **live.param_defaults)
+    assert np.all(np.isfinite(out))
