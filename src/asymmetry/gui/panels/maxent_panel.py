@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 from asymmetry.core.maxent import MaxEntConfig
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.widgets import apply_param_table_style
+from asymmetry.gui.styles.widgets import apply_param_table_style, build_primary_button_qss
 
 
 class MaxEntPanel(QWidget):
@@ -222,6 +222,7 @@ class MaxEntPanel(QWidget):
         self._cycle_five_btn = QPushButton("+5")
         self._cycle_twentyfive_btn = QPushButton("+25")
         self._converge_btn = QPushButton("Converge")
+        self._converge_btn.setStyleSheet(build_primary_button_qss())
         self._restart_btn = QPushButton("Restart")
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setEnabled(False)

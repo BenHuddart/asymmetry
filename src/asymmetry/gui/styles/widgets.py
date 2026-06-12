@@ -20,8 +20,8 @@ from asymmetry.gui.styles.typography import header_font
 
 RESULTS_GROUP_SUCCESS_STYLE = (
     "QGroupBox {"
-    " background-color: #f4f8f4;"
-    " border: 1px solid #cbe1cf;"
+    f" background-color: {tokens.SUCCESS_BG};"
+    f" border: 1px solid {tokens.SUCCESS_BORDER};"
     " border-radius: 4px;"
     " margin-top: 10px;"
     "}"
@@ -119,6 +119,69 @@ def build_segmented_button_qss(
         f" QPushButton:checked {{ padding: 2px {padding_h}px; font-weight: 600;"
         f" background-color: {tokens.ACCENT_SOFT}; color: {tokens.ACCENT};"
         f" border-color: {tokens.ACCENT}; }}"
+        # A per-widget stylesheet replaces the global one entirely, so the
+        # disabled state must be styled here too — without it, data-gated
+        # segments (Individual groups / MaxEnt with no capable run) look
+        # identical to clickable ones. Recede into the toolbar surface.
+        f" QPushButton:disabled {{ padding: 2px {padding_h}px; font-weight: 600;"
+        f" background-color: {tokens.SURFACE_ALT}; color: {tokens.TEXT_DIM};"
+        f" border-color: {tokens.BORDER}; }}"
+    )
+
+
+def build_segmented_container_qss() -> str:
+    """QSS for the QFrame that wraps a *joined* segmented control.
+
+    The design-handoff segmented control draws ONE border around the whole
+    group with 1px internal dividers — not separate fully-bordered buttons.
+    The frame owns the outer border and radius; the cells inside are
+    borderless (see :func:`build_segmented_cell_qss`).
+    """
+    return (
+        f"QFrame {{ border: 1px solid {tokens.BORDER}; border-radius: 4px;"
+        f" background-color: {tokens.SURFACE}; }}"
+    )
+
+
+def build_segmented_cell_qss(*, first: bool, last: bool, padding_h: int = 10) -> str:
+    """QSS for one cell of a joined segmented control.
+
+    Cells are borderless except for the 1px divider on their right edge;
+    only the outer cells round their corners (3px, sitting just inside the
+    container's 4px radius). The checked cell fills accent-soft with accent
+    text — matching the design handoff, the divider stays neutral.
+    """
+    radius = (
+        f" border-top-left-radius: {3 if first else 0}px;"
+        f" border-bottom-left-radius: {3 if first else 0}px;"
+        f" border-top-right-radius: {3 if last else 0}px;"
+        f" border-bottom-right-radius: {3 if last else 0}px;"
+    )
+    divider = "" if last else f" border-right: 1px solid {tokens.BORDER};"
+    base = f"padding: 2px {padding_h}px; font-weight: 600; border: none;{divider}{radius}"
+    return (
+        f"QPushButton {{ {base} background-color: transparent; color: {tokens.TEXT}; }}"
+        f" QPushButton:checked {{ {base} background-color: {tokens.ACCENT_SOFT};"
+        f" color: {tokens.ACCENT}; }}"
+        f" QPushButton:disabled {{ {base} background-color: {tokens.SURFACE_ALT};"
+        f" color: {tokens.TEXT_DIM}; }}"
+    )
+
+
+def build_primary_button_qss() -> str:
+    """Accent-tinted treatment for a panel's primary action (Run Fit, …).
+
+    The design handoff renders the primary action in the 'active' style —
+    accent-soft fill, accent border and text — so the eye lands on the one
+    button that advances the workflow.
+    """
+    return (
+        f"QPushButton {{ padding: 3px 12px; font-weight: 600;"
+        f" background-color: {tokens.ACCENT_SOFT}; color: {tokens.ACCENT};"
+        f" border: 1px solid {tokens.ACCENT}; border-radius: 4px; }}"
+        f" QPushButton:hover {{ background-color: {tokens.ACCENT_SOFT2}; }}"
+        f" QPushButton:disabled {{ background-color: {tokens.SURFACE_ALT};"
+        f" color: {tokens.TEXT_DIM}; border-color: {tokens.BORDER}; }}"
     )
 
 

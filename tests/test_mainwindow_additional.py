@@ -268,11 +268,11 @@ class TestMainWindowFourier:
         mainwindow._refresh_time_view_selector()
         # Move into the FFT view and simulate the stale-disabled MaxEnt button.
         mainwindow._plot_workspace.set_active_view("frequency")
-        mainwindow._domain_buttons[3].setEnabled(False)
+        mainwindow._domain_buttons_by_token["maxent"].setEnabled(False)
         # The exact handler wired to active_view_changed for an FFT -> MaxEnt
         # toolbar switch -- no reselection in the F-B view.
         mainwindow._on_plot_workspace_view_changed("maxent")
-        assert mainwindow._domain_buttons[3].isEnabled() is True
+        assert mainwindow._domain_buttons_by_token["maxent"].isEnabled() is True
 
     def test_maxent_domain_button_disabled_for_unsupported_after_view_change(
         self, mainwindow: MainWindow
@@ -284,9 +284,9 @@ class TestMainWindowFourier:
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8811)
         mainwindow._plot_workspace.set_active_view("frequency")
-        mainwindow._domain_buttons[3].setEnabled(True)  # stale-enabled
+        mainwindow._domain_buttons_by_token["maxent"].setEnabled(True)  # stale-enabled
         mainwindow._on_plot_workspace_view_changed("frequency")
-        assert mainwindow._domain_buttons[3].isEnabled() is False
+        assert mainwindow._domain_buttons_by_token["maxent"].isEnabled() is False
 
     def test_maxent_divergence_surfaces_visible_warning(self, mainwindow: MainWindow) -> None:
         """A diverged MaxEnt result must raise a visible, warning-coloured status
@@ -1380,12 +1380,20 @@ class TestMainWindowBasic:
         self,
         mainwindow: MainWindow,
     ) -> None:
-        """The toolbar Domain buttons should expose the 2+2 Time/Frequency views."""
+        """The toolbar Domain buttons should expose the 3+2 Time/Frequency views."""
         labels = [btn.text() for btn in mainwindow._domain_buttons]
-        assert labels == ["F-B asymmetry", "Individual groups", "FFT", "MaxEnt"]
+        assert labels == [
+            "F-B asymmetry",
+            "Individual groups",
+            "Integral scan",
+            "FFT",
+            "MaxEnt",
+        ]
 
-    def test_on_fit_shows_fit_dock(self, mainwindow: MainWindow) -> None:
-        """Fit action should unhide the fit dock if it starts hidden."""
+    def test_on_fit_reshows_closed_fit_dock(self, mainwindow: MainWindow) -> None:
+        """The fit dock is visible by default; Fit re-shows it after a close."""
+        assert not mainwindow._dock_fit.isHidden()
+        mainwindow._dock_fit.close()
         assert mainwindow._dock_fit.isHidden()
         mainwindow._on_fit()
         assert not mainwindow._dock_fit.isHidden()
@@ -1433,7 +1441,7 @@ class TestMainWindowBasic:
         monkeypatch.setattr(
             mainwindow,
             "_grouped_time_domain_display_datasets",
-            lambda dataset=None: [dataset or mainwindow._current_dataset],
+            lambda dataset=None, **_kwargs: [dataset or mainwindow._current_dataset],
         )
         mainwindow._refresh_time_view_selector()
         mainwindow._plot_workspace.set_active_view("groups")
@@ -1504,7 +1512,7 @@ class TestMainWindowBasic:
         monkeypatch.setattr(
             mainwindow,
             "_grouped_time_domain_display_datasets",
-            lambda dataset=None: grouped_datasets,
+            lambda dataset=None, **_kwargs: grouped_datasets,
         )
         captured: dict[str, object] = {}
         mainwindow._plot_panel.set_global_fits = lambda payload: captured.update(
@@ -1546,7 +1554,7 @@ class TestMainWindowBasic:
         monkeypatch.setattr(
             mainwindow,
             "_grouped_time_domain_display_datasets",
-            lambda dataset=None: grouped_datasets,
+            lambda dataset=None, **_kwargs: grouped_datasets,
         )
         captured: dict[str, object] = {}
         mainwindow._plot_panel.set_global_fits = lambda payload: captured.update(
@@ -1576,7 +1584,7 @@ class TestMainWindowBasic:
         monkeypatch.setattr(
             mainwindow,
             "_grouped_time_domain_display_datasets",
-            lambda dataset=None: [dataset or mainwindow._current_dataset],
+            lambda dataset=None, **_kwargs: [dataset or mainwindow._current_dataset],
         )
         mainwindow._refresh_time_view_selector()
 
@@ -1600,7 +1608,7 @@ class TestMainWindowBasic:
         monkeypatch.setattr(
             mainwindow,
             "_grouped_time_domain_display_datasets",
-            lambda dataset=None: [dataset or mainwindow._current_dataset],
+            lambda dataset=None, **_kwargs: [dataset or mainwindow._current_dataset],
         )
 
         mainwindow._plot_workspace.set_active_view("frequency")
@@ -1696,7 +1704,7 @@ class TestMainWindowBasic:
         monkeypatch.setattr(
             mainwindow,
             "_grouped_time_domain_display_datasets",
-            lambda target=None: [target or mainwindow._current_dataset],
+            lambda target=None, **_kwargs: [target or mainwindow._current_dataset],
         )
         mainwindow._refresh_time_view_selector()
         mainwindow._refresh_vector_axis_selector()
@@ -1752,8 +1760,10 @@ class TestMainWindowBasic:
         mainwindow._on_fourier()
         assert not mainwindow._dock_fourier.isHidden()
 
-    def test_on_fit_parameters_shows_params_dock(self, mainwindow: MainWindow) -> None:
-        """Fit Parameters action should unhide the dock if it starts hidden."""
+    def test_on_fit_parameters_reshows_closed_params_dock(self, mainwindow: MainWindow) -> None:
+        """The params dock is visible by default; the action re-shows it after a close."""
+        assert not mainwindow._dock_fit_parameters.isHidden()
+        mainwindow._dock_fit_parameters.close()
         assert mainwindow._dock_fit_parameters.isHidden()
         mainwindow._on_fit_parameters()
         assert not mainwindow._dock_fit_parameters.isHidden()
@@ -1917,44 +1927,60 @@ class TestMainWindowBasic:
         assert state["view_modes_state"]["modes"][0]["x_min"] == pytest.approx(0.25)
         assert state["view_modes_state"]["modes"][0]["x_max"] == pytest.approx(7.5)
 
-    def test_toolbar_grouping_before_fit(self, mainwindow: MainWindow) -> None:
-        """Toolbar should expose Grouping action before Fit for discoverability."""
+    def test_toolbar_omits_inspector_panel_actions(self, mainwindow: MainWindow) -> None:
+        """Fit/FFT/Params live in the right-hand inspector deck, not the toolbar."""
         toolbar = mainwindow.findChild(QToolBar)
         assert toolbar is not None
         texts = [action.text() for action in toolbar.actions()]
         assert "Grouping" in texts
-        assert "Fit" in texts
-        assert texts.index("Grouping") < texts.index("Fit")
+        assert "Fit" not in texts
+        assert "FFT" not in texts
+        assert "Params" not in texts
+        # Global Parameter Fit is an advanced feature, menu-bar only.
+        assert "Global Fit" not in texts
 
     def test_toolbar_has_domain_segmented_control(self, mainwindow: MainWindow) -> None:
-        """Toolbar should expose four Domain buttons (Time 2 + Frequency 2)."""
+        """Toolbar should expose five Domain buttons (Time 3 + Frequency 2)."""
         assert hasattr(mainwindow, "_domain_buttons")
         assert [btn.text() for btn in mainwindow._domain_buttons] == [
             "F-B asymmetry",
             "Individual groups",
+            "Integral scan",
             "FFT",
             "MaxEnt",
         ]
-        assert mainwindow._domain_buttons[0].isChecked()
-        assert not mainwindow._domain_buttons[1].isChecked()
-        assert not mainwindow._domain_buttons[2].isChecked()
-        # MaxEnt is reserved but not yet implemented.
-        assert not mainwindow._domain_buttons[3].isEnabled()
+        buttons = mainwindow._domain_buttons_by_token
+        assert buttons["fb_asymmetry"].isChecked()
+        assert not buttons["groups"].isChecked()
+        assert not buttons["integral_scan"].isChecked()
+        assert not buttons["frequency"].isChecked()
+        # Integral scan needs only the F-B reduction, so it is always enabled;
+        # the data-gated entries (Individual groups, MaxEnt, the raw-counts
+        # diagnostic in the View menu) must start visibly disabled — not just
+        # become disabled on the first click/selection event.
+        assert buttons["fb_asymmetry"].isEnabled()
+        assert buttons["integral_scan"].isEnabled()
+        assert buttons["frequency"].isEnabled()
+        assert not buttons["groups"].isEnabled()
+        assert not buttons["maxent"].isEnabled()
+        assert "raw_counts" not in buttons
+        assert not mainwindow._raw_counts_action.isEnabled()
 
     def test_domain_button_click_changes_workspace_view(self, mainwindow: MainWindow) -> None:
         """Clicking the Frequency domain button should switch the workspace view."""
-        mainwindow._domain_buttons[2].click()
+        mainwindow._domain_buttons_by_token["frequency"].click()
         assert mainwindow._plot_workspace.active_view() == "frequency"
 
     def test_workspace_view_change_syncs_domain_buttons(self, mainwindow: MainWindow) -> None:
         """Programmatic workspace view change should update Domain button checked state."""
+        buttons = mainwindow._domain_buttons_by_token
         mainwindow._plot_workspace.set_active_view("frequency")
-        assert mainwindow._domain_buttons[2].isChecked()
-        assert not mainwindow._domain_buttons[0].isChecked()
+        assert buttons["frequency"].isChecked()
+        assert not buttons["fb_asymmetry"].isChecked()
 
         mainwindow._plot_workspace.set_active_view("fb_asymmetry")
-        assert mainwindow._domain_buttons[0].isChecked()
-        assert not mainwindow._domain_buttons[2].isChecked()
+        assert buttons["fb_asymmetry"].isChecked()
+        assert not buttons["frequency"].isChecked()
 
     def test_deadtime_correction_uses_good_frames(self, mainwindow: MainWindow) -> None:
         """Deadtime correction should include good-frame normalization (Mantid-style)."""
@@ -3807,11 +3833,12 @@ class TestPlotWorkspaceDomainPhase7:
         """Individual-groups toolbar button is disabled when no grouped data exists."""
         monkeypatch.setattr(
             mainwindow,
-            "_grouped_time_domain_display_datasets",
-            lambda _dataset=None: [],
+            "_grouped_time_domain_available",
+            lambda dataset=None: False,
         )
         mainwindow._refresh_time_view_selector()
-        assert not mainwindow._domain_buttons[1].isEnabled()
+        assert not mainwindow._domain_buttons_by_token["groups"].isEnabled()
+        assert not mainwindow._raw_counts_action.isEnabled()
 
     def test_groups_button_enabled_when_grouped_data_present(
         self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
@@ -3819,8 +3846,8 @@ class TestPlotWorkspaceDomainPhase7:
         """Individual-groups toolbar button is enabled when grouped data is available."""
         monkeypatch.setattr(
             mainwindow,
-            "_grouped_time_domain_display_datasets",
-            lambda dataset=None: [dataset or mainwindow._current_dataset],
+            "_grouped_time_domain_available",
+            lambda dataset=None: True,
         )
         time_arr = np.linspace(0, 8, 100)
         asym = np.zeros(100)
@@ -3829,7 +3856,162 @@ class TestPlotWorkspaceDomainPhase7:
         ds = MuonDataset(time=time_arr, asymmetry=asym, error=err, run=run, metadata={})
         mainwindow._current_dataset = ds
         mainwindow._refresh_time_view_selector()
-        assert mainwindow._domain_buttons[1].isEnabled()
+        assert mainwindow._domain_buttons_by_token["groups"].isEnabled()
+        assert mainwindow._raw_counts_action.isEnabled()
+
+    def test_raw_counts_view_requests_uncorrected_grouped_datasets(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The Raw counts view renders grouped data without lifetime correction."""
+        time_arr = np.linspace(0, 8, 100)
+        run = Run(run_number=42, grouping={}, metadata={})
+        ds = MuonDataset(
+            time=time_arr,
+            asymmetry=np.zeros(100),
+            error=np.ones(100) * 0.01,
+            run=run,
+            metadata={},
+        )
+        captured: dict[str, object] = {}
+        # The fit-surface probe also calls the hook (with the corrected
+        # default), so record the flag at plot time, not just the last call.
+        flag_state = {"latest": None}
+
+        def _fake_grouped(dataset=None, *, lifetime_corrected=True):
+            flag_state["latest"] = lifetime_corrected
+            target = dataset or mainwindow._current_dataset
+            return [target] if target is not None else []
+
+        def _fake_plot(datasets):
+            captured.setdefault("plotted", list(datasets))
+            captured.setdefault("lifetime_corrected", flag_state["latest"])
+
+        monkeypatch.setattr(mainwindow, "_grouped_time_domain_display_datasets", _fake_grouped)
+        monkeypatch.setattr(mainwindow, "_grouped_time_domain_available", lambda dataset=None: True)
+        monkeypatch.setattr(mainwindow._plot_panel, "plot_grouped_time_domain_subplots", _fake_plot)
+        mainwindow._current_dataset = ds
+        mainwindow._refresh_time_view_selector()
+        mainwindow._plot_workspace.set_active_view("raw_counts")
+        assert captured.get("lifetime_corrected") is False
+        assert captured.get("plotted") == [ds]
+        # The grouped fit surface serves the raw-counts view too.
+        assert mainwindow._should_launch_multi_group_fit_window()
+
+    def test_raw_counts_menu_toggle_enters_and_leaves_view(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """View -> Diagnostics -> Raw counts toggles the diagnostic view; no
+        toolbar button stays lit while it is active."""
+        monkeypatch.setattr(mainwindow, "_grouped_time_domain_available", lambda dataset=None: True)
+        run = Run(run_number=43, grouping={}, metadata={})
+        ds = MuonDataset(
+            time=np.linspace(0, 8, 50),
+            asymmetry=np.zeros(50),
+            error=np.ones(50) * 0.01,
+            run=run,
+            metadata={},
+        )
+        mainwindow._current_dataset = ds
+        mainwindow._refresh_time_view_selector()
+        assert mainwindow._raw_counts_action.isEnabled()
+
+        mainwindow._raw_counts_action.trigger()
+        assert mainwindow._plot_workspace.active_view() == "raw_counts"
+        assert mainwindow._raw_counts_action.isChecked()
+        assert not any(btn.isChecked() for btn in mainwindow._domain_buttons_by_token.values())
+
+        mainwindow._raw_counts_action.trigger()
+        assert mainwindow._plot_workspace.active_view() == "groups"
+        assert not mainwindow._raw_counts_action.isChecked()
+        assert mainwindow._domain_buttons_by_token["groups"].isChecked()
+
+    def test_loading_a_file_enables_data_gated_views(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: Open plotted the loaded run but never made it current,
+        so the availability sync was skipped and Individual groups / MaxEnt
+        stayed greyed out until the user clicked the run in the browser."""
+        mw = mainwindow
+        assert not mw._domain_buttons_by_token["groups"].isEnabled()
+        assert not mw._domain_buttons_by_token["maxent"].isEnabled()
+
+        def _fake_load_file(_path: str) -> MuonDataset:
+            return _make_fourier_ready_dataset(8861, with_grouping=True)
+
+        monkeypatch.setattr(mw, "_load_file", _fake_load_file)
+        mw._load_files(["/tmp/run8861.nxs"])
+
+        assert mw._current_dataset is not None
+        assert int(mw._current_dataset.run_number) == 8861
+        assert mw._domain_buttons_by_token["groups"].isEnabled()
+        assert mw._domain_buttons_by_token["maxent"].isEnabled()
+        assert mw._raw_counts_action.isEnabled()
+        assert mw._plot_workspace.is_view_enabled("groups")
+        assert mw._plot_workspace.is_view_enabled("maxent")
+
+    def test_domain_click_heals_stale_workspace_availability(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Clicking a representation re-derives availability just-in-time.
+
+        Regression: the toolbar enable states and the workspace's allowed-view
+        set are written on different event paths; with a grouped dataset
+        current but a stale workspace set, clicking Individual groups silently
+        bounced back to F-B asymmetry (flaky, from-view-dependent selection).
+        """
+        mw = mainwindow
+        monkeypatch.setattr(mw, "_grouped_time_domain_available", lambda dataset=None: True)
+        ds = _make_dataset(8821, with_grouping=True)
+        mw._data_browser.add_dataset(ds)
+        mw._current_dataset = ds
+        # Simulate the stale state: workspace knows nothing beyond the base views.
+        mw._plot_workspace.set_available_views([])
+        assert not mw._plot_workspace.is_view_enabled("groups")
+
+        mw._on_domain_button_clicked("groups")
+        assert mw._plot_workspace.active_view() == "groups"
+
+    def test_maxent_click_with_stale_workspace_lands_on_maxent(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: a stale workspace set bounced a MaxEnt click cross-domain
+        into F-B asymmetry."""
+        mw = mainwindow
+        dataset = _make_fourier_ready_dataset(8822, with_grouping=True)
+        assert mw._dataset_supports_maxent(dataset) is True
+        mw._data_browser.add_dataset(dataset)
+        mw._on_dataset_selected(8822)
+        mw._plot_workspace.set_available_views([])  # stale: maxent missing
+        mw._domain_buttons_by_token["maxent"].setEnabled(True)
+
+        mw._on_domain_button_clicked("maxent")
+        assert mw._plot_workspace.active_view() == "maxent"
+
+    def test_disallowed_view_falls_back_within_its_domain(self, mainwindow: MainWindow) -> None:
+        """Regression: a disallowed frequency token fell back to fb_asymmetry,
+        dumping the user across domains."""
+        mw = mainwindow
+        mw._plot_workspace.set_available_views([])  # maxent not allowed
+        mw._plot_workspace.set_active_view("frequency")
+        mw._plot_workspace.set_active_view("maxent")
+        assert mw._plot_workspace.active_view() == "frequency"
+
+    def test_refresh_maxent_keeps_workspace_token_in_lockstep(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The view-change button refresh also updates the workspace token."""
+        mw = mainwindow
+        monkeypatch.setattr(mw, "_current_selection_supports_maxent", lambda: True)
+        mw._plot_workspace.set_available_views([])
+        assert not mw._plot_workspace.is_view_enabled("maxent")
+        mw._refresh_maxent_domain_enabled()
+        assert mw._plot_workspace.is_view_enabled("maxent")
+        assert mw._domain_buttons_by_token["maxent"].isEnabled()
+
+        monkeypatch.setattr(mw, "_current_selection_supports_maxent", lambda: False)
+        mw._refresh_maxent_domain_enabled()
+        assert not mw._plot_workspace.is_view_enabled("maxent")
+        assert not mw._domain_buttons_by_token["maxent"].isEnabled()
 
     def test_no_signal_on_same_view_click(self, mainwindow: MainWindow, qapp: QApplication) -> None:
         """Selecting the already-active view emits no active_view_changed signal."""

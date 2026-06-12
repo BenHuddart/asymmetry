@@ -19,6 +19,8 @@ QToolBar {
     border: none;
     border-bottom: 1px solid #dedcd6;
     spacing: 4px;
+    padding-top: 3px;
+    padding-bottom: 4px;
 }
 
 QMenuBar {
@@ -39,7 +41,7 @@ QMenuBar::item:selected {
 
 /* ── Status bar ─────────────────────────────────────────────────── */
 QStatusBar {
-    background-color: #fafaf9;
+    background-color: #f4f3f0;
     border-top: 1px solid #dedcd6;
     color: #67676b;
 }
@@ -73,6 +75,8 @@ QHeaderView::section {
     border-right: 1px solid #dedcd6;
     border-bottom: 1px solid #dedcd6;
     padding: 3px 6px;
+    font-size: 10px;
+    font-weight: 600;
 }
 
 QHeaderView::section:last {
@@ -84,7 +88,7 @@ QHeaderView::section:hover {
 }
 
 /* ── Tables ─────────────────────────────────────────────────────── */
-QTableWidget {
+QTableView {
     background-color: #ffffff;
     gridline-color: #dedcd6;
     selection-background-color: #e8eef7;
@@ -92,13 +96,13 @@ QTableWidget {
     border: 1px solid #dedcd6;
 }
 
-QTableWidget::item:focus {
+QTableView::item:focus {
     background-color: #dfe8f4;
     color: #1f4d8a;
 }
 
-QListWidget,
-QTreeWidget {
+QListView,
+QTreeView {
     background-color: #ffffff;
     selection-background-color: #e8eef7;
     selection-color: #1c1d20;
@@ -124,7 +128,11 @@ QGroupBox::title {
     text-transform: uppercase;
 }
 
-/* ── Tabs ───────────────────────────────────────────────────────── */
+/* ── Tabs ───────────────────────────────────────────────────────────
+   Flat underline grammar from the design handoff: tabs are text on the
+   muted strip, the active tab gets a 2px accent underline — no boxes.
+   Applies to QTabWidget tab bars and the QMainWindow dock-area tab bars
+   (the inspector deck) alike. */
 QTabWidget::pane {
     border: 1px solid #dedcd6;
     background-color: #ffffff;
@@ -135,22 +143,25 @@ QTabBar {
 }
 
 QTabBar::tab {
-    background-color: #f4f3f0;
+    background-color: transparent;
     color: #67676b;
-    border: 1px solid #dedcd6;
-    border-bottom: none;
-    padding: 4px 12px;
-    margin-right: 1px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 5px 12px;
+    margin-right: 2px;
+    /* In the base rule so tabs are SIZED for the bold text — Qt computes
+       tab metrics from the unselected state, and a selected-only weight
+       would clip/jitter the bolder label. */
+    font-weight: 600;
 }
 
 QTabBar::tab:selected {
-    background-color: #ffffff;
     color: #1c1d20;
     border-bottom: 2px solid #1f4d8a;
 }
 
 QTabBar::tab:hover:!selected {
-    background-color: #ececea;
+    color: #1c1d20;
 }
 
 /* ── Text inputs (backgrounds/colours; borders managed by UIManager) */
@@ -197,6 +208,12 @@ QScrollArea {
     border: none;
 }
 
+/* Inspector-deck scroll wrappers keep the dock-panel white background the
+   panels showed when they were direct dock children. */
+QScrollArea#inspectorScroll {
+    background-color: #ffffff;
+}
+
 /* ── Toolbar segmented-control and nav buttons ───────────────────────
    Styled per-widget via build_segmented_button_qss() / build_nav_button_qss()
    in styles/widgets.py.  Per-widget application is required because Qt's
@@ -204,6 +221,115 @@ QScrollArea {
    QPushButton rules in ways that cause pseudo-state padding to revert to
    the platform default rather than the rule-specified value. The style
    definitions are centralised in widgets.py; only application is per-widget. */
+
+/* ── Menus ──────────────────────────────────────────────────────── */
+QMenu {
+    background-color: #ffffff;
+    color: #1c1d20;
+    border: 1px solid #dedcd6;
+    padding: 4px 0;
+}
+
+QMenu::item {
+    background-color: transparent;
+    padding: 4px 24px 4px 12px;
+}
+
+QMenu::item:selected {
+    background-color: #e8eef7;
+    color: #1c1d20;
+}
+
+QMenu::item:disabled {
+    color: #9a9a9e;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: #dedcd6;
+    margin: 4px 8px;
+}
+
+/* ── Tooltips ───────────────────────────────────────────────────── */
+QToolTip {
+    background-color: #ffffff;
+    color: #1c1d20;
+    border: 1px solid #c2c0b9;
+    padding: 3px 6px;
+}
+
+/* ── Scroll bars ────────────────────────────────────────────────── */
+QScrollBar:vertical {
+    background: #fafaf9;
+    width: 12px;
+    margin: 0;
+}
+
+QScrollBar:horizontal {
+    background: #fafaf9;
+    height: 12px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background: #c2c0b9;
+    min-height: 28px;
+    border-radius: 4px;
+    margin: 2px 3px;
+}
+
+QScrollBar::handle:horizontal {
+    background: #c2c0b9;
+    min-width: 28px;
+    border-radius: 4px;
+    margin: 3px 2px;
+}
+
+QScrollBar::handle:vertical:hover,
+QScrollBar::handle:horizontal:hover {
+    background: #9a9a9e;
+}
+
+QScrollBar::add-line, QScrollBar::sub-line {
+    width: 0;
+    height: 0;
+}
+
+QScrollBar::add-page, QScrollBar::sub-page {
+    background: transparent;
+}
+
+/* ── Splitters and dock separators ──────────────────────────────── */
+QSplitter::handle {
+    background-color: #f4f3f0;
+}
+
+QSplitter::handle:hover {
+    background-color: #dfe8f4;
+}
+
+QMainWindow::separator {
+    background-color: #f4f3f0;
+    width: 4px;
+    height: 4px;
+}
+
+QMainWindow::separator:hover {
+    background-color: #dfe8f4;
+}
+
+/* ── Progress bars ──────────────────────────────────────────────── */
+QProgressBar {
+    background-color: #f4f3f0;
+    border: 1px solid #dedcd6;
+    border-radius: 3px;
+    color: #1c1d20;
+    text-align: center;
+}
+
+QProgressBar::chunk {
+    background-color: #1f4d8a;
+}
 
 /* ── Plot-canvas scroll bar ─────────────────────────────────────── */
 QScrollBar#plotScroll:vertical {

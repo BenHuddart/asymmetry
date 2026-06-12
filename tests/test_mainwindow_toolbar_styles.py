@@ -176,3 +176,24 @@ class TestDomainButtonsOnMainWindow:
         checked_body = qss.split("indicator:checked {")[1].split("}")[0]
         assert tokens.ACCENT in checked_body
         assert "checkmark.svg" in checked_body
+
+
+class TestSegmentedButtonDisabledState:
+    def test_disabled_rule_visibly_dims_the_button(self) -> None:
+        """Data-gated segments must read as greyed out, not clickable.
+
+        Per-widget stylesheets replace the global sheet entirely, so the
+        disabled state has to be declared here — without it a disabled
+        'Individual groups' / 'MaxEnt' button looked identical to an enabled
+        one."""
+        from asymmetry.gui.styles import tokens
+
+        qss = build_segmented_button_qss()
+        assert "QPushButton:disabled" in qss
+        disabled_rule = qss.split("QPushButton:disabled")[1]
+        assert tokens.TEXT_DIM in disabled_rule
+        assert tokens.SURFACE_ALT in disabled_rule
+        # Padding and font-weight repeated so Qt's pseudo-state cascade
+        # doesn't reflow the segment when it is enabled/disabled.
+        assert "padding:" in disabled_rule
+        assert "font-weight: 600" in disabled_rule

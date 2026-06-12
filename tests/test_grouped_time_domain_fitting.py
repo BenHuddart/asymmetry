@@ -677,3 +677,46 @@ def test_fit_grouped_time_domain_allows_phase_less_model_when_relative_phase_is_
     )
 
     assert result.success is True
+
+
+def test_grouped_time_domain_available_matches_build_outcome() -> None:
+    """The cheap probe agrees with the full build on the common gating cases."""
+    from asymmetry.core.fitting import grouped_time_domain_available
+
+    # A valid two-group source: probe True, build succeeds.
+    dataset = _grouped_source_dataset()
+    assert grouped_time_domain_available(dataset)
+    assert len(build_grouped_time_domain_datasets(dataset)) == 2
+
+    # No dataset / no run / no histograms / no grouping → probe False, build raises.
+    assert not grouped_time_domain_available(None)
+
+    bare = MuonDataset(
+        time=np.array([0.0]),
+        asymmetry=np.array([0.0]),
+        error=np.array([1.0]),
+        metadata={},
+    )
+    assert not grouped_time_domain_available(bare)
+
+    no_grouping = _grouped_source_dataset()
+    assert no_grouping.run is not None
+    no_grouping.run.grouping = {}
+    assert not grouped_time_domain_available(no_grouping)
+    with pytest.raises(ValueError):
+        build_grouped_time_domain_datasets(no_grouping)
+
+    no_histograms = _grouped_source_dataset()
+    assert no_histograms.run is not None
+    no_histograms.run.histograms = []
+    assert not grouped_time_domain_available(no_histograms)
+    with pytest.raises(ValueError):
+        build_grouped_time_domain_datasets(no_histograms)
+
+    # A single included group is not enough for the joint grouped view.
+    one_group = _grouped_source_dataset()
+    assert one_group.run is not None
+    one_group.run.grouping["included_groups"] = {2: False}
+    assert not grouped_time_domain_available(one_group)
+    with pytest.raises(ValueError):
+        build_grouped_time_domain_datasets(one_group)

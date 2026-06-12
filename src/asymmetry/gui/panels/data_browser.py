@@ -20,7 +20,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QBrush, QColor, QFont, QPalette
+from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -53,8 +53,12 @@ _GROUP_TEMP_REL_TOL = 2e-3
 _GROUP_FIELD_ABS_TOL_G = 1e-3
 _LOG_TEMPERATURE_FOREGROUND = QColor(176, 36, 36)
 _GROUP_FIELD_REL_TOL = 1e-4
-_GROUP_HEADER_BACKGROUND = QColor(200, 210, 225)
-_GROUP_MEMBER_BACKGROUND = QColor(235, 239, 247)
+_GROUP_HEADER_BACKGROUND = QColor(tokens.GROUP_HEADER_BG)
+_GROUP_MEMBER_BACKGROUND = QColor(tokens.GROUP_MEMBER_BG)
+#: Item-data role carrying the run comment shown as the Title cell's second line.
+_COMMENT_ROLE = Qt.ItemDataRole.UserRole + 1
+#: Column index of the two-line Title cell.
+_TITLE_COLUMN = 1
 # Soft red tint used to mark runs that belong to the active fit series in
 # the trend panel.  Red is the FitSeries brand colour (ACCENT_RED_SOFT).
 _SERIES_HIGHLIGHT_BACKGROUND = QColor(tokens.ACCENT_RED_SOFT)
@@ -213,17 +217,109 @@ class _RowHighlightDelegate(QStyledItemDelegate):
     The delegate strips State_Selected and State_HasFocus from the option copy
     before calling super().paint() so that QSS selection-background-color and
     ::item:focus rules never override the custom backgrounds above.
+
+    The Title column renders two lines when the run carries a comment: the
+    title on top, the comment in smaller muted text underneath (replacing the
+    old Comment column, which forced horizontal scrolling).
     """
 
     _SENTINEL = "group:"
-    _HEADER_SEL_BG = QColor(0xA8, 0xB8, 0xD0)  # #a8b8d0
-    _HEADER_FOC_BG = QColor(0x8F, 0xA3, 0xC2)  # #8fa3c2
-    _MEMBER_FOC_BG = QColor(0xDF, 0xE8, 0xF4)  # #dfe8f4  accentSoft2
-    _MEMBER_SEL_BG = QColor(0xE8, 0xEE, 0xF7)  # #e8eef7  accentSoft
+    _HEADER_SEL_BG = QColor(tokens.GROUP_HEADER_SEL_BG)
+    _HEADER_FOC_BG = QColor(tokens.GROUP_HEADER_FOCUS_BG)
+    _MEMBER_FOC_BG = QColor(tokens.ACCENT_SOFT2)
+    _MEMBER_SEL_BG = QColor(tokens.ACCENT_SOFT)
     _ACCENT = QColor(tokens.ACCENT)
     _ACCENT_SOFT = QColor(31, 77, 138, 102)  # 40 % accent
     _WHITE = QColor("white")
+    _COMMENT_COLOR = QColor(tokens.TEXT_MUTED)
     _CLEAR_FLAGS = QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_HasFocus
+    #: Vertical padding around the two text lines of a title+comment cell.
+    _TWO_LINE_PAD = 3
+
+    @staticmethod
+    def _cell_comment(index) -> str:
+        """Return the comment carried by a Title cell ('' elsewhere)."""
+        if index.column() != _TITLE_COLUMN:
+            return ""
+        comment = index.data(_COMMENT_ROLE)
+        return str(comment).strip() if isinstance(comment, str) else ""
+
+    @staticmethod
+    def _comment_font(base: QFont) -> QFont:
+        """Return the smaller font used for the comment line."""
+        font = QFont(base)
+        size = font.pointSizeF()
+        if size > 0:
+            font.setPointSizeF(max(7.0, size * 0.85))
+        return font
+
+    def _line_metrics(self, base: QFont) -> tuple[QFont, QFontMetrics, QFontMetrics]:
+        """Return (comment font, title metrics, comment metrics), cached per font.
+
+        paint() runs per cell per frame; constructing QFontMetrics there makes
+        scrolling measurably jankier, and the base font only changes on a UI
+        scale change.
+        """
+        cache = getattr(self, "_metrics_cache", None)
+        if cache is None:
+            cache = self._metrics_cache = {}
+        key = base.key()
+        entry = cache.get(key)
+        if entry is None:
+            comment_font = self._comment_font(base)
+            entry = (comment_font, QFontMetrics(base), QFontMetrics(comment_font))
+            cache[key] = entry
+        return entry
+
+    def _draw_two_line_cell(self, painter, opt, index) -> None:
+        """Draw title over muted smaller-text comment inside ``opt.rect``.
+
+        ``opt`` must already be initStyleOption()-initialised; the background
+        is the caller's responsibility.
+        """
+        comment = self._cell_comment(index)
+        title = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        rect = opt.rect.adjusted(4, self._TWO_LINE_PAD, -4, -self._TWO_LINE_PAD)
+
+        comment_font, title_fm, comment_fm = self._line_metrics(opt.font)
+
+        title_color = opt.palette.color(QPalette.ColorRole.Text)
+        foreground = index.data(Qt.ItemDataRole.ForegroundRole)
+        if isinstance(foreground, QBrush):
+            title_color = foreground.color()
+        elif isinstance(foreground, QColor):
+            title_color = foreground
+
+        painter.save()
+        painter.setFont(opt.font)
+        painter.setPen(title_color)
+        painter.drawText(
+            QRect(rect.left(), rect.top(), rect.width(), title_fm.height()),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            title_fm.elidedText(title, Qt.TextElideMode.ElideRight, rect.width()),
+        )
+        painter.setFont(comment_font)
+        painter.setPen(self._COMMENT_COLOR)
+        painter.drawText(
+            QRect(
+                rect.left(),
+                rect.top() + title_fm.height(),
+                rect.width(),
+                comment_fm.height(),
+            ),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            comment_fm.elidedText(comment, Qt.TextElideMode.ElideRight, rect.width()),
+        )
+        painter.restore()
+
+    def sizeHint(self, option, index):  # noqa: N802 — Qt override
+        hint = super().sizeHint(option, index)
+        if self._cell_comment(index):
+            opt = QStyleOptionViewItem(option)
+            self.initStyleOption(opt, index)
+            _, title_fm, comment_fm = self._line_metrics(opt.font)
+            hint.setHeight(title_fm.height() + comment_fm.height() + 2 * self._TWO_LINE_PAD)
+        return hint
 
     def paint(self, painter, option, index):
         table = self.parent()
@@ -234,6 +330,7 @@ class _RowHighlightDelegate(QStyledItemDelegate):
             and col0.data(Qt.ItemDataRole.UserRole).startswith(self._SENTINEL)
         )
         is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        has_comment = bool(self._cell_comment(index))
 
         if is_selected:
             is_focused = index.row() == table.currentRow()
@@ -259,7 +356,12 @@ class _RowHighlightDelegate(QStyledItemDelegate):
                 pal.setColor(QPalette.ColorRole.Text, self._WHITE)
                 opt.palette = pal
 
-            table.style().drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, table)
+            if has_comment:
+                self._draw_two_line_cell(painter, opt, index)
+            else:
+                table.style().drawControl(
+                    QStyle.ControlElement.CE_ItemViewItem, opt, painter, table
+                )
 
             # Left-edge bar on column 0 for member / run rows only
             if not is_header and index.column() == 0:
@@ -269,6 +371,12 @@ class _RowHighlightDelegate(QStyledItemDelegate):
                     QRect(option.rect.left(), option.rect.top(), bar_width, option.rect.height()),
                     bar_color,
                 )
+        elif has_comment:
+            opt = QStyleOptionViewItem(option)
+            self.initStyleOption(opt, index)
+            if opt.backgroundBrush.style() != Qt.BrushStyle.NoBrush:
+                painter.fillRect(option.rect, opt.backgroundBrush)
+            self._draw_two_line_cell(painter, opt, index)
         else:
             super().paint(painter, option, index)
 
@@ -282,7 +390,12 @@ class DataBrowserPanel(QWidget):
     get_info_requested = Signal(int)
     grouping_requested = Signal(int)
 
-    _COLUMNS = ["Run", "Title", "𝑇 (K)", "𝐵 (G)", "Comment"]
+    # The comment rides as the Title cell's second line (see
+    # _RowHighlightDelegate) instead of its own column, so long comments never
+    # force horizontal scrolling.
+    # Plain upright units per the design handoff's browser header (the RTF
+    # export re-italicises the physical symbols; see _rtf_header_cell).
+    _COLUMNS = ["Run", "Title", "T (K)", "B (G)"]
     _RUN_INFO_FIELD_LABELS = {
         "instrument": "Instrument",
         "run_label": "Run",
@@ -326,6 +439,12 @@ class DataBrowserPanel(QWidget):
         self._current_sort_order: Qt.SortOrder = Qt.SortOrder.AscendingOrder
         self._selection_anchor_row: int | None = None
         self._updating_table = False
+        #: True while OUR code resizes columns, so the user-takeover latch
+        #: below ignores programmatic section resizes.
+        self._auto_sizing_columns = False
+        #: Set the first time the user drags a column edge; from then on the
+        #: auto-fit stands down for the session and never fights their layout.
+        self._user_sized_columns = False
         #: Run numbers to tint as "series members" (set by the trend panel).
         self._highlighted_runs: set[int] = set()
         #: Run numbers handed out for synthetic/degraded runs not yet added.
@@ -346,13 +465,17 @@ class DataBrowserPanel(QWidget):
 
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.resizeSection(0, 110)
-        header.resizeSection(1, 145)
-        header.resizeSection(2, 60)
-        header.resizeSection(3, 60)
-        header.resizeSection(4, 155)
+        header.resizeSection(0, 62)  # run numbers are at most six digits
+        header.resizeSection(1, 200)
+        header.resizeSection(2, 52)
+        header.resizeSection(3, 52)
+        # The user-takeover latch: any section resize not made by our own
+        # auto-fit (or a table rebuild) counts as the user taking control.
+        header.sectionResized.connect(self._on_section_resized)
         self._table.setSortingEnabled(False)
-        self._table.horizontalHeader().setSortIndicatorShown(True)
+        # The indicator appears once the user actually sorts (see _sort_table);
+        # the design-handoff header row has no arrow at rest.
+        self._table.horizontalHeader().setSortIndicatorShown(False)
         self._table.horizontalHeader().setSectionsClickable(False)
         self._table.horizontalHeader().viewport().installEventFilter(self)
         self._table.viewport().installEventFilter(self)
@@ -661,15 +784,15 @@ class DataBrowserPanel(QWidget):
         run_item.setBackground(_GROUP_HEADER_BACKGROUND)
         self._table.setItem(row, 0, run_item)
 
-        # Cols 1–3: blank
-        for col in range(1, min(4, self._table.columnCount())):
+        # Cols 1–2 (Title, T): blank
+        for col in range(1, min(3, self._table.columnCount())):
             blank = QTableWidgetItem("")
             blank.setFlags(blank.flags() & ~Qt.ItemFlag.ItemIsEditable)
             blank.setBackground(_GROUP_HEADER_BACKGROUND)
             self._table.setItem(row, col, blank)
 
-        # Col 4 (Comment): right-aligned member count in muted mono
-        if self._table.columnCount() > 4:
+        # Last base column (B): right-aligned member count in muted mono
+        if self._table.columnCount() > 3:
             n = len(group.member_run_numbers)
             count_text = f"{n} run" if n == 1 else f"{n} runs"
             count_item = QTableWidgetItem(count_text)
@@ -678,10 +801,10 @@ class DataBrowserPanel(QWidget):
             count_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             count_item.setForeground(QColor(tokens.TEXT_MUTED))
             count_item.setBackground(_GROUP_HEADER_BACKGROUND)
-            self._table.setItem(row, 4, count_item)
+            self._table.setItem(row, 3, count_item)
 
-        # Extra columns beyond the fixed five: blank
-        for col in range(5, self._table.columnCount()):
+        # Extra columns beyond the fixed four: blank
+        for col in range(len(self._COLUMNS), self._table.columnCount()):
             blank = QTableWidgetItem("")
             blank.setFlags(blank.flags() & ~Qt.ItemFlag.ItemIsEditable)
             blank.setBackground(_GROUP_HEADER_BACKGROUND)
@@ -762,9 +885,16 @@ class DataBrowserPanel(QWidget):
         self._table.setItem(row, 0, run_item)
 
         title = str(meta.get("title", ""))
+        comment = str(meta.get("comment", ""))
         title_item = QTableWidgetItem(title)
         title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        # The comment renders as the cell's second line (see _RowHighlightDelegate).
+        title_item.setData(_COMMENT_ROLE, comment)
+        if title or comment:
+            title_item.setToolTip("\n".join(part for part in (title, comment) if part))
         self._table.setItem(row, 1, title_item)
+        if comment.strip():
+            self._table.setRowHeight(row, self._two_line_row_height())
 
         provenance_tip = self._derived_run_tooltip(meta)
         if provenance_tip:
@@ -786,10 +916,6 @@ class DataBrowserPanel(QWidget):
         field_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._table.setItem(row, 3, field_item)
 
-        comment = str(meta.get("comment", ""))
-        comment_item = QTableWidgetItem(comment)
-        comment_item.setFlags(comment_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self._table.setItem(row, 4, comment_item)
         for i, field_key in enumerate(self._visible_extra_columns(), start=len(self._COLUMNS)):
             value = self._value_for_extra_column(dataset, field_key)
             item = QTableWidgetItem(value)
@@ -917,32 +1043,162 @@ class DataBrowserPanel(QWidget):
         self._on_selection_changed()
         return True
 
-    def _resize_columns_to_content(self) -> None:
-        self._table.resizeColumnsToContents()
-        header = self._table.horizontalHeader()
-        minimums = {0: 90, 1: 145, 2: 60, 3: 60, 4: 155}
-        maximums = {0: 180, 1: 260, 2: 90, 3: 90, 4: 320}
-        for col, min_width in minimums.items():
-            size = header.sectionSize(col)
-            if size < min_width:
-                header.resizeSection(col, min_width)
-            elif size > maximums[col]:
-                header.resizeSection(col, maximums[col])
+    def _two_line_row_height(self) -> int:
+        """Row height for a title+comment cell, cached per table font."""
+        font = self._table.font()
+        font_key = font.key()
+        cached = getattr(self, "_two_line_height_cache", None)
+        if cached is not None and cached[0] == font_key:
+            return cached[1]
+        title_h = QFontMetrics(font).height()
+        comment_h = QFontMetrics(_RowHighlightDelegate._comment_font(font)).height()
+        height = title_h + comment_h + 2 * _RowHighlightDelegate._TWO_LINE_PAD
+        self._two_line_height_cache = (font_key, height)
+        return height
 
-        for col in range(len(self._COLUMNS), self._table.columnCount()):
-            size = header.sectionSize(col)
-            if size < 120:
-                header.resizeSection(col, 120)
-            elif size > 320:
-                header.resizeSection(col, 320)
+    #: Below this, forcing the fit would make Title unreadable — let the
+    #: horizontal scrollbar appear honestly instead (extra-column overflow).
+    _TITLE_FIT_FLOOR = 120
+
+    def _resize_columns_to_content(self) -> None:
+        """Content-size and clamp the columns, then fit Title to the viewport.
+
+        Stands down permanently once the user has dragged a column edge
+        (_user_sized_columns), so their layout is never stomped by a load.
+        """
+        if self._user_sized_columns:
+            # The user owns the layout — but a brand-new extra section still
+            # arrives at Qt's default width and needs its initial sizing.
+            self._auto_sizing_columns = True
+            try:
+                header = self._table.horizontalHeader()
+                default_size = header.defaultSectionSize()
+                for col in range(len(self._COLUMNS), self._table.columnCount()):
+                    if header.sectionSize(col) == default_size:
+                        hint = self._table.sizeHintForColumn(col)
+                        header.resizeSection(col, max(120, min(320, hint)))
+            finally:
+                self._auto_sizing_columns = False
+            return
+        self._auto_sizing_columns = True
+        try:
+            self._table.resizeColumnsToContents()
+            header = self._table.horizontalHeader()
+            minimums = {0: 56, 1: 145, 2: 48, 3: 48}
+            maximums = {0: 150, 1: 320, 2: 76, 3: 76}
+            for col, min_width in minimums.items():
+                size = header.sectionSize(col)
+                if size < min_width:
+                    header.resizeSection(col, min_width)
+                elif size > maximums[col]:
+                    header.resizeSection(col, maximums[col])
+
+            for col in range(len(self._COLUMNS), self._table.columnCount()):
+                size = header.sectionSize(col)
+                if size < 120:
+                    header.resizeSection(col, 120)
+                elif size > 320:
+                    header.resizeSection(col, 320)
+
+            self._fit_title_column()
+        finally:
+            self._auto_sizing_columns = False
+
+    def _fit_title_column(self) -> None:
+        """Stretch Title so the columns exactly fill the viewport.
+
+        Skipped when that would squeeze Title below _TITLE_FIT_FLOOR (e.g.
+        several extra metadata columns): the table then overflows honestly
+        into a horizontal scrollbar and Title stays at its content width —
+        and, unlike a Qt Stretch section, remains user-draggable throughout.
+        """
+        header = self._table.horizontalHeader()
+        viewport_width = self._table.viewport().width()
+        if viewport_width <= 0:
+            return
+        others = sum(
+            header.sectionSize(col)
+            for col in range(self._table.columnCount())
+            if col != _TITLE_COLUMN
+        )
+        available = viewport_width - others
+        if available >= self._TITLE_FIT_FLOOR:
+            header.resizeSection(_TITLE_COLUMN, available)
+
+    def _on_section_resized(self, *_args) -> None:
+        """Latch user column drags (programmatic resizes are flag-guarded)."""
+        if not self._auto_sizing_columns and not self._updating_table:
+            self._user_sized_columns = True
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        """Keep the columns filling the panel as the dock is resized.
+
+        Deferred one event-loop turn: the table's viewport geometry settles
+        via the layout pass *after* this event, so an immediate fit would
+        read the previous width.
+        """
+        super().resizeEvent(event)
+        if not self._user_sized_columns:
+            # The context argument cancels the pending timer if the panel is
+            # destroyed first — without it the callback fires against a
+            # deleted C++ object (RuntimeError in tests/shutdown).
+            QTimer.singleShot(0, self, self._fit_title_column_auto)
+
+    def _fit_title_column_auto(self) -> None:
+        """Flag-guarded fit used by the deferred resize hook."""
+        if self._user_sized_columns:
+            return
+        self._auto_sizing_columns = True
+        try:
+            self._fit_title_column()
+        finally:
+            self._auto_sizing_columns = False
+
+    def changeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        """Re-apply two-line row heights when fonts change.
+
+        The heights are explicit pixels computed from the table font at
+        rebuild time; a font change (UI scale) would otherwise leave the
+        comment line clipped until the next rebuild.
+        """
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.ApplicationFontChange):
+            self._two_line_height_cache = None
+            self._reapply_two_line_heights()
+
+    def _reapply_two_line_heights(self) -> None:
+        """Reset the explicit two-line heights from the current table font."""
+        if not hasattr(self, "_table"):
+            return
+        height: int | None = None
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, _TITLE_COLUMN)
+            if item is None:
+                continue
+            comment = item.data(_COMMENT_ROLE)
+            if isinstance(comment, str) and comment.strip():
+                if height is None:
+                    height = self._two_line_row_height()
+                self._table.setRowHeight(row, height)
 
     def _refresh_column_headers(self) -> None:
         """Apply base and dynamic column labels to the table header."""
         labels = list(self._COLUMNS) + [
             self._extra_column_header(key) for key in self._visible_extra_columns()
         ]
-        self._table.setColumnCount(len(labels))
-        self._table.setHorizontalHeaderLabels(labels)
+        # Column-count changes can emit section-resize signals for the new
+        # sections; those are ours, not the user's (see _on_section_resized).
+        self._auto_sizing_columns = True
+        try:
+            self._table.setColumnCount(len(labels))
+            self._table.setHorizontalHeaderLabels(labels)
+        finally:
+            self._auto_sizing_columns = False
+        # Numeric headers right-align over their right-aligned cells (T, B).
+        for col in (2, 3):
+            item = self._table.horizontalHeaderItem(col)
+            if item is not None:
+                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
     def _visible_extra_columns(self) -> list[str]:
         """Return extra columns that should appear beyond the fixed browser columns."""
@@ -1615,9 +1871,9 @@ class DataBrowserPanel(QWidget):
 
     def _rtf_header_cell(self, header: str) -> str:
         """Return RTF-formatted header text for export table cells."""
-        if header == "𝑇 (K)":
+        if header == "T (K)":
             return r"\i T\i0 (K)"
-        if header == "𝐵 (G)":
+        if header == "B (G)":
             return r"\i B\i0 (G)"
         return self._rtf_escape(header)
 
@@ -1672,11 +1928,13 @@ class DataBrowserPanel(QWidget):
         return "".join(escaped)
 
     def _active_column_headers(self) -> list[str]:
-        """Return visible/active data-browser column headers."""
-        headers: list[str] = []
-        for col in range(self._table.columnCount()):
-            header_item = self._table.horizontalHeaderItem(col)
-            headers.append(header_item.text() if header_item is not None else "")
+        """Return logbook-export column headers.
+
+        The browser shows comments inline under the title, but the export
+        keeps Comment as its own column after the base columns.
+        """
+        headers = list(self._COLUMNS) + ["Comment"]
+        headers.extend(self._extra_column_header(key) for key in self._visible_extra_columns())
         return headers
 
     def _export_sections(self) -> list[tuple[str, list[int]]]:
@@ -2168,6 +2426,7 @@ class DataBrowserPanel(QWidget):
         else:
             self._display_order = sorted_runs
 
+        self._table.horizontalHeader().setSortIndicatorShown(self._current_sort_column >= 0)
         self._table.horizontalHeader().setSortIndicator(
             self._current_sort_column, self._current_sort_order
         )
@@ -2515,6 +2774,10 @@ class DataBrowserPanel(QWidget):
         ]
         selected_group_ids = self._get_selected_group_ids()
         return {
+            # Version 2: the Comment column was removed (comments ride on the
+            # Title cell), so indices >= 4 shifted down by one. restore_state
+            # migrates version-1 indices.
+            "column_layout": 2,
             "sort_column": self._current_sort_column,
             "sort_order": "ascending"
             if self._current_sort_order == Qt.SortOrder.AscendingOrder
@@ -2532,11 +2795,33 @@ class DataBrowserPanel(QWidget):
         }
 
     def restore_state(self, state: dict) -> None:
+        try:
+            layout_version = int(state.get("column_layout", 1))
+        except (TypeError, ValueError):
+            layout_version = 1
+        # Layout v1 had Comment as column 4; v2 removed it, shifting extras
+        # down by one. Migrate legacy indices so old projects don't filter or
+        # sort against the wrong column (a stale Comment filter would hide
+        # every row).
+        legacy_comment_col = 4
+
         self._column_filters = {}
         for col_str, values in state.get("filters", {}).items():
-            self._column_filters[int(col_str)] = set(values)
+            col = int(col_str)
+            if layout_version < 2:
+                if col == legacy_comment_col:
+                    continue
+                if col > legacy_comment_col:
+                    col -= 1
+            self._column_filters[col] = set(values)
 
-        self._current_sort_column = int(state.get("sort_column", -1))
+        sort_column = int(state.get("sort_column", -1))
+        if layout_version < 2:
+            if sort_column == legacy_comment_col:
+                sort_column = -1
+            elif sort_column > legacy_comment_col:
+                sort_column -= 1
+        self._current_sort_column = sort_column
         sort_order_str = state.get("sort_order", "ascending")
         self._current_sort_order = (
             Qt.SortOrder.AscendingOrder

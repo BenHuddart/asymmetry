@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 from asymmetry.core.fourier.correlation import DEFAULT_CORR_ORDER
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.widgets import apply_param_table_style
+from asymmetry.gui.styles.widgets import apply_param_table_style, build_primary_button_qss
 from asymmetry.gui.utils.latex_renderer import render_latex_to_html_image
 
 _PHASE_MODE_LABELS = (
@@ -409,6 +409,7 @@ class FourierPanel(QWidget):
 
         # Action buttons
         self._fft_btn = QPushButton("Compute FFT")
+        self._fft_btn.setStyleSheet(build_primary_button_qss())
         content_layout.addWidget(self._fft_btn)
 
         self._apply_to_selection_btn = QPushButton("Apply settings to selected runs")

@@ -65,18 +65,20 @@ class TestAxesStyling:
         assert color[1] == pytest.approx(1.0)
         assert color[2] == pytest.approx(1.0)
 
-    def test_spine_color_is_bench_plot_axis(self, panel, dataset) -> None:
+    def test_spines_use_open_frame_grammar(self, panel, dataset) -> None:
+        """Design handoff: left/bottom spines only, in BENCH PLOT_AXIS."""
         if not getattr(panel, "_has_mpl", False):
             pytest.skip("matplotlib not available")
         panel.plot_dataset(dataset)
         import matplotlib.colors as mcolors
 
         expected = mcolors.to_rgba(tokens.PLOT_AXIS)
-        for spine in panel._ax.spines.values():
-            actual = spine.get_edgecolor()
-            assert actual == pytest.approx(expected, abs=0.01), (
-                f"Spine {spine} colour {actual} != BENCH PLOT_AXIS {expected}"
-            )
+        for side in ("left", "bottom"):
+            spine = panel._ax.spines[side]
+            assert spine.get_visible()
+            assert spine.get_edgecolor() == pytest.approx(expected, abs=0.01)
+        for side in ("top", "right"):
+            assert not panel._ax.spines[side].get_visible()
 
     def test_axes_styled_after_clear(self, panel, dataset) -> None:
         if not getattr(panel, "_has_mpl", False):
@@ -288,3 +290,70 @@ class TestPlotFooter:
         assert "Add Annotation" not in limit_btns, (
             "'Add Annotation' is still in the limit toolbar — it should be in the footer"
         )
+
+
+class TestHandoffPlotGrammar:
+    """Axis labels, legend text, and the zero reference line (design handoff)."""
+
+    def test_axis_labels_use_muted_label_grey(self, panel, dataset) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(dataset)
+        import matplotlib.colors as mcolors
+
+        expected = mcolors.to_rgba(tokens.PLOT_TICK_LABEL)
+        for label in (panel._ax.xaxis.label, panel._ax.yaxis.label):
+            assert mcolors.to_rgba(label.get_color()) == pytest.approx(expected, abs=0.01)
+            assert label.get_fontsize() == pytest.approx(10.0)
+
+    def test_zero_reference_line_drawn_under_data(self, panel, dataset) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(dataset)
+        import matplotlib.colors as mcolors
+
+        expected = mcolors.to_rgba(tokens.PLOT_ZERO_LINE)
+        zero_lines = [
+            line
+            for line in panel._ax.get_lines()
+            if np.allclose(mcolors.to_rgba(line.get_color()), expected)
+            and np.allclose(np.asarray(line.get_ydata(), dtype=float), 0.0)
+        ]
+        assert zero_lines, "No y = 0 reference line found on the time plot"
+
+    def test_legend_entries_are_monospaced(self, panel, dataset) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(dataset)
+        legend = panel._ax.get_legend()
+        assert legend is not None
+        texts = legend.get_texts()
+        assert texts
+        for text in texts:
+            assert "IBM Plex Mono" in str(text.get_fontfamily())
+            assert text.get_fontsize() == pytest.approx(9.0)
+
+
+def _offset_dataset():
+    from asymmetry.core.data.dataset import MuonDataset
+
+    t = np.linspace(0.0, 10.0, 100)
+    counts = 1000.0 + 200.0 * np.sin(t)
+    return MuonDataset(
+        time=t,
+        asymmetry=counts,
+        error=np.full_like(t, 5.0),
+        metadata={"run_number": 7},
+    )
+
+
+class TestZeroLineAutoscale:
+    def test_zero_line_does_not_anchor_positive_data_to_zero(self, panel) -> None:
+        """Regression: axhline registered y=0 in the data limits, so grouped
+        counts (~N0, far from zero) autoscaled to include 0 and squashed the
+        signal. The reference line must stay out of autoscale."""
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(_offset_dataset())
+        y_min, _y_max = panel._ax.get_ylim()
+        assert y_min > 400.0, f"y-axis anchored toward zero: ylim starts at {y_min}"

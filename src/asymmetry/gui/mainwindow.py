@@ -27,23 +27,25 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QActionGroup, QIcon, QPixmap
+from PySide6.QtGui import QActionGroup, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QDockWidget,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QStackedWidget,
     QTabBar,
+    QTabWidget,
     QToolBar,
-    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -55,6 +57,7 @@ from asymmetry.core.fitting import (
     fit_result_summary,
     fit_scan_baseline,
     fit_scan_model,
+    grouped_time_domain_available,
 )
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
@@ -143,12 +146,17 @@ from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import header_font
-from asymmetry.gui.styles.widgets import build_segmented_button_qss
+from asymmetry.gui.styles.widgets import (
+    build_segmented_button_qss,
+    build_segmented_cell_qss,
+    build_segmented_container_qss,
+)
 from asymmetry.gui.ui_manager import (
     UI_SCALE_OPTIONS,
     UI_SCALE_SETTINGS_KEY,
     UIManager,
 )
+from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
@@ -173,13 +181,6 @@ _MAXENT_WARN_TOTAL_MATRIX_BYTES = 8 * 1024**3
 # travel with the series and cannot orphan when the fit is re-run or removed.
 _GLOBAL_FIT_DECORATIONS_EXTRA_KEY = "global_fit_decorations"
 
-# ALC-mode toggle tooltips. The enabled text describes the feature; the disabled
-# text tells the user how to reach it (the toggle is only valid in the F-B view).
-_ALC_TOOLTIP_ENABLED = (
-    "Integral-asymmetry field scan (ALC / repolarisation / QLCR). "
-    "Available for the Forward-Backward asymmetry representation."
-)
-_ALC_TOOLTIP_DISABLED = "Switch to the F-B asymmetry view to use ALC mode."
 _MAXENT_WARN_TOTAL_OBSERVATIONS = 500_000
 
 
@@ -354,6 +355,45 @@ def _sync_grouping_keys(grouping: dict, payload: dict, keys: tuple[str, ...]) ->
             grouping.pop(key, None)
 
 
+class _InspectorStack(QStackedWidget):
+    """A QStackedWidget sized by its *current* page only.
+
+    QStackedWidget's size hints are the maximum over all pages, so a tall
+    hidden page (e.g. the multi-group fit surface) would impose its minimum
+    height on the whole main window even while the compact single-fit page is
+    showing — forcing the default window taller than small laptop screens.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        # Page swaps change the (current-page-derived) hints; tell the layout.
+        self.currentChanged.connect(lambda _index: self.updateGeometry())
+
+    def sizeHint(self):  # noqa: N802 — Qt override
+        current = self.currentWidget()
+        return current.sizeHint() if current is not None else super().sizeHint()
+
+    def minimumSizeHint(self):  # noqa: N802 — Qt override
+        current = self.currentWidget()
+        return current.minimumSizeHint() if current is not None else super().minimumSizeHint()
+
+
+def _inspector_scroll_area(content: QWidget) -> QScrollArea:
+    """Wrap an inspector dock's content so it scrolls instead of growing.
+
+    The deck is visible by default; without this, the tallest panel's minimum
+    height becomes the main window's minimum height, which cannot fit a
+    13-inch laptop screen. On large screens the content fills the dock exactly
+    as before; on small ones it scrolls.
+    """
+    area = QScrollArea()
+    area.setObjectName("inspectorScroll")  # bench.qss keeps the panel-white bg
+    area.setWidgetResizable(True)
+    area.setFrameShape(QFrame.Shape.NoFrame)
+    area.setWidget(content)
+    return area
+
+
 class MainWindow(QMainWindow):
     """Top-level application window for the Asymmetry μSR analysis GUI.
 
@@ -399,7 +439,21 @@ class MainWindow(QMainWindow):
         if icon is not None:
             self.setWindowIcon(icon)
 
-        self.resize(1400, 900)
+        # Prefer the spacious default, capped at ~90% of the available screen
+        # so the window opens comfortably *windowed* (never wall-to-wall) on a
+        # 13-inch MacBook, and centred rather than wherever the WM drops it.
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            self.resize(
+                max(640, min(1400, round(available.width() * 0.92))),
+                max(480, min(900, round(available.height() * 0.86))),
+            )
+            frame = self.frameGeometry()
+            frame.moveCenter(available.center())
+            self.move(frame.topLeft())
+        else:
+            self.resize(1400, 900)
 
         self._settings = QSettings()
         self._last_open_dir = self._settings.value("io/last_open_dir", "", str)
@@ -414,7 +468,6 @@ class MainWindow(QMainWindow):
         self._project_model = ProjectModel()
         self._next_batch_index = 1
         self._next_scan_index = 1
-        self._alc_mode = False
         #: Per-run data for the current ALC scan (fractional value + metadata),
         #: re-rendered when the scan-view x-axis / derivative options change.
         self._alc_scan_points: list[dict] = []
@@ -469,6 +522,11 @@ class MainWindow(QMainWindow):
         self._applying_view_mode = False
         self._syncing_bunch_context = False
         self._applying_inspector_domain = False
+        # Per-representation memory of inspector tabs the user closed: view
+        # token → dock keys. Closed tabs stay closed when the user returns to
+        # that representation; reopening (View menu or any programmatic show)
+        # clears the flag. Reset layout clears the whole memory.
+        self._inspector_closed_docks: dict[str, set[str]] = {}
 
         self._setup_menus()
         self._create_toolbars()
@@ -477,9 +535,13 @@ class MainWindow(QMainWindow):
         self._connect_actions()
         self._ui_manager.restore_settings()
         self._restore_plot_ranges_from_settings()
-        # The app can land in the default F-B view without firing a view-change
-        # signal, so seed the ALC-mode toggle's enabled state from the view now.
-        self._refresh_alc_mode_enabled()
+        # Surface the inspector deck for the initial representation (the app
+        # lands in the default F-B view without firing a view-change signal).
+        self._apply_inspector_for_domain(self._plot_workspace.active_view())
+        # Seed availability from the (empty) startup state: the data-gated
+        # buttons are constructed enabled and would otherwise look clickable
+        # until the first selection event runs the sync.
+        self._sync_available_views()
 
         # Check for SciPy availability and warn if using fallback
         from asymmetry.core.fitting.diffusion import is_scipy_available
@@ -569,7 +631,9 @@ class MainWindow(QMainWindow):
         # Analysis
         analysis_menu = mb.addMenu("&Analysis")
         analysis_menu.addAction("&Fit", self._on_fit)
-        analysis_menu.addAction("F&ourier", self._on_fourier)
+        # Gated alongside View → Show Fourier: disabled while the active
+        # representation's deck has no spectrum tab (time-domain views).
+        self._fourier_analysis_action = analysis_menu.addAction("F&ourier", self._on_fourier)
         analysis_menu.addAction("Fit &Parameters", self._on_fit_parameters)
         analysis_menu.addAction("Grouping...", self._on_grouping_current)
         self._global_parameter_fit_action = analysis_menu.addAction(
@@ -590,9 +654,24 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction("Show Data", self._on_show_data)
         view_menu.addAction("Show Fit", self._on_fit)
-        view_menu.addAction("Show Fourier", self._on_fourier)
+        # Disabled while the active representation has no spectrum-processing
+        # tab (time-domain views); see _apply_inspector_for_domain.
+        self._show_fourier_action = view_menu.addAction("Show Fourier", self._on_fourier)
         view_menu.addAction("Show Fit Parameters", self._on_fit_parameters)
         view_menu.addAction("Show Log", self._on_show_log)
+        view_menu.addSeparator()
+        diagnostics_menu = view_menu.addMenu("Diagnostics")
+        # Raw per-group detector counts (no lifetime correction). A diagnostic
+        # view, deliberately not a toolbar representation: checking enters the
+        # view, unchecking returns to Individual groups. Enabled exactly when
+        # grouped data is available (see _refresh_time_view_selector); the
+        # check state mirrors the active view (_sync_raw_counts_action).
+        self._raw_counts_action = diagnostics_menu.addAction("Raw counts")
+        self._raw_counts_action.setCheckable(True)
+        self._raw_counts_action.setEnabled(False)
+        # triggered (not toggled): fires on user action only, so programmatic
+        # check-state syncs cannot loop back into view switches.
+        self._raw_counts_action.triggered.connect(self._on_raw_counts_action_triggered)
 
         # Options
         options_menu = mb.addMenu("&Options")
@@ -630,77 +709,71 @@ class MainWindow(QMainWindow):
         self._main_toolbar.addAction("Export logbook", self._on_export_logbook)
         self._main_toolbar.addSeparator()
         self._main_toolbar.addAction("Grouping", self._on_grouping_current)
-        self._main_toolbar.addAction("Fit", self._on_fit)
-        self._main_toolbar.addAction("FFT", self._on_fourier)
-        self._main_toolbar.addAction("Params", self._on_fit_parameters)
-        self._global_parameter_fit_toolbar_action = self._main_toolbar.addAction(
-            "Global Fit", self._on_global_parameter_fit
-        )
-        self._global_parameter_fit_toolbar_action.setEnabled(False)
-        # ALC mode: integral-asymmetry field scan. Enabled only for the F-B
-        # asymmetry representation (see _on_plot_workspace_view_changed).
-        self._alc_mode_action = self._main_toolbar.addAction("ALC mode")
-        self._alc_mode_action.setCheckable(True)
-        self._alc_mode_action.setEnabled(False)
-        self._alc_mode_action.setToolTip(_ALC_TOOLTIP_ENABLED)
-        self._alc_mode_action.toggled.connect(self._on_alc_mode_toggled)
-        # Make the active state unmistakable: when checked, the button turns the
-        # ALC/FitSeries red. Styled on the specific tool button so the other
-        # toolbar buttons keep their native look.
-        alc_button = self._main_toolbar.widgetForAction(self._alc_mode_action)
-        if alc_button is not None:
-            alc_button.setStyleSheet(
-                "QToolButton { padding: 4px 8px; border-radius: 3px; }"
-                f"QToolButton:hover {{ background-color: {tokens.SURFACE_HI}; }}"
-                f"QToolButton:checked {{ background-color: {tokens.ACCENT_RED}; "
-                "color: #ffffff; font-weight: 700; }"
-                f"QToolButton:checked:hover {{ background-color: {tokens.ACCENT_RED}; }}"
-            )
-            # A disabled QToolButton swallows hover events, so Qt won't show its
-            # tooltip — yet the disabled state is exactly when the user needs the
-            # "switch to F-B view" hint. Filter the help event to show it anyway.
-            alc_button.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
-            alc_button.installEventFilter(self)
-        self._alc_mode_button = alc_button
+        # Fit / Fourier / Parameters live in the right-hand inspector deck
+        # (visible by default, per-representation; see
+        # _apply_inspector_for_domain) and are recoverable from the View menu.
+        # Global Parameter Fit is an advanced feature reached via the
+        # Analysis menu only.
         self._main_toolbar.addSeparator()
 
-        # Domain → representation segmented control, grouped 2 + 2 under
-        # "Time" and "Frequency" headers.  One exclusive group spans all four
-        # buttons so only a single representation is ever active.
+        # Domain → representation segmented control under "Time" and
+        # "Frequency" headers.  One exclusive group spans all buttons so only
+        # a single representation is ever active.  The integral-asymmetry
+        # field scan (ALC / repolarisation / QLCR) is a representation here,
+        # not a mode toggle: it owns its inspector deck (scan build → scan
+        # results) like the frequency views own theirs.
         self._domain_button_group = QButtonGroup(self)
         self._domain_button_group.setExclusive(True)
         self._domain_buttons: list[QPushButton] = []
-        _domain_qss = build_segmented_button_qss()
+        self._domain_buttons_by_token: dict[str, QPushButton] = {}
 
         def _domain_cluster(header: str, specs: list[tuple[str, str]]) -> QWidget:
+            # Deliberate deviation from the design handoff (Ben's call): a
+            # small uppercase caption ABOVE each cluster names the domain more
+            # clearly than an inline label. The control itself keeps the
+            # handoff's JOINED segmented grammar — one shared border, 1px
+            # internal dividers, outer corners only.
             container = QWidget()
             column = QVBoxLayout(container)
-            column.setContentsMargins(0, 0, 0, 0)
-            column.setSpacing(1)
-            heading = QLabel(header)
+            # A little air below the segmented control so the cluster doesn't
+            # sit flush on the toolbar's bottom edge.
+            column.setContentsMargins(0, 0, 0, 3)
+            column.setSpacing(2)
+            heading = QLabel(header.upper())
             heading.setFont(header_font())
             heading.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
             column.addWidget(heading)
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(0)
-            for label, token in specs:
+            frame = QFrame()
+            frame.setStyleSheet(build_segmented_container_qss())
+            cells = QHBoxLayout(frame)
+            cells.setContentsMargins(0, 0, 0, 0)
+            cells.setSpacing(0)
+            for index, (label, token) in enumerate(specs):
                 btn = QPushButton(label)
                 btn.setCheckable(True)
-                btn.setStyleSheet(_domain_qss)
+                btn.setStyleSheet(
+                    build_segmented_cell_qss(first=index == 0, last=index == len(specs) - 1)
+                )
                 btn.clicked.connect(
                     lambda _checked=False, v=token: self._on_domain_button_clicked(v)
                 )
                 self._domain_button_group.addButton(btn)
                 self._domain_buttons.append(btn)
-                row.addWidget(btn)
-            column.addLayout(row)
+                self._domain_buttons_by_token[token] = btn
+                cells.addWidget(btn)
+            column.addWidget(frame)
             return container
 
+        # The raw-counts view is a diagnostic, deliberately NOT a toolbar
+        # representation — it lives under View → Diagnostics.
         self._main_toolbar.addWidget(
             _domain_cluster(
                 "Time domain",
-                [("F-B asymmetry", "fb_asymmetry"), ("Individual groups", "groups")],
+                [
+                    ("F-B asymmetry", "fb_asymmetry"),
+                    ("Individual groups", "groups"),
+                    ("Integral scan", "integral_scan"),
+                ],
             )
         )
         self._main_toolbar.addSeparator()
@@ -710,9 +783,15 @@ class MainWindow(QMainWindow):
                 [("FFT", "frequency"), ("MaxEnt", "maxent")],
             )
         )
-        self._domain_buttons[0].setChecked(True)
-        self._domain_buttons[3].setEnabled(False)
-        self._domain_buttons[3].setToolTip("Maximum-entropy spectra from grouped counts")
+        self._domain_buttons_by_token["fb_asymmetry"].setChecked(True)
+        self._domain_buttons_by_token["integral_scan"].setToolTip(
+            "Integral-asymmetry field scan (ALC / repolarisation / QLCR): "
+            "integrate the F-B asymmetry over the fit window for each selected run"
+        )
+        self._domain_buttons_by_token["maxent"].setEnabled(False)
+        self._domain_buttons_by_token["maxent"].setToolTip(
+            "Maximum-entropy spectra from grouped counts"
+        )
 
         # Stretch spacer — pushes View / Bunch to the right edge
         _stretch = QWidget()
@@ -1006,6 +1085,10 @@ class MainWindow(QMainWindow):
         """Create and dock all child panels, then connect inter-panel signals."""
         # Enable dock nesting for proper splitter behavior
         self.setDockNestingEnabled(True)
+        # Design-handoff grammar: the inspector deck's tabs sit at the TOP of
+        # the dock area (a 30px strip with underline tabs), not Qt's default
+        # bottom position.
+        self.setTabPosition(Qt.DockWidgetArea.RightDockWidgetArea, QTabWidget.TabPosition.North)
 
         # Central plot
         try:
@@ -1040,7 +1123,7 @@ class MainWindow(QMainWindow):
 
         # Left dock — data browser / logbook
         self._data_browser = DataBrowserPanel()
-        self._dock_data_browser = QDockWidget("DATA BROWSER", self)
+        self._dock_data_browser = QDockWidget("Data Browser", self)
         self._dock_data_browser.setWidget(self._data_browser)
         self._dock_data_browser.setMinimumWidth(220)
         self._dock_data_browser.setFeatures(
@@ -1048,6 +1131,10 @@ class MainWindow(QMainWindow):
             | QDockWidget.DockWidgetFeature.DockWidgetFloatable
             | QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
+        # Custom title bar REPLACES Qt's (never both — the doubled-header
+        # failure mode); windowTitle stays set for menus/floating chrome.
+        self._browser_dock_header = DockHeader("DATA BROWSER", self._dock_data_browser)
+        self._dock_data_browser.setTitleBarWidget(self._browser_dock_header)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._dock_data_browser)
 
         # Right dock — fit controls
@@ -1078,44 +1165,59 @@ class MainWindow(QMainWindow):
         # Bespoke ALC-mode build panel, swapped into the Fit dock when ALC mode
         # is on (see _sync_fit_dock_mode).
         self._alc_fit_panel = ALCFitPanel()
-        self._fit_stack = QStackedWidget(self)
+        self._fit_stack = _InspectorStack(self)
         self._fit_stack.addWidget(self._fit_panel)
         self._fit_stack.addWidget(self._multi_group_fit_window)
         self._fit_stack.addWidget(self._alc_fit_panel)
         self._dock_fit = QDockWidget("Fit", self)
-        self._dock_fit.setWidget(self._fit_stack)
-        self._dock_fit.setMinimumWidth(320)
+        self._dock_fit.setWidget(_inspector_scroll_area(self._fit_stack))
+        self._dock_fit.setMinimumWidth(300)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit)
 
         # Right dock — spectrum controls (FFT / MaxEnt, tabbed with fit)
         self._fourier_panel = FourierPanel()
         self._maxent_panel = MaxEntPanel()
-        self._spectrum_stack = QStackedWidget(self)
+        self._spectrum_stack = _InspectorStack(self)
         self._spectrum_stack.addWidget(self._fourier_panel)
         self._spectrum_stack.addWidget(self._maxent_panel)
         self._dock_fourier = QDockWidget("Spectrum", self)
-        self._dock_fourier.setWidget(self._spectrum_stack)
+        self._dock_fourier.setWidget(_inspector_scroll_area(self._spectrum_stack))
         self._dock_fourier.setMinimumWidth(280)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fourier)
-        self.tabifyDockWidget(self._dock_fit, self._dock_fourier)
 
         # Right dock — fitted parameter trends (tabbed with fit/fourier). In ALC
         # mode the dock swaps to the bespoke scan view via _parameters_stack.
         self._fit_parameters_panel = FitParametersPanel()
         self._alc_scan_view = ALCScanView()
-        self._parameters_stack = QStackedWidget(self)
+        self._parameters_stack = _InspectorStack(self)
         self._parameters_stack.addWidget(self._fit_parameters_panel)
         self._parameters_stack.addWidget(self._alc_scan_view)
         self._dock_fit_parameters = QDockWidget("Parameters", self)
-        self._dock_fit_parameters.setWidget(self._parameters_stack)
-        self._dock_fit_parameters.setMinimumWidth(340)
+        self._dock_fit_parameters.setWidget(_inspector_scroll_area(self._parameters_stack))
+        self._dock_fit_parameters.setMinimumWidth(320)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit_parameters)
+        # Canonical inspector tab order, left to right: processing (Spectrum)
+        # first, then Fit, then Parameters — the user works through the deck in
+        # that order. Time-domain views simply hide the Spectrum tab, so one
+        # static order serves every representation.
+        self.tabifyDockWidget(self._dock_fourier, self._dock_fit)
         self.tabifyDockWidget(self._dock_fit, self._dock_fit_parameters)
+        # Slim title bars for the deck: the tab strip above already names the
+        # active pane, so the docked header shows only the float/close buttons
+        # (no repeated "Fit"); the title text returns when the dock floats.
+        for deck_dock in (self._dock_fourier, self._dock_fit, self._dock_fit_parameters):
+            deck_dock.setTitleBarWidget(DockHeader("", deck_dock, title_when_floating_only=True))
 
-        # Analysis docks are opened on demand from toolbar/menu actions.
-        self._dock_fit.hide()
+        # The inspector deck is visible by default; the Spectrum dock joins it
+        # only for frequency views. The constructor applies the deck for the
+        # initial representation via _apply_inspector_for_domain once the rest
+        # of the window state exists.
         self._dock_fourier.hide()
-        self._dock_fit_parameters.hide()
+        self._dock_fit.raise_()
+        # Track user closes (the dock X button) per representation so each view
+        # remembers which tabs the user dismissed (see eventFilter).
+        for dock in (self._dock_fit, self._dock_fourier, self._dock_fit_parameters):
+            dock.installEventFilter(self)
         # Gate the FitSeries browser highlight on Parameters dock visibility.
         self._dock_fit_parameters.visibilityChanged.connect(
             self._on_parameters_dock_visibility_changed
@@ -1123,14 +1225,26 @@ class MainWindow(QMainWindow):
 
         # Bottom dock — log panel
         self._log_panel = LogPanel()
-        self._dock_log = QDockWidget("LOG", self)
+        self._dock_log = QDockWidget("Log", self)
         self._dock_log.setWidget(self._log_panel)
         self._dock_log.setMinimumHeight(96)
+        self._log_dock_header = DockHeader("LOG", self._dock_log)
+        self._dock_log.setTitleBarWidget(self._log_dock_header)
+        if hasattr(self._log_panel, "entry_count_changed"):
+            self._log_panel.entry_count_changed.connect(
+                lambda n: self._log_dock_header.set_meta(f"{n} entries")
+            )
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._dock_log)
 
         # ── Structured status bar ──────────────────────────────────────────
         _sb = self.statusBar()
         _sb.setContentsMargins(4, 0, 4, 0)
+
+        # Design-handoff status line: ● state · selection/view · cursor · χ²/ν.
+        self._status_state_label = QLabel("● Idle")
+        self._status_state_label.setFont(mono_font(10.5))
+        self._status_state_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        _sb.addPermanentWidget(self._status_state_label)
 
         self._status_sel_label = QLabel("")
         self._status_sel_label.setFont(mono_font(10.5))
@@ -1141,11 +1255,18 @@ class MainWindow(QMainWindow):
         self._status_coords_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         _sb.addPermanentWidget(self._status_coords_label)
 
+        self._status_chi2_label = QLabel("")
+        self._status_chi2_label.setFont(mono_font(10.5))
+        _sb.addPermanentWidget(self._status_chi2_label)
+
         self._last_fit_chi2: float | None = None
 
         # Set compact-friendly defaults while keeping the central plot dominant.
-        self.resizeDocks([self._dock_data_browser], [360], Qt.Orientation.Horizontal)
-        self.resizeDocks([self._dock_log], [140], Qt.Orientation.Vertical)
+        # The width budget must leave the plot dominant on a 13-inch laptop
+        # (~1280 logical px): browser 330 + inspector deck 340 + plot ~600.
+        self.resizeDocks([self._dock_data_browser], [330], Qt.Orientation.Horizontal)
+        self.resizeDocks([self._dock_fit], [340], Qt.Orientation.Horizontal)
+        self.resizeDocks([self._dock_log], [112], Qt.Orientation.Vertical)
 
         # Connect signals
         self._data_browser.dataset_selected.connect(self._on_dataset_selected)
@@ -1310,7 +1431,18 @@ class MainWindow(QMainWindow):
         self._ui_manager.bind_actions()
 
     def _show_panel(self, panel_key: str) -> None:
-        """Show a panel in the standard dock layout."""
+        """Show a panel in the standard dock layout.
+
+        Showing an inspector tab — from the View menu or programmatically —
+        clears its closed-tab memory for the active representation.
+        """
+        if (
+            hasattr(self, "_dock_fit_parameters")
+            and hasattr(self, "_plot_workspace")
+            and panel_key in self._inspector_dock_map()
+        ):
+            view = self._plot_workspace.active_view()
+            self._inspector_closed_docks.get(view, set()).discard(panel_key)
         self._ui_manager.show_panel(panel_key)
 
     def _normalize_vector_axis(self, axis: object) -> str | None:
@@ -1506,44 +1638,59 @@ class MainWindow(QMainWindow):
         if not hasattr(self._plot_panel, "set_time_view_modes"):
             return
 
-        modes = ["fb_asymmetry"]
+        modes = self._sync_available_views()
+
+        if self._plot_workspace.active_domain() != "time":
+            return
+        current_mode = None
+        if hasattr(self._plot_panel, "current_time_view_mode"):
+            current_mode = self._plot_panel.current_time_view_mode()
+        active_view = current_mode if current_mode in modes else modes[0]
+        workspace_view = self._plot_workspace.active_view()
+        if workspace_view in modes:
+            active_view = workspace_view
+        self._plot_workspace.set_active_view(active_view)
+
+    def _sync_available_views(self) -> list[str]:
+        """Recompute view availability and apply it everywhere it surfaces.
+
+        This is the single writer for the workspace's enabled-view set and the
+        matching toolbar/menu enable states, so the two can never disagree —
+        a button click bouncing off a stale workspace set was the source of
+        "selecting a representation sometimes does nothing" flakiness.
+        Returns the available view tokens.
+        """
+        # The integral scan needs only the F-B reduction, so like fb_asymmetry
+        # it is always an available mode — including under multi-selection,
+        # where building a field scan from the selected runs is its workflow.
+        modes = ["fb_asymmetry", "integral_scan"]
         selected = list(self._data_browser.get_selected_datasets())
-        if len(selected) > 1 and self._overlay_enabled():
+        if not (len(selected) > 1 and self._overlay_enabled()):
+            # Overlaying several runs has no single run to transform, so the
+            # data-gated views are unavailable there.
+            target = self._current_dataset or (selected[0] if len(selected) == 1 else None)
+            if self._grouped_time_domain_available(target):
+                modes.extend(["groups", "raw_counts"])
+            if self._dataset_supports_maxent(target):
+                modes.append("maxent")
+            # The reconstruction view is result-backed (enabled by the MaxEnt
+            # worker); rewriting the set without it would kill the panel's
+            # reconstruction toggle and bounce an active reconstruction view.
+            if target is not None and self._maxent_reconstruction_datasets(int(target.run_number)):
+                modes.append("reconstruction")
+
+        if hasattr(self._plot_panel, "set_time_view_modes"):
             current_mode = None
             if hasattr(self._plot_panel, "current_time_view_mode"):
                 current_mode = self._plot_panel.current_time_view_mode()
             self._plot_panel.set_time_view_modes(modes, current_mode=current_mode)
-            if hasattr(self._plot_workspace, "set_available_views"):
-                self._plot_workspace.set_available_views(modes)
-                if self._plot_workspace.active_domain() == "time":
-                    self._plot_workspace.set_active_view("fb_asymmetry")
-            self._domain_buttons[1].setEnabled(False)
-            self._refresh_maxent_domain_enabled()
-            return
-
-        target = self._current_dataset or (selected[0] if len(selected) == 1 else None)
-        if target is not None and self._grouped_time_domain_display_datasets(target):
-            modes.append("groups")
-        if self._dataset_supports_maxent(target):
-            modes.append("maxent")
-
-        self._domain_buttons[1].setEnabled("groups" in modes)
-        self._refresh_maxent_domain_enabled()
-
-        current_mode = None
-        if hasattr(self._plot_panel, "current_time_view_mode"):
-            current_mode = self._plot_panel.current_time_view_mode()
-        self._plot_panel.set_time_view_modes(modes, current_mode=current_mode)
         if hasattr(self._plot_workspace, "set_available_views"):
             self._plot_workspace.set_available_views(modes)
-            if self._plot_workspace.active_domain() != "time":
-                return
-            active_view = current_mode if current_mode in modes else modes[0]
-            if hasattr(self._plot_workspace, "active_view"):
-                workspace_view = self._plot_workspace.active_view()
-                if workspace_view in modes:
-                    active_view = workspace_view
-            self._plot_workspace.set_active_view(active_view)
+
+        self._domain_buttons_by_token["groups"].setEnabled("groups" in modes)
+        self._raw_counts_action.setEnabled("raw_counts" in modes)
+        self._domain_buttons_by_token["maxent"].setEnabled("maxent" in modes)
+        return modes
 
     def _selected_or_current_datasets(self) -> list[MuonDataset]:
         """Return selected datasets, or the current dataset when none are selected."""
@@ -1705,13 +1852,20 @@ class MainWindow(QMainWindow):
             if not targets:
                 return
 
+            time_view_mode = (
+                self._plot_panel.current_time_view_mode()
+                if hasattr(self._plot_panel, "current_time_view_mode")
+                else "fb_asymmetry"
+            )
             if (
-                hasattr(self._plot_panel, "current_time_view_mode")
-                and self._plot_panel.current_time_view_mode() == "groups"
+                time_view_mode in ("groups", "raw_counts")
                 and self._plot_workspace.active_domain() == "time"
                 and len(targets) == 1
             ):
-                grouped_targets = self._grouped_time_domain_display_datasets(targets[0])
+                grouped_targets = self._grouped_time_domain_display_datasets(
+                    targets[0],
+                    lifetime_corrected=time_view_mode != "raw_counts",
+                )
                 if grouped_targets and hasattr(
                     self._plot_panel, "plot_grouped_time_domain_subplots"
                 ):
@@ -2131,15 +2285,22 @@ class MainWindow(QMainWindow):
                 self._log_panel.log(f"ERROR loading {path}: {e}")
                 failed += 1
 
-        # Plot the last successfully loaded dataset
+        # Select the last successfully loaded run in the browser: this drives
+        # the standard selection pipeline (_on_dataset_selected), which stores
+        # the OUTGOING dataset's Fourier/MaxEnt panel state before switching —
+        # assigning _current_dataset directly would attribute the old panel
+        # state to the new run — and then plots and syncs availability.
         if last_dataset:
-            self._plot_panel.plot_dataset(last_dataset)
+            run_number = int(last_dataset.run_number)
+            if hasattr(self._data_browser, "select_runs"):
+                self._data_browser.select_runs({run_number})
+            if self._current_dataset is None or int(self._current_dataset.run_number) != run_number:
+                # Stub browsers (tests) may not drive the selection signals.
+                self._plot_panel.plot_dataset(last_dataset)
+                self._current_dataset = last_dataset
 
         # Update selected datasets for global fitting
         self._update_selected_datasets()
-        # Loading runs into the already-active F-B view doesn't fire a view
-        # change, so re-evaluate the ALC-mode toggle against the current view.
-        self._refresh_alc_mode_enabled()
 
         # Update status message
         if successful > 0:
@@ -3776,9 +3937,9 @@ class MainWindow(QMainWindow):
             return False
         if not hasattr(self._plot_panel, "current_time_view_mode"):
             return False
-        if self._plot_panel.current_time_view_mode() != "groups":
+        if self._plot_panel.current_time_view_mode() not in ("groups", "raw_counts"):
             return False
-        return bool(self._grouped_time_domain_display_datasets())
+        return self._grouped_time_domain_available()
 
     def _sync_fit_dock_mode(self) -> None:
         """Swap the fit dock between regular, grouped and ALC content."""
@@ -3807,62 +3968,78 @@ class MainWindow(QMainWindow):
         else:
             self._dock_fit.setWindowTitle("Fit")  # inspector tab label — title case per spec
 
-    def _on_alc_mode_toggled(self, checked: bool) -> None:
-        """Enter/leave ALC mode: swap the Fit and Parameters docks accordingly."""
-        if checked and self._active_representation_type() != RepresentationType.TIME_FB_ASYMMETRY:
-            # Guard: ALC mode is only valid for the F-B asymmetry representation.
-            self._alc_mode_action.setChecked(False)
-            return
-        self._alc_mode = bool(checked)
-        self._sync_fit_dock_mode()
-        if self._alc_mode:
-            # Echo the current integration window and surface the docks.
-            t_min, t_max = (None, None)
-            if hasattr(self._plot_panel, "get_fit_range"):
-                t_min, t_max = self._plot_panel.get_fit_range()
-            self._alc_fit_panel.set_fit_range_display(t_min, t_max)
-            for dock in (self._dock_fit, self._dock_fit_parameters):
-                dock.show()
-                dock.raise_()
+    @property
+    def _alc_mode(self) -> bool:
+        """True while the Integral scan representation is active.
 
-    # Maps each toolbar domain token to (ordered visible dock keys, default raised key).
-    # Fourier is hidden in the groups domain; mgfit is surfaced by swapping _fit_stack.
+        The old standalone ALC toggle became the ``integral_scan`` view; this
+        property keeps the dock-mode and persistence code reading one flag.
+        """
+        if not hasattr(self, "_plot_workspace"):
+            return False
+        return self._plot_workspace.active_view() == "integral_scan"
+
+    # Maps each workspace view token to (ordered visible dock keys, default
+    # raised key). Spectrum processing (fourier) appears only for frequency
+    # views and always first, so the deck reads processing → fit → parameters
+    # left to right; mgfit is surfaced by swapping _fit_stack.
     _INSPECTOR_DOMAIN_CONFIG: dict[str, tuple[list[str], str]] = {
-        "fb_asymmetry": (["fit", "fourier", "fit_parameters"], "fit"),
+        "fb_asymmetry": (["fit", "fit_parameters"], "fit"),
+        # Integral scan: Fit dock shows the scan-build panel, Parameters the
+        # scan view (page swaps in _sync_fit_dock_mode).
+        "integral_scan": (["fit", "fit_parameters"], "fit"),
         "groups": (["fit", "fit_parameters"], "fit"),
+        "raw_counts": (["fit", "fit_parameters"], "fit"),
         "frequency": (["fourier", "fit", "fit_parameters"], "fourier"),
         "maxent": (["fourier", "fit", "fit_parameters"], "fourier"),
+        "reconstruction": (["fourier", "fit", "fit_parameters"], "fourier"),
     }
 
+    def _inspector_dock_map(self) -> dict[str, QDockWidget]:
+        """Return the inspector deck's dock-key → dock widget map."""
+        return {
+            "fit": self._dock_fit,
+            "fourier": self._dock_fourier,
+            "fit_parameters": self._dock_fit_parameters,
+        }
+
     def _apply_inspector_for_domain(self, view: str) -> None:
-        """Show/hide/raise the right inspector docks for *view* and sync the fit stack."""
+        """Show/hide/raise the right inspector docks for *view* and sync the fit stack.
+
+        Tabs the user closed while in *view* stay closed (per-representation
+        memory); tabs that do not belong to *view*'s deck are hidden even when
+        floating, and re-shown — still floating — when a deck that includes
+        them becomes active again.
+        """
         config = self._INSPECTOR_DOMAIN_CONFIG.get(view)
         if config is None:
             return
 
         visible_keys, default_key = config
-        dock_map = {
-            "fit": self._dock_fit,
-            "fourier": self._dock_fourier,
-            "fit_parameters": self._dock_fit_parameters,
-        }
-        visible_set = set(visible_keys)
+        dock_map = self._inspector_dock_map()
+        visible_set = set(visible_keys) - self._inspector_closed_docks.get(view, set())
 
         self._applying_inspector_domain = True
         try:
             for key, dock in dock_map.items():
-                if dock.isFloating():
-                    continue
-                if key in visible_set:
-                    dock.show()
-                else:
-                    dock.hide()
+                dock.setVisible(key in visible_set)
 
-            default_dock = dock_map[default_key]
-            if not default_dock.isFloating():
-                default_dock.raise_()
+            raise_key = default_key if default_key in visible_set else None
+            if raise_key is None:
+                raise_key = next((key for key in visible_keys if key in visible_set), None)
+            if raise_key is not None and not dock_map[raise_key].isFloating():
+                dock_map[raise_key].raise_()
         finally:
             self._applying_inspector_domain = False
+
+        # The Fourier menu entries only make sense where the deck has a
+        # spectrum tab — otherwise the dock they open would be reclaimed on
+        # the next view switch.
+        fourier_available = "fourier" in visible_keys
+        for action_name in ("_show_fourier_action", "_fourier_analysis_action"):
+            action = getattr(self, action_name, None)
+            if action is not None:
+                action.setEnabled(fourier_available)
 
         # Sync _fit_stack page: groups domain surfaces mgfit when grouped data is present,
         # all other domains revert to single-fit so the dock title reads "Fit".
@@ -3902,7 +4079,7 @@ class MainWindow(QMainWindow):
 
     def _on_fourier(self) -> None:
         """Show and raise the Fourier dock panel."""
-        self._sync_spectrum_panel_for_view("frequency")
+        self._sync_spectrum_panel_for_view()
         self._show_panel("fourier")
         if self._current_dataset is not None:
             self._sync_fourier_panel_for_dataset(self._current_dataset)
@@ -5350,6 +5527,7 @@ class MainWindow(QMainWindow):
         self._maxent_thread.finished.connect(self._maxent_thread.deleteLater)
         self._maxent_panel.set_busy(True)
         self._set_fourier_status(f"Computing MaxEnt spectrum for run {run_number}...")
+        self._set_status_state("Computing MaxEnt…")
         self._maxent_thread.start()
 
     def _on_cancel_maxent(self) -> None:
@@ -5458,6 +5636,7 @@ class MainWindow(QMainWindow):
 
     def _cleanup_maxent_thread(self) -> None:
         """Clear MaxEnt worker state after the thread exits."""
+        self._set_status_state("Idle")
         self._maxent_panel.set_busy(False)
         self._maxent_thread = None
         self._maxent_worker = None
@@ -5602,8 +5781,6 @@ class MainWindow(QMainWindow):
         else:
             self._global_parameter_fit_action.setText("Global Parameter Fit")
         self._global_parameter_fit_action.setEnabled(bool(has_result))
-        if hasattr(self, "_global_parameter_fit_toolbar_action"):
-            self._global_parameter_fit_toolbar_action.setEnabled(bool(has_result))
 
     def _on_gle_setup(self) -> None:
         """Open the GLE executable configuration dialog."""
@@ -5622,7 +5799,9 @@ class MainWindow(QMainWindow):
 
     def _reset_layout(self) -> None:
         """Reset dock panels to the default compact-friendly layout."""
+        self._inspector_closed_docks.clear()
         self._ui_manager.reset_layout()
+        self._apply_inspector_for_domain(self._plot_workspace.active_view())
 
     def _on_dataset_selected(self, run_number: int) -> None:
         """Handle dataset selection from data browser."""
@@ -5716,19 +5895,56 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(
                     f"Viewing individual groups for run {self._current_dataset.run_label}"
                 )
+            elif _mode == "raw_counts":
+                self.statusBar().showMessage(
+                    f"Viewing raw counts for run {self._current_dataset.run_label}"
+                )
             else:
                 self.statusBar().showMessage(f"Viewing run {self._current_dataset.run_label}")
 
     def _on_domain_button_clicked(self, view: str) -> None:
-        """Switch the workspace to *view* and keep the Domain buttons in sync."""
+        """Switch the workspace to *view* and keep the Domain buttons in sync.
+
+        Availability is re-derived just-in-time: enable states and the
+        workspace's allowed-view set are written on different event paths, so
+        at the moment of a click we trust the data, not whichever set was
+        refreshed last — otherwise the click can silently bounce.
+        """
+        self._sync_available_views()
         self._plot_workspace.set_active_view(view)
         self._sync_domain_buttons(self._plot_workspace.active_view())
 
     def _sync_domain_buttons(self, view: str) -> None:
-        """Update toolbar Domain button checked state to match *view*."""
-        _tokens = ("fb_asymmetry", "groups", "frequency", "maxent")
-        for idx, btn in enumerate(getattr(self, "_domain_buttons", [])):
-            btn.setChecked(_tokens[idx] == view)
+        """Update toolbar Domain button checked state to match *view*.
+
+        Diagnostic views (raw counts) have no toolbar button; the exclusive
+        button group must be relaxed momentarily so every button can be
+        unchecked while such a view is active — leaving a stale button lit
+        would misrepresent what is plotted.
+        """
+        buttons = getattr(self, "_domain_buttons_by_token", {})
+        group = getattr(self, "_domain_button_group", None)
+        if group is not None:
+            group.setExclusive(False)
+        try:
+            for token, btn in buttons.items():
+                btn.setChecked(token == view)
+        finally:
+            if group is not None:
+                group.setExclusive(True)
+
+    def _on_raw_counts_action_triggered(self, checked: bool) -> None:
+        """Enter/leave the raw-counts diagnostic view from View → Diagnostics."""
+        self._plot_workspace.set_active_view("raw_counts" if checked else "groups")
+        # set_active_view may have fallen back (e.g. the view became
+        # unavailable); reflect the actual outcome on the action.
+        self._sync_raw_counts_action(self._plot_workspace.active_view())
+
+    def _sync_raw_counts_action(self, view: str) -> None:
+        """Mirror the active view on the Diagnostics → Raw counts check state."""
+        action = getattr(self, "_raw_counts_action", None)
+        if action is not None:
+            action.setChecked(view == "raw_counts")
 
     def _on_plot_workspace_view_changed(self, view: str) -> None:
         """Map top-level workspace tab changes onto the shared time plot panel state."""
@@ -5752,11 +5968,16 @@ class MainWindow(QMainWindow):
         else:
             self._sync_frequency_plot_for_current_dataset()
         self._sync_domain_buttons(view)
+        self._sync_raw_counts_action(view)
+        if view == "integral_scan":
+            # Echo the current integration window into the scan-build panel
+            # before the deck surfaces it.
+            t_min, t_max = (None, None)
+            if hasattr(self._plot_panel, "get_fit_range"):
+                t_min, t_max = self._plot_panel.get_fit_range()
+            self._alc_fit_panel.set_fit_range_display(t_min, t_max)
         self._apply_inspector_for_domain(view)
         self._update_status_selection()
-        # ALC mode is only valid for the F-B asymmetry view; keep the toggle's
-        # enabled state in sync and auto-exit ALC mode when the user leaves it.
-        self._refresh_alc_mode_enabled()
         # FFT <-> MaxEnt is a view change within the frequency domain (no
         # active_domain_changed), so re-evaluate the MaxEnt button here too or it
         # stays stale-disabled when the dataset actually supports MaxEnt.
@@ -5819,6 +6040,7 @@ class MainWindow(QMainWindow):
             fit_function=fit_function,
         )
         self._last_fit_chi2 = float(fit_result.reduced_chi_squared)
+        self._set_status_chi2(self._last_fit_chi2)
         self._record_single_fit_slot(fit_result)
         self._log_panel.log(f"Fit completed: χ²ᵣ = {fit_result.reduced_chi_squared:.4f}", tag="fit")
 
@@ -5828,33 +6050,16 @@ class MainWindow(QMainWindow):
             return None
         return {
             "fb_asymmetry": RepresentationType.TIME_FB_ASYMMETRY,
+            # The integral scan integrates the F-B asymmetry; it shares that
+            # representation's slots (the scan itself is a FitSeries).
+            "integral_scan": RepresentationType.TIME_FB_ASYMMETRY,
             "groups": RepresentationType.TIME_GROUPS,
+            # Raw counts is the uncorrected display of the grouped
+            # representation; fits and trends share the TIME_GROUPS slot.
+            "raw_counts": RepresentationType.TIME_GROUPS,
             "frequency": RepresentationType.FREQ_FFT,
             "maxent": RepresentationType.FREQ_MAXENT,
         }.get(self._plot_workspace.active_view())
-
-    def _refresh_alc_mode_enabled(self) -> None:
-        """Sync the ALC-mode toggle's enabled state with the active representation.
-
-        ALC mode (integral-asymmetry field scan) is meaningful only for the
-        Forward-Backward asymmetry representation, and is enabled there
-        regardless of how many runs are selected — the "need two runs" rule is
-        enforced at build time in :meth:`_on_scan_requested`, not on the toggle.
-
-        Driving the flag off the active representation (rather than only the
-        view-change signal) keeps it correct on every path that lands in the F-B
-        view without firing that signal: startup, loading runs into the default
-        view, and project restore. When the view is not F-B the toggle is
-        disabled, its tooltip explains how to reach it, and any active ALC mode
-        is exited.
-        """
-        if not hasattr(self, "_alc_mode_action"):
-            return
-        is_fb = self._active_representation_type() == RepresentationType.TIME_FB_ASYMMETRY
-        self._alc_mode_action.setEnabled(is_fb)
-        self._alc_mode_action.setToolTip(_ALC_TOOLTIP_ENABLED if is_fb else _ALC_TOOLTIP_DISABLED)
-        if not is_fb and self._alc_mode_action.isChecked():
-            self._alc_mode_action.setChecked(False)  # fires _on_alc_mode_toggled(False)
 
     def _current_selection_supports_maxent(self) -> bool:
         """Whether the active selection/dataset can produce MaxEnt spectra.
@@ -5879,28 +6084,42 @@ class MainWindow(QMainWindow):
         the frequency *domain*, so switching between them emits
         ``active_view_changed`` but not ``active_domain_changed`` -- without this
         the button could stay stale-disabled in the FFT view even though the
-        current dataset supports MaxEnt. This is the same stale-enable-flag class
-        as the ALC toggle, so it is refreshed alongside
-        :meth:`_refresh_alc_mode_enabled`.
+        current dataset supports MaxEnt.
         """
-        if len(getattr(self, "_domain_buttons", [])) <= 3:
+        button = getattr(self, "_domain_buttons_by_token", {}).get("maxent")
+        if button is None:
             return
-        self._domain_buttons[3].setEnabled(self._current_selection_supports_maxent())
+        supports = self._current_selection_supports_maxent()
+        button.setEnabled(supports)
+        # Keep the workspace's token in lockstep with the button: an enabled
+        # button whose token is missing from the workspace set would make the
+        # click bounce (historically all the way to F-B asymmetry).
+        if hasattr(self._plot_workspace, "enabled_views"):
+            enabled = set(self._plot_workspace.enabled_views())
+            if supports != ("maxent" in enabled):
+                if supports:
+                    enabled.add("maxent")
+                else:
+                    enabled.discard("maxent")
+                self._plot_workspace.set_available_views(sorted(enabled))
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        """Show the ALC-mode tooltip on hover even while the button is disabled.
+        """Record inspector-dock closes into the per-representation memory.
 
-        Qt suppresses tooltips for disabled widgets, but the disabled state is
-        precisely when the user needs the "switch to F-B view" hint, so we render
-        the help event ourselves.
+        The dock X button sends a Close event; programmatic hide() does not —
+        so this captures exactly the user closes consumed by
+        _apply_inspector_for_domain.
         """
         if (
-            event.type() == QEvent.Type.ToolTip
-            and obj is getattr(self, "_alc_mode_button", None)
-            and not obj.isEnabled()
+            event.type() == QEvent.Type.Close
+            and not self._applying_inspector_domain
+            and hasattr(self, "_dock_fit_parameters")
         ):
-            QToolTip.showText(event.globalPos(), self._alc_mode_action.toolTip(), obj)
-            return True
+            for key, dock in self._inspector_dock_map().items():
+                if obj is dock:
+                    view = self._plot_workspace.active_view()
+                    self._inspector_closed_docks.setdefault(view, set()).add(key)
+                    break
         return super().eventFilter(obj, event)
 
     @staticmethod
@@ -6028,8 +6247,9 @@ class MainWindow(QMainWindow):
             )
 
         if entries and hasattr(self, "_dock_fit_parameters"):
-            self._dock_fit_parameters.show()
-            self._dock_fit_parameters.raise_()
+            # Route through _show_panel so the per-representation closed-tab
+            # memory is cleared — the app is deliberately surfacing the dock.
+            self._show_panel("fit_parameters")
         elif not entries and hasattr(self._data_browser, "set_highlighted_runs"):
             # No series remain — ensure the browser highlight is cleared.
             self._data_browser.set_highlighted_runs(set())
@@ -6306,9 +6526,8 @@ class MainWindow(QMainWindow):
         self._log_panel.log(f"Built integral scan '{series.label}' ({scan.n_points} points).")
 
         # Bring the freshly-built scan into view: raise the Parameters dock
-        # (the ALC scan view) over the Fit dock.
-        self._dock_fit_parameters.show()
-        self._dock_fit_parameters.raise_()
+        # (the ALC scan view) over the Fit dock, clearing any closed-tab memory.
+        self._show_panel("fit_parameters")
 
     # x-axis key → (display label, derivative unit label).
     _ALC_X_LABELS = {"field": "B (G)", "temperature": "T (K)", "run": "Run"}
@@ -6883,6 +7102,7 @@ class MainWindow(QMainWindow):
             sum(payload[0].reduced_chi_squared for payload in successful_results) / n_datasets
         )
         self._last_fit_chi2 = float(avg_chi2r)
+        self._set_status_chi2(self._last_fit_chi2)
         self._log_panel.log(
             f"Batch fit completed: {n_datasets} datasets, average χ²ᵣ = {avg_chi2r:.3f}",
             tag="fit",
@@ -6924,7 +7144,11 @@ class MainWindow(QMainWindow):
             )
 
         self._plot_panel.set_global_fits(fit_curves)
-        if hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
+        if not self._grouped_display_lifetime_corrected():
+            # The fit ran on lifetime-corrected counts; keep the Raw counts
+            # display raw — the overlay shows in the Individual groups view.
+            self._render_current_selection_plot()
+        elif hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
             self._plot_panel.plot_grouped_time_domain_subplots(grouped_datasets)
         self._log_panel.log(f"Grouped time-domain fit completed: {len(grouped_datasets)} groups")
         self.statusBar().showMessage(
@@ -6959,7 +7183,9 @@ class MainWindow(QMainWindow):
             )
 
         self._plot_panel.set_global_fits(fit_payloads)
-        if hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
+        if not self._grouped_display_lifetime_corrected():
+            self._render_current_selection_plot()
+        elif hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
             self._plot_panel.plot_grouped_time_domain_subplots(grouped_datasets)
 
     def _on_count_fit_completed(self, dataset, payload) -> None:
@@ -6999,7 +7225,11 @@ class MainWindow(QMainWindow):
             return
 
         self._plot_panel.set_global_fits(fit_curves)
-        if hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
+        if not self._grouped_display_lifetime_corrected():
+            # Overlays are on the corrected scale; the Raw counts display
+            # stays raw and shows them when the user switches to groups.
+            self._render_current_selection_plot()
+        elif hasattr(self._plot_panel, "plot_grouped_time_domain_subplots"):
             self._plot_panel.plot_grouped_time_domain_subplots(grouped_datasets)
         self._log_panel.log(f"Count-domain fit overlaid on {len(fit_curves)} group(s).")
 
@@ -7437,7 +7667,9 @@ class MainWindow(QMainWindow):
                 self._frequency_plot_panel.clear()
                 self._fit_panel.set_dataset(None)
 
-            self._refresh_time_view_selector()
+        # Availability must track every selection update — including "nothing
+        # is current" (after removals) — or the data-gated buttons go stale.
+        self._refresh_time_view_selector()
 
         # Multi-selection render mode depends on the plot-panel Overlay toggle.
         if len(selected) > 1:
@@ -7510,8 +7742,12 @@ class MainWindow(QMainWindow):
         n_total = len(all_ds)
         _domain_labels = {
             "fb_asymmetry": "F-B asymmetry",
+            "integral_scan": "integral scan",
             "groups": "individual groups",
+            "raw_counts": "raw counts",
             "frequency": "frequency",
+            "maxent": "MaxEnt",
+            "reconstruction": "reconstruction",
         }
         domain = _domain_labels.get(
             self._plot_workspace.active_view() if hasattr(self, "_plot_workspace") else "",
@@ -7527,6 +7763,22 @@ class MainWindow(QMainWindow):
         if domain:
             parts.append(f"{domain} view")
         self._status_sel_label.setText(" · ".join(parts))
+        # The browser dock header carries the selection count (design handoff).
+        if hasattr(self, "_browser_dock_header"):
+            self._browser_dock_header.set_meta(f"{n_sel} of {n_total} selected" if n_total else "")
+
+    def _set_status_chi2(self, value: float | None) -> None:
+        """Show the latest reduced χ² on the status bar (design handoff)."""
+        label = getattr(self, "_status_chi2_label", None)
+        if label is None:
+            return
+        label.setText("" if value is None else f"χ²/ν = {value:.2f}")
+
+    def _set_status_state(self, text: str) -> None:
+        """Update the status-bar state dot (● Idle / ● Computing …)."""
+        label = getattr(self, "_status_state_label", None)
+        if label is not None:
+            label.setText(f"● {text}")
 
     def _on_cursor_coords_changed(self, x: object, y: object) -> None:
         """Update the status bar right label with the current cursor position."""
@@ -7539,9 +7791,9 @@ class MainWindow(QMainWindow):
         if domain == "frequency":
             text = f"ν = {float(x):.3f} MHz  |F| = {float(y):.4g}"
         else:
+            # χ²/ν lives in its own permanent label (_status_chi2_label);
+            # appending it here would show it twice.
             text = f"x = {float(x):.3f} μs  y = {float(y):.2f} %"
-            if self._last_fit_chi2 is not None:
-                text += f"  χ²/ν = {self._last_fit_chi2:.3f}"
         self._status_coords_label.setText(text)
 
     def _get_fit_dataset(self, dataset):
@@ -7641,8 +7893,14 @@ class MainWindow(QMainWindow):
     def _grouped_time_domain_display_datasets(
         self,
         dataset: MuonDataset | None = None,
+        *,
+        lifetime_corrected: bool = True,
     ) -> list[MuonDataset]:
-        """Return grouped time-domain display datasets for the active dataset."""
+        """Return grouped time-domain display datasets for the active dataset.
+
+        ``lifetime_corrected=False`` yields the Raw counts view's uncorrected
+        per-group histograms.
+        """
         source = self._current_dataset if dataset is None else dataset
         if source is None:
             return []
@@ -7650,9 +7908,35 @@ class MainWindow(QMainWindow):
         if source_dataset is None:
             return []
         try:
-            return build_grouped_time_domain_datasets(source_dataset)
+            return build_grouped_time_domain_datasets(
+                source_dataset,
+                lifetime_corrected=lifetime_corrected,
+            )
         except ValueError:
             return []
+
+    def _grouped_time_domain_available(self, dataset: MuonDataset | None = None) -> bool:
+        """Cheap probe: can the active dataset produce grouped time-domain views?
+
+        Used everywhere only the yes/no answer matters (toolbar button enable
+        state, fit-dock mode) — it runs on every selection update, including
+        per-mouse-motion fit-range drags, where building the full per-group
+        arrays via :meth:`_grouped_time_domain_display_datasets` is far too
+        expensive. The probe reads ``dataset.run`` directly: the rebinned
+        analysis copy shares the same run, which is all the build consumes.
+        """
+        source = self._current_dataset if dataset is None else dataset
+        return grouped_time_domain_available(source)
+
+    def _grouped_display_lifetime_corrected(self) -> bool:
+        """Whether the grouped display shows lifetime-corrected counts.
+
+        False only in the Raw counts view; grouped fits always run on the
+        corrected counts, so their overlays match only the corrected display.
+        """
+        if hasattr(self._plot_panel, "current_time_view_mode"):
+            return self._plot_panel.current_time_view_mode() != "raw_counts"
+        return True
 
     # ── project save / open ────────────────────────────────────────────
 
@@ -8017,11 +8301,6 @@ class MainWindow(QMainWindow):
 
     def _restore_alc_scan(self) -> None:
         """Rebuild the ALC scan + analysis from the persisted computed series."""
-        # restore_state sets the workspace view without firing the view-change
-        # signal, so sync the toggle's enabled state to the restored view here —
-        # before any early return — so an F-B restore enables it even when no
-        # ALC scan was saved.
-        self._refresh_alc_mode_enabled()
         series = next(
             (
                 batch
@@ -8055,15 +8334,19 @@ class MainWindow(QMainWindow):
                     self._on_fit_peaks()
         finally:
             self._alc_loading = False
-        # Resume ALC mode if it was active at save time and the restored view is
-        # F-B asymmetry. The enabled flag was already synced at the top of this
-        # method; here we only re-check the toggle. (It just swaps docks with no
-        # re-render, so the restored scan + overlays survive.)
+        # Resume the integral-scan view if it was active at save time and the
+        # restored view is in the F-B family. New projects persist the view
+        # token directly in the workspace state; this also maps legacy saves
+        # (toolbar-toggle era, mode_active=True with an fb_asymmetry view).
         if (
             series.extra.get("mode_active")
             and self._active_representation_type() == RepresentationType.TIME_FB_ASYMMETRY
         ):
-            self._alc_mode_action.setChecked(True)
+            self._plot_workspace.set_active_view("integral_scan")
+            # Surface the restored scan: the deck raises the build tab by
+            # default, but the object of interest is the scan view in the
+            # Parameters dock (the old toggle path raised it last too).
+            self._show_panel("fit_parameters")
 
     def _alc_points_from_series(self, series) -> list[dict]:
         """Reconstruct per-run scan points from the series + loaded run metadata."""
@@ -8498,6 +8781,8 @@ class MainWindow(QMainWindow):
     def _clear_all_state(self) -> None:
         """Reset every panel to its empty initial state."""
         self._current_dataset = None
+        self._last_fit_chi2 = None
+        self._set_status_chi2(None)
         self._frequency_spectra_by_run = {}
         self._frequency_spectra_by_rep = {
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,

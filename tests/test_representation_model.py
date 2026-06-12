@@ -134,6 +134,22 @@ def test_groups_matches_build_grouped_datasets():
     assert all(c.metadata.get("plot_domain") == "time" for c in curves)
 
 
+def test_groups_raw_counts_recipe_disables_lifetime_correction():
+    run = _run()
+    raw = TimeGroups(recipe={"lifetime_corrected": False}).compute(run)
+
+    source = MuonDataset(np.array([]), np.array([]), np.array([]), run=run)
+    expected = build_grouped_time_domain_datasets(source, lifetime_corrected=False)
+    corrected = build_grouped_time_domain_datasets(source, lifetime_corrected=True)
+
+    for c, e in zip(raw, expected, strict=True):
+        np.testing.assert_allclose(c.asymmetry, e.asymmetry)
+    # The raw curves genuinely differ from the corrected default beyond t=0.
+    assert any(
+        not np.allclose(r.asymmetry, k.asymmetry) for r, k in zip(raw, corrected, strict=True)
+    )
+
+
 # ── FrequencyFFT ───────────────────────────────────────────────────────────
 
 

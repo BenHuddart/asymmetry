@@ -176,6 +176,29 @@ def build_grouped_time_domain_datasets(
     return grouped_datasets
 
 
+def grouped_time_domain_available(dataset: MuonDataset | None) -> bool:
+    """Cheap availability probe for the grouped time-domain build.
+
+    Answers "would :func:`build_grouped_time_domain_groups` find enough
+    groups?" without any array work, by running the same setup validation the
+    build itself runs (source run with histograms, grouping with at least two
+    included non-empty detector groups) — the GUI gates views and toolbar
+    buttons on this for every selection change, where building the full
+    per-group traces just to test truthiness is far too expensive.
+
+    A pathological run that passes this probe can still fail the full build
+    (e.g. every bin masked out of the fit window); callers already treat a
+    failed build as no-data at render time.
+    """
+    if dataset is None:
+        return False
+    try:
+        _run, grouping, groups_raw, included_groups = _count_group_setup(dataset)
+    except ValueError:
+        return False
+    return len(_resolve_group_indices(grouping, groups_raw, included_groups)) >= 2
+
+
 @dataclass
 class _CountGroupContext:
     """Shared per-run setup for building one or more count-domain group traces.

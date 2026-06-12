@@ -135,16 +135,23 @@ class UIManager(QObject):
         dock.raise_()
 
     def reset_layout(self) -> None:
-        """Reset dock layout to the compact-friendly default shell."""
+        """Reset dock layout to the compact-friendly default shell.
+
+        The inspector deck keeps its canonical tab order (Spectrum → Fit →
+        Parameters); the main window re-applies per-representation visibility
+        on top of this via _apply_inspector_for_domain.
+        """
         self._window.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._dock_data_browser)
-        self._window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit)
         self._window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fourier)
+        self._window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit)
         self._window.addDockWidget(
             Qt.DockWidgetArea.RightDockWidgetArea,
             self._dock_fit_parameters,
         )
         self._window.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._dock_log)
-        self._window.tabifyDockWidget(self._dock_fit, self._dock_fourier)
+        for dock in (self._dock_fourier, self._dock_fit, self._dock_fit_parameters):
+            dock.setFloating(False)
+        self._window.tabifyDockWidget(self._dock_fourier, self._dock_fit)
         self._window.tabifyDockWidget(self._dock_fit, self._dock_fit_parameters)
 
         defaults = self._default_full_visibility()
@@ -155,10 +162,10 @@ class UIManager(QObject):
         self._dock_log.setVisible(defaults["log"])
         self._window.resizeDocks(
             [self._dock_data_browser, self._dock_fit],
-            [360, 360],
+            [330, 340],
             Qt.Orientation.Horizontal,
         )
-        self._window.resizeDocks([self._dock_log], [140], Qt.Orientation.Vertical)
+        self._window.resizeDocks([self._dock_log], [112], Qt.Orientation.Vertical)
 
     def build_stylesheet(self, scale: float) -> str:
         """Return the global stylesheet block for the requested scale."""
@@ -223,6 +230,18 @@ QAbstractSpinBox::up-arrow {{
 QAbstractSpinBox::down-arrow {{
     image: url({_SPIN_DOWN_ARROW_ICON});
 }}
+QComboBox::drop-down {{
+    width: {spin_button_width}px;
+    border-left: 1px solid {t.BORDER};
+    background-color: palette(button);
+    border-top-right-radius: {border_radius}px;
+    border-bottom-right-radius: {border_radius}px;
+}}
+QComboBox::down-arrow {{
+    width: {spin_arrow_size}px;
+    height: {spin_arrow_size}px;
+    image: url({_SPIN_DOWN_ARROW_ICON});
+}}
 QTableWidget::item {{
     padding: {table_padding_v}px {table_padding_h}px;
 }}
@@ -270,11 +289,14 @@ QAbstractItemView::indicator:disabled {{
         }[panel_key]
 
     def _default_full_visibility(self) -> dict[str, bool]:
+        # The inspector deck (fit/parameters) is visible by default; the
+        # Spectrum dock joins it only for frequency views, applied by the main
+        # window's _apply_inspector_for_domain on top of these defaults.
         return {
             "data": True,
-            "fit": False,
+            "fit": True,
             "fourier": False,
-            "fit_parameters": False,
+            "fit_parameters": True,
             "log": True,
         }
 
