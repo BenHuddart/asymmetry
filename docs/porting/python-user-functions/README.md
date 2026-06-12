@@ -1,6 +1,7 @@
 # Python user functions — study
 
-**Status:** study complete; implementation decisions recorded below.
+**Status:** implemented (2026-06-12); decisions and verification results
+recorded below and in [verification-plan.md](verification-plan.md).
 **Umbrella:** `wimda-parity-gap` Wave B; promotes the
 `python-user-functions` candidate (`docs/porting/candidates/python-user-functions/`,
 retained for scoring history).

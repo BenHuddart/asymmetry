@@ -395,11 +395,16 @@ reimplemented.
 `COMPONENTS` (composite time-domain basis functions), `MODELS` (single-channel
 models), and `PARAMETER_MODEL_COMPONENTS` (parameter-trend components) — that
 span different analysis domains, so a bare name does not identify which registry
-(or domain) a function belongs to. The Wave B `python-user-functions`
-registration facade, which builds the public registration API over exactly these
-dicts, is the place to formalise domain-distinguishing names; new registrations
-must present names that disambiguate the domain rather than relying on the
-registry a caller happens to reach for.
+(or domain) a function belongs to. The `python-user-functions` registration
+facade (`core/fitting/user_functions.py`) formalises this: every registration
+through it requires an explicit domain tag and a name unique across **all
+three** registries, so a facade-registered name maps to exactly one
+(registry, domain) pair. Code-path registrations share one insertion core
+(`core/fitting/registration.py`, also used by `models._register`); the single
+legacy cross-registry collision (`Constant`) stays grandfathered behind the
+kind-aware documentation lookup. User-registered definitions carry a `user`
+flag — provenance badges and docs-test exemptions key off the flag, never
+name lists.
 
 ### 4.3.1 Grouped Time-Domain Boundary
 

@@ -69,6 +69,31 @@ missing/invalid domain tag, module raising on import):
 - `python tools/harness.py docs` green with the tutorial page in the
   toctree.
 
-## Results
+## Results (2026-06-12, implementation complete)
 
-(filled in at implementation completion)
+All seven sections verified; the suite additions live in
+`tests/test_user_functions.py` (facade, discovery, degrade, Keren parity —
+34 tests) and `tests/test_user_functions_gui.py` (fit-tab degrade, badges,
+load-report dialog — 8 tests), with the three docs-enforcement tests in
+`tests/test_fit_function_docs.py` now sweeping built-ins by the `user`
+flag.
+
+- §1 Keren parity: bit-for-bit (`np.array_equal`) on a 1025-point grid
+  across the Δ/ν/B_L sweep; **exact** fit-result equality (values and
+  uncertainties) against the built-in; picker presence; persistence
+  round-trip. The example plugin loads through the real discovery path.
+- §2 All seven bad-fixture classes produce the designed
+  `UserFunctionError`/report entries; registries verified byte-identical
+  after each failure; sibling files still load.
+- §3 Guard + docs tests green with user components registered; exemption
+  verified to be flag-based (the test asserts the user category is *not*
+  in `CATEGORY_PAGES`).
+- §4 Round-trip with the component absent: model dict bit-identical
+  through load → save; placeholder evaluates to zero; both fit tabs block
+  with the designed message; re-registration revives the model. The old
+  silent default-model fallback is regression-tested.
+- §5 Overwrites refused in both directions; atomicity tested.
+- §6 Badge, info-dialog provenance, Setup dialog, log lines all covered;
+  gui-smoke green.
+- §7 `validate` green (see PR); `docs` builds clean (only pre-existing
+  screenshot warnings).

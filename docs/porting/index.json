@@ -286,7 +286,7 @@
     {
       "slug": "python-user-functions",
       "feature_name": "Python user functions (registration facade + discovery, replacing WiMDA plugin DLLs)",
-      "status": "study",
+      "status": "implemented",
       "path": "docs/porting/python-user-functions",
       "references": [
         "WiMDA",
@@ -301,9 +301,9 @@
         "verification_plan": "docs/porting/python-user-functions/verification-plan.md"
       },
       "updated": "2026-06-12",
-      "tests_path": null,
-      "src_path": null,
-      "notes": "Wave B project of wimda-parity-gap; promoted from candidate (candidate docs retained at docs/porting/candidates/python-user-functions-candidate for scoring history). N4 registry-naming formalisation lands here per reconciliation-study §5."
+      "tests_path": "tests/test_user_functions.py",
+      "src_path": "src/asymmetry/core/fitting/user_functions.py",
+      "notes": "Wave B project of wimda-parity-gap; promoted from candidate (python-user-functions-candidate retained for scoring history). IMPLEMENTED 2026-06-12, 5 milestones. Facade core/fitting/user_functions.py (register_component + register_parameter_component; MODELS internal-only, models._register aligned onto shared core/fitting/registration.py); N4 naming = grammar-atom names + required domain + cross-registry uniqueness (W17 user flag exempts docs tests); discovery core/plugins.py (~/.asymmetry/user_functions + asymmetry.user_functions entry points, explicit load_user_functions(), structured report, never crashes); W1 named zero-valued placeholder degrade replaces fit_panel silent fallback; GUI: startup hook, log lines, Setup dialog, picker/info badges; Keren example plugin bit-for-bit + exact-fit parity, doubles as docs/user_guide/user_functions.rst tutorial. Design-only: getresults derived-quantities hook, sandboxing (WiMDA trust model documented), hot reload."
     },
     {
       "slug": "moments-analysis",
