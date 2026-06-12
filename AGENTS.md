@@ -42,6 +42,16 @@ repo-local docs and use this file as the map.
 - Prefer small, focused changes with tests beside the behavior they protect.
 - When a repeated review comment exposes a rule, encode it in
   `tools/harness.py`, tests, or docs so future agents can discover it.
+- Never run long work (file I/O, fits, transforms, reconstructions) on the
+  GUI thread. Use the worker machinery in `src/asymmetry/gui/tasks.py` (or
+  the fit-panel worker pattern) with a cooperative cancel path, and marshal
+  results back as plain objects via queued signals. Never connect a worker
+  signal to a bare lambda/partial that touches widgets — with no receiver
+  QObject the slot runs on the worker thread; route through a GUI-thread
+  QObject method instead. Hold strong references to live threads, and shut
+  them down in `closeEvent`.
+- When adding datasets to the browser in a loop, wrap the loop in
+  `DataBrowserPanel.batch_updates()` — per-add table rebuilds are O(n²).
 
 ## Validation Ladder
 

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -284,6 +284,13 @@ class FitParametersPanel(QWidget):
         self._y_selector_table.horizontalHeader().setVisible(False)
         apply_param_table_style(self._y_selector_table)
         self._y_selector_table.itemSelectionChanged.connect(self._on_y_selection_changed)
+        # Selection-driven redraws are debounced: clicking through parameters
+        # or drag-selecting fires per row, and each full-figure redraw costs
+        # 200-500 ms in Subplots mode. One redraw after the last change wins.
+        self._plot_refresh_timer = QTimer(self)
+        self._plot_refresh_timer.setSingleShot(True)
+        self._plot_refresh_timer.setInterval(120)
+        self._plot_refresh_timer.timeout.connect(self._refresh_plot)
 
         y_header = self._y_selector_table.horizontalHeader()
         y_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -1194,7 +1201,7 @@ class FitParametersPanel(QWidget):
     def _on_y_selection_changed(self) -> None:
         self._selected_y_param_names = self._selected_y_parameters()
         self._update_composite_action_buttons()
-        self._refresh_plot()
+        self._plot_refresh_timer.start()
 
     def _copy_parameter_set(self, source: ParameterSet) -> ParameterSet:
         copied = ParameterSet()
