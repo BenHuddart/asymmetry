@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.fourier.correlation import DEFAULT_CORR_ORDER
+from asymmetry.gui.panels.spectral_moments_widget import SpectralMomentsWidget
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.widgets import apply_param_table_style, build_primary_button_qss
@@ -398,6 +399,10 @@ class FourierPanel(QWidget):
         content_layout.addWidget(self._build_conditioning_group())
         content_layout.addWidget(self._build_diamag_group())
         content_layout.addWidget(self._build_exclusions_group())
+        # Spectral moments — a sibling of the advanced stack (range/cutoff control
+        # over the lineshape-faithful spectrum); the host wires it up.
+        self._moments_widget = SpectralMomentsWidget()
+        content_layout.addWidget(self._moments_widget)
 
         # Read-only hint: the grouping's pre-FFT background correction is
         # inherited by the Fourier input (F3) and is otherwise invisible here.
@@ -1053,10 +1058,18 @@ class FourierPanel(QWidget):
                 else None
             ),
             "correlation_order": self._correlation_order_spin.value(),
+            # Additive, namespaced moments sub-dict (no schema bump; W1).
+            "moments": self._moments_widget.get_state(),
         }
+
+    @property
+    def moments_widget(self) -> SpectralMomentsWidget:
+        """The spectral-moments control hosted in the advanced stack."""
+        return self._moments_widget
 
     def restore_state(self, state: dict) -> None:
         """Restore Fourier panel settings from a saved dict."""
+        self._moments_widget.restore_state(state.get("moments"))
         window_mode = self._coerce_filter_mode(state.get("window", "none"))
         self._filter_lorentzian_radio.setChecked(window_mode == "lorentzian")
         self._filter_gaussian_radio.setChecked(window_mode == "gaussian")

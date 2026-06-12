@@ -35,6 +35,7 @@ material.
    fourier_analysis
    frequency_finishers
    radical_correlation
+   spectral_moments
    frequency_domain_fitting
    vector_polarization
    fitting

@@ -1,6 +1,9 @@
 # Moments analysis
 
-**Status:** candidate.
+**Status:** candidate — **superseded by the implementation-grade study
+[`spectral-moments`](../../spectral-moments/README.md)** (2026-06-12). This
+candidate is kept for provenance; new work happens under the `spectral-moments`
+slug.
 
 ## What
 
