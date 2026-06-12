@@ -107,6 +107,19 @@ period payloads / raw histograms ───────────┘        │
   `core/simulate.py` (`reduce_run_to_dataset`, provenance pattern to mirror).
 - GUI: `gui/panels/data_browser.py`, plus a small reference-run picker dialog.
 
+## Status — implemented
+
+Shipped on `feat/run-arithmetic`: Qt-free `core/data/combine.py`
+(`combine_runs` + `reduce_combined_run`); the Data Browser co-add rewired onto
+the kernel; the "Subtract Reference Run…" action with sign-aware combined rows
+and additive `.asymp` persistence; the user-guide page
+`docs/user_guide/run_arithmetic.rst`. Verified by `tests/test_combine.py` (pull
+test, co-subtract zero/√2/scaled, negative guard, event-weighted metadata, t0
+alignment, two-period co-add, F9 chokepoint spy), `tests/test_data_browser_combine.py`
+and a `.asymp` round-trip in `tests/test_mainwindow_additional.py`. Headline:
+the curve-mean co-add over-estimated the combined error by **53 %** at a 10:1
+statistics ratio (synthetic, see comparison.md).
+
 ## Out of scope (recorded)
 
 - In-batch co-add during sequential fitting — optional phase of

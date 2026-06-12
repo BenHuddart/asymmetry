@@ -64,12 +64,18 @@ totals (F₁,B₁) and (F₂,B₂):
 
 - count-sum reduces (F₁+F₂, B₁+B₂) → one Poisson error from the pooled counts;
 - curve-mean takes ½√(σ₁² + σ₂²), which only equals the pooled error when the
-  two runs have identical counts. For a 10:1 statistics ratio the curve-mean
-  error bar is ≈ 30 % larger than the correct pooled error.
+  two runs have identical counts.
 
-The exact figure on a real corpus pair (CdS or EuO, see
-[test-data.md](test-data.md)) is computed in the verification pass and quoted
-in the user-guide page. This is the headline number the brief asks for.
+**Quantified (synthetic, fixed seeds, relaxing-TF cosine).** Co-adding a
+low-statistics run with one carrying 10× the events, the old curve-mean error
+bar **over-estimates** the combined error by **53 %** (median over the good
+window) relative to the correct pooled Poisson error. For two equal-statistics
+runs the two routes agree to 0.1 % (ratio 0.999), confirming the divergence is
+purely the unequal-statistics term and the value itself is unchanged at
+α = 1. This is the headline number the brief asks for; it is quoted in the
+user-guide page. (The synthetic pair is the controlled oracle; the corpus pair
+in [test-data.md](test-data.md) exercises the same path on real data behind the
+`$ASYMMETRY_*` env gate.)
 
 ## When to use which (for the user guide)
 
