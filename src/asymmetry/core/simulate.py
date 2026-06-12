@@ -27,9 +27,12 @@ This module is Qt-free and must stay importable without the GUI.
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from asymmetry.core.negmu.model import CaptureComponent
 
 import numpy as np
 from numpy.typing import NDArray
@@ -1621,3 +1624,140 @@ def matched_statistics(run: Run) -> tuple[float, float]:
     background_total = background_per_bin * total_bins
     signal_events = max(total_events_of(run) - background_total, 1.0)
     return signal_events, background_per_bin
+
+
+# ---------------------------------------------------------------------------
+# μ⁻ capture-lifetime run synthesis
+# ---------------------------------------------------------------------------
+
+
+def simulate_capture_run(
+    template: Run,
+    components: Sequence[CaptureComponent],
+    weights: Mapping[str, float],
+    *,
+    total_events: float,
+    group_id: int | None = None,
+    seed: int = 0,
+    background_per_bin: float = 0.0,
+    run_number: int | None = None,
+    title: str | None = None,
+) -> Run:
+    """Synthesise a μ⁻ capture-lifetime run.
+
+    Per detector in the signal group (or all detectors if ``group_id`` is
+    ``None``):
+
+        N_d(t) = Σ_i N_{i,d}·exp(−(t−t0)/τ_i) + b      (t ≥ t0)
+        N_d(t) = b                                        (t < t0)
+
+    with the component populations split by ``weights`` (relative, normalised
+    over the components) and the per-bin envelope using the same exact
+    telescoping normalisation as :func:`expected_counts`::
+
+        n0_i = N_{i,d}·(1−exp(−Δt/τ_i))
+
+    so the post-t0 window sum ≈ ``total_events``. Detectors in ``group_id``
+    (or all detectors if ``None``) carry the signal; ``background_per_bin`` is
+    added in addition to the event budget. Poisson-sampled with ``seed`` and
+    assembled (provenance, deadtime-zeroing) via :func:`_sample_and_build_run`.
+    Provenance records ``capture_mode=True``, the components/τ and weights,
+    and the seed.
+
+    Parameters
+    ----------
+    template
+        Geometry template — bin structure, t0, grouping. Counts are ignored.
+    components
+        Ordered sequence of :class:`~asymmetry.core.negmu.model.CaptureComponent`
+        objects (duck-typed: need ``.label`` and ``.tau_us``).
+    weights
+        Relative weight per component label. Normalised over the components
+        present; missing labels default to zero weight.
+    total_events
+        Expected number of detected capture events in the post-t0 window,
+        summed over all signal detectors.
+    group_id
+        Only detectors in this group carry the signal. If ``None``, all
+        detectors are signal detectors.
+    seed
+        RNG seed for bit-for-bit reproducibility.
+    background_per_bin
+        Flat background counts per bin added to every detector (signal and
+        non-signal alike).
+    run_number, title
+        Provenance metadata for the returned :class:`Run`.
+    """
+    if not np.isfinite(total_events) or total_events <= 0:
+        raise ValueError("total_events must be a positive, finite event budget.")
+    if background_per_bin < 0:
+        raise ValueError("background_per_bin must be non-negative.")
+
+    histograms = template.histograms
+    n_det = len(histograms)
+    if n_det == 0:
+        raise ValueError("simulate_capture_run requires a template run with detector histograms.")
+
+    # Normalise component weights
+    labels = [str(c.label) for c in components]
+    weight_vals = [max(0.0, float(weights.get(lbl, 0.0))) for lbl in labels]
+    total_w = sum(weight_vals)
+    if total_w <= 0:
+        raise ValueError(
+            "weights must have at least one positive entry for the components present."
+        )
+    weights_norm = [w / total_w for w in weight_vals]
+
+    # Identify signal detectors (0-based indices)
+    if group_id is not None:
+        det_group = _detector_group_map(template.grouping, n_det)
+        signal_dets = {det for det, gid in det_group.items() if gid == group_id}
+        if not signal_dets:
+            raise ValueError(f"simulate_capture_run: no detectors found for group_id={group_id!r}.")
+    else:
+        signal_dets = set(range(n_det))
+
+    n_signal = len(signal_dets)
+
+    # Build expected per-detector count arrays
+    expected: list[NDArray[np.float64]] = []
+    for det_idx, hist in enumerate(histograms):
+        n_bins = hist.n_bins
+        t0_bin = max(0, int(hist.t0_bin))
+        bin_width = float(hist.bin_width)
+        n_post = max(0, n_bins - t0_bin)
+
+        clean = np.full(n_bins, float(background_per_bin), dtype=float)
+
+        if det_idx in signal_dets and n_post > 0:
+            t_post = np.arange(n_post, dtype=float) * bin_width
+            n_det_total = total_events / n_signal
+            envelope = np.zeros(n_post, dtype=float)
+            for comp, w_norm in zip(components, weights_norm):
+                tau = float(comp.tau_us)
+                n_i_det = n_det_total * w_norm
+                # Same telescoping normalisation as expected_counts
+                n0_i = n_i_det * (1.0 - np.exp(-bin_width / tau))
+                envelope += n0_i * np.exp(-t_post / tau)
+            clean[t0_bin:] += np.clip(envelope, 0.0, None)
+
+        expected.append(clean)
+
+    sim_metadata: dict[str, Any] = {
+        "capture_mode": True,
+        "components": [{"label": str(c.label), "tau_us": float(c.tau_us)} for c in components],
+        "weights": {str(c.label): float(weights.get(str(c.label), 0.0)) for c in components},
+        "group_id": group_id,
+    }
+
+    return _sample_and_build_run(
+        template,
+        expected,
+        seed=seed,
+        total_events=total_events,
+        background_per_bin=background_per_bin,
+        run_number=run_number,
+        title=title,
+        default_title="Simulated μ⁻ capture run",
+        simulation_metadata=sim_metadata,
+    )
