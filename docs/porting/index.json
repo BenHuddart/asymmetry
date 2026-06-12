@@ -789,6 +789,28 @@
       "src_path": null,
       "updated": "2026-06-12",
       "notes": "Wave B. Absorbs the minos-error-analysis candidate. MINOS=display-only overlay (additive FitResult.minos_errors + 'uncertainties_asymmetric' summary key; downstream surfaces stay symmetric HESSE by design). One shared engine.py drive helper (migrad + opt-in MINOS; explicit HESSE only pre-MINOS on simplex since migrad already runs HESSE) from all three minimiser sites (FitEngine.fit, global_fit, count_domain._solve). fit_quality already an EXACT WiMDA port (chi2.cdf==Gammp); wired through result_summary + every surface (W7 'quality' key), R fixed 0.95. Chain-seeding ('chain from previous run', distinct from warm_start_source) passes through normalize_to_grouped_contract (W5); Auto order-key default. Abort mirrors MaxEnt contract: core cancel_callback + FitCancelledError, in-fit raise + between-member checks, nothing recorded on abort (W6). FitLog REFRAMED (Ben 2026-06-12): no append-file; .asymp already stores latest-fit-per-dataset (FitSlot.result) + latest batch (FitSeries.results_by_run) = WiMDA's overwrite .fit/.bfit snapshots; enrich those records additively + Qt-free fit_log.py formatter + on-demand export only (W14). Follow-ons: in-batch co-add, fgAll Poisson cost-factory unification, provenance keys at recording sites, worker mixin."
+    },
+    {
+      "slug": "run-arithmetic",
+      "feature_name": "Histogram-level run arithmetic (WiMDA co-add / co-subtract)",
+      "status": "study",
+      "path": "docs/porting/run-arithmetic",
+      "references": [
+        "WiMDA",
+        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
+      ],
+      "docs": {
+        "readme": "docs/porting/run-arithmetic/README.md",
+        "comparison": "docs/porting/run-arithmetic/comparison.md",
+        "implementation_options": "docs/porting/run-arithmetic/implementation-options.md",
+        "test_data": "docs/porting/run-arithmetic/test-data.md",
+        "verification_plan": "docs/porting/run-arithmetic/verification-plan.md"
+      },
+      "tests_path": null,
+      "src_path": null,
+      "depends_on": [],
+      "updated": "2026-06-12",
+      "notes": "Wave B proj 2. Verified vs WiMDA muondata.pas:2418-2491 (cosign=-1 subtract, frame/spill+period accumulation, ACC tshift align) and BatchFit.pas:300-324 (in-batch coadd reuses same machinery, OUT of scope here). F9: co-subtract built ON subtract_scaled_counts + resolve_background_reference. W3: scalar event-weighted T/field + temperature_spread/field_spread + nested combination block (combined_from kept). W11: rewire _coadd_datasets/rebuild_combined_dataset onto combine_runs, keep negative ids + combined_datasets schema. W12: per-period sum via periods.sum_period_histograms. W1: no schema bump. KEY DIVERGENCE: WiMDA keeps master run's T/field (no averaging in code); Asymmetry event-weights + records spread. Decisions: ref-run-only co-subtract; first-class combined rows where it just works; per-detector t0 align (apply_grouping_aligned); silent recompute on .asymp load; flat menu action."
     }
   ]
 }
