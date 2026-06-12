@@ -601,6 +601,25 @@ def test_coadd_selects_newly_created_run(qapp: QApplication) -> None:
     assert set(panel._get_selected_run_numbers()) == {combined_runs[0]}
 
 
+def test_separate_combined_selects_restored_runs(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset_with_run(66))
+    panel.add_dataset(_dataset_with_run(67))
+
+    panel._table.selectRow(0)
+    idx = panel._table.model().index(1, 0)
+    panel._table.selectionModel().select(
+        idx, QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+    )
+    panel._coadd_selected()
+
+    combined_rn = next(rn for rn in panel._datasets if rn < 0)
+    panel.select_runs({combined_rn})
+    panel._separate_combined()
+
+    assert set(panel._get_selected_run_numbers()) == {66, 67}
+
+
 def test_coadded_temperature_from_log_uses_event_weighted_average(
     qapp: QApplication,
 ) -> None:

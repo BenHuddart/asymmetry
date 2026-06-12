@@ -117,10 +117,10 @@ def test_separate_restores_subtraction_sources(monkeypatch):
     monkeypatch.setattr(panel, "_prompt_reference_run", lambda sample, cands: 302)
     panel._subtract_reference_run(301)
     combined = next(iter(panel._combined_datasets))
-    monkeypatch.setattr(panel, "_get_selected_run_numbers", lambda: [combined])
     panel._separate_combined()
     assert 301 in panel._datasets
     assert 302 in panel._datasets
+    assert set(panel._get_selected_run_numbers()) == {301, 302}
     assert combined not in panel._combined_datasets
     assert combined not in panel._combined_signs
 

@@ -2842,9 +2842,11 @@ class DataBrowserPanel(QWidget):
         if not combined_items:
             return
 
+        restored_run_numbers: list[int] = []
         for rn in combined_items:
             insert_index = self._display_index_for_run(rn)
             source_datasets = self._combined_source_datasets.get(rn, [])
+            restored_run_numbers.extend(int(ds.run_number) for ds in source_datasets)
             group_id = self._run_to_group.get(rn)
             group = self._groups.get(group_id) if group_id is not None else None
 
@@ -2880,6 +2882,8 @@ class DataBrowserPanel(QWidget):
                         self._display_order.insert(insert_index + offset, source_rn)
 
         self._rebuild_table()
+        if restored_run_numbers:
+            self.select_runs(set(restored_run_numbers))
 
     # ------------------------------------------------------------------
     # Project state
