@@ -370,6 +370,8 @@ class PlotPanel(QWidget):
             self._last_low_count_mask = None
             self._decimation_enabled = True
             self._decimation_applied_for_current_view = False
+            self._decimation_points_shown = 0
+            self._decimation_points_total = 0
             self._max_render_points_per_trace = 4000
             self._viewport_refresh_pending = False
             self._viewport_refresh_in_progress = False
@@ -989,27 +991,83 @@ class PlotPanel(QWidget):
                     return str(color_getter())
         return self._x_axis_label_color(ax)
 
+    @staticmethod
+    def _format_point_count(count: int) -> str:
+        """Human-readable point count for the decimation chip (1.2M, 4.0k, 312)."""
+        value = float(count)
+        if value >= 1e6:
+            return f"{value / 1e6:.1f}M"
+        if value >= 1e3:
+            return f"{value / 1e3:.1f}k"
+        return str(int(value))
+
+    _DECIMATION_TOOLTIP = (
+        "Display decimated for responsiveness — zoom in for full resolution. "
+        "Fits, transforms and exports always use every point."
+    )
+
     def _apply_x_axis_decimation_indicator(self, ax) -> None:
-        """Highlight the x-axis when the current view is display-decimated."""
+        """Maintain the corner chip that flags a display-decimated view.
+
+        A small translucent badge ("4.0k of 1.2M pts") in the plot corner —
+        it disappears once the user zooms in far enough that every visible
+        point is rendered, which itself teaches how the decimation behaves.
+        The canvas tooltip carries the full explanation, including that only
+        the *display* is decimated.
+        """
+        artists = getattr(self, "_decimation_chip_artists", None)
+        if artists is None:
+            artists = {}
+            self._decimation_chip_artists = artists
+        existing = artists.pop(id(ax), None)
+        if existing is not None:
+            try:
+                existing.remove()
+            except (ValueError, NotImplementedError):
+                pass  # axis was cleared; the artist is already gone
+
         active = bool(getattr(self, "_decimation_applied_for_current_view", False))
-        label_color = "red" if active else getattr(self, "_default_x_axis_label_color", "black")
-        tick_color = (
-            "red"
-            if active
-            else getattr(
-                self,
-                "_default_x_axis_tick_color",
-                label_color,
+        canvas = getattr(self, "_canvas", None)
+        if not active:
+            if canvas is not None and hasattr(canvas, "setToolTip"):
+                canvas.setToolTip("")
+            return
+
+        shown = int(getattr(self, "_decimation_points_shown", 0))
+        total = int(getattr(self, "_decimation_points_total", 0))
+        if total > 0 and shown > 0:
+            chip_text = (
+                f"{self._format_point_count(shown)} of {self._format_point_count(total)} pts"
             )
-        )
-        xaxis = getattr(ax, "xaxis", None)
-        label = getattr(xaxis, "label", None)
-        label_setter = getattr(label, "set_color", None)
-        if callable(label_setter):
-            label_setter(label_color)
-        tick_params = getattr(ax, "tick_params", None)
-        if callable(tick_params):
-            tick_params(axis="x", colors=tick_color)
+        else:
+            chip_text = "decimated display"
+        text_fn = getattr(ax, "text", None)
+        if callable(text_fn):
+            artists[id(ax)] = text_fn(
+                0.99,
+                0.015,
+                chip_text,
+                transform=ax.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=7,
+                color="white",
+                zorder=20,
+                bbox={
+                    "boxstyle": "round,pad=0.35",
+                    "facecolor": "0.25",
+                    "alpha": 0.65,
+                    "edgecolor": "none",
+                },
+            )
+        if canvas is not None and hasattr(canvas, "setToolTip"):
+            canvas.setToolTip(self._DECIMATION_TOOLTIP)
+
+    def decimation_chip_text(self, ax=None) -> str | None:
+        """Return the decimation chip text on *ax* (None when not displayed)."""
+        artists = getattr(self, "_decimation_chip_artists", {})
+        artist = artists.get(id(ax if ax is not None else self._ax))
+        return str(artist.get_text()) if artist is not None else None
 
     def _on_frequency_x_unit_changed(self, _index: int) -> None:
         """Switch the displayed frequency x-axis between MHz and Gauss."""
@@ -1603,8 +1661,20 @@ class PlotPanel(QWidget):
                 visible_indices = candidate
         return visible_indices
 
-    def _decimated_plot_indices(self, time: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        """Return bounded sample indices for display-only errorbar rendering."""
+    def _decimated_plot_indices(
+        self,
+        time: np.ndarray,
+        mask: np.ndarray,
+        values: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Return bounded sample indices for display-only errorbar rendering.
+
+        Time-domain scatter uses a uniform stride — an unbiased visual sample
+        of noisy data (a min-max envelope would exaggerate the noise).
+        Frequency-domain spectra use min-max bucketing on *values* instead:
+        a stride can drop a narrow spectral peak entirely, and the peaks are
+        the physics.
+        """
         visible_indices = self._visible_plot_indices(time, mask)
         if visible_indices.size <= 0:
             return visible_indices
@@ -1615,6 +1685,9 @@ class PlotPanel(QWidget):
         if visible_indices.size <= max_points:
             return visible_indices
 
+        if values is not None and self._is_frequency_plot_panel():
+            return self._minmax_bucket_indices(visible_indices, np.asarray(values), max_points)
+
         stride = max(1, int(np.ceil(visible_indices.size / float(max_points))))
         sampled = visible_indices[::stride]
         if sampled.size == 0:
@@ -1622,6 +1695,30 @@ class PlotPanel(QWidget):
         if sampled[-1] != visible_indices[-1]:
             sampled = np.append(sampled, visible_indices[-1])
         return sampled
+
+    @staticmethod
+    def _minmax_bucket_indices(
+        visible_indices: np.ndarray,
+        values: np.ndarray,
+        max_points: int,
+    ) -> np.ndarray:
+        """Keep the min and max sample of each display bucket (extrema survive)."""
+        n = int(visible_indices.size)
+        n_buckets = max(1, max_points // 2)
+        edges = (np.arange(n_buckets + 1, dtype=np.int64) * n) // n_buckets
+        y = values[visible_indices]
+        keep: list[int] = [0, n - 1]
+        for bucket in range(n_buckets):
+            lo, hi = int(edges[bucket]), int(edges[bucket + 1])
+            if hi <= lo:
+                continue
+            segment = y[lo:hi]
+            try:
+                keep.append(lo + int(np.nanargmin(segment)))
+                keep.append(lo + int(np.nanargmax(segment)))
+            except ValueError:
+                continue  # all-NaN bucket
+        return visible_indices[np.unique(np.asarray(keep, dtype=np.int64))]
 
     def _plot_errorbar_masked(
         self,
@@ -1634,11 +1731,18 @@ class PlotPanel(QWidget):
     ) -> int:
         """Plot a masked errorbar series using bounded display density."""
         visible_indices = self._visible_plot_indices(time, mask)
-        indices = self._decimated_plot_indices(time, mask)
+        indices = self._decimated_plot_indices(time, mask, values=asymmetry)
         if indices.size <= 0:
             return 0
         if self.decimation_enabled() and indices.size < visible_indices.size:
             self._decimation_applied_for_current_view = True
+        # Per-view totals feed the corner chip ("4.0k of 1.2M pts").
+        self._decimation_points_shown = int(getattr(self, "_decimation_points_shown", 0)) + int(
+            indices.size
+        )
+        self._decimation_points_total = int(getattr(self, "_decimation_points_total", 0)) + int(
+            visible_indices.size
+        )
 
         ax.errorbar(
             time[indices],
@@ -1750,6 +1854,8 @@ class PlotPanel(QWidget):
         self._last_plot_error = None
         self._last_low_count_mask = None
         self._decimation_applied_for_current_view = False
+        self._decimation_points_shown = 0
+        self._decimation_points_total = 0
         self._fit_x_min = None
         self._fit_x_max = None
         if self._is_frequency_plot_panel():
@@ -2365,6 +2471,8 @@ class PlotPanel(QWidget):
         self._set_alpha_label(None)
         self._grouped_time_subplot_datasets = []
         self._decimation_applied_for_current_view = False
+        self._decimation_points_shown = 0
+        self._decimation_points_total = 0
         self._vector_subplot_datasets = {k: list(v) for k, v in datasets_by_axis.items() if v}
         self._current_datasets = list(self._vector_subplot_datasets.get(order[0], []))
         self._current_dataset = self._current_datasets[-1] if self._current_datasets else None
@@ -2458,6 +2566,8 @@ class PlotPanel(QWidget):
         self._subplot_axes_by_polarization = {}
         self._vector_subplot_datasets = {}
         self._decimation_applied_for_current_view = False
+        self._decimation_points_shown = 0
+        self._decimation_points_total = 0
         self._grouped_time_subplot_datasets = list(datasets)
         self._current_datasets = list(datasets)
         self._current_dataset = datasets[-1]
@@ -2878,6 +2988,8 @@ class PlotPanel(QWidget):
         self._grouped_time_subplot_datasets = []
         self._set_alpha_label(None)
         self._decimation_applied_for_current_view = False
+        self._decimation_points_shown = 0
+        self._decimation_points_total = 0
         self._rrf_frame_drawn = None
         self._current_dataset = datasets[-1]
         self._current_datasets = list(datasets)
@@ -3126,6 +3238,8 @@ class PlotPanel(QWidget):
         self._ensure_single_axis_mode()
         self._grouped_time_subplot_datasets = []
         self._decimation_applied_for_current_view = False
+        self._decimation_points_shown = 0
+        self._decimation_points_total = 0
         self._rrf_frame_drawn = None
         # Store the original dataset
         self._current_dataset = dataset

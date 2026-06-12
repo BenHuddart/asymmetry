@@ -864,11 +864,13 @@ class TestPlotPanel:
         plotted_x = np.asarray(errorbar_calls[-1]["args"][0], dtype=float)
         assert plotted_x.size < t.size
         assert plotted_x.size <= 11
-        assert panel._ax.xaxis.label.get_color() == "red"
-        panel._canvas.draw()
-        visible_ticks = [tick for tick in panel._ax.get_xticklabels() if tick.get_visible()]
-        assert visible_ticks
-        assert all(tick.get_color() == "red" for tick in visible_ticks)
+        # The corner chip flags the decimated view ("11 of 101 pts"); the
+        # x-axis itself is left untouched (no more alarm-red labels).
+        chip_text = panel.decimation_chip_text()
+        assert chip_text is not None
+        assert "of" in chip_text and "pts" in chip_text
+        assert panel._ax.xaxis.label.get_color() == panel._default_x_axis_label_color
+        assert panel._canvas.toolTip() != ""
 
     def test_plot_dataset_can_disable_decimation_for_dense_display(
         self,
@@ -901,11 +903,9 @@ class TestPlotPanel:
 
         plotted_x = np.asarray(errorbar_calls[-1]["args"][0], dtype=float)
         assert plotted_x.size == t.size
-        assert panel._ax.xaxis.label.get_color() == panel._default_x_axis_label_color
-        panel._canvas.draw()
-        visible_ticks = [tick for tick in panel._ax.get_xticklabels() if tick.get_visible()]
-        assert visible_ticks
-        assert all(tick.get_color() == panel._default_x_axis_tick_color for tick in visible_ticks)
+        # No decimation -> no chip, no tooltip.
+        assert panel.decimation_chip_text() is None
+        assert panel._canvas.toolTip() == ""
 
     def test_polarization_combo_uses_subscript_labels(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -1598,7 +1598,7 @@ class TestPlotPanel:
 
         panel.plot_dataset(ds)
         initial_visible = np.asarray(errorbar_calls[-1]["args"][0], dtype=float)
-        assert panel._ax.xaxis.label.get_color() == "red"
+        assert panel.decimation_chip_text() is not None
 
         panel.set_view_limits(2.0, 4.0, -0.1, 0.3)
         QApplication.processEvents()
@@ -1607,11 +1607,9 @@ class TestPlotPanel:
         assert refreshed_visible.size < initial_visible.size
         assert np.all(refreshed_visible >= 2.0)
         assert np.all(refreshed_visible <= 4.0)
-        assert panel._ax.xaxis.label.get_color() == panel._default_x_axis_label_color
-        panel._canvas.draw()
-        visible_ticks = [tick for tick in panel._ax.get_xticklabels() if tick.get_visible()]
-        assert visible_ticks
-        assert all(tick.get_color() == panel._default_x_axis_tick_color for tick in visible_ticks)
+        # Zoomed view renders every visible point, so the chip disappears.
+        assert panel.decimation_chip_text() is None
+        assert panel._canvas.toolTip() == ""
 
     def test_add_label_keeps_multi_dataset_redraw(
         self, panel: PlotPanel, monkeypatch: pytest.MonkeyPatch
@@ -3032,3 +3030,48 @@ class TestPlotPanel:
 
         assert len(fig.axes) == 3
         assert all(axis.legend_call_count == 0 for axis in fig.axes)
+
+
+class TestDecimationStrategies:
+    """Domain-specific decimation: stride for time scatter, min-max for spectra."""
+
+    def test_frequency_minmax_decimation_preserves_narrow_peak(self, qapp: QApplication) -> None:
+        """A 3-bin spectral peak must survive decimation of a 100k-point spectrum.
+
+        A uniform stride of ~100 would drop it entirely — and in a spectrum the
+        peaks ARE the physics — so frequency panels bucket by min/max instead.
+        """
+        panel = PlotPanel(domain="frequency")
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        n = 100_000
+        freq = np.linspace(0.0, 50.0, n)
+        amplitude = np.zeros(n)
+        amplitude[50_001:50_004] = 1.0  # narrow peak, offset from any stride grid
+        mask = np.ones(n, dtype=bool)
+        panel._max_render_points_per_trace = 1000
+
+        indices = panel._decimated_plot_indices(freq, mask, values=amplitude)
+
+        assert indices.size < n
+        assert indices.size <= 1002  # 2 per bucket + endpoints
+        assert amplitude[indices].max() == 1.0, "min-max bucketing must keep the peak"
+
+    def test_time_domain_keeps_uniform_stride(self, qapp: QApplication) -> None:
+        """Time-domain scatter stays a uniform sample (an unbiased visual of noise)."""
+        panel = PlotPanel()
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        n = 100_000
+        t = np.linspace(0.0, 32.0, n)
+        rng = np.random.default_rng(7)
+        asym = rng.normal(0.0, 0.05, n)
+        mask = np.ones(n, dtype=bool)
+        panel._max_render_points_per_trace = 1000
+
+        indices = panel._decimated_plot_indices(t, mask, values=asym)
+
+        assert indices.size <= 1001
+        # All gaps equal except possibly the appended final point.
+        gaps = np.diff(indices)
+        assert np.all(gaps[:-1] == gaps[0])
