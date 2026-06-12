@@ -6271,6 +6271,9 @@ class MainWindow(QMainWindow):
 
     def _on_plot_workspace_view_changed(self, view: str) -> None:
         """Map top-level workspace tab changes onto the shared time plot panel state."""
+        # RRF controls show only on the FB-asymmetry representation (W16).
+        if getattr(self._plot_panel, "_rrf_controls", None) is not None:
+            self._plot_panel._rrf_controls.set_active_view_token(view)
         # Keep the spectrum dock's stacked panel in lockstep with the view for
         # every transition: leaving "maxent" for a time view must restore the
         # FFT controls (and the "Fourier" title), or FFT status messages land
