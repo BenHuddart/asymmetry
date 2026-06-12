@@ -61,6 +61,12 @@ small). This is the definitive answer to "can I quote this uncertainty?" — and
 the one a low χ² alone cannot give, because a fit can land a perfect χ² while
 its Hessian errors are mis-scaled.
 
+Before the full pull diagnostic, a quick read on a *single* parameter's error is
+its :ref:`MINOS asymmetric interval <minos-asymmetric-errors>`: when the upper
+and lower excursions differ markedly, the symmetric Hessian error is already
+suspect — the likelihood is skewed or the parameter is against a bound — and the
+pull diagnostic is worth running.
+
 Use the three together: the χ² band is a fast triage, the recorded verdict
 tracks quality across a series, and the pull diagnostic validates the error
 bars before you quote them.

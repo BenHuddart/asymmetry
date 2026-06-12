@@ -238,3 +238,22 @@ background file, no schema break.**
 - **In-batch co-add / re-fit-coadded; `fgAll`→Poisson cost-factory unification** —
   follow-ons per the directive (run-arithmetic dependency / separate refactor).
 - **Dedicated "Fit log" window** — rejected; existing surfaces suffice (Ben).
+
+## Recorded follow-ons (built nothing; noted for later)
+
+- **Cosmetic provenance keys on the persisted record.** The additive `quality` and
+  `uncertainties_asymmetric` keys ride into `.asymp` automatically via the shared
+  `fit_result_summary`, so the durable record already carries the headline
+  diagnostics and the export report renders from it. The lighter provenance keys
+  (`model_name`, `fit_range`, `timestamp`, `provenance`) have a core home
+  (`enrich_summary_provenance`) but are *not yet populated* at the GUI recording
+  sites, because doing so means threading the model name, fit range, and a clock
+  through `_record_single_fit_slot` / the batch and series recorders. The `FitLog`
+  formatter degrades gracefully without them (it omits the header lines). Wiring
+  them is a small, self-contained follow-on.
+- **GUI "Average seed" mode.** The batch-seeding menu exposes Auto / Independent /
+  Chain — the three modes the core distinguishes mechanically. A first-class
+  "average seed" toggle (averaging per-run seeds before the fit) is a GUI-only
+  refinement on top of the existing per-member Initial Values dialog; recorded, not
+  built. Auto's non-chain branch therefore falls back to independent seeds, a
+  documented divergence from the brief's "Auto → average".
