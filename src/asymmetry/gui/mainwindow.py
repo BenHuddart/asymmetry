@@ -23,6 +23,7 @@ import copy
 import hashlib
 import os
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
@@ -2232,6 +2233,15 @@ class MainWindow(QMainWindow):
                 return f"{safe_stem}_logbook.tsv"
         return "logbook.tsv"
 
+    def _browser_batch(self):
+        """Batch-update context on the data browser (no-op for test stubs).
+
+        Adding datasets one by one rebuilds the browser table per add; wrap
+        any multi-add loop in this context so the table renders once.
+        """
+        batch = getattr(self._data_browser, "batch_updates", None)
+        return batch() if callable(batch) else nullcontext()
+
     def _load_files(self, paths: list[str]) -> None:
         """Load multiple data files."""
         started_at = time.perf_counter()
@@ -2244,81 +2254,82 @@ class MainWindow(QMainWindow):
         auto_grouping_attempts = 0
         auto_grouping_applied = 0
 
-        for path in paths:
-            should_overwrite_existing = False
-            if self._is_source_file_loaded(path):
-                if not overwrite_existing_to_all:
-                    overwrite_choice = self._prompt_overwrite_existing_dataset(path)
-                    if overwrite_choice == QMessageBox.StandardButton.No:
-                        self._log_panel.log(f"Skipped already-loaded file: {path}")
+        with self._browser_batch():
+            for path in paths:
+                should_overwrite_existing = False
+                if self._is_source_file_loaded(path):
+                    if not overwrite_existing_to_all:
+                        overwrite_choice = self._prompt_overwrite_existing_dataset(path)
+                        if overwrite_choice == QMessageBox.StandardButton.No:
+                            self._log_panel.log(f"Skipped already-loaded file: {path}")
+                            continue
+                        if overwrite_choice == QMessageBox.StandardButton.YesToAll:
+                            overwrite_existing_to_all = True
+                    should_overwrite_existing = True
+
+                try:
+                    loaded = self._load_file(path)
+                    if loaded is None:
                         continue
-                    if overwrite_choice == QMessageBox.StandardButton.YesToAll:
-                        overwrite_existing_to_all = True
-                should_overwrite_existing = True
 
-            try:
-                loaded = self._load_file(path)
-                if loaded is None:
-                    continue
+                    datasets = loaded if isinstance(loaded, list) else [loaded]
+                    if not datasets:
+                        continue
 
-                datasets = loaded if isinstance(loaded, list) else [loaded]
-                if not datasets:
-                    continue
-
-                if should_overwrite_existing:
-                    removed = self._remove_datasets_for_source_file(path)
-                    self._log_panel.log(
-                        f"Updated file {path} (replaced {removed} existing dataset(s))."
-                    )
-
-                for dataset in datasets:
-                    # Offer to apply field extracted from comment when available.
-                    apply_choice = self._maybe_apply_comment_field(
-                        dataset,
-                        path,
-                        apply_comment_field_to_all,
-                    )
-                    if apply_choice == "cancel":
-                        self._log_panel.log("File loading cancelled by user")
-                        break
-                    if apply_choice == "yes_to_all":
-                        apply_comment_field_to_all = True
-
-                    if auto_grouping_payload is not None:
-                        auto_grouping_attempts += 1
-                        grouping_payload = dict(auto_grouping_payload)
-                        # good_frames and its period companions are measured
-                        # per-run normalisers; they must come from each dataset's
-                        # own loader metadata, never be inherited from the
-                        # template run, or the dead-time correction diverges.
-                        for per_run_key in self._PER_RUN_NORMALISER_KEYS:
-                            grouping_payload.pop(per_run_key, None)
-                        active_axis = None
-                        if hasattr(self._plot_panel, "get_current_polarization_axis"):
-                            active_axis = self._normalize_vector_axis(
-                                self._plot_panel.get_current_polarization_axis()
-                            )
-                        if active_axis in {"P_x", "P_y", "P_z"}:
-                            grouping_payload["vector_axis"] = active_axis
-
-                        applied, _ = self._apply_grouping_settings_to_dataset(
-                            dataset, grouping_payload
+                    if should_overwrite_existing:
+                        removed = self._remove_datasets_for_source_file(path)
+                        self._log_panel.log(
+                            f"Updated file {path} (replaced {removed} existing dataset(s))."
                         )
-                        if applied:
-                            auto_grouping_applied += 1
 
-                    self._data_browser.add_dataset(dataset)
-                    if dataset:
-                        last_dataset = dataset
-                        successful += 1
-                else:
-                    self._log_panel.log(f"Loaded {path}", tag="load")
-                    continue
+                    for dataset in datasets:
+                        # Offer to apply field extracted from comment when available.
+                        apply_choice = self._maybe_apply_comment_field(
+                            dataset,
+                            path,
+                            apply_comment_field_to_all,
+                        )
+                        if apply_choice == "cancel":
+                            self._log_panel.log("File loading cancelled by user")
+                            break
+                        if apply_choice == "yes_to_all":
+                            apply_comment_field_to_all = True
 
-                break
-            except Exception as e:
-                self._log_panel.log(f"ERROR loading {path}: {e}")
-                failed += 1
+                        if auto_grouping_payload is not None:
+                            auto_grouping_attempts += 1
+                            grouping_payload = dict(auto_grouping_payload)
+                            # good_frames and its period companions are measured
+                            # per-run normalisers; they must come from each dataset's
+                            # own loader metadata, never be inherited from the
+                            # template run, or the dead-time correction diverges.
+                            for per_run_key in self._PER_RUN_NORMALISER_KEYS:
+                                grouping_payload.pop(per_run_key, None)
+                            active_axis = None
+                            if hasattr(self._plot_panel, "get_current_polarization_axis"):
+                                active_axis = self._normalize_vector_axis(
+                                    self._plot_panel.get_current_polarization_axis()
+                                )
+                            if active_axis in {"P_x", "P_y", "P_z"}:
+                                grouping_payload["vector_axis"] = active_axis
+
+                            applied, _ = self._apply_grouping_settings_to_dataset(
+                                dataset, grouping_payload
+                            )
+                            if applied:
+                                auto_grouping_applied += 1
+
+                        self._data_browser.add_dataset(dataset)
+                        if dataset:
+                            last_dataset = dataset
+                            successful += 1
+                    else:
+                        self._log_panel.log(f"Loaded {path}", tag="load")
+                        continue
+
+                    break
+                except Exception as e:
+                    self._log_panel.log(f"ERROR loading {path}: {e}")
+                    failed += 1
 
         # Select the last successfully loaded run in the browser: this drives
         # the standard selection pipeline (_on_dataset_selected), which stores
@@ -8812,113 +8823,122 @@ class MainWindow(QMainWindow):
 
         # ── load source files ──────────────────────────────────────────
         loaded_file_cache: dict[str, object] = {}
-        for ds_info in datasets_info:
-            rn = ds_info.get("run_number")
-            source_file = ds_info.get("source_file", "")
-            if not source_file:
-                self._log_panel.log(f"WARNING: Run {rn} has no source file; skipping.")
-                continue
-
-            resolved = resolved_paths.get(rn)
-            if not resolved:
-                self._log_panel.log(f"WARNING: Source file not found: {source_file}; skipping.")
-                continue
-
-            try:
-                if resolved in loaded_file_cache:
-                    loaded_obj = loaded_file_cache[resolved]
-                else:
-                    loaded_obj = self._load_file(resolved)
-                    loaded_file_cache[resolved] = loaded_obj
-
-                if loaded_obj is None:
-                    continue
-
-                candidates = loaded_obj if isinstance(loaded_obj, list) else [loaded_obj]
-                dataset = None
-                for cand in candidates:
-                    if cand is None:
-                        continue
-                    try:
-                        if int(cand.run_number) == int(rn):
-                            dataset = cand
-                            break
-                    except (TypeError, ValueError):
-                        continue
-                if dataset is None and len(candidates) == 1:
-                    dataset = candidates[0]
-
-                # A period-mapped dataset is saved as {run_number: combined N,
-                # source_file: the multi-period file}, but a 3+-period file
-                # reloads as per-period siblings numbered by the loader's own
-                # scheme — none match N, so the entry was being silently
-                # dropped. Rebuild the combined dataset from the persisted
-                # period_mapping (combine_mapped_periods reproduces exactly what
-                # "Map periods…" built originally).
-                if dataset is None:
-                    overrides = ds_info.get("grouping_overrides")
-                    persisted_mapping = (
-                        overrides.get("period_mapping") if isinstance(overrides, dict) else None
-                    )
-                    period_candidates = [cand for cand in candidates if cand is not None]
-                    if persisted_mapping and len(period_candidates) >= 2:
-                        try:
-                            dataset = combine_mapped_periods(
-                                period_candidates,
-                                persisted_mapping,
-                                source_run_number=int(rn),
-                                source_file=resolved,
-                            )
-                        except (ValueError, TypeError) as exc:
-                            self._log_panel.log(
-                                f"WARNING: Run {rn} period mapping could not be rebuilt: {exc}"
-                            )
-
-                if dataset is None:
-                    self._log_panel.log(
-                        f"WARNING: Run {rn} not found in loaded file {source_file}; skipping."
-                    )
-                    continue
-                if int(dataset.run_number) in loaded_run_numbers:
-                    continue
-
-                # Apply saved metadata overrides without prompting.
-                for key, val in ds_info.get("metadata_overrides", {}).items():
-                    dataset.metadata[key] = val
-                    if dataset.run:
-                        dataset.run.metadata[key] = val
-
-                grouping_overrides = ds_info.get("grouping_overrides")
-                if isinstance(grouping_overrides, dict):
-                    self._apply_grouping_settings_to_dataset(dataset, grouping_overrides)
-
-                self._data_browser.add_dataset(dataset)
-                loaded_run_numbers.add(dataset.run_number)
-            except Exception as e:
-                self._log_panel.log(f"ERROR loading {source_file}: {e}")
-
-        # ── recreate combined datasets ─────────────────────────────────
-        # Map saved combined IDs to restored IDs so selection can be adjusted.
         combined_id_map: dict[int, int] = {}
-        for combined_info in state.get("combined_datasets", []):
-            old_id = combined_info.get("combined_run_number")
-            src_runs = combined_info.get("source_run_numbers", [])
-            sign = -1 if combined_info.get("operation") == "subtract_reference" else 1
-            if all(rn in loaded_run_numbers for rn in src_runs):
-                new_id = self._data_browser.add_combined_dataset(src_runs, sign=sign)
-                if new_id is not None and old_id is not None:
-                    combined_id_map[int(old_id)] = new_id
-                elif new_id is None:
+        with self._browser_batch():
+            for ds_info in datasets_info:
+                rn = ds_info.get("run_number")
+                source_file = ds_info.get("source_file", "")
+                if not source_file:
+                    self._log_panel.log(f"WARNING: Run {rn} has no source file; skipping.")
+                    continue
+
+                resolved = resolved_paths.get(rn)
+                if not resolved:
                     self._log_panel.log(
-                        f"WARNING: Could not recreate combined dataset {src_runs}; "
-                        "the source runs are no longer compatible (e.g. missing histograms)."
+                        f"WARNING: Source file not found: {source_file}; skipping."
                     )
-            else:
-                missing = [rn for rn in src_runs if rn not in loaded_run_numbers]
-                self._log_panel.log(
-                    f"WARNING: Could not recreate combined dataset "
-                    f"{src_runs}; missing runs: {missing}"
-                )
+                    continue
+
+                try:
+                    if resolved in loaded_file_cache:
+                        loaded_obj = loaded_file_cache[resolved]
+                    else:
+                        loaded_obj = self._load_file(resolved)
+                        loaded_file_cache[resolved] = loaded_obj
+
+                    if loaded_obj is None:
+                        continue
+
+                    candidates = loaded_obj if isinstance(loaded_obj, list) else [loaded_obj]
+                    dataset = None
+                    for cand in candidates:
+                        if cand is None:
+                            continue
+                        try:
+                            if int(cand.run_number) == int(rn):
+                                dataset = cand
+                                break
+                        except (TypeError, ValueError):
+                            continue
+                    if dataset is None and len(candidates) == 1:
+                        dataset = candidates[0]
+
+                    # A period-mapped dataset is saved as {run_number: combined N,
+                    # source_file: the multi-period file}, but a 3+-period file
+                    # reloads as per-period siblings numbered by the loader's own
+                    # scheme — none match N, so the entry was being silently
+                    # dropped. Rebuild the combined dataset from the persisted
+                    # period_mapping (combine_mapped_periods reproduces exactly what
+                    # "Map periods…" built originally).
+                    if dataset is None:
+                        overrides = ds_info.get("grouping_overrides")
+                        persisted_mapping = (
+                            overrides.get("period_mapping")
+                            if isinstance(overrides, dict)
+                            else None
+                        )
+                        period_candidates = [cand for cand in candidates if cand is not None]
+                        if persisted_mapping and len(period_candidates) >= 2:
+                            try:
+                                dataset = combine_mapped_periods(
+                                    period_candidates,
+                                    persisted_mapping,
+                                    source_run_number=int(rn),
+                                    source_file=resolved,
+                                )
+                            except (ValueError, TypeError) as exc:
+                                self._log_panel.log(
+                                    f"WARNING: Run {rn} period mapping could not be "
+                                    f"rebuilt: {exc}"
+                                )
+
+                    if dataset is None:
+                        self._log_panel.log(
+                            f"WARNING: Run {rn} not found in loaded file {source_file}; "
+                            "skipping."
+                        )
+                        continue
+                    if int(dataset.run_number) in loaded_run_numbers:
+                        continue
+
+                    # Apply saved metadata overrides without prompting.
+                    for key, val in ds_info.get("metadata_overrides", {}).items():
+                        dataset.metadata[key] = val
+                        if dataset.run:
+                            dataset.run.metadata[key] = val
+
+                    grouping_overrides = ds_info.get("grouping_overrides")
+                    if isinstance(grouping_overrides, dict):
+                        self._apply_grouping_settings_to_dataset(dataset, grouping_overrides)
+
+                    self._data_browser.add_dataset(dataset)
+                    loaded_run_numbers.add(dataset.run_number)
+                except Exception as e:
+                    self._log_panel.log(f"ERROR loading {source_file}: {e}")
+
+            # ── recreate combined datasets ─────────────────────────────
+            # Map saved combined IDs to restored IDs so selection can be
+            # adjusted.
+            for combined_info in state.get("combined_datasets", []):
+                old_id = combined_info.get("combined_run_number")
+                src_runs = combined_info.get("source_run_numbers", [])
+                sign = -1 if combined_info.get("operation") == "subtract_reference" else 1
+                if all(rn in loaded_run_numbers for rn in src_runs):
+                    new_id = self._data_browser.add_combined_dataset(src_runs, sign=sign)
+                    if new_id is not None and old_id is not None:
+                        combined_id_map[int(old_id)] = new_id
+                    elif new_id is None:
+                        self._log_panel.log(
+                            f"WARNING: Could not recreate combined dataset {src_runs}; "
+                            "the source runs are no longer compatible "
+                            "(e.g. missing histograms)."
+                        )
+                else:
+                    missing = [rn for rn in src_runs if rn not in loaded_run_numbers]
+                    self._log_panel.log(
+                        f"WARNING: Could not recreate combined dataset "
+                        f"{src_runs}; missing runs: {missing}"
+                    )
 
         # ── fix up browser state: remap old combined IDs ───────────────
         browser_state = dict(state.get("browser_state", {}))
