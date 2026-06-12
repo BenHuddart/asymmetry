@@ -24,7 +24,9 @@ from PySide6.QtGui import QBrush, QColor, QFont, QFontMetrics, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDialog,
+    QDialogButtonBox,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -425,6 +427,9 @@ class DataBrowserPanel(QWidget):
         self._datasets: dict[int, MuonDataset] = {}
         self._combined_datasets: dict[int, list[int]] = {}
         self._combined_source_datasets: dict[int, list[MuonDataset]] = {}
+        # Combine sign per combined id: +1 co-add (default), -1 reference
+        # subtraction. Absent ⇒ co-add, so existing projects are unaffected.
+        self._combined_signs: dict[int, int] = {}
         self._next_combined_id = -1
 
         self._groups: dict[str, DataGroup] = {}
@@ -869,7 +874,7 @@ class DataBrowserPanel(QWidget):
         meta = dataset.metadata
         run_display = str(dataset.run_label)
         if rn in self._combined_datasets:
-            run_display = " + ".join(map(str, self._combined_datasets[rn]))
+            run_display = self._combined_run_display(rn)
         if indent:
             run_display = f"    {run_display}"
 
@@ -1614,6 +1619,16 @@ class DataBrowserPanel(QWidget):
         """Return all datasets currently present in the browser."""
         return list(self._datasets.values())
 
+    def _combined_run_display(self, run_number: int) -> str:
+        """Source-number label for a combined row, with the operator separator.
+
+        Co-add rows join with ``" + "``; reference-subtraction rows with
+        ``" − "`` (sample − reference).
+        """
+        sources = self._combined_datasets.get(run_number, [])
+        separator = " − " if self._combined_signs.get(run_number, 1) == -1 else " + "
+        return separator.join(map(str, sources))
+
     def is_combined_dataset(self, run_number: int) -> bool:
         """Return ``True`` when *run_number* refers to a combined row."""
         try:
@@ -1646,8 +1661,13 @@ class DataBrowserPanel(QWidget):
         )
         from asymmetry.core.data.combine import CombineError
 
+        builder = (
+            self._subtract_datasets
+            if self._combined_signs.get(combined_rn, 1) == -1
+            else self._coadd_datasets
+        )
         try:
-            rebuilt = self._coadd_datasets(
+            rebuilt = builder(
                 source_datasets,
                 source_run_numbers,
                 combined_run_number=combined_rn,
@@ -1971,7 +1991,7 @@ class DataBrowserPanel(QWidget):
         meta = dataset.metadata
         run_display = str(dataset.run_label)
         if run_number in self._combined_datasets:
-            run_display = " + ".join(map(str, self._combined_datasets[run_number]))
+            run_display = self._combined_run_display(run_number)
 
         row = [
             run_display,
@@ -2028,6 +2048,7 @@ class DataBrowserPanel(QWidget):
         self._datasets.pop(run_number, None)
         self._combined_datasets.pop(run_number, None)
         self._combined_source_datasets.pop(run_number, None)
+        self._combined_signs.pop(run_number, None)
         self._temperature_from_log_overrides.pop(int(run_number), None)
 
         gid = self._run_to_group.get(run_number)
@@ -2093,6 +2114,11 @@ class DataBrowserPanel(QWidget):
                     "Degrade Statistics…",
                     lambda rn=selected_run: self._on_degrade_statistics(rn),
                 )
+                if self._reference_subtraction_candidates(selected_run):
+                    menu.addAction(
+                        "Subtract Reference Run…",
+                        lambda rn=selected_run: self._subtract_reference_run(rn),
+                    )
 
         if combined_runs:
             menu.addAction("Separate Combined", self._separate_combined)
@@ -2602,6 +2628,96 @@ class DataBrowserPanel(QWidget):
         self._display_order.insert(insert_index, combined_rn)
         self._rebuild_table()
 
+    def _subtract_reference_run(self, sample_rn: int) -> None:
+        """Subtract a chosen reference run from *sample_rn* (study RA3/RA4).
+
+        Opens a picker of the other loaded runs; the difference becomes a new
+        combined row (sample − reference) hiding both constituents, restorable
+        with "Separate Combined".
+        """
+        sample = self._datasets.get(sample_rn)
+        if sample is None or sample.run is None or not sample.run.histograms:
+            return
+
+        candidates = self._reference_subtraction_candidates(sample_rn)
+        if not candidates:
+            QMessageBox.information(
+                self,
+                "Subtract Reference Run",
+                "Load another run (with histograms) to subtract as a reference.",
+            )
+            return
+
+        reference_rn = self._prompt_reference_run(sample_rn, candidates)
+        if reference_rn is None:
+            return
+
+        from asymmetry.core.data.combine import CombineError
+
+        run_numbers = [int(sample_rn), int(reference_rn)]
+        source_datasets = [self._datasets[sample_rn], self._datasets[reference_rn]]
+        insert_index = self._display_index_for_run(sample_rn)
+        combined_rn = self._next_combined_id
+        try:
+            combined_dataset = self._subtract_datasets(
+                source_datasets,
+                run_numbers,
+                combined_run_number=combined_rn,
+            )
+        except CombineError as exc:
+            QMessageBox.warning(self, "Cannot Subtract Reference Run", str(exc))
+            return
+
+        self._next_combined_id -= 1
+        self._datasets[combined_rn] = combined_dataset
+        self._combined_datasets[combined_rn] = run_numbers
+        self._combined_source_datasets[combined_rn] = source_datasets
+        self._combined_signs[combined_rn] = -1
+
+        for rn in run_numbers:
+            self._remove_run_number(rn)
+
+        self._display_order.insert(insert_index, combined_rn)
+        self._rebuild_table()
+
+    def _reference_subtraction_candidates(self, sample_rn: int) -> list[int]:
+        """Loaded, non-combined runs (with histograms) usable as a reference."""
+        return [
+            rn
+            for rn in self._datasets
+            if rn != sample_rn
+            and rn not in self._combined_datasets
+            and self._datasets[rn].run is not None
+            and self._datasets[rn].run.histograms
+        ]
+
+    def _prompt_reference_run(self, sample_rn: int, candidates: list[int]) -> int | None:
+        """Modal picker returning the chosen reference run number (or None)."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Subtract Reference Run")
+        layout = QVBoxLayout(dialog)
+        sample_label = self._datasets[sample_rn].run_label
+        layout.addWidget(
+            QLabel(
+                f"Subtract a frame-scaled reference run from run {sample_label}.\n"
+                "Counts are subtracted bin-by-bin; errors add in quadrature."
+            )
+        )
+        combo = QComboBox(dialog)
+        for rn in candidates:
+            combo.addItem(self._datasets[rn].run_label, rn)
+        layout.addWidget(combo)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return int(combo.currentData())
+
     def _coadd_datasets(
         self,
         datasets: list[MuonDataset],
@@ -2618,15 +2734,83 @@ class DataBrowserPanel(QWidget):
         count-fitted and transformed like any run. Combined results change
         numerically — this is the correctness fix (study RA1/RA2/RA8).
         """
-        from dataclasses import replace
-
         from asymmetry.core.data.combine import combine_runs, reduce_combined_run
 
-        # The dataset metadata is the browser's source of truth for the
-        # displayed scalars (it carries field overrides, etc., that may not be
-        # on run.metadata). Merge them onto a shallow run copy — sharing
-        # histograms/grouping, which combine_runs never mutates — so the
-        # event-weighted T/field reflect what the browser shows.
+        runs = self._runs_for_combine(datasets)
+        combined_run = combine_runs(
+            runs,
+            sign=1,
+            run_number=combined_run_number,
+            label=" + ".join(map(str, run_numbers)),
+        )
+        reduced = reduce_combined_run(combined_run)
+        return self._store_combined_reduction(reduced, existing_dataset)
+
+    def _subtract_datasets(
+        self,
+        datasets: list[MuonDataset],
+        run_numbers: list[int],
+        *,
+        combined_run_number: int,
+        existing_dataset: MuonDataset | None = None,
+    ) -> MuonDataset:
+        """Subtract a frame-scaled reference run from a sample (study RA3/RA4).
+
+        ``datasets`` is ``[sample, reference]``. The reference is resolved and
+        frame-scaled through the single reference-run home
+        (:func:`asymmetry.core.io.resolve_background_reference`, F9) and the
+        per-detector arithmetic runs through ``subtract_scaled_counts`` inside
+        ``combine_runs`` — no parallel subtraction path.
+        """
+        from asymmetry.core.data.combine import combine_runs, reduce_combined_run
+        from asymmetry.core.io import resolve_background_reference
+        from asymmetry.core.transform.grouping import good_frames
+
+        runs = self._runs_for_combine(datasets)
+        sample_run, reference_run = runs
+        sample_frames = good_frames(sample_run.grouping, 0.0) or None
+        # Route reference resolution + frame scale through the shared home so a
+        # reference subtraction uses exactly the background path's exposure
+        # scale (sample/reference good frames).
+        payload = {
+            "run_number": int(reference_run.run_number),
+            "source_file": reference_run.source_file,
+            "good_frames_reference": good_frames(reference_run.grouping, 0.0) or None,
+        }
+        try:
+            resolved = resolve_background_reference(
+                payload,
+                sample_good_frames=sample_frames,
+                datasets=[datasets[1]],
+            )
+            scale = float(resolved.scale)
+        except (ValueError, OSError):
+            # Fall back to the direct frame ratio when resolution is unavailable
+            # (both runs are already in hand, so this is always computable).
+            ref_frames = good_frames(reference_run.grouping, 0.0)
+            scale = (sample_frames / ref_frames) if (sample_frames and ref_frames) else 1.0
+
+        combined_run = combine_runs(
+            runs,
+            sign=-1,
+            scales=[1.0, scale],
+            run_number=combined_run_number,
+            label=" − ".join(map(str, run_numbers)),
+        )
+        reduced = reduce_combined_run(combined_run)
+        return self._store_combined_reduction(reduced, existing_dataset)
+
+    def _runs_for_combine(self, datasets: list[MuonDataset]) -> list:
+        """Shallow run copies whose metadata reflects the browser's scalars.
+
+        The dataset metadata is the browser's source of truth for the displayed
+        scalars (field overrides, etc., that may not be on ``run.metadata``).
+        Merge them onto a shallow run copy — sharing histograms/grouping, which
+        ``combine_runs`` never mutates — so the event-weighted T/field reflect
+        what the browser shows.
+        """
+        from dataclasses import replace
+
         runs = []
         for ds in datasets:
             if ds.run is None:
@@ -2636,14 +2820,7 @@ class DataBrowserPanel(QWidget):
                 if key in ds.metadata:
                     merged[key] = ds.metadata[key]
             runs.append(replace(ds.run, metadata=merged))
-        combined_run = combine_runs(
-            runs,
-            sign=1,
-            run_number=combined_run_number,
-            label=" + ".join(map(str, run_numbers)),
-        )
-        reduced = reduce_combined_run(combined_run)
-        return self._store_combined_reduction(reduced, existing_dataset)
+        return runs
 
     def _store_combined_reduction(
         self,
@@ -2681,6 +2858,7 @@ class DataBrowserPanel(QWidget):
             self._datasets.pop(rn, None)
             self._combined_datasets.pop(rn, None)
             self._combined_source_datasets.pop(rn, None)
+            self._combined_signs.pop(rn, None)
             if group is not None:
                 try:
                     member_index = group.member_run_numbers.index(rn)
@@ -2718,6 +2896,7 @@ class DataBrowserPanel(QWidget):
         self._datasets.clear()
         self._combined_datasets.clear()
         self._combined_source_datasets.clear()
+        self._combined_signs.clear()
         self._next_combined_id = -1
         self._groups.clear()
         self._run_to_group.clear()
@@ -2734,7 +2913,16 @@ class DataBrowserPanel(QWidget):
         self._refresh_column_headers()
         self._table.setRowCount(0)
 
-    def add_combined_dataset(self, source_run_numbers: list[int]) -> int | None:
+    def add_combined_dataset(
+        self, source_run_numbers: list[int], *, sign: int = 1
+    ) -> int | None:
+        """Recreate a combined row programmatically (``.asymp`` load).
+
+        ``sign=+1`` co-adds; ``sign=-1`` subtracts the second source (reference)
+        from the first (sample). Co-add requires identical grouping; a reference
+        subtraction only needs the count-level invariants (combine_runs checks
+        them), so the stricter grouping gate is skipped for it.
+        """
         datasets_to_combine = []
         for rn in source_run_numbers:
             ds = self._datasets.get(rn)
@@ -2745,16 +2933,20 @@ class DataBrowserPanel(QWidget):
         if len(datasets_to_combine) < 2:
             return None
 
-        incompatibility = self._coadd_compatibility_error(datasets_to_combine)
-        if incompatibility is not None:
+        if sign == 1:
+            incompatibility = self._coadd_compatibility_error(datasets_to_combine)
+            if incompatibility is not None:
+                return None
+        elif len(datasets_to_combine) != 2:
             return None
 
         from asymmetry.core.data.combine import CombineError
 
+        builder = self._subtract_datasets if sign == -1 else self._coadd_datasets
         combined_rn = self._next_combined_id
         source_datasets = [self._datasets[rn] for rn in source_run_numbers if rn in self._datasets]
         try:
-            combined_dataset = self._coadd_datasets(
+            combined_dataset = builder(
                 source_datasets,
                 source_run_numbers,
                 combined_run_number=combined_rn,
@@ -2766,6 +2958,8 @@ class DataBrowserPanel(QWidget):
         self._datasets[combined_rn] = combined_dataset
         self._combined_datasets[combined_rn] = source_run_numbers
         self._combined_source_datasets[combined_rn] = source_datasets
+        if sign == -1:
+            self._combined_signs[combined_rn] = -1
 
         insert_index = min(self._display_index_for_run(rn) for rn in source_run_numbers)
         for rn in source_run_numbers:
