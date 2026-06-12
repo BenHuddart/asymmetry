@@ -1,6 +1,8 @@
 # Python user functions
 
-**Status:** candidate.
+**Status:** candidate — **promoted to a full study**, see
+`docs/porting/python-user-functions/` (this folder is retained for scoring
+history; the study supersedes its technical content).
 
 ## What
 

@@ -285,22 +285,25 @@
     },
     {
       "slug": "python-user-functions",
-      "feature_name": "Python user-function plugins (decorator-based)",
-      "status": "candidate",
-      "tier": "next",
-      "score": 12,
-      "path": "docs/porting/candidates/python-user-functions",
+      "feature_name": "Python user functions (registration facade + discovery, replacing WiMDA plugin DLLs)",
+      "status": "study",
+      "path": "docs/porting/python-user-functions",
       "references": [
-        "musrfit",
         "WiMDA",
+        "musrfit",
         "Mantid"
       ],
       "docs": {
-        "readme": "docs/porting/candidates/python-user-functions/README.md",
-        "comparison": "docs/porting/candidates/python-user-functions/comparison.md",
-        "scoring": "docs/porting/candidates/python-user-functions/scoring.md"
+        "readme": "docs/porting/python-user-functions/README.md",
+        "comparison": "docs/porting/python-user-functions/comparison.md",
+        "implementation_options": "docs/porting/python-user-functions/implementation-options.md",
+        "test_data": "docs/porting/python-user-functions/test-data.md",
+        "verification_plan": "docs/porting/python-user-functions/verification-plan.md"
       },
-      "updated": "2026-05-23"
+      "updated": "2026-06-12",
+      "tests_path": null,
+      "src_path": null,
+      "notes": "Wave B project of wimda-parity-gap; promoted from candidate (candidate docs retained at docs/porting/candidates/python-user-functions-candidate for scoring history). N4 registry-naming formalisation lands here per reconciliation-study §5."
     },
     {
       "slug": "moments-analysis",
@@ -789,6 +792,26 @@
       "src_path": null,
       "updated": "2026-06-12",
       "notes": "Wave B. Absorbs the minos-error-analysis candidate. MINOS=display-only overlay (additive FitResult.minos_errors + 'uncertainties_asymmetric' summary key; downstream surfaces stay symmetric HESSE by design). One shared engine.py drive helper (migrad + opt-in MINOS; explicit HESSE only pre-MINOS on simplex since migrad already runs HESSE) from all three minimiser sites (FitEngine.fit, global_fit, count_domain._solve). fit_quality already an EXACT WiMDA port (chi2.cdf==Gammp); wired through result_summary + every surface (W7 'quality' key), R fixed 0.95. Chain-seeding ('chain from previous run', distinct from warm_start_source) passes through normalize_to_grouped_contract (W5); Auto order-key default. Abort mirrors MaxEnt contract: core cancel_callback + FitCancelledError, in-fit raise + between-member checks, nothing recorded on abort (W6). FitLog REFRAMED (Ben 2026-06-12): no append-file; .asymp already stores latest-fit-per-dataset (FitSlot.result) + latest batch (FitSeries.results_by_run) = WiMDA's overwrite .fit/.bfit snapshots; enrich those records additively + Qt-free fit_log.py formatter + on-demand export only (W14). Follow-ons: in-batch co-add, fgAll Poisson cost-factory unification, provenance keys at recording sites, worker mixin."
+    },
+    {
+      "slug": "python-user-functions-candidate",
+      "feature_name": "Python user-function plugins (decorator-based)",
+      "status": "candidate",
+      "tier": "next",
+      "score": 12,
+      "path": "docs/porting/candidates/python-user-functions-candidate",
+      "references": [
+        "musrfit",
+        "WiMDA",
+        "Mantid"
+      ],
+      "docs": {
+        "readme": "docs/porting/candidates/python-user-functions-candidate/README.md",
+        "comparison": "docs/porting/candidates/python-user-functions-candidate/comparison.md",
+        "scoring": "docs/porting/candidates/python-user-functions-candidate/scoring.md"
+      },
+      "updated": "2026-06-12",
+      "notes": "Promoted to full study: see slug 'python-user-functions' (docs/porting/python-user-functions). Candidate docs retained for scoring history; the study supersedes their technical content."
     }
   ]
 }
