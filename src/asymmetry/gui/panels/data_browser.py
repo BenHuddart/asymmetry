@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import header_font
@@ -1644,12 +1644,19 @@ class DataBrowserPanel(QWidget):
             combined_rn,
             [int(ds.run_number) for ds in source_datasets],
         )
-        rebuilt = self._coadd_datasets(
-            source_datasets,
-            source_run_numbers,
-            combined_run_number=combined_rn,
-            existing_dataset=self._datasets.get(combined_rn),
-        )
+        from asymmetry.core.data.combine import CombineError
+
+        try:
+            rebuilt = self._coadd_datasets(
+                source_datasets,
+                source_run_numbers,
+                combined_run_number=combined_rn,
+                existing_dataset=self._datasets.get(combined_rn),
+            )
+        except CombineError:
+            # Source runs no longer combine (e.g. histograms unavailable after a
+            # partial reload); leave the existing combined row untouched.
+            return None
         self._datasets[combined_rn] = rebuilt
         return rebuilt
 
@@ -2569,16 +2576,22 @@ class DataBrowserPanel(QWidget):
             QMessageBox.warning(self, "Cannot Co-add Selected Datasets", incompatibility)
             return
 
+        from asymmetry.core.data.combine import CombineError
+
         insert_index = min(self._display_index_for_run(rn) for rn in run_numbers)
         combined_rn = self._next_combined_id
-        self._next_combined_id -= 1
         source_datasets = [self._datasets[rn] for rn in run_numbers if rn in self._datasets]
-        combined_dataset = self._coadd_datasets(
-            source_datasets,
-            run_numbers,
-            combined_run_number=combined_rn,
-        )
+        try:
+            combined_dataset = self._coadd_datasets(
+                source_datasets,
+                run_numbers,
+                combined_run_number=combined_rn,
+            )
+        except CombineError as exc:
+            QMessageBox.warning(self, "Cannot Co-add Selected Datasets", str(exc))
+            return
 
+        self._next_combined_id -= 1
         self._datasets[combined_rn] = combined_dataset
         self._combined_datasets[combined_rn] = list(run_numbers)
         self._combined_source_datasets[combined_rn] = source_datasets
@@ -2597,65 +2610,61 @@ class DataBrowserPanel(QWidget):
         combined_run_number: int,
         existing_dataset: MuonDataset | None = None,
     ) -> MuonDataset:
-        time_grid = datasets[0].time
+        """Co-add source datasets at the raw-count level via ``combine_runs``.
 
-        asymmetries = []
-        errors_squared = []
+        Replaces the former curve-mean co-add (statistically wrong at low
+        counts, and it discarded histograms). The combined dataset now carries
+        real summed histograms, so it can be regrouped, deadtime-corrected,
+        count-fitted and transformed like any run. Combined results change
+        numerically — this is the correctness fix (study RA1/RA2/RA8).
+        """
+        from dataclasses import replace
 
-        for dataset in datasets:
-            if np.array_equal(dataset.time, time_grid):
-                asymmetries.append(dataset.asymmetry)
-                errors_squared.append(dataset.error**2)
-            else:
-                interp_asymmetry = np.interp(time_grid, dataset.time, dataset.asymmetry)
-                interp_error = np.interp(time_grid, dataset.time, dataset.error)
-                asymmetries.append(interp_asymmetry)
-                errors_squared.append(interp_error**2)
+        from asymmetry.core.data.combine import combine_runs, reduce_combined_run
 
-        combined_asymmetry = np.mean(asymmetries, axis=0)
-        combined_error = np.sqrt(np.sum(errors_squared, axis=0)) / len(datasets)
-
-        titles = [str(d.metadata.get("title", "")).strip() for d in datasets]
-        non_empty_titles = [t for t in titles if t]
-        if non_empty_titles and all(t == non_empty_titles[0] for t in non_empty_titles):
-            combined_title = non_empty_titles[0]
-        else:
-            combined_title = f"Combined {len(datasets)} runs"
-
-        metadata = {
-            "title": combined_title,
-            "temperature": np.mean([d.metadata.get("temperature", 0) for d in datasets]),
-            "field": np.mean([d.metadata.get("field", 0) for d in datasets]),
-            "run_number": combined_run_number,
-            "run_label": " + ".join(map(str, run_numbers)),
-            "combined_from": list(run_numbers),
-        }
-        mirrored_grouping = self._mirrored_grouping_for_combined_dataset(datasets[0])
-        run = Run(
+        # The dataset metadata is the browser's source of truth for the
+        # displayed scalars (it carries field overrides, etc., that may not be
+        # on run.metadata). Merge them onto a shallow run copy — sharing
+        # histograms/grouping, which combine_runs never mutates — so the
+        # event-weighted T/field reflect what the browser shows.
+        runs = []
+        for ds in datasets:
+            if ds.run is None:
+                continue
+            merged = dict(ds.run.metadata)
+            for key in ("temperature", "field", "title"):
+                if key in ds.metadata:
+                    merged[key] = ds.metadata[key]
+            runs.append(replace(ds.run, metadata=merged))
+        combined_run = combine_runs(
+            runs,
+            sign=1,
             run_number=combined_run_number,
-            histograms=[],
-            metadata=dict(metadata),
-            grouping=mirrored_grouping,
-            source_file="",
+            label=" + ".join(map(str, run_numbers)),
         )
+        reduced = reduce_combined_run(combined_run)
+        return self._store_combined_reduction(reduced, existing_dataset)
 
-        if existing_dataset is not None:
-            existing_dataset.time = time_grid.copy()
-            existing_dataset.asymmetry = combined_asymmetry
-            existing_dataset.error = combined_error
-            existing_dataset.metadata = metadata
-            existing_dataset.run = run
-            if hasattr(existing_dataset, "_grouping_source_arrays_cache"):
-                delattr(existing_dataset, "_grouping_source_arrays_cache")
-            return existing_dataset
+    def _store_combined_reduction(
+        self,
+        reduced: MuonDataset,
+        existing_dataset: MuonDataset | None,
+    ) -> MuonDataset:
+        """Place a freshly reduced combined dataset, reusing ``existing_dataset``.
 
-        return MuonDataset(
-            time=time_grid.copy(),
-            asymmetry=combined_asymmetry,
-            error=combined_error,
-            metadata=metadata,
-            run=run,
-        )
+        Rebuild paths (``.asymp`` load, regroup) hold a reference to the
+        combined dataset; mutate it in place so those references stay valid.
+        """
+        if existing_dataset is None:
+            return reduced
+        existing_dataset.time = reduced.time
+        existing_dataset.asymmetry = reduced.asymmetry
+        existing_dataset.error = reduced.error
+        existing_dataset.metadata = reduced.metadata
+        existing_dataset.run = reduced.run
+        if hasattr(existing_dataset, "_grouping_source_arrays_cache"):
+            delattr(existing_dataset, "_grouping_source_arrays_cache")
+        return existing_dataset
 
     def _separate_combined(self) -> None:
         run_numbers = self._get_selected_run_numbers()
@@ -2740,15 +2749,20 @@ class DataBrowserPanel(QWidget):
         if incompatibility is not None:
             return None
 
-        combined_rn = self._next_combined_id
-        self._next_combined_id -= 1
-        source_datasets = [self._datasets[rn] for rn in source_run_numbers if rn in self._datasets]
-        combined_dataset = self._coadd_datasets(
-            source_datasets,
-            source_run_numbers,
-            combined_run_number=combined_rn,
-        )
+        from asymmetry.core.data.combine import CombineError
 
+        combined_rn = self._next_combined_id
+        source_datasets = [self._datasets[rn] for rn in source_run_numbers if rn in self._datasets]
+        try:
+            combined_dataset = self._coadd_datasets(
+                source_datasets,
+                source_run_numbers,
+                combined_run_number=combined_rn,
+            )
+        except CombineError:
+            return None
+
+        self._next_combined_id -= 1
         self._datasets[combined_rn] = combined_dataset
         self._combined_datasets[combined_rn] = source_run_numbers
         self._combined_source_datasets[combined_rn] = source_datasets
