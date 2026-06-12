@@ -24,6 +24,7 @@ extensions = [
 
 templates_path = ['_templates']
 exclude_patterns = ['_build', '_generated', 'Thumbs.db', '.DS_Store']
+html_css_files = ['custom.css']
 
 # -- Options for HTML output -------------------------------------------------
 html_theme = 'sphinx_rtd_theme'
