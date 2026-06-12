@@ -294,14 +294,8 @@ def test_context_menu_shows_separate_for_combined_dataset(qapp: QApplication) ->
     )
     panel._coadd_selected()
 
-    # Select the combined dataset row
-    for row in range(panel._table.rowCount()):
-        item = panel._table.item(row, 0)
-        if item:
-            rn = item.data(Qt.ItemDataRole.UserRole)
-            if rn in panel._combined_datasets:
-                panel._table.selectRow(row)
-                break
+    combined_rn = next(iter(panel._combined_datasets))
+    panel.select_runs({combined_rn})
 
     menu = panel._create_table_context_menu()
 
@@ -688,8 +682,8 @@ def test_separate_inserts_at_combined_dataset_position(qapp: QApplication) -> No
     panel._coadd_selected()
 
     # Now we should have: combined (row 0), d3 (row 1)
-    # Select the combined dataset
-    panel._table.selectRow(0)
+    combined_rn = next(iter(panel._combined_datasets))
+    panel.select_runs({combined_rn})
     panel._separate_combined()
 
     # After separation, we should have: d1 (row 0), d2 (row 1), d3 (row 2)
