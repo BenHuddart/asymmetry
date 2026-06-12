@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset
 from asymmetry.core.fitting import (
+    FitLog,
     as_composite_model,
     build_grouped_time_domain_datasets,
     fit_result_summary,
@@ -644,6 +645,22 @@ class MainWindow(QMainWindow):
             self._on_global_parameter_fit,
         )
         self._update_global_parameter_fit_menu_style(False)
+
+        # Batch-series seeding mode (chain-from-previous for scans). "Auto" picks
+        # per the order key; the others force a mode. All reach fit_grouped_series.
+        seeding_menu = analysis_menu.addMenu("Batch seeding")
+        self._batch_seeding_group = QActionGroup(self)
+        for label, mode in (
+            ("Auto", "auto"),
+            ("Independent seeds", "as_provided"),
+            ("Chain from previous run", "chain"),
+        ):
+            action = seeding_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(mode == "auto")
+            action.triggered.connect(lambda _checked, m=mode: self._on_set_batch_seeding(m))
+            self._batch_seeding_group.addAction(action)
+        analysis_menu.addAction("Export fit report…", self._on_export_fit_report)
 
         # View
         view_menu = mb.addMenu("&View")
@@ -3946,6 +3963,53 @@ class MainWindow(QMainWindow):
             self._log_panel.log("Opened Multi-Group Fit panel")
             return
         self._log_panel.log("Opened Fit panel")
+
+    def _on_set_batch_seeding(self, mode: str) -> None:
+        """Apply the chosen batch-series seeding mode to the fit panel."""
+        self._fit_panel.set_batch_seeding_mode(mode)
+        labels = {"auto": "Auto", "as_provided": "Independent seeds", "chain": "Chain from previous run"}
+        self._log_panel.log(f"Batch seeding: {labels.get(mode, mode)}", tag="fit")
+
+    def _collect_latest_fit_records(self) -> list[tuple[str, dict]]:
+        """Gather (title, record) for every persisted latest fit in the project.
+
+        Each ``record`` is the enriched ``fit_result_summary`` dict already stored on
+        a representation's :class:`FitSlot` (the structured ``.fit`` snapshot) — the
+        same provenance that rides into ``.asymp``.
+        """
+        records: list[tuple[str, dict]] = []
+        for run_number, container in sorted(self._project_model.datasets.items()):
+            for rep_type, representation in container.by_type.items():
+                slot = getattr(representation, "fit", None)
+                result = getattr(slot, "result", None) if slot is not None else None
+                if isinstance(result, dict) and result.get("parameters"):
+                    rep_label = getattr(rep_type, "value", str(rep_type))
+                    records.append((f"Run {run_number} · {rep_label}", result))
+        return records
+
+    def _on_export_fit_report(self) -> None:
+        """Write a human-readable report of every dataset's latest fit to a file."""
+        records = self._collect_latest_fit_records()
+        if not records:
+            self._log_panel.log("No fits to export.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export fit report", "fit_report.txt", "Text files (*.txt);;All files (*)"
+        )
+        if not path:
+            return
+        titles = [title for title, _ in records]
+        report = FitLog().format_report(
+            [record for _, record in records],
+            header=f"Asymmetry fit report — {len(records)} fit(s)",
+            titles=titles,
+        )
+        try:
+            Path(path).write_text(report, encoding="utf-8")
+        except OSError as exc:
+            self._log_panel.log(f"ERROR writing fit report: {exc}")
+            return
+        self._log_panel.log(f"Exported fit report ({len(records)} fits) to {path}", tag="fit")
 
     def _should_launch_multi_group_fit_window(self) -> bool:
         """Return True when Fit should open the multi-group fit window."""

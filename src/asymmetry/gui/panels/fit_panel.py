@@ -5977,6 +5977,10 @@ class FitPanel(QWidget):
 
         layout.addWidget(self._tabs)
 
+    def set_batch_seeding_mode(self, mode: str) -> None:
+        """Forward the batch-series seeding mode to the Batch tab."""
+        self._global_tab.set_batch_seeding_mode(mode)
+
     def domain(self) -> str:
         """Return the current fitting domain."""
         return self._domain
