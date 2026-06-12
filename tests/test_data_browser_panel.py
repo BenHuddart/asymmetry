@@ -1547,3 +1547,68 @@ def test_restore_state_migrates_legacy_column_indices(qapp: QApplication) -> Non
     panel.restore_state({"column_layout": 2, "sort_column": 4, "filters": {"4": ["rod"]}})
     assert panel._column_filters == {4: {"rod"}}
     assert panel._current_sort_column == 4
+
+
+# ── Column fit-to-viewport (option C) ────────────────────────────────────────
+
+
+def _fill_panel(panel: DataBrowserPanel, *, width: int = 330) -> None:
+    panel.resize(width, 600)
+    panel.show()
+    QApplication.processEvents()
+    for rn in (785401, 785402, 785403):
+        ds = _dataset(rn)
+        ds.metadata["title"] = f"YBCO #B12 run {rn}"
+        ds.metadata["comment"] = "TF 100G"
+        # The module helper derives huge T/B values from the run number,
+        # which would max out those columns and (correctly) trigger the
+        # honest-overflow stand-down; use realistic values here.
+        ds.metadata["temperature"] = 10.0
+        ds.metadata["field"] = 100.0
+        panel.add_dataset(ds)
+    QApplication.processEvents()
+
+
+def test_columns_fill_viewport_exactly_on_load(qapp: QApplication) -> None:
+    """Default load: the base columns sum to the viewport — no scrollbar."""
+    panel = DataBrowserPanel()
+    _fill_panel(panel)
+    header = panel._table.horizontalHeader()
+    total = sum(header.sectionSize(i) for i in range(panel._table.columnCount()))
+    assert total == panel._table.viewport().width()
+    assert panel._table.horizontalScrollBar().maximum() == 0
+    # Run is sized for six digits, not the old 72px floor.
+    assert header.sectionSize(0) <= 66
+    panel.close()
+
+
+def test_user_column_drag_stops_the_auto_fit(qapp: QApplication) -> None:
+    """The first manual edge drag latches; later loads keep the user layout."""
+    panel = DataBrowserPanel()
+    _fill_panel(panel)
+    header = panel._table.horizontalHeader()
+    # An unguarded resize is indistinguishable from a user drag.
+    header.resizeSection(1, 99)
+    assert panel._user_sized_columns
+    panel.add_dataset(_dataset(785409))
+    QApplication.processEvents()
+    assert header.sectionSize(1) == 99
+    panel.close()
+
+
+def test_overflowing_extra_columns_fall_back_to_honest_scrolling(
+    qapp: QApplication,
+) -> None:
+    """When extras leave Title below its readable floor, the fit stands down:
+    the table overflows into a scrollbar and Title keeps a usable width."""
+    panel = DataBrowserPanel()
+    _fill_panel(panel)
+    for key in ("instrument", "started", "stopped"):
+        panel.add_extra_column(key)
+    QApplication.processEvents()
+    header = panel._table.horizontalHeader()
+    assert not panel._user_sized_columns  # extras must not trip the latch
+    assert header.sectionSize(1) >= panel._TITLE_FIT_FLOOR
+    total = sum(header.sectionSize(i) for i in range(panel._table.columnCount()))
+    assert total > panel._table.viewport().width()
+    panel.close()

@@ -439,6 +439,12 @@ class DataBrowserPanel(QWidget):
         self._current_sort_order: Qt.SortOrder = Qt.SortOrder.AscendingOrder
         self._selection_anchor_row: int | None = None
         self._updating_table = False
+        #: True while OUR code resizes columns, so the user-takeover latch
+        #: below ignores programmatic section resizes.
+        self._auto_sizing_columns = False
+        #: Set the first time the user drags a column edge; from then on the
+        #: auto-fit stands down for the session and never fights their layout.
+        self._user_sized_columns = False
         #: Run numbers to tint as "series members" (set by the trend panel).
         self._highlighted_runs: set[int] = set()
         #: Run numbers handed out for synthetic/degraded runs not yet added.
@@ -459,10 +465,13 @@ class DataBrowserPanel(QWidget):
 
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.resizeSection(0, 86)
+        header.resizeSection(0, 62)  # run numbers are at most six digits
         header.resizeSection(1, 200)
         header.resizeSection(2, 52)
         header.resizeSection(3, 52)
+        # The user-takeover latch: any section resize not made by our own
+        # auto-fit (or a table rebuild) counts as the user taking control.
+        header.sectionResized.connect(self._on_section_resized)
         self._table.setSortingEnabled(False)
         # The indicator appears once the user actually sorts (see _sort_table);
         # the design-handoff header row has no arrow at rest.
@@ -1047,32 +1056,102 @@ class DataBrowserPanel(QWidget):
         self._two_line_height_cache = (font_key, height)
         return height
 
-    def _resize_columns_to_content(self) -> None:
-        self._table.resizeColumnsToContents()
-        header = self._table.horizontalHeader()
-        minimums = {0: 72, 1: 145, 2: 48, 3: 48}
-        maximums = {0: 150, 1: 320, 2: 76, 3: 76}
-        for col, min_width in minimums.items():
-            size = header.sectionSize(col)
-            if size < min_width:
-                header.resizeSection(col, min_width)
-            elif size > maximums[col]:
-                header.resizeSection(col, maximums[col])
+    #: Below this, forcing the fit would make Title unreadable — let the
+    #: horizontal scrollbar appear honestly instead (extra-column overflow).
+    _TITLE_FIT_FLOOR = 120
 
-        for col in range(len(self._COLUMNS), self._table.columnCount()):
-            size = header.sectionSize(col)
-            if size < 120:
-                header.resizeSection(col, 120)
-            elif size > 320:
-                header.resizeSection(col, 320)
+    def _resize_columns_to_content(self) -> None:
+        """Content-size and clamp the columns, then fit Title to the viewport.
+
+        Stands down permanently once the user has dragged a column edge
+        (_user_sized_columns), so their layout is never stomped by a load.
+        """
+        if self._user_sized_columns:
+            return
+        self._auto_sizing_columns = True
+        try:
+            self._table.resizeColumnsToContents()
+            header = self._table.horizontalHeader()
+            minimums = {0: 56, 1: 145, 2: 48, 3: 48}
+            maximums = {0: 150, 1: 320, 2: 76, 3: 76}
+            for col, min_width in minimums.items():
+                size = header.sectionSize(col)
+                if size < min_width:
+                    header.resizeSection(col, min_width)
+                elif size > maximums[col]:
+                    header.resizeSection(col, maximums[col])
+
+            for col in range(len(self._COLUMNS), self._table.columnCount()):
+                size = header.sectionSize(col)
+                if size < 120:
+                    header.resizeSection(col, 120)
+                elif size > 320:
+                    header.resizeSection(col, 320)
+
+            self._fit_title_column()
+        finally:
+            self._auto_sizing_columns = False
+
+    def _fit_title_column(self) -> None:
+        """Stretch Title so the columns exactly fill the viewport.
+
+        Skipped when that would squeeze Title below _TITLE_FIT_FLOOR (e.g.
+        several extra metadata columns): the table then overflows honestly
+        into a horizontal scrollbar and Title stays at its content width —
+        and, unlike a Qt Stretch section, remains user-draggable throughout.
+        """
+        header = self._table.horizontalHeader()
+        viewport_width = self._table.viewport().width()
+        if viewport_width <= 0:
+            return
+        others = sum(
+            header.sectionSize(col)
+            for col in range(self._table.columnCount())
+            if col != _TITLE_COLUMN
+        )
+        available = viewport_width - others
+        if available >= self._TITLE_FIT_FLOOR:
+            header.resizeSection(_TITLE_COLUMN, available)
+
+    def _on_section_resized(self, *_args) -> None:
+        """Latch user column drags (programmatic resizes are flag-guarded)."""
+        if not self._auto_sizing_columns and not self._updating_table:
+            self._user_sized_columns = True
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        """Keep the columns filling the panel as the dock is resized.
+
+        Deferred one event-loop turn: the table's viewport geometry settles
+        via the layout pass *after* this event, so an immediate fit would
+        read the previous width.
+        """
+        super().resizeEvent(event)
+        if not self._user_sized_columns:
+            QTimer.singleShot(0, self._fit_title_column_auto)
+
+    def _fit_title_column_auto(self) -> None:
+        """Flag-guarded fit used by the deferred resize hook."""
+        if self._user_sized_columns:
+            return
+        self._auto_sizing_columns = True
+        try:
+            self._fit_title_column()
+        finally:
+            self._auto_sizing_columns = False
 
     def _refresh_column_headers(self) -> None:
         """Apply base and dynamic column labels to the table header."""
         labels = list(self._COLUMNS) + [
             self._extra_column_header(key) for key in self._visible_extra_columns()
         ]
-        self._table.setColumnCount(len(labels))
-        self._table.setHorizontalHeaderLabels(labels)
+        # Column-count changes can emit section-resize signals for the new
+        # sections; those are ours, not the user's (see _on_section_resized).
+        self._auto_sizing_columns = True
+        try:
+            self._table.setColumnCount(len(labels))
+            self._table.setHorizontalHeaderLabels(labels)
+        finally:
+            self._auto_sizing_columns = False
         # Numeric headers right-align over their right-aligned cells (T, B).
         for col in (2, 3):
             item = self._table.horizontalHeaderItem(col)
