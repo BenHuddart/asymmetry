@@ -84,6 +84,13 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, ParamInfo, get_param_info
 from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.core.fitting.rrf_offset import (
+    RRF_ROTATION_COMPONENTS,
+    UnsupportedRRFComponentError,
+    apply_rrf_offsets,
+    rrf_frequency_offsets,
+    rrf_offset_model,
+)
 from asymmetry.core.fitting.spectral import (
     FREQUENCY_COMPONENT_NAMES,
     append_frequency_field_derived_parameters,
@@ -98,6 +105,11 @@ __all__ = [
     "FitResult",
     "FitCancelledError",
     "drive_minuit",
+    "RRF_ROTATION_COMPONENTS",
+    "UnsupportedRRFComponentError",
+    "apply_rrf_offsets",
+    "rrf_frequency_offsets",
+    "rrf_offset_model",
     "SelectionMetric",
     "SpectrumFingerprint",
     "CandidateTemplate",

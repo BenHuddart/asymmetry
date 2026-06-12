@@ -64,6 +64,12 @@ from asymmetry.core.transform.rebin import (
     rebin,
     resolve_binning_mode,
 )
+from asymmetry.core.transform.rrf import (
+    RRFCurve,
+    default_bandwidth_mhz,
+    rrf_demodulate,
+    rrf_demodulate_values,
+)
 from asymmetry.core.transform.t0 import (
     RunT0Search,
     T0Estimate,
@@ -105,6 +111,10 @@ __all__ = [
     "FieldScan",
     "FieldScanPoint",
     "rebin",
+    "RRFCurve",
+    "default_bandwidth_mhz",
+    "rrf_demodulate",
+    "rrf_demodulate_values",
     "ALPHA_ESTIMATION_METHODS",
     "AlphaEstimate",
     "estimate_alpha_detailed",

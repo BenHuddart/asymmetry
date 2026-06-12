@@ -281,7 +281,8 @@
         "comparison": "docs/porting/candidates/rrf-transform/comparison.md",
         "scoring": "docs/porting/candidates/rrf-transform/scoring.md"
       },
-      "updated": "2026-05-23"
+      "updated": "2026-06-12",
+      "notes": "Promoted to full study: see slug 'rrf' (docs/porting/rrf). Candidate docs retained for scoring history; the study supersedes their technical content."
     },
     {
       "slug": "python-user-functions",
@@ -789,6 +790,31 @@
       "src_path": null,
       "updated": "2026-06-12",
       "notes": "Wave B. Absorbs the minos-error-analysis candidate. MINOS=display-only overlay (additive FitResult.minos_errors + 'uncertainties_asymmetric' summary key; downstream surfaces stay symmetric HESSE by design). One shared engine.py drive helper (migrad + opt-in MINOS; explicit HESSE only pre-MINOS on simplex since migrad already runs HESSE) from all three minimiser sites (FitEngine.fit, global_fit, count_domain._solve). fit_quality already an EXACT WiMDA port (chi2.cdf==Gammp); wired through result_summary + every surface (W7 'quality' key), R fixed 0.95. Chain-seeding ('chain from previous run', distinct from warm_start_source) passes through normalize_to_grouped_contract (W5); Auto order-key default. Abort mirrors MaxEnt contract: core cancel_callback + FitCancelledError, in-fit raise + between-member checks, nothing recorded on abort (W6). FitLog REFRAMED (Ben 2026-06-12): no append-file; .asymp already stores latest-fit-per-dataset (FitSlot.result) + latest batch (FitSeries.results_by_run) = WiMDA's overwrite .fit/.bfit snapshots; enrich those records additively + Qt-free fit_log.py formatter + on-demand export only (W14). Follow-ons: in-batch co-add, fgAll Poisson cost-factory unification, provenance keys at recording sites, worker mixin."
+    },
+    {
+      "slug": "rrf",
+      "feature_name": "Rotating-reference-frame display and fitting (WiMDA RRF + complex-demodulation upgrade)",
+      "status": "implemented",
+      "path": "docs/porting/rrf",
+      "references": [
+        "WiMDA",
+        "musrfit",
+        "Mantid",
+        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)",
+        "Riseman & Brewer, Hyperfine Interact. 65, 1107 (1991)",
+        "Rainford, in Muon Science (CRC Press, 1999)"
+      ],
+      "docs": {
+        "readme": "docs/porting/rrf/README.md",
+        "comparison": "docs/porting/rrf/comparison.md",
+        "implementation_options": "docs/porting/rrf/implementation-options.md",
+        "test_data": "docs/porting/rrf/test-data.md",
+        "verification_plan": "docs/porting/rrf/verification-plan.md"
+      },
+      "updated": "2026-06-12",
+      "notes": "Promotion of the rrf-transform candidate via the wimda-parity-gap umbrella (Wave B project 10). Verified vs WiMDA Pascal (PlotPar.pas RRF controls 427-475; Plot.pas 2cos+box demod 1652-1695, single-group variant 1712-1727, 2pi/deg conversions 2532-2536; Analyse.pas MusrFun shift 1124-1140 + AsymFitFunction.pas 440-470; dofit raw-data assembly 805-867), Mantid RRFMuon (exact quadrature rotation oracle), musrfit PRunAsymmetryRRF (2cos + packing). Display = complex demodulation + windowed-sinc FIR (WiMDA 2cos+box as named comparison mode; 2w-image suppression is the headline divergence); fitting = core-only frequency-offset CompositeModel wrapper on raw data (textbook: RRF is a visualization tool, not a fit preprocessor). Controls only on fb_asymmetry view; plot_state['rrf'] additive, no schema bump. IMPLEMENTED: core/transform/rrf.py (Blackman FIR, sampling-aware default bandwidth ducking the folded 2nu0 image; exact error propagation; WiMDA mode bin-for-bin vs Pascal loop) + core/fitting/rrf_offset.py (registry+wrapper, delta-nu semantics, fit-equivalence proven, engine-level frequency_offset flagged follow-up) + gui/widgets/rrf_controls.py (one-line panel hook, display-only transform, frame badge, plot_state['rrf']) + corpus smoke on HAL-9500 8T kappa-ET (F2/F7 near-opposite pair; group-sum washout documented) + user_guide/rotating_frame.rst. validate green 2632.",
+      "tests_path": "tests/test_rrf_transform.py",
+      "src_path": "src/asymmetry/core/transform/rrf.py"
     },
     {
       "slug": "run-arithmetic",
