@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import csv
 import json
 import sys
@@ -1803,14 +1802,6 @@ class DataBrowserPanel(QWidget):
                 "Align groups, alpha, good-bin limits, bunching, and deadtime settings first."
             )
         return None
-
-    def _mirrored_grouping_for_combined_dataset(self, dataset: MuonDataset) -> dict:
-        """Return grouping metadata mirrored onto a combined dataset."""
-        run = getattr(dataset, "run", None)
-        grouping = getattr(run, "grouping", None)
-        if not isinstance(grouping, dict):
-            return {}
-        return copy.deepcopy(grouping)
 
     def export_logbook_tsv(self, path: str) -> int:
         """Export all runs to tab-separated text using current columns/grouping.

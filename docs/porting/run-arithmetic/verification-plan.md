@@ -46,4 +46,23 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python tools/harness.py test -- tests/test_d
 - Symmetric two-run / N-run signed co-subtract (decision 1).
 - In-batch co-add during sequential fitting (fit-workflow-diagnostics).
 - Co-subtract across multi-period runs beyond the reference-run case.
+
+### From the high-effort code review (deferred, not churned)
+
+- **Unify the t0-shift loop.** `combine._aligned_detector_arrays` (across runs,
+  one detector) and `grouping.apply_grouping_aligned` (across detectors, one
+  run) share the same front-pad-to-common-t0 algorithm on different axes.
+  Extracting one `_shift_arrays_to_common_t0(arrays, t0s)` helper would remove
+  the duplication; deferred because the axes differ and unifying touches a
+  hot, widely-used grouping helper. The fixed code-review items (latent
+  subtract-variance scaling, orphaned `_mirrored_grouping_for_combined_dataset`,
+  load-time recreate warning, unreachable shift branch) were applied.
+- **Period-frame helpers.** `combine._accumulate_period_good_frames`
+  (element-wise sum of `period_good_frames` across runs) and
+  `periods._sum_period_good_frames` (sum of `good_frames` over chosen period
+  indices) solve related-but-distinct problems; left separate with this note.
+- **Co-add `scales`.** The public `combine_runs` accepts per-run `scales` but
+  the co-add exposure and period paths assume unit scales (the only values the
+  GUI passes). Scaled co-add is not a supported surface; recorded here rather
+  than wired through.
 </content>

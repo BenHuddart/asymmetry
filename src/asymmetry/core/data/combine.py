@@ -292,8 +292,9 @@ def _aligned_detector_arrays(
     common_t0 = max(0, max(int(t) for t in t0s))
     shifted: list[NDArray[np.float64]] = []
     for arr, t0 in zip(counts, t0s, strict=True):
+        # common_t0 is the maximum, so offset is always >= 0 (front zero-pad).
         offset = common_t0 - int(t0)
-        if offset <= 0:
+        if offset == 0:
             shifted.append(np.asarray(arr, dtype=np.float64).copy())
         else:
             out = np.zeros(len(arr) + offset, dtype=np.float64)
@@ -330,10 +331,13 @@ def _combine_histograms_subtract(
     Returns the difference histograms, the per-detector variances (error²) so
     the reduction can propagate them, and the count of negative difference bins
     (the unphysical-counts guard, RA5). ``runs`` is ``[sample, reference]``; the
-    reference scale is ``scales[1]`` (the sample keeps ``scales[0]``).
+    reference scale is ``scales[1]``. The sample is taken at unit scale (a
+    reference subtraction is ``sample − scale·reference``, so ``scales[0]`` is
+    1.0 by contract and recorded for provenance only); passing it through the
+    chokepoint's variance term would give the wrong, linear-in-scale variance.
     """
     sample, reference = runs
-    sample_scale, reference_scale = scales
+    reference_scale = scales[1]
     n_detectors = len(sample.histograms)
     out: list[Histogram] = []
     variances: list[NDArray[np.float64]] = []
@@ -346,9 +350,9 @@ def _combine_histograms_subtract(
         t0s = [int(sample.histograms[det].t0_bin), int(reference.histograms[det].t0_bin)]
         (s_counts, r_counts), common_t0 = _aligned_detector_arrays(arrays, t0s)
         # subtract_scaled_counts is the single count-level subtraction seam
-        # (F9): difference = sample_scale·sample − reference_scale·reference,
+        # (F9): difference = sample − reference_scale·reference,
         # variance = sample + reference_scale²·reference.
-        diff, error = subtract_scaled_counts(sample_scale * s_counts, r_counts, reference_scale)
+        diff, error = subtract_scaled_counts(s_counts, r_counts, reference_scale)
         negative_bins += int(np.count_nonzero(diff < 0.0))
         out.append(_clone_geometry(sample.histograms[det], diff, common_t0))
         variances.append(error * error)

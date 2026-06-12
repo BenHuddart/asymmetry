@@ -8876,6 +8876,11 @@ class MainWindow(QMainWindow):
                 new_id = self._data_browser.add_combined_dataset(src_runs, sign=sign)
                 if new_id is not None and old_id is not None:
                     combined_id_map[int(old_id)] = new_id
+                elif new_id is None:
+                    self._log_panel.log(
+                        f"WARNING: Could not recreate combined dataset {src_runs}; "
+                        "the source runs are no longer compatible (e.g. missing histograms)."
+                    )
             else:
                 missing = [rn for rn in src_runs if rn not in loaded_run_numbers]
                 self._log_panel.log(
