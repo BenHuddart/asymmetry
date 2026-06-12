@@ -99,6 +99,7 @@ from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.widgets import (
     RESULTS_GROUP_SUCCESS_STYLE,
     apply_param_table_style,
+    build_primary_button_qss,
     configure_formula_label,
     error_html,
     success_html,
@@ -685,7 +686,7 @@ def _apply_domain_mismatch_warning(label: QLabel, model: CompositeModel, domain:
     foreign_names = sorted(
         component.name for component in model.components if component.domain != domain
     )
-    label.setStyleSheet("color: #A44A00; font-weight: bold;")
+    label.setStyleSheet(f"color: {tokens.WARN}; font-weight: bold;")
     label.setText("\u26a0 " + label.text())
     label.setToolTip(
         f"This model contains {'/'.join(sorted(foreign))}-domain component(s) "
@@ -1110,6 +1111,7 @@ class SingleFitTab(QWidget):
         btn_layout.setHorizontalSpacing(6)
         btn_layout.setVerticalSpacing(6)
         self._fit_btn = QPushButton("Fit")
+        self._fit_btn.setStyleSheet(build_primary_button_qss())
         self._fit_btn.clicked.connect(self._run_fit)
         self._reset_btn = QPushButton("Reset")
         self._reset_btn.clicked.connect(self._reset_parameters)
@@ -2225,6 +2227,7 @@ class GlobalFitTab(QWidget):
         # Fit button
         btn_layout = QHBoxLayout()
         self._fit_btn = QPushButton("Run Batch Fit")
+        self._fit_btn.setStyleSheet(build_primary_button_qss())
         self._fit_btn.clicked.connect(self._run_global_fit)
         self._fit_btn.setEnabled(False)
         btn_layout.addWidget(self._fit_btn)

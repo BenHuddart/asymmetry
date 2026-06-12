@@ -32,6 +32,29 @@ def mono_font(point_size: float = 11.0, weight: QFont.Weight = QFont.Weight.Norm
     return font
 
 
+_MPL_FONTS_REGISTERED = False
+
+
+def register_matplotlib_fonts() -> None:
+    """Register the bundled IBM Plex Mono TTFs with matplotlib's font manager.
+
+    Truly idempotent (module-level once-guard — ``addfont`` itself appends
+    duplicate entries) and Qt-free, so plot-styling helpers can call it on
+    every use: tick/legend text resolves the face even when a figure is
+    created without the full application startup (tests, scripts).
+    """
+    global _MPL_FONTS_REGISTERED
+    if _MPL_FONTS_REGISTERED:
+        return
+    try:
+        from matplotlib import font_manager
+    except ImportError:
+        return
+    for ttf in sorted(_FONTS_DIR.glob("IBMPlexMono-*.ttf")):
+        font_manager.fontManager.addfont(str(ttf))
+    _MPL_FONTS_REGISTERED = True
+
+
 def configure_plot_fonts() -> None:
     """Configure matplotlib rcParams to match the BENCH UI font stack.
 
@@ -47,13 +70,12 @@ def configure_plot_fonts() -> None:
     """
     try:
         import matplotlib as mpl
-        from matplotlib import font_manager
     except ImportError:
         return
 
-    # Register IBM Plex Mono with matplotlib so it resolves by name.
-    for ttf in sorted(_FONTS_DIR.glob("IBMPlexMono-*.ttf")):
-        font_manager.fontManager.addfont(str(ttf))
+    register_matplotlib_fonts()
+
+    from asymmetry.gui.styles import tokens
 
     mpl.rcParams.update(
         {
@@ -62,12 +84,20 @@ def configure_plot_fonts() -> None:
             # Italic symbols inside $...$ use a sans-serif math set so they
             # blend with surrounding roman label text.
             "mathtext.fontset": "dejavusans",
-            # Base sizes matching the BENCH type scale.
+            # Sizes/colours matching the design-handoff plot grammar (the
+            # per-axes treatment in styles/plots.py sets the same values
+            # explicitly; these cover text created outside style_axes).
             "font.size": 11,
-            "axes.labelsize": 11,
-            "xtick.labelsize": 10,
-            "ytick.labelsize": 10,
-            "legend.fontsize": 10,
-            "axes.titlesize": 11,
+            "axes.labelsize": 10,
+            "axes.labelcolor": tokens.PLOT_TICK_LABEL,
+            "xtick.labelsize": 9,
+            "ytick.labelsize": 9,
+            "xtick.color": tokens.PLOT_TICK_MARK,
+            "ytick.color": tokens.PLOT_TICK_MARK,
+            "xtick.labelcolor": tokens.PLOT_TICK_LABEL,
+            "ytick.labelcolor": tokens.PLOT_TICK_LABEL,
+            "legend.fontsize": 9,
+            "axes.titlesize": 10,
+            "axes.titlecolor": tokens.TEXT,
         }
     )

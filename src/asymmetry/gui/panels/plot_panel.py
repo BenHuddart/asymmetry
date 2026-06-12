@@ -64,7 +64,13 @@ from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.plots import draw_fit_range_span, style_axes, style_figure, style_legend
+from asymmetry.gui.styles.plots import (
+    draw_fit_range_span,
+    draw_zero_line,
+    style_axes,
+    style_figure,
+    style_legend,
+)
 from asymmetry.gui.styles.widgets import build_nav_button_qss
 
 # Metadata fields available for dataset labelling in the legend.
@@ -78,6 +84,7 @@ _LABEL_FIELDS: list[tuple[str, str]] = [
 _TIME_VIEW_FIELDS: list[tuple[str, str]] = [
     ("FB Asymmetry", "fb_asymmetry"),
     ("Individual Groups", "groups"),
+    ("Raw Counts", "raw_counts"),
 ]
 
 #: Map the frequency plot panel's x-unit tokens to ``core.fourier.units`` units.
@@ -439,8 +446,11 @@ class PlotPanel(QWidget):
         # ── Row 1: frequency-specific controls (surfaceAlt tinted second row) ──
         if self._is_frequency_plot_panel():
             row1_widget = QWidget()
+            row1_widget.setObjectName("plotFrequencyRow")
+            # Scope to the container: a bare QWidget selector would cascade
+            # the border/background onto every child label and combo.
             row1_widget.setStyleSheet(
-                f"QWidget {{ background-color: {tokens.SURFACE_ALT};"
+                f"QWidget#plotFrequencyRow {{ background-color: {tokens.SURFACE_ALT};"
                 f" border-top: 1px solid {tokens.BORDER}; }}"
             )
             row1 = QHBoxLayout(row1_widget)
@@ -490,8 +500,9 @@ class PlotPanel(QWidget):
     def _create_plot_header(self) -> QWidget:
         """Return the title strip shown above the canvas."""
         widget = QWidget()
+        widget.setObjectName("plotHeaderStrip")
         widget.setStyleSheet(
-            f"QWidget {{ background-color: {tokens.SURFACE_ALT};"
+            f"QWidget#plotHeaderStrip {{ background-color: {tokens.SURFACE_ALT};"
             f" border-bottom: 1px solid {tokens.BORDER}; }}"
         )
         row = QHBoxLayout(widget)
@@ -503,7 +514,7 @@ class PlotPanel(QWidget):
         title_font.setPointSizeF(11.0)
         title_font.setWeight(title_font.Weight.DemiBold)
         self._header_title_label.setFont(title_font)
-        self._header_title_label.setStyleSheet(f"color: {tokens.TEXT}; border: none;")
+        self._header_title_label.setStyleSheet(f"color: {tokens.TEXT};")
         row.addWidget(self._header_title_label, 1)
 
         self._header_meta_label = QLabel()
@@ -511,7 +522,7 @@ class PlotPanel(QWidget):
         self._header_meta_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-        self._header_meta_label.setStyleSheet(f"color: {tokens.TEXT_MUTED}; border: none;")
+        self._header_meta_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         row.addWidget(self._header_meta_label)
 
         self._update_plot_header()
@@ -520,8 +531,9 @@ class PlotPanel(QWidget):
     def _create_plot_footer(self) -> QWidget:
         """Return the control bar shown below the canvas."""
         widget = QWidget()
+        widget.setObjectName("plotFooterStrip")
         widget.setStyleSheet(
-            f"QWidget {{ background-color: {tokens.SURFACE_ALT};"
+            f"QWidget#plotFooterStrip {{ background-color: {tokens.SURFACE_ALT};"
             f" border-top: 1px solid {tokens.BORDER}; }}"
         )
         row = QHBoxLayout(widget)
@@ -562,6 +574,9 @@ class PlotPanel(QWidget):
             multi_suffix = "runs overlaid"
         elif getattr(self, "_current_time_view_mode", "fb_asymmetry") == "groups":
             domain = "Grouped time-domain"
+            multi_suffix = "runs"
+        elif getattr(self, "_current_time_view_mode", "fb_asymmetry") == "raw_counts":
+            domain = "Raw counts"
             multi_suffix = "runs"
         else:
             domain = "Time-domain F-B asymmetry"
@@ -1264,10 +1279,17 @@ class PlotPanel(QWidget):
         self._redraw_current_view()
 
     def _normalize_time_view_mode(self, mode: object) -> str:
-        """Normalize a stored time-view token to a supported internal key."""
+        """Normalize a stored time-view token to a supported internal key.
+
+        The integral-scan representation plots the F-B asymmetry (with the
+        fit-range acting as the integration window), so it maps onto the
+        ``fb_asymmetry`` plot mode.
+        """
         token = str(mode or "").strip().lower().replace(" ", "_")
         if token in {"groups", "group", "individual_groups", "grouped", "grouped_counts"}:
             return "groups"
+        if token in {"raw_counts", "raw", "raw_count"}:
+            return "raw_counts"
         return "fb_asymmetry"
 
     def _time_view_display_text(self, mode: str) -> str:
@@ -1884,6 +1906,19 @@ class PlotPanel(QWidget):
         axis_key = self._axis_key_for_dataset(dataset, axis_override=axis_override)
         return run_number, axis_key
 
+    @staticmethod
+    def _is_raw_counts_dataset(dataset: MuonDataset | None) -> bool:
+        """True for grouped datasets built without lifetime correction.
+
+        Stored grouped/count fit overlays are on the lifetime-corrected scale,
+        so they must not be drawn against raw-count curves (they diverge by
+        e^(t/τ), ~38× at 8 μs).
+        """
+        return (
+            dataset is not None
+            and dataset.metadata.get("grouped_time_domain_lifetime_corrected") is False
+        )
+
     def _fit_curve_for_dataset(
         self,
         dataset: MuonDataset | None,
@@ -1891,6 +1926,8 @@ class PlotPanel(QWidget):
         axis_override: str | None = None,
     ) -> tuple | None:
         """Return best-matching fit curve payload for *dataset*."""
+        if self._is_raw_counts_dataset(dataset):
+            return None
         storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
         if storage_key is not None:
             fit_data = self._fit_curves_by_key.get(storage_key)
@@ -1926,6 +1963,8 @@ class PlotPanel(QWidget):
         axis_override: str | None = None,
     ) -> list[tuple[str, object]]:
         """Return best-matching additive component curves for *dataset*."""
+        if self._is_raw_counts_dataset(dataset):
+            return []
         storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
         if storage_key is not None:
             components = self._fit_components_by_key.get(storage_key)
@@ -2178,6 +2217,9 @@ class PlotPanel(QWidget):
         self, ax, datasets: list[MuonDataset], axis_key: str | None
     ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
         """Plot one or more datasets on ``ax`` and return flattened arrays for auto-y."""
+        # Handoff plot grammar: y = 0 reference line under the data (it is
+        # excluded from autoscaling, so positive-only data never stretches).
+        draw_zero_line(ax)
         all_times: list[np.ndarray] = []
         all_asym: list[np.ndarray] = []
         all_err: list[np.ndarray] = []
@@ -2377,7 +2419,12 @@ class PlotPanel(QWidget):
         ordered_keys: list[str] = []
         grouped_x_ranges: list[tuple[float, float]] = []
         for idx, dataset in enumerate(datasets):
+            # Raw and corrected builds share synthetic run numbers but live on
+            # very different y scales; qualify the key so pinned y-limits from
+            # one mode are not applied to the other.
             axis_key = str(dataset.run_number)
+            if self._is_raw_counts_dataset(dataset):
+                axis_key += ":raw"
             ordered_keys.append(axis_key)
             ax = self._figure.add_subplot(len(datasets), 1, idx + 1, sharex=shared_ax)
             style_axes(ax)
@@ -2780,6 +2827,7 @@ class PlotPanel(QWidget):
         self._set_frequency_reference_from_dataset(datasets[0])
         self._ax.clear()
         style_axes(self._ax)
+        draw_zero_line(self._ax)
 
         all_times: list[np.ndarray] = []
         all_asym: list[np.ndarray] = []
@@ -3036,6 +3084,7 @@ class PlotPanel(QWidget):
 
         self._ax.clear()
         style_axes(self._ax)
+        draw_zero_line(self._ax)
 
         finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
         valid_low = finite_mask & low_count_mask

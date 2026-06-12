@@ -167,15 +167,17 @@ def _create_splash_screen(app, logo=None):
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QColor, QPainter, QPixmap
         from PySide6.QtWidgets import QSplashScreen
+
+        from asymmetry.gui.styles import tokens
     except (ImportError, ModuleNotFoundError):
         return None
 
     canvas = QPixmap(420, 300)
-    canvas.fill(QColor("#f8fafc"))
+    canvas.fill(QColor(tokens.BG))
 
     painter = QPainter(canvas)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.setPen(QColor("#cbd5e1"))
+    painter.setPen(QColor(tokens.BORDER))
     painter.drawRect(0, 0, canvas.width() - 1, canvas.height() - 1)
 
     if logo is not None:
@@ -192,13 +194,13 @@ def _create_splash_screen(app, logo=None):
     font.setPointSize(24)
     font.setBold(True)
     painter.setFont(font)
-    painter.setPen(QColor("#0f172a"))
+    painter.setPen(QColor(tokens.TEXT))
     painter.drawText(0, 205, canvas.width(), 34, Qt.AlignmentFlag.AlignHCenter, "Asymmetry")
 
     font.setPointSize(10)
     font.setBold(False)
     painter.setFont(font)
-    painter.setPen(QColor("#475569"))
+    painter.setPen(QColor(tokens.TEXT_MUTED))
     painter.drawText(
         0,
         246,
@@ -247,6 +249,10 @@ def main() -> None:
         _install_smoke_qt_message_filter()
 
     app = QApplication(sys.argv)
+
+    from asymmetry.gui.styles.palette import apply_bench_style
+
+    apply_bench_style(app)
 
     startup_pixmap = _load_startup_pixmap("logo_256x256.png")
     if startup_pixmap is None:

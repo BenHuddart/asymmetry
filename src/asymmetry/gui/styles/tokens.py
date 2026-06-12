@@ -25,8 +25,10 @@ ACCENT_RED = "#a8332a"
 ACCENT_RED_SOFT = "#f5dcd8"
 ACCENT_RED_SOFT2 = "#efcfca"
 
-# Data browser groups — match _GROUP_HEADER_BACKGROUND / _GROUP_MEMBER_BACKGROUND
+# Data browser groups
 GROUP_HEADER_BG = "#c8d2e1"
+GROUP_HEADER_SEL_BG = "#a8b8d0"
+GROUP_HEADER_FOCUS_BG = "#8fa3c2"
 GROUP_MEMBER_BG = "#ebeff7"
 
 # Semantic
@@ -41,6 +43,7 @@ SUCCESS_BORDER = "#cbe1cf"
 
 # Matplotlib plot chrome — used by styles/plots.py
 PLOT_AXIS = "#3a3c40"
+PLOT_TICK_MARK = "#8a8d92"
 PLOT_TICK_LABEL = "#56585b"
 PLOT_GRID = (0, 0, 0, 0.06)  # (r, g, b, alpha) tuple for mpl
 PLOT_ZERO_LINE = "#b0b3b7"

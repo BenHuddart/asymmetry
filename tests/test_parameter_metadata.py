@@ -86,3 +86,22 @@ def test_parameter_composite_model_keeps_component_specific_units() -> None:
     indexed = ParameterCompositeModel(["DiffusionLF_2D", "DiffusionLF_3D"], operators=["+"])
     assert indexed.param_info["A_1"].unit == "MHz"
     assert indexed.param_info["A_2"].unit == "MHz"
+
+
+def test_get_param_info_free_text_name_stays_out_of_mathtext() -> None:
+    """Regression: unknown free-text quantity names (the integral scan's
+    'Integral asymmetry (%)') were wrapped in $...$, and matplotlib's
+    mathtext parser raised at draw time on the spaces and '%'."""
+    info = get_param_info("Integral asymmetry (%)")
+    assert "$" not in info.latex
+    assert info.latex == "Integral asymmetry (%)"
+
+    # The mathtext parser itself must accept the resulting axis label.
+    from matplotlib.mathtext import MathTextParser
+
+    label = info.latex_label()
+    if "$" in label:  # pragma: no cover — guarded above
+        MathTextParser("agg").parse(label)
+
+    # Clean unknown symbols keep the mathtext wrapping.
+    assert get_param_info("Zeta").latex == "$Zeta$"

@@ -47,10 +47,17 @@ def _switch_domain(win: MainWindow, view: str) -> None:
 # ── F-B asymmetry domain ─────────────────────────────────────────────────────
 
 
-def test_fb_domain_makes_fit_fourier_params_visible(win: MainWindow) -> None:
+def test_fb_domain_shows_fit_and_params_only(win: MainWindow) -> None:
+    """Time-domain decks have no spectrum-processing tab."""
     _switch_domain(win, "fb_asymmetry")
     assert win._dock_fit.isVisible()
-    assert win._dock_fourier.isVisible()
+    assert not win._dock_fourier.isVisible()
+    assert win._dock_fit_parameters.isVisible()
+
+
+def test_inspector_deck_visible_on_fresh_window(win: MainWindow) -> None:
+    """The deck is present by default — no toolbar action needed to reveal it."""
+    assert win._dock_fit.isVisible()
     assert win._dock_fit_parameters.isVisible()
 
 
@@ -74,7 +81,7 @@ def test_groups_domain_shows_fit_and_params(win: MainWindow) -> None:
 
 def test_groups_domain_hides_fourier(win: MainWindow) -> None:
     # Start with fourier visible so we can verify it gets hidden.
-    _switch_domain(win, "fb_asymmetry")
+    _switch_domain(win, "frequency")
     assert win._dock_fourier.isVisible()
     _switch_domain(win, "groups")
     assert not win._dock_fourier.isVisible()
@@ -116,28 +123,82 @@ def test_domain_switch_resets_raised_tab(win: MainWindow) -> None:
     assert win._dock_fit.isVisible()
 
 
-# ── Fourier hidden in groups reappears on fb switch ──────────────────────────
+# ── Fourier hidden in time views reappears on frequency switch ───────────────
 
 
-def test_fourier_hidden_by_groups_reappears_in_fb(win: MainWindow) -> None:
+def test_fourier_hidden_by_groups_reappears_in_frequency(win: MainWindow) -> None:
     _switch_domain(win, "groups")
     assert not win._dock_fourier.isVisible()
-    _switch_domain(win, "fb_asymmetry")
+    _switch_domain(win, "frequency")
     assert win._dock_fourier.isVisible()
 
 
-# ── Floating dock is skipped ─────────────────────────────────────────────────
+# ── Floating docks follow the deck ───────────────────────────────────────────
 
 
-def test_floating_dock_unaffected_by_domain_switch(win: MainWindow) -> None:
-    # Float the fourier dock then switch to groups (which would hide it if docked).
+def test_floating_fourier_follows_deck_applicability(win: MainWindow) -> None:
+    """A popped-out Spectrum window hides in time views and returns — still
+    floating — when a frequency view becomes active again."""
+    _switch_domain(win, "frequency")
     win._dock_fourier.setFloating(True)
     try:
-        was_visible = win._dock_fourier.isVisible()
+        assert win._dock_fourier.isVisible()
         _switch_domain(win, "groups")
-        assert win._dock_fourier.isVisible() == was_visible
+        assert not win._dock_fourier.isVisible()
+        _switch_domain(win, "frequency")
+        assert win._dock_fourier.isVisible()
+        assert win._dock_fourier.isFloating()
     finally:
         win._dock_fourier.setFloating(False)
+
+
+# ── Per-representation closed-tab memory ─────────────────────────────────────
+
+
+def test_closed_tab_stays_closed_per_representation(qapp: QApplication, win: MainWindow) -> None:
+    """Closing a deck tab is remembered for that representation only."""
+    win._plot_workspace.set_active_view("fb_asymmetry")
+    qapp.processEvents()
+    win._dock_fit_parameters.close()
+    qapp.processEvents()
+    assert not win._dock_fit_parameters.isVisible()
+
+    # Other representations still show their full deck.
+    win._plot_workspace.set_active_view("frequency")
+    qapp.processEvents()
+    assert win._dock_fit_parameters.isVisible()
+
+    # Returning to F-B honours the remembered close.
+    win._plot_workspace.set_active_view("fb_asymmetry")
+    qapp.processEvents()
+    assert not win._dock_fit_parameters.isVisible()
+
+
+def test_show_panel_clears_closed_tab_memory(qapp: QApplication, win: MainWindow) -> None:
+    """Reopening a closed tab (View menu path) clears its per-rep memory."""
+    win._plot_workspace.set_active_view("fb_asymmetry")
+    qapp.processEvents()
+    win._dock_fit_parameters.close()
+    qapp.processEvents()
+    win._on_fit_parameters()
+    assert win._dock_fit_parameters.isVisible()
+
+    # Cycle away and back — the tab must stay open now.
+    win._plot_workspace.set_active_view("frequency")
+    qapp.processEvents()
+    win._plot_workspace.set_active_view("fb_asymmetry")
+    qapp.processEvents()
+    assert win._dock_fit_parameters.isVisible()
+
+
+def test_fourier_menu_actions_disabled_in_time_views(win: MainWindow) -> None:
+    """Both Fourier menu entries are only enabled where the deck has the tab."""
+    _switch_domain(win, "fb_asymmetry")
+    assert not win._show_fourier_action.isEnabled()
+    assert not win._fourier_analysis_action.isEnabled()
+    _switch_domain(win, "frequency")
+    assert win._show_fourier_action.isEnabled()
+    assert win._fourier_analysis_action.isEnabled()
 
 
 # ── Unknown domain token is a no-op ──────────────────────────────────────────
@@ -215,6 +276,17 @@ def test_refresh_inspector_tab_bar_reshows_hidden_tab_bar(
     tab_bar.hide()  # simulate the Qt relayout failure
     win._refresh_inspector_tab_bar()
     assert tab_bar.isVisible()
+
+
+def test_inspector_tab_order_processing_first(qapp: QApplication, win: MainWindow) -> None:
+    """Frequency decks read processing → Fit → Parameters, left to right."""
+    _switch_domain(win, "frequency")
+    qapp.processEvents()
+    tab_bar = _inspector_tab_bar(win)
+    assert tab_bar is not None
+    texts = [tab_bar.tabText(i) for i in range(tab_bar.count())]
+    assert texts[0] in {"Spectrum", "Fourier", "MaxEnt"}
+    assert texts[1:] == ["Fit", "Parameters"]
 
 
 def test_refresh_inspector_tab_bar_noop_with_single_visible_dock(win: MainWindow) -> None:
