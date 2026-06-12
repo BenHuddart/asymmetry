@@ -206,34 +206,29 @@ jobs:
           }
           & "dist\Asymmetry\Asymmetry.exe" --smoke-test --smoke-test-root
 
-      - name: Install WiX
+      - name: Install Inno Setup
         shell: pwsh
-        run: dotnet tool install --global wix --version 4.0.6
+        run: choco install innosetup -y
 
-      - name: Add WiX UI extension
-        shell: pwsh
-        run: wix extension add --global WixToolset.UI.wixext/4.0.6
-
-      - name: Build MSI installer
+      - name: Build EXE installer
         shell: pwsh
         run: |
           $version = "${{ steps.meta.outputs.version }}"
-          $distDir = "$env:GITHUB_WORKSPACE\dist\Asymmetry"
+          $appDir = "$env:GITHUB_WORKSPACE\dist\Asymmetry"
           $iconFile = "$env:GITHUB_WORKSPACE\build\icons\Asymmetry.ico"
-          $output = "dist\Asymmetry-$version-windows-x64-setup.msi"
-          wix build packaging\windows\installer.wxs `
-            -d Version=$version `
-            -d DistDir=$distDir `
-            -d IconFile=$iconFile `
-            -o $output `
-            -arch x64 `
-            -ext WixToolset.UI.wixext
+          $outputDir = "$env:GITHUB_WORKSPACE\dist"
+          iscc `
+            "/DAppVersion=$version" `
+            "/DAppDir=$appDir" `
+            "/DIconFile=$iconFile" `
+            "/DOutputDir=$outputDir" `
+            packaging\windows\asymmetry.iss
 
       - name: Upload Windows installer artifact
         uses: actions/upload-artifact@v7
         with:
           name: asymmetry-windows-x64
-          path: dist/Asymmetry-${{ steps.meta.outputs.version }}-windows-x64-setup.msi
+          path: dist/Asymmetry-${{ steps.meta.outputs.version }}-windows-x64-setup.exe
           if-no-files-found: error
           # Build artifacts are only needed long enough for the release job to
           # download them; the "Delete workflow artifacts" step removes them on
@@ -265,7 +260,7 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             release-assets/**/*.dmg
-            release-assets/**/*.msi
+            release-assets/**/*.exe
 
       - name: Delete workflow artifacts
         uses: actions/github-script@v8

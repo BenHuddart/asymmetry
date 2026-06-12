@@ -26,7 +26,6 @@ jobs:
           $baseVersion = $line.Line -replace '^version = "(.+)"', '$1'
           $shortSha = $env:GITHUB_SHA.Substring(0, 7)
           $previewVersion = "$baseVersion-preview.$shortSha"
-          "wix_version=$baseVersion" >> $env:GITHUB_OUTPUT
           "version=$previewVersion" >> $env:GITHUB_OUTPUT
 
       - name: Set up Python
@@ -61,36 +60,31 @@ jobs:
           }
           & "dist\Asymmetry\Asymmetry.exe" --smoke-test --smoke-test-root
 
-      - name: Install WiX
+      - name: Install Inno Setup
         shell: pwsh
-        run: dotnet tool install --global wix --version 4.0.6
+        run: choco install innosetup -y
 
-      - name: Add WiX UI extension
-        shell: pwsh
-        run: wix extension add --global WixToolset.UI.wixext/4.0.6
-
-      - name: Build MSI installer
+      - name: Build EXE installer
         shell: pwsh
         run: |
-          # WiX Package Version must be numeric M.N.P; use pyproject base version.
-          $wixVersion = "${{ steps.meta.outputs.wix_version }}"
-          $distDir = "$env:GITHUB_WORKSPACE\dist\Asymmetry"
-          $iconFile = "$env:GITHUB_WORKSPACE\build\icons\Asymmetry.ico"
           $previewVersion = "${{ steps.meta.outputs.version }}"
-          $output = "dist\Asymmetry-$previewVersion-windows-x64-setup.msi"
-          wix build packaging\windows\installer.wxs `
-            -d Version=$wixVersion `
-            -d DistDir=$distDir `
-            -d IconFile=$iconFile `
-            -o $output `
-            -arch x64 `
-            -ext WixToolset.UI.wixext
+          $appDir = "$env:GITHUB_WORKSPACE\dist\Asymmetry"
+          $iconFile = "$env:GITHUB_WORKSPACE\build\icons\Asymmetry.ico"
+          $outputDir = "$env:GITHUB_WORKSPACE\dist"
+          $outputName = "Asymmetry-$previewVersion-windows-x64-setup"
+          iscc `
+            "/DAppVersion=$previewVersion" `
+            "/DAppDir=$appDir" `
+            "/DIconFile=$iconFile" `
+            "/DOutputDir=$outputDir" `
+            "/DOutputName=$outputName" `
+            packaging\windows\asymmetry.iss
 
       - name: Upload Windows preview artifact
         uses: actions/upload-artifact@v7
         with:
           name: asymmetry-windows-x64-preview
-          path: dist/Asymmetry-${{ steps.meta.outputs.version }}-windows-x64-setup.msi
+          path: dist/Asymmetry-${{ steps.meta.outputs.version }}-windows-x64-setup.exe
           if-no-files-found: error
           # Preview builds are downloaded manually from the workflow run; a short
           # retention keeps Actions storage use low (default is 90 days).
