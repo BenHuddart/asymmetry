@@ -7,6 +7,8 @@ tests' view of ``COMPONENTS``/``MODELS``/``PARAMETER_MODEL_COMPONENTS``.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -513,3 +515,115 @@ def test_placeholder_model_goes_live_once_plugin_returns():
     t = np.linspace(0.0, 5.0, 11)
     out = live.function(t, **live.param_defaults)
     assert np.all(np.isfinite(out))
+
+
+# ── Keren example-plugin parity (the tutorial's worked example) ────────────
+
+
+_EXAMPLE_PLUGIN = (
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "user_guide"
+    / "examples"
+    / "keren_user_function.py"
+)
+
+
+def _load_example_plugin(tmp_path):
+    from asymmetry.core.plugins import load_user_functions
+
+    target = tmp_path / "keren_user_function.py"
+    target.write_text(_EXAMPLE_PLUGIN.read_text(encoding="utf-8"), encoding="utf-8")
+    report = load_user_functions(tmp_path)
+    errors = [source.error for source in report.sources if not source.ok]
+    assert not errors, errors
+    return report
+
+
+def test_example_plugin_registers_keren_clone(tmp_path):
+    report = _load_example_plugin(tmp_path)
+    (source,) = report.sources
+    assert source.registered_names() == ["KerenUser"]
+    definition = COMPONENTS["KerenUser"]
+    assert definition.user is True
+    assert definition.param_names == COMPONENTS["Keren"].param_names
+    assert definition.param_defaults == COMPONENTS["Keren"].param_defaults
+
+    from asymmetry.core.fitting.domain_library import components_for_domain
+
+    assert "KerenUser" in components_for_domain("time")
+
+
+def test_example_plugin_matches_builtin_keren_bit_for_bit(tmp_path):
+    _load_example_plugin(tmp_path)
+    builtin = COMPONENTS["Keren"].function
+    clone = COMPONENTS["KerenUser"].function
+
+    t = np.linspace(0.0, 32.0, 1025)
+    for delta in (0.2, 0.5, 1.5):
+        for nu in (0.0, 0.1, 1.0, 10.0):
+            for b_l in (0.0, 20.0, 100.0):
+                expected = builtin(t, A=25.0, Delta=delta, nu=nu, B_L=b_l)
+                actual = clone(t, A=25.0, Delta=delta, nu=nu, B_L=b_l)
+                assert np.array_equal(actual, expected), (delta, nu, b_l)
+
+
+def test_example_plugin_fit_matches_builtin_exactly(tmp_path):
+    pytest.importorskip("iminuit")
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.fitting.engine import FitEngine
+    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+    _load_example_plugin(tmp_path)
+
+    rng = np.random.default_rng(7)
+    t = np.linspace(0.0, 16.0, 320)
+    truth = {"A": 24.0, "Delta": 0.5, "nu": 1.2, "B_L": 20.0}
+    y = COMPONENTS["Keren"].function(t, **truth) + rng.normal(0.0, 0.3, t.size)
+    dataset = MuonDataset(time=t, asymmetry=y, error=np.full_like(t, 0.3))
+
+    def _fit(component_name):
+        model = CompositeModel([component_name])
+        start = {"A_1": 20.0, "Delta": 0.3, "nu": 0.8, "B_L": truth["B_L"]}
+        params = ParameterSet(
+            [
+                Parameter(
+                    name,
+                    value=start.get(name, 1.0),
+                    min=0.0,
+                    fixed=(name == "B_L"),
+                )
+                for name in model.param_names
+            ]
+        )
+        result = FitEngine().fit(dataset, model.function, params)
+        assert result.success
+        return result
+
+    builtin_result = _fit("Keren")
+    clone_result = _fit("KerenUser")
+
+    builtin_values = {p.name: p.value for p in builtin_result.parameters}
+    clone_values = {p.name: p.value for p in clone_result.parameters}
+    assert clone_values == builtin_values
+    assert clone_result.uncertainties == builtin_result.uncertainties
+
+    fitted = clone_values
+    assert fitted["A_1"] == pytest.approx(truth["A"], abs=0.5)
+    assert fitted["Delta"] == pytest.approx(truth["Delta"], abs=0.1)
+    assert fitted["nu"] == pytest.approx(truth["nu"], abs=0.4)
+
+
+def test_example_plugin_persistence_round_trip(tmp_path):
+    _load_example_plugin(tmp_path)
+    model = CompositeModel.from_expression("KerenUser + Constant")
+    data = model.to_dict()
+
+    restored = CompositeModel.from_dict(data)
+    assert restored.missing_component_names == ()
+    assert restored.component_names == ["KerenUser", "Constant"]
+    t = np.linspace(0.0, 16.0, 65)
+    np.testing.assert_array_equal(
+        restored.function(t, **restored.param_defaults),
+        model.function(t, **model.param_defaults),
+    )
