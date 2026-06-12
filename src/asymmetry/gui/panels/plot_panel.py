@@ -72,6 +72,12 @@ from asymmetry.gui.styles.plots import (
     style_legend,
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
+from asymmetry.gui.widgets.rrf_controls import (
+    install_rrf_controls,
+    rrf_display_dataset,
+    rrf_display_fit_curve,
+    rrf_draw_badge,
+)
 
 # Metadata fields available for dataset labelling in the legend.
 _LABEL_FIELDS: list[tuple[str, str]] = [
@@ -304,6 +310,8 @@ class PlotPanel(QWidget):
             nav_row.addWidget(self._zoom_btn)
 
             layout.addLayout(nav_row)
+
+            layout.addWidget(install_rrf_controls(self))
 
             self._plot_header = self._create_plot_header()
             layout.addWidget(self._plot_header)
@@ -2247,7 +2255,7 @@ class PlotPanel(QWidget):
                 variant_idx = period_color_counts.get(period_color, 0)
                 color = self._period_mode_color_variant(period_color, variant_idx)
                 period_color_counts[period_color] = variant_idx + 1
-            analysis_dataset = self.get_analysis_dataset(dataset)
+            analysis_dataset = rrf_display_dataset(self, self.get_analysis_dataset(dataset))
             if analysis_dataset is None:
                 continue
 
@@ -2291,6 +2299,7 @@ class PlotPanel(QWidget):
             )
 
             fit_to_plot = self._fit_curve_for_dataset(dataset, axis_override=axis_key)
+            fit_to_plot = rrf_display_fit_curve(self, fit_to_plot)
             if fit_to_plot is not None:
                 t_fit, y_fit, fit_label = fit_to_plot
                 fit_color = self._fit_line_color_for_dataset(
@@ -2856,7 +2865,7 @@ class PlotPanel(QWidget):
                 variant_idx = period_color_counts.get(period_color, 0)
                 color = self._period_mode_color_variant(period_color, variant_idx)
                 period_color_counts[period_color] = variant_idx + 1
-            analysis_dataset = self.get_analysis_dataset(dataset)
+            analysis_dataset = rrf_display_dataset(self, self.get_analysis_dataset(dataset))
             if not self._has_plottable_samples(analysis_dataset):
                 continue
 
@@ -2901,6 +2910,7 @@ class PlotPanel(QWidget):
 
             # Overlay fit curve in same colour; excluded from legend by "_" prefix.
             fit_to_plot = self._fit_curve_for_dataset(dataset)
+            fit_to_plot = rrf_display_fit_curve(self, fit_to_plot)
             if fit_to_plot is not None:
                 t_fit, y_fit, fit_label = fit_to_plot
                 fit_color = self._fit_line_color_for_dataset(
@@ -3079,7 +3089,7 @@ class PlotPanel(QWidget):
         self._update_plot_header()
         self._set_frequency_reference_from_dataset(dataset)
 
-        analysis_dataset = self.get_analysis_dataset(dataset)
+        analysis_dataset = rrf_display_dataset(self, self.get_analysis_dataset(dataset))
         if not self._has_plottable_samples(analysis_dataset):
             self._render_empty_plot_state(alpha_text=self._single_dataset_alpha_label_text(dataset))
             return
@@ -3140,6 +3150,7 @@ class PlotPanel(QWidget):
 
         # Re-plot fit curve if it exists (check both single and global fits)
         fit_to_plot = self._fit_curve_for_dataset(dataset)
+        fit_to_plot = rrf_display_fit_curve(self, fit_to_plot)
 
         if fit_to_plot is not None:
             t_fit, y_fit, fit_label = fit_to_plot
@@ -3267,6 +3278,7 @@ class PlotPanel(QWidget):
 
     def _draw_annotations(self) -> None:
         """Recreate annotation artists on the active axis."""
+        rrf_draw_badge(self, self._ax)
         for ann in self._annotations:
             artist = self._ax.text(
                 ann["x"],
@@ -3412,7 +3424,7 @@ class PlotPanel(QWidget):
         all_low_masks: list[np.ndarray] = []
 
         for dataset in datasets:
-            analysis_dataset = self.get_analysis_dataset(dataset)
+            analysis_dataset = rrf_display_dataset(self, self.get_analysis_dataset(dataset))
             if analysis_dataset is None:
                 continue
 
@@ -4571,7 +4583,7 @@ class PlotPanel(QWidget):
 
         payloads: list[dict] = []
         for dataset in target_datasets:
-            analysis = self.get_analysis_dataset(dataset)
+            analysis = rrf_display_dataset(self, self.get_analysis_dataset(dataset))
             if analysis is None:
                 continue
 
@@ -4587,6 +4599,8 @@ class PlotPanel(QWidget):
                 run_metadata.update(run.metadata)
             if isinstance(dataset.metadata, dict):
                 run_metadata.update(dataset.metadata)
+            if isinstance(analysis.metadata, dict) and analysis.metadata.get("rrf_frame"):
+                run_metadata["rrf_frame"] = analysis.metadata["rrf_frame"]
 
             histogram_info: dict[str, object] | None = None
             if run is not None and getattr(run, "histograms", None):
@@ -5393,6 +5407,8 @@ class PlotPanel(QWidget):
             "fit_x_min": self._fit_x_min,
             "fit_x_max": self._fit_x_max,
         }
+        if hasattr(self, "_rrf_controls"):
+            state["rrf"] = self._rrf_controls.get_state()
 
         if self._is_frequency_plot_panel():
             state["frequency_x_unit"] = self._current_frequency_x_unit
@@ -5469,6 +5485,9 @@ class PlotPanel(QWidget):
             return
 
         import numpy as np
+
+        if hasattr(self, "_rrf_controls"):
+            self._rrf_controls.set_state(state.get("rrf"))
 
         self._auto_x_btn.setChecked(bool(state.get("auto_x_enabled", False)))
         self._auto_y_btn.setChecked(bool(state.get("auto_y_enabled", False)))
