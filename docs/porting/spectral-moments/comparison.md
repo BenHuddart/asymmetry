@@ -188,12 +188,13 @@ which has a sharp low-field cutoff at the lattice's saddle-point field and a lon
 tail to high field near the vortex cores — the **mean sits above the peak**, so
 `B_ave − B_pk > 0` and **β > 0** denotes the physically expected
 positive-skew (high-field-tailed) lineshape. This matches WiMDA's sign and the
-sign of the skewness `α` for the same distribution. The literature citation for
-the asymmetric `p(B)` and the sign of its skewness is recorded with Ben at
-step-3 and pinned here and in the user guide (the textbook's mixed-state field
-distribution treatment; Brandt's vortex-lattice `p(B)` is the canonical primary
-reference). Verified on a synthetic vortex-lattice-like lineshape in
-[verification-plan.md](verification-plan.md).
+sign of the skewness `α` for the same distribution. **Settled with Ben
+(2026-06-12): keep WiMDA's sign**, cited to **E. H. Brandt's vortex-lattice field
+distribution `p(B)`** as the primary reference (the asymmetric distribution with a
+low-field saddle-point cutoff and a long high-field core tail), with the
+textbook's mixed-state field-distribution treatment (Blundell, De Renzi,
+Lancaster & Pratt, OUP 2022) as the secondary reference. Verified on a synthetic
+vortex-lattice-like lineshape in [verification-plan.md](verification-plan.md).
 
 ## 4. Divergence ledger
 

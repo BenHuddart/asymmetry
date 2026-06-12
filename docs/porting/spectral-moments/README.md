@@ -104,13 +104,26 @@ namespaced sub-dict inside the host panel's existing `get_state()` /
 `restore_state()` (the Fourier panel's `fourier_state`); `restore_state`
 tolerates its absence. `CURRENT_SCHEMA_VERSION` stays at 8.
 
-### Deferred to step-3 (post-study) decisions
+### Implementation choices (settled with Ben, 2026-06-12)
 
-Uncertainty method, exact GUI hosting (Fourier-only first vs Fourier + MaxEnt
-panel vs one shared widget mounted in both), and the `β` sign convention with
-its literature citation — recommendations in
-[implementation-options.md](implementation-options.md) §"Open choices", settled
-with Ben before implementation and recorded back here.
+- **Uncertainty — bootstrap (primary) + linear fallback.** When the spectrum
+  carries per-point errors, uncertainties come from a seeded bootstrap (resample
+  `amplitude[i] ~ N(amplitude[i], σ[i])`, recompute all moments, take the sample
+  std) — the one method that propagates correctly through the nonlinear `b_pk`,
+  `α`, `β` and *exposes* `b_pk`'s fragility rather than asserting it. Analytic
+  linear propagation is the deterministic fallback for the linear moments; errors
+  are `NaN` (greyed) when the spectrum has no error array. The bootstrap seed is
+  recorded in the recipe for reproducibility.
+- **GUI hosting — one shared widget in both panels.** A single
+  `SpectralMomentsWidget` class is mounted in *both* the Fourier advanced stack
+  and the MaxEnt panel (each feeding it via the same W15 accessor), covering
+  WiMDA's canonical MaxEnt input with no duplication and ≤ one-line hooks (W10).
+- **β sign — WiMDA's, cited to Brandt + the textbook.** `β = (B_ave −
+  B_pk)/√m₂,pk > 0` for the high-field-tailed mixed-state lineshape (mean above
+  peak), matching WiMDA and the skewness sign. Primary citation: E. H. Brandt's
+  vortex-lattice field distribution `p(B)`; secondary: the textbook's mixed-state
+  field-distribution treatment. Pinned in [comparison.md](comparison.md) §3 and
+  the user guide.
 
 ## The B_pk fragility caveat (stated plainly)
 
