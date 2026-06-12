@@ -50,15 +50,18 @@ from asymmetry.core.fitting.global_fit_wizard import (
 from asymmetry.core.fitting.grouped_time_domain import (
     GROUP_NUISANCE_PARAMS,
     GROUPED_SERIES_RELATIONSHIPS,
+    GROUPED_SERIES_SEEDING,
     GroupedSeriesFitResult,
     GroupedTimeDomainFitResult,
     GroupedTimeDomainGroup,
+    SeedingRecommendation,
     build_grouped_count_model,
     build_grouped_time_domain_datasets,
     build_grouped_time_domain_groups,
     fit_grouped_series,
     fit_grouped_time_domain,
     grouped_time_domain_available,
+    recommend_grouped_series_seeding,
 )
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.parameter_models import (
@@ -105,6 +108,9 @@ __all__ = [
     "GlobalFitWizardRecommendation",
     "GROUP_NUISANCE_PARAMS",
     "GROUPED_SERIES_RELATIONSHIPS",
+    "GROUPED_SERIES_SEEDING",
+    "SeedingRecommendation",
+    "recommend_grouped_series_seeding",
     "build_grouped_count_model",
     "build_grouped_time_domain_datasets",
     "build_grouped_time_domain_groups",

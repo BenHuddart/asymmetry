@@ -9,7 +9,8 @@ domain.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Hashable
+import math
+from collections.abc import Callable, Hashable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,7 +23,7 @@ from asymmetry.core.fitting.global_search.heuristics import (
     is_amplitude_parameter,
     is_background_parameter,
 )
-from asymmetry.core.fitting.parameters import ParameterSet, split_parameter_name
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet, split_parameter_name
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
@@ -740,6 +741,118 @@ class GroupedSeriesFitResult:
     member_group_id: dict[int, Hashable]
     shared_parameters: ParameterSet
     message: str = ""
+    #: The seeding mode actually used ("as_provided"/"chain"); for Auto this is the
+    #: resolved choice. ``seeding_reason`` is a human-readable explanation the GUI
+    #: surfaces so Auto is never silent.
+    seeding_used: str = "as_provided"
+    seeding_reason: str = ""
+
+
+#: Concrete grouped-series seeding mechanisms. ``"as_provided"`` uses each member's
+#: caller-built seed (the per-run or averaged seeds the GUI prepares); ``"chain"``
+#: carries member N's fitted values into member N+1 (the WiMDA ``itPrevious``
+#: analogue). ``"auto"`` is resolved to one of these by
+#: :func:`recommend_grouped_series_seeding`.
+GROUPED_SERIES_SEEDING: tuple[str, ...] = ("as_provided", "chain", "auto")
+
+#: Auto chooses chaining only for an ordered scan of at least this many members.
+_CHAIN_MIN_MEMBERS = 3
+
+
+@dataclass(frozen=True)
+class SeedingRecommendation:
+    """The seeding mode Auto picked for a grouped series, with a human reason."""
+
+    mode: str  # "as_provided" or "chain"
+    reason: str
+
+
+def recommend_grouped_series_seeding(
+    member_runs: Sequence[int],
+    order_key: dict[int, float] | None,
+    *,
+    min_members: int = _CHAIN_MIN_MEMBERS,
+) -> SeedingRecommendation:
+    """Pick a seeding mode for an independent grouped series (the "Auto" policy).
+
+    Chaining from the previous run wins on **ordered scans** — a temperature or
+    field sweep where each member's best seed is its neighbour, especially across a
+    transition. It is pointless or harmful on unordered/repeat collections (a
+    diverged member would poison the chain). So Auto chains only when a usable
+    numeric ``order_key`` (run → temperature/field) spans a real range over at least
+    ``min_members`` members; otherwise it leaves the caller's seeds in place. The
+    returned ``reason`` is meant to be surfaced to the user — Auto is never silent.
+    """
+    runs = [int(r) for r in member_runs]
+    n = len(runs)
+    if n < min_members:
+        return SeedingRecommendation(
+            "as_provided",
+            f"{n} member(s): too few to chain (need ≥ {min_members}) — using independent seeds",
+        )
+    if not order_key:
+        return SeedingRecommendation(
+            "as_provided",
+            "no temperature/field order key — members are unordered, using independent seeds",
+        )
+    values = [
+        float(order_key[r])
+        for r in runs
+        if r in order_key and order_key[r] is not None and math.isfinite(float(order_key[r]))
+    ]
+    if len(values) < n or len(set(values)) < 2:
+        return SeedingRecommendation(
+            "as_provided",
+            "order key missing or constant across members — using independent seeds",
+        )
+    lo, hi = min(values), max(values)
+    return SeedingRecommendation(
+        "chain",
+        f"ordered scan over {n} members spanning {lo:g}–{hi:g} — chaining from previous run",
+    )
+
+
+def _chained_initial_from_member(
+    prev_result: GroupedTimeDomainFitResult,
+    provided: dict[Hashable, ParameterSet],
+) -> dict[Hashable, ParameterSet]:
+    """Build the next member's seed from ``prev_result``'s fitted values.
+
+    Each group's seed keeps the provided structure (names, bounds, fixed, links) but
+    takes the previous fit's fitted values, re-pinned through the normalised
+    polarisation contract (amplitude→1, background→0, per W5). A group whose previous
+    fit is missing or unsuccessful falls back to its provided seed.
+    """
+    chained: dict[Hashable, ParameterSet] = {}
+    for group_id, seed in provided.items():
+        group_result = prev_result.group_results.get(group_id)
+        if group_result is None or not getattr(group_result, "success", False):
+            chained[group_id] = seed
+            continue
+        fitted_names = set(group_result.parameters.names)
+        carried = {
+            p.name: (
+                float(group_result.parameters[p.name].value)
+                if p.name in fitted_names
+                else p.value
+            )
+            for p in seed
+        }
+        normalised = normalize_to_grouped_contract([p.name for p in seed], carried)
+        rebuilt = ParameterSet()
+        for p in seed:
+            rebuilt.add(
+                Parameter(
+                    name=p.name,
+                    value=normalised[p.name],
+                    min=p.min,
+                    max=p.max,
+                    fixed=p.fixed,
+                    link_group=p.link_group,
+                )
+            )
+        chained[group_id] = rebuilt
+    return chained
 
 
 def fit_grouped_series(
@@ -757,6 +870,8 @@ def fit_grouped_series(
     max_calls: int = 10000,
     minos: bool = False,
     cancel_callback: Callable[[], bool] | None = None,
+    seeding: str = "as_provided",
+    order_key: dict[int, float] | None = None,
 ) -> GroupedSeriesFitResult:
     """Fit a series of grouped runs with one of three member relationships.
 
@@ -809,8 +924,21 @@ def fit_grouped_series(
     if overlapping:
         raise ValueError(f"Global and local grouped parameters overlap: {sorted(overlapping)}")
 
+    if seeding not in GROUPED_SERIES_SEEDING:
+        raise ValueError(
+            f"Unknown grouped-series seeding {seeding!r}; expected one of {GROUPED_SERIES_SEEDING}"
+        )
+
     engine = fit_engine or FitEngine()
     if relationship in ("individual", "batch"):
+        # Resolve Auto to a concrete mechanism using the order-key policy; explicit
+        # modes pass through with a descriptive reason.
+        if seeding == "auto":
+            recommendation = recommend_grouped_series_seeding(list(members), order_key)
+        elif seeding == "chain":
+            recommendation = SeedingRecommendation("chain", "chain from previous run (requested)")
+        else:
+            recommendation = SeedingRecommendation("as_provided", "independent seeds (requested)")
         return _fit_grouped_series_independent(
             relationship,
             members,
@@ -825,7 +953,12 @@ def fit_grouped_series(
             max_calls=max_calls,
             minos=minos,
             cancel_callback=cancel_callback,
+            seeding=recommendation.mode,
+            seeding_reason=recommendation.reason,
+            order_key=order_key,
         )
+    # A "global" series is one simultaneous fit, so sequential chaining does not
+    # apply; the seeding choice is recorded as-is for transparency.
     return _fit_grouped_series_global(
         members,
         polarization_model_fn,
@@ -857,19 +990,40 @@ def _fit_grouped_series_independent(
     max_calls: int,
     minos: bool = False,
     cancel_callback: Callable[[], bool] | None = None,
+    seeding: str = "as_provided",
+    seeding_reason: str = "",
+    order_key: dict[int, float] | None = None,
 ) -> GroupedSeriesFitResult:
-    """Run one independent grouped joint fit per member run (no cross-run sharing)."""
+    """Run one independent grouped joint fit per member run (no cross-run sharing).
+
+    With ``seeding="chain"`` each member is seeded from the previous member's fitted
+    values (re-normalised to the grouped contract), iterating in ``order_key`` order
+    so the chain follows the physical scan; a failed member resets the next member to
+    its provided seed.
+    """
+    # Chaining follows the physical scan order; fall back to the caller's member order
+    # when no order key is supplied.
+    run_order = list(members)
+    if seeding == "chain" and order_key:
+        run_order = sorted(run_order, key=lambda r: (order_key.get(int(r), math.inf), int(r)))
+
     member_results: dict[int, FitResult] = {}
     member_source_run: dict[int, int] = {}
     member_group_id: dict[int, Hashable] = {}
     messages: list[str] = []
-    for raw_run, groups in members.items():
+    previous: GroupedTimeDomainFitResult | None = None
+    for raw_run in run_order:
+        groups = members[raw_run]
         # Cooperative cancel between member fits (the minimum abort granularity): a
         # cancelled series records nothing and the loop stops cleanly here.
         if cancel_callback is not None and bool(cancel_callback()):
             raise FitCancelledError("Fit cancelled.")
         run = int(raw_run)
-        run_initial = initial_params.get(run, {})
+        provided = initial_params.get(run, {})
+        if seeding == "chain" and previous is not None:
+            run_initial = _chained_initial_from_member(previous, provided)
+        else:
+            run_initial = provided
         result = fit_grouped_time_domain(
             groups,
             polarization_model_fn,
@@ -884,6 +1038,9 @@ def _fit_grouped_series_independent(
             minos=minos,
             cancel_callback=cancel_callback,
         )
+        # Only chain from a successful member; a failed fit resets the next member to
+        # its provided seed rather than propagating a diverged seed down the scan.
+        previous = result if result.success else None
         messages.append(f"run {run}: {result.message}")
         for index, group in enumerate(groups, start=1):
             key = _group_dataset_run_number(run, index)
@@ -902,6 +1059,8 @@ def _fit_grouped_series_independent(
         member_group_id=member_group_id,
         shared_parameters=ParameterSet(),
         message="; ".join(messages),
+        seeding_used=seeding,
+        seeding_reason=seeding_reason,
     )
 
 
