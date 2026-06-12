@@ -135,8 +135,7 @@ def test_coadd_distributionally_identical_to_one_long_run():
     n_runs = 6
     events_each = 4e5
     parts = [
-        simulate_run(template, _cos, total_events=events_each, seed=100 + i)
-        for i in range(n_runs)
+        simulate_run(template, _cos, total_events=events_each, seed=100 + i) for i in range(n_runs)
     ]
     combined = reduce_combined_run(combine_runs(parts, sign=1, run_number=-1))
     single = reduce_run_to_dataset(
@@ -270,8 +269,7 @@ def test_two_period_coadd_sums_period_histograms():
     # Period 0 detector 0 counts are the per-run sum.
     np.testing.assert_array_equal(
         c.grouping["period_histograms"][0][0].counts,
-        a.grouping["period_histograms"][0][0].counts
-        + b.grouping["period_histograms"][0][0].counts,
+        a.grouping["period_histograms"][0][0].counts + b.grouping["period_histograms"][0][0].counts,
     )
     # Per-period good frames accumulate.
     assert c.grouping["period_good_frames"][0] == pytest.approx(

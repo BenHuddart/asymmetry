@@ -155,9 +155,7 @@ def slice_to_good_window(
 
     asymmetry = asymmetry[first_good : last_good + 1]
     error = error[first_good : last_good + 1]
-    time = (np.arange(asymmetry.size, dtype=float) + first_good - int(common_t0)) * float(
-        bin_width
-    )
+    time = (np.arange(asymmetry.size, dtype=float) + first_good - int(common_t0)) * float(bin_width)
     return time, asymmetry, error
 
 

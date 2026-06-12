@@ -2913,9 +2913,7 @@ class DataBrowserPanel(QWidget):
         self._refresh_column_headers()
         self._table.setRowCount(0)
 
-    def add_combined_dataset(
-        self, source_run_numbers: list[int], *, sign: int = 1
-    ) -> int | None:
+    def add_combined_dataset(self, source_run_numbers: list[int], *, sign: int = 1) -> int | None:
         """Recreate a combined row programmatically (``.asymp`` load).
 
         ``sign=+1`` co-adds; ``sign=-1`` subtracts the second source (reference)

@@ -261,8 +261,7 @@ def _validate_compatible(runs: list[Run]) -> None:
             width = float(run.histograms[det].bin_width)
             if not np.isclose(width, width0, rtol=_BIN_WIDTH_RTOL, atol=0.0):
                 raise CombineError(
-                    f"detector {det + 1} bin widths differ ({width0} vs {width} µs); "
-                    "cannot combine"
+                    f"detector {det + 1} bin widths differ ({width0} vs {width} µs); cannot combine"
                 )
 
 
@@ -349,9 +348,7 @@ def _combine_histograms_subtract(
         # subtract_scaled_counts is the single count-level subtraction seam
         # (F9): difference = sample_scale·sample − reference_scale·reference,
         # variance = sample + reference_scale²·reference.
-        diff, error = subtract_scaled_counts(
-            sample_scale * s_counts, r_counts, reference_scale
-        )
+        diff, error = subtract_scaled_counts(sample_scale * s_counts, r_counts, reference_scale)
         negative_bins += int(np.count_nonzero(diff < 0.0))
         out.append(_clone_geometry(sample.histograms[det], diff, common_t0))
         variances.append(error * error)
@@ -459,9 +456,7 @@ def _mirror_grouping(
     The run-level ``good_frames`` is set to the accumulated ``exposure`` so the
     deadtime normaliser sees the combined frame count.
     """
-    grouping = copy.deepcopy(
-        {k: v for k, v in base.grouping.items() if k not in _PERIOD_KEYS}
-    )
+    grouping = copy.deepcopy({k: v for k, v in base.grouping.items() if k not in _PERIOD_KEYS})
     if exposure > 0.0:
         grouping["good_frames"] = float(exposure)
     if period_payload is not None:

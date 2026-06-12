@@ -3770,16 +3770,16 @@ class TestMainWindowBasic:
             return loaded
 
         monkeypatch.setattr(
-            mw_module.QMessageBox, "question", lambda *a, **k: mw_module.QMessageBox.StandardButton.No
+            mw_module.QMessageBox,
+            "question",
+            lambda *a, **k: mw_module.QMessageBox.StandardButton.No,
         )
 
         monkeypatch.setattr(restored, "_load_file", _fake_load_file)
         restored.restore_project_state(loaded_state, str(project_path))
 
         restored_combined = [
-            rn
-            for rn, sign in restored._data_browser._combined_signs.items()
-            if sign == -1
+            rn for rn, sign in restored._data_browser._combined_signs.items() if sign == -1
         ]
         assert len(restored_combined) == 1
         rebuilt = restored._data_browser.get_dataset(restored_combined[0])

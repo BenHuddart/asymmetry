@@ -16,7 +16,9 @@ from asymmetry.gui.panels.data_browser import DataBrowserPanel
 pytestmark = pytest.mark.usefixtures("qapp")
 
 
-def _dataset(rn: int, *, frames: float = 1000.0, expected: float = 300.0, seed: int = 0) -> MuonDataset:
+def _dataset(
+    rn: int, *, frames: float = 1000.0, expected: float = 300.0, seed: int = 0
+) -> MuonDataset:
     rng = np.random.default_rng(seed)
     grouping = {
         "groups": {1: [1], 2: [2]},
