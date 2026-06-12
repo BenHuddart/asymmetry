@@ -38,6 +38,7 @@ material.
    spectral_moments
    frequency_domain_fitting
    vector_polarization
+   rotating_frame
    fitting
    assessing_a_fit
    fit_workflow_diagnostics
