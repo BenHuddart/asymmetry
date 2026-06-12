@@ -98,9 +98,7 @@ class TestBeat:
         valid = np.flatnonzero(curve.valid)
         quarter = int(round(1.0 / (4.0 * delta) / (t[1] - t[0])))
         i0 = valid[len(valid) // 2]
-        np.testing.assert_allclose(
-            curve.imag[i0 + quarter], curve.real[i0], rtol=0.05, atol=0.2
-        )
+        np.testing.assert_allclose(curve.imag[i0 + quarter], curve.real[i0], rtol=0.05, atol=0.2)
 
 
 class TestImageSuppression:
@@ -333,9 +331,7 @@ class TestApiContract:
     def test_wide_bandwidth_degenerates_to_identity(self):
         t, asym, err, _ = _signal()
         nyquist = 0.5 / (t[1] - t[0])
-        curve = rrf_demodulate(
-            t, asym, err, frequency_mhz=30.0, bandwidth_mhz=nyquist * 1.1
-        )
+        curve = rrf_demodulate(t, asym, err, frequency_mhz=30.0, bandwidth_mhz=nyquist * 1.1)
         assert curve.filter_taps == 1
         # Unfiltered demodulation is just 2·A·e^{−iθ}.
         theta = 2.0 * np.pi * 30.0 * t

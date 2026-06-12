@@ -100,9 +100,7 @@ class RRFCurve:
         floor = np.finfo(float).tiny
         safe = np.where(mag > floor, mag, 1.0)
         err = (
-            np.sqrt(
-                np.square(self.real * self.real_error) + np.square(self.imag * self.imag_error)
-            )
+            np.sqrt(np.square(self.real * self.real_error) + np.square(self.imag * self.imag_error))
             / safe
         )
         # Where the magnitude vanishes the first-order expansion collapses;
