@@ -42,6 +42,11 @@ def test_fit_no_qt():
     assert not new, f"negmu.fit triggered Qt load: {new}"
 
 
+def test_ratio_no_qt():
+    new = _qt_loaded_by("import asymmetry.core.negmu.ratio")
+    assert not new, f"negmu.ratio triggered Qt load: {new}"
+
+
 def test_simulate_capture_no_qt():
     new = _qt_loaded_by("import asymmetry.core.simulate")
     assert not new, f"core.simulate triggered Qt load: {new}"
@@ -63,6 +68,7 @@ def test_negmu_does_not_import_count_domain():
     import asymmetry.core.negmu.fit  # noqa: F401
     import asymmetry.core.negmu.lifetimes  # noqa: F401
     import asymmetry.core.negmu.model  # noqa: F401
+    import asymmetry.core.negmu.ratio  # noqa: F401
 
     negmu_dir = pathlib.Path(asymmetry.core.negmu.fit.__file__).parent
     for src in negmu_dir.glob("*.py"):

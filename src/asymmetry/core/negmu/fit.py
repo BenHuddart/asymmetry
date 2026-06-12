@@ -32,7 +32,11 @@ from asymmetry.core.fitting.engine import (
     _minuit_status_message,
     drive_minuit,
 )
-from asymmetry.core.fitting.grouped_time_domain import build_count_group
+from asymmetry.core.fitting.grouped_time_domain import (
+    GroupedTimeDomainFitResult,
+    build_count_group,
+    build_count_groups,
+)
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.negmu.lifetimes import DECAY_BACKGROUND_LABEL, tau_us
 from asymmetry.core.negmu.model import CaptureComponent, build_capture_count_model
@@ -332,4 +336,243 @@ def fit_capture_group(
         parameters=parameters,
         minos=minos,
         cancel_callback=cancel_callback,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Forward/backward simultaneous fit with shared amplitudes and free α (WP2.1)
+# ---------------------------------------------------------------------------
+
+# Parameters not passed to the shared model function (handled outside model_fn).
+_FB_PER_EVAL: frozenset[str] = frozenset({"alpha", "bg_F", "bg_B"})
+
+
+def fit_capture_fb_alpha(
+    dataset,
+    forward_group: int,
+    backward_group: int,
+    spec: CaptureModelSpec,
+    *,
+    cost: str = "poisson",
+    t_min: float | None = None,
+    t_max: float | None = None,
+    exclude: tuple[float, float] | None = None,
+    alpha_seed: float = 1.0,
+    minos: bool = False,
+    cancel_callback: Callable[[], bool] | None = None,
+) -> GroupedTimeDomainFitResult:
+    """Simultaneously fit forward and backward capture histograms with shared
+    per-element amplitudes amp_<label>, shared τ_i, and a free detector balance α:
+
+        N_F(t) = √α · Σ_i amp_i·exp(−t/τ_i) + bg_F
+        N_B(t) = (1/√α) · Σ_i amp_i·exp(−t/τ_i) + bg_B
+
+    mirroring ``build_count_groups`` geometry and the √α detector-balance split.
+    Both banks built in ONE context (``build_count_groups``) for a common t0.
+    Returns a :class:`GroupedTimeDomainFitResult`: ``group_results`` keyed by
+    ``forward_group`` / ``backward_group``; ``shared_parameters`` holds α,
+    amplitudes, and τ.
+
+    DIVERGENCE from WiMDA: WiMDA fits independent per-side amplitudes (NF, NB);
+    this shares ``amp_i`` (isotropic capture populations), so per-side capture
+    ratios are identical by construction. Use :func:`fit_capture_group` on each
+    side independently when a genuine F/B amplitude difference is wanted.
+    """
+    if cost not in COUNT_COSTS:
+        raise ValueError(f"Unknown cost {cost!r}; expected one of {COUNT_COSTS}")
+    if int(forward_group) == int(backward_group):
+        raise ValueError("Forward/backward capture fit needs two distinct groups")
+
+    from iminuit import Minuit
+
+    # Build both banks in ONE context so they share a common t0 alignment.
+    g_fwd, g_bwd = build_count_groups(
+        dataset,
+        [forward_group, backward_group],
+        t_min=t_min,
+        t_max=t_max,
+        lifetime_corrected=False,
+        exclude=exclude,
+    )
+    time_f = np.asarray(g_fwd.time, dtype=np.float64)
+    counts_f = np.asarray(g_fwd.counts, dtype=np.float64)
+    time_b = np.asarray(g_bwd.time, dtype=np.float64)
+    counts_b = np.asarray(g_bwd.counts, dtype=np.float64)
+
+    # Seed shared amp_*/tau_* from the forward group (representative of shared physics).
+    seed_params = default_capture_parameters(spec, time=time_f, counts=counts_f)
+
+    # Build the combined ParameterSet:
+    #   alpha (shared, free, floor 1e-6)
+    #   amp_*/tau_* from seeding (shared; skip 'background' — replaced by bg_F/bg_B)
+    #   bg_F / bg_B (per-side flat backgrounds)
+    params = ParameterSet()
+    params.add(Parameter(name="alpha", value=max(1e-6, abs(float(alpha_seed))), min=1e-6))
+    for p in seed_params:
+        if p.name != "background":
+            params.add(p)
+    n_late_f = max(1, len(counts_f) // 10)
+    bg_f_seed = max(0.0, float(np.mean(counts_f[-n_late_f:])))
+    params.add(Parameter(name="bg_F", value=bg_f_seed, min=0.0))
+    n_late_b = max(1, len(counts_b) // 10)
+    bg_b_seed = max(0.0, float(np.mean(counts_b[-n_late_b:])))
+    params.add(Parameter(name="bg_B", value=bg_b_seed, min=0.0))
+
+    model_fn = build_capture_count_model(spec.components())
+
+    free = params.free_parameters
+    free_names = [p.name for p in free]
+    fixed_vals = {p.name: p.value for p in params if p.name not in set(free_names)}
+
+    guard = _make_cancel_guard(cancel_callback)
+
+    def total_cost(*args: float) -> float:
+        guard()
+        kw = dict(fixed_vals)
+        kw.update(zip(free_names, args))
+        alpha = max(1e-6, float(kw["alpha"]))
+        sqrt_a = float(np.sqrt(alpha))
+        bg_f = float(kw["bg_F"])
+        bg_b = float(kw["bg_B"])
+        # Shared model sum excludes bg_F/bg_B/alpha (model_fn defaults background=0.0).
+        model_kw = {k: v for k, v in kw.items() if k not in _FB_PER_EVAL}
+        model_f = sqrt_a * model_fn(time_f, **model_kw) + bg_f
+        model_b = (1.0 / sqrt_a) * model_fn(time_b, **model_kw) + bg_b
+        if cost == "gaussian":
+            return _gaussian_chi2(counts_f, model_f) + _gaussian_chi2(counts_b, model_b)
+        return _poisson_cash(counts_f, model_f) + _poisson_cash(counts_b, model_b)
+
+    total_cost.errordef = 1.0
+
+    initial = [p.value for p in free]
+    m = Minuit(total_cost, *initial, name=free_names)
+    for i, p in enumerate(free):
+        lo = None if not np.isfinite(p.min) else float(p.min)
+        hi = None if not np.isfinite(p.max) else float(p.max)
+        m.limits[i] = (lo, hi)
+
+    m.strategy = 2
+    m.simplex(ncall=5000)
+    drive_minuit(m, migrad_kwargs={"iterate": 5, "use_simplex": True}, minos=minos)
+
+    # Reconstruct fitted parameter values for model evaluation.
+    fitted_kw = dict(fixed_vals)
+    fitted_kw.update({name: float(m.values[i]) for i, name in enumerate(free_names)})
+
+    alpha_fit = max(1e-6, float(fitted_kw["alpha"]))
+    sqrt_a_fit = float(np.sqrt(alpha_fit))
+    bg_f_fit = float(fitted_kw.get("bg_F", 0.0))
+    bg_b_fit = float(fitted_kw.get("bg_B", 0.0))
+    model_kw_fit = {k: v for k, v in fitted_kw.items() if k not in _FB_PER_EVAL}
+    model_f_fit = sqrt_a_fit * model_fn(time_f, **model_kw_fit) + bg_f_fit
+    model_b_fit = (1.0 / sqrt_a_fit) * model_fn(time_b, **model_kw_fit) + bg_b_fit
+    residuals_f = counts_f - model_f_fit
+    residuals_b = counts_b - model_b_fit
+
+    # Pack result ParameterSet from iminuit values.
+    result_params = ParameterSet()
+    uncertainties: dict[str, float] = {}
+    minos_errors: dict[str, tuple[float, float]] = {}
+    merrors = getattr(m, "merrors", None)
+
+    for p in params:
+        if p.name in set(free_names):
+            idx = free_names.index(p.name)
+            result_params.add(
+                Parameter(name=p.name, value=float(m.values[idx]), min=p.min, max=p.max)
+            )
+            err = float(m.errors[idx]) if m.errors[idx] is not None else 0.0
+            if err > 0.0:
+                uncertainties[p.name] = err
+            if merrors is not None:
+                try:
+                    me = merrors[p.name]
+                    if me is not None and getattr(me, "is_valid", False):
+                        minos_errors[p.name] = (float(me.lower), float(me.upper))
+                except (KeyError, TypeError):
+                    pass
+        else:
+            result_params.add(Parameter(name=p.name, value=p.value, fixed=True))
+
+    covariance: np.ndarray | None = None
+    cov_params: list[str] = []
+    if m.valid and getattr(m, "covariance", None) is not None:
+        covariance = np.asarray(m.covariance, dtype=float)
+        cov_params = list(free_names)
+
+    n_free_params = len(free_names)
+    msg = _minuit_status_message(
+        m,
+        success_message="Capture F+B fit successful",
+        failure_prefix="Capture F+B fit failed",
+    )
+
+    # Per-side chi-squared from the evaluated fitted model.
+    if cost == "gaussian":
+        chi2_f = _gaussian_chi2(counts_f, model_f_fit)
+        chi2_b = _gaussian_chi2(counts_b, model_b_fit)
+    else:
+        chi2_f = _poisson_cash(counts_f, model_f_fit)
+        chi2_b = _poisson_cash(counts_b, model_b_fit)
+
+    # DOF: both sides share all free parameters (simultaneous fit).
+    dof_f = max(len(time_f) - n_free_params, 1)
+    dof_b = max(len(time_b) - n_free_params, 1)
+    n_calls = int(getattr(m, "nfcn", 0) or 0)
+    cov_accurate = getattr(m, "accurate", False)
+    is_valid = bool(m.valid)
+    minos_out = minos_errors or None
+
+    # Build independent per-group ParameterSets: shared params + own bg only.
+    # This prevents result_f and result_b from aliasing the same ParameterSet
+    # (forward result should not expose bg_B; backward should not expose bg_F).
+    def _side_params(exclude_bg: str) -> ParameterSet:
+        ps = ParameterSet()
+        for p in result_params:
+            if p.name != exclude_bg:
+                ps.add(p)
+        return ps
+
+    params_f = _side_params("bg_B")
+    params_b = _side_params("bg_F")
+    unc_f = {k: v for k, v in uncertainties.items() if k != "bg_B"}
+    unc_b = {k: v for k, v in uncertainties.items() if k != "bg_F"}
+
+    def _pack(
+        chi2: float,
+        dof_g: int,
+        resid: np.ndarray,
+        side_params: ParameterSet,
+        side_unc: dict[str, float],
+    ) -> FitResult:
+        return FitResult(
+            success=is_valid,
+            chi_squared=chi2,
+            reduced_chi_squared=chi2 / dof_g,
+            parameters=side_params,
+            uncertainties=side_unc,
+            covariance=covariance,
+            covariance_parameters=cov_params,
+            residuals=resid,
+            message=msg,
+            function_calls=n_calls,
+            dof=dof_g,
+            minos_errors=minos_out,
+            covariance_accurate=cov_accurate,
+        )
+
+    result_f = _pack(chi2_f, dof_f, residuals_f, params_f, unc_f)
+    result_b = _pack(chi2_b, dof_b, residuals_b, params_b, unc_b)
+
+    # shared_parameters: alpha + amp_* + tau_* (excluding per-side bg_F/bg_B).
+    shared = ParameterSet()
+    for p in result_params:
+        if p.name not in {"bg_F", "bg_B"}:
+            shared.add(p)
+
+    return GroupedTimeDomainFitResult(
+        success=is_valid,
+        group_results={int(forward_group): result_f, int(backward_group): result_b},
+        shared_parameters=shared,
+        message=msg,
     )
