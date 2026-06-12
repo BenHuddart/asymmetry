@@ -47,7 +47,7 @@ from asymmetry.core.fitting.count_domain import (
     single_histogram_overlay,
 )
 from asymmetry.core.fitting.domain_library import coerce_domain
-from asymmetry.core.fitting.engine import FitEngine, FitResult
+from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     FitWizardRecommendation,
@@ -81,6 +81,7 @@ from asymmetry.core.fitting.parameters import (
     get_param_info,
     split_parameter_name,
 )
+from asymmetry.core.fitting.result_summary import fit_result_summary
 from asymmetry.core.fitting.spectral import (
     append_frequency_field_derived_parameters,
     default_frequency_model,
@@ -102,6 +103,8 @@ from asymmetry.gui.styles.widgets import (
     build_primary_button_qss,
     configure_formula_label,
     error_html,
+    fit_quality_chip_html,
+    fit_quality_tooltip,
     success_html,
 )
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
@@ -549,8 +552,16 @@ def _get_file_value_for_parameter(
     return None
 
 
+def _fit_quality_dict(result) -> dict | None:
+    """The χ² verdict dict for *result* via the shared summary (single source)."""
+    try:
+        return fit_result_summary(result).get("quality")
+    except Exception:
+        return None
+
+
 def _fit_success_html(result) -> str:
-    """Return compact success HTML for the result label."""
+    """Return compact success HTML for the result label, with a χ² verdict chip."""
     npar = len(result.parameters.free_parameters)
     ndof = (
         round(result.chi_squared / result.reduced_chi_squared)
@@ -560,6 +571,7 @@ def _fit_success_html(result) -> str:
     stats = f"χ²/ν = {result.reduced_chi_squared:.4f} · npar = {npar} · ndof = {ndof}"
     if result.edm is not None:
         stats += f" · Δ‖p‖ = {result.edm:.2e}"
+    stats += fit_quality_chip_html(_fit_quality_dict(result))
     return success_html("Fit converged", detail=stats)
 
 
@@ -792,8 +804,19 @@ class GlobalFitWorker(QObject):
     # conversion errors when queued between threads.
     finished = Signal(object, object)  # results_dict, fitted_global
     error = Signal(str)
+    cancelled = Signal()
 
-    def __init__(self, fit_engine, datasets, model_fn, global_params, local_params, initial_params):
+    def __init__(
+        self,
+        fit_engine,
+        datasets,
+        model_fn,
+        global_params,
+        local_params,
+        initial_params,
+        *,
+        minos=False,
+    ):
         super().__init__()
         self.fit_engine = fit_engine
         self.datasets = datasets
@@ -801,6 +824,12 @@ class GlobalFitWorker(QObject):
         self.global_params = global_params
         self.local_params = local_params
         self.initial_params = initial_params
+        self.minos = minos
+        self._cancel_requested = False
+
+    def cancel(self) -> None:
+        """Request cooperative cancellation of the running global fit."""
+        self._cancel_requested = True
 
     def run(self):
         """Execute the global fit."""
@@ -811,8 +840,12 @@ class GlobalFitWorker(QObject):
                 self.global_params,
                 self.local_params,
                 self.initial_params,
+                minos=self.minos,
+                cancel_callback=lambda: self._cancel_requested,
             )
             self.finished.emit(results_dict, fitted_global)
+        except FitCancelledError:
+            self.cancelled.emit()
         except Exception as e:
             self.error.emit(_format_fit_worker_exception(e))
 
@@ -822,6 +855,7 @@ class GroupedTimeDomainFitWorker(QObject):
 
     finished = Signal(object, object)  # grouped_datasets, fit_result_bundle
     error = Signal(str)
+    cancelled = Signal()
 
     def __init__(
         self,
@@ -831,6 +865,8 @@ class GroupedTimeDomainFitWorker(QObject):
         global_params,
         local_params,
         initial_params,
+        *,
+        minos=False,
     ):
         super().__init__()
         self.grouped_groups = grouped_groups
@@ -839,6 +875,12 @@ class GroupedTimeDomainFitWorker(QObject):
         self.global_params = global_params
         self.local_params = local_params
         self.initial_params = initial_params
+        self.minos = minos
+        self._cancel_requested = False
+
+    def cancel(self) -> None:
+        """Request cooperative cancellation of the running grouped fit."""
+        self._cancel_requested = True
 
     def run(self):
         """Execute the grouped time-domain fit."""
@@ -849,8 +891,12 @@ class GroupedTimeDomainFitWorker(QObject):
                 self.global_params,
                 self.local_params,
                 self.initial_params,
+                minos=self.minos,
+                cancel_callback=lambda: self._cancel_requested,
             )
             self.finished.emit(self.grouped_datasets, result)
+        except FitCancelledError:
+            self.cancelled.emit()
         except Exception as e:
             self.error.emit(_format_fit_worker_exception(e))
 
@@ -865,6 +911,7 @@ class GroupedSeriesFitWorker(QObject):
 
     finished = Signal(object, object)  # grouped_datasets, GroupedSeriesFitResult
     error = Signal(str)
+    cancelled = Signal()
 
     def __init__(
         self,
@@ -875,6 +922,10 @@ class GroupedSeriesFitWorker(QObject):
         global_params,
         local_params,
         initial_params,
+        *,
+        minos=False,
+        seeding="as_provided",
+        order_key=None,
     ):
         super().__init__()
         self.relationship = relationship
@@ -884,6 +935,14 @@ class GroupedSeriesFitWorker(QObject):
         self.global_params = global_params
         self.local_params = local_params
         self.initial_params = initial_params
+        self.minos = minos
+        self.seeding = seeding
+        self.order_key = order_key
+        self._cancel_requested = False
+
+    def cancel(self) -> None:
+        """Request cooperative cancellation of the running series fit."""
+        self._cancel_requested = True
 
     def run(self):
         """Execute the grouped-series fit."""
@@ -895,8 +954,14 @@ class GroupedSeriesFitWorker(QObject):
                 self.global_params,
                 self.local_params,
                 self.initial_params,
+                minos=self.minos,
+                seeding=self.seeding,
+                order_key=self.order_key,
+                cancel_callback=lambda: self._cancel_requested,
             )
             self.finished.emit(self.grouped_datasets, result)
+        except FitCancelledError:
+            self.cancelled.emit()
         except Exception as e:
             self.error.emit(_format_fit_worker_exception(e))
 
@@ -904,20 +969,28 @@ class GroupedSeriesFitWorker(QObject):
 class _ValueUncertaintyDelegate(QStyledItemDelegate):
     """Paints 'value  ±σ' in a table cell; editing shows only the bare value.
 
-    Uncertainty is stored in UserRole+1 alongside the item text. Cleared
-    automatically when the user edits the cell.
+    Uncertainty is stored in UserRole+1 alongside the item text. When an opt-in
+    MINOS asymmetric interval is present (UserRole+2, a ``(lower, upper)`` pair with
+    ``lower < 0 < upper``), the cell instead shows ``value  +upper / lower`` — the
+    display-only asymmetric overlay. Both roles are cleared when the user edits.
     """
 
     _UNC_ROLE = Qt.ItemDataRole.UserRole + 1
+    _MINOS_ROLE = Qt.ItemDataRole.UserRole + 2
     _MUTED = QColor(tokens.TEXT_MUTED)
 
     def paint(self, painter, option, index) -> None:
         super().paint(painter, option, index)
+        minos = index.data(self._MINOS_ROLE)
         unc = index.data(self._UNC_ROLE)
-        if unc is None:
+        if minos is not None and len(minos) == 2:
+            lower, upper = float(minos[0]), float(minos[1])
+            unc_str = f"  +{upper:.4f} / {lower:.4f}"
+        elif unc is not None:
+            unc_str = f"  ±{float(unc):.4f}"
+        else:
             return
         val_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-        unc_str = f"  ±{float(unc):.4f}"
         style = option.widget.style() if option.widget else QApplication.style()
         text_opt = QStyleOptionViewItem(option)
         self.initStyleOption(text_opt, index)
@@ -935,6 +1008,7 @@ class _ValueUncertaintyDelegate(QStyledItemDelegate):
 
     def setModelData(self, editor, model, index) -> None:  # noqa: N802
         model.setData(index, None, self._UNC_ROLE)
+        model.setData(index, None, self._MINOS_ROLE)
         super().setModelData(editor, model, index)
 
 
@@ -1125,10 +1199,18 @@ class SingleFitTab(QWidget):
         )
         self._pull_diagnostic_btn.clicked.connect(self._on_pull_diagnostic)
         self._pull_diagnostic_btn.setEnabled(False)
+        self._minos_checkbox = QCheckBox("Asymmetric errors (MINOS)")
+        self._minos_checkbox.setToolTip(
+            "After fitting, walk the χ² profile of each free parameter to get its "
+            "asymmetric +/− 1σ interval (MINOS). Slower than the default symmetric "
+            "errors; most useful at low statistics, near parameter bounds, or in "
+            "strongly correlated fits where the parabolic error is unreliable."
+        )
         btn_layout.addWidget(self._fit_btn, 0, 0)
         btn_layout.addWidget(self._reset_btn, 0, 1)
         btn_layout.addWidget(self._preview_btn, 0, 2)
         btn_layout.addWidget(self._pull_diagnostic_btn, 1, 0, 1, 3)
+        btn_layout.addWidget(self._minos_checkbox, 2, 0, 1, 3)
         btn_layout.setColumnStretch(3, 1)
         layout.addLayout(btn_layout)
 
@@ -1567,6 +1649,10 @@ class SingleFitTab(QWidget):
                 value_item.setText(f"{display_values.get(param_name, fitted.value):.6f}")
                 unc = result.uncertainties.get(param_name, None)
                 value_item.setData(_ValueUncertaintyDelegate._UNC_ROLE, unc)
+                value_item.setData(
+                    _ValueUncertaintyDelegate._MINOS_ROLE,
+                    (result.minos_errors or {}).get(param_name),
+                )
 
             min_item = self._param_table.item(row, 3)
             if min_item is not None:
@@ -1767,6 +1853,7 @@ class SingleFitTab(QWidget):
                 self._current_dataset,
                 self._composite_model.function,
                 parameters,
+                minos=self._minos_checkbox.isChecked(),
             )
         except Exception as e:
             self._result_label.setText(f"<b>Error during fit:</b><br>{str(e)}")
@@ -1786,8 +1873,10 @@ class SingleFitTab(QWidget):
             )
             self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
             self._result_label.setText(_fit_success_html(result))
+            self._result_label.setToolTip(fit_quality_tooltip(_fit_quality_dict(result)))
 
             # Update table with fit results
+            minos_errors = result.minos_errors or {}
             self._updating_fraction_values = True
             for i in range(self._param_table.rowCount()):
                 name_item = self._param_table.item(i, 0)
@@ -1802,6 +1891,9 @@ class SingleFitTab(QWidget):
                     val_item.setText(f"{fitted_value:.6f}")
                     unc = result.uncertainties.get(param_name, None)
                     val_item.setData(_ValueUncertaintyDelegate._UNC_ROLE, unc)
+                    val_item.setData(
+                        _ValueUncertaintyDelegate._MINOS_ROLE, minos_errors.get(param_name)
+                    )
                     # A fresh single fit supersedes any piped-back batch role.
                     _set_param_batch_role_cell(self._param_table, i, None)
             self._updating_fraction_values = False
@@ -1867,6 +1959,11 @@ class SingleFitTab(QWidget):
                 if value_item is not None
                 else None
             )
+            unc_asym = (
+                value_item.data(_ValueUncertaintyDelegate._MINOS_ROLE)
+                if value_item is not None
+                else None
+            )
 
             fix_widget = self._param_table.cellWidget(i, 2)
             fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
@@ -1885,6 +1982,7 @@ class SingleFitTab(QWidget):
                     "min": min_item.text() if min_item else "-inf",
                     "max": max_item.text() if max_item else "inf",
                     "uncertainty": unc,
+                    "uncertainty_asymmetric": list(unc_asym) if unc_asym is not None else None,
                     "role": role if isinstance(role, str) else None,
                     "link_group": _link_group_combo_value(link_combo),
                 }
@@ -1959,6 +2057,9 @@ class SingleFitTab(QWidget):
                 )
                 unc = p_data.get("uncertainty")
                 value_item.setData(_ValueUncertaintyDelegate._UNC_ROLE, unc)
+                value_item.setData(
+                    _ValueUncertaintyDelegate._MINOS_ROLE, p_data.get("uncertainty_asymmetric")
+                )
 
             fix_widget = self._param_table.cellWidget(i, 2)
             fix_checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
@@ -2051,6 +2152,9 @@ class GlobalFitTab(QWidget):
         self._member_datasets: list[MuonDataset] = []
         # Populated by the grouped-context builder: run_number -> list[groups].
         self._grouped_members: dict[int, list[object]] = {}
+        # Batch-series seeding mode (menu-bar "Batch seeding"); "auto" picks
+        # chain-from-previous for ordered scans, else independent seeds.
+        self._batch_seeding_mode = "auto"
         # Count-domain fit target: "all" (fgAll, the existing grouped path),
         # "fb" (forward+backward with free alpha), or "single" (one histogram).
         self._count_fit_mode = "all"
@@ -2231,6 +2335,12 @@ class GlobalFitTab(QWidget):
         self._fit_btn.clicked.connect(self._run_global_fit)
         self._fit_btn.setEnabled(False)
         btn_layout.addWidget(self._fit_btn)
+        # Stop replaces the disabled Fit button while a worker-based fit runs.
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setToolTip("Cancel the running fit; no partial result is recorded.")
+        self._stop_btn.clicked.connect(self._on_stop_fit)
+        self._stop_btn.hide()
+        btn_layout.addWidget(self._stop_btn)
         self._preview_btn = QPushButton("Preview")
         self._preview_btn.clicked.connect(self._on_preview_requested)
         self._preview_btn.setEnabled(False)
@@ -2241,6 +2351,12 @@ class GlobalFitTab(QWidget):
         )
         self._initial_values_btn.clicked.connect(self._open_initial_values_dialog)
         btn_layout.addWidget(self._initial_values_btn)
+        self._minos_checkbox = QCheckBox("Asymmetric errors (MINOS)")
+        self._minos_checkbox.setToolTip(
+            "After fitting, report asymmetric +/− 1σ MINOS intervals (slower; most "
+            "useful at low statistics or near parameter bounds)."
+        )
+        btn_layout.addWidget(self._minos_checkbox)
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
@@ -3466,7 +3582,7 @@ class GlobalFitTab(QWidget):
 
         # Run global fit in background thread
         self._result_text.setText("Fitting... This may take a moment for many datasets...")
-        self._fit_btn.setEnabled(False)  # Disable button during fit
+        self._set_series_busy(True)
 
         # Clean up any existing thread
         if self._fit_thread is not None:
@@ -3482,6 +3598,7 @@ class GlobalFitTab(QWidget):
             global_params,
             local_params,
             initial_params,
+            minos=self._minos_checkbox.isChecked(),
         )
         self._fit_worker.moveToThread(self._fit_thread)
 
@@ -3493,8 +3610,10 @@ class GlobalFitTab(QWidget):
         self._fit_thread.started.connect(self._fit_worker.run)
         self._fit_worker.finished.connect(self._on_fit_finished)
         self._fit_worker.error.connect(self._on_fit_error)
+        self._fit_worker.cancelled.connect(self._on_series_fit_cancelled)
         self._fit_worker.finished.connect(self._fit_thread.quit)
         self._fit_worker.error.connect(self._fit_thread.quit)
+        self._fit_worker.cancelled.connect(self._fit_thread.quit)
         self._fit_thread.finished.connect(self._cleanup_thread)
 
         # Start the thread. The started signal lets listeners snapshot
@@ -3556,7 +3675,7 @@ class GlobalFitTab(QWidget):
         )
 
         self._result_text.setText("Fitting grouped time-domain data...")
-        self._fit_btn.setEnabled(False)
+        self._set_series_busy(True)
 
         if self._fit_thread is not None:
             self._fit_thread.quit()
@@ -3570,6 +3689,7 @@ class GlobalFitTab(QWidget):
             global_params,
             local_params,
             initial_params,
+            minos=self._minos_checkbox.isChecked(),
         )
         self._fit_worker.moveToThread(self._fit_thread)
         self._current_model = grouped_model
@@ -3578,8 +3698,10 @@ class GlobalFitTab(QWidget):
         self._fit_thread.started.connect(self._fit_worker.run)
         self._fit_worker.finished.connect(self._on_grouped_fit_finished)
         self._fit_worker.error.connect(self._on_fit_error)
+        self._fit_worker.cancelled.connect(self._on_series_fit_cancelled)
         self._fit_worker.finished.connect(self._fit_thread.quit)
         self._fit_worker.error.connect(self._fit_thread.quit)
+        self._fit_worker.cancelled.connect(self._fit_thread.quit)
         self._fit_thread.finished.connect(self._cleanup_thread)
         self._fit_thread.start()
 
@@ -3800,6 +3922,7 @@ class GlobalFitTab(QWidget):
         self._result_text.setText("Fitting count-domain data…")
         self._fit_btn.setEnabled(False)
         try:
+            minos = self._minos_checkbox.isChecked()
             if self._count_fit_mode == "fb":
                 result = fit_fb_alpha(
                     dataset,
@@ -3811,6 +3934,7 @@ class GlobalFitTab(QWidget):
                     t_min=t_min,
                     t_max=t_max,
                     exclude=self._count_exclude,
+                    minos=minos,
                 )
                 self._render_count_fb_result(dataset, result, forward, backward)
             else:
@@ -3825,6 +3949,7 @@ class GlobalFitTab(QWidget):
                     t_min=t_min,
                     t_max=t_max,
                     exclude=self._count_exclude,
+                    minos=minos,
                 )
                 self._render_count_single_result(dataset, result, target)
         except (ValueError, RuntimeError) as exc:
@@ -3844,8 +3969,9 @@ class GlobalFitTab(QWidget):
         alpha = fwd.parameters["alpha"].value
         alpha_err = fwd.uncertainties.get("alpha")
         rows = [self._count_param_row(fwd, name) for name in fwd.parameters.names]
+        chip = fit_quality_chip_html(_fit_quality_dict(fwd))
         detail = (
-            f"α = {self._fmt_value(alpha, alpha_err)} · χ²/ν = {fwd.reduced_chi_squared:.4f} "
+            f"α = {self._fmt_value(alpha, alpha_err)} · χ²/ν = {fwd.reduced_chi_squared:.4f}{chip} "
             f"(cost: {self._count_fit_cost})<br>" + "<br>".join(rows)
         )
         self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
@@ -4118,7 +4244,12 @@ class GlobalFitTab(QWidget):
     def _count_param_row(self, fit_result, name: str) -> str:
         value = fit_result.parameters[name].value
         err = fit_result.uncertainties.get(name)
-        return f"{_format_param_label(name)} = {self._fmt_value(value, err)}"
+        row = f"{_format_param_label(name)} = {self._fmt_value(value, err)}"
+        minos = (getattr(fit_result, "minos_errors", None) or {}).get(name)
+        if minos is not None and len(minos) == 2:
+            lower, upper = float(minos[0]), float(minos[1])
+            row += f" (+{upper:.2g} / {lower:.2g})"
+        return row
 
     @staticmethod
     def _fmt_value(value: float, err: float | None) -> str:
@@ -4151,6 +4282,59 @@ class GlobalFitTab(QWidget):
             return "individual", None
         return ("global" if physics_global else "batch"), None
 
+    def set_batch_seeding_mode(self, mode: str) -> None:
+        """Set the batch-series seeding mode from the menu ("auto"/"as_provided"/etc.)."""
+        self._batch_seeding_mode = mode
+
+    def _set_series_busy(self, busy: bool) -> None:
+        """Swap the Fit button for a Stop button (and back) around a worker fit."""
+        self._fit_btn.setVisible(not busy)
+        self._fit_btn.setEnabled(not busy)
+        self._stop_btn.setVisible(busy)
+        self._stop_btn.setEnabled(busy)
+
+    def _on_stop_fit(self) -> None:
+        """Request cancellation of the active worker-based fit."""
+        worker = self._fit_worker
+        if worker is not None and hasattr(worker, "cancel"):
+            self._stop_btn.setEnabled(False)
+            self._result_text.setText("Cancelling fit…")
+            worker.cancel()
+
+    def _on_series_fit_cancelled(self) -> None:
+        """Handle a cancelled series fit: restore the panel, record nothing."""
+        self._set_series_busy(False)
+        self._results_group.setStyleSheet("")
+        self._result_text.setText("Fit cancelled — no result recorded.")
+
+    @staticmethod
+    def _grouped_series_order_key(members: dict) -> dict[int, float] | None:
+        """Best-effort run → temperature/field order key from group metadata.
+
+        Auto seeding chains only when this is a usable ordered scan; absent
+        temperature/field metadata, this returns ``None`` and Auto safely falls back
+        to independent seeds.
+        """
+        order: dict[int, float] = {}
+        for run, groups in members.items():
+            value = None
+            for group in groups:
+                meta = getattr(group, "metadata", None) or {}
+                for key in ("temperature", "temperature_k", "field", "field_g"):
+                    raw = meta.get(key)
+                    if raw is not None:
+                        try:
+                            value = float(raw)
+                        except (TypeError, ValueError):
+                            value = None
+                        break
+                if value is not None:
+                    break
+            if value is None:
+                return None
+            order[int(run)] = value
+        return order or None
+
     def _run_grouped_series_fit(
         self,
         grouped_datasets: list[MuonDataset],
@@ -4179,7 +4363,7 @@ class GlobalFitTab(QWidget):
         }
 
         self._result_text.setText("Fitting grouped time-domain series...")
-        self._fit_btn.setEnabled(False)
+        self._set_series_busy(True)
 
         if self._fit_thread is not None:
             self._fit_thread.quit()
@@ -4194,6 +4378,9 @@ class GlobalFitTab(QWidget):
             global_params,
             local_params,
             initial_params,
+            minos=self._minos_checkbox.isChecked(),
+            seeding=self._batch_seeding_mode,
+            order_key=self._grouped_series_order_key(members),
         )
         self._fit_worker.moveToThread(self._fit_thread)
         self._current_model = grouped_model
@@ -4202,8 +4389,10 @@ class GlobalFitTab(QWidget):
         self._fit_thread.started.connect(self._fit_worker.run)
         self._fit_worker.finished.connect(self._on_grouped_series_fit_finished)
         self._fit_worker.error.connect(self._on_fit_error)
+        self._fit_worker.cancelled.connect(self._on_series_fit_cancelled)
         self._fit_worker.finished.connect(self._fit_thread.quit)
         self._fit_worker.error.connect(self._fit_thread.quit)
+        self._fit_worker.cancelled.connect(self._fit_thread.quit)
         self._fit_thread.finished.connect(self._cleanup_thread)
         self._fit_thread.start()
 
@@ -4215,6 +4404,7 @@ class GlobalFitTab(QWidget):
         persists the ``FitSeries(member_kind="groups")``. (Reflecting fitted values
         back into the per-group tables is deferred; the seeds remain shown.)
         """
+        self._set_series_busy(False)
         self._update_mode_ui(preserve_result=True)
         member_results = dict(getattr(series_result, "member_results", {}))
         source_run = dict(getattr(series_result, "member_source_run", {}))
@@ -4252,6 +4442,9 @@ class GlobalFitTab(QWidget):
         reduced = [r.reduced_chi_squared for r in member_results.values() if r.reduced_chi_squared]
         avg_red_chi2 = sum(reduced) / len(reduced) if reduced else 0.0
         stats = f"{n_runs} runs · {n_members} group fits · avg χ²/ν = {avg_red_chi2:.4f}"
+        seeding_reason = getattr(series_result, "seeding_reason", "")
+        if seeding_reason:
+            stats += f"<br>Seeding: {seeding_reason}"
         self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
         self._result_text.setHtml(success_html("Grouped series fit converged", detail=stats))
         self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
@@ -4604,6 +4797,7 @@ class GlobalFitTab(QWidget):
 
     def _on_fit_finished(self, results_dict: dict, fitted_global: list) -> None:
         """Handle successful fit completion."""
+        self._set_series_busy(False)
         self._update_mode_ui(preserve_result=True)
 
         model = self._current_model
@@ -4628,6 +4822,7 @@ class GlobalFitTab(QWidget):
 
     def _on_fit_error(self, error_msg: str) -> None:
         """Handle fit error."""
+        self._set_series_busy(False)
         self._update_mode_ui(preserve_result=True)
         self._results_group.setStyleSheet("")
         mode_label = "grouped fit" if self.is_grouped_time_domain_mode() else "global fit"
@@ -4709,6 +4904,7 @@ class GlobalFitTab(QWidget):
 
     def _on_grouped_fit_finished(self, grouped_datasets: list[MuonDataset], grouped_result) -> None:
         """Handle successful grouped fit completion."""
+        self._set_series_busy(False)
         self._update_mode_ui(preserve_result=True)
         self._cache_grouped_simulate_seed(grouped_result)
 

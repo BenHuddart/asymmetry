@@ -494,7 +494,7 @@ def test_single_fit_uses_dataset_object_it_was_given(
 
     captured = {}
 
-    def _fit(captured_dataset, model_fn, parameters):
+    def _fit(captured_dataset, model_fn, parameters, *, minos=False):
         captured["dataset"] = captured_dataset
         captured["model_fn"] = model_fn
         captured["n_points"] = len(captured_dataset.time)
@@ -1056,10 +1056,13 @@ def test_grouped_fit_uses_per_group_seed_values_from_group_columns(
             _global_params,
             _local_params,
             initial_params,
+            *,
+            minos=False,
         ):
             captured["initial_params"] = initial_params
             self.finished = _DummySignal()
             self.error = _DummySignal()
+            self.cancelled = _DummySignal()
 
         def moveToThread(self, _thread):
             return None
@@ -1889,10 +1892,13 @@ def test_global_fit_uses_inherited_local_values_per_run(
             _global_params,
             _local_params,
             initial_params,
+            *,
+            minos=False,
         ):
             captured["initial_params"] = initial_params
             self.finished = _DummySignal()
             self.error = _DummySignal()
+            self.cancelled = _DummySignal()
 
         def moveToThread(self, _thread):
             return None
