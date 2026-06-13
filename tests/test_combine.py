@@ -15,6 +15,7 @@ import pytest
 
 from asymmetry.core.data.combine import (
     CombineError,
+    coadd_member_windows,
     combine_runs,
     reduce_combined_run,
 )
@@ -106,6 +107,71 @@ def test_subtract_requires_exactly_two():
 # ---------------------------------------------------------------------------
 # Co-add
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# In-batch co-add windowing (WiMDA BatchFit Smooth/Bin)
+# ---------------------------------------------------------------------------
+
+
+def test_coadd_windows_off_returns_singletons():
+    assert coadd_member_windows(4, mode="off", window=2) == [[0], [1], [2], [3]]
+    # window <= 1 is a no-op even in a co-add mode.
+    assert coadd_member_windows(3, mode="bin", window=1) == [[0], [1], [2]]
+
+
+def test_coadd_windows_bin_steps_by_window_dropping_partial():
+    # Bin over 2N runs (W=2) -> N non-overlapping pairs; matches WiMDA's
+    # i := i + jump + 1 with the "until i + jump > nff" full-window guard.
+    assert coadd_member_windows(6, mode="bin", window=2) == [[0, 1], [2, 3], [4, 5]]
+    # A trailing partial window is dropped (run index 4 here).
+    assert coadd_member_windows(5, mode="bin", window=2) == [[0, 1], [2, 3]]
+    assert coadd_member_windows(7, mode="bin", window=3) == [[0, 1, 2], [3, 4, 5]]
+
+
+def test_coadd_windows_smooth_slides_by_one():
+    # Smooth steps by one run (inc(i)); yields n - W + 1 full windows.
+    assert coadd_member_windows(5, mode="smooth", window=3) == [
+        [0, 1, 2],
+        [1, 2, 3],
+        [2, 3, 4],
+    ]
+
+
+def test_coadd_windows_empty_when_window_exceeds_members():
+    assert coadd_member_windows(2, mode="bin", window=3) == []
+    assert coadd_member_windows(2, mode="smooth", window=5) == []
+
+
+def test_bin_coadd_over_2n_equals_pairwise_combines_exactly():
+    """Bin-mode batch over 2N runs == N fits of pairwise-combined runs (exact).
+
+    The grouped-series in-batch co-add partitions members with
+    :func:`coadd_member_windows` then co-adds each window via
+    :func:`combine_runs`. For Bin W=2 the windows are consecutive pairs, so each
+    combined member must be bit-for-bit the pairwise co-add of its two runs.
+    """
+    n_pairs = 3
+    runs = [
+        simulate_run(_template(), _cos, total_events=2e5, seed=10 + i)
+        for i in range(2 * n_pairs)
+    ]
+    windows = coadd_member_windows(len(runs), mode="bin", window=2)
+    assert windows == [[0, 1], [2, 3], [4, 5]]
+    for window in windows:
+        windowed = combine_runs([runs[i] for i in window], sign=1)
+        pairwise = combine_runs([runs[window[0]], runs[window[1]]], sign=1)
+        for det in range(len(windowed.histograms)):
+            np.testing.assert_array_equal(
+                windowed.histograms[det].counts,
+                pairwise.histograms[det].counts,
+            )
+            # And exactly the per-bin sum of the two source histograms.
+            np.testing.assert_array_equal(
+                windowed.histograms[det].counts,
+                runs[window[0]].histograms[det].counts
+                + runs[window[1]].histograms[det].counts,
+            )
 
 
 def test_coadd_sums_counts_bin_for_bin():

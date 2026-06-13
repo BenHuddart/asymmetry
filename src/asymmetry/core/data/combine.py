@@ -51,6 +51,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 __all__ = [
     "CombineError",
+    "coadd_member_windows",
     "combine_runs",
     "reduce_combined_run",
 ]
@@ -236,6 +237,58 @@ def reduce_combined_run(run: Run) -> MuonDataset:
     metadata.setdefault("run_number", run.run_number)
     metadata.setdefault("run_label", str(run.run_number))
     return MuonDataset(time=time, asymmetry=asymmetry, error=error, metadata=metadata, run=run)
+
+
+# --- in-batch co-add windowing ------------------------------------------------
+
+
+def coadd_member_windows(
+    n_members: int,
+    *,
+    mode: str,
+    window: int,
+) -> list[list[int]]:
+    """Index windows for in-batch co-add of successive batch-series members.
+
+    Mirrors WiMDA's ``BatchFit.pas`` sequential co-add (the "+ N runs" control):
+    a window co-adds ``window`` successive members. The two stepping modes match
+    WiMDA's Smooth/Bin radio buttons (``$WIMDA_SRC/src/BatchFit.pas`` ~375):
+
+    * ``"smooth"`` — sliding window, **step 1**: windows
+      ``[0, W)``, ``[1, 1 + W)``, … (``inc(i)``). Yields ``n - W + 1`` windows.
+    * ``"bin"`` — non-overlapping, **step W**: windows ``[0, W)``, ``[W, 2W)``, …
+      (``i := i + jump + 1``). Yields ``n // W`` windows.
+
+    In both modes WiMDA's loop guard (``until i + jump > nff``) requires a *full*
+    window, so a trailing partial window is dropped — this matches that exactly.
+
+    Parameters
+    ----------
+    n_members
+        Number of ordered members available to fit.
+    mode
+        ``"smooth"`` or ``"bin"``. Any other value (e.g. ``"off"``) returns one
+        singleton window per member (no co-add).
+    window
+        Members co-added per window (WiMDA ``jump + 1``). A value ``<= 1`` is the
+        no-op singleton partition; values are clamped to ``>= 1``.
+
+    Returns
+    -------
+    list[list[int]]
+        Each inner list holds the member indices for one co-add window, in order.
+        Empty when no full window fits (``window > n_members`` in a co-add mode);
+        callers fall back to no co-add and report it.
+    """
+    n = max(0, int(n_members))
+    width = max(1, int(window))
+    normalized = str(mode).strip().lower()
+    if normalized not in ("smooth", "bin") or width <= 1:
+        return [[i] for i in range(n)]
+    if width > n:
+        return []
+    step = 1 if normalized == "smooth" else width
+    return [list(range(start, start + width)) for start in range(0, n - width + 1, step)]
 
 
 # --- compatibility ------------------------------------------------------------

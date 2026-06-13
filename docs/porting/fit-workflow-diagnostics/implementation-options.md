@@ -242,6 +242,16 @@ background file, no schema break.**
   grouped fits route through Poisson Cash by default; see
   `docs/porting/count-domain-fit-modes/implementation-options.md` follow-on 1
   for the design and the quantified low-count shift.
+  *Update (2026-06-13): in-batch co-add and re-fit-coadded landed on
+  `feat/batch-arithmetic` once the `combine_runs` kernel was on `main`.*
+  In-batch co-add is a "Co-add members" group-box on the Batch tab (Off / Bin /
+  Smooth + window size): `_compute_grouped_mode_context` transforms the member
+  datasets through the pure `combine.coadd_member_windows` partition (Smooth =
+  sliding step 1, Bin = non-overlapping step W, trailing partial dropped — WiMDA
+  `BatchFit.pas` ~375) then `combine_runs` + `reduce_combined_run` before the
+  grouped-series fit, so chain-seeding and the normalised-polarisation seed
+  contract see ordinary runs. Re-fit-coadded lives as a Data Browser
+  context-menu action (see `docs/porting/run-arithmetic/`).
 - **Dedicated "Fit log" window** — rejected; existing surfaces suffice (Ben).
 
 ## Recorded follow-ons (built nothing; noted for later)
