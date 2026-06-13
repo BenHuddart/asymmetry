@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -41,6 +41,7 @@ from asymmetry.core.fitting.parameter_models import (
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style, configure_formula_label
+from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.function_expression_builder import (
     ComponentSelectorButton as _ComponentSelectorButton,  # noqa: F401
 )
@@ -324,23 +325,6 @@ class _RangeWidgets:
     status_label: QLabel
 
 
-class _FitWorker(QObject):
-    """Run a fit task off the UI thread and return the result."""
-
-    finished = Signal(object)
-    failed = Signal(str)
-
-    def __init__(self, task: Callable[[], object]) -> None:
-        super().__init__()
-        self._task = task
-
-    def run(self) -> None:
-        try:
-            self.finished.emit(self._task())
-        except Exception:
-            self.failed.emit(traceback.format_exc())
-
-
 class ModelFitDialog(QDialog):
     """Configure and run model fits for one Y parameter vs selected X variable."""
 
@@ -381,8 +365,9 @@ class ModelFitDialog(QDialog):
         self._range_widgets: list[_RangeWidgets] = []
         self._active_range_idx: int | None = None
         self._fit_in_progress = False
-        self._fit_thread: QThread | None = None
-        self._fit_worker: _FitWorker | None = None
+        # Background fits run on the shared TaskRunner (gui/tasks.py), which owns
+        # the QThread/worker lifecycle and a bounded, Windows-safe shutdown.
+        self._tasks = TaskRunner(self)
         self._fit_done_callback: Callable[[object], None] | None = None
 
         if existing_fit is not None and existing_fit.ranges:
@@ -1199,41 +1184,43 @@ class ModelFitDialog(QDialog):
             return
         super().reject()
 
+    def closeEvent(self, event) -> None:
+        """Refuse to tear down mid-fit; otherwise shut the TaskRunner down."""
+        if self._fit_in_progress:
+            _show_info(self, "Fit in progress", "Please wait for the current fit to finish.")
+            event.ignore()
+            return
+        self._tasks.shutdown()
+        super().closeEvent(event)
+
     def _start_fit_task(
         self, task: Callable[[], object], on_done: Callable[[object], None]
     ) -> None:
         if self._fit_in_progress:
             return
 
-        thread = QThread(self)
-        worker = _FitWorker(task)
-        worker.moveToThread(thread)
-
         self._fit_in_progress = True
         self._set_fit_ui_busy(True)
-        self._fit_thread = thread
-        self._fit_worker = worker
         self._fit_done_callback = on_done
 
-        def _cleanup() -> None:
-            self._fit_in_progress = False
-            self._set_fit_ui_busy(False)
-            self._fit_worker = None
-            self._fit_thread = None
+        def _run(worker, task=task):
+            try:
+                return task()
+            except Exception as exc:
+                # TaskWorker would surface only str(exc); wrap the full
+                # traceback so the failure dialog keeps the same detail the
+                # old _FitWorker.failed signal carried.
+                raise RuntimeError(traceback.format_exc()) from exc
 
-        thread.started.connect(worker.run)
-        worker.finished.connect(self._on_fit_worker_finished)
-        worker.failed.connect(self._on_fit_worker_failed)
-        worker.finished.connect(worker.deleteLater)
-        worker.failed.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(_cleanup)
-        thread.start()
+        self._tasks.start(
+            _run,
+            on_finished=self._on_fit_worker_finished,
+            on_error=self._on_fit_worker_failed,
+        )
 
     def _on_fit_worker_finished(self, result: object) -> None:
         """Handle fit completion on the dialog (UI) thread."""
         callback = self._fit_done_callback
-        thread = self._fit_thread
         try:
             if callback is not None:
                 callback(result)
@@ -1244,15 +1231,18 @@ class ModelFitDialog(QDialog):
                 "Unexpected error while applying fit results.\n\n" + traceback.format_exc(),
             )
         finally:
-            if thread is not None:
-                thread.quit()
+            self._fit_done_callback = None
+            self._fit_in_progress = False
+            self._set_fit_ui_busy(False)
 
     def _on_fit_worker_failed(self, trace: str) -> None:
         """Handle fit failure on the dialog (UI) thread."""
-        _show_warning(self, "Fit failed", f"Unexpected error during fitting.\n\n{trace}")
-        thread = self._fit_thread
-        if thread is not None:
-            thread.quit()
+        try:
+            _show_warning(self, "Fit failed", f"Unexpected error during fitting.\n\n{trace}")
+        finally:
+            self._fit_done_callback = None
+            self._fit_in_progress = False
+            self._set_fit_ui_busy(False)
 
     def _set_fit_ui_busy(self, busy: bool) -> None:
         self._fit_progress_label.setVisible(busy)
