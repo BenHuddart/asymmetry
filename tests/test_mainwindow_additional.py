@@ -3079,9 +3079,42 @@ class TestMainWindowBasic:
         monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "P_z")
         assert mainwindow._single_fit_restore_payload(dataset) == {}
 
-        # The default slot (here empty) defers to the panel's run-keyed restore.
+        # The ALL/aggregate view also blanks once any projection has been fit:
+        # recording a projection fit contaminates the run blob, so deferring to
+        # it would let ALL inherit P_x's fit.
         monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "ALL")
+        assert mainwindow._single_fit_restore_payload(dataset) == {}
+
+    def test_restore_payload_defers_to_run_blob_for_plain_run(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A run with no projection fits defers to the panel's run-keyed blob."""
+        dataset = _make_dataset(8807, with_grouping=True)
+        mainwindow._project_model.ensure_dataset(8807).ensure(RepresentationType.TIME_FB_ASYMMETRY)
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "ALL")
+        # No default ui_state and no projection fits → defer (legacy / plain run).
         assert mainwindow._single_fit_restore_payload(dataset) is None
+
+    def test_export_fit_report_includes_per_projection_fits(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """The fit report lists each per-projection single fit, not just the default slot."""
+        rep = mainwindow._project_model.ensure_dataset(8808).ensure(
+            RepresentationType.TIME_FB_ASYMMETRY
+        )
+        rep.set_fit_for(None, FitSlot(provenance="single", result={"parameters": {"A": 0.1}}))
+        rep.set_fit_for("P_x", FitSlot(provenance="single", result={"parameters": {"A": 0.2}}))
+        rep.set_fit_for("P_z", FitSlot(provenance="single", result={"parameters": {"A": 0.3}}))
+
+        titles = [title for title, _ in mainwindow._collect_latest_fit_records()]
+
+        rep_label = RepresentationType.TIME_FB_ASYMMETRY.value
+        assert f"Run 8808 · {rep_label}" in titles  # default slot (no projection suffix)
+        assert f"Run 8808 · {rep_label} · P_x" in titles
+        assert f"Run 8808 · {rep_label} · P_z" in titles
 
     def test_in_session_projection_swap_restores_each_fit(
         self,

@@ -6135,19 +6135,24 @@ class FitPanel(QWidget):
         if run_number is None:
             return
 
-        if run_number in self._single_state_by_run:
+        # The main window's restore mediator is authoritative when it has an
+        # opinion: a payload (possibly an empty dict, meaning "blank this unfit
+        # projection") restores from the per-(run, representation, projection)
+        # slot — the canonical store for single fits. ``None`` means "no
+        # opinion", so fall back to the run-keyed blob (default slot / legacy
+        # projects). Consulting it first avoids restoring the form twice.
+        payload = (
+            self._single_fit_restore_provider(dataset)
+            if self._single_fit_restore_provider is not None
+            else None
+        )
+        if payload is not None:
+            self.restore_single_fit_ui(payload)
+        elif run_number in self._single_state_by_run:
             self._single_tab.restore_state(self._single_state_by_run[run_number])
         else:
             # Unseen datasets should not inherit another run's fit UI/result state.
             self._reset_single_fit_form()
-
-        # The main window may override the run-keyed restore with the persisted
-        # per-(run, representation, projection) slot — the canonical store for
-        # single fits. ``None`` means "no opinion": keep the run-blob restore.
-        if self._single_fit_restore_provider is not None:
-            payload = self._single_fit_restore_provider(dataset)
-            if payload is not None:
-                self.restore_single_fit_ui(payload)
 
     def _reset_single_fit_form(self) -> None:
         """Blank the single-fit form to its domain default ("No fit yet")."""
@@ -6184,15 +6189,14 @@ class FitPanel(QWidget):
 
         A populated dict restores the form verbatim; an empty dict (or ``None``)
         blanks it — an unfit projection must never inherit another projection's
-        fit. The active run's run-keyed blob is kept in sync so downstream
-        run-keyed consumers (global seeding, group sharing) see the same form.
+        fit. The run-keyed blob is deliberately *not* touched: it stays the
+        per-run store that global seeding and group sharing read, while the
+        per-projection slot is the source of truth for the single-fit form.
         """
         if isinstance(payload, dict) and payload:
             self._single_tab.restore_state(payload)
         else:
             self._reset_single_fit_form()
-        if self._active_single_run_number is not None:
-            self._single_state_by_run[self._active_single_run_number] = self._single_tab.get_state()
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting tab and track for group sharing."""

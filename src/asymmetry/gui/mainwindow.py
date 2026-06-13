@@ -4280,11 +4280,15 @@ class MainWindow(QMainWindow):
         records: list[tuple[str, dict]] = []
         for run_number, container in sorted(self._project_model.datasets.items()):
             for rep_type, representation in container.by_type.items():
-                slot = getattr(representation, "fit", None)
-                result = getattr(slot, "result", None) if slot is not None else None
-                if isinstance(result, dict) and result.get("parameters"):
-                    rep_label = getattr(rep_type, "value", str(rep_type))
-                    records.append((f"Run {run_number} · {rep_label}", result))
+                rep_label = getattr(rep_type, "value", str(rep_type))
+                # Include every stored slot — the default fit and each
+                # per-projection single fit — so a fit taken in a vector
+                # projection view is not silently absent from the report.
+                for projection, slot in representation.iter_fit_slots():
+                    result = getattr(slot, "result", None)
+                    if isinstance(result, dict) and result.get("parameters"):
+                        suffix = f" · {projection}" if projection else ""
+                        records.append((f"Run {run_number} · {rep_label}{suffix}", result))
         return records
 
     def _on_export_fit_report(self) -> None:
@@ -7511,42 +7515,51 @@ class MainWindow(QMainWindow):
         ui_state = slot.ui_state if isinstance(slot.ui_state, dict) else {}
         if ui_state:
             return copy.deepcopy(ui_state)
-        # No persisted form payload: a real projection must blank (it must not
-        # inherit the run blob's other-projection fit); the default slot defers.
-        return {} if projection is not None else None
+        # No persisted form payload for this slot. A genuine projection always
+        # blanks (it must never inherit another projection's fit). The default
+        # slot blanks too once *any* projection has been fit, because recording
+        # a projection fit writes that projection's form into the panel's
+        # run-keyed blob (`_on_single_fit_completed`) — deferring to it would let
+        # the ALL/aggregate view inherit a single projection's fit. Only a run
+        # with no projection fits defers to the blob (the default-slot and
+        # legacy-project path, where the blob is the authoritative single store).
+        if projection is not None or representation.projection_fits:
+            return {}
+        return None
 
     def _record_single_fit_slot(self, fit_result) -> None:
         """Write the active representation's single FitSlot into the project model."""
         rep_type = self._active_representation_type()
         if rep_type is None or self._current_dataset is None:
             return
-        if not hasattr(self._fit_panel, "get_single_state"):
+        if not hasattr(self._fit_panel, "get_single_form_state"):
             return
-        state = self._fit_panel.get_single_state()
-        if not isinstance(state, dict):
+        # One serialise of the single-fit form feeds both the structured slot
+        # fields and its ``ui_state`` restore payload.
+        form_state = self._fit_panel.get_single_form_state()
+        if not isinstance(form_state, dict):
             return
         run_number = int(self._current_dataset.run_number)
         projection = self._current_single_fit_projection()
         representation = self._project_model.ensure_dataset(run_number).ensure(rep_type)
-        ui_state = (
-            self._fit_panel.get_single_form_state()
-            if hasattr(self._fit_panel, "get_single_form_state")
-            else {}
-        )
         representation.set_fit_for(
             projection,
             FitSlot(
-                model=state.get("composite_model"),
-                parameters=[dict(p) for p in state.get("parameters", []) if isinstance(p, dict)],
+                model=form_state.get("composite_model"),
+                parameters=[
+                    dict(p) for p in form_state.get("parameters", []) if isinstance(p, dict)
+                ],
                 result={
                     **self._fit_result_summary(fit_result),
-                    "result_html": state.get("result_html"),
+                    "result_html": form_state.get("result_html"),
                 },
                 provenance="single",
-                ui_state=ui_state,
+                ui_state=form_state,
             ),
         )
-        # Editing a batch member's model via a single fit may diverge it.
+        # A single fit on the default slot (non-vector / ALL view) can change a
+        # batch member's model and diverge it; per-projection single fits are
+        # not series members, so they never affect divergence.
         self._project_model.refresh_divergence()
 
     def _record_global_fit_batch(self, normalized_payloads: dict, global_params) -> None:

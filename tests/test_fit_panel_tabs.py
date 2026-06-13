@@ -434,15 +434,23 @@ def test_restore_single_fit_ui_restores_form_from_payload(
     )
     payload = panel.get_single_form_state()
 
+    # The projection store is authoritative for the form, so restore must leave
+    # the run-keyed blob (read by global seeding / group sharing) untouched.
+    blob_models_before = {
+        run: state.get("composite_model", {}).get("component_names")
+        for run, state in panel._single_state_by_run.items()
+    }
+
     # Move the form elsewhere, then restore the captured payload.
     panel._single_tab._set_composite_model(CompositeModel(["Exponential"], operators=[]))
     panel.restore_single_fit_ui(payload)
 
     assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
-    # The active run's run-keyed blob is kept in sync with the restored form.
-    assert panel._single_state_by_run[int(dataset.run_number)]["composite_model"][
-        "component_names"
-    ] == ["Gaussian", "Constant"]
+    blob_models_after = {
+        run: state.get("composite_model", {}).get("component_names")
+        for run, state in panel._single_state_by_run.items()
+    }
+    assert blob_models_after == blob_models_before
 
 
 def test_restore_single_fit_ui_empty_blanks_form(qapp: QApplication, dataset: MuonDataset) -> None:
