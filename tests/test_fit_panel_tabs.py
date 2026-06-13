@@ -1131,55 +1131,14 @@ def test_grouped_fit_uses_per_group_seed_values_from_group_columns(
 
     captured: dict[str, object] = {}
 
-    class _DummySignal:
-        def connect(self, *_args, **_kwargs):
-            return None
+    # Grouped fits launch via _start_fit_call with a functools.partial whose
+    # positional args are (groups, model_fn, global, local, initial_params);
+    # capture initial_params without running the engine on a worker thread.
+    def _fake_start(panel, call, *, on_finished, on_error, on_cancelled):
+        captured["initial_params"] = call.args[4]
+        return SimpleNamespace(cancel=lambda: None)
 
-    class _FakeThread:
-        def __init__(self):
-            self.started = _DummySignal()
-            self.finished = _DummySignal()
-
-        def start(self):
-            return None
-
-        def quit(self):
-            return None
-
-        def wait(self):
-            return None
-
-        def deleteLater(self):
-            return None
-
-    class _FakeWorker:
-        def __init__(
-            self,
-            _grouped_groups,
-            _grouped_datasets,
-            _model_fn,
-            _global_params,
-            _local_params,
-            initial_params,
-            *,
-            minos=False,
-        ):
-            captured["initial_params"] = initial_params
-            self.finished = _DummySignal()
-            self.error = _DummySignal()
-            self.cancelled = _DummySignal()
-
-        def moveToThread(self, _thread):
-            return None
-
-        def run(self):
-            return None
-
-        def deleteLater(self):
-            return None
-
-    monkeypatch.setattr(fit_panel_module, "QThread", _FakeThread)
-    monkeypatch.setattr(fit_panel_module, "GroupedTimeDomainFitWorker", _FakeWorker)
+    monkeypatch.setattr(fit_panel_module, "_start_fit_call", _fake_start)
 
     tab._run_global_fit()
 
@@ -1967,55 +1926,14 @@ def test_global_fit_uses_inherited_local_values_per_run(
 
     captured: dict[str, object] = {}
 
-    class _DummySignal:
-        def connect(self, *_args, **_kwargs):
-            return None
+    # Global fits launch via _start_fit_call with a functools.partial whose
+    # positional args are (datasets, model_fn, global, local, initial_params);
+    # capture initial_params without running the engine on a worker thread.
+    def _fake_start(panel, call, *, on_finished, on_error, on_cancelled):
+        captured["initial_params"] = call.args[4]
+        return SimpleNamespace(cancel=lambda: None)
 
-    class _FakeThread:
-        def __init__(self):
-            self.started = _DummySignal()
-            self.finished = _DummySignal()
-
-        def start(self):
-            return None
-
-        def quit(self):
-            return None
-
-        def wait(self):
-            return None
-
-        def deleteLater(self):
-            return None
-
-    class _FakeWorker:
-        def __init__(
-            self,
-            _fit_engine,
-            _datasets,
-            _model_fn,
-            _global_params,
-            _local_params,
-            initial_params,
-            *,
-            minos=False,
-        ):
-            captured["initial_params"] = initial_params
-            self.finished = _DummySignal()
-            self.error = _DummySignal()
-            self.cancelled = _DummySignal()
-
-        def moveToThread(self, _thread):
-            return None
-
-        def run(self):
-            return None
-
-        def deleteLater(self):
-            return None
-
-    monkeypatch.setattr(fit_panel_module, "QThread", _FakeThread)
-    monkeypatch.setattr(fit_panel_module, "GlobalFitWorker", _FakeWorker)
+    monkeypatch.setattr(fit_panel_module, "_start_fit_call", _fake_start)
 
     tab._run_global_fit()
 

@@ -503,6 +503,62 @@ def test_run_fit_passes_error_mode_and_windows_to_core(qapp: QApplication, monke
     assert captured["windows"] == [(1.0, 4.0), (7.0, 10.0)]
 
 
+def test_run_fit_failure_surfaces_traceback_and_resets_state(
+    qapp: QApplication, monkeypatch
+) -> None:
+    """A fit that raises in the worker reaches the failure dialog (with the
+    full traceback) via TaskRunner's on_error, and the busy state is cleared."""
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult  # noqa: F401
+
+    dlg = _make_dialog(qapp)
+
+    def _boom(**_kwargs):
+        raise RuntimeError("fit blew up")
+
+    monkeypatch.setattr("asymmetry.gui.panels.model_fit_dialog.fit_parameter_model", _boom)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.model_fit_dialog._show_warning",
+        lambda _parent, _title, text: warnings.append(text),
+    )
+
+    dlg._run_fit(0)
+    _wait_for_fit(dlg)
+
+    assert dlg._fit_in_progress is False
+    assert dlg._fit_done_callback is None
+    assert warnings and "fit blew up" in warnings[0]
+    # The full traceback (not just str(exc)) is preserved through the migration.
+    assert "Traceback" in warnings[0]
+
+
+def test_close_event_refuses_while_fit_in_progress(qapp: QApplication, monkeypatch) -> None:
+    """closeEvent ignores the close (mirroring reject) while a fit is running."""
+    from PySide6.QtGui import QCloseEvent
+
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    dlg = _make_dialog(qapp)
+    gate = threading.Event()
+
+    def _fake_fit(**_kwargs):
+        gate.wait(timeout=1.0)
+        return ParameterModelFitResult(success=True, reduced_chi_squared=1.0)
+
+    monkeypatch.setattr("asymmetry.gui.panels.model_fit_dialog.fit_parameter_model", _fake_fit)
+    monkeypatch.setattr("asymmetry.gui.panels.model_fit_dialog._show_info", lambda *a, **k: None)
+    try:
+        dlg._run_fit(0)
+        assert dlg._fit_in_progress is True
+        event = QCloseEvent()
+        dlg.closeEvent(event)
+        assert not event.isAccepted()  # close refused while the fit runs
+    finally:
+        gate.set()
+    _wait_for_fit(dlg)
+    assert dlg._fit_in_progress is False
+
+
 def test_window_editor_round_trips_model_fit_range(qapp: QApplication) -> None:
     dlg = _make_dialog(qapp)
     fit_range = dlg._fit.ranges[0]

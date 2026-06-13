@@ -30,6 +30,19 @@ from asymmetry.gui.styles import tokens
 from tests._qt_helpers import wait_for
 
 
+def _compute_fourier_sync(window: MainWindow, timeout_s: float = 15.0) -> None:
+    """Run the now-async FFT compute and block until it lands.
+
+    ``_on_compute_fourier`` launches the averaged grouped FFT on the shared
+    TaskRunner; spin the event loop until the worker's completion callback
+    clears the busy flag (or returns immediately if validation short-circuited).
+    """
+    window._on_compute_fourier()
+    wait_for(
+        lambda: not window._fourier_compute_active, QApplication.instance(), timeout_s=timeout_s
+    )
+
+
 @pytest.fixture(scope="module")
 def qapp() -> QApplication:
     """Ensure a QApplication exists for widget tests."""
@@ -243,6 +256,11 @@ class TestMainWindowFourier:
         mainwindow._fourier_panel._phase_mode_radio.setChecked(True)
 
         mainwindow._on_fill_fourier_phases()
+        wait_for(
+            lambda: not mainwindow._fourier_phase_estimate_active,
+            QApplication.instance(),
+            timeout_s=15.0,
+        )
 
         phases = mainwindow._fourier_panel.group_phase_table()
         assert mainwindow._fourier_panel._use_phase_table_check.isChecked() is True
@@ -329,7 +347,7 @@ class TestMainWindowFourier:
         mainwindow._on_dataset_selected(8802)
         mainwindow._fourier_panel._power_sqrt_radio.setChecked(True)
 
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
 
         plotted = mainwindow._frequency_plot_panel._current_dataset
         assert plotted is not None
@@ -416,7 +434,7 @@ class TestMainWindowFourier:
             {1: "Left", 2: "Right"}, {1: 32.0, 2: -18.0}
         )
 
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
 
         plotted = mainwindow._frequency_plot_panel._current_dataset
         assert plotted is not None
@@ -435,7 +453,7 @@ class TestMainWindowFourier:
             {1: True, 2: False},
         )
 
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
 
         plotted = mainwindow._frequency_plot_panel._current_dataset
         assert plotted is not None
@@ -449,7 +467,7 @@ class TestMainWindowFourier:
         dataset = _make_fourier_ready_dataset(8820, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8820)
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
         generated = mainwindow._frequency_spectra_by_run[8820][0]
 
         state = mainwindow.collect_project_state()
@@ -478,7 +496,7 @@ class TestMainWindowFourier:
         dataset = _make_fourier_ready_dataset(8821, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8821)
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
         state = mainwindow.collect_project_state()
 
         mainwindow._frequency_spectra_by_run = {}
@@ -500,7 +518,7 @@ class TestMainWindowFourier:
         dataset = _make_fourier_ready_dataset(8823, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8823)
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
         snapshot = mainwindow._frequency_spectra_by_run[8823][0]
         state = mainwindow.collect_project_state()
 
@@ -536,7 +554,7 @@ class TestMainWindowFourier:
         mainwindow._data_browser.add_dataset(ds1)
         mainwindow._data_browser.add_dataset(ds2)
         mainwindow._on_dataset_selected(8830)
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
 
         monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
         mainwindow._on_apply_fourier_to_selection()
@@ -571,7 +589,7 @@ class TestMainWindowFourier:
         assert enabled.get(1) is True
         assert enabled.get(2) is False
 
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
         plotted = mainwindow._frequency_plot_panel._current_dataset
         assert plotted is not None
         assert plotted.metadata["group_ids"] == [1]
@@ -590,7 +608,7 @@ class TestMainWindowFourier:
             {1: True, 2: False},
         )
 
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
 
         plotted = mainwindow._frequency_plot_panel._current_dataset
         assert plotted is not None
@@ -621,7 +639,7 @@ class TestMainWindowFourier:
         # the symbol where it is actually called.
         monkeypatch.setattr(spectrum_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
 
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
 
         assert calls == [(1.0, 4.0), (1.0, 4.0)]
 
@@ -664,7 +682,7 @@ class TestMainWindowFourier:
         )
         monkeypatch.setattr(spectrum_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
 
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
 
         assert len(build_calls) == 2
         first_prepared = build_calls[0].get("prepared_histograms")
@@ -682,7 +700,7 @@ class TestMainWindowFourier:
         mainwindow._on_dataset_selected(8807)
         mainwindow._fourier_panel._estimate_average_error_check.setChecked(True)
 
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
 
         plotted = mainwindow._frequency_plot_panel._current_dataset
         assert plotted is not None
@@ -696,7 +714,7 @@ class TestMainWindowFourier:
         mainwindow._data_browser.add_dataset(dataset_b)
 
         mainwindow._on_dataset_selected(8809)
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
         plotted_a = mainwindow._frequency_plot_panel._current_dataset
 
         mainwindow._on_dataset_selected(8810)
@@ -720,7 +738,7 @@ class TestMainWindowFourier:
         mainwindow._data_browser.add_dataset(dataset_b)
 
         mainwindow._on_dataset_selected(8812)
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
         _x_min, _x_max, y_min, y_max = mainwindow._frequency_plot_panel.get_view_limits()
         mainwindow._frequency_plot_panel.set_view_limits(1.25, 3.75, y_min, y_max)
 
@@ -731,7 +749,7 @@ class TestMainWindowFourier:
         assert x_min == pytest.approx(1.25)
         assert x_max == pytest.approx(3.75)
 
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
 
         computed_x_min, computed_x_max, _computed_y_min, _computed_y_max = (
             mainwindow._frequency_plot_panel.get_view_limits()
@@ -936,7 +954,7 @@ class TestMainWindowFourier:
         # the computation is already done.
         mainwindow._on_dataset_selected(8864)
         mainwindow._plot_workspace.set_active_view("fb_asymmetry")
-        wait_for(lambda: mainwindow._maxent_thread is None, QApplication.instance(), timeout_s=5.0)
+        wait_for(lambda: not mainwindow._maxent_active, QApplication.instance(), timeout_s=5.0)
 
         assert mainwindow._plot_workspace.active_view() == "fb_asymmetry"
         assert 8863 in mainwindow._frequency_cache(RepresentationType.FREQ_MAXENT)
@@ -1015,7 +1033,7 @@ class TestMainWindowFourier:
         dataset = _make_fourier_ready_dataset(8811, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8811)
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
         abs_x_min, abs_x_max, _abs_y_min, _abs_y_max = (
             mainwindow._frequency_plot_panel.get_view_limits()
         )
@@ -1045,7 +1063,7 @@ class TestMainWindowFourier:
         dataset = _make_fourier_ready_dataset(8813, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8813)
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
 
         mainwindow._frequency_axis_relative_check.setChecked(True)
         _x_min, _x_max, y_min, y_max = mainwindow._frequency_plot_panel.get_view_limits()
@@ -1062,13 +1080,13 @@ class TestMainWindowFourier:
         dataset = _make_fourier_ready_dataset(8814, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8814)
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
 
         mainwindow._frequency_axis_relative_check.setChecked(True)
         _x_min, _x_max, y_min, y_max = mainwindow._frequency_plot_panel.get_view_limits()
         mainwindow._frequency_plot_panel.set_view_limits(-0.75, 0.25, y_min, y_max)
 
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
 
         x_min, x_max, _y_min, _y_max = mainwindow._frequency_plot_panel.get_view_limits()
         center = 100.0 * 135.538817 * 1.0e-4
@@ -1098,7 +1116,7 @@ class TestMainWindowFourier:
         mainwindow._maxent_panel._time_binning_spin.setValue(2)
 
         mainwindow._on_compute_maxent(1)
-        wait_for(lambda: mainwindow._maxent_thread is None, QApplication.instance(), timeout_s=10.0)
+        wait_for(lambda: not mainwindow._maxent_active, QApplication.instance(), timeout_s=10.0)
 
         assert mainwindow._plot_workspace.active_view() == "maxent"
         assert mainwindow._spectrum_stack.currentWidget() is mainwindow._maxent_panel
@@ -1134,7 +1152,7 @@ class TestMainWindowFourier:
         table.item(1, 0).setCheckState(Qt.CheckState.Unchecked)
 
         mainwindow._on_compute_maxent(1)
-        wait_for(lambda: mainwindow._maxent_thread is None, QApplication.instance(), timeout_s=10.0)
+        wait_for(lambda: not mainwindow._maxent_active, QApplication.instance(), timeout_s=10.0)
 
         representation = mainwindow._project_model.representation(
             8841, RepresentationType.FREQ_MAXENT
@@ -1162,7 +1180,7 @@ class TestMainWindowFourier:
 
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8816)
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
         mainwindow._fourier_panel._phase_mode_radio.setChecked(True)
         mainwindow._fourier_panel._use_phase_table_check.setChecked(True)
         mainwindow._fourier_panel.set_group_phases({1: 14.0, 2: -9.0}, auto_filled=True)
@@ -1215,7 +1233,7 @@ class TestMainWindowFourier:
 
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8817)
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
 
         mainwindow._fit_panel.set_domain("frequency")
         mainwindow._fit_panel.set_dataset(mainwindow._active_frequency_fit_dataset())
@@ -1322,7 +1340,7 @@ class TestMainWindowBasic:
         monkeypatch.setenv("ASYMMETRY_PERF_LOGGING", "1")
 
         mainwindow._on_dataset_selected(8830)
-        mainwindow._on_compute_fourier()
+        _compute_fourier_sync(mainwindow)
 
         log_text = mainwindow._log_panel.to_plain_text()
         assert "PERF selection_plot:" in log_text
@@ -1872,18 +1890,21 @@ class TestMainWindowBasic:
             mw_module, "remember_export_path", lambda p: remembered.setdefault("path", p)
         )
 
-        called: dict[str, str] = {}
+        rendered: dict[str, bool] = {}
 
-        def _export(path: str) -> int:
-            called["path"] = path
-            return 3
+        def _render() -> tuple[str, int]:
+            rendered["called"] = True
+            return ("run\tcol\n", 3)
 
         mainwindow._data_browser.get_all_datasets = lambda: [object()]
-        mainwindow._data_browser.export_logbook_tsv = _export
+        mainwindow._data_browser.render_logbook_tsv = _render
         mainwindow._on_export_logbook()
+        # The file write runs on the shared TaskRunner; wait for completion.
+        wait_for(lambda: "path" in remembered, QApplication.instance(), timeout_s=5.0)
 
-        assert called["path"] == str(destination)
+        assert rendered.get("called") is True
         assert remembered["path"] == str(destination)
+        assert destination.exists()
 
     def test_on_export_logbook_uses_rtf_export_when_rtf_selected(
         self,
@@ -1899,17 +1920,20 @@ class TestMainWindowBasic:
             lambda *args, **kwargs: (str(destination), "Rich Text Format (*.rtf)"),
         )
 
-        called: dict[str, str] = {}
+        rendered: dict[str, bool] = {}
 
-        def _export(path: str) -> int:
-            called["path"] = path
-            return 2
+        def _render() -> tuple[str, int]:
+            rendered["called"] = True
+            return (r"{\rtf1}", 2)
 
         mainwindow._data_browser.get_all_datasets = lambda: [object()]
-        mainwindow._data_browser.export_logbook_rtf = _export
+        mainwindow._data_browser.render_logbook_rtf = _render
         mainwindow._on_export_logbook()
+        expected = tmp_path / "logbook.rtf"
+        wait_for(lambda: expected.exists(), QApplication.instance(), timeout_s=5.0)
 
-        assert called["path"].endswith(".rtf")
+        assert rendered.get("called") is True
+        assert expected.exists()
 
     def test_on_export_logbook_uses_project_name_in_default_filename(
         self,
