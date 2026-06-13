@@ -4728,7 +4728,12 @@ class PlotPanel(QWidget):
 
         self._update_export_enabled()
 
-        if self._current_dataset is not None:
+        if self._subplot_axes_by_polarization and self._vector_subplot_datasets:
+            # Stacked multi-subplot view: re-render the subplots so the fit
+            # overlays the target projection's subplot (drawn per-axis from
+            # _fit_curves_by_key) without dropping the other projections.
+            self.plot_vector_subplots(self._vector_subplot_datasets)
+        elif self._current_dataset is not None:
             self.plot_dataset(self._current_dataset)
         else:
             self._ax.plot(t_fit, y_fit, "-", color=tokens.PLOT_FIT, linewidth=2, label=label)

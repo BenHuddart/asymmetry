@@ -1033,6 +1033,30 @@ class TestPlotPanel:
         panel._current_polarization_axis = "ALL"
         assert panel._default_fit_target() == "P_x"
 
+    def test_plot_fit_preserves_stacked_subplots(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        t = np.linspace(0.0, 4.0, 5)
+        e = np.full_like(t, 0.01)
+        datasets_by_axis = {
+            axis: [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.zeros_like(t),
+                    error=e,
+                    metadata={"run_number": 9301},
+                )
+            ]
+            for axis in ("P_x", "P_y", "P_z")
+        }
+        panel._current_polarization_axis = "ALL"
+        panel.plot_vector_subplots(datasets_by_axis)
+        assert len(panel._subplot_axes_by_polarization) == 3
+
+        # Overlaying a fit must NOT collapse the stacked view to a single plot.
+        panel.plot_fit(t, np.zeros_like(t), label="Fit")
+        assert len(panel._subplot_axes_by_polarization) == 3
+
     def test_active_y_axis_follows_fit_target_in_subplots(self, panel: PlotPanel) -> None:
         panel._subplot_axes_by_polarization = {"P_x": _FakeAxis(), "P_z": _FakeAxis()}
         panel._current_polarization_axis = "ALL"
