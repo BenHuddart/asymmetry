@@ -1057,6 +1057,33 @@ class TestPlotPanel:
         panel.plot_fit(t, np.zeros_like(t), label="Fit")
         assert len(panel._subplot_axes_by_polarization) == 3
 
+    def test_plot_fit_keys_under_the_selected_subplot(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        t = np.linspace(0.0, 4.0, 5)
+        e = np.full_like(t, 0.01)
+        datasets_by_axis = {
+            axis: [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.zeros_like(t),
+                    error=e,
+                    metadata={"run_number": 9302},
+                )
+            ]
+            for axis in ("P_x", "P_y", "P_z")
+        }
+        panel._current_polarization_axis = "ALL"
+        panel.plot_vector_subplots(datasets_by_axis)
+        # Target the SECOND projection, not the first that _current_dataset points at.
+        panel.set_fit_target_projection("P_y", emit=False)
+
+        panel.plot_fit(t, np.zeros_like(t), label="Fit")
+
+        # The fit is keyed under the selected projection (P_y), not P_x.
+        assert (9302, "P_y") in panel._fit_curves_by_key
+        assert (9302, "P_x") not in panel._fit_curves_by_key
+
     def test_active_y_axis_follows_fit_target_in_subplots(self, panel: PlotPanel) -> None:
         panel._subplot_axes_by_polarization = {"P_x": _FakeAxis(), "P_z": _FakeAxis()}
         panel._current_polarization_axis = "ALL"

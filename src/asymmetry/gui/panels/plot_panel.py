@@ -4709,6 +4709,13 @@ class PlotPanel(QWidget):
             except (TypeError, ValueError):
                 run_number = None
             axis_key = self._axis_key_for_dataset(self._current_dataset)
+        # In the stacked view the fit belongs to the SELECTED subplot, not the
+        # first projection that _current_dataset happens to point at — otherwise
+        # every fit would draw on the first subplot regardless of the target.
+        if self._subplot_axes_by_polarization:
+            target = self.fit_target_projection()
+            if target is not None:
+                axis_key = target
         self._fit_curve_run_number = run_number
 
         if run_number is not None:
