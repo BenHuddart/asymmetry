@@ -571,6 +571,28 @@ def test_field_from_log_state_round_trips(qapp: QApplication) -> None:
     assert restored._table.item(0, 3).text() == "100.5"
 
 
+def test_legacy_field_extra_column_does_not_enable_field_from_log(
+    qapp: QApplication,
+) -> None:
+    # An old project (pre-field-from-log) could save "field" as an ordinary
+    # extra column with no "use_field_from_log" key. Restoring it must NOT
+    # silently switch the B column into log-mean mode.
+    panel = DataBrowserPanel()
+    ds = _field_log_dataset(311)
+    panel.add_dataset(ds)
+    panel.restore_state(
+        {
+            "sort_column": -1,
+            "filters": {},
+            "extra_columns": ["field"],  # legacy: no use_field_from_log key
+        }
+    )
+    assert panel.use_field_from_log() is False
+    # B column shows the header scalar, not the log mean, and stays editable.
+    assert panel._table.item(0, 3).text() == "100.0"
+    assert panel._table.item(0, 3).flags() & Qt.ItemFlag.ItemIsEditable
+
+
 def test_nexus_temperature_include_replaces_browser_value_with_log_mean(
     qapp: QApplication,
 ) -> None:

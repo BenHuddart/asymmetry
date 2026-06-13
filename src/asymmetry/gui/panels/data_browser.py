@@ -3268,9 +3268,12 @@ class DataBrowserPanel(QWidget):
         self._use_temperature_from_log = bool(
             state.get("use_temperature_from_log", "temperature" in saved_extra_columns)
         )
-        self._use_field_from_log = bool(
-            state.get("use_field_from_log", "field" in saved_extra_columns)
-        )
+        # Default OFF when the key is absent: unlike "temperature" (always a
+        # from-log pseudo-key), older projects could save "field" as an ordinary
+        # "Magnetic Field (G)" extra column, so a present "field" must not be
+        # read as a request for field-from-log (which would silently switch the
+        # B column to the log mean on open).
+        self._use_field_from_log = bool(state.get("use_field_from_log", False))
         self._extra_columns = [
             key for key in saved_extra_columns if key not in self._BASE_COLUMN_OVERRIDE_KEYS
         ]

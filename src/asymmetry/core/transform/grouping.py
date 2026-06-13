@@ -158,13 +158,20 @@ def good_event_count(
     groups_raw = grouping.get("groups")
     if not isinstance(groups_raw, dict):
         return None
+    # Coerce group ids to int so a JSON-restored grouping (string keys) matches
+    # the int forward/backward ids just as an in-memory grouping does.
+    groups_by_id: dict[int, object] = {}
+    for key, vals in groups_raw.items():
+        gid = _safe_int(key)
+        if gid is not None:
+            groups_by_id[gid] = vals
     f_gid = _safe_int(grouping.get("forward_group"))
     b_gid = _safe_int(grouping.get("backward_group"))
     selected: list[object] = []
-    if f_gid is not None and f_gid in groups_raw:
-        selected.extend(groups_raw[f_gid])
-    if b_gid is not None and b_gid in groups_raw:
-        selected.extend(groups_raw[b_gid])
+    if f_gid is not None and f_gid in groups_by_id:
+        selected.extend(groups_by_id[f_gid])
+    if b_gid is not None and b_gid in groups_by_id:
+        selected.extend(groups_by_id[b_gid])
     if not selected:
         return None
 

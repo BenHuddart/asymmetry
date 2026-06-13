@@ -955,9 +955,7 @@ class TestPlotPanel:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        panel.set_time_view_modes(
-            ["fb_asymmetry", "raw_counts"], current_mode="fb_asymmetry"
-        )
+        panel.set_time_view_modes(["fb_asymmetry", "raw_counts"], current_mode="fb_asymmetry")
         assert not panel._log_counts_checkbox.isVisible()
 
         panel.set_current_time_view_mode("raw_counts")
@@ -2294,9 +2292,7 @@ class TestPlotPanel:
         assert "No plotted data" in warnings[0]
 
     def _parse_dat_columns(self, path: Path) -> np.ndarray:
-        rows = [
-            line for line in path.read_text().splitlines() if line and not line.startswith("!")
-        ]
+        rows = [line for line in path.read_text().splitlines() if line and not line.startswith("!")]
         return np.array([[float(v) for v in r.split()] for r in rows])
 
     def test_export_plotted_data_as_text_data_only_round_trips(

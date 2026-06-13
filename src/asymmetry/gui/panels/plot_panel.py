@@ -603,9 +603,7 @@ class PlotPanel(QWidget):
         self._export_gle_btn.setEnabled(False)
         self._export_menu = QMenu(self._export_gle_btn)
         self._export_menu.addAction("Export to GLE…", self.export_plots_to_gle)
-        self._export_menu.addAction(
-            "Export plotted data (text)…", self.export_plotted_data_as_text
-        )
+        self._export_menu.addAction("Export plotted data (text)…", self.export_plotted_data_as_text)
         self._export_gle_btn.setMenu(self._export_menu)
         row.addWidget(self._export_gle_btn)
 
@@ -5608,9 +5606,7 @@ class PlotPanel(QWidget):
             for i, payload in enumerate(payloads):
                 token = self._safe_file_token(str(payload.get("label", f"dataset_{i}")))
                 written.extend(
-                    self._write_payload_text_files(
-                        export_dir / token, payload, content, x_range
-                    )
+                    self._write_payload_text_files(export_dir / token, payload, content, x_range)
                 )
 
         if not written:

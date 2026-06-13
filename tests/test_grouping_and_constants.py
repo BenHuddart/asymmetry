@@ -71,6 +71,24 @@ def test_good_event_count_clamps_range_and_ignores_missing_detectors() -> None:
     assert good_event_count(hists, grouping) == pytest.approx(6.0)
 
 
+def test_good_event_count_matches_string_keyed_groups() -> None:
+    # A JSON-restored grouping carries string group ids; they must still match
+    # the int forward/backward ids.
+    hists = [
+        Histogram(counts=np.arange(0, 10, dtype=float), bin_width=0.01),
+        Histogram(counts=np.arange(10, 20, dtype=float), bin_width=0.01),
+    ]
+    grouping = {
+        "groups": {"1": [1], "2": [2]},  # string keys
+        "forward_group": 1,
+        "backward_group": 2,
+        "first_good_bin": 0,
+        "last_good_bin": 9,
+    }
+    expected = float(np.sum(hists[0].counts)) + float(np.sum(hists[1].counts))
+    assert good_event_count(hists, grouping) == pytest.approx(expected)
+
+
 def test_good_event_count_returns_none_when_undetermined() -> None:
     h = [Histogram(counts=np.ones(5, dtype=float), bin_width=0.01)]
     # No grouping / no good-bin range / no named groups -> None (caller falls back).
