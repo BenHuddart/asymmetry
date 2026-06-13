@@ -98,3 +98,26 @@ class TestProjectionChipBar:
         bar = ProjectionChipBar()
         bar.set_projections(_VECTOR)
         assert PROJECTION_TINTS["P_x"] in bar._chips["P_x"].styleSheet()
+
+    def test_set_projections_selected_argument(self, qapp):
+        bar = ProjectionChipBar()
+        bar.set_projections(_VECTOR, ["P_y"])
+        assert bar.selected_labels() == ["P_y"]
+
+    def test_unchanged_projection_set_keeps_chip_widgets(self, qapp):
+        bar = ProjectionChipBar()
+        bar.set_projections(_VECTOR)
+        chip_before = bar._chips["P_x"]
+        # Same label/tint set, different selection: must not tear down chips
+        # (a click round-trips through here and must not delete the chip pressed).
+        bar.set_projections(_VECTOR, ["P_x"])
+        assert bar._chips["P_x"] is chip_before
+        assert bar.selected_labels() == ["P_x"]
+
+    def test_changed_projection_set_rebuilds_chips(self, qapp):
+        bar = ProjectionChipBar()
+        bar.set_projections(_VECTOR)
+        chip_before = bar._chips["P_x"]
+        bar.set_projections(_VECTOR[:2])
+        assert "P_z" not in bar._chips
+        assert bar._chips["P_x"] is not chip_before

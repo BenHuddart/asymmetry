@@ -2332,8 +2332,7 @@ class PlotPanel(QWidget):
         wanted = set(selected) if selected else set(labels)
         chosen = [lbl for lbl in labels if lbl in wanted] or list(labels)
 
-        self._projection_bar.set_projections(specs)
-        self._projection_bar.set_selected(chosen)
+        self._projection_bar.set_projections(specs, chosen)
         self._selected_projection_labels = self._projection_bar.selected_labels()
 
         new_axis = self._axis_for_selection(self._selected_projection_labels)
@@ -2350,8 +2349,13 @@ class PlotPanel(QWidget):
             self._update_y_limit_controls_for_axis(new_axis)
 
     def selected_projection_labels(self) -> list[str]:
-        """Return the projection labels currently selected in the chip bar."""
-        return list(self._selected_projection_labels)
+        """Return the projection labels currently selected.
+
+        The chip bar is the source of truth once populated; the stored copy is
+        the fallback during project restore, before the bar has been rebuilt.
+        """
+        bar_selection = self._projection_bar.selected_labels()
+        return bar_selection or list(self._selected_projection_labels)
 
     def _polarization_ylabel(self, axis_key: str | None) -> str:
         """Return y-axis label for the provided polarization component."""
@@ -5638,6 +5642,7 @@ class PlotPanel(QWidget):
             "y_min": self._y_min.value() if self._has_mpl else -30.0,
             "y_max": self._y_max.value() if self._has_mpl else 30.0,
             "polarization_axis": self._current_polarization_axis,
+            "projection_selection": list(self._selected_projection_labels),
             "y_limits_by_polarization": {
                 axis: [float(lim[0]), float(lim[1])]
                 for axis, lim in self._y_limits_by_polarization.items()
@@ -5754,6 +5759,15 @@ class PlotPanel(QWidget):
 
         self._active_label_group_id = None
         self._current_polarization_axis = self._axis_canonical_key(state.get("polarization_axis"))
+        # Seed the selected subset so a restored stacked-subplot view reopens
+        # with the exact projections it was saved with (the chip bar is rebuilt
+        # later by _refresh_vector_axis_selector, which reads this).
+        raw_selection = state.get("projection_selection")
+        self._selected_projection_labels = (
+            [str(label) for label in raw_selection if label]
+            if isinstance(raw_selection, list)
+            else []
+        )
         self._y_limits_by_polarization = {}
         raw_y_limits_by_axis = state.get("y_limits_by_polarization", {})
         if isinstance(raw_y_limits_by_axis, dict):

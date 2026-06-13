@@ -67,19 +67,28 @@ class ProjectionChipBar(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
-    def set_projections(self, projections: list[dict]) -> None:
-        """Rebuild chips from ``projections`` (each ``{"label", "tint"?}``).
+    def set_projections(self, projections: list[dict], selected: list[str] | None = None) -> None:
+        """Set chips from ``projections`` (each ``{"label", "tint"?}``).
 
-        Selection for labels that persist across the rebuild is preserved;
-        otherwise every projection starts selected (the old "All" default).
-        The bar is shown only when at least two projections exist. Does not
-        emit :attr:`selection_changed` — the caller drives the initial render.
+        ``selected`` chooses the checked chips; when omitted, a selection for
+        labels that persist across the update is preserved, else every
+        projection starts selected (the old "All" default). The chip widgets are
+        only torn down and rebuilt when the label/tint set actually changes — a
+        no-op update (the common case on every plot refresh) keeps the existing
+        chips, so a click does not destroy the chip the user just pressed. The
+        bar is shown only when at least two projections exist. Does not emit
+        :attr:`selection_changed` — the caller drives the initial render.
         """
         prior = self.selected_labels()
-        self._projections = [dict(p) for p in projections if p.get("label")]
-        self._rebuild_chips()
+        new_specs = [dict(p) for p in projections if p.get("label")]
+        new_sig = [(str(p["label"]), str(p.get("tint") or "")) for p in new_specs]
+        current_sig = [(str(p["label"]), str(p.get("tint") or "")) for p in self._projections]
+        self._projections = new_specs
+        if new_sig != current_sig:
+            self._rebuild_chips()
 
-        keep = [lbl for lbl in prior if lbl in self._chips]
+        source = selected if selected is not None else prior
+        keep = [lbl for lbl in source if lbl in self._chips]
         if not keep:
             keep = list(self._chips)
         self._apply_selection(keep, emit=False)

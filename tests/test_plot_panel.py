@@ -1726,6 +1726,23 @@ class TestPlotPanel:
 
         assert restored._label_field_combo.currentData() == "temperature"
 
+    def test_projection_subset_persists_in_panel_state(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        # A 2-of-3 subset must survive save/restore rather than widening to all.
+        panel.set_projections(_projection_specs(["P_x", "P_y", "P_z"]), ["P_x", "P_z"])
+        assert panel.get_current_polarization_axis() == "ALL"
+        state = panel.get_state()
+        assert state["projection_selection"] == ["P_x", "P_z"]
+
+        restored = PlotPanel()
+        if not hasattr(restored, "_has_mpl") or not restored._has_mpl:
+            pytest.skip("matplotlib not available")
+        restored.restore_state(state, dataset=None)
+
+        assert restored.selected_projection_labels() == ["P_x", "P_z"]
+
     def test_overlay_selection_persists_in_panel_state(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")

@@ -118,6 +118,22 @@ because fixing them piecemeal would half-build the chip-bar generality:
   the chip bar adds more projection handling, introduce a single
   `normalize_projection_payload` / `AsymmetryProjection.from_payload` helper.
 
+### From the Step 2 review (deferred to Step 4/5)
+
+- **The `"ALL"` sentinel collapses the subset.** Multi-select is mapped onto the
+  legacy single `_current_polarization_axis` string (`len>1 → "ALL"`), so the
+  actual subset (`{P_x,P_z}` vs the full triple) is recoverable only from
+  `selected_projection_labels()`. Step 2.5 fixed the *user-visible* symptom by
+  persisting `projection_selection` in plot state; the deeper fix — keying off
+  the selected-label list directly and treating single-vs-stacked as
+  `len(labels)==1` rather than a sentinel — is deferred. It will otherwise fight
+  the TF dual-grouping case (2 projections, not a vector triple) in Step 5.
+- **`_normalize_vector_axis` is canonical-only.** Single-selecting a
+  non-`P_x/P_y/P_z` projection routes through it and is dropped; the chip bar /
+  `_build_vector_axis_datasets` / `plot_vector_subplots` are already
+  label-agnostic, so this gate is the remaining canonical assumption to remove in
+  Step 5.
+
 ## Suggested implementation order
 
 1. B1 data model (`AsymmetryProjection` + schema field) with migration; retire
