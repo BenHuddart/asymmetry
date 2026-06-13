@@ -296,6 +296,31 @@ def test_iter_fit_slots_includes_default_and_projections():
     assert keys == {None, "P_x"}
 
 
+def test_fit_for_is_a_pure_read_and_does_not_insert():
+    # Inspecting an unfit projection must not leak an empty slot into the model.
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    slot = rep.fit_for("P_y")
+    assert slot.is_empty()
+    assert rep.projection_fits == {}
+    assert "projection_fits" not in rep.to_dict()
+
+
+def test_to_dict_skips_empty_projection_slots():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.set_fit_for("P_x", FitSlot())  # empty slot
+    rep.set_fit_for("P_z", FitSlot(provenance="single", result={"chi2": 1.0}))
+    data = rep.to_dict()
+    # Only the projection that actually carries a fit is persisted.
+    assert set(data["projection_fits"]) == {"P_z"}
+
+
+def test_all_sentinel_maps_to_default_slot():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.set_fit_for("ALL", FitSlot(provenance="single"))
+    assert rep.fit.provenance == "single"
+    assert rep.projection_fits == {}
+
+
 # ── DatasetRepresentations container ───────────────────────────────────────
 
 

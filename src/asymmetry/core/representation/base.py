@@ -136,54 +136,58 @@ class Representation(ABC):
         projection_fits: dict[str, FitSlot] | None = None,
     ) -> None:
         self.recipe: dict[str, Any] = dict(recipe or {})
-        # Fits keyed by projection label; the ``None`` key is the default
-        # (non-projection / single-pair) slot, exposed as the ``fit`` property so
-        # every existing ``representation.fit`` read/write keeps operating on it.
-        # Per-projection slots (P_x/P_y/P_z, transverse-field labels, …) let each
+        # ``fit`` is the default (non-projection / single-pair) slot — a plain
+        # attribute, so every existing ``representation.fit`` read/write/in-place
+        # mutation is unchanged. ``projection_fits`` holds the per-projection
+        # slots (P_x/P_y/P_z, transverse-field labels, …), letting each
         # projection of a vector grouping remember its own fit.
-        self._fits: dict[str | None, FitSlot] = {
-            None: fit if isinstance(fit, FitSlot) else FitSlot()
-        }
+        self.fit: FitSlot = fit if isinstance(fit, FitSlot) else FitSlot()
+        self.projection_fits: dict[str, FitSlot] = {}
         if isinstance(projection_fits, dict):
             for key, slot in projection_fits.items():
-                if key is not None and isinstance(slot, FitSlot):
-                    self._fits[str(key)] = slot
+                if key and isinstance(slot, FitSlot):
+                    self.projection_fits[str(key)] = slot
         self.trend_state: dict[str, Any] = dict(trend_state or {})
         self.result_metadata: dict[str, Any] = dict(result_metadata or {})
         self._datasets: list[MuonDataset] | None = None
 
     # ── fit slots (per projection) ─────────────────────────────────────────
 
-    @property
-    def fit(self) -> FitSlot:
-        """The default (non-projection) fit slot."""
-        return self._fits[None]
-
-    @fit.setter
-    def fit(self, slot: FitSlot) -> None:
-        self._fits[None] = slot if isinstance(slot, FitSlot) else FitSlot()
-
     @staticmethod
     def _fit_key(projection: str | None) -> str | None:
-        """Normalise a projection label to a fit-slot key (empty → default)."""
-        return projection if projection else None
+        """Normalise a projection label to a projection-fit key.
+
+        Falsy labels and the ``"ALL"`` aggregate sentinel (which is not a
+        physical projection and is never fit) map to ``None`` — the default
+        ``fit`` slot — so they never create a phantom projection entry.
+        """
+        if not projection or projection == "ALL":
+            return None
+        return str(projection)
 
     def fit_for(self, projection: str | None) -> FitSlot:
-        """Return the fit slot for *projection*, creating an empty one if absent."""
-        return self._fits.setdefault(self._fit_key(projection), FitSlot())
+        """Return the fit slot for *projection* (a fresh empty slot if unfit).
+
+        This is a pure read — it never inserts, so inspecting an unfit
+        projection does not leak an empty slot into the saved project.
+        """
+        key = self._fit_key(projection)
+        if key is None:
+            return self.fit
+        return self.projection_fits.get(key, FitSlot())
 
     def set_fit_for(self, projection: str | None, slot: FitSlot) -> None:
         """Store *slot* as the fit for *projection*."""
-        self._fits[self._fit_key(projection)] = slot if isinstance(slot, FitSlot) else FitSlot()
-
-    @property
-    def projection_fits(self) -> dict[str, FitSlot]:
-        """Return the per-projection (non-default) fit slots, keyed by label."""
-        return {key: slot for key, slot in self._fits.items() if key is not None}
+        resolved = slot if isinstance(slot, FitSlot) else FitSlot()
+        key = self._fit_key(projection)
+        if key is None:
+            self.fit = resolved
+        else:
+            self.projection_fits[key] = resolved
 
     def iter_fit_slots(self) -> list[tuple[str | None, FitSlot]]:
         """Return ``(projection_key, slot)`` for every stored fit (default + projections)."""
-        return list(self._fits.items())
+        return [(None, self.fit), *self.projection_fits.items()]
 
     # ── identity ───────────────────────────────────────────────────────────
 
@@ -248,11 +252,12 @@ class Representation(ABC):
             "trend_state": dict(self.trend_state),
             "result_metadata": dict(self.result_metadata),
         }
-        projection_fits = self.projection_fits
+        # Only persist projections that actually carry a fit — never empty slots.
+        projection_fits = {
+            key: slot.to_dict() for key, slot in self.projection_fits.items() if not slot.is_empty()
+        }
         if projection_fits:
-            payload["projection_fits"] = {
-                key: slot.to_dict() for key, slot in projection_fits.items()
-            }
+            payload["projection_fits"] = projection_fits
         return payload
 
     def __repr__(self) -> str:

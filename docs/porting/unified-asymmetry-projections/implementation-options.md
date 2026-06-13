@@ -118,6 +118,22 @@ because fixing them piecemeal would half-build the chip-bar generality:
   the chip bar adds more projection handling, introduce a single
   `normalize_projection_payload` / `AsymmetryProjection.from_payload` helper.
 
+### From the Step 3 part-1 review (obligations for part 2)
+
+- **Divergence / trend must iterate projection slots.** Everything in
+  `core/representation/project_model.py` (`refresh_divergence` and the
+  series-divergence/trend helpers, `set_member_trend_inclusion`, `remove_batch`)
+  reads `representation.fit` (the default slot) only. Once part 2 writes
+  projection slots via `set_fit_for(axis, …)`, those helpers must iterate
+  `representation.iter_fit_slots()` so a projection's fit can diverge / be
+  excluded from trending / be toggled — otherwise a projection fit silently
+  contaminates the trend. (Acceptable in part 1: nothing writes projection slots
+  yet.)
+- **`set_fit_for` key contract.** Part-2 write sites should pass the *selected
+  single projection* (fitting is blocked in multi-select/ALL). `_fit_key` already
+  routes falsy / `"ALL"` to the default slot defensively, but the write site
+  should still pass the real axis, not the aggregate.
+
 ### From the Step 2 review (deferred to Step 4/5)
 
 - **The `"ALL"` sentinel collapses the subset.** Multi-select is mapped onto the
