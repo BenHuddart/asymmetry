@@ -4901,3 +4901,343 @@ class TestReductionSettingsPersistence:
         mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
 
         assert "binning_mode" not in dataset.run.grouping
+
+
+class TestRefitCoadded:
+    """Browser "Re-fit as Co-added": combine selection, fit, record trend row."""
+
+    @staticmethod
+    def _fake_result(params: dict[str, float]):
+        return SimpleNamespace(
+            success=True,
+            chi_squared=2.0,
+            reduced_chi_squared=0.9,
+            parameters=[SimpleNamespace(name=k, value=v) for k, v in params.items()],
+            uncertainties={k: 0.01 for k in params},
+        )
+
+    @staticmethod
+    def _combined_dataset(temperature: float, field: float) -> MuonDataset:
+        run = Run(
+            run_number=-2_100_000_001,
+            histograms=[Histogram(counts=np.ones(4), bin_width=0.01)],
+            metadata={"temperature": temperature, "field": field},
+            grouping={},
+        )
+        return MuonDataset(
+            time=np.arange(4.0),
+            asymmetry=np.zeros(4),
+            error=np.ones(4),
+            metadata={"temperature": temperature, "field": field, "combined_from": [501, 502]},
+            run=run,
+        )
+
+    def test_member_key_and_batch_id_deterministic(self, mainwindow: MainWindow) -> None:
+        model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+        key1 = mainwindow._refit_coadded_member_key([501, 502])
+        key2 = mainwindow._refit_coadded_member_key([501, 502])
+        assert key1 == key2 < -2_000_000_000
+        assert mainwindow._refit_coadded_member_key([501, 503]) != key1
+
+        bid1 = mainwindow._refit_coadded_batch_id(model, [501, 502])
+        assert bid1.startswith("refit-coadded-")
+        assert bid1 == mainwindow._refit_coadded_batch_id(model, [501, 502])
+        assert mainwindow._refit_coadded_batch_id(model, [501, 503]) != bid1
+        other = CompositeModel(["Gaussian"], operators=[])
+        assert mainwindow._refit_coadded_batch_id(other, [501, 502]) != bid1
+
+    def test_finished_records_computed_series_with_provenance(self, mainwindow: MainWindow) -> None:
+        model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+        member_key = mainwindow._refit_coadded_member_key([501, 502])
+        rep_type = RepresentationType.TIME_FB_ASYMMETRY
+        payload = (self._combined_dataset(7.5, 120.0), self._fake_result({"A": 0.2, "lambda": 1.3}))
+
+        mainwindow._on_refit_coadded_finished(
+            payload, [501, 502], model, member_key, rep_type, "501 + 502"
+        )
+
+        batch_id = mainwindow._refit_coadded_batch_id(model, [501, 502])
+        series = mainwindow._project_model.batch(batch_id)
+        assert series is not None
+        assert series.is_computed  # model-less computed trend row
+        assert series.member_run_numbers == [member_key]
+        row = series.results_by_run[member_key]
+        assert row["combined_from"] == [501, 502]
+        assert row["parameters"]["A"] == pytest.approx(0.2)
+        assert row["temperature"] == pytest.approx(7.5)
+        assert row["field"] == pytest.approx(120.0)
+        assert series.extra["combined_from"] == [501, 502]
+
+    def test_rerun_same_selection_replaces_series(self, mainwindow: MainWindow) -> None:
+        model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+        member_key = mainwindow._refit_coadded_member_key([501, 502])
+        rep_type = RepresentationType.TIME_FB_ASYMMETRY
+
+        mainwindow._on_refit_coadded_finished(
+            (self._combined_dataset(7.5, 120.0), self._fake_result({"A": 0.2})),
+            [501, 502],
+            model,
+            member_key,
+            rep_type,
+            "501 + 502",
+        )
+        mainwindow._on_refit_coadded_finished(
+            (self._combined_dataset(7.5, 120.0), self._fake_result({"A": 0.9})),
+            [501, 502],
+            model,
+            member_key,
+            rep_type,
+            "501 + 502",
+        )
+
+        batch_id = mainwindow._refit_coadded_batch_id(model, [501, 502])
+        matching = [bid for bid in mainwindow._project_model.batches if bid == batch_id]
+        assert len(matching) == 1  # replaced, not duplicated
+        assert mainwindow._project_model.batch(batch_id).results_by_run[member_key]["parameters"][
+            "A"
+        ] == pytest.approx(0.9)
+
+    def test_failed_fit_records_nothing(self, mainwindow: MainWindow) -> None:
+        model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+        member_key = mainwindow._refit_coadded_member_key([501, 502])
+        failed = SimpleNamespace(success=False)
+        mainwindow._on_refit_coadded_finished(
+            (self._combined_dataset(7.5, 120.0), failed),
+            [501, 502],
+            model,
+            member_key,
+            RepresentationType.TIME_FB_ASYMMETRY,
+            "501 + 502",
+        )
+        assert mainwindow._refit_coadded_batch_id(model, [501, 502]) not in (
+            mainwindow._project_model.batches
+        )
+
+    def test_requested_combines_and_fits_end_to_end(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The real async path: combine the runs and fit off-thread, then record."""
+
+        class _FakeEngine:
+            def fit(self, dataset, _fn, seed, **_kw):
+                return SimpleNamespace(
+                    success=True,
+                    chi_squared=1.0,
+                    reduced_chi_squared=0.8,
+                    parameters=list(seed),
+                    uncertainties={},
+                )
+
+        monkeypatch.setattr("asymmetry.core.fitting.engine.FitEngine", _FakeEngine)
+        for rn in (501, 502):
+            mainwindow._data_browser.add_dataset(_make_dataset(rn, with_grouping=True))
+        # A view that maps to a real representation type.
+        monkeypatch.setattr(
+            mainwindow, "_active_representation_type", lambda: RepresentationType.TIME_FB_ASYMMETRY
+        )
+
+        mainwindow._on_refit_coadded_requested([501, 502])
+        wait_for(
+            lambda: mainwindow._refit_coadded_worker is None,
+            QApplication.instance(),
+            timeout_s=15.0,
+        )
+
+        model, _seed = mainwindow._fit_panel.single_fit_model_and_seed()
+        batch_id = mainwindow._refit_coadded_batch_id(model, [501, 502])
+        series = mainwindow._project_model.batch(batch_id)
+        assert series is not None
+        member_key = mainwindow._refit_coadded_member_key([501, 502])
+        assert series.results_by_run[member_key]["combined_from"] == [501, 502]
+
+    def test_recorded_series_survives_asymp_round_trip(
+        self, mainwindow: MainWindow, tmp_path: Path
+    ) -> None:
+        model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+        member_key = mainwindow._refit_coadded_member_key([501, 502])
+        mainwindow._on_refit_coadded_finished(
+            (self._combined_dataset(7.5, 120.0), self._fake_result({"A": 0.2})),
+            [501, 502],
+            model,
+            member_key,
+            RepresentationType.TIME_FB_ASYMMETRY,
+            "501 + 502",
+        )
+        batch_id = mainwindow._refit_coadded_batch_id(model, [501, 502])
+
+        # The computed series round-trips through the project model dict like any
+        # other results series (shared _add_results_series recorder).
+        from asymmetry.core.representation.project_model import ProjectModel
+
+        restored = ProjectModel.from_dict(mainwindow._project_model.to_dict())
+        series = restored.batch(batch_id)
+        assert series is not None
+        assert series.results_by_run[member_key]["combined_from"] == [501, 502]
+        assert series.extra["combined_from"] == [501, 502]
+
+
+class TestMaxEntBatchReconstructSend:
+    """MaxEnt batch-reconstruct-then-send: queue + cancel + final moments send."""
+
+    @staticmethod
+    def _setup(mainwindow, monkeypatch, run_numbers):
+        from asymmetry.core.maxent import MaxEntConfig
+
+        datasets = [_make_dataset(rn, with_grouping=True) for rn in run_numbers]
+        for ds in datasets:
+            mainwindow._data_browser.add_dataset(ds)
+        monkeypatch.setattr(
+            mainwindow._data_browser, "get_selected_datasets", lambda: list(datasets)
+        )
+        monkeypatch.setattr(mainwindow, "_dataset_supports_maxent", lambda ds: True)
+        monkeypatch.setattr(
+            mainwindow._maxent_panel, "maxent_config", lambda *, cycles: MaxEntConfig()
+        )
+        monkeypatch.setattr(mainwindow._maxent_panel, "selected_group_ids", lambda: [1, 2])
+
+        launched: list[int] = []
+
+        def _fake_launch(*, run, config, cycles, state, run_number):
+            launched.append(int(run_number))
+            # Simulate a successful reconstruction caching its result, then the
+            # finished-callback tail that advances the batch.
+            mainwindow._maxent_result_by_run[int(run_number)] = ("result", config)
+            if mainwindow._maxent_batch_active:
+                mainwindow._maxent_batch_done += 1
+                mainwindow._advance_maxent_batch()
+
+        monkeypatch.setattr(mainwindow, "_launch_maxent_worker", _fake_launch)
+
+        sends: list[object] = []
+        monkeypatch.setattr(mainwindow, "_on_moments_send_to_trend", lambda w: sends.append(w))
+        return launched, sends
+
+    def test_reconstructs_all_missing_then_sends(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        launched, sends = self._setup(mainwindow, monkeypatch, [701, 702, 703])
+        widget = mainwindow._maxent_panel.moments_widget
+
+        mainwindow._on_maxent_batch_reconstruct_and_send(widget)
+
+        assert launched == [701, 702, 703]
+        assert sends == [widget]  # one moments send, after the queue drains
+        assert mainwindow._maxent_batch_active is False
+        assert mainwindow._maxent_batch_queue == []
+
+    def test_skips_runs_with_cached_reconstruction(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        launched, sends = self._setup(mainwindow, monkeypatch, [701, 702, 703])
+        mainwindow._maxent_result_by_run[702] = ("cached", None)  # already reconstructed
+        widget = mainwindow._maxent_panel.moments_widget
+
+        mainwindow._on_maxent_batch_reconstruct_and_send(widget)
+
+        assert launched == [701, 703]
+        assert sends == [widget]
+
+    def test_all_cached_sends_immediately_without_reconstructing(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        launched, sends = self._setup(mainwindow, monkeypatch, [701, 702])
+        for rn in (701, 702):
+            mainwindow._maxent_result_by_run[rn] = ("cached", None)
+        widget = mainwindow._maxent_panel.moments_widget
+
+        mainwindow._on_maxent_batch_reconstruct_and_send(widget)
+
+        assert launched == []
+        assert sends == [widget]
+        assert mainwindow._maxent_batch_active is False
+
+    def test_no_selection_does_nothing(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [])
+        sends: list[object] = []
+        monkeypatch.setattr(mainwindow, "_on_moments_send_to_trend", lambda w: sends.append(w))
+        widget = mainwindow._maxent_panel.moments_widget
+        mainwindow._on_maxent_batch_reconstruct_and_send(widget)
+        assert sends == []
+        assert mainwindow._maxent_batch_active is False
+
+    def test_cancel_clears_queue_and_aborts(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Put the window in a mid-batch state by hand and confirm cancel aborts
+        # without a moments send.
+        sends: list[object] = []
+        monkeypatch.setattr(mainwindow, "_on_moments_send_to_trend", lambda w: sends.append(w))
+        widget = mainwindow._maxent_panel.moments_widget
+        mainwindow._maxent_batch_active = True
+        mainwindow._maxent_batch_queue = [801, 802]
+        mainwindow._maxent_batch_widget = widget
+        mainwindow._maxent_worker = None  # no live worker → cancel aborts here
+
+        mainwindow._on_cancel_maxent()
+
+        assert mainwindow._maxent_batch_active is False
+        assert mainwindow._maxent_batch_queue == []
+        assert mainwindow._maxent_batch_widget is None
+        assert sends == []  # aborted batch records nothing
+
+    def test_maxent_moments_widget_exposes_batch_button(self, mainwindow: MainWindow) -> None:
+        widget = mainwindow._maxent_panel.moments_widget
+        assert widget._batch_btn.isVisibleTo(widget)
+        fourier = mainwindow._fourier_panel.moments_widget
+        assert not fourier._batch_btn.isVisibleTo(fourier)
+
+    def test_cancel_with_live_worker_aborts_batch_so_late_finish_sends_nothing(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Cancel aborts immediately; a racing normal completion records no send.
+
+        MaxEnt cancel is cooperative, so the in-flight run can still emit
+        `finished` after Cancel. Aborting the batch in `_on_cancel_maxent` (not
+        only in the cancelled callback) makes the terminal handler's
+        `if self._maxent_batch_active` guard False, so no moments send fires.
+        """
+        sends: list[object] = []
+        monkeypatch.setattr(mainwindow, "_on_moments_send_to_trend", lambda w: sends.append(w))
+        cancelled = {"flag": False}
+        mainwindow._maxent_worker = SimpleNamespace(
+            cancel=lambda: cancelled.__setitem__("flag", True)
+        )
+        mainwindow._maxent_batch_active = True
+        mainwindow._maxent_batch_queue = [802]
+        mainwindow._maxent_batch_widget = mainwindow._maxent_panel.moments_widget
+
+        mainwindow._on_cancel_maxent()
+
+        assert cancelled["flag"] is True  # the live worker was asked to stop
+        assert mainwindow._maxent_batch_active is False  # batch aborted up front
+
+        # Simulate the in-flight run finishing normally despite the cancel: the
+        # finished-callback tail must NOT advance/send because the batch is gone.
+        mainwindow._maxent_batch_done += 1 if mainwindow._maxent_batch_active else 0
+        if mainwindow._maxent_batch_active:
+            mainwindow._advance_maxent_batch()
+        assert sends == []
+
+    def test_batch_run_config_prefers_per_run_stored_state(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A run with its own stored MaxEnt settings reconstructs with those."""
+        dataset = _make_dataset(901, with_grouping=True)
+        stored = {"selected_group_ids": [1, 2], "spectrum_points": 64}
+        mainwindow._maxent_panel_state_by_run[901] = stored
+
+        captured: dict = {}
+
+        def _norm(state, _names):
+            captured["state"] = state
+            return {}
+
+        monkeypatch.setattr(mainwindow, "_normalise_maxent_panel_state", _norm)
+        config = mainwindow._maxent_config_for_batch_run(dataset)
+
+        # The run's own stored state was consulted (not the active panel), and
+        # the batch cycle budget was threaded in.
+        assert captured["state"] == stored
+        assert config.outer_cycles == mainwindow._MAXENT_BATCH_CYCLES

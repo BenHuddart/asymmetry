@@ -75,6 +75,9 @@ class SpectralMomentsWidget(QGroupBox):
     settings_changed = Signal()
     #: Emitted when the user clicks Send to trend.
     send_to_trend_requested = Signal()
+    #: Emitted when the user clicks "Reconstruct selection & send" (MaxEnt host
+    #: only; the button is hidden until :meth:`enable_batch_reconstruct`).
+    batch_reconstruct_send_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("Spectral moments", parent)
@@ -134,6 +137,20 @@ class SpectralMomentsWidget(QGroupBox):
         self._send_btn.clicked.connect(self.send_to_trend_requested.emit)
         outer.addWidget(self._send_btn)
 
+        # MaxEnt-only: reconstruct the selected runs' spectra first, then send —
+        # so a B_rms(T) series builds without per-run reconstruct clicks. Hidden
+        # until the MaxEnt host enables it.
+        self._batch_btn = QPushButton("Reconstruct selection & send")
+        self._batch_btn.setToolTip(
+            "Reconstruct any MaxEnt spectra missing for the selected runs — each "
+            "with its own stored settings, or the current panel settings if it "
+            "has none — then send their moments to the trend. Cancel from the "
+            "MaxEnt panel."
+        )
+        self._batch_btn.clicked.connect(self.batch_reconstruct_send_requested.emit)
+        self._batch_btn.hide()
+        outer.addWidget(self._batch_btn)
+
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
         outer.addWidget(self._status_label)
@@ -182,6 +199,10 @@ class SpectralMomentsWidget(QGroupBox):
 
     def is_eligible(self) -> bool:
         return self._eligible
+
+    def enable_batch_reconstruct(self, enabled: bool = True) -> None:
+        """Show the MaxEnt "Reconstruct selection & send" button (host opt-in)."""
+        self._batch_btn.setVisible(enabled)
 
     # ── unit / range / cutoff state ───────────────────────────────────────
 

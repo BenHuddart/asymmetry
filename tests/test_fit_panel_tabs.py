@@ -19,7 +19,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QMessageBox, QSizePolicy
 
-from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError, FitResult
 from asymmetry.core.fitting.fit_wizard import (
@@ -763,6 +763,88 @@ def test_global_tab_set_datasets_states(qapp: QApplication, dataset: MuonDataset
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
     tab.set_datasets([dataset, d2])
     assert tab._fit_btn.isEnabled() is True
+
+
+def _grouped_run_dataset(run_number: int, temperature: float) -> MuonDataset:
+    """A run-bearing grouped dataset (2 detectors) for in-batch co-add tests."""
+    counts_f = np.array([100.0, 90.0, 80.0, 70.0], dtype=float)
+    counts_b = np.array([60.0, 55.0, 50.0, 45.0], dtype=float)
+    run = Run(
+        run_number=run_number,
+        histograms=[
+            Histogram(counts=counts_f, bin_width=0.1, t0_bin=0, good_bin_start=0, good_bin_end=3),
+            Histogram(counts=counts_b, bin_width=0.1, t0_bin=0, good_bin_start=0, good_bin_end=3),
+        ],
+        metadata={"title": "T-scan", "temperature": temperature, "field": 100.0},
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "group_names": {1: "Forward", 2: "Backward"},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "good_frames": 1000.0,
+        },
+    )
+    return MuonDataset(
+        time=np.array([0.0, 0.1, 0.2, 0.3]),
+        asymmetry=np.zeros(4),
+        error=np.ones(4),
+        metadata={"run_number": run_number, "temperature": temperature},
+        run=run,
+    )
+
+
+def test_inbatch_coadd_off_passes_members_through(qapp: QApplication) -> None:
+    tab = GlobalFitTab(member_kind="runs")
+    members = [_grouped_run_dataset(100 + i, 5.0 + i) for i in range(4)]
+    combined, note = tab._apply_inbatch_coadd(members)
+    assert combined is members  # untouched
+    assert note == ""
+
+
+def test_inbatch_coadd_bin_combines_successive_pairs(qapp: QApplication) -> None:
+    tab = GlobalFitTab(member_kind="runs")
+    members = [_grouped_run_dataset(100 + i, 5.0 + i) for i in range(4)]
+    tab._coadd_mode = "bin"
+    tab._coadd_window = 2
+    combined, note = tab._apply_inbatch_coadd(members)
+
+    assert len(combined) == 2
+    assert "2 combined members" in note
+    # Each combined member's run histograms are the per-bin sum of its pair.
+    for window, member in zip([(0, 1), (2, 3)], combined, strict=True):
+        for det in range(2):
+            np.testing.assert_array_equal(
+                member.run.histograms[det].counts,
+                members[window[0]].run.histograms[det].counts
+                + members[window[1]].run.histograms[det].counts,
+            )
+        # Event-weighted temperature lands between the pair's endpoints.
+        temp = float(member.run.metadata["temperature"])
+        lo = members[window[0]].run.metadata["temperature"]
+        hi = members[window[1]].run.metadata["temperature"]
+        assert lo <= temp <= hi
+
+
+def test_inbatch_coadd_smooth_slides_by_one(qapp: QApplication) -> None:
+    tab = GlobalFitTab(member_kind="runs")
+    members = [_grouped_run_dataset(100 + i, 5.0 + i) for i in range(4)]
+    tab._coadd_mode = "smooth"
+    tab._coadd_window = 2
+    combined, _note = tab._apply_inbatch_coadd(members)
+    assert len(combined) == 3  # n - W + 1 sliding windows
+
+
+def test_inbatch_coadd_window_exceeding_members_is_skipped(qapp: QApplication) -> None:
+    tab = GlobalFitTab(member_kind="runs")
+    members = [_grouped_run_dataset(100 + i, 5.0 + i) for i in range(2)]
+    tab._coadd_mode = "bin"
+    tab._coadd_window = 3
+    combined, note = tab._apply_inbatch_coadd(members)
+    assert combined is members
+    assert "exceeds" in note
 
 
 def test_global_fit_rejects_non_finite_value(qapp: QApplication, dataset: MuonDataset) -> None:

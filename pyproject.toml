@@ -102,6 +102,7 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "src/asymmetry/core/fitting/sc/models.py" = ["N803"]  # Physics parameter names (Tc)
 "src/asymmetry/core/project/schema.py" = ["N818"]  # Public API exception class predates the suffix rule
 "src/asymmetry/gui/mainwindow.py" = ["N802"]  # Qt closeEvent override
+"src/asymmetry/gui/panels/fit_parameters_panel.py" = ["N802"]  # Qt closeEvent override
 "src/asymmetry/gui/panels/fit_function_builder.py" = ["N802", "N815"]  # Qt-compatible shim names
 "src/asymmetry/core/negmu/fit.py" = ["N806"]  # Physics variable names (exp_T, etc.)
 "tests/negmu/test_fit_single.py" = ["N806"]  # Physics variable names (amp_C, amp_Fe, tau_C, etc.)

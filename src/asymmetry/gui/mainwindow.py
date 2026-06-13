@@ -516,6 +516,18 @@ class MainWindow(QMainWindow):
         self._maxent_active_config: MaxEntConfig | None = None
         self._maxent_active_cycles: int = 0
         self._maxent_started_at: float | None = None
+        # MaxEnt batch-reconstruct-then-send: a queue of run numbers driven
+        # through the single-run worker one at a time, reusing each run's
+        # resumable state, then a moments send. Cancel aborts the whole queue.
+        self._maxent_batch_active: bool = False
+        self._maxent_batch_queue: list[int] = []
+        self._maxent_batch_widget = None
+        self._maxent_batch_config: MaxEntConfig | None = None
+        self._maxent_batch_total: int = 0
+        self._maxent_batch_done: int = 0
+        # Live worker for the Data Browser "Re-fit as Co-added" action (one at a
+        # time; the handler gates relaunch while one is in flight).
+        self._refit_coadded_worker: TaskWorker | None = None
         # Frequency representation the fit-panel datasets were last collected
         # from, and its snapshot at global-fit launch.  The async completion
         # handler resolves run datasets against the LAUNCH snapshot: the
@@ -1398,6 +1410,8 @@ class MainWindow(QMainWindow):
             self._data_browser.grouping_requested.connect(self._on_grouping_requested)
         if hasattr(self._data_browser, "group_selected"):
             self._data_browser.group_selected.connect(self._on_group_selected)
+        if hasattr(self._data_browser, "refit_coadded_requested"):
+            self._data_browser.refit_coadded_requested.connect(self._on_refit_coadded_requested)
         self._data_browser.selection_changed.connect(self._update_selected_datasets)
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         if hasattr(self._frequency_plot_panel, "fit_range_changed"):
@@ -1415,6 +1429,14 @@ class MainWindow(QMainWindow):
             _widget.send_to_trend_requested.connect(
                 lambda w=_widget: self._on_moments_send_to_trend(w)
             )
+            # MaxEnt is per-run and lazy, so a multi-run moments send only records
+            # runs whose reconstruction already exists. Offer batch-reconstruct-
+            # then-send on the MaxEnt host so a B_rms(T) series builds in one click.
+            if _rep == RepresentationType.FREQ_MAXENT:
+                _widget.enable_batch_reconstruct(True)
+                _widget.batch_reconstruct_send_requested.connect(
+                    lambda w=_widget: self._on_maxent_batch_reconstruct_and_send(w)
+                )
         if hasattr(self._plot_panel, "cursor_coords_changed"):
             self._plot_panel.cursor_coords_changed.connect(self._on_cursor_coords_changed)
         if hasattr(self._fit_panel, "fit_range_edit_committed"):
@@ -6795,9 +6817,18 @@ class MainWindow(QMainWindow):
         self._set_status_state("Computing MaxEnt…")
 
     def _on_cancel_maxent(self) -> None:
-        """Request cancellation of the active MaxEnt worker."""
+        """Request cancellation of the active MaxEnt worker (and any batch)."""
+        was_batch = self._maxent_batch_active
+        if was_batch:
+            # Abort the batch now (clears _maxent_batch_active), so that even if
+            # the in-flight run's cooperative cancel loses the race and it emits
+            # `finished` instead of `cancelled`, the terminal handler's
+            # `if self._maxent_batch_active` guard is already False — no further
+            # run launches and no moments send fires for a cancelled batch.
+            self._abort_maxent_batch()
         if self._maxent_worker is None:
-            self._set_fourier_status("No MaxEnt calculation is running.")
+            if not was_batch:
+                self._set_fourier_status("No MaxEnt calculation is running.")
             return
         self._maxent_worker.cancel()
         self._set_fourier_status("Cancelling MaxEnt calculation...")
@@ -6882,6 +6913,9 @@ class MainWindow(QMainWindow):
         self._log_panel.log(message)
         self._log_maxent_perf()
         self._finish_maxent()
+        if self._maxent_batch_active:
+            self._maxent_batch_done += 1
+            self._advance_maxent_batch()
 
     def _on_maxent_worker_error(self, message: str) -> None:
         """Handle a failed MaxEnt worker."""
@@ -6893,6 +6927,10 @@ class MainWindow(QMainWindow):
         self._log_panel.log(f"MaxEnt failed: {message}")
         self._log_maxent_perf()
         self._finish_maxent()
+        if self._maxent_batch_active:
+            # Skip the failed run and keep reconstructing the rest of the batch.
+            self._log_panel.log("MaxEnt batch: skipping the failed run.")
+            self._advance_maxent_batch()
 
     def _on_maxent_worker_cancelled(self) -> None:
         """Handle worker cancellation."""
@@ -6900,6 +6938,8 @@ class MainWindow(QMainWindow):
         self._log_panel.log("MaxEnt calculation cancelled.")
         self._log_maxent_perf()
         self._finish_maxent()
+        if self._maxent_batch_active:
+            self._abort_maxent_batch()
 
     def _finish_maxent(self) -> None:
         """Clear MaxEnt worker state after a terminal callback (GUI thread)."""
@@ -6969,6 +7009,126 @@ class MainWindow(QMainWindow):
             state=state,
             run_number=run_number,
         )
+
+    #: Cycle budget per run in a batch reconstruct (the engine early-stops at
+    #: convergence, so this is an upper bound, matching the Converge button).
+    _MAXENT_BATCH_CYCLES = 50
+
+    def _on_maxent_batch_reconstruct_and_send(self, widget) -> None:
+        """Reconstruct the selected runs' MaxEnt spectra, then send their moments.
+
+        Closes the spectral-moments gap that MaxEnt's per-run, lazy
+        reconstruction leaves: a multi-run moments send records only runs whose
+        reconstruction already exists. This queues the missing reconstructions —
+        driving the single-run worker one run at a time, reusing each run's
+        resumable state and its **own** stored MaxEnt settings (falling back to
+        the current panel settings for runs that have none) — then performs the
+        moments send, so a B_rms(T) series builds in one action. Cancel from the
+        MaxEnt panel aborts the whole queue.
+        """
+        if self._maxent_active or self._maxent_batch_active:
+            self._set_fourier_status("A MaxEnt calculation is already running.")
+            return
+
+        candidates = [
+            int(ds.run_number)
+            for ds in self._data_browser.get_selected_datasets()
+            if ds.run is not None and self._dataset_supports_maxent(ds)
+        ]
+        if not candidates:
+            self._set_fourier_status("Select grouped runs to reconstruct before sending moments.")
+            return
+
+        # Validate the active panel config — the fallback used for any run that
+        # has no stored MaxEnt settings of its own.
+        fallback = self._maxent_panel.maxent_config(cycles=self._MAXENT_BATCH_CYCLES)
+        if (
+            fallback.t_min_us is not None
+            and fallback.t_max_us is not None
+            and fallback.t_max_us <= fallback.t_min_us
+        ):
+            self._set_fourier_status("MaxEnt end time must be greater than the start time.")
+            return
+        if fallback.mode == "zf_lf" and len(self._maxent_panel.selected_group_ids()) != 2:
+            self._set_fourier_status(
+                "ZF/LF mode needs exactly two included groups (forward and backward)."
+            )
+            return
+
+        # Reconstruct only runs without a cached MaxEnt result; runs already
+        # reconstructed go straight to the moments send.
+        queue = [rn for rn in candidates if self._maxent_result_by_run.get(rn) is None]
+        self._maxent_batch_widget = widget
+        if not queue:
+            self._on_moments_send_to_trend(widget)
+            return
+
+        self._maxent_batch_config = fallback
+        self._maxent_batch_active = True
+        self._maxent_batch_queue = list(queue)
+        self._maxent_batch_total = len(queue)
+        self._maxent_batch_done = 0
+        self._advance_maxent_batch()
+
+    def _maxent_config_for_batch_run(self, dataset) -> MaxEntConfig:
+        """MaxEnt config for one batch run: its own stored settings, else fallback.
+
+        A run that has been visited or carries a persisted MaxEnt recipe is
+        reconstructed with *its* group selection / phases / window — not whichever
+        run happens to be displayed — so a heterogeneous selection reconstructs
+        each run faithfully. Runs with no settings of their own use the active
+        panel config captured at batch start (``_maxent_batch_config``).
+        """
+        run_number = int(dataset.run_number)
+        group_names = self._fourier_group_names_for_dataset(dataset)
+        state = self._maxent_panel_state_by_run.get(run_number)
+        if state is None:
+            state = self._maxent_state_from_representation(run_number, group_names)
+        if state is None:
+            return self._maxent_batch_config or self._maxent_panel.maxent_config(
+                cycles=self._MAXENT_BATCH_CYCLES
+            )
+        normalised = self._normalise_maxent_panel_state(dict(state), group_names)
+        return MaxEntConfig.from_dict({**normalised, "outer_cycles": self._MAXENT_BATCH_CYCLES})
+
+    def _advance_maxent_batch(self) -> None:
+        """Launch the next queued reconstruction, or send moments when drained."""
+        while self._maxent_batch_queue:
+            run_number = self._maxent_batch_queue.pop(0)
+            dataset = self._data_browser.get_dataset(run_number)
+            if dataset is None or dataset.run is None or not self._dataset_supports_maxent(dataset):
+                continue  # a run that can no longer be reconstructed is skipped
+            self._set_fourier_status(
+                f"MaxEnt batch: reconstructing run {run_number} "
+                f"({self._maxent_batch_done + 1}/{self._maxent_batch_total})…"
+            )
+            self._launch_maxent_worker(
+                run=dataset.run,
+                config=self._maxent_config_for_batch_run(dataset),
+                cycles=self._MAXENT_BATCH_CYCLES,
+                state=self._maxent_state_by_run.get(run_number),
+                run_number=run_number,
+            )
+            return
+
+        widget = self._maxent_batch_widget
+        sent = self._maxent_batch_done
+        self._maxent_batch_active = False
+        self._maxent_batch_widget = None
+        self._maxent_batch_config = None
+        if widget is not None:
+            self._on_moments_send_to_trend(widget)
+        self._set_fourier_status(
+            f"MaxEnt batch: reconstructed {sent} run(s); moments sent to trend."
+        )
+
+    def _abort_maxent_batch(self) -> None:
+        """Tear down batch state after a cancellation (records no moments send)."""
+        self._maxent_batch_active = False
+        self._maxent_batch_queue = []
+        self._maxent_batch_widget = None
+        self._maxent_batch_config = None
+        self._set_fourier_status("MaxEnt batch cancelled.")
 
     def _on_apply_maxent_to_selection(self) -> None:
         """Copy the active run's MaxEnt recipe to other selected runs."""
@@ -8968,6 +9128,145 @@ class MainWindow(QMainWindow):
             )
         )
 
+    def _on_refit_coadded_requested(self, run_numbers) -> None:
+        """Combine the selected runs and re-fit them as one co-added member.
+
+        Mirrors WiMDA's right-click "co-add and re-fit" (``FitTableUnit.pas``):
+        the selected runs are summed at the raw-count level (``combine_runs``)
+        and fitted off-thread with the active single-fit model, then recorded as
+        a one-member computed trend series carrying ``combined_from`` provenance.
+        A deterministic ``batch_id`` (model + member set) means re-running the
+        same selection replaces its row rather than duplicating it.
+        """
+        from asymmetry.core.data.combine import (
+            combine_runs,
+            reduce_combined_run,
+            runs_with_dataset_metadata,
+        )
+
+        runs = sorted({int(r) for r in (run_numbers or [])})
+        if len(runs) < 2:
+            return
+        if self._refit_coadded_worker is not None:
+            self.statusBar().showMessage("A co-added re-fit is already running.")
+            return
+
+        source_datasets = []
+        for rn in runs:
+            dataset = self._data_browser.get_dataset(rn)
+            if dataset is None or dataset.run is None or not dataset.run.histograms:
+                QMessageBox.warning(
+                    self,
+                    "Re-fit as Co-added",
+                    "Every selected run needs detector histograms to co-add and fit.",
+                )
+                return
+            source_datasets.append(dataset)
+        # Carry the browser's displayed scalar overrides onto the run copies so
+        # the combined member's event-weighted temperature/field — the trend
+        # row's x-coordinate — match what the user sees.
+        source_runs = runs_with_dataset_metadata(source_datasets)
+
+        rep_type = self._active_representation_type()
+        if rep_type is None:
+            QMessageBox.warning(
+                self,
+                "Re-fit as Co-added",
+                "Select a fittable representation before re-fitting a co-added selection.",
+            )
+            return
+        try:
+            model, seed = self._fit_panel.single_fit_model_and_seed()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Re-fit as Co-added", f"Fix the fit parameters first: {exc}")
+            return
+        if model is None or seed is None:
+            return
+
+        member_key = self._refit_coadded_member_key(runs)
+        label = " + ".join(str(r) for r in runs)
+
+        from asymmetry.core.fitting.engine import FitEngine
+
+        def _work(_worker, src=source_runs, key=member_key, lbl=label, mdl=model, sd=seed):
+            combined_run = combine_runs(src, sign=1, run_number=key, label=lbl)
+            combined_dataset = reduce_combined_run(combined_run)
+            result = FitEngine().fit(combined_dataset, mdl.function, sd)
+            return combined_dataset, result
+
+        self.statusBar().showMessage(f"Re-fitting co-added runs {label}…")
+        self._refit_coadded_worker = self._tasks.start(
+            _work,
+            on_finished=lambda payload, r=runs, m=model, key=member_key, rt=rep_type, lbl=label: (
+                self._on_refit_coadded_finished(payload, r, m, key, rt, lbl)
+            ),
+            on_error=self._on_refit_coadded_error,
+        )
+
+    def _on_refit_coadded_finished(self, payload, runs, model, member_key, rep_type, label) -> None:
+        """Record a successful co-added re-fit as a computed trend row."""
+        self._refit_coadded_worker = None
+        combined_dataset, result = payload
+        if result is None or not getattr(result, "success", False):
+            self.statusBar().showMessage(f"Co-added re-fit of {label} did not converge.")
+            self._log_panel.log(f"Co-added re-fit of runs {label} did not converge.")
+            return
+
+        meta = combined_dataset.metadata if isinstance(combined_dataset.metadata, dict) else {}
+        values = {p.name: float(p.value) for p in result.parameters}
+        values["chi2_r"] = float(result.reduced_chi_squared)
+        summary = {
+            "success": True,
+            "parameters": values,
+            "uncertainties": {k: float(v) for k, v in result.uncertainties.items()},
+            "chi_squared": float(result.chi_squared),
+            "reduced_chi_squared": float(result.reduced_chi_squared),
+            "run_label": label,
+            "field": _safe_float(meta.get("field")),
+            "temperature": _safe_float(meta.get("temperature")),
+            "combined_from": list(runs),
+        }
+        batch_id = self._refit_coadded_batch_id(model, runs)
+        self._add_results_series(
+            batch_id,
+            rep_type,
+            f"Re-fit co-added: {label}",
+            [member_key],
+            {member_key: summary},
+            extra={"combined_from": list(runs)},
+        )
+        self._refresh_trend_panel()
+        chi = float(result.reduced_chi_squared)
+        self.statusBar().showMessage(f"Recorded co-added re-fit of {label} (χ²ᵣ = {chi:.3f}).")
+        self._log_panel.log(f"Re-fit co-added runs {label}: χ²ᵣ = {chi:.3f}")
+
+    def _on_refit_coadded_error(self, message) -> None:
+        self._refit_coadded_worker = None
+        self.statusBar().showMessage(f"Co-added re-fit failed: {message}")
+        self._log_panel.log(f"Co-added re-fit failed: {message}")
+
+    def _refit_coadded_member_key(self, runs: list[int]) -> int:
+        """Deterministic synthetic member key for a co-added re-fit selection.
+
+        Far below any real run or browser-combined id, and stable across re-runs
+        of the same selection so the replaced series keeps the same member key.
+        """
+        digest = hashlib.sha1(",".join(map(str, runs)).encode("utf-8")).hexdigest()[:8]
+        return -(2_100_000_000 + int(digest, 16) % 100_000_000)
+
+    def _refit_coadded_batch_id(self, model, runs: list[int]) -> str:
+        """Deterministic ``refit-coadded-<digest>`` id from model + member set.
+
+        Re-running the same selection with the same model replaces its series
+        (mirrors :meth:`_spectral_moments_batch_id`).
+        """
+        import json
+
+        model_key = json.dumps(model.to_dict(), sort_keys=True, default=str)
+        logical = f"{model_key}::{','.join(map(str, runs))}"
+        digest = hashlib.sha1(logical.encode("utf-8")).hexdigest()[:12]
+        return f"refit-coadded-{digest}"
+
     def _on_single_model_fit_completed(self, parameter_name, x_key, fit) -> None:
         """Record a single-series model fit's per-range outputs as a series."""
         self._record_single_model_fit_results_series(parameter_name, x_key, fit)
@@ -9655,16 +9954,19 @@ class MainWindow(QMainWindow):
                 _append_dataset_entry(dataset)
 
         # Combined dataset definitions. The optional "operation" field is
-        # written only for reference subtractions, so co-add entries round-trip
+        # written only for subtractions, so co-add entries round-trip
         # byte-for-byte as before (additive schema; no version bump).
         combined_signs = getattr(self._data_browser, "_combined_signs", {})
+        combined_methods = getattr(self._data_browser, "_combined_methods", {})
         combined_datasets = []
         for crn, src_runs in self._data_browser._combined_datasets.items():
             entry = {
                 "combined_run_number": int(crn),
                 "source_run_numbers": [int(r) for r in src_runs],
             }
-            if combined_signs.get(crn, 1) == -1:
+            if combined_methods.get(crn) == "subtract_signed":
+                entry["operation"] = "subtract_signed"
+            elif combined_signs.get(crn, 1) == -1:
                 entry["operation"] = "subtract_reference"
             combined_datasets.append(entry)
 
@@ -10116,9 +10418,12 @@ class MainWindow(QMainWindow):
             for combined_info in state.get("combined_datasets", []):
                 old_id = combined_info.get("combined_run_number")
                 src_runs = combined_info.get("source_run_numbers", [])
-                sign = -1 if combined_info.get("operation") == "subtract_reference" else 1
+                operation = combined_info.get("operation")
+                sign = -1 if operation in ("subtract_reference", "subtract_signed") else 1
                 if all(rn in loaded_run_numbers for rn in src_runs):
-                    new_id = self._data_browser.add_combined_dataset(src_runs, sign=sign)
+                    new_id = self._data_browser.add_combined_dataset(
+                        src_runs, sign=sign, operation=operation
+                    )
                     if new_id is not None and old_id is not None:
                         combined_id_map[int(old_id)] = new_id
                     elif new_id is None:
