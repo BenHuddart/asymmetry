@@ -70,3 +70,9 @@ material.
    :caption: Comparison
 
    comparison
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Negative muon (experimental)
+
+   negative_muon_analysis
