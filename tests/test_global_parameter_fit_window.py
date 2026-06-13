@@ -113,9 +113,7 @@ def test_set_results_computes_fit_curves_off_thread_behind_overlay(
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=1.0,
-        global_parameters=ParameterSet(
-            [Parameter("m", value=-0.005), Parameter("b", value=0.25)]
-        ),
+        global_parameters=ParameterSet([Parameter("m", value=-0.005), Parameter("b", value=0.25)]),
         local_parameters={},
         fixed_parameters=ParameterSet(),
     )
