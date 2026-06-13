@@ -13,18 +13,17 @@ from collections.abc import Callable
 
 import numpy as np
 from PySide6.QtCore import QEventLoop, QSignalBlocker, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QDoubleValidator
 from PySide6.QtWidgets import (
-    QAbstractSpinBox,
     QApplication,
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFormLayout,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -605,6 +604,65 @@ def _fit_range_provenance_text(min_spin, max_spin, unit_label) -> str | None:
     return f"{lo:.{decimals}f}–{hi:.{decimals}f} {unit_label.text()}"
 
 
+class _FloatLimitField(QLineEdit):
+    """Compact text field for a fit-range limit (min/max).
+
+    Replaces ``QDoubleSpinBox`` for the fit range: a plain typed field (the
+    design's limit-field style) with no spin arrows and no reserved arrow
+    padding, so it stays narrow on a 13" dock. A ``QDoubleValidator`` keeps
+    entries numeric and in range. Exposes the small spinbox-compatible surface
+    (``value``/``setValue``/``decimals``/``setDecimals``/``setRange``) that the
+    shared fit-range plumbing already relies on, so both Fit tabs reuse it and
+    ``editingFinished`` (a built-in ``QLineEdit`` signal) keeps its old wiring.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._decimals = 3
+        self._value = 0.0
+        self._validator = QDoubleValidator(-1000.0, 1000.0, self._decimals, self)
+        self._validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        self.setValidator(self._validator)
+        self.setFont(mono_font(11.0))
+        # A bare QLineEdit sizes to ~17 chars; cap it so the min/max pair stays
+        # compact in the dock (fits "-1000.000" with room to spare).
+        self.setMinimumWidth(56)
+        self.setMaximumWidth(88)
+        self.setText(self._format(self._value))
+        # Normalise the display after a manual edit (e.g. "1" -> "1.000"). This
+        # connects first, so the external editingFinished handler reads the
+        # already-normalised text via value().
+        self.editingFinished.connect(self._normalise_text)
+
+    def _format(self, value: float) -> str:
+        return f"{float(value):.{self._decimals}f}"
+
+    def _normalise_text(self) -> None:
+        self.setText(self._format(self.value()))
+
+    def value(self) -> float:
+        """Current value, falling back to the last programmatic value if blank."""
+        try:
+            return float(self.text())
+        except ValueError:
+            return self._value
+
+    def setValue(self, value: float) -> None:  # noqa: N802 — spinbox-API shim
+        self._value = float(value)
+        self.setText(self._format(self._value))
+
+    def decimals(self) -> int:
+        return self._decimals
+
+    def setDecimals(self, decimals: int) -> None:  # noqa: N802 — spinbox-API shim
+        self._decimals = int(decimals)
+        self._validator.setDecimals(self._decimals)
+        self.setText(self._format(self.value()))
+
+    def setRange(self, minimum: float, maximum: float) -> None:  # noqa: N802 — spinbox-API shim
+        self._validator.setRange(minimum, maximum, self._decimals)
+
+
 def _fit_success_html(result) -> str:
     """Return compact success HTML for the result label, with a χ² verdict chip."""
     npar = len(result.parameters.free_parameters)
@@ -1115,33 +1173,12 @@ class SingleFitTab(QWidget):
         fit_range_layout.setSpacing(4)
         _fit_range_box.addLayout(fit_range_layout)
 
-        self._fit_range_min_spin = QDoubleSpinBox()
-        self._fit_range_min_spin.setDecimals(3)
-        self._fit_range_min_spin.setRange(-1000.0, 1000.0)
-        self._fit_range_min_spin.setSingleStep(0.1)
-        self._fit_range_min_spin.setMinimumWidth(64)
-        # Keep the fit-range fields compact: drop the spin arrows (the design's
-        # limit-field style) and the right-padding the global QSS reserves for
-        # them, and cap the width — otherwise the wide ±1000 range sizes the box
-        # for "-1000.000" (~132px) and bloats the row. 88px shows realistic fit
-        # times in full.
-        self._fit_range_min_spin.setMaximumWidth(88)
-        self._fit_range_min_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self._fit_range_min_spin.setStyleSheet("QAbstractSpinBox { padding-right: 6px; }")
-        self._fit_range_min_spin.setFont(mono_font(11.0))
+        self._fit_range_min_spin = _FloatLimitField()
 
         self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
         self._fit_range_mid_label.setTextFormat(Qt.TextFormat.RichText)
 
-        self._fit_range_max_spin = QDoubleSpinBox()
-        self._fit_range_max_spin.setDecimals(3)
-        self._fit_range_max_spin.setRange(-1000.0, 1000.0)
-        self._fit_range_max_spin.setSingleStep(0.1)
-        self._fit_range_max_spin.setMinimumWidth(64)
-        self._fit_range_max_spin.setMaximumWidth(88)
-        self._fit_range_max_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self._fit_range_max_spin.setStyleSheet("QAbstractSpinBox { padding-right: 6px; }")
-        self._fit_range_max_spin.setFont(mono_font(11.0))
+        self._fit_range_max_spin = _FloatLimitField()
 
         self._fit_range_unit_label = QLabel("μs")
 
@@ -2446,33 +2483,12 @@ class GlobalFitTab(QWidget):
         _fr_layout.setSpacing(4)
         _fr_box.addLayout(_fr_layout)
 
-        self._fit_range_min_spin = QDoubleSpinBox()
-        self._fit_range_min_spin.setDecimals(3)
-        self._fit_range_min_spin.setRange(-1000.0, 1000.0)
-        self._fit_range_min_spin.setSingleStep(0.1)
-        self._fit_range_min_spin.setMinimumWidth(64)
-        # Keep the fit-range fields compact: drop the spin arrows (the design's
-        # limit-field style) and the right-padding the global QSS reserves for
-        # them, and cap the width — otherwise the wide ±1000 range sizes the box
-        # for "-1000.000" (~132px) and bloats the row. 88px shows realistic fit
-        # times in full.
-        self._fit_range_min_spin.setMaximumWidth(88)
-        self._fit_range_min_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self._fit_range_min_spin.setStyleSheet("QAbstractSpinBox { padding-right: 6px; }")
-        self._fit_range_min_spin.setFont(mono_font(11.0))
+        self._fit_range_min_spin = _FloatLimitField()
 
         self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
         self._fit_range_mid_label.setTextFormat(Qt.TextFormat.RichText)
 
-        self._fit_range_max_spin = QDoubleSpinBox()
-        self._fit_range_max_spin.setDecimals(3)
-        self._fit_range_max_spin.setRange(-1000.0, 1000.0)
-        self._fit_range_max_spin.setSingleStep(0.1)
-        self._fit_range_max_spin.setMinimumWidth(64)
-        self._fit_range_max_spin.setMaximumWidth(88)
-        self._fit_range_max_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-        self._fit_range_max_spin.setStyleSheet("QAbstractSpinBox { padding-right: 6px; }")
-        self._fit_range_max_spin.setFont(mono_font(11.0))
+        self._fit_range_max_spin = _FloatLimitField()
 
         _fr_layout.addWidget(self._fit_range_min_spin)
         _fr_layout.addWidget(self._fit_range_mid_label)
