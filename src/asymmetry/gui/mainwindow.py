@@ -7231,9 +7231,7 @@ class MainWindow(QMainWindow):
         HESSE σ) and ``ndof`` is read back from the χ² quality block; both are
         omitted when unavailable.
         """
-        summary = fit_result_summary(
-            fit_result, confidence=fit_quality_confidence(self._settings)
-        )
+        summary = fit_result_summary(fit_result, confidence=fit_quality_confidence(self._settings))
         uncertainties = summary.get("uncertainties") or {}
         quality = summary.get("quality") or {}
         ndof = quality.get("dof") if isinstance(quality, dict) else None
