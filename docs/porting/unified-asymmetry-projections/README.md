@@ -145,12 +145,11 @@ projection instead of run" — not a new subsystem. Selectable subplots then bec
 **Out of scope for this pass:** per-projection *batch/global* fits and the actual
 joint fit. In scope: per-projection *single* fits, shaped to accept them later.
 
-## Open micro-decision
+## Resolved decisions
 
-- **Keep the "all" text-action, or drop it entirely?** With only three
-  projections, dropping it costs at most two extra clicks; keeping it (as a verb,
-  not a toggle) saves the frequent fit-workflow round-trip. Leaning keep;
-  Ben to confirm.
+- **"all" affordance** (Ben, 2026-06-13): **keep** a lightweight "all" *action*
+  (text link, not a toggle; greys out when all chips on) — it saves the frequent
+  collapse-to-one-then-expand round-trip in the fit workflow.
 
 ## Files
 

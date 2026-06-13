@@ -2585,6 +2585,46 @@ class TestMainWindowBasic:
         assert payload["alpha_y"] == pytest.approx(1.15)
         assert payload["alpha_z"] == pytest.approx(1.25)
 
+    def test_declared_projections_drive_axis_without_canonical_names(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Explicit projections resolve even when group names are non-canonical."""
+        dataset = _make_dataset(7452, with_grouping=False)
+        payload = {
+            "groups": {1: [1], 2: [2], 3: [1], 4: [2], 5: [1], 6: [2]},
+            "group_names": {1: "G1", 2: "G2", 3: "G3", 4: "G4", 5: "G5", 6: "G6"},
+            "projections": [
+                {"label": "P_x", "forward_group": 5, "backward_group": 6},
+                {"label": "P_y", "forward_group": 3, "backward_group": 4},
+                {"label": "P_z", "forward_group": 1, "backward_group": 2},
+            ],
+            "forward_group": 1,
+            "backward_group": 2,
+            "vector_axis": "P_x",
+            "instrument": "EMU",
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert dataset.run is not None
+        # The declared P_x pair (5/6) overrides forward/backward despite the
+        # generic group names that the legacy name-matching could never resolve.
+        assert dataset.run.grouping["forward_group"] == 5
+        assert dataset.run.grouping["backward_group"] == 6
+        stored = dataset.run.grouping["projections"]
+        assert [p["label"] for p in stored] == ["P_x", "P_y", "P_z"]
+        # Projections survive extraction for project save.
+        payload_out = mainwindow._extract_grouping_overrides(dataset)
+        assert payload_out is not None
+        assert [p["label"] for p in payload_out["projections"]] == ["P_x", "P_y", "P_z"]
+
     def test_extract_grouping_overrides_includes_period_mode(
         self,
         mainwindow: MainWindow,

@@ -3059,6 +3059,10 @@ class MainWindow(QMainWindow):
         if vector_axis is not None:
             payload["vector_axis"] = vector_axis
 
+        projections_raw = grouping.get("projections")
+        if isinstance(projections_raw, list) and projections_raw:
+            payload["projections"] = [dict(p) for p in projections_raw if isinstance(p, dict)]
+
         group_names_raw = grouping.get("group_names")
         if isinstance(group_names_raw, dict) and group_names_raw:
             payload["group_names"] = {int(k): str(v) for k, v in group_names_raw.items()}
@@ -3224,6 +3228,11 @@ class MainWindow(QMainWindow):
         projections_for_axis = grouping_result.get("projections")
         if not projections_for_axis and isinstance(existing_grouping, dict):
             projections_for_axis = existing_grouping.get("projections")
+        projections_to_store = (
+            [dict(p) for p in projections_for_axis if isinstance(p, dict)]
+            if isinstance(projections_for_axis, list) and projections_for_axis
+            else None
+        )
         axis_pairs = self._vector_axis_pairs_for_grouping(
             groups, group_names_for_axis, projections_for_axis
         )
@@ -3410,6 +3419,10 @@ class MainWindow(QMainWindow):
                 }
             if vector_axis and axis_pairs:
                 run.grouping["vector_axis"] = vector_axis
+            if projections_to_store:
+                run.grouping["projections"] = [dict(p) for p in projections_to_store]
+            else:
+                run.grouping.pop("projections", None)
             preset_name = grouping_result.get("grouping_preset")
             if preset_name:
                 run.grouping["grouping_preset"] = str(preset_name)
@@ -3754,6 +3767,10 @@ class MainWindow(QMainWindow):
             run.grouping["included_groups"] = {int(k): bool(v) for k, v in included_groups.items()}
         if vector_axis and axis_pairs:
             run.grouping["vector_axis"] = vector_axis
+        if projections_to_store:
+            run.grouping["projections"] = [dict(p) for p in projections_to_store]
+        else:
+            run.grouping.pop("projections", None)
         preset_name = grouping_result.get("grouping_preset")
         if preset_name:
             run.grouping["grouping_preset"] = str(preset_name)

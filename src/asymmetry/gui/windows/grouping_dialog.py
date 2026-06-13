@@ -152,6 +152,7 @@ class GroupingDialog(QDialog):
         self._groups = self._load_groups(self._run)
         self._group_names: dict[int, str] = self._load_group_names(self._run)
         self._included_groups: dict[int, bool] = self._load_included_groups(self._run)
+        self._projection_specs: list[dict] | None = self._load_projection_specs(self._run)
         self._vector_axis_pairs: dict[str, tuple[int, int]] = {}
         self._vector_alpha_spins: dict[str, QDoubleSpinBox] = {}
         self._vector_forward_labels: dict[str, QLabel] = {}
@@ -656,6 +657,14 @@ class GroupingDialog(QDialog):
                 continue
         return result
 
+    def _load_projection_specs(self, run) -> list[dict] | None:
+        """Load declared projection specs from run grouping, if present."""
+        grouping = getattr(run, "grouping", None) or {}
+        specs = grouping.get("projections")
+        if isinstance(specs, list) and specs:
+            return [dict(s) for s in specs if isinstance(s, dict)]
+        return None
+
     def _load_included_groups(self, run) -> dict[int, bool]:
         """Load per-group include flags from run metadata, defaulting missing rows to True."""
         grouping = run.grouping or {}
@@ -836,6 +845,7 @@ class GroupingDialog(QDialog):
         )
         self._group_names = self._load_group_names(self._run)
         self._included_groups = self._load_included_groups(self._run)
+        self._projection_specs = self._load_projection_specs(self._run)
         forward_gid, backward_gid = self._analysis_pair_for_reference(
             int(grouping.get("forward_group", 1)),
             int(grouping.get("backward_group", 2)),
@@ -1752,6 +1762,7 @@ class GroupingDialog(QDialog):
             forward_group=forward_gid,
             backward_group=backward_gid,
             excluded_detectors=current_exclusion,
+            projections=self._projection_specs,
             parent=self,
         )
         if dlg.exec() != DetectorLayoutDialog.DialogCode.Accepted:
@@ -1759,6 +1770,8 @@ class GroupingDialog(QDialog):
 
         result = dlg.get_result()
         self._exclude_edit.setText(format_detector_list(result.get("excluded_detectors", [])))
+        result_projections = result.get("projections")
+        self._projection_specs = result_projections if result_projections else None
 
         # Write back: convert 1-based IDs back to 0-based internal indices
         new_groups_0based: dict[int, list[int]] = {}
@@ -2149,6 +2162,7 @@ class GroupingDialog(QDialog):
             )
             | alpha_provenance
             | (self._vector_alpha_payload() if vector_mode else {})
+            | ({"projections": list(self._projection_specs)} if self._projection_specs else {})
             | deadtime_payload
         )
 

@@ -7,7 +7,7 @@
 - [x] Data-model, UI, colour, fit-target, and storage options recorded with the
       chosen option marked (`implementation-options.md`).
 - [x] Naming settled: `projection` / `AsymmetryProjection`.
-- [ ] Open micro-decision resolved: keep vs drop the "all" text-action.
+- [x] "all" affordance resolved (Ben, 2026-06-13): keep as a text action.
 
 ## Implementation-pass checks (per the suggested order)
 
