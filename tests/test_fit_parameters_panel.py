@@ -2136,10 +2136,13 @@ def test_trend_curves_recompute_off_thread_behind_overlay(
         timeout_s=10.0,
     )
 
-    # Landed: overlay cleared, precompute consumed-then-dropped, model curve drawn.
+    # Landed: overlay cleared, curves cached (keyed by signature) for reuse, and
+    # the model curve drawn.
     assert not panel._trend_curve_compute_active
     assert panel._trend_overlay.isHidden()
-    assert panel._precomputed_trend_curves is None
+    assert isinstance(panel._precomputed_trend_curves, dict)
+    assert "A0" in panel._precomputed_trend_curves
+    assert panel._trend_cache_sig is not None
     drawn = [line for ax in panel._figure.axes for line in ax.get_lines()]
     assert drawn, "the trend overlay curve should be drawn after the compute"
 
@@ -2256,3 +2259,48 @@ def test_restore_state_clears_suspend_flag_on_exception(
         panel.restore_state({"rows": []})
 
     assert panel._suspend_plot_refresh is False, "suspend guard must clear after a failed restore"
+
+
+def test_pure_render_refresh_reuses_trend_cache(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A redraw with unchanged inputs reuses the cached curves (no new worker)."""
+    if not panel._has_mpl:
+        pytest.skip("matplotlib not available")
+    panel._model_fits = {"A0": _active_linear_fit("A0")}
+    monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
+
+    panel._refresh_plot()
+    assert panel._trend_curve_compute_active
+    wait_for(lambda: not panel._trend_curve_compute_active, QApplication.instance(), timeout_s=10.0)
+    sig1 = panel._trend_cache_sig
+    assert sig1 is not None
+
+    # A pure-render refresh (e.g. a log-scale toggle) does not change the
+    # signature, so it draws from the cache synchronously without starting a new
+    # compute (a cache hit never sets the busy flag).
+    panel._refresh_plot()
+    assert not panel._trend_curve_compute_active
+    assert panel._trend_cache_sig == sig1
+    panel.shutdown_workers()
+
+
+def test_show_components_toggle_recomputes_trend_overlay(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Toggling an input (show components) invalidates the cache and recomputes."""
+    if not panel._has_mpl:
+        pytest.skip("matplotlib not available")
+    panel._model_fits = {"A0": _active_linear_fit("A0")}
+    monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
+
+    panel._refresh_plot()
+    wait_for(lambda: not panel._trend_curve_compute_active, QApplication.instance(), timeout_s=10.0)
+    sig1 = panel._trend_cache_sig
+
+    # Toggling show-components fires _refresh_plot; the signature now differs, so
+    # a fresh off-thread recompute is dispatched rather than reusing the cache.
+    panel._show_components_check.setChecked(True)
+    wait_for(lambda: not panel._trend_curve_compute_active, QApplication.instance(), timeout_s=10.0)
+    assert panel._trend_cache_sig != sig1
+    panel.shutdown_workers()
