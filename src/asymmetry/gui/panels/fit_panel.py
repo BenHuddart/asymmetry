@@ -108,6 +108,7 @@ from asymmetry.gui.styles.widgets import (
     error_html,
     fit_quality_chip_html,
     fit_quality_tooltip,
+    make_formula_box,
     make_section_header,
     success_html,
 )
@@ -679,6 +680,7 @@ def _set_param_batch_role_cell(table: QTableWidget, row: int, role: str | None) 
 
 
 _configure_formula_label = configure_formula_label
+_make_formula_box = make_formula_box
 
 
 def _set_formula_label_text(label: QLabel, formula: str, **_kwargs) -> None:
@@ -981,8 +983,7 @@ class SingleFitTab(QWidget):
         model_group = QWidget()
         model_layout = QFormLayout(model_group)
         model_layout.setContentsMargins(0, 0, 0, 0)
-        self._formula_label = QLabel()
-        _configure_formula_label(self._formula_label)
+        self._formula_box, self._formula_label = _make_formula_box()
         self._edit_model_btn = QPushButton("Edit Function...")
         self._edit_model_btn.clicked.connect(self._edit_function)
         self._fit_wizard_btn = QPushButton("Fit Wizard...")
@@ -1021,7 +1022,7 @@ class SingleFitTab(QWidget):
             model_button_layout.addWidget(_model_btn, 0, Qt.AlignmentFlag.AlignLeft)
 
         self._formula_row_label = QLabel("A(t):")
-        model_layout.addRow(self._formula_row_label, self._formula_label)
+        model_layout.addRow(self._formula_row_label, self._formula_box)
         model_layout.addRow("", model_button_layout)
         layout.addWidget(model_group)
 
@@ -2248,8 +2249,7 @@ class GlobalFitTab(QWidget):
         model_group = QWidget()
         model_layout = QFormLayout(model_group)
         model_layout.setContentsMargins(0, 0, 0, 0)
-        self._formula_label = QLabel()
-        _configure_formula_label(self._formula_label)
+        self._formula_box, self._formula_label = _make_formula_box()
         self._edit_model_btn = QPushButton("Edit Function...")
         self._edit_model_btn.clicked.connect(self._edit_function)
         self._fit_wizard_btn = QPushButton("Global Wizard...")
@@ -2267,7 +2267,7 @@ class GlobalFitTab(QWidget):
         model_button_layout.setColumnStretch(0, 1)
         model_button_layout.setColumnStretch(1, 1)
         self._formula_row_label = QLabel("A(t):")
-        model_layout.addRow(self._formula_row_label, self._formula_label)
+        model_layout.addRow(self._formula_row_label, self._formula_box)
         model_layout.addRow("", model_button_layout)
         layout.addWidget(model_group)
 

@@ -10,7 +10,15 @@ from typing import Literal
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QGroupBox, QLabel, QPushButton, QSizePolicy, QTableWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QGroupBox,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QTableWidget,
+)
 
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
@@ -109,25 +117,54 @@ def apply_param_table_style(table: QTableWidget) -> None:
 
 
 def configure_formula_label(label: QLabel) -> None:
-    """Style a QLabel as a read-only mono code-box for formula display."""
+    """Configure a QLabel as the inner, single-line formula text.
+
+    The label never wraps (so a single function is not broken across lines) and
+    is transparent — the surrounding code-box border/background lives on the
+    :func:`make_formula_box` scroll area, which also owns the horizontal
+    scrollbar that appears when the expression overflows. Keeping the label
+    transparent means the domain-mismatch warning (which sets the label's
+    stylesheet to recolour the text) cannot clobber the box chrome.
+    """
     label.setFont(mono_font(11.0))
-    label.setWordWrap(True)
-    label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+    label.setWordWrap(False)
+    label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
     label.setTextFormat(Qt.TextFormat.PlainText)
-    # Ignored (not Expanding) horizontally: a long, unbreakable token — e.g. a
-    # custom user-function name — has no wrap point, so under Expanding the
-    # label's minimum width would grow to fit it and drag the whole inspector
-    # dock wide (re-introducing a window scrollbar). Ignored makes the box fill
-    # the width it is given and clip the overflow instead; the full expression
-    # stays available via the tooltip set in _set_formula_label_text.
-    label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.MinimumExpanding)
-    label.setMinimumWidth(0)
-    label.setStyleSheet(
-        f"QLabel {{ background-color: {tokens.SURFACE_ALT}; border: 1px solid {tokens.BORDER};"
-        " border-radius: 3px; padding: 6px 8px; }"
+    label.setContentsMargins(6, 0, 6, 0)
+    label.setStyleSheet("QLabel { background: transparent; }")
+
+
+def make_formula_box() -> tuple[QScrollArea, QLabel]:
+    """Return a ``(scroll_area, label)`` pair for displaying a fit-function formula.
+
+    A long expression scrolls horizontally inside the box rather than wrapping a
+    single function across several lines or dragging the inspector dock wide. The
+    box (border/background) is on the scroll area so it always fills the available
+    width; the no-wrap label sizes to its text, so the horizontal scrollbar only
+    appears when the formula is wider than the box. Keep the returned label for
+    :func:`set text/tooltip <_set_formula_label_text>`; add the scroll area to the
+    layout.
+    """
+    label = QLabel()
+    configure_formula_label(label)
+
+    area = QScrollArea()
+    area.setObjectName("formulaBox")
+    area.setWidgetResizable(True)
+    area.setFrameShape(QFrame.Shape.NoFrame)
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    area.setWidget(label)
+    area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    area.setStyleSheet(
+        f"QScrollArea#formulaBox {{ background-color: {tokens.SURFACE_ALT};"
+        f" border: 1px solid {tokens.BORDER}; border-radius: 3px; }}"
+        " QScrollArea#formulaBox > QWidget > QWidget { background: transparent; }"
     )
     line_height = label.fontMetrics().lineSpacing()
-    label.setMinimumHeight(line_height * 3 + 16)
+    scrollbar = area.horizontalScrollBar().sizeHint().height() or 14
+    area.setFixedHeight(line_height + scrollbar + 10)
+    return area, label
 
 
 # ── Table header font ─────────────────────────────────────────────────────────

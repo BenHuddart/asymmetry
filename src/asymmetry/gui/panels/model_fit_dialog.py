@@ -40,7 +40,7 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.styles.widgets import apply_param_table_style, configure_formula_label
+from asymmetry.gui.styles.widgets import apply_param_table_style, make_formula_box
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.function_expression_builder import (
     ComponentSelectorButton as _ComponentSelectorButton,  # noqa: F401
@@ -461,9 +461,8 @@ class ModelFitDialog(QDialog):
         self._range_hint_label = QLabel("Select a range above to edit its model parameters.")
         params_layout.addWidget(self._range_hint_label)
 
-        self._formula_label = QLabel("")
-        configure_formula_label(self._formula_label)
-        params_layout.addWidget(self._formula_label)
+        self._formula_box, self._formula_label = make_formula_box()
+        params_layout.addWidget(self._formula_box)
 
         self._chi2_label = QLabel("")
         self._chi2_label.setTextFormat(Qt.TextFormat.RichText)
