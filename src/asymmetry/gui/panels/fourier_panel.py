@@ -368,7 +368,8 @@ class FourierPanel(QWidget):
         phase_form.addRow("Auto method:", self._auto_method_combo)
         phase_layout.addLayout(phase_form)
 
-        self._auto_phase_btn = QPushButton("Fill Phase Estimates")
+        self._auto_phase_btn = QPushButton("Fill phases")
+        self._auto_phase_btn.setToolTip("Fill per-group phase estimates from the data.")
         phase_layout.addWidget(self._auto_phase_btn)
 
         content_layout.addWidget(phase_group)
@@ -418,7 +419,7 @@ class FourierPanel(QWidget):
         self._fft_btn.setStyleSheet(build_primary_button_qss())
         content_layout.addWidget(self._fft_btn)
 
-        self._apply_to_selection_btn = QPushButton("Apply settings to selected runs")
+        self._apply_to_selection_btn = QPushButton("Apply to selection")
         self._apply_to_selection_btn.setToolTip(
             "Copy this run's Fourier settings to the other selected runs and "
             "generate their spectra."

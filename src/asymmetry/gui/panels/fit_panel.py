@@ -971,10 +971,11 @@ class SingleFitTab(QWidget):
         self._fit_wizard_btn = QPushButton("Fit Wizard...")
         self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
         self._fit_wizard_btn.setEnabled(False)
-        self._share_group_btn = QPushButton("Share Function With Data Group")
+        self._share_group_btn = QPushButton("Share with Group")
+        self._share_group_btn.setToolTip("Share this fit function with the selected data group.")
         self._share_group_btn.clicked.connect(self._on_share_function_with_group)
         self._share_group_btn.setEnabled(False)
-        self._send_to_batch_btn = QPushButton("Send Model to Batch")
+        self._send_to_batch_btn = QPushButton("Send to Batch")
         self._send_to_batch_btn.setToolTip(
             "Copy this fit function into the Batch tab to seed a batch fit over the selected runs."
         )
@@ -1022,7 +1023,7 @@ class SingleFitTab(QWidget):
         self._fit_range_min_spin.setDecimals(3)
         self._fit_range_min_spin.setRange(-1000.0, 1000.0)
         self._fit_range_min_spin.setSingleStep(0.1)
-        self._fit_range_min_spin.setMinimumWidth(90)
+        self._fit_range_min_spin.setMinimumWidth(72)
         self._fit_range_min_spin.setFont(mono_font(11.0))
 
         self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
@@ -1032,7 +1033,7 @@ class SingleFitTab(QWidget):
         self._fit_range_max_spin.setDecimals(3)
         self._fit_range_max_spin.setRange(-1000.0, 1000.0)
         self._fit_range_max_spin.setSingleStep(0.1)
-        self._fit_range_max_spin.setMinimumWidth(90)
+        self._fit_range_max_spin.setMinimumWidth(72)
         self._fit_range_max_spin.setFont(mono_font(11.0))
 
         self._fit_range_unit_label = QLabel("μs")
@@ -1057,13 +1058,16 @@ class SingleFitTab(QWidget):
             ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link"]
         )
         self._param_table.horizontalHeader().setStretchLastSection(False)
-        self._param_table.setColumnWidth(0, 80)  # Name
-        self._param_table.setColumnWidth(1, 100)  # Value
-        self._param_table.setColumnWidth(2, 40)  # Fix
-        self._param_table.setColumnWidth(3, 80)  # Min
-        self._param_table.setColumnWidth(4, 80)  # Max
-        self._param_table.setColumnWidth(5, 70)  # Batch role (read-only)
-        self._param_table.setColumnWidth(6, 60)  # Link group (equality tie)
+        # Tight default widths so the table fits a 13" dock without sideways
+        # scrolling in the common case; columns stay user-resizable and the
+        # horizontal scrollbar still appears on demand for wide bounds/roles.
+        self._param_table.setColumnWidth(0, 72)  # Name (incl. unit)
+        self._param_table.setColumnWidth(1, 88)  # Value ± σ
+        self._param_table.setColumnWidth(2, 30)  # Fix
+        self._param_table.setColumnWidth(3, 52)  # Min
+        self._param_table.setColumnWidth(4, 52)  # Max
+        self._param_table.setColumnWidth(5, 50)  # Batch role (read-only)
+        self._param_table.setColumnWidth(6, 40)  # Link group (equality tie)
 
         _apply_param_table_style(self._param_table)
         self._param_table.setItemDelegateForColumn(1, _ValueUncertaintyDelegate(self._param_table))
@@ -2224,7 +2228,8 @@ class GlobalFitTab(QWidget):
         _configure_formula_label(self._formula_label)
         self._edit_model_btn = QPushButton("Edit Function...")
         self._edit_model_btn.clicked.connect(self._edit_function)
-        self._fit_wizard_btn = QPushButton("Global Fit Wizard...")
+        self._fit_wizard_btn = QPushButton("Global Wizard...")
+        self._fit_wizard_btn.setToolTip("Open the Global Fit Wizard.")
         self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
         self._fit_wizard_btn.setEnabled(False)
         model_button_layout = QGridLayout()
@@ -2253,7 +2258,7 @@ class GlobalFitTab(QWidget):
         self._fit_range_min_spin.setDecimals(3)
         self._fit_range_min_spin.setRange(-1000.0, 1000.0)
         self._fit_range_min_spin.setSingleStep(0.1)
-        self._fit_range_min_spin.setMinimumWidth(90)
+        self._fit_range_min_spin.setMinimumWidth(72)
         self._fit_range_min_spin.setFont(mono_font(11.0))
 
         self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
@@ -2263,7 +2268,7 @@ class GlobalFitTab(QWidget):
         self._fit_range_max_spin.setDecimals(3)
         self._fit_range_max_spin.setRange(-1000.0, 1000.0)
         self._fit_range_max_spin.setSingleStep(0.1)
-        self._fit_range_max_spin.setMinimumWidth(90)
+        self._fit_range_max_spin.setMinimumWidth(72)
         self._fit_range_max_spin.setFont(mono_font(11.0))
 
         _fr_layout.addWidget(self._fit_range_min_spin)
@@ -2295,10 +2300,10 @@ class GlobalFitTab(QWidget):
         self._param_table = QTableWidget(0, 4)
         self._param_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
         self._param_table.horizontalHeader().setStretchLastSection(False)
-        self._param_table.setColumnWidth(0, 80)  # Parameter name
-        self._param_table.setColumnWidth(1, 80)  # Initial value
-        self._param_table.setColumnWidth(2, 100)  # Type (dropdown)
-        self._param_table.setColumnWidth(3, 150)  # Bounds
+        self._param_table.setColumnWidth(0, 64)  # Parameter name
+        self._param_table.setColumnWidth(1, 76)  # Initial value
+        self._param_table.setColumnWidth(2, 86)  # Type (dropdown)
+        self._param_table.setColumnWidth(3, 104)  # Bounds
         _apply_param_table_style(self._param_table)
         self._param_table.itemChanged.connect(self._on_param_table_item_changed)
         param_layout.addWidget(self._param_table)
@@ -2316,10 +2321,10 @@ class GlobalFitTab(QWidget):
         self._group_param_table = QTableWidget(0, 4)
         self._group_param_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
         self._group_param_table.horizontalHeader().setStretchLastSection(False)
-        self._group_param_table.setColumnWidth(0, 110)
-        self._group_param_table.setColumnWidth(1, 90)
-        self._group_param_table.setColumnWidth(2, 100)
-        self._group_param_table.setColumnWidth(3, 150)
+        self._group_param_table.setColumnWidth(0, 92)
+        self._group_param_table.setColumnWidth(1, 78)
+        self._group_param_table.setColumnWidth(2, 86)
+        self._group_param_table.setColumnWidth(3, 104)
         _apply_param_table_style(self._group_param_table)
         self._group_param_table.itemChanged.connect(self._on_group_param_item_changed)
         group_param_layout.addWidget(self._group_param_table)
@@ -2339,10 +2344,10 @@ class GlobalFitTab(QWidget):
         self._group_model_table = QTableWidget(0, 4)
         self._group_model_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
         self._group_model_table.horizontalHeader().setStretchLastSection(False)
-        self._group_model_table.setColumnWidth(0, 110)
-        self._group_model_table.setColumnWidth(1, 90)
-        self._group_model_table.setColumnWidth(2, 100)
-        self._group_model_table.setColumnWidth(3, 150)
+        self._group_model_table.setColumnWidth(0, 92)
+        self._group_model_table.setColumnWidth(1, 78)
+        self._group_model_table.setColumnWidth(2, 86)
+        self._group_model_table.setColumnWidth(3, 104)
         _apply_param_table_style(self._group_model_table)
         self._group_model_table.itemChanged.connect(self._on_group_model_table_item_changed)
         group_model_layout.addWidget(self._group_model_table)
@@ -5565,11 +5570,11 @@ class GlobalFitTab(QWidget):
         self._group_param_table.setHorizontalHeaderLabels(
             ["Parameter", *value_headers, "Type", "Bounds"]
         )
-        self._group_param_table.setColumnWidth(0, 110)
+        self._group_param_table.setColumnWidth(0, 92)
         for offset in range(len(value_headers)):
-            self._group_param_table.setColumnWidth(1 + offset, 90)
-        self._group_param_table.setColumnWidth(self._group_param_type_column(), 100)
-        self._group_param_table.setColumnWidth(self._group_param_bounds_column(), 150)
+            self._group_param_table.setColumnWidth(1 + offset, 78)
+        self._group_param_table.setColumnWidth(self._group_param_type_column(), 86)
+        self._group_param_table.setColumnWidth(self._group_param_bounds_column(), 104)
         self._group_param_table.setRowCount(len(GROUP_NUISANCE_PARAMS))
 
         n0_defaults_by_group: dict[str, float] = {}

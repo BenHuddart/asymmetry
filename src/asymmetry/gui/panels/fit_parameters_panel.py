@@ -287,7 +287,8 @@ class FitParametersPanel(QWidget):
         self._group_tabs_widget.setVisible(False)
         controls_form.addRow(self._group_tabs_widget)
 
-        self._show_table_btn = QPushButton("Show fitted parameter table")
+        self._show_table_btn = QPushButton("Show table")
+        self._show_table_btn.setToolTip("Show the fitted parameter table.")
         self._show_table_btn.setEnabled(False)
         self._show_table_btn.clicked.connect(self._show_table_dialog)
         controls_form.addRow(self._show_table_btn)
@@ -338,15 +339,18 @@ class FitParametersPanel(QWidget):
 
         controls_form.addRow("Y parameters:", self._y_selector_table)
 
-        self._create_composite_btn = QPushButton("Create Composite Parameter")
+        self._create_composite_btn = QPushButton("New composite")
+        self._create_composite_btn.setToolTip("Create a composite (derived) parameter.")
         self._create_composite_btn.setEnabled(False)
         self._create_composite_btn.clicked.connect(self._open_composite_parameter_dialog)
 
-        self._edit_composite_btn = QPushButton("Edit Selected Composite")
+        self._edit_composite_btn = QPushButton("Edit composite")
+        self._edit_composite_btn.setToolTip("Edit the selected composite parameter.")
         self._edit_composite_btn.setEnabled(False)
         self._edit_composite_btn.clicked.connect(self._edit_selected_composite_parameter)
 
-        self._remove_composite_btn = QPushButton("Remove Selected Composite")
+        self._remove_composite_btn = QPushButton("Remove composite")
+        self._remove_composite_btn.setToolTip("Remove the selected composite parameter.")
         self._remove_composite_btn.setEnabled(False)
         self._remove_composite_btn.clicked.connect(self._remove_selected_composite_parameters)
 
