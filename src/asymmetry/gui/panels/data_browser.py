@@ -962,7 +962,7 @@ class DataBrowserPanel(QWidget):
         temp = self._temperature_for_display(dataset)
         temp_item = NumericTableWidgetItem(f"{temp:.2f}")
         temp_item.setFlags(temp_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        temp_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        temp_item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         if self._temperature_uses_log_for_display(dataset):
             temp_item.setForeground(_LOG_TEMPERATURE_FOREGROUND)
         self._table.setItem(row, 2, temp_item)
@@ -970,7 +970,7 @@ class DataBrowserPanel(QWidget):
         field = float(meta.get("field", 0.0))
         field_item = NumericTableWidgetItem(f"{field:.1f}")
         field_item.setFlags(field_item.flags() | Qt.ItemFlag.ItemIsEditable)
-        field_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        field_item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
         self._table.setItem(row, 3, field_item)
 
         for i, field_key in enumerate(self._visible_extra_columns(), start=len(self._COLUMNS)):
@@ -1254,11 +1254,12 @@ class DataBrowserPanel(QWidget):
             self._table.setHorizontalHeaderLabels(labels)
         finally:
             self._auto_sizing_columns = False
-        # Numeric headers right-align over their right-aligned cells (T, B).
+        # T and B headers/cells centre-align: right-aligned headers were
+        # clipped by the sort-indicator arrow when sorting on these columns.
         for col in (2, 3):
             item = self._table.horizontalHeaderItem(col)
             if item is not None:
-                item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
 
     def _visible_extra_columns(self) -> list[str]:
         """Return extra columns that should appear beyond the fixed browser columns."""
