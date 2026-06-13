@@ -497,6 +497,80 @@ def test_temperature_include_replaces_browser_value_with_log_mean(qapp: QApplica
     assert panel._table.item(0, 2).text() == "50.00"
 
 
+def _field_log_dataset(run_number: int) -> MuonDataset:
+    ds = _dataset(run_number)
+    ds.metadata["field"] = 100.0
+    ds.metadata["nexus_time_series"] = {
+        "entry/sample/magnetic_field": {
+            "units": "G",
+            "time": [0.0, 10.0],
+            "values": [99.0, 101.0],
+            "mean": 100.5,
+            "role": "sample_field",
+            "primary": True,
+        }
+    }
+    return ds
+
+
+def test_field_from_log_replaces_browser_value_with_log_mean(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _field_log_dataset(307)
+    panel.add_dataset(ds)
+
+    # Header value first (B column is index 3), editable.
+    assert panel._table.item(0, 3).text() == "100.0"
+    assert panel._table.item(0, 3).flags() & Qt.ItemFlag.ItemIsEditable
+
+    panel.set_use_field_from_log(True)
+    assert panel.use_field_from_log() is True
+    assert panel.get_extra_columns() == ["field"]
+    # Now shows the log mean and is display-only (like the temperature column).
+    assert panel._table.item(0, 3).text() == "100.5"
+    assert not (panel._table.item(0, 3).flags() & Qt.ItemFlag.ItemIsEditable)
+
+    panel.set_use_field_from_log(False)
+    assert panel._table.item(0, 3).text() == "100.0"
+    assert panel._table.item(0, 3).flags() & Qt.ItemFlag.ItemIsEditable
+
+
+def test_field_from_log_per_run_override(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _field_log_dataset(308)
+    panel.add_dataset(ds)
+    # Global off, but override this run on.
+    panel.set_dataset_field_from_log(308, True)
+    assert panel.dataset_uses_field_from_log(308) is True
+    assert panel._table.item(0, 3).text() == "100.5"
+
+
+def test_field_from_log_falls_back_to_header_when_no_log(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _dataset(309)
+    ds.metadata["field"] = 250.0  # no nexus_time_series field channel
+    panel.add_dataset(ds)
+    panel.set_use_field_from_log(True)
+    # No field log -> header scalar, cell stays editable (not log-tinted).
+    assert panel._table.item(0, 3).text() == "250.0"
+    assert panel._table.item(0, 3).flags() & Qt.ItemFlag.ItemIsEditable
+
+
+def test_field_from_log_state_round_trips(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _field_log_dataset(310)
+    panel.add_dataset(ds)
+    panel.set_use_field_from_log(True)
+
+    state = panel.get_state()
+    assert state["use_field_from_log"] is True
+
+    restored = DataBrowserPanel()
+    restored.add_dataset(_field_log_dataset(310))
+    restored.restore_state(state)
+    assert restored.use_field_from_log() is True
+    assert restored._table.item(0, 3).text() == "100.5"
+
+
 def test_nexus_temperature_include_replaces_browser_value_with_log_mean(
     qapp: QApplication,
 ) -> None:
