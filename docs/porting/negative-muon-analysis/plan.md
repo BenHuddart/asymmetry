@@ -19,11 +19,12 @@ negative-muon-analysis` on branch `feat/negative-muon-analysis`, using its
 
 ## 0. Phasing
 
-Five phases, each a **separate implementation session**. Every phase ends with
+Six phases, each a **separate implementation session**. Phases 1–5 end with
 validate-green + high-effort code-review + fix, then a **commit on the feature
-branch** — **no push and no PR per phase**. Push the branch and open a single PR
-**only after all phases have closed out**. Phases are ordered; later phases
-depend on earlier. Each phase rebases onto `origin/main` at its start.
+branch** — **no push and no PR**. **Phase 6** is a whole-implementation close-out
+review (run on **Opus**) that fixes any residual findings and then **pushes the
+branch and opens the single PR** for the whole feature. Phases are ordered; later
+phases depend on earlier. Each phase rebases onto `origin/main` at its start.
 
 | Phase | Deliverable | New/edited files |
 |-------|-------------|------------------|
@@ -31,12 +32,13 @@ depend on earlier. Each phase rebases onto `origin/main` at its start.
 | 2 | α-coupled F+B fit + capture-ratio report + tests | `core/negmu/fit.py` (+), `ratio.py`; `tests/negmu/…` |
 | 3 | Set-as-BG subtraction + tests | `core/negmu/background.py`; `tests/negmu/…` |
 | 4 | μ⁻SR polarisation slice (None/LorGau/Diamagnetic) + tests | `core/negmu/polarisation.py`, `fit.py` (+); `tests/negmu/…` |
-| 5 | Docs: experimental user-guide page + API autodoc + toctree | `docs/user_guide/negative_muon_analysis.rst`, `docs/api/*`, `docs/user_guide/index.rst` |
+| 5 | Docs: experimental user-guide page + API autodoc + toctree (commit only) | `docs/user_guide/negative_muon_analysis.rst`, `docs/api/*`, `docs/user_guide/index.rst` |
+| 6 | **Opus** whole-implementation close-out review + fix → **push + single PR** | review fixes only |
 
-Phase 5 (docs) may be threaded into each phase (recommended: stub the page in
-Phase 1 with the WIP admonition + element-table section, extend per phase). Every
-phase rebases onto `origin/main` at start (Wave B in flight — `README.md`
-§"Repo awareness").
+Phase 5 (docs) may be threaded into the earlier phases (recommended: stub the page
+in Phase 1 with the WIP admonition + element-table section, extend per phase) —
+but the push + PR is always **Phase 6 only**. Every phase rebases onto
+`origin/main` at start (Wave B in flight — `README.md` §"Repo awareness").
 
 ---
 
@@ -648,10 +650,11 @@ Page outline:
 
 > Copy the block below into a fresh session to execute **Phase 1**. For later
 > phases, reuse it changing the phase number, the "READ FIRST" phase pointer, and
-> the "EXECUTE" line. **Workflow (Ben):** every phase ends with code-review + fix
-> + a commit on this feature branch — **no push, no PR per phase**. Push the
-> branch and open one PR only after the **final** phase closes out (that final
-> push+PR is pre-authorised).
+> the "EXECUTE" line. **Workflow (Ben):** Phases 1–5 each end with code-review +
+> fix + a commit on this feature branch — **no push, no PR**. **Phase 6** is a
+> whole-implementation close-out review run on **Opus** that fixes residual
+> findings and then **pushes + opens the single PR** (pre-authorised). So the
+> Phase-1 (and 2–5) end-stage is commit-only; only Phase 6 pushes.
 
 ```
 Implement Phase 1 of the negative-muon-analysis plan (API-only, work-in-progress).
@@ -704,4 +707,60 @@ END-OF-PHASE STAGE (commit only — do NOT push or open a PR):
    fit, simulate)" summarising the phase and the WIP/experimental status.
 4. Do NOT push and do NOT open a PR. Ben pushes + opens one PR after the final
    phase. Report what landed and that Phase 2 is next.
+```
+
+### Phase 6 — Opus close-out review → push + PR (the only push/PR session)
+
+> Run this session on **Opus** (max-capability). It adds no features — it reviews
+> the whole branch, fixes residual findings, and ships.
+
+```
+Phase 6 (final) of the negative-muon-analysis feature: a whole-implementation
+close-out review of the entire branch, then push + open the single PR. Run on
+Opus. Phases 1–5 are committed on feat/negative-muon-analysis; no new features.
+
+SETUP: cd ~/Source/Asymmetry-worktrees/negative-muon-analysis; confirm branch
+feat/negative-muon-analysis; use .venv (numpy 2.2.x); git fetch origin && git
+rebase origin/main; confirm `python tools/harness.py validate` and `docs` are
+green BEFORE reviewing (clean baseline).
+
+READ: docs/porting/negative-muon-analysis/plan.md (all phases, Reuse audit §1,
+Non-goals §7, WIP disclaimer §5), comparison.md, verification-plan.md.
+
+REVIEW the full feature diff vs main:
+  git diff origin/main -- src/asymmetry/core/negmu src/asymmetry/core/simulate.py \
+    tests/negmu docs/user_guide/negative_muon_analysis.rst docs/api docs/user_guide/index.rst
+Run /code-review at MAX effort over it, checking specifically:
+- Physics correctness: Cash/Gaussian cost; multi-exp model + √α F/B split;
+  covariance-aware ratio propagation (verify it uses fit.covariance /
+  covariance_parameters); amplitude seeding; the Phase-4 polarisation
+  parameterisation (MHz vs rad/μs, damping/phase conventions — the flagged WiMDA
+  unit ambiguity).
+- Reuse discipline: drive_minuit/FitResult/Parameter/ParameterSet/
+  build_count_group(s)/_sample_and_build_run/assess_fit_quality reused, not
+  re-implemented; no third copy of the cost/driver; count_domain.py UNMODIFIED and
+  not imported by core/negmu.
+- No-GUI invariant: nothing in COMPONENTS/MODELS; no Qt/asymmetry.gui import
+  (test_no_gui meaningful).
+- WIP disclaimers verbatim in every module docstring + the docs page.
+- Tests assert the verification-plan expected values (lifetime spot-checks incl.
+  Tl/Ne guards; ratio 2.00(10)/2.00(9); α + ratio recovery tolerances; simulate
+  round-trip + bit-for-bit seed).
+- Lifetime table: spot-check transcribed values vs plan §2; confirm the ⚠confirm
+  rows were verified or clearly marked.
+
+FIX every confirmed finding. For genuine design ambiguity the plan does not
+settle, STOP and ask Ben — do not change physics on a hunch. Do NOT modify
+count_domain.py or other out-of-scope modules. Then: validate green; docs builds.
+
+FINAL STAGE (pre-authorised — push + open the single PR):
+1. Commit review fixes, e.g. "fix(negmu): Phase 6 — close-out review fixes
+   (<summary>)". If nothing to fix, skip the commit and say so.
+2. git fetch origin && git rebase origin/main; re-confirm validate + docs green.
+3. Push the branch and open ONE PR titled "feat(negmu): negative-muon
+   capture-lifetime analysis (API-only, experimental)". Body: summarise all
+   phases; state WIP/experimental + API-only + no-GUI-by-construction; note the
+   literature-anchored lifetime table (Suzuki/Measday/Roalsvig 1987) and the
+   WiMDA bugs corrected; summarise the Phase-6 review outcome; link the study at
+   docs/porting/negative-muon-analysis/. Do NOT enable auto-merge. Report PR URL.
 ```
