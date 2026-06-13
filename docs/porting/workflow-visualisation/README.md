@@ -42,8 +42,8 @@ side by side, is the centrepiece of [`comparison.md`](comparison.md). In brief:
 | 4 | B-from-log (field from the data log) | **ADOPT** — mirror the existing temperature-from-log machinery for field |
 | 5 | Deadtime-file auto-discovery + staleness warning | **REJECT** — the estimate/calibrate/promote family + project persistence is fresher and native |
 | 6 | Log-count display mode | **ADOPT** — a log-y diagnostic on the raw-counts view |
-| 7 | F,B *balance* overlay (renamed — see below) | **ADAPT (borderline)** — overlay F and α·B on shared axes; the one eyeball the estimators can't give |
-| 8 | Data-snapped cursor: S/N, parabolic peak, windowed average | **ADAPT** — build on the existing cursor signal + status bar; subset is Ben's call (workflow explained in `comparison.md` §8) |
+| 7 | F,B *balance* overlay (renamed — see below) | **REJECT** (checkpoint) — the α estimator suite + α-free fit already serve calibration |
+| 8 | Data-snapped cursor: S/N, parabolic peak, windowed average | **ADAPT** — build on the existing cursor signal + status bar; **full set** chosen at the checkpoint (workflow in `comparison.md` §8) |
 | 9 | Cosmetic basket (error-bar toggle, markers, ticks, ns/bins units) | **REJECT here** — UI-polish-pass territory |
 | 10 | Live current-run monitoring | **DESIGN-ONLY** — design the refreshable-loader hook; implement only with beamline access |
 
@@ -53,13 +53,15 @@ side by side, is the centrepiece of [`comparison.md`](comparison.md). In brief:
 
 ## Implementation scope (pending the checkpoint)
 
-If Ben confirms the table, the implement-straight-through list is:
+Confirmed at the checkpoint (2026-06-13). The implement-straight-through list is:
 
 - **ADOPT:** events columns (§3), B-from-log (§4), log-count diagnostic (§6).
-- **ADAPT:** data-only export (§2), cursor readouts (§8, subset TBD), F,B balance
-  overlay (§7, borderline — may drop to REJECT on Ben's call).
+- **ADAPT:** data-only export (§2, menu on the existing GLE button), cursor readouts
+  (§8, **full set**: snap + S/N, windowed-average, parabolic peak).
 
-REJECT items (§1, §5, §9) ship nothing; §10 ships a documented hook design only.
+REJECT items (§1, §5, §7, §9) ship nothing; §10 ships a documented hook design only.
+Item 7 (F,B balance overlay) was dropped from borderline-ADAPT to REJECT at the
+checkpoint.
 
 None of this is advanced/niche enough to hide — it is mainstream browser-and-plot
 workflow and belongs on the **primary** surfaces. The **Options → Advanced** gate

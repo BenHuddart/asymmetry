@@ -50,12 +50,9 @@ variants run in CI.
 - **Consistency:** linear and log renders of the same run show the same data (one is
   the other's log).
 
-### 7. F,B balance overlay (ADAPT, borderline — only if confirmed)
-- **Coincidence:** with the corpus run's known-good α, forward and α·backward
-  envelopes coincide (overlay gap within tolerance).
-- **Sensitivity:** perturbing α by ±20% opens a visible, monotonic gap.
-- **Display-only:** the overlay creates no new α value and exposes no promote path
-  (assert no α mutation on the grouping).
+### 7. F,B balance overlay — REJECTED at the checkpoint (no gates)
+Dropped from borderline-ADAPT to REJECT (2026-06-13); nothing shipped, so no
+verification. The α estimator suite + α-free fit retain their existing tests.
 
 ### 8. Cursor readouts (ADAPT, subset per checkpoint)
 - **Snap:** hovering near a point emits the nearest cached `(t, A, err)`; the status
@@ -80,7 +77,7 @@ variants run in CI.
   edits stay additive where Wave-B/③ sessions also touch them (keys, menu entries).
 
 ## Out-of-scope (no gates)
-- Items 1, 5, 9 (REJECT) — nothing shipped; their deferred niceties, if ever taken
-  up, verify then.
+- Items 1, 5, 7, 9 (REJECT) — nothing shipped; their deferred niceties, if ever
+  taken up, verify then.
 - Item 10 (design-only) — the hook contract is documented, not built; it will gain a
   fixture-driven `reload_from_source` test when a beamline makes it testable.

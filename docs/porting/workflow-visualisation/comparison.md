@@ -15,15 +15,17 @@ citations are oracle-only (`$WIMDA_SRC`, GPL — behaviour read, never copied).
 | 4 | B-from-log | `WiMDA_Main.pas:729–733` `Bfromaveinblog`: field = avg of the B log channel (coil fallback) | Temperature-from-log is fully built (`_series_mean_for_field`, per-run override, log tint); **no field analogue** — field is always `metadata['field']` | **ADOPT** | Mirror the temperature-from-log machinery for field; a clean native pattern already exists to copy |
 | 5 | Deadtime-file auto-discovery + staleness | `WiMDA_Main:925–975`: discover a `.cal` in the data dir; warn if its date predates the run | estimate/calibrate/promote family (`calibrate_deadtime_from_histograms` → `promote_deadtime_to_grouping`); grouping persists in `.asymp`; `parse_deadtime_calibration_text` exists but unused | **REJECT** | Calibrating from *this run* is strictly fresher than a dated external file; project persistence replaces the file store. (Optional deferred nicety: wire the existing parser to a manual import — not auto-discovery) |
 | 6 | Log-count display mode | `Plot.pas:1542–1548` `GetDataGroup` "Logp": `ln(count/nbin)`, no error bars | Raw-counts view shipped (#53) via `set_time_view_modes` + `plot_grouped_time_domain_subplots` | **ADOPT** | Standard t0/background/deadtime diagnostic: a pure decay is a straight line on a log axis, so deviations pop out. Add a log-y rendering of the raw-counts view |
-| 7 | F,B **balance** overlay | `Plot.pas:2701–2711` `FBOverlay`: overlay forward vs backward group histograms; visual α check | Three α estimators (diamagnetic/general/ratio) + α-free count fit; groups view shows each group in its **own** subplot, never F vs α·B on shared axes | **ADAPT (borderline)** | The estimators give a *number*; the missing piece is the *eyeball* — F and α·B on shared axes — which matters when an estimator silently clamps (ledger #6). Display-only; may drop to REJECT on Ben's call |
+| 7 | F,B **balance** overlay | `Plot.pas:2701–2711` `FBOverlay`: overlay forward vs backward group histograms; visual α check | Three α estimators (diamagnetic/general/ratio) + α-free count fit; groups view shows each group in its **own** subplot, never F vs α·B on shared axes | **REJECT** (checkpoint 2026-06-13) | The estimator suite + α-free fit already serve α calibration; the marginal eyeball did not clear the bar. Ben's call at the checkpoint |
 | 8 | Data-snapped cursor + readouts | `Plot.pas:1159–1228,2962–3006`: snap to point; S/N=\|y/err\|; 3-pt parabola vertex; windowed mean±err | `cursor_coords_changed` → `_status_coords_label` gives free (x,y); cached `_last_plot_*` arrays; `integrate_curve` gives windowed mean±err | **ADAPT** | Build on the existing cursor signal + status bar. Subset is Ben's call — see §8 for the workflow this belongs to |
 | 9 | Cosmetic basket | error-bar toggle, marker styles, tick spacing, ns/bins x-units | The plot panel's existing styling | **REJECT here** | UI-polish-pass territory; no workflow reason found (the one near-miss, bins x-units, is noted under §6 as an optional pairing) |
 | 10 | Live current-run monitoring | `muondata.pas:1376` "run 0": freshest `macq*.tmp`/`auto_*.tmp`, auto-refresh | none | **DESIGN-ONLY** | Beamline access required to test (decision 2026-06-10); design the refreshable-loader hook, implement later |
 
-Net: **3 ADOPT** (3, 4, 6), **3 ADAPT** (2, 7-borderline, 8), **3 REJECT** (1, 5,
-9), **1 design-only** (10). Three rejects is a healthy outcome — it is the thesis
-working: the browser and the existing analysis surfaces already absorb a third of
-WiMDA's "instrument feel" basket.
+Net after the checkpoint (2026-06-13): **3 ADOPT** (3, 4, 6), **2 ADAPT** (2, 8),
+**4 REJECT** (1, 5, 7, 9), **1 design-only** (10). Item 7 (the one borderline ADAPT)
+was dropped to REJECT at the checkpoint — the α estimator suite + α-free fit already
+serve the calibration need. Four rejects is the thesis working: the browser and the
+existing analysis surfaces already absorb nearly half of WiMDA's "instrument feel"
+basket.
 
 ---
 
@@ -201,7 +203,13 @@ legible) rather than WiMDA's `ln(count)` on a linear axis; **mask non-positive
 bins** (log undefined) and keep Poisson error bars where the axis permits, instead
 of WiMDA's silent `log(0) → −∞` and dropped errors.
 
-### 7. F,B balance overlay — ADAPT (borderline; Ben to confirm or drop to REJECT)
+### 7. F,B balance overlay — REJECT (checkpoint 2026-06-13: dropped from borderline-ADAPT)
+
+> **Checkpoint outcome.** Presented as the one borderline ADAPT; Ben chose to
+> **drop it**. The three α estimators (with bootstrap uncertainty + method label)
+> and the α-free count fit already serve α calibration, and the marginal "eyeball"
+> value did not justify a new diagnostic surface. The original weighing is retained
+> below for the record.
 
 **What WiMDA does.** `FBOverlay` (`Plot.pas:2701–2711`) draws the forward and
 backward group histograms on one set of axes so the eye can judge **α balance**.
@@ -268,12 +276,11 @@ arrays; `integrate_curve` is ready for the windowed average. The carrier is in
 place; only the readouts are missing.
 
 **Verdict: ADAPT**, building on the existing cursor signal + status bar (not WiMDA's
-keyboard-index model — Asymmetry snaps on hover to the nearest cached point). The
-**subset** is Ben's decision, re-asked at the checkpoint with this workflow framing.
-Recommendation: **windowed-average ± err** (reuses `integrate_curve`; serves the
-level-reading workflow) and **parabolic peak** (the real gap; serves spectrum
-reading) are the two worth doing; **snap** is their carrier; **S/N** is a cheap
-add-on on the snapped point.
+keyboard-index model — Asymmetry snaps on hover to the nearest cached point).
+**Checkpoint outcome (2026-06-13): Ben chose the full set** — snap-to-point + S/N,
+**windowed-average ± err** (reuses `integrate_curve`; serves the level-reading
+workflow), and the **3-point parabolic peak** (the real gap; serves spectrum
+reading). All three ship.
 
 ### 9. Cosmetic basket — REJECT here
 
