@@ -2564,6 +2564,47 @@ class TestMainWindowBasic:
         assert dataset.run.grouping["alpha_y"] == pytest.approx(1.3)
         assert dataset.run.grouping["alpha_z"] == pytest.approx(1.1)
 
+    def test_fit_target_change_reduces_dataset_to_that_projection(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """A subplot fit-target change must re-reduce the live dataset to that
+        projection's pair, so the fit runs on the selected projection's curve."""
+        dataset = _make_dataset(7461, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.grouping.update(
+            {
+                "groups": {1: [1], 2: [2], 3: [1], 4: [2], 5: [1], 6: [2]},
+                "projections": [
+                    {"label": "P_x", "forward_group": 5, "backward_group": 6},
+                    {"label": "P_y", "forward_group": 3, "backward_group": 4},
+                    {"label": "P_z", "forward_group": 1, "backward_group": 2},
+                ],
+                "forward_group": 5,
+                "backward_group": 6,
+                "vector_axis": "P_x",
+                "instrument": "EMU",
+                "alpha": 1.0,
+                "first_good_bin": 0,
+                "last_good_bin": 3,
+                "bunching_factor": 1,
+                "deadtime_correction": False,
+            }
+        )
+        mainwindow._current_dataset = dataset
+        mainwindow._data_browser.get_selected_datasets = lambda: [dataset]
+        # Plot panel reports the stacked (ALL) view with P_y as the fit target.
+        mainwindow._plot_panel.get_current_polarization_axis = lambda: "ALL"
+        mainwindow._plot_panel.fit_target_projection = lambda: "P_y"
+
+        mainwindow._on_fit_target_projection_changed("P_y")
+
+        # The dataset is now reduced to P_y's forward/backward pair (3/4), so a
+        # fit will minimise against P_y's asymmetry — not the stale P_x curve.
+        assert dataset.run.grouping["vector_axis"] == "P_y"
+        assert dataset.run.grouping["forward_group"] == 3
+        assert dataset.run.grouping["backward_group"] == 4
+
     def test_extract_grouping_overrides_includes_vector_axis(
         self,
         mainwindow: MainWindow,

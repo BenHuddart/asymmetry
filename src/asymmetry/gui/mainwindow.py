@@ -2077,12 +2077,19 @@ class MainWindow(QMainWindow):
         if self._multi_group_fit_window is not None:
             self._multi_group_fit_window.set_fit_blocked(blocked, reason)
 
-    def _on_fit_target_projection_changed(self, _label: str) -> None:
+    def _on_fit_target_projection_changed(self, label: str) -> None:
         """Re-target the single fit when the user clicks a different subplot.
 
-        Rebinds the fit panel to the selected projection's slot (so its form
-        shows that projection's fit) and refreshes the fit-block state.
+        Critically, the fit must run on the *selected* projection's asymmetry,
+        not whatever axis the underlying dataset was last reduced to. The
+        stacked subplots are rendered from per-projection clones, so we re-reduce
+        the live target dataset(s) onto the selected projection's forward/backward
+        pair before rebinding the fit panel — otherwise a fit clicked on P_y would
+        minimise against P_x's curve yet be recorded under P_y.
         """
+        projection = self._normalize_vector_axis(label)
+        if projection in ("P_x", "P_y", "P_z"):
+            self._synchronize_targets_to_axis(self._selected_or_current_datasets(), projection)
         self._rebind_single_fit_to_active_projection()
         self._update_fit_block_state()
 

@@ -2406,15 +2406,17 @@ class PlotPanel(QWidget):
         if label is not None and label not in self._subplot_axes_by_polarization:
             return
         changed = label != self._fit_target_projection
+        if not changed:
+            return  # no-op re-click: skip the tight-bbox recompute and redraw
         in_subplots = bool(self._subplot_axes_by_polarization)
-        if changed and in_subplots:
+        if in_subplots:
             self._cache_current_y_limits_for_axis()  # caches the outgoing target
         self._fit_target_projection = label
-        if changed and in_subplots:
+        if in_subplots:
             self._restore_y_limits_for_axis(label)
             self._update_y_limit_controls_for_axis(self._current_polarization_axis)
         self._refresh_fit_target_decoration()
-        if changed and emit and label is not None:
+        if emit and label is not None:
             self.fit_target_projection_changed.emit(str(label))
 
     def _subplot_projection_at_event(self, event) -> str | None:
@@ -3623,9 +3625,9 @@ class PlotPanel(QWidget):
                     limits = self._y_limits_by_polarization.get(axis_key)
                     if limits is not None:
                         axis_obj.set_ylim(float(limits[0]), float(limits[1]))
-                    elif self._current_polarization_axis == "ALL":
-                        # Fallback for axes without cached limits yet.
-                        axis_obj.set_ylim(y0, y1)
+                    # A non-focused subplot with no cached limit keeps its own
+                    # (auto-scaled) y-range — manual Y never bleeds across
+                    # subplots.
             finally:
                 self._syncing_limits_from_axes = False
             self._canvas.draw()
