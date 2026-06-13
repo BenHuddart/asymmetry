@@ -29,3 +29,4 @@ for parameter-trend fits, and
    fitting
    fourier
    transforms
+   negmu
