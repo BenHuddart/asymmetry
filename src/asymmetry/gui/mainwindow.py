@@ -163,6 +163,7 @@ from asymmetry.gui.ui_manager import (
     UI_SCALE_SETTINGS_KEY,
     UIManager,
 )
+from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
@@ -334,7 +335,7 @@ def _sync_grouping_keys(grouping: dict, payload: dict, keys: tuple[str, ...]) ->
             grouping.pop(key, None)
 
 
-class _InspectorStack(QStackedWidget):
+class _InspectorStack(CurrentPageSizingMixin, QStackedWidget):
     """A QStackedWidget sized by its *current* page only.
 
     QStackedWidget's size hints are the maximum over all pages, so a tall
@@ -342,19 +343,6 @@ class _InspectorStack(QStackedWidget):
     height on the whole main window even while the compact single-fit page is
     showing — forcing the default window taller than small laptop screens.
     """
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        # Page swaps change the (current-page-derived) hints; tell the layout.
-        self.currentChanged.connect(lambda _index: self.updateGeometry())
-
-    def sizeHint(self):  # noqa: N802 — Qt override
-        current = self.currentWidget()
-        return current.sizeHint() if current is not None else super().sizeHint()
-
-    def minimumSizeHint(self):  # noqa: N802 — Qt override
-        current = self.currentWidget()
-        return current.minimumSizeHint() if current is not None else super().minimumSizeHint()
 
 
 def _inspector_scroll_area(content: QWidget) -> QScrollArea:

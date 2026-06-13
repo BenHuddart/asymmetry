@@ -109,10 +109,12 @@ from asymmetry.gui.styles.widgets import (
     fit_quality_chip_html,
     fit_quality_tooltip,
     make_formula_box,
+    make_section,
     make_section_header,
     success_html,
 )
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
+from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
@@ -990,10 +992,10 @@ class SingleFitTab(QWidget):
         self._model_generation = 0
 
         # Model selection
-        layout.addWidget(make_section_header("Model"))
-        model_group = QWidget()
-        model_layout = QFormLayout(model_group)
+        model_group, model_box = make_section("Model")
+        model_layout = QFormLayout()
         model_layout.setContentsMargins(0, 0, 0, 0)
+        model_box.addLayout(model_layout)
         self._formula_box, self._formula_label = _make_formula_box()
         self._edit_model_btn = QPushButton("Edit Function...")
         self._edit_model_btn.clicked.connect(self._edit_function)
@@ -1038,11 +1040,11 @@ class SingleFitTab(QWidget):
         layout.addWidget(model_group)
 
         # Fit range section
-        layout.addWidget(make_section_header("Fit range"))
-        fit_range_group = QWidget()
-        fit_range_layout = QHBoxLayout(fit_range_group)
+        fit_range_group, _fit_range_box = make_section("Fit range")
+        fit_range_layout = QHBoxLayout()
         fit_range_layout.setContentsMargins(0, 0, 0, 0)
         fit_range_layout.setSpacing(4)
+        _fit_range_box.addLayout(fit_range_layout)
 
         self._fit_range_min_spin = QDoubleSpinBox()
         self._fit_range_min_spin.setDecimals(3)
@@ -1079,10 +1081,7 @@ class SingleFitTab(QWidget):
         self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
 
         # Parameter table
-        layout.addWidget(make_section_header("Parameters"))
-        param_group = QWidget()
-        param_layout = QVBoxLayout(param_group)
-        param_layout.setContentsMargins(0, 0, 0, 0)
+        param_group, param_layout = make_section("Parameters")
         self._param_table = QTableWidget(0, 7)
         self._param_table.setHorizontalHeaderLabels(
             ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link"]
@@ -2256,10 +2255,10 @@ class GlobalFitTab(QWidget):
         self._group_param_group_specs: list[tuple[object, str]] = []
 
         # Model selection
-        layout.addWidget(make_section_header("Model"))
-        model_group = QWidget()
-        model_layout = QFormLayout(model_group)
+        model_group, model_box = make_section("Model")
+        model_layout = QFormLayout()
         model_layout.setContentsMargins(0, 0, 0, 0)
+        model_box.addLayout(model_layout)
         self._formula_box, self._formula_label = _make_formula_box()
         self._edit_model_btn = QPushButton("Edit Function...")
         self._edit_model_btn.clicked.connect(self._edit_function)
@@ -2283,11 +2282,11 @@ class GlobalFitTab(QWidget):
         layout.addWidget(model_group)
 
         # Fit range section
-        layout.addWidget(make_section_header("Fit range"))
-        _fr_group = QWidget()
-        _fr_layout = QHBoxLayout(_fr_group)
+        _fr_group, _fr_box = make_section("Fit range")
+        _fr_layout = QHBoxLayout()
         _fr_layout.setContentsMargins(0, 0, 0, 0)
         _fr_layout.setSpacing(4)
+        _fr_box.addLayout(_fr_layout)
 
         self._fit_range_min_spin = QDoubleSpinBox()
         self._fit_range_min_spin.setDecimals(3)
@@ -2323,10 +2322,7 @@ class GlobalFitTab(QWidget):
         self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
 
         # Parameter classification table
-        self._param_group = QWidget()
-        param_layout = QVBoxLayout(self._param_group)
-        param_layout.setContentsMargins(0, 0, 0, 0)
-        param_layout.addWidget(make_section_header("Parameter Classification"))
+        self._param_group, param_layout = make_section("Parameter Classification")
 
         param_header_layout = QHBoxLayout()
         param_header_layout.addStretch()
@@ -2354,10 +2350,7 @@ class GlobalFitTab(QWidget):
         self._grouped_context_label.hide()
         layout.addWidget(self._grouped_context_label)
 
-        self._group_param_group = QWidget()
-        group_param_layout = QVBoxLayout(self._group_param_group)
-        group_param_layout.setContentsMargins(0, 0, 0, 0)
-        group_param_layout.addWidget(make_section_header("Per-Group Parameters"))
+        self._group_param_group, group_param_layout = make_section("Per-Group Parameters")
         self._group_param_table = QTableWidget(0, 4)
         self._group_param_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
         self._group_param_table.horizontalHeader().setStretchLastSection(False)
@@ -2377,10 +2370,7 @@ class GlobalFitTab(QWidget):
         group_param_layout.addLayout(group_param_button_layout)
         layout.addWidget(self._group_param_group)
 
-        self._group_model_group = QWidget()
-        group_model_layout = QVBoxLayout(self._group_model_group)
-        group_model_layout.setContentsMargins(0, 0, 0, 0)
-        group_model_layout.addWidget(make_section_header("Fit-Function Parameters"))
+        self._group_model_group, group_model_layout = make_section("Fit-Function Parameters")
         self._group_model_table = QTableWidget(0, 4)
         self._group_model_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
         self._group_model_table.horizontalHeader().setStretchLastSection(False)
@@ -6052,35 +6042,18 @@ class GlobalFitTab(QWidget):
         )
 
 
-class _CurrentPageTabWidget(QTabWidget):
+class _CurrentPageTabWidget(CurrentPageSizingMixin, QTabWidget):
     """A QTabWidget sized by its *current* tab, not the maximum over all tabs.
 
     A plain QTabWidget reports the largest size hint across every page, so the
     wide Batch tab would impose its width on the dock even while the compact
     Single tab is showing — forcing the inspector scroll area to scroll
-    horizontally (a second scrollbar on top of the parameter table's own). This
-    mirrors :class:`asymmetry.gui.mainwindow._InspectorStack` for the inner
-    Single/Batch tabs, so the dock can follow the visible tab's width.
+    horizontally (a second scrollbar on top of the parameter table's own).
+    Sizing to the visible tab (plus the tab bar) lets the dock follow it.
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        # Tab switches change the (current-tab-derived) hints; tell the layout.
-        self.currentChanged.connect(lambda _index: self.updateGeometry())
-
-    def _hint(self, *, minimum: bool) -> QSize:
-        current = self.currentWidget()
-        if current is None:
-            return super().minimumSizeHint() if minimum else super().sizeHint()
-        page = current.minimumSizeHint() if minimum else current.sizeHint()
-        tab_bar = self.tabBar().sizeHint()
-        return QSize(max(page.width(), tab_bar.width()), page.height() + tab_bar.height())
-
-    def sizeHint(self) -> QSize:  # noqa: N802 — Qt override
-        return self._hint(minimum=False)
-
-    def minimumSizeHint(self) -> QSize:  # noqa: N802 — Qt override
-        return self._hint(minimum=True)
+    def _page_extra(self) -> QSize:
+        return self.tabBar().sizeHint()
 
 
 class FitPanel(QWidget):

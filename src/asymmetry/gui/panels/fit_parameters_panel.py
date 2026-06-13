@@ -67,7 +67,7 @@ from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
-    make_section_header,
+    make_section,
     style_group_state_button,
 )
 from asymmetry.gui.tasks import TaskRunner
@@ -273,10 +273,7 @@ class FitParametersPanel(QWidget):
 
         layout = QVBoxLayout(self)
 
-        controls_group = QWidget()
-        controls_layout = QVBoxLayout(controls_group)
-        controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.addWidget(make_section_header("Parameter settings"))
+        controls_group, controls_layout = make_section("Parameter settings")
         controls_form = QFormLayout()
         controls_layout.addLayout(controls_form)
 
@@ -402,11 +399,8 @@ class FitParametersPanel(QWidget):
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         apply_param_table_style(self._table)
 
-        self._plot_group = QWidget()
-        plot_layout = QVBoxLayout(self._plot_group)
-        plot_layout.setContentsMargins(0, 0, 0, 0)
+        self._plot_group, plot_layout = make_section("Parameter plot")
         plot_layout.setSpacing(8)
-        plot_layout.addWidget(make_section_header("Parameter plot"))
 
         self._plot_labels_bar = QWidget(self._plot_group)
         labels_row = QHBoxLayout(self._plot_labels_bar)

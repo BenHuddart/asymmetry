@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QTableWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from asymmetry.gui.styles import tokens
@@ -44,6 +46,24 @@ def make_section_header(text: str) -> QLabel:
     label.setFont(section_label_font())
     label.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
     return label
+
+
+def make_section(title: str) -> tuple[QWidget, QVBoxLayout]:
+    """Return a ``(section widget, content layout)`` pair for a flat dock section.
+
+    The widget holds a :func:`make_section_header` followed by an empty,
+    margin-free content area. Add content to the returned layout (a widget, or a
+    sub-layout via ``addLayout`` for form/row content) and add the widget to the
+    parent layout. Because the header lives inside the widget, hiding the widget
+    hides its header too. Replaces the repeated
+    ``header + QWidget + zero-margin layout`` idiom across the inspector tabs.
+    """
+    container = QWidget()
+    layout = QVBoxLayout(container)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(4)
+    layout.addWidget(make_section_header(title))
+    return container, layout
 
 
 # ── Result box ────────────────────────────────────────────────────────────────
