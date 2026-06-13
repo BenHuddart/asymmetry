@@ -130,6 +130,7 @@ def default_capture_parameters(
     n_bins = len(counts)
     bin_width = float(time[1] - time[0]) if len(time) > 1 else 0.016
     bin_width = max(bin_width, 1e-9)
+    t_start = float(time[0]) if len(time) > 0 else 0.0
     t_window = float(n_bins) * bin_width
 
     n_late = max(1, n_bins // 10)
@@ -140,10 +141,12 @@ def default_capture_parameters(
     params = ParameterSet()
     for comp in comps:
         tau_i = max(float(comp.tau_us), 1e-9)
+        exp_start = float(np.exp(-t_start / tau_i))
         exp_dt = float(np.exp(-bin_width / tau_i))
         exp_T = float(np.exp(-t_window / tau_i))
-        # amp ≈ signal_per_comp * (1-exp(-Δt/τ)) / (1-exp(-T/τ))  (exact telescoping)
-        denom = max(1.0 - exp_T, 1e-12)
+        # amp ≈ signal_per_comp * (1-exp(-Δt/τ)) / (exp(-t_start/τ)·(1-exp(-T/τ)))
+        # The exp_start factor accounts for data windows that begin after t=0.
+        denom = max(exp_start * (1.0 - exp_T), 1e-12)
         amp_seed = max(1.0, signal_per_comp * (1.0 - exp_dt) / denom)
 
         amp_name = f"amp_{comp.label}"
@@ -579,9 +582,13 @@ def fit_capture_fb_alpha(
         chi2_f = _poisson_cash(counts_f, model_f_fit)
         chi2_b = _poisson_cash(counts_b, model_b_fit)
 
-    # DOF: both sides share all free parameters (simultaneous fit).
-    dof_f = max(len(time_f) - n_free_params, 1)
-    dof_b = max(len(time_b) - n_free_params, 1)
+    # DOF: the joint fit has (N_f + N_b - n_free) total. Apportion the parameter
+    # count proportionally by data-point count so dof_f + dof_b = true joint DOF.
+    n_f = len(time_f)
+    n_b = len(time_b)
+    dof_total = max(n_f + n_b - n_free_params, 1)
+    dof_f = max(round(dof_total * n_f / (n_f + n_b)), 1)
+    dof_b = max(dof_total - dof_f, 1)
     n_calls = int(getattr(m, "nfcn", 0) or 0)
     cov_accurate = getattr(m, "accurate", False)
     is_valid = bool(m.valid)

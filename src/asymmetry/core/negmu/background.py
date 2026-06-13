@@ -146,6 +146,11 @@ def capture_background_run(
     source_run = dataset.run
     source_grouping = source_run.grouping
     source_detectors = source_grouping.get("groups", {}).get(group_id, [1])
+    if not source_detectors:
+        raise ValueError(
+            f"capture_background_run: group {group_id!r} has no detector assignments "
+            f"in the source run grouping."
+        )
 
     # axis_start = first_good − common_t0 (both integers in the source grouping).
     # Reading these directly avoids a floating-point round-trip through the post-rebin

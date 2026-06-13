@@ -20,6 +20,7 @@ no new results framework.
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -124,7 +125,11 @@ def capture_ratio_report(
                 cov_term = 2.0 * cov_ij / (amp * amp_ref)
 
             var = (sigma / amp) ** 2 + (sigma_ref / amp_ref) ** 2 - cov_term
-            sigma_ratio = abs(ratio) * math.sqrt(max(0.0, var))
+            if var < 0.0:
+                # Negative variance signals an invalid (non-PSD) covariance matrix.
+                sigma_ratio = float("nan")
+            else:
+                sigma_ratio = abs(ratio) * math.sqrt(var)
 
         ratios.append(
             CaptureRatio(
@@ -133,6 +138,14 @@ def capture_ratio_report(
                 ratio=ratio,
                 sigma=sigma_ratio,
             )
+        )
+
+    missing = [lbl for lbl in all_labels if lbl not in amplitudes]
+    if missing:
+        warnings.warn(
+            f"capture_ratio_report: spec labels {missing!r} absent from fit result "
+            f"— spec and fit may refer to different models.",
+            stacklevel=2,
         )
 
     return CaptureRatioReport(
