@@ -1178,16 +1178,21 @@ class ModelFitDialog(QDialog):
         self._removed = True
         self.accept()
 
-    def reject(self) -> None:
+    def _refuse_close_while_fitting(self) -> bool:
+        """Notify and return True while a fit is running (blocks reject/close)."""
         if self._fit_in_progress:
             _show_info(self, "Fit in progress", "Please wait for the current fit to finish.")
+            return True
+        return False
+
+    def reject(self) -> None:
+        if self._refuse_close_while_fitting():
             return
         super().reject()
 
     def closeEvent(self, event) -> None:
         """Refuse to tear down mid-fit; otherwise shut the TaskRunner down."""
-        if self._fit_in_progress:
-            _show_info(self, "Fit in progress", "Please wait for the current fit to finish.")
+        if self._refuse_close_while_fitting():
             event.ignore()
             return
         self._tasks.shutdown()
