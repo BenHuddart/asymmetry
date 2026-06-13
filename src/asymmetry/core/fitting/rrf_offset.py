@@ -28,11 +28,14 @@ rotation; the F-μ-F and dipolar families — multi-frequency) raises
 :class:`UnsupportedRRFComponentError`: a silently un-shifted line would
 reintroduce the WiMDA trap.  Envelope components pass through untouched.
 
-Recorded follow-ons (study, implementation-options §B): a GUI surface in the
-fit panel, and an engine-level ``frequency_offset`` argument once
-``engine.py`` is free this wave — both consume
-:func:`rrf_frequency_offsets`, which is therefore kept separate from the
-thin callable wrapper.
+Migrated (study, implementation-options §B, 2026-06-13): the engine-level
+``frequency_offsets`` argument is now live —
+:meth:`asymmetry.core.fitting.engine.FitEngine.fit` accepts the resolved
+``{param: ν₀}`` dict and applies the same :func:`offset_model_function`
+shift, so the GUI fit path resolves :func:`rrf_frequency_offsets` once and
+passes it straight to the engine rather than building a callable wrapper.
+The thin :func:`rrf_offset_model` wrapper is retained for standalone
+callers and pins the engine path's equivalence.
 """
 
 from __future__ import annotations
@@ -52,6 +55,7 @@ __all__ = [
     "RRF_ROTATION_COMPONENTS",
     "UnsupportedRRFComponentError",
     "apply_rrf_offsets",
+    "offset_model_function",
     "rrf_frequency_offsets",
     "rrf_offset_model",
 ]
@@ -121,6 +125,34 @@ def rrf_frequency_offsets(model: CompositeModel, frequency_mhz: float) -> dict[s
     return offsets
 
 
+def offset_model_function(
+    base_fn: Callable[..., NDArray],
+    offsets: dict[str, float],
+) -> Callable[..., NDArray[np.float64]]:
+    """Wrap ``f(t, **params)`` so the named parameters are shifted additively.
+
+    The returned callable adds ``offsets[name]`` to each named parameter before
+    delegating to ``base_fn`` — the single shift seam shared by
+    :func:`rrf_offset_model` and the engine-level ``frequency_offsets``
+    argument (:meth:`asymmetry.core.fitting.engine.FitEngine.fit`), so fitting
+    raw data through either path is bit-for-bit identical.  A parameter named in
+    ``offsets`` but absent from the call raises :class:`ValueError`.
+    """
+    offset_items = tuple(offsets.items())
+
+    def wrapped(t: NDArray, **params: float) -> NDArray[np.float64]:
+        shifted = dict(params)
+        for name, off in offset_items:
+            if name not in shifted:
+                raise ValueError(
+                    f"RRF-offset model expected parameter '{name}'; got {sorted(shifted)}."
+                )
+            shifted[name] = float(shifted[name]) + off
+        return base_fn(t, **shifted)
+
+    return wrapped
+
+
 def rrf_offset_model(
     model: CompositeModel,
     frequency_mhz: float,
@@ -132,20 +164,13 @@ def rrf_offset_model(
     equivalent) before delegation, so the data fitted are raw and the fitted
     values are rotating-frame offsets.  The offsets used are attached as
     ``rrf_offsets`` (with ``rrf_frequency_mhz``) for reporting.
+
+    The shift itself is :func:`offset_model_function`; the GUI fit path instead
+    resolves :func:`rrf_frequency_offsets` once and passes them straight to the
+    engine's ``frequency_offsets`` argument, which applies the same seam.
     """
     offsets = rrf_frequency_offsets(model, frequency_mhz)
-    base = model.function
-
-    def wrapped(t: NDArray, **params: float) -> NDArray[np.float64]:
-        shifted = dict(params)
-        for name, off in offsets.items():
-            if name not in shifted:
-                raise ValueError(
-                    f"RRF-offset model expected parameter '{name}'; got {sorted(shifted)}."
-                )
-            shifted[name] = float(shifted[name]) + off
-        return base(t, **shifted)
-
+    wrapped = offset_model_function(model.function, offsets)
     wrapped.rrf_frequency_mhz = float(frequency_mhz)
     wrapped.rrf_offsets = dict(offsets)
     return wrapped

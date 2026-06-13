@@ -154,3 +154,75 @@ class TestFitEquivalence:
         assert lab["field"] == pytest.approx(
             {p.name: p.value for p in direct.parameters}["field"], abs=1e-4
         )
+
+
+class TestEngineFrequencyOffset:
+    """The engine-level ``frequency_offsets`` argument == wrapping the model.
+
+    The migration target (study §B): the fit panel resolves
+    :func:`rrf_frequency_offsets` once and passes the dict straight to
+    ``FitEngine.fit``, instead of building a callable wrapper. Both must fit raw
+    data identically.
+    """
+
+    def test_engine_offset_matches_wrapper_bit_for_bit(self):
+        dataset = _dataset(seed=21)
+        model = CompositeModel.from_expression("Oscillatory * Exponential")
+        engine = FitEngine()
+        seed = _params(NU_LAB + 0.05 - NU_FRAME)
+        offsets = rrf_frequency_offsets(model, NU_FRAME)
+
+        wrapped = rrf_offset_model(model, NU_FRAME)
+        via_wrapper = engine.fit(dataset, wrapped, seed)
+        via_engine = engine.fit(dataset, model.function, seed, frequency_offsets=offsets)
+
+        assert via_engine.success and via_wrapper.success
+        # Identical objective and identical fitted δν — same shift, same data.
+        assert via_engine.chi_squared == via_wrapper.chi_squared
+        for name in ("A_1", "Lambda", "frequency", "phase"):
+            assert via_engine.parameters[name].value == via_wrapper.parameters[name].value
+            assert via_engine.uncertainties.get(name) == via_wrapper.uncertainties.get(name)
+
+    def test_engine_offset_recovers_lab_frame(self):
+        dataset = _dataset(seed=22)
+        model = CompositeModel.from_expression("Oscillatory * Exponential")
+        engine = FitEngine()
+        offsets = rrf_frequency_offsets(model, NU_FRAME)
+
+        direct = engine.fit(dataset, model.function, _params(NU_LAB + 0.05))
+        rotating = engine.fit(
+            dataset, model.function, _params(NU_LAB + 0.05 - NU_FRAME), frequency_offsets=offsets
+        )
+        assert rotating.success and direct.success
+
+        lab = apply_rrf_offsets({p.name: p.value for p in rotating.parameters}, offsets)
+        assert lab["frequency"] == pytest.approx(
+            {p.name: p.value for p in direct.parameters}["frequency"], abs=1e-6
+        )
+        assert rotating.parameters["frequency"].value == pytest.approx(NU_LAB - NU_FRAME, abs=1e-3)
+
+    def test_engine_offset_none_is_unchanged(self):
+        dataset = _dataset(seed=23)
+        model = CompositeModel.from_expression("Oscillatory * Exponential")
+        engine = FitEngine()
+        seed = _params(NU_LAB + 0.05)
+
+        baseline = engine.fit(dataset, model.function, seed)
+        with_none = engine.fit(dataset, model.function, seed, frequency_offsets=None)
+        assert with_none.chi_squared == baseline.chi_squared
+        assert with_none.parameters["frequency"].value == baseline.parameters["frequency"].value
+
+    def test_engine_offset_missing_parameter_raises(self):
+        dataset = _dataset(seed=24)
+        model = CompositeModel.from_expression("Oscillatory * Exponential")
+        engine = FitEngine()
+        # An offset keyed on a parameter the model never receives must raise,
+        # not silently leave a line in the lab frame.
+        result = engine.fit(
+            dataset, model.function, _params(0.5), frequency_offsets={"frequency": 29.2}
+        )
+        assert result.success  # control: the real offset works
+        with pytest.raises(ValueError, match="not_a_param"):
+            engine.fit(
+                dataset, model.function, _params(0.5), frequency_offsets={"not_a_param": 1.0}
+            )

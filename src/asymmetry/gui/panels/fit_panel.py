@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import functools
 import re
+from collections.abc import Callable
 
 import numpy as np
 from PySide6.QtCore import QEventLoop, QSignalBlocker, Qt, QTimer, Signal
@@ -83,6 +84,10 @@ from asymmetry.core.fitting.parameters import (
     split_parameter_name,
 )
 from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.core.fitting.rrf_offset import (
+    UnsupportedRRFComponentError,
+    rrf_frequency_offsets,
+)
 from asymmetry.core.fitting.spectral import (
     append_frequency_field_derived_parameters,
     default_frequency_model,
@@ -921,6 +926,34 @@ class _ValueUncertaintyDelegate(QStyledItemDelegate):
         super().setModelData(editor, model, index)
 
 
+def _shift_rrf_parameters(
+    parameters: ParameterSet, offsets: dict[str, float], *, sign: int
+) -> ParameterSet:
+    """Shift the rotation parameters of a set by ±ν₀ (value and bounds together).
+
+    ``sign=-1`` maps a lab-frame seed to the rotating frame (δν = ν − ν₀) for
+    the engine, which fits the small offset; ``sign=+1`` maps a rotating-frame
+    fit result back to the lab frame for display/recording. The parameter table
+    stays entirely lab-frame — what the user reads and edits — while the engine
+    works in the better-conditioned δν, and a refit round-trips exactly.
+    """
+    shifted = ParameterSet()
+    for p in parameters:
+        delta = offsets.get(p.name, 0.0) * sign
+        shifted.add(
+            Parameter(
+                name=p.name,
+                value=float(p.value) + delta,
+                min=p.min + delta,  # ±inf + finite stays ±inf
+                max=p.max + delta,
+                fixed=getattr(p, "fixed", False),
+                expr=getattr(p, "expr", None),  # preserve constraints faithfully
+                link_group=getattr(p, "link_group", None),
+            )
+        )
+    return shifted
+
+
 class SingleFitTab(QWidget):
     """Single dataset fitting interface.
 
@@ -965,6 +998,10 @@ class SingleFitTab(QWidget):
         self._cached_wizard_signature: dict[str, object] | None = None
         self._cached_wizard_log_text = ""
         self._updating_fraction_values = False
+        # Optional provider of the rotating-frame ν₀ (MHz) supplied by the host
+        # window; returns a frequency when an RRF fit should run (the plot's RRF
+        # display is active), else None. Default no-op keeps the tab standalone.
+        self._rrf_frequency_provider: Callable[[], float | None] = lambda: None
         self._last_fit_result: FitResult | None = None
         self._last_fit_parameters: ParameterSet | None = None
         self._pull_diagnostic_btn: QPushButton | None = None
@@ -1254,6 +1291,10 @@ class SingleFitTab(QWidget):
         )
         self._pull_diagnostic_window = window
         window.show()
+
+    def set_rrf_frequency_provider(self, provider: Callable[[], float | None]) -> None:
+        """Install the host's rotating-frame ν₀ provider (see __init__)."""
+        self._rrf_frequency_provider = provider or (lambda: None)
 
     def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
         """Enable/disable single-fit actions while preserving the active dataset."""
@@ -1787,6 +1828,35 @@ class SingleFitTab(QWidget):
             self._result_label.setText(f"ERROR: {exc}")
             return
 
+        # Resolve the rotating-reference-frame offset, if the host's RRF display
+        # is active. The fit then consumes RAW lab-frame data with the model's
+        # rotation frequencies offset by ν₀, so it keeps exact per-bin
+        # statistics while the engine's free parameter is the small, better-
+        # conditioned δν; the parameter table stays lab-frame throughout.
+        model = self._composite_model
+        rrf_offsets: dict[str, float] | None = None
+        rrf_nu0 = self._rrf_frequency_provider()
+        if rrf_nu0:
+            try:
+                rrf_offsets = rrf_frequency_offsets(model, float(rrf_nu0))
+            except UnsupportedRRFComponentError as exc:
+                # A composite with an oscillating component that is not a pure
+                # frame rotation (muonium, Bessel, …) cannot be safely offset;
+                # refuse rather than silently leave a line in the lab frame.
+                self._result_label.setText(
+                    f"ERROR: cannot fit in the rotating frame — {exc} "
+                    "Turn off the rotating frame (Options → Advanced) to fit this model."
+                )
+                return
+            except ValueError:
+                # No rotation component at all (e.g. a pure relaxation model):
+                # the rotating frame does not apply; fit normally.
+                rrf_offsets = None
+
+        fit_seed = (
+            _shift_rrf_parameters(parameters, rrf_offsets, sign=-1) if rrf_offsets else parameters
+        )
+
         # Run the fit on a worker thread; the GUI (and Stop button) stay live.
         self._results_group.setStyleSheet("")
         self._result_label.setText("Fitting...")
@@ -1797,18 +1867,24 @@ class SingleFitTab(QWidget):
         # GUI thread with each launch's own context, so a late result can
         # never be applied against a different launch's snapshot.
         dataset = self._current_dataset
-        model = self._composite_model
+        # Only thread the RRF offset when one is active, so the ordinary fit
+        # path (and its test doubles) is unchanged.
+        fit_kwargs: dict = {"minos": self._minos_checkbox.isChecked()}
+        if rrf_offsets:
+            fit_kwargs["frequency_offsets"] = rrf_offsets
         self._fit_worker = _start_fit_call(
             self,
             functools.partial(
                 self._fit_engine.fit,
                 dataset,
                 model.function,
-                parameters,
-                minos=self._minos_checkbox.isChecked(),
+                fit_seed,
+                **fit_kwargs,
             ),
-            on_finished=lambda result, p=parameters, d=dataset, m=model, g=self._model_generation: (
-                self._apply_single_fit_result(result, p, d, m, g)
+            on_finished=(
+                lambda result, p=parameters, d=dataset, m=model, g=self._model_generation, off=rrf_offsets, nu0=rrf_nu0: (
+                    self._apply_single_fit_result(result, p, d, m, g, rrf_offsets=off, rrf_nu0=nu0)
+                )
             ),
             on_error=self._on_single_fit_error,
             on_cancelled=self._on_single_fit_cancelled,
@@ -1856,7 +1932,15 @@ class SingleFitTab(QWidget):
         return _wait_for_fit_thread(self, timeout_ms)
 
     def _apply_single_fit_result(
-        self, result, parameters, dataset, model, model_generation
+        self,
+        result,
+        parameters,
+        dataset,
+        model,
+        model_generation,
+        *,
+        rrf_offsets=None,
+        rrf_nu0=None,
     ) -> None:
         """Apply a completed single fit to the panel (GUI thread)."""
         self._set_fit_busy(False)
@@ -1866,6 +1950,21 @@ class SingleFitTab(QWidget):
             self._results_group.setStyleSheet("")
             self._result_label.setText(f"<b>Fit failed:</b> {result.message}")
             return
+
+        # The engine fitted the rotating-frame offsets δν; shift the result back
+        # to the lab frame (ν = δν + ν₀, bounds with it) so every downstream
+        # surface — the parameter table, the overlay curve drawn on raw data,
+        # the recorded FitSlot, the pull diagnostic — reads in the lab frame. χ²,
+        # uncertainties and covariance are frame-invariant (the offset is an
+        # additive constant), so only the values/bounds move.
+        rrf_note = ""
+        if rrf_offsets:
+            result.parameters = _shift_rrf_parameters(result.parameters, rrf_offsets, sign=+1)
+            rrf_note = (
+                "<br><i>frame: ν_RRF = "
+                f"{float(rrf_nu0):.4f} MHz — fitted in the rotating frame; "
+                "frequencies reported in the lab frame.</i>"
+            )
 
         # A result is only "fresh" when the panel still shows the model AND run
         # it was fitted on. Otherwise the user navigated away mid-fit: applying
@@ -1879,7 +1978,7 @@ class SingleFitTab(QWidget):
         dataset_unchanged = self._current_dataset is dataset
 
         self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
-        self._result_label.setText(_fit_success_html(result))
+        self._result_label.setText(_fit_success_html(result) + rrf_note)
         self._result_label.setToolTip(fit_quality_tooltip(_fit_quality_dict(result)))
 
         if not (model_unchanged and dataset_unchanged):
@@ -1890,6 +1989,7 @@ class SingleFitTab(QWidget):
                 reason = f"run {run_id} is no longer selected"
             self._result_label.setText(
                 _fit_success_html(result)
+                + rrf_note
                 + f"<br><i>This fit was not applied or recorded because {reason}. "
                 "Restore the original model and run, then refit to keep it.</i>"
             )
@@ -3730,6 +3830,7 @@ class GlobalFitTab(QWidget):
                 local_params,
                 initial_params,
                 minos=self._minos_checkbox.isChecked(),
+                cost=self._count_fit_cost,
             ),
             on_finished=lambda result, ds=grouped_datasets: self._on_grouped_fit_finished(
                 ds, result
@@ -4467,6 +4568,7 @@ class GlobalFitTab(QWidget):
                 minos=self._minos_checkbox.isChecked(),
                 seeding=self._batch_seeding_mode,
                 order_key=self._grouped_series_order_key(members),
+                cost=self._count_fit_cost,
             ),
             on_finished=lambda result, ds=grouped_datasets: self._on_grouped_series_fit_finished(
                 ds, result
@@ -6084,6 +6186,10 @@ class FitPanel(QWidget):
     def domain(self) -> str:
         """Return the current fitting domain."""
         return self._domain
+
+    def set_rrf_frequency_provider(self, provider: Callable[[], float | None]) -> None:
+        """Forward the rotating-frame ν₀ provider to the single-fit tab."""
+        self._single_tab.set_rrf_frequency_provider(provider)
 
     def set_domain(self, domain: str) -> None:
         """Switch the fit panel between time- and frequency-domain workflows."""

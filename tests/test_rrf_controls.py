@@ -61,6 +61,9 @@ def panel(qapp: QApplication):
 
 def _enable_rrf(panel, frequency_mhz=NU, component="real"):
     controls = panel._rrf_controls
+    # RRF is gated behind the Options → Advanced toggle (default off); the tests
+    # that exercise the transform enable the feature explicitly.
+    controls.set_feature_enabled(True)
     controls._freq_spin.setValue(frequency_mhz)
     idx = controls._component_combo.findData(component)
     controls._component_combo.setCurrentIndex(idx)
@@ -71,9 +74,11 @@ def _enable_rrf(panel, frequency_mhz=NU, component="real"):
 class TestViewGating:
     def test_visible_only_on_fb_asymmetry(self, panel):
         controls = panel._rrf_controls
+        controls.set_feature_enabled(True)  # gate is exercised in TestFeatureGate
         panel.set_time_view_modes(["fb_asymmetry", "groups", "raw_counts"])
         controls.set_active_view_token("fb_asymmetry")
         assert controls.applies_to_current_view()
+        assert controls.isVisibleTo(panel)
 
         controls.set_active_view_token("integral_scan")
         assert not controls.applies_to_current_view()
@@ -83,6 +88,48 @@ class TestViewGating:
         panel.set_current_time_view_mode("groups")
         panel.time_view_changed.emit("groups")
         assert not controls.applies_to_current_view()
+
+
+class TestFeatureGate:
+    """The Options → Advanced toggle gates the entire RRF surface (default off)."""
+
+    def test_controls_absent_until_feature_enabled(self, panel):
+        controls = panel._rrf_controls
+        panel.set_time_view_modes(["fb_asymmetry", "groups", "raw_counts"])
+        controls.set_active_view_token("fb_asymmetry")
+        # Default off: even on the FB-asymmetry view the controls are hidden
+        # (zero layout footprint), and the display transform is inert.
+        assert not controls.feature_enabled()
+        assert not controls.isVisibleTo(panel)
+        controls._freq_spin.setValue(NU)
+        controls._enable_check.setChecked(True)
+        assert not controls.is_active()
+        dataset = _dataset()
+        assert rrf_display_dataset(panel, dataset) is dataset  # transform inert
+        # Enabling the feature reveals them under the existing view condition.
+        controls.set_feature_enabled(True)
+        assert controls.isVisibleTo(panel)
+        assert controls.is_active()
+
+    def test_panel_setter_toggles_feature_and_transform(self, panel):
+        dataset = _dataset()
+        _enable_rrf(panel)
+        assert panel._rrf_controls.is_active()
+        assert rrf_display_dataset(panel, dataset) is not dataset
+        # Turning the feature back off makes the transform inert immediately.
+        panel.set_rrf_feature_enabled(False)
+        assert not panel._rrf_controls.is_active()
+        assert rrf_display_dataset(panel, dataset) is dataset
+        assert not panel._rrf_controls.isVisibleTo(panel)
+
+    def test_rrf_fit_frequency_only_when_active(self, panel):
+        panel.set_time_view_modes(["fb_asymmetry", "groups", "raw_counts"])
+        panel._rrf_controls.set_active_view_token("fb_asymmetry")
+        assert panel.rrf_fit_frequency_mhz() is None  # feature off
+        _enable_rrf(panel, frequency_mhz=NU)
+        assert panel.rrf_fit_frequency_mhz() == pytest.approx(NU)
+        panel.set_rrf_feature_enabled(False)
+        assert panel.rrf_fit_frequency_mhz() is None
 
     def test_transform_inactive_when_disabled(self, panel):
         dataset = _dataset()
@@ -236,11 +283,20 @@ class TestPersistence:
                 pytest.skip("matplotlib required")
             restored.restore_state(state)
             rrf = restored._rrf_controls
-            assert rrf.is_active()
+            # The frame parameters round-trip via plot_state["rrf"]; the feature
+            # flag is app-level chrome (QSettings), NOT in the project, so a
+            # fresh panel restores with the toggle off (the host auto-enables it
+            # on open — see rrf_has_active_parameters). The restored frame is
+            # therefore configured-but-inactive until the feature is enabled.
+            assert restored.rrf_has_active_parameters()  # configured…
+            assert not rrf.is_active()  # …but inactive until the feature is on
+            assert rrf._enable_check.isChecked()
             assert rrf.frequency_mhz() == pytest.approx(NU)
             assert rrf.phase_deg() == pytest.approx(15.0)
             assert rrf.bandwidth_mhz() == pytest.approx(3.0)
             assert rrf.component() == "magnitude"
+            restored.set_rrf_feature_enabled(True)
+            assert rrf.is_active()
         finally:
             restored.close()
             restored.deleteLater()

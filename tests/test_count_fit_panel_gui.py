@@ -45,11 +45,12 @@ def test_target_selector_pushes_mode_to_both_tabs(qapp, fb_dataset):
     window._target_combo.setCurrentIndex(1)  # Forward + Backward (free α)
     assert window._single_fit_tab._count_fit_mode == "fb"
     assert window._batch_fit_tab._count_fit_mode == "fb"
-    # Cost selector is enabled for count modes, disabled for All groups.
+    # The Poisson/Gaussian cost now applies to every grouped target, including
+    # the lifetime-corrected fgAll ("all") fit, so the selector stays enabled.
     assert window._cost_combo.isEnabled()
     window._target_combo.setCurrentIndex(0)
     assert window._single_fit_tab._count_fit_mode == "all"
-    assert not window._cost_combo.isEnabled()
+    assert window._cost_combo.isEnabled()
 
 
 def test_fb_count_fit_runs_and_recovers_alpha(qapp, fb_dataset):

@@ -213,7 +213,10 @@ class MultiGroupFitWindow(QWidget):
         count_mode = mode != "all"
         self._side_combo.setEnabled(single)
         self._side_label.setEnabled(single)
-        self._cost_combo.setEnabled(count_mode)
+        # The Poisson/Gaussian cost now applies to every grouped target,
+        # including the lifetime-corrected fgAll ("all") fit — its grouped
+        # driver routes through the same Cash/√N cost-factory seam.
+        self._cost_combo.setEnabled(True)
         for widget in (
             self._exclude_min,
             self._exclude_max,
