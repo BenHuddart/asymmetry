@@ -114,7 +114,14 @@ def configure_formula_label(label: QLabel) -> None:
     label.setWordWrap(True)
     label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
     label.setTextFormat(Qt.TextFormat.PlainText)
-    label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
+    # Ignored (not Expanding) horizontally: a long, unbreakable token — e.g. a
+    # custom user-function name — has no wrap point, so under Expanding the
+    # label's minimum width would grow to fit it and drag the whole inspector
+    # dock wide (re-introducing a window scrollbar). Ignored makes the box fill
+    # the width it is given and clip the overflow instead; the full expression
+    # stays available via the tooltip set in _set_formula_label_text.
+    label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.MinimumExpanding)
+    label.setMinimumWidth(0)
     label.setStyleSheet(
         f"QLabel {{ background-color: {tokens.SURFACE_ALT}; border: 1px solid {tokens.BORDER};"
         " border-radius: 3px; padding: 6px 8px; }"
