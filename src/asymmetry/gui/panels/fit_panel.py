@@ -11,7 +11,7 @@ import functools
 import re
 
 import numpy as np
-from PySide6.QtCore import QEventLoop, QObject, QSignalBlocker, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEventLoop, QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
@@ -108,7 +108,7 @@ from asymmetry.gui.styles.widgets import (
     fit_quality_tooltip,
     success_html,
 )
-from asymmetry.gui.tasks import TaskRunner, retire_thread
+from asymmetry.gui.tasks import TaskRunner, TaskWorker
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
@@ -790,188 +790,8 @@ def _fit_curve_sample_count(
     return int(max(base_points, min(max_points, required_points)))
 
 
-class GlobalFitWorker(QObject):
-    """Worker for running global fits in a background thread.
-
-    Signals
-    -------
-    finished : Signal(object, object)
-        Emitted with (results_dict, fitted_global) when fit completes successfully.
-    error : Signal(str)
-        Emitted with error message if fit fails.
-    """
-
-    # Use object/object for cross-thread payloads containing Python objects
-    # (FitResult, ParameterSet, numpy arrays). Typed Qt containers can trigger
-    # conversion errors when queued between threads.
-    finished = Signal(object, object)  # results_dict, fitted_global
-    error = Signal(str)
-    cancelled = Signal()
-
-    def __init__(
-        self,
-        fit_engine,
-        datasets,
-        model_fn,
-        global_params,
-        local_params,
-        initial_params,
-        *,
-        minos=False,
-    ):
-        super().__init__()
-        self.fit_engine = fit_engine
-        self.datasets = datasets
-        self.model_fn = model_fn
-        self.global_params = global_params
-        self.local_params = local_params
-        self.initial_params = initial_params
-        self.minos = minos
-        self._cancel_requested = False
-
-    def cancel(self) -> None:
-        """Request cooperative cancellation of the running global fit."""
-        self._cancel_requested = True
-
-    def run(self):
-        """Execute the global fit."""
-        try:
-            results_dict, fitted_global = self.fit_engine.global_fit(
-                self.datasets,
-                self.model_fn,
-                self.global_params,
-                self.local_params,
-                self.initial_params,
-                minos=self.minos,
-                cancel_callback=lambda: self._cancel_requested,
-            )
-            self.finished.emit(results_dict, fitted_global)
-        except FitCancelledError:
-            self.cancelled.emit()
-        except Exception as e:
-            self.error.emit(_format_fit_worker_exception(e))
-
-
-class GroupedTimeDomainFitWorker(QObject):
-    """Worker for grouped time-domain fitting in a background thread."""
-
-    finished = Signal(object, object)  # grouped_datasets, fit_result_bundle
-    error = Signal(str)
-    cancelled = Signal()
-
-    def __init__(
-        self,
-        grouped_groups,
-        grouped_datasets,
-        model_fn,
-        global_params,
-        local_params,
-        initial_params,
-        *,
-        minos=False,
-    ):
-        super().__init__()
-        self.grouped_groups = grouped_groups
-        self.grouped_datasets = grouped_datasets
-        self.model_fn = model_fn
-        self.global_params = global_params
-        self.local_params = local_params
-        self.initial_params = initial_params
-        self.minos = minos
-        self._cancel_requested = False
-
-    def cancel(self) -> None:
-        """Request cooperative cancellation of the running grouped fit."""
-        self._cancel_requested = True
-
-    def run(self):
-        """Execute the grouped time-domain fit."""
-        try:
-            result = fit_grouped_time_domain(
-                self.grouped_groups,
-                self.model_fn,
-                self.global_params,
-                self.local_params,
-                self.initial_params,
-                minos=self.minos,
-                cancel_callback=lambda: self._cancel_requested,
-            )
-            self.finished.emit(self.grouped_datasets, result)
-        except FitCancelledError:
-            self.cancelled.emit()
-        except Exception as e:
-            self.error.emit(_format_fit_worker_exception(e))
-
-
-class GroupedSeriesFitWorker(QObject):
-    """Worker for a multi-run grouped-*series* fit in a background thread.
-
-    Mirrors :class:`GroupedTimeDomainFitWorker` but calls
-    :func:`fit_grouped_series` over a ``members`` mapping (run -> groups), so a
-    grouped fit can span several runs (batch / global) instead of one.
-    """
-
-    finished = Signal(object, object)  # grouped_datasets, GroupedSeriesFitResult
-    error = Signal(str)
-    cancelled = Signal()
-
-    def __init__(
-        self,
-        relationship,
-        members,
-        grouped_datasets,
-        model_fn,
-        global_params,
-        local_params,
-        initial_params,
-        *,
-        minos=False,
-        seeding="as_provided",
-        order_key=None,
-    ):
-        super().__init__()
-        self.relationship = relationship
-        self.members = members
-        self.grouped_datasets = grouped_datasets
-        self.model_fn = model_fn
-        self.global_params = global_params
-        self.local_params = local_params
-        self.initial_params = initial_params
-        self.minos = minos
-        self.seeding = seeding
-        self.order_key = order_key
-        self._cancel_requested = False
-
-    def cancel(self) -> None:
-        """Request cooperative cancellation of the running series fit."""
-        self._cancel_requested = True
-
-    def run(self):
-        """Execute the grouped-series fit."""
-        try:
-            result = fit_grouped_series(
-                self.relationship,
-                self.members,
-                self.model_fn,
-                self.global_params,
-                self.local_params,
-                self.initial_params,
-                minos=self.minos,
-                seeding=self.seeding,
-                order_key=self.order_key,
-                cancel_callback=lambda: self._cancel_requested,
-            )
-            self.finished.emit(self.grouped_datasets, result)
-        except FitCancelledError:
-            self.cancelled.emit()
-        except Exception as e:
-            self.error.emit(_format_fit_worker_exception(e))
-
-
 def _fit_work_pending(panel) -> bool:
-    """True while *panel* has a worker fit in flight (legacy thread or runner)."""
-    if getattr(panel, "_fit_thread", None) is not None:
-        return True
+    """True while *panel* has a worker fit in flight on its TaskRunner."""
     runner = getattr(panel, "_fit_call_runner", None)
     return runner is not None and runner.active_count > 0
 
@@ -979,9 +799,9 @@ def _fit_work_pending(panel) -> bool:
 def _wait_for_fit_thread(panel, timeout_ms: int = 30_000) -> bool:
     """Run a nested event loop until *panel*'s worker fits fully complete.
 
-    Completion covers both the legacy ``_fit_thread`` workers (global /
-    grouped fits) and TaskRunner-based fit calls (single / count-domain).
-    Used by tests and synchronous callers; returns ``False`` on timeout.
+    Completion covers every worker fit (single, global, grouped, grouped-series
+    and count-domain), all of which run on the panel's TaskRunner. Used by
+    tests and synchronous callers; returns ``False`` on timeout.
     """
     if not _fit_work_pending(panel):
         return True
@@ -2552,15 +2372,13 @@ class GlobalFitTab(QWidget):
 
         layout.addStretch()
 
-        # Thread management for non-blocking fits. Global/grouped fits use the
-        # legacy _fit_thread workers; count-domain fit calls run on the shared
-        # TaskRunner machinery (bounded shutdown, GUI-thread callback relay).
-        # The two keep SEPARATE worker handles: count fits never touch
-        # _fit_thread, so a stale legacy _cleanup_thread (keyed on _fit_thread)
-        # must not be able to reach in and delete a live count-fit worker.
-        self._fit_thread: QThread | None = None
-        self._fit_worker: GlobalFitWorker | None = None
-        self._count_fit_worker = None
+        # Every background fit on this tab — global, grouped, grouped-series and
+        # count-domain — runs through the shared TaskRunner (bounded shutdown,
+        # GUI-thread callback relay). Only one fit runs at a time (shared Fit
+        # button); _fit_worker / _count_fit_worker hold the live TaskWorker
+        # handle for the Stop button.
+        self._fit_worker: TaskWorker | None = None
+        self._count_fit_worker: TaskWorker | None = None
         self._fit_call_runner = TaskRunner(self)
 
         self._setup_group_nuisance_table()
@@ -3776,51 +3594,36 @@ class GlobalFitTab(QWidget):
                 )
             initial_params[run_number] = params
 
-        # Run global fit in background thread
+        # Run the global fit on the shared TaskRunner; the GUI (and Stop
+        # button) stay live.
         self._result_text.setText("Fitting... This may take a moment for many datasets...")
         self._set_series_busy(True)
 
-        # Clean up any existing thread. On a timed-out wait the old thread is
-        # still running; reassigning _fit_thread below would drop its last
-        # reference and GC would destroy a running QThread (qFatal), so hand
-        # it to the process-level keep-alive instead.
-        if self._fit_thread is not None:
-            self._fit_thread.quit()
-            if not self._fit_thread.wait(10_000):
-                retire_thread(self._fit_thread, self._fit_worker)
-
-        # Create worker and thread
-        self._fit_thread = QThread()
-        self._fit_worker = GlobalFitWorker(
-            self._fit_engine,
-            self._datasets,
-            self._composite_model.function,
-            global_params,
-            local_params,
-            initial_params,
-            minos=self._minos_checkbox.isChecked(),
-        )
-        self._fit_worker.moveToThread(self._fit_thread)
-
-        # Store model for later use in callbacks
+        # Store model for later use in callbacks (read by _on_fit_finished).
         self._current_model = self._composite_model
         self._current_global_params = global_params
 
-        # Connect signals
-        self._fit_thread.started.connect(self._fit_worker.run)
-        self._fit_worker.finished.connect(self._on_fit_finished)
-        self._fit_worker.error.connect(self._on_fit_error)
-        self._fit_worker.cancelled.connect(self._on_series_fit_cancelled)
-        self._fit_worker.finished.connect(self._fit_thread.quit)
-        self._fit_worker.error.connect(self._fit_thread.quit)
-        self._fit_worker.cancelled.connect(self._fit_thread.quit)
-        self._fit_thread.finished.connect(self._cleanup_thread)
-
-        # Start the thread. The started signal lets listeners snapshot
-        # launch-time context (e.g. which frequency representation the
-        # datasets came from) before any UI refresh can change it.
+        # The started signal lets listeners snapshot launch-time context (e.g.
+        # which frequency representation the datasets came from) before any UI
+        # refresh can change it; emit before the worker can produce a result.
         self.global_fit_started.emit()
-        self._fit_thread.start()
+        # global_fit returns (results_dict, fitted_global) — unpack into the
+        # two-argument finished handler on the GUI thread.
+        self._fit_worker = _start_fit_call(
+            self,
+            functools.partial(
+                self._fit_engine.global_fit,
+                self._datasets,
+                self._composite_model.function,
+                global_params,
+                local_params,
+                initial_params,
+                minos=self._minos_checkbox.isChecked(),
+            ),
+            on_finished=lambda result: self._on_fit_finished(*result),
+            on_error=self._on_fit_error,
+            on_cancelled=self._on_series_fit_cancelled,
+        )
 
     def _run_grouped_time_domain_fit(self) -> None:
         """Execute grouped time-domain fitting for the active dataset."""
@@ -3876,35 +3679,29 @@ class GlobalFitTab(QWidget):
 
         self._result_text.setText("Fitting grouped time-domain data...")
         self._set_series_busy(True)
-
-        if self._fit_thread is not None:
-            self._fit_thread.quit()
-            if not self._fit_thread.wait(10_000):
-                retire_thread(self._fit_thread, self._fit_worker)
-
-        self._fit_thread = QThread()
-        self._fit_worker = GroupedTimeDomainFitWorker(
-            grouped_groups,
-            grouped_datasets,
-            grouped_model.function,
-            global_params,
-            local_params,
-            initial_params,
-            minos=self._minos_checkbox.isChecked(),
-        )
-        self._fit_worker.moveToThread(self._fit_thread)
         self._current_model = grouped_model
         self._current_global_params = global_params
 
-        self._fit_thread.started.connect(self._fit_worker.run)
-        self._fit_worker.finished.connect(self._on_grouped_fit_finished)
-        self._fit_worker.error.connect(self._on_fit_error)
-        self._fit_worker.cancelled.connect(self._on_series_fit_cancelled)
-        self._fit_worker.finished.connect(self._fit_thread.quit)
-        self._fit_worker.error.connect(self._fit_thread.quit)
-        self._fit_worker.cancelled.connect(self._fit_thread.quit)
-        self._fit_thread.finished.connect(self._cleanup_thread)
-        self._fit_thread.start()
+        # grouped_datasets is GUI-side launch context (not produced by the
+        # engine); bind it into the finished closure, mirroring the engine
+        # worker's old (grouped_datasets, result) two-argument emit.
+        self._fit_worker = _start_fit_call(
+            self,
+            functools.partial(
+                fit_grouped_time_domain,
+                grouped_groups,
+                grouped_model.function,
+                global_params,
+                local_params,
+                initial_params,
+                minos=self._minos_checkbox.isChecked(),
+            ),
+            on_finished=lambda result, ds=grouped_datasets: self._on_grouped_fit_finished(
+                ds, result
+            ),
+            on_error=self._on_fit_error,
+            on_cancelled=self._on_series_fit_cancelled,
+        )
 
     # --- count-domain fit modes (forward/backward free-alpha, single histogram) ---
 
@@ -4544,8 +4341,9 @@ class GlobalFitTab(QWidget):
 
     def _on_stop_fit(self) -> None:
         """Request cancellation of the active worker-based fit."""
-        # Only one fit runs at a time (shared Fit button), but it may be either
-        # a legacy series/global worker or a count-domain TaskRunner worker.
+        # Only one fit runs at a time (shared Fit button); the live handle is
+        # the count-domain worker or the global/grouped/series worker, both
+        # TaskRunner workers with a cooperative cancel().
         worker = self._count_fit_worker or self._fit_worker
         if worker is not None and hasattr(worker, "cancel"):
             self._stop_btn.setEnabled(False)
@@ -4555,6 +4353,7 @@ class GlobalFitTab(QWidget):
     def _on_series_fit_cancelled(self) -> None:
         """Handle a cancelled series fit: restore the panel, record nothing."""
         self._set_series_busy(False)
+        self._fit_worker = None
         self._results_group.setStyleSheet("")
         self._result_text.setText("Fit cancelled — no result recorded.")
 
@@ -4615,38 +4414,31 @@ class GlobalFitTab(QWidget):
 
         self._result_text.setText("Fitting grouped time-domain series...")
         self._set_series_busy(True)
-
-        if self._fit_thread is not None:
-            self._fit_thread.quit()
-            if not self._fit_thread.wait(10_000):
-                retire_thread(self._fit_thread, self._fit_worker)
-
-        self._fit_thread = QThread()
-        self._fit_worker = GroupedSeriesFitWorker(
-            relationship,
-            members,
-            grouped_datasets,
-            grouped_model.function,
-            global_params,
-            local_params,
-            initial_params,
-            minos=self._minos_checkbox.isChecked(),
-            seeding=self._batch_seeding_mode,
-            order_key=self._grouped_series_order_key(members),
-        )
-        self._fit_worker.moveToThread(self._fit_thread)
         self._current_model = grouped_model
         self._current_global_params = global_params
 
-        self._fit_thread.started.connect(self._fit_worker.run)
-        self._fit_worker.finished.connect(self._on_grouped_series_fit_finished)
-        self._fit_worker.error.connect(self._on_fit_error)
-        self._fit_worker.cancelled.connect(self._on_series_fit_cancelled)
-        self._fit_worker.finished.connect(self._fit_thread.quit)
-        self._fit_worker.error.connect(self._fit_thread.quit)
-        self._fit_worker.cancelled.connect(self._fit_thread.quit)
-        self._fit_thread.finished.connect(self._cleanup_thread)
-        self._fit_thread.start()
+        # grouped_datasets is GUI-side launch context; bind it into the
+        # finished closure (the engine returns only the series result).
+        self._fit_worker = _start_fit_call(
+            self,
+            functools.partial(
+                fit_grouped_series,
+                relationship,
+                members,
+                grouped_model.function,
+                global_params,
+                local_params,
+                initial_params,
+                minos=self._minos_checkbox.isChecked(),
+                seeding=self._batch_seeding_mode,
+                order_key=self._grouped_series_order_key(members),
+            ),
+            on_finished=lambda result, ds=grouped_datasets: self._on_grouped_series_fit_finished(
+                ds, result
+            ),
+            on_error=self._on_fit_error,
+            on_cancelled=self._on_series_fit_cancelled,
+        )
 
     def _on_grouped_series_fit_finished(self, grouped_datasets, series_result) -> None:
         """Handle a completed multi-run grouped-series fit (persist + plot).
@@ -4657,6 +4449,7 @@ class GlobalFitTab(QWidget):
         back into the per-group tables is deferred; the seeds remain shown.)
         """
         self._set_series_busy(False)
+        self._fit_worker = None
         self._update_mode_ui(preserve_result=True)
         member_results = dict(getattr(series_result, "member_results", {}))
         source_run = dict(getattr(series_result, "member_source_run", {}))
@@ -5050,6 +4843,7 @@ class GlobalFitTab(QWidget):
     def _on_fit_finished(self, results_dict: dict, fitted_global: list) -> None:
         """Handle successful fit completion."""
         self._set_series_busy(False)
+        self._fit_worker = None
         self._update_mode_ui(preserve_result=True)
 
         model = self._current_model
@@ -5075,6 +4869,7 @@ class GlobalFitTab(QWidget):
     def _on_fit_error(self, error_msg: str) -> None:
         """Handle fit error."""
         self._set_series_busy(False)
+        self._fit_worker = None
         self._update_mode_ui(preserve_result=True)
         self._results_group.setStyleSheet("")
         mode_label = "grouped fit" if self.is_grouped_time_domain_mode() else "global fit"
@@ -5157,6 +4952,7 @@ class GlobalFitTab(QWidget):
     def _on_grouped_fit_finished(self, grouped_datasets: list[MuonDataset], grouped_result) -> None:
         """Handle successful grouped fit completion."""
         self._set_series_busy(False)
+        self._fit_worker = None
         self._update_mode_ui(preserve_result=True)
         self._cache_grouped_simulate_seed(grouped_result)
 
@@ -5277,37 +5073,14 @@ class GlobalFitTab(QWidget):
         self._result_text.setHtml(success_html("Grouped fit converged", detail=stats))
         self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
 
-    def _cleanup_thread(self) -> None:
-        """Clean up thread resources."""
-        sender = self.sender()
-        if isinstance(sender, QThread) and sender is not self._fit_thread:
-            # Stale cleanup: a previous fit's thread.finished was still queued
-            # when a new fit was launched. Deleting the panel's CURRENT
-            # (running) thread here would qFatal; clean up only the sender.
-            sender.deleteLater()
-            return
-        if self._fit_thread is not None:
-            self._fit_thread.deleteLater()
-            self._fit_thread = None
-        if self._fit_worker is not None:
-            self._fit_worker.deleteLater()
-            self._fit_worker = None
-
     def shutdown_workers(self) -> None:
         """Cancel any running fit and wait for its thread (window close).
 
-        Bounded like TaskRunner.shutdown: cancellation is cooperative (polled
-        between cost evaluations), so an unbounded wait could hang closeEvent
-        for the rest of a long migrad/MINOS step. A timed-out wait degrades
-        to a leaked thread instead.
+        Every fit runs on ``_fit_call_runner``, whose ``shutdown`` is bounded
+        and Windows-safe: cancellation is cooperative (polled between cost
+        evaluations), so a timed-out wait degrades to a reaped (leaked) thread
+        rather than hanging closeEvent for the rest of a long migrad/MINOS step.
         """
-        if self._fit_worker is not None and hasattr(self._fit_worker, "cancel"):
-            self._fit_worker.cancel()
-        if self._fit_thread is not None:
-            self._fit_thread.quit()
-            if not self._fit_thread.wait(10_000):
-                retire_thread(self._fit_thread, self._fit_worker)
-            self._fit_thread = None
         self._fit_call_runner.shutdown()
 
     def wait_for_fit(self, timeout_ms: int = 30_000) -> bool:

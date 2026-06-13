@@ -157,7 +157,7 @@ from asymmetry.gui.styles.widgets import (
     build_segmented_cell_qss,
     build_segmented_container_qss,
 )
-from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.tasks import TaskRunner, TaskWorker
 from asymmetry.gui.ui_manager import (
     UI_SCALE_OPTIONS,
     UI_SCALE_SETTINGS_KEY,
@@ -224,52 +224,6 @@ def _format_bytes(num_bytes: int) -> str:
             return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
         value /= 1024.0
     return f"{value:.1f} TiB"
-
-
-class MaxEntWorker(QObject):
-    """Background worker for MaxEnt calculation."""
-
-    progress = Signal(int, int, str)
-    finished = Signal(object)
-    error = Signal(str)
-    cancelled = Signal()
-
-    def __init__(
-        self,
-        run,
-        config: MaxEntConfig,
-        *,
-        cycles: int,
-        state: MaxEntState | None,
-    ) -> None:
-        super().__init__()
-        self._run = run
-        self._config = config
-        self._cycles = int(cycles)
-        self._state = state
-        self._cancel_requested = False
-
-    def cancel(self) -> None:
-        """Request cooperative cancellation."""
-        self._cancel_requested = True
-
-    def run(self) -> None:
-        """Run the MaxEnt calculation and emit one terminal signal."""
-        try:
-            result = maxent(
-                self._run,
-                self._config,
-                cycles=self._cycles,
-                state=self._state,
-                progress_callback=self.progress.emit,
-                cancel_callback=lambda: bool(self._cancel_requested),
-            )
-        except MaxEntCancelledError:
-            self.cancelled.emit()
-        except Exception as exc:  # pragma: no cover - exercised through GUI smoke tests
-            self.error.emit(str(exc))
-        else:
-            self.finished.emit(result)
 
 
 def _load_window_icon() -> QIcon | None:
@@ -518,8 +472,11 @@ class MainWindow(QMainWindow):
         # The last fitted per-detector deadtime (run_number, [µs per detector]).
         self._maxent_fitted_deadtime: tuple[int, list[float]] | None = None
         self._maxent_panel_state_by_run: dict[int, dict] = {}
-        self._maxent_thread: QThread | None = None
-        self._maxent_worker: MaxEntWorker | None = None
+        # MaxEnt runs on the shared TaskRunner (self._tasks); _maxent_worker is
+        # the live TaskWorker handle (for the Stop button), and _maxent_active
+        # gates relaunch while one is in flight.
+        self._maxent_active: bool = False
+        self._maxent_worker: TaskWorker | None = None
         self._maxent_active_run_number: int | None = None
         self._maxent_active_run = None
         self._maxent_active_config: MaxEntConfig | None = None
@@ -6038,7 +5995,7 @@ class MainWindow(QMainWindow):
 
     def _on_restart_maxent(self) -> None:
         """Drop resumable MaxEnt state for the active run."""
-        if self._maxent_thread is not None:
+        if self._maxent_active:
             self._set_fourier_status("Cancel the running MaxEnt calculation before restarting.")
             return
         if self._current_dataset is None:
@@ -6119,32 +6076,31 @@ class MainWindow(QMainWindow):
         state: MaxEntState | None,
         run_number: int,
     ) -> None:
-        """Start a background MaxEnt worker."""
-        self._maxent_thread = QThread(self)
-        self._maxent_worker = MaxEntWorker(run, config, cycles=int(cycles), state=state)
+        """Start a background MaxEnt worker on the shared TaskRunner."""
+        self._maxent_active = True
         self._maxent_active_run_number = int(run_number)
         self._maxent_active_run = run
         self._maxent_active_config = config
         self._maxent_active_cycles = int(cycles)
         self._maxent_started_at = time.perf_counter()
-        self._maxent_worker.moveToThread(self._maxent_thread)
-        self._maxent_thread.started.connect(self._maxent_worker.run)
-        self._maxent_worker.progress.connect(self._on_maxent_progress)
-        self._maxent_worker.finished.connect(self._on_maxent_worker_finished)
-        self._maxent_worker.error.connect(self._on_maxent_worker_error)
-        self._maxent_worker.cancelled.connect(self._on_maxent_worker_cancelled)
-        self._maxent_worker.finished.connect(self._maxent_thread.quit)
-        self._maxent_worker.error.connect(self._maxent_thread.quit)
-        self._maxent_worker.cancelled.connect(self._maxent_thread.quit)
-        self._maxent_worker.finished.connect(self._maxent_worker.deleteLater)
-        self._maxent_worker.error.connect(self._maxent_worker.deleteLater)
-        self._maxent_worker.cancelled.connect(self._maxent_worker.deleteLater)
-        self._maxent_thread.finished.connect(self._cleanup_maxent_thread)
-        self._maxent_thread.finished.connect(self._maxent_thread.deleteLater)
+        self._maxent_worker = self._tasks.start(
+            lambda w, run=run, config=config, cycles=int(cycles), state=state: maxent(
+                run,
+                config,
+                cycles=cycles,
+                state=state,
+                progress_callback=w.progress.emit,
+                cancel_callback=w.is_cancelled,
+            ),
+            on_progress=self._on_maxent_progress,
+            on_finished=self._on_maxent_worker_finished,
+            on_error=self._on_maxent_worker_error,
+            on_cancelled=self._on_maxent_worker_cancelled,
+            cancel_exceptions=(MaxEntCancelledError,),
+        )
         self._maxent_panel.set_busy(True)
         self._set_fourier_status(f"Computing MaxEnt spectrum for run {run_number}...")
         self._set_status_state("Computing MaxEnt…")
-        self._maxent_thread.start()
 
     def _on_cancel_maxent(self) -> None:
         """Request cancellation of the active MaxEnt worker."""
@@ -6233,6 +6189,7 @@ class MainWindow(QMainWindow):
             self._set_fourier_status(message, success=True)
         self._log_panel.log(message)
         self._log_maxent_perf()
+        self._finish_maxent()
 
     def _on_maxent_worker_error(self, message: str) -> None:
         """Handle a failed MaxEnt worker."""
@@ -6243,18 +6200,20 @@ class MainWindow(QMainWindow):
         self._set_fourier_status(f"MaxEnt failed: {message}")
         self._log_panel.log(f"MaxEnt failed: {message}")
         self._log_maxent_perf()
+        self._finish_maxent()
 
     def _on_maxent_worker_cancelled(self) -> None:
         """Handle worker cancellation."""
         self._set_fourier_status("MaxEnt calculation cancelled.")
         self._log_panel.log("MaxEnt calculation cancelled.")
         self._log_maxent_perf()
+        self._finish_maxent()
 
-    def _cleanup_maxent_thread(self) -> None:
-        """Clear MaxEnt worker state after the thread exits."""
+    def _finish_maxent(self) -> None:
+        """Clear MaxEnt worker state after a terminal callback (GUI thread)."""
         self._set_status_state("Idle")
         self._maxent_panel.set_busy(False)
-        self._maxent_thread = None
+        self._maxent_active = False
         self._maxent_worker = None
         self._maxent_active_run_number = None
         self._maxent_active_run = None
@@ -6276,7 +6235,7 @@ class MainWindow(QMainWindow):
 
     def _on_compute_maxent(self, cycles: int) -> None:
         """Compute or resume a MaxEnt spectrum for the active run."""
-        if self._maxent_thread is not None:
+        if self._maxent_active:
             self._set_fourier_status("A MaxEnt calculation is already running.")
             return
         if self._current_dataset is None or self._current_dataset.run is None:
@@ -9558,28 +9517,14 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Stopping file load — try closing again in a moment.")
             event.ignore()
             return
-        # All TaskRunner work (file loads, fits, …): cancel, quit and wait.
+        # All TaskRunner work (file loads, MaxEnt, FFT, save, …): cancel, quit
+        # and wait, with the bounded + orphan-reaper fallback shutdown() owns.
         if getattr(self, "_tasks", None) is not None:
             self._tasks.shutdown()
         # Fit-panel worker threads (single / batch / count-domain fits).
         fit_panel = getattr(self, "_fit_panel", None)
         if fit_panel is not None and hasattr(fit_panel, "shutdown_workers"):
             fit_panel.shutdown_workers()
-        # The MaxEnt thread is parented to this window: letting the window be
-        # destroyed while it runs aborts the process (QThread::~QThread calls
-        # qFatal). Request cooperative cancellation and wait for the worker.
-        if getattr(self, "_maxent_worker", None) is not None:
-            self._maxent_worker.cancel()
-        thread = getattr(self, "_maxent_thread", None)
-        if thread is not None:
-            thread.quit()
-            if not thread.wait(10_000):
-                # The engine checks cancellation per kernel chunk, so this is
-                # unlikely — but if the worker is still inside numpy, unparent
-                # the thread so a timed-out wait degrades to a leaked thread
-                # instead of a qFatal abort when the window is destroyed.
-                thread.setParent(None)
-                thread.finished.connect(thread.deleteLater)
         if hasattr(self, "_plot_panel") and hasattr(self._plot_panel, "get_view_limits"):
             x_min, x_max, y_min, y_max = self._plot_panel.get_view_limits()
             self._settings.setValue("plot/time_x_min", float(x_min))
