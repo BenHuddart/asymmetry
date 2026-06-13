@@ -6057,15 +6057,24 @@ class FitPanel(QWidget):
 
         layout.addWidget(self._tabs)
 
-    def set_active_projection_label(self, projection: str | None) -> None:
-        """Show/hide the 'Fitting: <projection>' echo for the bound projection."""
+    def set_active_projection_label(
+        self, projection: str | None, tint: str | None = None
+    ) -> None:
+        """Show/hide the 'Fitting: <projection>' echo for the bound projection.
+
+        ``tint`` colours the text to match the projection's subplot frame.
+        """
         if not hasattr(self, "_projection_echo"):
             return
         if projection:
             self._projection_echo.setText(f"Fitting: {projection}")
+            self._projection_echo.setStyleSheet(
+                f"color: {tint}; font-weight: 500;" if tint else ""
+            )
             self._projection_echo.show()
         else:
             self._projection_echo.clear()
+            self._projection_echo.setStyleSheet("")
             self._projection_echo.hide()
 
     def set_batch_seeding_mode(self, mode: str) -> None:

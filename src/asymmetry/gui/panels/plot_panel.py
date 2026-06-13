@@ -2387,6 +2387,12 @@ class PlotPanel(QWidget):
 
     # ── stacked-subplot fit target (Step 4) ────────────────────────────────
 
+    def projection_tint(self, label: str | None) -> str | None:
+        """Return the frame/identity tint for a projection label, if any."""
+        if label is None:
+            return None
+        return self._tint_by_label.get(str(label))
+
     def fit_target_projection(self) -> str | None:
         """Return the projection whose subplot is the active single-fit target.
 

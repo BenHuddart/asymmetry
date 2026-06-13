@@ -394,11 +394,13 @@ def test_fit_panel_forwards_fit_wizard_apply_via_normal_fit_completed_signal(
 def test_active_projection_echo_shows_and_hides(qapp: QApplication) -> None:
     panel = FitPanel()
     assert panel._projection_echo.isHidden()
-    panel.set_active_projection_label("P_x")
+    panel.set_active_projection_label("P_x", "#534AB7")
     assert not panel._projection_echo.isHidden()
     assert "P_x" in panel._projection_echo.text()
+    assert "#534AB7" in panel._projection_echo.styleSheet()
     panel.set_active_projection_label(None)
     assert panel._projection_echo.isHidden()
+    assert panel._projection_echo.styleSheet() == ""
 
 
 def test_fit_panel_forwards_single_tab_preview(qapp: QApplication, dataset: MuonDataset) -> None:

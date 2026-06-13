@@ -2073,7 +2073,13 @@ class MainWindow(QMainWindow):
         if hasattr(self._fit_panel, "set_fit_blocked"):
             self._fit_panel.set_fit_blocked(blocked, reason)
         if hasattr(self._fit_panel, "set_active_projection_label"):
-            self._fit_panel.set_active_projection_label(self._current_single_fit_projection())
+            projection = self._current_single_fit_projection()
+            tint = (
+                self._plot_panel.projection_tint(projection)
+                if projection and hasattr(self._plot_panel, "projection_tint")
+                else None
+            )
+            self._fit_panel.set_active_projection_label(projection, tint)
         if self._multi_group_fit_window is not None:
             self._multi_group_fit_window.set_fit_blocked(blocked, reason)
 
