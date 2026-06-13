@@ -1881,8 +1881,7 @@ class SingleFitTab(QWidget):
                 **fit_kwargs,
             ),
             on_finished=(
-                lambda result, p=parameters, d=dataset, m=model,
-                g=self._model_generation, off=rrf_offsets, nu0=rrf_nu0: (
+                lambda result, p=parameters, d=dataset, m=model, g=self._model_generation, off=rrf_offsets, nu0=rrf_nu0: (
                     self._apply_single_fit_result(result, p, d, m, g, rrf_offsets=off, rrf_nu0=nu0)
                 )
             ),
@@ -1932,7 +1931,15 @@ class SingleFitTab(QWidget):
         return _wait_for_fit_thread(self, timeout_ms)
 
     def _apply_single_fit_result(
-        self, result, parameters, dataset, model, model_generation, *, rrf_offsets=None, rrf_nu0=None
+        self,
+        result,
+        parameters,
+        dataset,
+        model,
+        model_generation,
+        *,
+        rrf_offsets=None,
+        rrf_nu0=None,
     ) -> None:
         """Apply a completed single fit to the panel (GUI thread)."""
         self._set_fit_busy(False)

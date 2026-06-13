@@ -306,7 +306,9 @@ def test_cost_factory_gaussian_matches_default_least_squares():
     via_factory = engine.fit(ds, _decay_count_model, params, cost_factory=GAUSSIAN_COST)
     assert base.success and via_factory.success
     assert via_factory.chi_squared == pytest.approx(base.chi_squared, rel=1e-12)
-    assert via_factory.parameters["N0"].value == pytest.approx(base.parameters["N0"].value, rel=1e-9)
+    assert via_factory.parameters["N0"].value == pytest.approx(
+        base.parameters["N0"].value, rel=1e-9
+    )
     assert via_factory.parameters["tau"].value == pytest.approx(
         base.parameters["tau"].value, rel=1e-9
     )

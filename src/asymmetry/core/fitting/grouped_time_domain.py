@@ -522,7 +522,9 @@ def _raw_group_counts(
     """
     if not bool(metadata.get("grouped_time_domain_lifetime_corrected", True)):
         return np.asarray(counts, dtype=float)
-    return np.asarray(counts, dtype=float) * np.exp(-np.asarray(time, dtype=float) / float(MUON_LIFETIME_US))
+    return np.asarray(counts, dtype=float) * np.exp(
+        -np.asarray(time, dtype=float) / float(MUON_LIFETIME_US)
+    )
 
 
 def fit_grouped_time_domain(
@@ -612,7 +614,9 @@ def fit_grouped_time_domain(
             )
 
     if cost not in COST_FACTORIES:
-        raise ValueError(f"Unknown grouped fit cost {cost!r}; expected one of {sorted(COST_FACTORIES)}")
+        raise ValueError(
+            f"Unknown grouped fit cost {cost!r}; expected one of {sorted(COST_FACTORIES)}"
+        )
     # Poisson (Cash) fits the raw counts against a raw-count expectation, so the
     # objective sees true Poisson statistics; Gaussian keeps the historical
     # lifetime-corrected √N least squares (cost_factory=None → byte-identical).
@@ -1155,7 +1159,9 @@ def _fit_grouped_series_global(
 ) -> GroupedSeriesFitResult:
     """Fit every ``(run, group)`` simultaneously, sharing physics across all runs."""
     if cost not in COST_FACTORIES:
-        raise ValueError(f"Unknown grouped fit cost {cost!r}; expected one of {sorted(COST_FACTORIES)}")
+        raise ValueError(
+            f"Unknown grouped fit cost {cost!r}; expected one of {sorted(COST_FACTORIES)}"
+        )
     use_poisson = cost == "poisson"
     cost_factory = POISSON_COST if use_poisson else None
     temporary_datasets: list[MuonDataset] = []
