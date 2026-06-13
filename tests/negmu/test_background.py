@@ -202,6 +202,21 @@ class TestSubtractCaptureBackground:
         with pytest.raises(ValueError, match="not in spec"):
             subtract_capture_background(group.time, group.counts, fit, spec, unwanted=["Au"])
 
+    def test_spec_fit_mismatch_raises(self, cfe_bg_fit):
+        """Requesting a component absent from fit.parameters raises ValueError (not silent no-op).
+
+        build_capture_count_model defaults amp to 0.0 for missing keys, so without
+        this guard the subtraction would be a silent no-op.
+        """
+        dataset, fit, spec, *_ = cfe_bg_fit
+        group = build_count_group(dataset, GROUP_ID, lifetime_corrected=False)
+        # Al is a valid element but was NOT in the fit's spec → amp_Al absent.
+        mismatch_spec = CaptureModelSpec(elements=("C", "Fe", "Al"), include_decay_background=False)
+        with pytest.raises(ValueError, match="fit has no amplitude for"):
+            subtract_capture_background(
+                group.time, group.counts, fit, mismatch_spec, unwanted=["Al"]
+            )
+
 
 # ---------------------------------------------------------------------------
 # capture_background_run — derived Run tests
@@ -271,6 +286,56 @@ class TestCaptureBackgroundRun:
             dataset, GROUP_ID, fit, spec, unwanted=[], run_number=99
         )
         assert derived_run.run_number == 99
+
+    def test_time_axis_preserved_with_bunching(self, cfe_bg_fit):
+        """Derived Run axis_start_bins is read from source integers, not float inversion.
+
+        With bunching_factor=2 the post-rebin time axis uses bin midpoints:
+        time[0] = (axis_start + 0.5) * bin_width_orig.  Dividing by bin_width_post
+        = 2 * bin_width_orig gives (axis_start + 0.5) / 2, which rounds to the wrong
+        integer whenever axis_start is even.  The integer-based fix avoids this.
+        """
+        dataset, fit, spec, *_ = cfe_bg_fit
+        source_run = dataset.run
+
+        # Inject bunching_factor=2 into the grouping.
+        bunched_grouping = {**source_run.grouping, "bunching_factor": 2}
+        bunched_run = Run(
+            run_number=source_run.run_number,
+            histograms=source_run.histograms,
+            metadata=source_run.metadata,
+            grouping=bunched_grouping,
+            source_file=source_run.source_file,
+        )
+        bunched_dataset = MuonDataset(
+            time=dataset.time,
+            asymmetry=dataset.asymmetry,
+            error=dataset.error,
+            metadata=dataset.metadata,
+            run=bunched_run,
+        )
+
+        src_group = build_count_group(bunched_dataset, GROUP_ID, lifetime_corrected=False)
+        derived_run = capture_background_run(bunched_dataset, GROUP_ID, fit, spec, unwanted=[])
+        derived_dataset = MuonDataset(
+            time=np.array([]),
+            asymmetry=np.array([]),
+            error=np.array([]),
+            metadata={},
+            run=derived_run,
+        )
+        derived_group = build_count_group(derived_dataset, GROUP_ID, lifetime_corrected=False)
+
+        # With the integer fix, the error is bounded by 0.5 * bin_width_orig (midpoint
+        # shift inherent to rebinning) rather than up to 1 full post-rebin bin width
+        # (= 2 * bin_width_orig) that the float round-trip would produce.
+        bin_width_orig = float(source_run.histograms[0].bin_width)
+        err = abs(float(derived_group.time[0]) - float(src_group.time[0]))
+        assert err <= 0.5 * bin_width_orig + 1e-9, (
+            f"Time axis off by more than half a pre-rebin bin with bunching: "
+            f"err={err:.6f} μs (src={src_group.time[0]:.4f}, "
+            f"derived={derived_group.time[0]:.4f})"
+        )
 
     def test_time_axis_preserved_with_nonzero_offset(self, cfe_bg_fit):
         """Derived Run preserves time[0] when source group has first_good_bin > 0."""

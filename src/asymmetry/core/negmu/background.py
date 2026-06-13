@@ -89,6 +89,17 @@ def subtract_capture_background(
     # Σ amp_label·exp(−t/τ_label) per component, not the flat background term.
     # The flat background remains in the residual for downstream re-fitting.
     params_no_bg = {k: v for k, v in params.items() if k != "background"}
+
+    # Guard against spec/fit mismatch.  build_capture_count_model defaults
+    # amp to 0.0 when a key is absent, so a missing amp_<label> would silently
+    # produce a zero-subtraction no-op with no error.
+    missing = [lbl for lbl in unwanted_set if f"amp_{lbl}" not in params_no_bg]
+    if missing:
+        raise ValueError(
+            f"subtract_capture_background: fit has no amplitude for "
+            f"{sorted(missing)!r} — was fit run with a different spec?"
+        )
+
     background_model = evaluate_capture_model(unwanted_comps, params_no_bg, time_arr)
     return counts_arr - background_model
 
@@ -131,29 +142,42 @@ def capture_background_run(
     run_number
         Run number for the derived Run.  Defaults to the source run's number.
     """
+    # Read source geometry before grouping to keep the integer arithmetic together.
+    source_run = dataset.run
+    source_grouping = source_run.grouping
+    source_detectors = source_grouping.get("groups", {}).get(group_id, [1])
+
+    # axis_start = first_good − common_t0 (both integers in the source grouping).
+    # Reading these directly avoids a floating-point round-trip through the post-rebin
+    # time axis, which uses bin midpoints after rebinning and therefore yields a
+    # non-integer when divided by bin_width_post whenever bunching_factor > 1.
+    first_good = int(source_grouping.get("first_good_bin", 0))
+    common_t0 = max(int(source_run.histograms[int(det) - 1].t0_bin) for det in source_detectors)
+    axis_start_bins = max(0, first_good - common_t0)
+
+    # Authoritative bin_width from source histogram, scaled by bunching factor.
+    # Avoids the single-bin fallback (len(group.time) <= 1) using a hardcoded default.
+    bunch = int(source_grouping.get("bunching_factor", 1))
+    bin_width = (
+        float(source_run.histograms[int(next(iter(source_detectors))) - 1].bin_width) * bunch
+    )
+
     group = build_count_group(dataset, group_id, lifetime_corrected=False)
-
     corrected = subtract_capture_background(group.time, group.counts, fit, spec, unwanted=unwanted)
-
-    bin_width = float(group.time[1] - group.time[0]) if len(group.time) > 1 else 0.016
     n_corrected = len(corrected)
 
-    # Preserve the time-axis offset from the source group.  build_count_group
-    # computes time[0] = axis_start * bin_width where axis_start = first_good -
-    # t0_bin.  Re-encode that offset as prepended zero bins so that a subsequent
-    # build_count_group call on the derived Run reproduces the same time axis.
-    axis_start_bins = max(0, int(round(float(group.time[0]) / bin_width))) if bin_width > 0 else 0
+    last_good = axis_start_bins + n_corrected - 1
     if axis_start_bins > 0:
         padded = np.concatenate([np.zeros(axis_start_bins, dtype=np.float64), corrected])
     else:
-        padded = corrected
+        padded = corrected.copy()  # own the buffer — Histogram stores counts by reference
 
     histogram = Histogram(
         counts=padded,
         bin_width=bin_width,
         t0_bin=0,
         good_bin_start=axis_start_bins,
-        good_bin_end=axis_start_bins + n_corrected - 1,
+        good_bin_end=last_good,
     )
 
     grouping: dict = {
@@ -161,14 +185,12 @@ def capture_background_run(
         "group_names": {group_id: f"Group {group_id}"},
         "included_groups": {group_id: True},
         "first_good_bin": axis_start_bins,
-        "last_good_bin": axis_start_bins + n_corrected - 1,
+        "last_good_bin": last_good,
         "bunching_factor": 1,
         "deadtime_correction": False,
         "dead_time_us": [0.0],
         "bin_index_base": 1,
     }
-
-    source_run = dataset.run
     base_meta: dict = dict(source_run.metadata) if source_run is not None else {}
     base_meta["background_subtraction"] = {
         "group_id": int(group_id),
