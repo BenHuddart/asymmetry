@@ -146,3 +146,35 @@ scipy and textbook-documented).
 - The fit wizard (`fit_wizard.py`) references a candidate-template list; new
   components are opt-in there and can be added selectively later — out of scope
   for this port except where trivially safe.
+
+### Fit-wizard adoption (resolved 2026-06-13)
+
+The wizard shortlists *generic* candidate models from a deterministic spectrum
+fingerprint (no field/geometry knowledge), fits each, and ranks by AICc behind a
+residual gate. A component is a sensible automatic candidate only when (a) its
+shape is inferable from the fingerprint, and (b) it competes with existing
+candidates in the same regime rather than always losing (which would just add
+noise to the comparison table).
+
+**Adopted (3), each gated by the matching fingerprint hint so it appears only on
+plausible data:**
+
+| Component | Template | Gate | Competes with | Why it earns a slot |
+|---|---|---|---|---|
+| `RischKehr` | `RischKehr + Constant` | `multi_rate_hint` | StretchedExponential, biexponential | Closed-form 1D-diffusion relaxation; curved semilog envelope, 1 shape param — a parsimonious alternative for broader-than-exponential monotonic decay. |
+| `GaussianBroadenedKT` | `GBKT + Constant` | `kt_like_hint` | StaticGKT_ZF | Distributed-Δ KT for disordered/dilute moments; its niche is the *weak-LF* distributed case (pure ZF correctly defers to the sharper StaticGKT_ZF, as B_L pins its lower bound). |
+| `Bessel` | `Bessel * Exponential + Constant` | `oscillatory_hint` | Oscillatory*Exp/Gaussian | A J₀ line shape distinguishes incommensurate/SDW internal-field distributions from a cosine on oscillatory data. |
+
+**Rejected (specialist — would pollute):** `MuoniumHighTF`,
+`MuoniumHighTFAniso`, `MuoniumLFRelax` (need hyperfine/field context),
+`DipolarSpinJ`, `DipolarPairField`, `ProtonDipole`, `ElectronDipole`,
+`DynamicFmuF`, `FmuF_Triangle` (need the nucleus/geometry — a generic ZF
+asymmetry cannot imply them, so they would only ever lose and clutter the
+table). A regression test asserts none of these can leak into the candidate
+portfolio under any hint combination.
+
+Adopting these surfaced and fixed a latent wizard bug: `_bound_hit_names` used
+`|max|` in its tolerance scale, so an infinite upper bound (e.g. Risch-Kehr's
+`Gamma ∈ [0, ∞)`) made *every* parameter read as "at lower bound" and gated an
+otherwise-perfect fit. The new components' parameters also gained physical
+wizard bounds (`Gamma ≥ 0`, `B_L ≥ 0`, `w_rel ≥ 0`).

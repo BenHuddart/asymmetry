@@ -162,6 +162,107 @@ def test_fit_wizard_recommends_damped_oscillation_for_oscillatory_spectrum(
     assert recommendation.recommended_key == "oscillatory_exp_constant"
 
 
+# ── selectively adopted wimda-fit-function-parity candidates (Item 5) ─────────
+
+
+def test_fit_wizard_recommends_risch_kehr_for_1d_diffusion_spectrum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_scipy_fit_backend(monkeypatch)
+    model = CompositeModel(["RischKehr", "Constant"], operators=["+"])
+    dataset = _dataset_for(model, A_1=0.25, Gamma=2.0, A_bg=0.01)
+
+    recommendation = build_fit_wizard_recommendation(dataset)
+
+    assert recommendation.recommended_key == "risch_kehr_constant"
+
+
+def test_fit_wizard_recommends_bessel_for_bessel_oscillation_spectrum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_scipy_fit_backend(monkeypatch)
+    model = CompositeModel(["Bessel", "Exponential", "Constant"], operators=["*", "+"])
+    dataset = _dataset_for(model, A_1=0.25, frequency=0.6, phase=0.0, Lambda=0.2, A_bg=0.01)
+
+    recommendation = build_fit_wizard_recommendation(dataset)
+
+    assert recommendation.recommended_key == "bessel_exp_constant"
+
+
+def test_fit_wizard_recommends_gbkt_for_broadened_kt_spectrum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_scipy_fit_backend(monkeypatch)
+    model = CompositeModel(["GaussianBroadenedKT", "Constant"], operators=["+"])
+    # Weak LF (B_L = 5 G) so B_L sits off its lower bound — the distributed-Δ
+    # regime GBKT is for. Pure ZF (B_L = 0) correctly defers to StaticGKT_ZF.
+    dataset = _dataset_for(model, A_1=0.25, Delta=0.6, B_L=5.0, w_rel=0.3, A_bg=0.01)
+
+    recommendation = build_fit_wizard_recommendation(dataset)
+
+    assert recommendation.recommended_key == "gbkt_constant"
+
+
+#: Specialist parity components that must never appear as automatic wizard
+#: candidates: muonium/F–µ–F/dipolar forms need field or geometry context the
+#: deterministic spectrum fingerprint cannot supply, so they would only pollute
+#: recommendations. See docs/porting/wimda-fit-function-parity/.
+_SPECIALIST_PARITY_COMPONENTS = {
+    "MuoniumHighTF",
+    "MuoniumHighTFAniso",
+    "MuoniumLFRelax",
+    "DynamicFmuF",
+    "FmuF_Triangle",
+    "DipolarPairField",
+    "ProtonDipole",
+    "ElectronDipole",
+    "DipolarSpinJ",
+}
+
+
+def test_specialist_parity_components_are_never_wizard_candidates() -> None:
+    """Across every fingerprint-hint combination, no specialist component leaks
+    into the candidate portfolio (only Bessel/GBKT/Risch-Kehr were adopted)."""
+    from itertools import product
+
+    from asymmetry.core.fitting.fit_wizard import SpectrumFingerprint
+
+    base = dict(
+        tail_estimate=0.0,
+        initial_amplitude_estimate=0.2,
+        zero_crossings=0,
+        smoothed_zero_crossings=0,
+        smoothed_turning_points=0,
+        dominant_fft_frequency_mhz=0.5,
+        dominant_fft_snr=4.0,
+        dominant_fft_cycles_in_window=2.0,
+        monotonic_decay_fraction=0.5,
+        early_time_curvature=-0.1,
+        semilog_slope_ratio=2.0,
+        late_time_dip_recovery_score=0.1,
+    )
+    for kt, osc, multi in product((False, True), repeat=3):
+        fp = SpectrumFingerprint(
+            **base, kt_like_hint=kt, oscillatory_hint=osc, multi_rate_hint=multi
+        )
+        templates = build_candidate_templates(fp)
+        used = {name for tpl in templates for name in tpl.model.component_names}
+        leaked = used & _SPECIALIST_PARITY_COMPONENTS
+        assert not leaked, f"specialist components leaked into candidates: {leaked}"
+
+
+def test_bound_hit_detection_ignores_infinite_bounds() -> None:
+    """A finite value far from a one-sided [0, inf) bound is not a bound hit
+    (regression: an infinite |max| made the tolerance infinite)."""
+    from asymmetry.core.fitting.fit_wizard import _bound_hit_names
+
+    params = ParameterSet([Parameter("Gamma", 2.0, min=0.0, max=float("inf"))])
+    assert _bound_hit_names(params) == []
+    # A value genuinely at the finite lower bound is still flagged.
+    pinned = ParameterSet([Parameter("Gamma", 0.0, min=0.0, max=float("inf"))])
+    assert pinned and _bound_hit_names(pinned) == ["Gamma at lower bound"]
+
+
 def test_monotonic_low_frequency_spectrum_prefers_multi_rate_over_oscillation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
