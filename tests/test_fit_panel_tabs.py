@@ -391,6 +391,16 @@ def test_fit_panel_forwards_fit_wizard_apply_via_normal_fit_completed_signal(
     assert len(emitted["curve"][0]) >= 500
 
 
+def test_active_projection_echo_shows_and_hides(qapp: QApplication) -> None:
+    panel = FitPanel()
+    assert panel._projection_echo.isHidden()
+    panel.set_active_projection_label("P_x")
+    assert not panel._projection_echo.isHidden()
+    assert "P_x" in panel._projection_echo.text()
+    panel.set_active_projection_label(None)
+    assert panel._projection_echo.isHidden()
+
+
 def test_fit_panel_forwards_single_tab_preview(qapp: QApplication, dataset: MuonDataset) -> None:
     panel = FitPanel()
     panel.set_dataset(dataset)

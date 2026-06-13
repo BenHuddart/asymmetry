@@ -2072,6 +2072,8 @@ class MainWindow(QMainWindow):
         blocked, reason = self._current_fit_block_state()
         if hasattr(self._fit_panel, "set_fit_blocked"):
             self._fit_panel.set_fit_blocked(blocked, reason)
+        if hasattr(self._fit_panel, "set_active_projection_label"):
+            self._fit_panel.set_active_projection_label(self._current_single_fit_projection())
         if self._multi_group_fit_window is not None:
             self._multi_group_fit_window.set_fit_blocked(blocked, reason)
 

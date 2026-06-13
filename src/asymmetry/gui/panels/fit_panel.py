@@ -6047,7 +6047,26 @@ class FitPanel(QWidget):
         self._global_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
         self._tabs.addTab(self._global_tab, "Batch")
 
+        # Echo of the projection a single fit is currently bound to (vector
+        # multi-subplot view); hidden when fitting the default/non-projection
+        # asymmetry. Driven by the main window via set_active_projection_label.
+        self._projection_echo = QLabel("")
+        self._projection_echo.setContentsMargins(6, 2, 6, 2)
+        self._projection_echo.hide()
+        layout.addWidget(self._projection_echo)
+
         layout.addWidget(self._tabs)
+
+    def set_active_projection_label(self, projection: str | None) -> None:
+        """Show/hide the 'Fitting: <projection>' echo for the bound projection."""
+        if not hasattr(self, "_projection_echo"):
+            return
+        if projection:
+            self._projection_echo.setText(f"Fitting: {projection}")
+            self._projection_echo.show()
+        else:
+            self._projection_echo.clear()
+            self._projection_echo.hide()
 
     def set_batch_seeding_mode(self, mode: str) -> None:
         """Forward the batch-series seeding mode to the Batch tab."""

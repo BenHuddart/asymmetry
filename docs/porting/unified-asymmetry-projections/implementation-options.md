@@ -1,5 +1,18 @@
 # Implementation options
 
+## Known pre-existing bug (deferred, surfaced during Step 4 testing)
+
+**Auto-X ↔ display-decimation interaction.** Setting Auto X while *coming from a
+narrower x-range* yields a wrong/narrow x-range with data missing; toggling the
+view (re-render) recovers it. Display decimation is computed per visible view
+(`_decimation_applied_for_current_view`) and `_last_plot_time` — which
+`_auto_x_limits` reads — is populated from whatever the current (possibly narrow,
+decimated) view rendered, so Auto X computes from a stale/narrow time array until
+a re-render recomputes decimation over the full view. **Pre-existing, unrelated to
+projections** (Ben chose to finish Step 4 first, then fix this separately). NB: an
+earlier attempt to fix it by excluding "low-count" points was wrong — the grey
+bars are *decimated dense data*, not low-count — and was reverted.
+
 ## A. UI surface for selecting/viewing projections
 
 Four surfaces were considered (mockups discussed with Ben, 2026-06-13). All build
