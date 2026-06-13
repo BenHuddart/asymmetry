@@ -884,6 +884,26 @@
       "depends_on": [],
       "updated": "2026-06-12",
       "notes": "SUPERSEDES the deferred brief wimda-parity-gap/projects/negative-muon-analysis.md (promotion with changed scope). API-ONLY, work-in-progress: no GUI/panels/dialogs/menus and NO COMPONENTS/MODELS registration (the μ⁻ models live in a new core/negmu/ package, never inserted via registration.insert_definition, so invisible to the GUI pickers by construction). Adapt-not-port: salvage physics+data from WiMDA NegMuAnalyse.pas, discard form structure (p[213..223] slots, GLE export). KEY REUSE FINDING: count_domain (single exp(-t/τ_μ) envelope) and FitEngine (Gaussian-on-asymmetry) CANNOT fit the multi-τ capture sum Σ N_i exp(-t/τ_i)+bg; new fitter reuses drive_minuit/FitResult/Parameter/ParameterSet and replicates only the ~6-line Cash cost (count_domain's is private + off-limits). Element lifetimes literature-anchored to textbook Table C.1 (= Suzuki/Measday/Roalsvig 1987), NOT WiMDA: caught WiMDA's mystrings 69-vs-67 length mismatch, myelements[66]='Ti' typo for 'Tl', and value divergences (Ne 1.520→1.461, Zn 0.169→0.161, Sr 0.142→0.132, Ba 0.072→0.0949). Decisions (Ben): EVERYTHING phased across multiple Sonnet sessions; τ fixed-at-table by default (freeable); ALSO add α-coupled F+B fit; new core/negmu/ package; add simulate_capture_run to core/simulate.py reusing _sample_and_build_run. Plan = plan.md: 5 phases (1 table+model+single-fit+sim; 2 F+B+ratio; 3 Set-as-BG; 4 μ⁻SR polarisation; 5 docs), full signatures, reuse audit, constants table w/ citations, test plan w/ expected values, WIP disclaimer verbatim, ready-to-paste Phase-1 implementer prompt. Promotion trigger for GUI: real ISIS μ⁻ data + a user. STUDY+PLAN ONLY this session — no src/tests changes."
+    },
+    {
+      "slug": "unified-asymmetry-projections",
+      "feature_name": "Unified asymmetry projections (vector polarization + TF dual grouping)",
+      "status": "study",
+      "path": "docs/porting/unified-asymmetry-projections",
+      "references": [
+        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
+      ],
+      "docs": {
+        "readme": "docs/porting/unified-asymmetry-projections/README.md",
+        "comparison": "docs/porting/unified-asymmetry-projections/comparison.md",
+        "implementation_options": "docs/porting/unified-asymmetry-projections/implementation-options.md",
+        "test_data": "docs/porting/unified-asymmetry-projections/test-data.md",
+        "verification_plan": "docs/porting/unified-asymmetry-projections/verification-plan.md"
+      },
+      "tests_path": "tests/test_instrument.py",
+      "src_path": "src/asymmetry/core/instrument.py",
+      "updated": "2026-06-13",
+      "notes": "Internal unification (not an external port). Vector polarization (EMU P_x/P_y/P_z) and TF dual detector grouping (MuSR/HiFi) are one abstraction: a set of named projections, each a (fwd,bwd,alpha) F/B pair of the same run. Converged design w/ Ben 2026-06-13: (1) first-class AsymmetryProjection on PresetGrouping + schema, retiring magic group-name string-matching in 3 GUI sites (grouping_dialog._detect_vector_axis_pairs, mainwindow._vector_axis_pairs_for_grouping/_vector_axis_state_for_dataset); (2) multi-select projection chip bar replacing the x/y/z/All combo, floor-of-one, NO 'All' chip (redundant in multi-select; optional 'all' text-action open micro-decision), one projection = one stacked subplot, never co-plotted; (3) frame-tint = projection identity vs trace-colour = run identity (RG mode) kept orthogonal; (4) selectable subplots set the fit target (ring+pill, fit-panel echo), requiring projection-keyed FitSlot map (currently (run,rep_type)-only, axis-agnostic; plot panel has transient (run,axis_key) curve caches only) → schema v9 + migration; (5) joint RF fitting deferred but door left open by shaping per-projection storage to mirror FitSeries.results_by_run as results_by_projection. NOT IMPLEMENTED."
     }
   ]
 }
