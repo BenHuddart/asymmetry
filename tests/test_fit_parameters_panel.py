@@ -2174,3 +2174,63 @@ def test_shutdown_workers_joins_trend_compute(
 
     panel.shutdown_workers()
     assert panel._tasks.active_count == 0
+
+
+def test_restore_state_defers_trend_overlay_to_async(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """restore_state must not evaluate the (heavy) trend overlay synchronously.
+
+    Regression: a project with a slow trend model (e.g. DiffusionLF_2D, which
+    runs scipy quadrature per sample) froze the GUI for seconds after the file
+    loader closed, because restore_state's intermediate refreshes drew the
+    overlay inline. The draw must be suppressed during restore and deferred to a
+    single off-thread recompute.
+    """
+    src = FitParametersPanel()
+    if not src._has_mpl:
+        pytest.skip("matplotlib not available")
+    src._rows = [
+        _FitRow(
+            run_number=1,
+            run_label="1",
+            field=100.0,
+            temperature=10.0,
+            values={"Lambda": 0.10},
+            errors={"Lambda": 0.01},
+        ),
+        _FitRow(
+            run_number=2,
+            run_label="2",
+            field=200.0,
+            temperature=10.0,
+            values={"Lambda": 0.20},
+            errors={"Lambda": 0.01},
+        ),
+    ]
+    src._varying_params = ["Lambda"]
+    src._inferred_x_key = "field"
+    src._model_fits = {"Lambda": _active_linear_fit("Lambda")}
+    src._selected_y_param_names = ["Lambda"]
+    state = src.get_state()
+
+    target = FitParametersPanel()
+    monkeypatch.setattr(target, "_selected_y_parameters", lambda: ["Lambda"])
+    drew: list[int] = []
+    monkeypatch.setattr(target, "_draw_model_overlay_mpl", lambda *a, **k: drew.append(1))
+
+    target.restore_state(state)
+
+    # The synchronous restore drew no overlay inline and re-enabled plotting…
+    assert drew == []
+    assert target._suspend_plot_refresh is False
+    # …it deferred the heavy evaluation to an off-thread recompute.
+    assert target._trend_curve_compute_active
+
+    wait_for(
+        lambda: not target._trend_curve_compute_active,
+        QApplication.instance(),
+        timeout_s=10.0,
+    )
+    assert drew, "the overlay should be drawn once the async recompute lands"
+    target.shutdown_workers()

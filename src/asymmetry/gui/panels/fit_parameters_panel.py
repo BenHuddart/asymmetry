@@ -250,6 +250,12 @@ class FitParametersPanel(QWidget):
         #: consumed by the *next* _refresh_plot draw, then dropped so interactive
         #: redraws (control toggles) evaluate inline.
         self._precomputed_trend_curves: dict[str, list] | None = None
+        #: Suppresses synchronous plot draws while a bulk state change (project
+        #: restore) is in progress — every intermediate trigger (checkbox
+        #: setChecked signals, group-selection sync) would otherwise evaluate the
+        #: trend overlay inline on the GUI thread. The bulk operation issues a
+        #: single async recompute when it finishes.
+        self._suspend_plot_refresh = False
 
         layout = QVBoxLayout(self)
 
@@ -533,6 +539,11 @@ class FitParametersPanel(QWidget):
         }
 
     def restore_state(self, state: dict) -> None:
+        # Suppress the heavy synchronous plot draws each intermediate restore step
+        # would otherwise trigger (checkbox setChecked signals, group-selection
+        # sync); a single off-thread recompute runs at the end. Reset first so a
+        # prior aborted restore can't leave the plot permanently suspended.
+        self._suspend_plot_refresh = True
         rows_data = state.get("rows", [])
         self._composite_parameters = self._deserialize_composite_parameters(
             state.get("composite_parameters", [])
@@ -687,9 +698,12 @@ class FitParametersPanel(QWidget):
                 self._plot_mode_combo.setCurrentIndex(idx)
 
         self._update_x_axis_auto_hint()
-        # The table is cheap; the trend-overlay curves (model eval per fit range
-        # over an 800-pt axis) recompute off-thread behind the overlay so a saved
-        # project's trend fits don't block the GUI thread on open.
+        # Restore done: re-enable plotting and draw once. The table is cheap; the
+        # trend-overlay curves (model eval per fit range over an 800-pt axis —
+        # e.g. DiffusionLF_2D runs scipy quadrature per sample) recompute
+        # off-thread behind the overlay so a saved project's trend fits don't
+        # block the GUI thread on open.
+        self._suspend_plot_refresh = False
         self._refresh_table()
         self._start_trend_curve_compute()
 
@@ -3005,6 +3019,10 @@ class FitParametersPanel(QWidget):
 
     def _refresh_plot(self) -> None:
         if not self._has_mpl:
+            return
+        if self._suspend_plot_refresh:
+            # A bulk state change (project restore) is in progress; it issues a
+            # single off-thread recompute when done. Skip the intermediate draw.
             return
 
         self._axes_tag_map = {}
