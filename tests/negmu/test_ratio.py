@@ -12,7 +12,7 @@ import math
 import numpy as np
 import pytest
 
-from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.negmu.fit import CaptureModelSpec, fit_capture_fb_alpha
@@ -24,6 +24,8 @@ from asymmetry.core.negmu.ratio import (
     fb_capture_ratio_report,
 )
 from asymmetry.core.simulate import simulate_capture_run
+from tests.negmu.helpers import combine_groups as _combine_groups
+from tests.negmu.helpers import make_fb_template
 
 # ---------------------------------------------------------------------------
 # Helpers for building synthetic FitResults
@@ -197,68 +199,7 @@ BIN_WIDTH = 0.016
 
 
 def _make_fb_template() -> Run:
-    histograms = [
-        Histogram(
-            counts=np.zeros(N_BINS, dtype=float),
-            bin_width=BIN_WIDTH,
-            t0_bin=0,
-            good_bin_start=0,
-            good_bin_end=N_BINS - 1,
-        )
-        for _ in range(2)
-    ]
-    grouping = {
-        "groups": {1: [1], 2: [2]},
-        "group_names": {1: "Forward", 2: "Backward"},
-        "forward_group": 1,
-        "backward_group": 2,
-        "alpha": 1.0,
-        "t0_bin": 0,
-        "t_good_offset": 0,
-        "first_good_bin": 0,
-        "last_good_bin": N_BINS - 1,
-        "bin_index_base": 1,
-        "bunching_factor": 1,
-        "good_frames": 1.0,
-        "deadtime_correction": False,
-        "dead_time_us": [0.0, 0.0],
-        "included_groups": {1: True, 2: True},
-    }
-    return Run(
-        run_number=0,
-        histograms=histograms,
-        metadata={"title": "FB smoke template"},
-        grouping=grouping,
-        source_file="",
-    )
-
-
-def _combine_groups(run_f: Run, run_b: Run, template: Run) -> Run:
-    h_fwd = run_f.histograms[0]
-    h_bwd = run_b.histograms[1]
-    combined = [
-        Histogram(
-            counts=h_fwd.counts.copy(),
-            bin_width=h_fwd.bin_width,
-            t0_bin=h_fwd.t0_bin,
-            good_bin_start=h_fwd.good_bin_start,
-            good_bin_end=h_fwd.good_bin_end,
-        ),
-        Histogram(
-            counts=h_bwd.counts.copy(),
-            bin_width=h_bwd.bin_width,
-            t0_bin=h_bwd.t0_bin,
-            good_bin_start=h_bwd.good_bin_start,
-            good_bin_end=h_bwd.good_bin_end,
-        ),
-    ]
-    return Run(
-        run_number=0,
-        histograms=combined,
-        metadata={"title": "FB smoke"},
-        grouping=template.grouping,
-        source_file="",
-    )
+    return make_fb_template(n_bins=N_BINS, bin_width=BIN_WIDTH)
 
 
 _COMPS_SMOKE = [

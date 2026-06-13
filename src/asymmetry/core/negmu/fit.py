@@ -124,7 +124,7 @@ def default_capture_parameters(
     override = dict(seeds) if seeds else {}
 
     n_bins = len(counts)
-    bin_width = float(time[1] - time[0]) if n_bins > 1 else 0.016
+    bin_width = float(time[1] - time[0]) if len(time) > 1 else 0.016
     bin_width = max(bin_width, 1e-9)
     t_window = float(n_bins) * bin_width
 
@@ -521,11 +521,10 @@ def fit_capture_fb_alpha(
     n_calls = int(getattr(m, "nfcn", 0) or 0)
     cov_accurate = getattr(m, "accurate", False)
     is_valid = bool(m.valid)
-    minos_out = minos_errors or None
 
-    # Build independent per-group ParameterSets: shared params + own bg only.
-    # This prevents result_f and result_b from aliasing the same ParameterSet
-    # (forward result should not expose bg_B; backward should not expose bg_F).
+    # Build independent per-group ParameterSets, covariance sub-matrices, and
+    # minos dicts: each side gets shared params + its own bg only, matching the
+    # count_domain._result_from_minuit keep_params pattern.
     def _side_params(exclude_bg: str) -> ParameterSet:
         ps = ParameterSet()
         for p in result_params:
@@ -533,10 +532,24 @@ def fit_capture_fb_alpha(
                 ps.add(p)
         return ps
 
+    def _side_cov(exclude_bg: str) -> tuple[np.ndarray | None, list[str]]:
+        """Extract the covariance sub-matrix for one side's free parameters."""
+        if covariance is None:
+            return None, []
+        side_names = [n for n in cov_params if n != exclude_bg]
+        idx = [cov_params.index(n) for n in side_names]
+        if not idx:
+            return None, []
+        return covariance[np.ix_(idx, idx)], side_names
+
     params_f = _side_params("bg_B")
     params_b = _side_params("bg_F")
     unc_f = {k: v for k, v in uncertainties.items() if k != "bg_B"}
     unc_b = {k: v for k, v in uncertainties.items() if k != "bg_F"}
+    cov_f, cov_params_f = _side_cov("bg_B")
+    cov_b, cov_params_b = _side_cov("bg_F")
+    minos_f = {k: v for k, v in minos_errors.items() if k != "bg_B"} or None
+    minos_b = {k: v for k, v in minos_errors.items() if k != "bg_F"} or None
 
     def _pack(
         chi2: float,
@@ -544,6 +557,9 @@ def fit_capture_fb_alpha(
         resid: np.ndarray,
         side_params: ParameterSet,
         side_unc: dict[str, float],
+        side_cov: np.ndarray | None,
+        side_cov_params: list[str],
+        side_minos: dict[str, tuple[float, float]] | None,
     ) -> FitResult:
         return FitResult(
             success=is_valid,
@@ -551,18 +567,18 @@ def fit_capture_fb_alpha(
             reduced_chi_squared=chi2 / dof_g,
             parameters=side_params,
             uncertainties=side_unc,
-            covariance=covariance,
-            covariance_parameters=cov_params,
+            covariance=side_cov,
+            covariance_parameters=side_cov_params,
             residuals=resid,
             message=msg,
             function_calls=n_calls,
             dof=dof_g,
-            minos_errors=minos_out,
+            minos_errors=side_minos,
             covariance_accurate=cov_accurate,
         )
 
-    result_f = _pack(chi2_f, dof_f, residuals_f, params_f, unc_f)
-    result_b = _pack(chi2_b, dof_b, residuals_b, params_b, unc_b)
+    result_f = _pack(chi2_f, dof_f, residuals_f, params_f, unc_f, cov_f, cov_params_f, minos_f)
+    result_b = _pack(chi2_b, dof_b, residuals_b, params_b, unc_b, cov_b, cov_params_b, minos_b)
 
     # shared_parameters: alpha + amp_* + tau_* (excluding per-side bg_F/bg_B).
     shared = ParameterSet()

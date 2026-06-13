@@ -76,6 +76,12 @@ def capture_ratio_report(
     cov_param_list: list[str] = list(fit.covariance_parameters or [])
 
     amp_ref_name = f"amp_{reference}"
+    if amp_ref_name not in params:
+        available = [p.name[4:] for p in params if p.name.startswith("amp_")]
+        raise ValueError(
+            f"reference {reference!r} not found in fit result; "
+            f"available amplitude parameters: {available}"
+        )
     amp_ref = params[amp_ref_name].value
     sigma_ref = uncertainties.get(amp_ref_name, 0.0)
 
