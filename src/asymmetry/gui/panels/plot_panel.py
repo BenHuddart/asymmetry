@@ -25,12 +25,14 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -589,9 +591,17 @@ class PlotPanel(QWidget):
         row.addWidget(self._add_label_btn)
         row.addStretch()
 
-        self._export_gle_btn = QPushButton("Export Plot(s) to GLE")
+        # One export button hosting a menu (no second export button, per the
+        # workflow-visualisation brief): GLE export and a plain-text data
+        # export that skips the GLE folder/script/compile.
+        self._export_gle_btn = QPushButton("Export…")
         self._export_gle_btn.setEnabled(False)
-        self._export_gle_btn.clicked.connect(self.export_plots_to_gle)
+        self._export_menu = QMenu(self._export_gle_btn)
+        self._export_menu.addAction("Export to GLE…", self.export_plots_to_gle)
+        self._export_menu.addAction(
+            "Export plotted data (text)…", self.export_plotted_data_as_text
+        )
+        self._export_gle_btn.setMenu(self._export_menu)
         row.addWidget(self._export_gle_btn)
 
         row.addWidget(QLabel("Format:"))
@@ -5046,8 +5056,14 @@ class PlotPanel(QWidget):
         if show_legend:
             style_legend(ax.legend(loc="best"))
 
-    def _write_fit_file(self, fit_path: Path, payload: dict) -> None:
-        """Write a .fit file with fit-curve data and metadata header."""
+    def _write_fit_file(
+        self, fit_path: Path, payload: dict, *, x_range: tuple[float, float] | None = None
+    ) -> None:
+        """Write a .fit file with fit-curve data and metadata header.
+
+        ``x_range`` optionally restricts the written rows to ``[lo, hi]``;
+        ``None`` (the GLE-export default) writes the whole curve.
+        """
         fit = payload.get("fit") or {}
         t_fit = fit.get("t")
         y_fit = fit.get("y")
@@ -5077,13 +5093,27 @@ class PlotPanel(QWidget):
                         f.write(f"!   {p['name']} = {p['value']:.8g}\n")
             f.write("!\n")
             f.write("! time  asymmetry_fit\n")
+            lo, hi = (None, None) if x_range is None else (min(x_range), max(x_range))
             for t_val, y_val in zip(t_fit, y_fit):
-                f.write(f"{float(t_val):.10g} {float(y_val):.10g}\n")
+                tf = float(t_val)
+                if lo is not None and (tf < lo or tf > hi):
+                    continue
+                f.write(f"{tf:.10g} {float(y_val):.10g}\n")
 
     def _write_data_file(
-        self, dat_path: Path, payload: dict, *, label_text: object | None = None
+        self,
+        dat_path: Path,
+        payload: dict,
+        *,
+        label_text: object | None = None,
+        x_range: tuple[float, float] | None = None,
     ) -> None:
-        """Write a .dat file with spectra data and metadata header."""
+        """Write a .dat file with spectra data and metadata header.
+
+        ``x_range`` optionally restricts the written rows to ``[lo, hi]``
+        (inclusive); ``None`` (the default, used by the GLE export) writes every
+        point.
+        """
         data = payload.get("data") or {}
         t_data = data.get("t")
         y_data = data.get("y")
@@ -5270,8 +5300,12 @@ class PlotPanel(QWidget):
             f.write("! END OF DATA SET INFORMATION\n")
             f.write("! time  asymmetry  error\n")
             err_arr = y_err if y_err is not None else np.zeros_like(y_data)
+            lo, hi = (None, None) if x_range is None else (min(x_range), max(x_range))
             for t_val, y_val, e_val in zip(t_data, y_data, err_arr):
-                f.write(f"{float(t_val):.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
+                tf = float(t_val)
+                if lo is not None and (tf < lo or tf > hi):
+                    continue
+                f.write(f"{tf:.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
 
     def _show_export_result_dialog(self, title: str, summary: str, details: str) -> None:
         """Show export results with scrollable details and fixed bottom button."""
@@ -5388,12 +5422,11 @@ class PlotPanel(QWidget):
             # Preview is best-effort only; export should still succeed.
             return
 
-    def export_plots_to_gle(self) -> None:
-        """Export current main-plot view as GLE using gleplot.
+    def _collect_export_payloads(self) -> list[dict] | None:
+        """Assemble the current plot's export payloads (with the ALL fallback).
 
-        Data is plotted with error bars (no connecting lines), fit curves
-        with lines (no markers).  File names are derived from the Label
-        dropdown value for each dataset.
+        Shared by the GLE export and the plain-text data export so both see the
+        same per-dataset payloads.
         """
         payloads = self.get_current_plot_export_data()
         if (
@@ -5401,13 +5434,154 @@ class PlotPanel(QWidget):
             and self._current_polarization_axis == "ALL"
             and self._vector_subplot_datasets
         ):
-            first_axis_payloads = self.get_current_plot_export_data(
+            payloads = self.get_current_plot_export_data(
                 self._vector_subplot_datasets.get("P_x")
                 or self._vector_subplot_datasets.get("P_y")
                 or self._vector_subplot_datasets.get("P_z")
                 or []
             )
-            payloads = first_axis_payloads
+        return payloads
+
+    def _prompt_text_export_options(self) -> tuple[str, bool] | None:
+        """Ask for the data-only export content and x-range option.
+
+        Returns ``(content, limit_to_range)`` where content is one of
+        ``"data"`` / ``"data_fit"`` / ``"fit"``, or ``None`` if cancelled.
+        """
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Export plotted data (text)")
+        dialog.setModal(True)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Content to export:"))
+        content_combo = QComboBox(dialog)
+        content_combo.addItem("Data only", "data")
+        content_combo.addItem("Data + fit", "data_fit")
+        content_combo.addItem("Fit only", "fit")
+        layout.addWidget(content_combo)
+        range_box = QCheckBox("Limit to current x-range", dialog)
+        range_box.setChecked(False)
+        layout.addWidget(range_box)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return str(content_combo.currentData()), bool(range_box.isChecked())
+
+    def export_plotted_data_as_text(self) -> None:
+        """Export the plotted curve(s) as plain text, without the GLE machinery.
+
+        Reuses the same ``.dat``/``.fit`` writers (and their provenance header)
+        as the GLE export, but writes only the text files — no ``.gleplot``
+        folder, GLE script, or compile. The content switch (data only / data +
+        fit / fit only) mirrors WiMDA's stData/stBoth/stFit.
+        """
+        payloads = self._collect_export_payloads()
+        if not payloads:
+            QMessageBox.warning(
+                self,
+                "Export unavailable",
+                "No plotted data is available to export.",
+            )
+            return
+
+        options = self._prompt_text_export_options()
+        if options is None:
+            return
+        content, limit_to_range = options
+        x_range = None
+        if limit_to_range:
+            x0 = float(self._x_min.value())
+            x1 = float(self._x_max.value())
+            if self._is_frequency_plot_panel():
+                x0 = self._convert_frequency_control_value_to_axis_limit(x0)
+                x1 = self._convert_frequency_control_value_to_axis_limit(x1)
+            x_range = (x0, x1)
+
+        if len(payloads) == 1:
+            token = self._safe_file_token(str(payloads[0].get("label", "dataset")))
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export plotted data (text)",
+                default_export_path(f"{token}.dat"),
+                "Data files (*.dat);;Text files (*.txt);;All files (*)",
+            )
+            if not path:
+                return
+            remember_export_path(path)
+            base = Path(path).with_suffix("")
+            written = self._write_payload_text_files(base, payloads[0], content, x_range)
+        else:
+            directory = QFileDialog.getExistingDirectory(
+                self,
+                "Export plotted data (text) — choose a folder",
+                default_export_path(""),
+            )
+            if not directory:
+                return
+            remember_export_path(directory)
+            export_dir = Path(directory)
+            written = []
+            for i, payload in enumerate(payloads):
+                token = self._safe_file_token(str(payload.get("label", f"dataset_{i}")))
+                written.extend(
+                    self._write_payload_text_files(
+                        export_dir / token, payload, content, x_range
+                    )
+                )
+
+        if not written:
+            QMessageBox.warning(
+                self,
+                "Nothing written",
+                "The selected content produced no files (for example 'fit only' "
+                "with no fit on the plot).",
+            )
+            return
+        files_text = "\n".join(str(p) for p in written)
+        self._show_export_result_dialog(
+            "Export Successful",
+            f"Wrote {len(written)} text file(s).",
+            files_text,
+        )
+
+    def _write_payload_text_files(
+        self,
+        base: Path,
+        payload: dict,
+        content: str,
+        x_range: tuple[float, float] | None,
+    ) -> list[Path]:
+        """Write the .dat and/or .fit text files for one payload."""
+        written: list[Path] = []
+        if content in ("data", "data_fit"):
+            dat_path = base.with_suffix(".dat")
+            self._write_data_file(
+                dat_path, payload, label_text=payload.get("label"), x_range=x_range
+            )
+            if dat_path.exists():
+                written.append(dat_path)
+        if content in ("data_fit", "fit"):
+            fit = payload.get("fit") or {}
+            if fit.get("t") is not None and fit.get("y") is not None:
+                fit_path = base.with_suffix(".fit")
+                self._write_fit_file(fit_path, payload, x_range=x_range)
+                if fit_path.exists():
+                    written.append(fit_path)
+        return written
+
+    def export_plots_to_gle(self) -> None:
+        """Export current main-plot view as GLE using gleplot.
+
+        Data is plotted with error bars (no connecting lines), fit curves
+        with lines (no markers).  File names are derived from the Label
+        dropdown value for each dataset.
+        """
+        payloads = self._collect_export_payloads()
         if not payloads:
             QMessageBox.warning(
                 self,

@@ -2241,6 +2241,104 @@ class TestPlotPanel:
         assert warnings
         assert "No plotted data" in warnings[0]
 
+    def _parse_dat_columns(self, path: Path) -> np.ndarray:
+        rows = [
+            line for line in path.read_text().splitlines() if line and not line.startswith("!")
+        ]
+        return np.array([[float(v) for v in r.split()] for r in rows])
+
+    def test_export_plotted_data_as_text_data_only_round_trips(
+        self,
+        panel: PlotPanel,
+        sample_dataset: MuonDataset,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        target = tmp_path / "run12345.dat"
+        monkeypatch.setattr(panel, "_prompt_text_export_options", lambda: ("data", False))
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target), "Data files (*.dat)"),
+        )
+        monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *a: None)
+
+        panel.export_plotted_data_as_text()
+
+        assert target.exists()
+        # No fit was plotted, so data-only must not emit a .fit sidecar.
+        assert not target.with_suffix(".fit").exists()
+        text = target.read_text()
+        assert "START OF RUN INFORMATION" in text  # provenance header present
+        parsed = self._parse_dat_columns(target)
+        np.testing.assert_allclose(parsed[:, 0], sample_dataset.time, rtol=1e-5)
+        np.testing.assert_allclose(parsed[:, 1], sample_dataset.asymmetry, rtol=1e-5)
+
+    def test_export_plotted_data_as_text_data_fit_and_xrange(
+        self,
+        panel: PlotPanel,
+        sample_dataset: MuonDataset,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        t_fit = np.linspace(0.0, 10.0, 50)
+        panel.plot_fit(t_fit, 0.18 * np.exp(-0.45 * t_fit), label="Fit")
+        panel._x_min.setValue(2.0)
+        panel._x_max.setValue(6.0)
+
+        target = tmp_path / "run12345.dat"
+        monkeypatch.setattr(panel, "_prompt_text_export_options", lambda: ("data_fit", True))
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target), "Data files (*.dat)"),
+        )
+        monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *a: None)
+
+        panel.export_plotted_data_as_text()
+
+        assert target.exists()
+        assert target.with_suffix(".fit").exists()  # data+fit -> both sidecars
+        parsed = self._parse_dat_columns(target)
+        # x-range limiting: every written time within [2, 6].
+        assert parsed[:, 0].min() >= 2.0 - 1e-9
+        assert parsed[:, 0].max() <= 6.0 + 1e-9
+
+    def test_export_plotted_data_as_text_fit_only_without_fit_warns(
+        self,
+        panel: PlotPanel,
+        sample_dataset: MuonDataset,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)  # no fit on the plot
+        target = tmp_path / "run12345.dat"
+        monkeypatch.setattr(panel, "_prompt_text_export_options", lambda: ("fit", False))
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target), "Data files (*.dat)"),
+        )
+        warnings: list[str] = []
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QMessageBox.warning",
+            lambda *a, **k: warnings.append(a[2] if len(a) > 2 else ""),
+        )
+
+        panel.export_plotted_data_as_text()
+
+        assert not target.exists()
+        assert not target.with_suffix(".fit").exists()
+        assert warnings and "no files" in warnings[-1].lower()
+
     def test_export_current_plot_writes_gle_and_compiles_pdf(
         self,
         panel: PlotPanel,
