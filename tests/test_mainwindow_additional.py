@@ -3028,7 +3028,6 @@ class TestMainWindowBasic:
             "parameters": [{"name": "A", "value": 0.2}],
             "result_html": "x-fit",
         }
-        monkeypatch.setattr(mainwindow._fit_panel, "get_single_state", lambda: state)
         monkeypatch.setattr(mainwindow._fit_panel, "get_single_form_state", lambda: dict(state))
 
         mainwindow._record_single_fit_slot(self._single_fit_result())
@@ -3050,7 +3049,6 @@ class TestMainWindowBasic:
         mainwindow._current_dataset = dataset
         monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "ALL")
         state = {"composite_model": {"component_names": ["Gaussian"]}, "result_html": "all"}
-        monkeypatch.setattr(mainwindow._fit_panel, "get_single_state", lambda: state)
         monkeypatch.setattr(mainwindow._fit_panel, "get_single_form_state", lambda: dict(state))
 
         mainwindow._record_single_fit_slot(self._single_fit_result())

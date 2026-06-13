@@ -999,6 +999,40 @@ class TestPlotPanel:
         panel._apply_projection_frame_tint(ax, "P_x")
         assert ax.label_color is None
 
+    def test_set_fit_target_projection_updates_state_and_emits(self, panel: PlotPanel) -> None:
+        panel._subplot_axes_by_polarization = {
+            "P_x": _FakeAxis(),
+            "P_y": _FakeAxis(),
+            "P_z": _FakeAxis(),
+        }
+        captured: list[str] = []
+        panel.fit_target_projection_changed.connect(captured.append)
+        panel.set_fit_target_projection("P_y")
+        assert panel.fit_target_projection() == "P_y"
+        assert captured == ["P_y"]
+        # Re-selecting the same target does not re-emit.
+        panel.set_fit_target_projection("P_y")
+        assert captured == ["P_y"]
+
+    def test_fit_target_is_none_outside_subplot_view(self, panel: PlotPanel) -> None:
+        panel._subplot_axes_by_polarization = {}
+        panel._fit_target_projection = "P_x"
+        assert panel.fit_target_projection() is None
+
+    def test_clicking_a_subplot_sets_it_as_fit_target(self, panel: PlotPanel) -> None:
+        ax_x, ax_z = _FakeAxis(), _FakeAxis()
+        panel._subplot_axes_by_polarization = {"P_x": ax_x, "P_z": ax_z}
+        assert panel._subplot_projection_at_event(SimpleNamespace(inaxes=ax_z)) == "P_z"
+        assert panel._subplot_projection_at_event(SimpleNamespace(inaxes=None)) is None
+
+    def test_default_fit_target_prefers_active_axis(self, panel: PlotPanel) -> None:
+        panel._subplot_axes_by_polarization = {"P_x": _FakeAxis(), "P_z": _FakeAxis()}
+        panel._current_polarization_axis = "P_z"
+        assert panel._default_fit_target() == "P_z"
+        # When the active axis is not among the subplots, fall back to the first.
+        panel._current_polarization_axis = "ALL"
+        assert panel._default_fit_target() == "P_x"
+
     def test_time_view_selector_supports_group_mode(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")

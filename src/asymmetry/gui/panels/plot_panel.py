@@ -164,6 +164,9 @@ class PlotPanel(QWidget):
     fit_range_changed = Signal(float, float)
     view_limits_changed = Signal(float, float, float, float)
     polarization_axis_changed = Signal(str)
+    #: Emitted with the projection label when a stacked subplot is clicked to
+    #: become the single-fit target (multi-subplot / ALL view only).
+    fit_target_projection_changed = Signal(str)
     overlay_toggled = Signal(bool)
     time_view_changed = Signal(str)
     cursor_coords_changed = Signal(object, object)  # (x: float|None, y: float|None)
@@ -322,6 +325,9 @@ class PlotPanel(QWidget):
             self._projection_specs: list[dict] = []
             self._tint_by_label: dict[str, str] = {}
             self._selected_projection_labels: list[str] = []
+            # Which stacked subplot is the active single-fit target (multi-view).
+            self._fit_target_projection: str | None = None
+            self._fit_target_artists: list = []
             self._y_limits_by_polarization: dict[str, tuple[float, float]] = {}
             self._subplot_axes_by_polarization: dict[str, object] = {}
             self._vector_subplot_datasets: dict[str, list[MuonDataset]] = {}
@@ -2357,6 +2363,109 @@ class PlotPanel(QWidget):
         bar_selection = self._projection_bar.selected_labels()
         return bar_selection or list(self._selected_projection_labels)
 
+    # ── stacked-subplot fit target (Step 4) ────────────────────────────────
+
+    def fit_target_projection(self) -> str | None:
+        """Return the projection whose subplot is the active single-fit target.
+
+        Only meaningful in the stacked multi-subplot view; ``None`` otherwise.
+        """
+        if self._fit_target_projection in self._subplot_axes_by_polarization:
+            return self._fit_target_projection
+        return None
+
+    def set_fit_target_projection(self, label: str | None, *, emit: bool = True) -> None:
+        """Mark *label*'s subplot as the single-fit target and redraw its box."""
+        if label is not None and label not in self._subplot_axes_by_polarization:
+            return
+        changed = label != self._fit_target_projection
+        self._fit_target_projection = label
+        self._refresh_fit_target_decoration()
+        if changed and emit and label is not None:
+            self.fit_target_projection_changed.emit(str(label))
+
+    def _subplot_projection_at_event(self, event) -> str | None:
+        """Return the projection whose subplot axes contains the click event."""
+        inaxes = getattr(event, "inaxes", None)
+        if inaxes is None:
+            return None
+        for label, axis in self._subplot_axes_by_polarization.items():
+            if axis is inaxes:
+                return label
+        return None
+
+    def _default_fit_target(self) -> str | None:
+        """Pick a sensible default target: the active single axis, else the first."""
+        order = self._all_mode_axes_order()
+        if not order:
+            return None
+        axis = self._current_polarization_axis
+        if axis in order:
+            return axis
+        return order[0]
+
+    def _clear_fit_target_decoration(self) -> None:
+        for artist in self._fit_target_artists:
+            try:
+                artist.remove()
+            except Exception:
+                continue
+        self._fit_target_artists = []
+
+    def _refresh_fit_target_decoration(self) -> None:
+        """Draw a neutral focus ring + 'fit target' pill on the active subplot.
+
+        The ring/pill is *selection* state and is deliberately distinct from the
+        per-projection frame tint (which encodes projection identity).
+        """
+        if not self._has_mpl:
+            return
+        self._clear_fit_target_decoration()
+        target = self.fit_target_projection()
+        # Only decorate when there is a genuine choice (two or more subplots).
+        if target is None or len(self._subplot_axes_by_polarization) < 2:
+            self._canvas.draw_idle()
+            return
+
+        ax = self._subplot_axes_by_polarization[target]
+        # Decoration is best-effort chrome — a non-standard axis (e.g. a test
+        # double) must never break the click/selection path.
+        if not hasattr(ax, "get_position"):
+            self._canvas.draw_idle()
+            return
+
+        from matplotlib.patches import FancyBboxPatch
+
+        pos = ax.get_position()
+        ring = FancyBboxPatch(
+            (pos.x0, pos.y0),
+            pos.width,
+            pos.height,
+            boxstyle="round,pad=0.004",
+            transform=self._figure.transFigure,
+            fill=False,
+            edgecolor=tokens.TEXT,
+            linewidth=1.6,
+            zorder=10,
+        )
+        self._figure.add_artist(ring)
+        self._fit_target_artists.append(ring)
+
+        pill = ax.text(
+            0.985,
+            0.94,
+            "fit target",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=8,
+            color=tokens.SURFACE,
+            zorder=11,
+            bbox={"boxstyle": "round,pad=0.25", "facecolor": tokens.TEXT, "edgecolor": "none"},
+        )
+        self._fit_target_artists.append(pill)
+        self._canvas.draw_idle()
+
     def _polarization_ylabel(self, axis_key: str | None) -> str:
         """Return y-axis label for the provided polarization component."""
         if axis_key in {"P_x", "P_y", "P_z"}:
@@ -2627,6 +2736,13 @@ class PlotPanel(QWidget):
         self._apply_limits(schedule_viewport_refresh=True)
         self._apply_auto_limits_if_enabled()
         self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
+
+        # Auto-select a fit target so fitting is never dead-on-arrival; keep the
+        # prior target when it is still visible. Emit so the fit panel rebinds.
+        if self._fit_target_projection not in self._subplot_axes_by_polarization:
+            self.set_fit_target_projection(self._default_fit_target())
+        else:
+            self._refresh_fit_target_decoration()
 
     def plot_grouped_time_domain_subplots(self, datasets: list[MuonDataset]) -> None:
         """Render grouped time-domain traces as stacked subplots."""
@@ -4395,6 +4511,11 @@ class PlotPanel(QWidget):
         if ann_idx is not None:
             self._active_annotation_idx = ann_idx
             self._annotation_drag_started = False
+        elif self._subplot_axes_by_polarization:
+            # A plain click inside a stacked subplot makes it the fit target.
+            projection = self._subplot_projection_at_event(event)
+            if projection is not None:
+                self.set_fit_target_projection(projection)
 
     def _on_canvas_motion_notify(self, event) -> None:
         """Drag the active fit-range handle while the mouse moves."""
