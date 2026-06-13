@@ -427,18 +427,20 @@ def _combine_histograms_subtract(
 
     Returns the difference histograms, the per-detector variances (error²) so
     the reduction can propagate them, and the count of negative difference bins
-    (the unphysical-counts guard, RA5). ``runs[0]`` is the sample, taken at unit
-    Poisson variance (its scale is recorded for provenance only — passing it
-    through the chokepoint's variance term would give the wrong, linear-in-scale
-    variance). Each reference ``runs[k≥1]`` contributes ``scaleₖ·counts`` to the
-    difference and ``scaleₖ²·counts`` to the variance.
+    (the unphysical-counts guard, RA5). ``runs[0]`` is the sample at unit Poisson
+    variance ``clip(sample)``; each reference ``runs[k≥1]`` contributes
+    ``scaleₖ·counts`` to the difference (through the ``subtract_scaled_counts``
+    seam, F9) and ``scaleₖ²·clip(counts)`` to the variance. The empty-bin ``1.0``
+    sentinel (a zero-variance guard for the reduction) is applied **once** to the
+    final summed variance — not per reference, which would over-state the
+    variance of an N-run difference wherever any single term's bin is zero.
 
-    For the two-run reference case this is byte-identical to a single
-    ``subtract_scaled_counts(sample, reference, scaleₖ)`` call. The symmetric
-    N-run signed subtract folds the extra references in through the same seam
-    against a zero accumulator, so the running difference (no longer Poisson)
-    carries its variance separately while every count-level subtraction still
-    flows through ``subtract_scaled_counts`` (F9).
+    For the two-run reference case this matches a single
+    ``subtract_scaled_counts(sample, reference, scale₁)`` call: an exact
+    difference ``sample − scale₁·ref₁`` and variance
+    ``clip(sample) + scale₁²·clip(ref₁)`` with the same final zero→1.0 sentinel
+    (stored directly rather than as ``error*error``, so it agrees to
+    floating-point — the reduction takes its √ regardless).
     """
     sample = runs[0]
     n_detectors = len(sample.histograms)
@@ -450,24 +452,20 @@ def _combine_histograms_subtract(
         t0s = [int(run.histograms[det].t0_bin) for run in runs]
         aligned, common_t0 = _aligned_detector_arrays(arrays, t0s)
         s_counts = aligned[0]
-        # First reference through the seam (exact two-run reference path):
-        # difference = sample − scale₁·ref₁, variance = sample + scale₁²·ref₁.
-        diff, error = subtract_scaled_counts(s_counts, aligned[1], scales[1])
-        variance = error * error
-        # Additional references (symmetric N-run subtract): subtract each scaled
-        # reference and add only its scaleₖ²·counts variance term — routed through
-        # the same chokepoint against a zero accumulator.
-        for ref_counts, ref_scale in zip(aligned[2:], scales[2:], strict=True):
+        diff = s_counts.copy()
+        # Sample's Poisson variance; references add scaleₖ²·counts. The sentinel
+        # is deferred to the full sum below.
+        variance = np.clip(s_counts, 0.0, None)
+        for ref_counts, ref_scale in zip(aligned[1:], scales[1:], strict=True):
+            # The count-level subtraction routes through the chokepoint (F9); the
+            # difference is no longer Poisson, so its variance is summed here.
             contrib, _contrib_error = subtract_scaled_counts(
                 np.zeros_like(ref_counts), ref_counts, ref_scale
             )
             diff = diff + contrib
-            # Add only this reference's Poisson variance (scaleₖ²·counts) directly,
-            # matching subtract_scaled_counts' own variance term. Reading it off the
-            # returned error instead would fold in that helper's empty-bin 1.0
-            # sentinel for every extra reference, over-stating the variance wherever
-            # a reference bin is zero.
             variance = variance + ref_scale * ref_scale * np.clip(ref_counts, 0.0, None)
+        # Zero-variance guard once, matching subtract_scaled_counts' 1.0 sentinel.
+        variance = np.where(variance > 0.0, variance, 1.0)
         negative_bins += int(np.count_nonzero(diff < 0.0))
         out.append(_clone_geometry(sample.histograms[det], diff, common_t0))
         variances.append(variance)

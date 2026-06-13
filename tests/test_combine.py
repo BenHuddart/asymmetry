@@ -401,6 +401,31 @@ def test_signed_subtract_three_runs_difference_and_variance():
     assert d.metadata["combination"]["scales"] == [1.0, 1.0, 1.0]
 
 
+def test_two_run_reference_matches_chokepoint_all_bins():
+    """The 2-run reference path equals a direct subtract_scaled_counts, all bins.
+
+    Guards the refactor that unified the subtract loop: the sample-plus-one-
+    reference case must still produce the chokepoint's difference (exact) and
+    variance (the refactor stores the variance directly rather than the old
+    ``error*error`` √-round-trip, so they agree to floating-point), including the
+    empty-bin 1.0 sentinel — checked on *all* bins, not just populated ones.
+    """
+    from asymmetry.core.transform.background import subtract_scaled_counts
+
+    a = simulate_run(_template(), _cos, total_events=3e5, seed=11)
+    b = simulate_run(_template(), _cos, total_events=3e5, seed=22)
+    scale = 0.7
+    d = combine_runs([a, b], sign=-1, scales=[1.0, scale])
+    for det in range(2):
+        diff, error = subtract_scaled_counts(
+            a.histograms[det].counts, b.histograms[det].counts, scale
+        )
+        np.testing.assert_array_equal(d.histograms[det].counts, diff)
+        np.testing.assert_allclose(
+            d.metadata["combination"]["detector_variance"][det], error * error, rtol=1e-12
+        )
+
+
 def test_signed_subtract_extra_reference_empty_bin_no_sentinel():
     """An empty reference bin adds 0 variance, not the chokepoint's 1.0 sentinel.
 
