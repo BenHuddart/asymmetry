@@ -1,0 +1,19 @@
+{% extends "!layout.html" %}
+
+{# Append a persistent alpha / verify-the-physics notice to the bottom of the
+   left navigation column, below the table of contents. The `navigation` block
+   lives inside `.wy-side-scroll` (the sidebar), so the note scrolls with the
+   TOC and stays in the nav column on every page. The theme's `versions.html`
+   slot, by contrast, is rendered outside `.wy-nav-side` and is therefore the
+   wrong place for this. #}
+{% block navigation %}
+  {{ super() }}
+  <div class="asym-alpha-note" role="note">
+    <span class="asym-alpha-icon">⚠️</span>
+    <span class="asym-alpha-text">
+      <strong>Alpha software.</strong>
+      Descriptions of µSR data, fitting models, and workflows here may be
+      incomplete or in error — verify the physics against trusted sources.
+    </span>
+  </div>
+{% endblock %}

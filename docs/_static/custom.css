@@ -1,0 +1,24 @@
+/* Persistent alpha / verify-the-physics notice in the left sidebar.
+   Rendered via the `navigation` block override in _templates/layout.html,
+   which appends it below the table of contents in the sidebar on every page. */
+.asym-alpha-note {
+    margin: 1em 0.8em;
+    padding: 0.7em 0.9em;
+    font-size: 0.8em;
+    line-height: 1.4;
+    color: #fff;
+    background: #d35400;          /* orange, matching the README alpha badge */
+    border-radius: 4px;
+    display: flex;
+    gap: 0.5em;
+    align-items: flex-start;
+}
+
+.asym-alpha-note strong {
+    color: #fff;
+}
+
+.asym-alpha-icon {
+    font-size: 1.1em;
+    line-height: 1;
+}
