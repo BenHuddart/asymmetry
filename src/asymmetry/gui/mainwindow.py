@@ -610,16 +610,23 @@ class MainWindow(QMainWindow):
         """Auto-enable the Advanced RRF toggle when an opened project uses RRF.
 
         If the restored project carries an active RRF frame but the app-level
-        toggle is off, turn it on so the user's configured rotating-frame
-        analysis is not silently hidden. ``setChecked`` fires the toggled
-        handler, which persists the preference and applies it to the panel.
+        toggle is off, reveal it so the user's configured rotating-frame
+        analysis is not silently hidden — for this session only. The persisted
+        global preference is the user's own explicit choice and is deliberately
+        left untouched (opening a project must not permanently opt a user into
+        an advanced feature); the action is checked with its signal blocked and
+        the feature applied directly, so a fresh launch returns to the user's
+        default until they reopen this project.
         """
         action = getattr(self, "_rrf_advanced_action", None)
         panel = getattr(self, "_plot_panel", None)
         if action is None or action.isChecked() or panel is None:
             return
         if hasattr(panel, "rrf_has_active_parameters") and panel.rrf_has_active_parameters():
+            action.blockSignals(True)
             action.setChecked(True)
+            action.blockSignals(False)
+            self._apply_rrf_advanced_to_panels(True)
 
     def _perf_dataset_metrics(
         self, datasets: MuonDataset | list[MuonDataset] | None

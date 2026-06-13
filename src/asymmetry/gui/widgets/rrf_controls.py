@@ -148,6 +148,15 @@ class RRFControls(QWidget):
 
     # ── state ──────────────────────────────────────────────────────────────
 
+    def has_active_frame(self) -> bool:
+        """True when a frame is configured (enabled + ν₀ > 0), feature-independent.
+
+        The single definition of "this project carries an active RRF frame",
+        shared by :meth:`is_active` and the host's open-project auto-enable
+        check, so the two never drift.
+        """
+        return bool(self._enable_check.isChecked()) and self.frequency_mhz() > 0.0
+
     def is_active(self) -> bool:
         """True when RRF display should transform the plotted curve.
 
@@ -155,11 +164,7 @@ class RRFControls(QWidget):
         controls are hidden, so a stale ``enabled`` flag (e.g. restored from a
         project saved before the toggle existed) must not silently demodulate.
         """
-        return (
-            self._feature_enabled
-            and bool(self._enable_check.isChecked())
-            and self.frequency_mhz() > 0.0
-        )
+        return self._feature_enabled and self.has_active_frame()
 
     def feature_enabled(self) -> bool:
         """Whether the Options → Advanced RRF toggle is on."""

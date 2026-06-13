@@ -527,6 +527,35 @@ def _raw_group_counts(
     )
 
 
+def _resolve_grouped_cost(cost: str):
+    """Validate a grouped-fit cost name and return ``(use_poisson, cost_factory)``.
+
+    Shared by the single-run and global-series grouped fitters so the cost
+    contract (valid names, the Poisson→raw-count routing) lives in one place.
+    """
+    if cost not in COST_FACTORIES:
+        raise ValueError(
+            f"Unknown grouped fit cost {cost!r}; expected one of {sorted(COST_FACTORIES)}"
+        )
+    use_poisson = cost == "poisson"
+    return use_poisson, (POISSON_COST if use_poisson else None)
+
+
+def _raw_count_dataset_fields(time, counts, metadata):
+    """Return (raw_counts, poisson_error, metadata) for a Poisson grouped fit.
+
+    Inverts the lifetime correction to recover the raw Poisson counts and floors
+    a Poisson √N error (unused by Cash, but ``global_fit`` rejects zero errors);
+    the returned metadata records the trace is no longer lifetime-corrected so it
+    cannot be double-corrected downstream.
+    """
+    raw = _raw_group_counts(time, counts, metadata)
+    error = np.sqrt(np.clip(raw, 1.0, None))
+    fixed_metadata = dict(metadata)
+    fixed_metadata["grouped_time_domain_lifetime_corrected"] = False
+    return raw, error, fixed_metadata
+
+
 def fit_grouped_time_domain(
     groups: list[GroupedTimeDomainGroup],
     polarization_model_fn,
@@ -613,15 +642,10 @@ def fit_grouped_time_domain(
                 f"Grouped time-domain parameters for {group_id!r} are missing: {missing_names}"
             )
 
-    if cost not in COST_FACTORIES:
-        raise ValueError(
-            f"Unknown grouped fit cost {cost!r}; expected one of {sorted(COST_FACTORIES)}"
-        )
     # Poisson (Cash) fits the raw counts against a raw-count expectation, so the
     # objective sees true Poisson statistics; Gaussian keeps the historical
     # lifetime-corrected √N least squares (cost_factory=None → byte-identical).
-    use_poisson = cost == "poisson"
-    cost_factory = POISSON_COST if use_poisson else None
+    use_poisson, cost_factory = _resolve_grouped_cost(cost)
     base_model_fn = build_grouped_count_model(polarization_model_fn)
     model_fn = _raw_count_model(base_model_fn) if use_poisson else base_model_fn
 
@@ -640,14 +664,9 @@ def fit_grouped_time_domain(
             raise ValueError(
                 f"Grouped time-domain arrays for {group.group_id!r} must share one shape"
             )
-        if use_poisson:
-            # Recover the raw Poisson counts the Cash statistic needs: invert the
-            # lifetime correction the trace carries (a no-op for an already-raw
-            # group). The error is Poisson √N and unused by Cash, but global_fit
-            # rejects zero errors, so floor it.
-            counts = _raw_group_counts(time, counts, group.metadata)
-            error = np.sqrt(np.clip(counts, 1.0, None))
         metadata = dict(group.metadata)
+        if use_poisson:
+            counts, error, metadata = _raw_count_dataset_fields(time, counts, metadata)
         metadata.update(
             {
                 "run_number": internal_id,
@@ -1158,12 +1177,7 @@ def _fit_grouped_series_global(
     cost: str = "poisson",
 ) -> GroupedSeriesFitResult:
     """Fit every ``(run, group)`` simultaneously, sharing physics across all runs."""
-    if cost not in COST_FACTORIES:
-        raise ValueError(
-            f"Unknown grouped fit cost {cost!r}; expected one of {sorted(COST_FACTORIES)}"
-        )
-    use_poisson = cost == "poisson"
-    cost_factory = POISSON_COST if use_poisson else None
+    use_poisson, cost_factory = _resolve_grouped_cost(cost)
     temporary_datasets: list[MuonDataset] = []
     temporary_initial: dict[int, ParameterSet] = {}
     member_source_run: dict[int, int] = {}
@@ -1195,10 +1209,9 @@ def _fit_grouped_series_global(
                     f"Grouped-series arrays for run {run} group {group.group_id!r} "
                     "must share one shape"
                 )
-            if use_poisson:
-                counts = _raw_group_counts(time, counts, group.metadata)
-                error = np.sqrt(np.clip(counts, 1.0, None))
             metadata = dict(group.metadata)
+            if use_poisson:
+                counts, error, metadata = _raw_count_dataset_fields(time, counts, metadata)
             metadata.update(
                 {
                     "run_number": key,

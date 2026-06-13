@@ -947,6 +947,7 @@ def _shift_rrf_parameters(
                 min=p.min + delta,  # ±inf + finite stays ±inf
                 max=p.max + delta,
                 fixed=getattr(p, "fixed", False),
+                expr=getattr(p, "expr", None),  # preserve constraints faithfully
                 link_group=getattr(p, "link_group", None),
             )
         )

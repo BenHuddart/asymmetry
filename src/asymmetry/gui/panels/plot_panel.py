@@ -5599,7 +5599,7 @@ class PlotPanel(QWidget):
         controls = getattr(self, "_rrf_controls", None)
         if controls is None:
             return False
-        return bool(controls._enable_check.isChecked()) and controls.frequency_mhz() > 0.0  # noqa: SLF001
+        return controls.has_active_frame()
 
     def rrf_fit_frequency_mhz(self) -> float | None:
         """Frame frequency ν₀ (MHz) when an RRF fit should be performed, else None.
