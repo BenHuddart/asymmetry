@@ -39,7 +39,11 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.instrument import detect_instrument, get_instrument_layout
+from asymmetry.core.instrument import (
+    derive_projection_pairs,
+    detect_instrument,
+    get_instrument_layout,
+)
 from asymmetry.core.transform import (
     apply_grouping,
     available_background_modes,
@@ -1541,38 +1545,17 @@ class GroupingDialog(QDialog):
         return dict(included)
 
     def _detect_vector_axis_pairs(self) -> dict[str, tuple[int, int]]:
-        """Return vector-axis group pairs if canonical vector group names exist."""
+        """Return projection group pairs for the current grouping.
+
+        Prefers an explicit projection declaration (set when a multi-projection
+        preset is applied) and falls back to the legacy canonical vector group
+        names; see :func:`asymmetry.core.instrument.derive_projection_pairs`.
+        """
         if not self._groups or not isinstance(self._group_names, dict):
             return {}
-
-        by_name: dict[str, int] = {}
-        for gid, name in self._group_names.items():
-            try:
-                gid_int = int(gid)
-            except (TypeError, ValueError):
-                continue
-            by_name[str(name).strip().lower()] = gid_int
-
-        def _find(*candidates: str) -> int | None:
-            for cand in candidates:
-                gid = by_name.get(cand)
-                if gid in self._groups and self._groups.get(gid):
-                    return gid
-            return None
-
-        pz_f = _find("pz forward")
-        pz_b = _find("pz backward")
-        py_t = _find("py top", "py up")
-        py_b = _find("py bottom", "py down")
-        px_l = _find("px left")
-        px_r = _find("px right")
-        if None in {pz_f, pz_b, py_t, py_b, px_l, px_r}:
-            return {}
-        return {
-            "P_x": (int(px_l), int(px_r)),
-            "P_y": (int(py_t), int(py_b)),
-            "P_z": (int(pz_f), int(pz_b)),
-        }
+        return derive_projection_pairs(
+            self._groups, self._group_names, getattr(self, "_projection_specs", None)
+        )
 
     def _vector_alpha_key(self, axis: str) -> str:
         """Return grouping payload key for a canonical vector axis."""

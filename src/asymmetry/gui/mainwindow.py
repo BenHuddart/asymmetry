@@ -79,6 +79,7 @@ from asymmetry.core.fourier import (
 )
 from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
 from asymmetry.core.fourier.units import FieldUnit, convert
+from asymmetry.core.instrument import derive_projection_pairs
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
     combine_mapped_periods,
@@ -1578,42 +1579,15 @@ class MainWindow(QMainWindow):
         self,
         groups: dict[int, list[int]],
         group_names: dict[int, str] | None,
+        projections: object = None,
     ) -> dict[str, tuple[int, int]]:
-        """Return vector-axis pair mapping for EMU-style group names when present."""
-        if not isinstance(groups, dict) or not groups:
-            return {}
+        """Return projection pair mapping for a grouping.
 
-        names = group_names if isinstance(group_names, dict) else {}
-        by_name: dict[str, int] = {}
-        for gid, name in names.items():
-            try:
-                gid_int = int(gid)
-            except (TypeError, ValueError):
-                continue
-            by_name[str(name).strip().lower()] = gid_int
-
-        def _find(*candidates: str) -> int | None:
-            for cand in candidates:
-                gid = by_name.get(cand)
-                if gid in groups and groups.get(gid):
-                    return gid
-            return None
-
-        pz_f = _find("pz forward")
-        pz_b = _find("pz backward")
-        py_a = _find("py top", "py up")
-        py_b = _find("py bottom", "py down")
-        px_a = _find("px left")
-        px_b = _find("px right")
-
-        if None in {pz_f, pz_b, py_a, py_b, px_a, px_b}:
-            return {}
-
-        return {
-            "P_z": (int(pz_f), int(pz_b)),
-            "P_y": (int(py_a), int(py_b)),
-            "P_x": (int(px_a), int(px_b)),
-        }
+        Prefers an explicit ``projections`` declaration and falls back to the
+        legacy canonical vector group names; see
+        :func:`asymmetry.core.instrument.derive_projection_pairs`.
+        """
+        return derive_projection_pairs(groups, group_names, projections)
 
     def _vector_axis_state_for_dataset(
         self, dataset
@@ -1643,7 +1617,9 @@ class MainWindow(QMainWindow):
                 if det_ids:
                     groups[gid] = det_ids
 
-        pairs = self._vector_axis_pairs_for_grouping(groups, grouping.get("group_names"))
+        pairs = self._vector_axis_pairs_for_grouping(
+            groups, grouping.get("group_names"), grouping.get("projections")
+        )
         if not pairs:
             return {}, None
 
@@ -1852,7 +1828,9 @@ class MainWindow(QMainWindow):
                     continue
                 groups = payload.get("groups", {})
                 names = payload.get("group_names")
-                pairs = self._vector_axis_pairs_for_grouping(groups, names)
+                pairs = self._vector_axis_pairs_for_grouping(
+                    groups, names, payload.get("projections")
+                )
                 if axis not in pairs:
                     continue
 
@@ -1894,6 +1872,7 @@ class MainWindow(QMainWindow):
             pairs = self._vector_axis_pairs_for_grouping(
                 payload.get("groups", {}),
                 payload.get("group_names"),
+                payload.get("projections"),
             )
             if axis not in pairs:
                 continue
@@ -2057,6 +2036,7 @@ class MainWindow(QMainWindow):
             pairs = self._vector_axis_pairs_for_grouping(
                 payload.get("groups", {}),
                 payload.get("group_names"),
+                payload.get("projections"),
             )
             if axis not in pairs:
                 continue
@@ -3241,7 +3221,12 @@ class MainWindow(QMainWindow):
         group_names_for_axis = grouping_result.get("group_names")
         if not isinstance(group_names_for_axis, dict) and isinstance(existing_grouping, dict):
             group_names_for_axis = existing_grouping.get("group_names")
-        axis_pairs = self._vector_axis_pairs_for_grouping(groups, group_names_for_axis)
+        projections_for_axis = grouping_result.get("projections")
+        if not projections_for_axis and isinstance(existing_grouping, dict):
+            projections_for_axis = existing_grouping.get("projections")
+        axis_pairs = self._vector_axis_pairs_for_grouping(
+            groups, group_names_for_axis, projections_for_axis
+        )
         vector_axis = self._normalize_vector_axis(
             grouping_result.get("vector_axis", existing_grouping.get("vector_axis"))
         )
