@@ -1477,7 +1477,7 @@ class TestMainWindowBasic:
         """Test mainwindow initializes correctly."""
         assert mainwindow is not None
         assert mainwindow.windowTitle() != ""
-        assert mainwindow._dock_fourier.minimumWidth() == 250
+        assert mainwindow._dock_fourier.minimumWidth() == 236
 
     def test_perf_logging_reports_selection_and_fourier_when_enabled(
         self,

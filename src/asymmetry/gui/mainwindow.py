@@ -1289,7 +1289,12 @@ class MainWindow(QMainWindow):
         self._fit_stack.addWidget(self._alc_fit_panel)
         self._dock_fit = QDockWidget("Fit", self)
         self._dock_fit.setWidget(_inspector_scroll_area(self._fit_stack))
-        self._dock_fit.setMinimumWidth(260)
+        # The inspector docks are tabified (share the max of their minimum
+        # widths), so all three floor at the compacted Single-fit tab width
+        # (~236) to let the deck get as narrow as a 13" screen wants; a denser
+        # current page (grouped count fit, ALC scan) still grows it via the
+        # per-page sizing mixin.
+        self._dock_fit.setMinimumWidth(236)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit)
 
         # Right dock — spectrum controls (FFT / MaxEnt, tabbed with fit)
@@ -1300,7 +1305,7 @@ class MainWindow(QMainWindow):
         self._spectrum_stack.addWidget(self._maxent_panel)
         self._dock_fourier = QDockWidget("Spectrum", self)
         self._dock_fourier.setWidget(_inspector_scroll_area(self._spectrum_stack))
-        self._dock_fourier.setMinimumWidth(250)
+        self._dock_fourier.setMinimumWidth(236)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fourier)
 
         # Right dock — fitted parameter trends (tabbed with fit/fourier). In ALC
@@ -1312,7 +1317,7 @@ class MainWindow(QMainWindow):
         self._parameters_stack.addWidget(self._alc_scan_view)
         self._dock_fit_parameters = QDockWidget("Parameters", self)
         self._dock_fit_parameters.setWidget(_inspector_scroll_area(self._parameters_stack))
-        self._dock_fit_parameters.setMinimumWidth(270)
+        self._dock_fit_parameters.setMinimumWidth(236)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit_parameters)
         # Canonical inspector tab order, left to right: processing (Spectrum)
         # first, then Fit, then Parameters — the user works through the deck in

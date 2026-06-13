@@ -11,10 +11,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -29,9 +31,11 @@ from asymmetry.gui.panels.fit_panel import GlobalFitTab
 from asymmetry.gui.styles.widgets import make_section
 
 #: Fit-target choices (label, mode key) shown in the count-domain selector.
+#: Labels stay short so the selector does not set the Fit dock's minimum width;
+#: the mode key (item data) is what is persisted, not the label.
 _FIT_TARGETS: tuple[tuple[str, str], ...] = (
     ("All groups", "all"),
-    ("Forward + Backward (free α)", "fb"),
+    ("F + B (free α)", "fb"),
     ("Single group", "single"),
 )
 _FIT_COSTS: tuple[tuple[str, str], ...] = (("Poisson", "poisson"), ("Gaussian √N", "gaussian"))
@@ -106,6 +110,11 @@ class MultiGroupFitWindow(QWidget):
             spin.setDecimals(3)
             spin.setRange(0.0, 1000.0)
             spin.setSingleStep(0.1)
+            # Keep these count-config fields narrow so the grouped page does not
+            # set the Fit dock's minimum width past the other tabs: drop the spin
+            # arrows (edit by typing/keys/wheel) and cap the width.
+            spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+            spin.setMaximumWidth(76)
             spin.valueChanged.connect(self._sync_count_fit_target)
         exclude_row = QWidget()
         exclude_layout = QHBoxLayout(exclude_row)
@@ -116,7 +125,8 @@ class MultiGroupFitWindow(QWidget):
         # Relabelled from the bare "Exclude (μs)": the count fit *drops* these
         # bins from the fit (a hard skip), unlike the MaxEnt de-weight window
         # that keeps the FFT grid. The semantics differ; the labels now say so.
-        self._exclude_label = QLabel("Skip window (μs)")
+        self._exclude_label = QLabel("Skip (μs)")
+        self._exclude_label.setToolTip("Interior bins to skip (exclude window, μs)")
         form.addRow(self._exclude_label, exclude_row)
 
         self._t0_check = QCheckBox("Fit t₀ offset")
@@ -125,9 +135,13 @@ class MultiGroupFitWindow(QWidget):
         self._baseline_check.toggled.connect(self._sync_count_fit_target)
         self._deadtime_check = QCheckBox("Fit deadtime DT₀")
         self._deadtime_check.toggled.connect(self._sync_count_fit_target)
+        # Stack the nuisance toggles in a column: a single row of three
+        # checkboxes set this dock page's minimum width well past the other Fit
+        # tabs on a 13" screen.
         nuisance_row = QWidget()
-        nuisance_layout = QHBoxLayout(nuisance_row)
+        nuisance_layout = QVBoxLayout(nuisance_row)
         nuisance_layout.setContentsMargins(0, 0, 0, 0)
+        nuisance_layout.setSpacing(2)
         nuisance_layout.addWidget(self._t0_check)
         nuisance_layout.addWidget(self._baseline_check)
         nuisance_layout.addWidget(self._deadtime_check)
@@ -139,6 +153,8 @@ class MultiGroupFitWindow(QWidget):
         self._dpsep_spin.setDecimals(3)
         self._dpsep_spin.setRange(0.0, 5.0)
         self._dpsep_spin.setSingleStep(0.01)
+        self._dpsep_spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._dpsep_spin.setMaximumWidth(76)
         self._dpsep_spin.valueChanged.connect(self._sync_count_fit_target)
         self._dpsep_fit_check = QCheckBox("fit")
         self._dpsep_fit_check.setToolTip(
@@ -154,12 +170,14 @@ class MultiGroupFitWindow(QWidget):
         form.addRow(self._dpsep_label, dpsep_row)
 
         # Promote a fitted deadtime into the grouping correction (Send-to-Group).
-        self._promote_btn = QPushButton("Promote DT₀ → grouping")
+        self._promote_btn = QPushButton("Promote DT₀")
+        self._promote_btn.setToolTip("Promote the fitted deadtime DT₀ → grouping correction")
         self._promote_btn.clicked.connect(self._on_promote_deadtime)
         self._promote_additive = QCheckBox("accumulate")
         promote_row = QWidget()
-        promote_layout = QHBoxLayout(promote_row)
+        promote_layout = QVBoxLayout(promote_row)
         promote_layout.setContentsMargins(0, 0, 0, 0)
+        promote_layout.setSpacing(2)
         promote_layout.addWidget(self._promote_btn)
         promote_layout.addWidget(self._promote_additive)
         self._promote_label = QLabel("Calibrate")
@@ -180,11 +198,14 @@ class MultiGroupFitWindow(QWidget):
         )
         self._promote_bg_btn.clicked.connect(lambda: self._active_tab().promote_count_background())
         promote_row2 = QWidget()
-        promote_layout2 = QHBoxLayout(promote_row2)
+        promote_layout2 = QGridLayout(promote_row2)
         promote_layout2.setContentsMargins(0, 0, 0, 0)
-        promote_layout2.addWidget(self._promote_alpha_btn)
-        promote_layout2.addWidget(self._promote_t0_btn)
-        promote_layout2.addWidget(self._promote_bg_btn)
+        promote_layout2.setHorizontalSpacing(4)
+        promote_layout2.setVerticalSpacing(2)
+        promote_layout2.addWidget(self._promote_alpha_btn, 0, 0)
+        promote_layout2.addWidget(self._promote_t0_btn, 0, 1)
+        promote_layout2.addWidget(self._promote_bg_btn, 1, 0, 1, 2)
+        promote_layout2.setColumnStretch(2, 1)
         form.addRow(QLabel(""), promote_row2)
 
         # N3 interpretive guard: the count fit consumes raw counts, so a grouping

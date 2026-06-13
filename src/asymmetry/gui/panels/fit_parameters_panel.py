@@ -402,14 +402,18 @@ class FitParametersPanel(QWidget):
         self._plot_group, plot_layout = make_section("Parameter plot")
         plot_layout.setSpacing(8)
 
+        # Two-column grids (not a single wide row) so the plot toolbar does not
+        # set the Parameters dock's minimum width past the other tabs on a 13"
+        # screen; the buttons wrap to a second line instead of growing the dock.
         self._plot_labels_bar = QWidget(self._plot_group)
-        labels_row = QHBoxLayout(self._plot_labels_bar)
+        labels_row = QGridLayout(self._plot_labels_bar)
         labels_row.setContentsMargins(0, 0, 0, 0)
-        labels_row.setSpacing(6)
-        labels_row.addWidget(QLabel("Plot labels:"))
-        labels_row.addWidget(self._add_label_btn)
-        labels_row.addWidget(self._clear_labels_btn)
-        labels_row.addStretch()
+        labels_row.setHorizontalSpacing(6)
+        labels_row.setVerticalSpacing(4)
+        labels_row.addWidget(QLabel("Plot labels:"), 0, 0, 1, 2)
+        labels_row.addWidget(self._add_label_btn, 1, 0)
+        labels_row.addWidget(self._clear_labels_btn, 1, 1)
+        labels_row.setColumnStretch(2, 1)
         plot_layout.addWidget(self._plot_labels_bar)
 
         self._has_mpl = False
@@ -431,15 +435,15 @@ class FitParametersPanel(QWidget):
             self._trend_overlay = None
 
         self._plot_export_bar = QWidget(self._plot_group)
-        export_row = QHBoxLayout(self._plot_export_bar)
+        export_row = QGridLayout(self._plot_export_bar)
         export_row.setContentsMargins(0, 0, 0, 0)
-        export_row.setSpacing(6)
-        export_row.addWidget(QLabel("Export:"))
-        export_row.addWidget(self._export_csv_btn)
-        export_row.addWidget(self._export_gle_btn)
-        export_row.addWidget(QLabel("Format:"))
-        export_row.addWidget(self._gle_format_combo)
-        export_row.addStretch()
+        export_row.setHorizontalSpacing(6)
+        export_row.setVerticalSpacing(4)
+        export_row.addWidget(self._export_csv_btn, 0, 0)
+        export_row.addWidget(self._export_gle_btn, 0, 1)
+        export_row.addWidget(QLabel("Format:"), 1, 0)
+        export_row.addWidget(self._gle_format_combo, 1, 1)
+        export_row.setColumnStretch(2, 1)
         plot_layout.addWidget(self._plot_export_bar)
 
         controls_group.setMinimumHeight(0)

@@ -2461,16 +2461,15 @@ class GlobalFitTab(QWidget):
         self._fit_wizard_btn.setToolTip("Open the Global Fit Wizard.")
         self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
         self._fit_wizard_btn.setEnabled(False)
-        model_button_layout = QGridLayout()
+        # Single column of natural-width buttons (mirrors SingleFitTab): a
+        # side-by-side grid forced both button columns to set the tab's minimum
+        # width; stacking them left-aligned at natural width lets the Batch tab
+        # get as narrow as the Single tab on a 13" screen.
+        model_button_layout = QVBoxLayout()
         model_button_layout.setContentsMargins(0, 0, 0, 0)
-        model_button_layout.setHorizontalSpacing(6)
-        model_button_layout.setVerticalSpacing(6)
-        self._edit_model_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._fit_wizard_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        model_button_layout.addWidget(self._edit_model_btn, 0, 0)
-        model_button_layout.addWidget(self._fit_wizard_btn, 0, 1)
-        model_button_layout.setColumnStretch(0, 1)
-        model_button_layout.setColumnStretch(1, 1)
+        model_button_layout.setSpacing(4)
+        for _model_btn in (self._edit_model_btn, self._fit_wizard_btn):
+            model_button_layout.addWidget(_model_btn, 0, Qt.AlignmentFlag.AlignLeft)
         self._formula_row_label = QLabel("A(t):")
         model_layout.addRow(self._formula_row_label, self._formula_box)
         model_layout.addRow("", model_button_layout)
@@ -2521,6 +2520,12 @@ class GlobalFitTab(QWidget):
         self._param_table.setColumnWidth(2, 86)  # Type (dropdown)
         self._param_table.setColumnWidth(3, 104)  # Bounds
         _apply_param_table_style(self._param_table)
+        # Size to content (see _size_param_table_to_content): the dock scrolls
+        # vertically as a whole, so the table shows all rows with no internal
+        # scrollbar or empty rows.
+        self._param_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._param_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._param_table.setWordWrap(False)
         self._param_table.itemChanged.connect(self._on_param_table_item_changed)
         param_layout.addWidget(self._param_table)
         layout.addWidget(self._param_group)
@@ -2539,6 +2544,11 @@ class GlobalFitTab(QWidget):
         self._group_param_table.setColumnWidth(2, 86)
         self._group_param_table.setColumnWidth(3, 104)
         _apply_param_table_style(self._group_param_table)
+        self._group_param_table.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self._group_param_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._group_param_table.setWordWrap(False)
         self._group_param_table.itemChanged.connect(self._on_group_param_item_changed)
         group_param_layout.addWidget(self._group_param_table)
         group_param_button_layout = QHBoxLayout()
@@ -2559,6 +2569,11 @@ class GlobalFitTab(QWidget):
         self._group_model_table.setColumnWidth(2, 86)
         self._group_model_table.setColumnWidth(3, 104)
         _apply_param_table_style(self._group_model_table)
+        self._group_model_table.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self._group_model_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._group_model_table.setWordWrap(False)
         self._group_model_table.itemChanged.connect(self._on_group_model_table_item_changed)
         group_model_layout.addWidget(self._group_model_table)
         layout.addWidget(self._group_model_group)
@@ -2571,9 +2586,11 @@ class GlobalFitTab(QWidget):
         coadd_layout.setSpacing(6)
         _coadd_box.addLayout(coadd_layout)
         self._coadd_mode_combo = QComboBox()
+        # Short labels (the tooltip below spells out Bin vs Smooth) so the row
+        # does not set the Batch tab's minimum width past the other Fit tabs.
         self._coadd_mode_combo.addItem("Off", "off")
-        self._coadd_mode_combo.addItem("Bin (step N)", "bin")
-        self._coadd_mode_combo.addItem("Smooth (sliding)", "smooth")
+        self._coadd_mode_combo.addItem("Bin", "bin")
+        self._coadd_mode_combo.addItem("Smooth", "smooth")
         self._coadd_mode_combo.setToolTip(
             "Co-add successive runs before fitting (WiMDA Smooth/Bin):\n"
             "• Bin — non-overlapping windows, one combined fit per N runs.\n"
@@ -2596,36 +2613,42 @@ class GlobalFitTab(QWidget):
         self._coadd_group.hide()
         layout.addWidget(self._coadd_group)
 
-        # Fit button
-        btn_layout = QHBoxLayout()
+        # Fit buttons. A single-row HBox of these long-labelled actions
+        # ("Run Batch Fit" + "Preview" + "Initial Values..." + the checkbox) set
+        # the Batch tab's minimum width far past the Single tab; a compact grid
+        # (mirroring SingleFitTab) keeps the widest row to two buttons.
+        btn_layout = QGridLayout()
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setHorizontalSpacing(6)
+        btn_layout.setVerticalSpacing(6)
         self._fit_btn = QPushButton("Run Batch Fit")
         self._fit_btn.setStyleSheet(build_primary_button_qss())
         self._fit_btn.clicked.connect(self._run_global_fit)
         self._fit_btn.setEnabled(False)
-        btn_layout.addWidget(self._fit_btn)
         # Stop replaces the disabled Fit button while a worker-based fit runs.
         self._stop_btn = QPushButton("Stop")
         self._stop_btn.setToolTip("Cancel the running fit; no partial result is recorded.")
         self._stop_btn.clicked.connect(self._on_stop_fit)
         self._stop_btn.hide()
-        btn_layout.addWidget(self._stop_btn)
         self._preview_btn = QPushButton("Preview")
         self._preview_btn.clicked.connect(self._on_preview_requested)
         self._preview_btn.setEnabled(False)
-        btn_layout.addWidget(self._preview_btn)
         self._initial_values_btn = QPushButton("Initial Values...")
         self._initial_values_btn.setToolTip(
             "Edit per-member initial parameter values (per run, or per run/group for grouped fits)."
         )
         self._initial_values_btn.clicked.connect(self._open_initial_values_dialog)
-        btn_layout.addWidget(self._initial_values_btn)
         self._minos_checkbox = QCheckBox("Asymmetric errors")
         self._minos_checkbox.setToolTip(
             "After fitting, report asymmetric +/− 1σ MINOS intervals (slower; most "
             "useful at low statistics or near parameter bounds)."
         )
-        btn_layout.addWidget(self._minos_checkbox)
-        btn_layout.addStretch()
+        btn_layout.addWidget(self._fit_btn, 0, 0)
+        btn_layout.addWidget(self._stop_btn, 0, 0)
+        btn_layout.addWidget(self._preview_btn, 0, 1)
+        btn_layout.addWidget(self._initial_values_btn, 1, 0, 1, 2)
+        btn_layout.addWidget(self._minos_checkbox, 2, 0, 1, 2)
+        btn_layout.setColumnStretch(2, 1)
         layout.addLayout(btn_layout)
 
         # Results display
@@ -3306,6 +3329,7 @@ class GlobalFitTab(QWidget):
             bounds_column=3,
             type_column=2,
         )
+        _size_param_table_to_content(self._param_table)
         self._rebuild_grouped_model_table(grouped_model_state)
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
@@ -5966,6 +5990,7 @@ class GlobalFitTab(QWidget):
             )
             self._sync_group_param_row_values(row)
         self._group_param_table.blockSignals(previous_signal_state)
+        _size_param_table_to_content(self._group_param_table)
 
     def _sync_group_param_row_values(self, row: int, edited_column: int | None = None) -> None:
         if self._updating_group_param_values:
@@ -6053,6 +6078,7 @@ class GlobalFitTab(QWidget):
         )
         self._updating_group_model_fraction_values = False
         self._synchronize_grouped_model_fraction_rows()
+        _size_param_table_to_content(self._group_model_table)
 
     def _parse_grouped_parameter_configuration(self) -> dict[str, object]:
         global_params: list[str] = []

@@ -401,7 +401,10 @@ def test_background_active_note_visibility_tracks_grouping(qapp, fb_dataset):
 def test_skip_window_label_is_relabelled(qapp):
     """F8: the count-fit exclude control is relabelled to encode its semantics."""
     window = MultiGroupFitWindow()
-    assert window._exclude_label.text() == "Skip window (μs)"
+    # "Skip" (not the bare "Exclude") still encodes the hard-skip semantics that
+    # distinguish this from the MaxEnt de-weight window; the tooltip has the rest.
+    assert window._exclude_label.text() == "Skip (μs)"
+    assert "exclude" in window._exclude_label.toolTip().lower()
 
 
 def test_count_skip_window_round_trips_through_state(qapp):
