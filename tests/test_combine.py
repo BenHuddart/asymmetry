@@ -159,8 +159,7 @@ def test_bin_coadd_over_2n_equals_pairwise_combines_exactly():
     """
     n_pairs = 3
     runs = [
-        simulate_run(_template(), _cos, total_events=2e5, seed=10 + i)
-        for i in range(2 * n_pairs)
+        simulate_run(_template(), _cos, total_events=2e5, seed=10 + i) for i in range(2 * n_pairs)
     ]
     windows = coadd_member_windows(len(runs), mode="bin", window=2)
     assert windows == [[0, 1], [2, 3], [4, 5]]
@@ -175,8 +174,7 @@ def test_bin_coadd_over_2n_equals_pairwise_combines_exactly():
             # And exactly the per-bin sum of the two source histograms.
             np.testing.assert_array_equal(
                 windowed.histograms[det].counts,
-                runs[window[0]].histograms[det].counts
-                + runs[window[1]].histograms[det].counts,
+                runs[window[0]].histograms[det].counts + runs[window[1]].histograms[det].counts,
             )
 
 
@@ -351,9 +349,7 @@ def test_signed_subtract_three_runs_difference_and_variance():
             rtol=1e-12,
         )
     var = d.metadata["combination"]["detector_variance"][0]
-    expected_var = (
-        a.histograms[0].counts + b.histograms[0].counts + c.histograms[0].counts
-    )
+    expected_var = a.histograms[0].counts + b.histograms[0].counts + c.histograms[0].counts
     populated = expected_var > 0
     np.testing.assert_allclose(var[populated], expected_var[populated], rtol=1e-12)
     assert d.metadata["combined_from"] == [1000, 1000, 1000]
@@ -372,9 +368,7 @@ def test_signed_subtract_respects_per_run_scales():
     )
     var = d.metadata["combination"]["detector_variance"][0]
     expected_var = (
-        a.histograms[0].counts
-        + 0.25 * b.histograms[0].counts
-        + 0.0625 * c.histograms[0].counts
+        a.histograms[0].counts + 0.25 * b.histograms[0].counts + 0.0625 * c.histograms[0].counts
     )
     populated = expected_var > 0
     np.testing.assert_allclose(var[populated], expected_var[populated], rtol=1e-12)

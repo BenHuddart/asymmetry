@@ -3002,7 +3002,9 @@ class DataBrowserPanel(QWidget):
         def _update_preview() -> None:
             sample = int(combo.currentData())
             rest = [rn for rn in ordered_runs if rn != sample]
-            labels = [self._datasets[sample].run_label] + [self._datasets[r].run_label for r in rest]
+            labels = [self._datasets[sample].run_label] + [
+                self._datasets[r].run_label for r in rest
+            ]
             preview.setText("Result:  " + " − ".join(labels))
 
         combo.currentIndexChanged.connect(_update_preview)

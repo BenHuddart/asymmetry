@@ -4946,9 +4946,7 @@ class TestRefitCoadded:
         other = CompositeModel(["Gaussian"], operators=[])
         assert mainwindow._refit_coadded_batch_id(other, [501, 502]) != bid1
 
-    def test_finished_records_computed_series_with_provenance(
-        self, mainwindow: MainWindow
-    ) -> None:
+    def test_finished_records_computed_series_with_provenance(self, mainwindow: MainWindow) -> None:
         model = CompositeModel(["Exponential", "Constant"], operators=["+"])
         member_key = mainwindow._refit_coadded_member_key([501, 502])
         rep_type = RepresentationType.TIME_FB_ASYMMETRY
@@ -4977,19 +4975,27 @@ class TestRefitCoadded:
 
         mainwindow._on_refit_coadded_finished(
             (self._combined_dataset(7.5, 120.0), self._fake_result({"A": 0.2})),
-            [501, 502], model, member_key, rep_type, "501 + 502",
+            [501, 502],
+            model,
+            member_key,
+            rep_type,
+            "501 + 502",
         )
         mainwindow._on_refit_coadded_finished(
             (self._combined_dataset(7.5, 120.0), self._fake_result({"A": 0.9})),
-            [501, 502], model, member_key, rep_type, "501 + 502",
+            [501, 502],
+            model,
+            member_key,
+            rep_type,
+            "501 + 502",
         )
 
         batch_id = mainwindow._refit_coadded_batch_id(model, [501, 502])
         matching = [bid for bid in mainwindow._project_model.batches if bid == batch_id]
         assert len(matching) == 1  # replaced, not duplicated
-        assert mainwindow._project_model.batch(batch_id).results_by_run[member_key][
-            "parameters"
-        ]["A"] == pytest.approx(0.9)
+        assert mainwindow._project_model.batch(batch_id).results_by_run[member_key]["parameters"][
+            "A"
+        ] == pytest.approx(0.9)
 
     def test_failed_fit_records_nothing(self, mainwindow: MainWindow) -> None:
         model = CompositeModel(["Exponential", "Constant"], operators=["+"])
@@ -4997,7 +5003,11 @@ class TestRefitCoadded:
         failed = SimpleNamespace(success=False)
         mainwindow._on_refit_coadded_finished(
             (self._combined_dataset(7.5, 120.0), failed),
-            [501, 502], model, member_key, RepresentationType.TIME_FB_ASYMMETRY, "501 + 502",
+            [501, 502],
+            model,
+            member_key,
+            RepresentationType.TIME_FB_ASYMMETRY,
+            "501 + 502",
         )
         assert mainwindow._refit_coadded_batch_id(model, [501, 502]) not in (
             mainwindow._project_model.batches
@@ -5047,7 +5057,11 @@ class TestRefitCoadded:
         member_key = mainwindow._refit_coadded_member_key([501, 502])
         mainwindow._on_refit_coadded_finished(
             (self._combined_dataset(7.5, 120.0), self._fake_result({"A": 0.2})),
-            [501, 502], model, member_key, RepresentationType.TIME_FB_ASYMMETRY, "501 + 502",
+            [501, 502],
+            model,
+            member_key,
+            RepresentationType.TIME_FB_ASYMMETRY,
+            "501 + 502",
         )
         batch_id = mainwindow._refit_coadded_batch_id(model, [501, 502])
 
@@ -5095,9 +5109,7 @@ class TestMaxEntBatchReconstructSend:
         monkeypatch.setattr(mainwindow, "_launch_maxent_worker", _fake_launch)
 
         sends: list[object] = []
-        monkeypatch.setattr(
-            mainwindow, "_on_moments_send_to_trend", lambda w: sends.append(w)
-        )
+        monkeypatch.setattr(mainwindow, "_on_moments_send_to_trend", lambda w: sends.append(w))
         return launched, sends
 
     def test_reconstructs_all_missing_then_sends(
