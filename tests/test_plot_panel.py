@@ -2616,11 +2616,11 @@ class TestPlotPanel:
         )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
         monkeypatch.setattr(
-            "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
-        )
-        monkeypatch.setattr(
             "subprocess.run",
             lambda args, **kwargs: subprocess_calls.append((list(args), kwargs.get("cwd"))),
+        )
+        monkeypatch.setattr(
+            "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
         monkeypatch.setattr(
             panel,
@@ -2706,10 +2706,10 @@ class TestPlotPanel:
         )
         monkeypatch.setattr(panel, "get_current_plot_export_data", lambda: [payload])
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
@@ -2763,10 +2763,10 @@ class TestPlotPanel:
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
@@ -2822,10 +2822,10 @@ class TestPlotPanel:
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
@@ -2881,10 +2881,10 @@ class TestPlotPanel:
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
@@ -2980,10 +2980,10 @@ class TestPlotPanel:
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
@@ -3348,10 +3348,10 @@ class TestPlotPanel:
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
@@ -3427,10 +3427,10 @@ class TestPlotPanel:
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
