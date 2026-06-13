@@ -42,6 +42,22 @@ from asymmetry.gui.panels.fit_parameters_panel import (
     _format_plot_legend_label,
     _GroupFitData,
 )
+from tests._qt_helpers import wait_for
+
+
+def _active_linear_fit(param: str, x_key: str = "field") -> ParameterModelFit:
+    """An active model fit with one solved range, for trend-overlay tests."""
+    model = ParameterCompositeModel(["Linear"])
+    params = ParameterSet([Parameter("m", value=0.001), Parameter("b", value=0.2)])
+    result = ParameterModelFitResult(success=True, parameters=params)
+    return ParameterModelFit(
+        parameter_name=param,
+        x_key=x_key,
+        active=True,
+        ranges=[
+            ModelFitRange(x_min=100.0, x_max=200.0, model=model, parameters=params, result=result)
+        ],
+    )
 
 
 @pytest.fixture(scope="module")
@@ -2098,3 +2114,225 @@ def test_fit_range_curve_sampler_spans_window_envelope(panel: FitParametersPanel
     # Invalid (inverted) windows skip the curve instead of raising.
     fit_range.windows = [(5.0, 1.0)]
     assert panel._sample_fit_range_curve(fit_range, x_key="field") is None
+
+
+def test_trend_curves_recompute_off_thread_behind_overlay(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An active trend fit recomputes its overlay off-thread under the overlay."""
+    if not panel._has_mpl:
+        pytest.skip("matplotlib not available")
+    panel._model_fits = {"A0": _active_linear_fit("A0")}
+    monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
+
+    panel._start_trend_curve_compute()
+    # Mid-flight: the overlay covers the plot and the compute is active.
+    assert panel._trend_curve_compute_active
+    assert panel._trend_overlay is not None and not panel._trend_overlay.isHidden()
+
+    wait_for(
+        lambda: not panel._trend_curve_compute_active,
+        QApplication.instance(),
+        timeout_s=10.0,
+    )
+
+    # Landed: overlay cleared, curves cached (keyed by signature) for reuse, and
+    # the model curve drawn.
+    assert not panel._trend_curve_compute_active
+    assert panel._trend_overlay.isHidden()
+    assert isinstance(panel._precomputed_trend_curves, dict)
+    assert "A0" in panel._precomputed_trend_curves
+    assert panel._trend_cache_sig is not None
+    drawn = [line for ax in panel._figure.axes for line in ax.get_lines()]
+    assert drawn, "the trend overlay curve should be drawn after the compute"
+
+
+def test_trend_compute_without_active_fit_draws_synchronously(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no active overlay to evaluate, the scatter draws synchronously."""
+    if not panel._has_mpl:
+        pytest.skip("matplotlib not available")
+    panel._model_fits = {}
+    monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
+
+    panel._start_trend_curve_compute()
+
+    assert not panel._trend_curve_compute_active
+    assert panel._tasks.active_count == 0
+    assert panel._trend_overlay is not None and panel._trend_overlay.isHidden()
+
+
+def test_shutdown_workers_joins_trend_compute(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """shutdown_workers tears the trend worker down within the bounded wait."""
+    if not panel._has_mpl:
+        pytest.skip("matplotlib not available")
+    panel._model_fits = {"A0": _active_linear_fit("A0")}
+    monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
+
+    panel._start_trend_curve_compute()
+    assert panel._trend_curve_compute_active
+
+    panel.shutdown_workers()
+    assert panel._tasks.active_count == 0
+
+
+def test_restore_state_defers_trend_overlay_to_async(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """restore_state must not evaluate the (heavy) trend overlay synchronously.
+
+    Regression: a project with a slow trend model (e.g. DiffusionLF_2D, which
+    runs scipy quadrature per sample) froze the GUI for seconds after the file
+    loader closed, because restore_state's intermediate refreshes drew the
+    overlay inline. The draw must be suppressed during restore and deferred to a
+    single off-thread recompute.
+    """
+    src = FitParametersPanel()
+    if not src._has_mpl:
+        pytest.skip("matplotlib not available")
+    src._rows = [
+        _FitRow(
+            run_number=1,
+            run_label="1",
+            field=100.0,
+            temperature=10.0,
+            values={"Lambda": 0.10},
+            errors={"Lambda": 0.01},
+        ),
+        _FitRow(
+            run_number=2,
+            run_label="2",
+            field=200.0,
+            temperature=10.0,
+            values={"Lambda": 0.20},
+            errors={"Lambda": 0.01},
+        ),
+    ]
+    src._varying_params = ["Lambda"]
+    src._inferred_x_key = "field"
+    src._model_fits = {"Lambda": _active_linear_fit("Lambda")}
+    src._selected_y_param_names = ["Lambda"]
+    state = src.get_state()
+
+    target = FitParametersPanel()
+    monkeypatch.setattr(target, "_selected_y_parameters", lambda: ["Lambda"])
+    drew: list[int] = []
+    monkeypatch.setattr(target, "_draw_model_overlay_mpl", lambda *a, **k: drew.append(1))
+
+    target.restore_state(state)
+
+    # The synchronous restore drew no overlay inline and re-enabled plotting…
+    assert drew == []
+    assert target._suspend_plot_refresh is False
+    # …it deferred the heavy evaluation to an off-thread recompute.
+    assert target._trend_curve_compute_active
+
+    wait_for(
+        lambda: not target._trend_curve_compute_active,
+        QApplication.instance(),
+        timeout_s=10.0,
+    )
+    assert drew, "the overlay should be drawn once the async recompute lands"
+    target.shutdown_workers()
+
+
+def test_restore_state_clears_suspend_flag_on_exception(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mid-restore exception must not leave the plot permanently suspended.
+
+    Regression: _suspend_plot_refresh is set for the duration of restore_state;
+    without the try/finally an exception (malformed project) would wedge it True,
+    silently disabling every subsequent plot refresh for the session.
+    """
+    panel = FitParametersPanel()
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("malformed project")
+
+    monkeypatch.setattr(panel, "_rebuild_y_controls", _boom)
+
+    with pytest.raises(RuntimeError):
+        panel.restore_state({"rows": []})
+
+    assert panel._suspend_plot_refresh is False, "suspend guard must clear after a failed restore"
+
+
+def test_pure_render_refresh_reuses_trend_cache(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A redraw with unchanged inputs reuses the cached curves (no new worker)."""
+    if not panel._has_mpl:
+        pytest.skip("matplotlib not available")
+    panel._model_fits = {"A0": _active_linear_fit("A0")}
+    monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
+
+    panel._refresh_plot()
+    assert panel._trend_curve_compute_active
+    wait_for(lambda: not panel._trend_curve_compute_active, QApplication.instance(), timeout_s=10.0)
+    sig1 = panel._trend_cache_sig
+    assert sig1 is not None
+
+    # A pure-render refresh (e.g. a log-scale toggle) does not change the
+    # signature, so it draws from the cache synchronously without starting a new
+    # compute (a cache hit never sets the busy flag).
+    panel._refresh_plot()
+    assert not panel._trend_curve_compute_active
+    assert panel._trend_cache_sig == sig1
+    panel.shutdown_workers()
+
+
+def test_show_components_toggle_recomputes_trend_overlay(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Toggling an input (show components) invalidates the cache and recomputes."""
+    if not panel._has_mpl:
+        pytest.skip("matplotlib not available")
+    panel._model_fits = {"A0": _active_linear_fit("A0")}
+    monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
+
+    panel._refresh_plot()
+    wait_for(lambda: not panel._trend_curve_compute_active, QApplication.instance(), timeout_s=10.0)
+    sig1 = panel._trend_cache_sig
+
+    # Toggling show-components fires _refresh_plot; the signature now differs, so
+    # a fresh off-thread recompute is dispatched rather than reusing the cache.
+    panel._show_components_check.setChecked(True)
+    wait_for(lambda: not panel._trend_curve_compute_active, QApplication.instance(), timeout_s=10.0)
+    assert panel._trend_cache_sig != sig1
+    panel.shutdown_workers()
+
+
+def test_cache_present_missing_param_does_not_sample_inline(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cache that omits an active param must not fall back to inline sampling.
+
+    Regression: when the off-thread worker produced no curves for a param (or the
+    error path stored an empty cache), _draw_model_overlay_mpl treated the missing
+    key as 'no cache' and re-evaluated the (possibly very slow) model on the GUI
+    thread — defeating the off-thread design and re-running on every redraw.
+    """
+    if not panel._has_mpl:
+        pytest.skip("matplotlib not available")
+    panel._model_fits = {"A0": _active_linear_fit("A0")}
+    monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
+
+    sampled_calls: list[int] = []
+    orig = panel._sampled_fit_curves
+    monkeypatch.setattr(
+        panel,
+        "_sampled_fit_curves",
+        lambda *a, **k: (sampled_calls.append(1), orig(*a, **k))[1],
+    )
+
+    # Cache present (non-None) but missing A0 — as after a worker that produced
+    # nothing for it, or the error path's empty cache.
+    panel._precomputed_trend_curves = {}
+    panel._trend_cache_sig = panel._trend_overlay_signature(panel._active_overlay_params())
+    panel._draw_plot()
+
+    assert sampled_calls == [], "must not sample the model inline when a cache is present"

@@ -164,6 +164,7 @@ from asymmetry.gui.ui_manager import (
     UIManager,
 )
 from asymmetry.gui.widgets.dock_header import DockHeader
+from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
@@ -448,6 +449,14 @@ class MainWindow(QMainWindow):
         self._project_save_active = False  # True while a background save is writing
         self._fourier_compute_active = False  # True while a background FFT runs
         self._fourier_phase_estimate_active = False  # True while auto-phase runs
+        # In-flight (run, rep) lazy-FFT recompute keys: coalesce duplicate
+        # requests and, via the _frequency_recompute_active property, drive the
+        # overlay/idle state. _frequency_recompute_limits keeps the latest
+        # requested view limits per key (so a re-request refreshes them), and
+        # _frequency_display_key (the displayed (run, rep)) guards stale redraws.
+        self._frequency_recompute_inflight: set[tuple[int, RepresentationType]] = set()
+        self._frequency_recompute_limits: dict[tuple[int, RepresentationType], tuple] = {}
+        self._frequency_display_key: tuple[int, RepresentationType] | None = None
         # Set when a project open is cancelled mid-prefetch: the loaded set is
         # known-incomplete, so saving would silently drop the unloaded runs.
         self._project_load_incomplete = False
@@ -1139,6 +1148,9 @@ class MainWindow(QMainWindow):
             self._frequency_plot_panel = PlotPanel(domain="frequency")
         except TypeError:
             self._frequency_plot_panel = PlotPanel()
+        # Covers the frequency plot while a lazy FFT recompute is in flight, so
+        # the panel never shows a half-populated spectrum as if it were final.
+        self._frequency_overlay = LoadingOverlay(self._frequency_plot_panel)
         if hasattr(self._plot_panel, "set_decimation_enabled"):
             self._plot_panel.set_decimation_enabled(
                 self._plot_decimation_is_enabled(),
@@ -4964,28 +4976,13 @@ class MainWindow(QMainWindow):
                     # unviewed run's snapshot still round-trips through save.
                     self._pending_recipe_recompute.add((int(run_number), rep_type))
 
-    def _ensure_frequency_spectra_for_run(
-        self,
-        run_number: int | None,
-        rep_type: RepresentationType,
-    ) -> list:
-        """Return spectra for *run_number*, computing from its recipe on demand.
+    def _ensure_recompute_tracking(self) -> tuple[set, set]:
+        """Return the ``(pending, failures)`` lazy-recompute bookkeeping sets.
 
-        The lazy counterpart of the old recompute-everything-on-load: a cache
-        miss with a stored recipe recomputes just that run's spectrum (an FFT —
-        milliseconds). MaxEnt keeps its explicit-run-only contract
-        (``recompute_on_load`` is false), so a missing MaxEnt spectrum stays
-        missing until the user runs it. A recipe that fails to recompute is
-        logged and remembered so view syncs don't retry it forever; an
-        explicit recompute (Compute FFT) clears the marker via
-        :meth:`_store_frequency_spectra_for_run`.
+        Both are created by :meth:`_restore_frequency_representations` /
+        :meth:`_clear_all_state`, but a view sync can fire before either runs,
+        so initialise defensively and return the canonical instances.
         """
-        if run_number is None:
-            return []
-        run_number = int(run_number)
-        cache = self._frequency_cache(rep_type)
-        cached = list(cache.get(run_number, []))
-        key = (run_number, rep_type)
         pending = getattr(self, "_pending_recipe_recompute", None)
         if pending is None:
             pending = set()
@@ -4994,62 +4991,169 @@ class MainWindow(QMainWindow):
         if failures is None:
             failures = set()
             self._lazy_recompute_failures = failures
+        return pending, failures
 
+    @property
+    def _frequency_recompute_active(self) -> bool:
+        """True while any lazy FFT recompute is in flight (derived state).
+
+        Single source of truth is :attr:`_frequency_recompute_inflight`; deriving
+        the flag avoids the two drifting out of sync.
+        """
+        return bool(getattr(self, "_frequency_recompute_inflight", None))
+
+    def _frequency_recompute_target(
+        self,
+        run_number: int | None,
+        rep_type: RepresentationType,
+    ) -> tuple[object, object] | None:
+        """Return ``(representation, run)`` when a heavy recipe recompute is due.
+
+        Side-effect free, GUI-thread only. This is the single source of truth
+        for "would recomputing this run's spectrum run :meth:`compute`?", shared
+        by the synchronous :meth:`_ensure_frequency_spectra_for_run` and the
+        async view path in :meth:`_sync_frequency_plot_for_run` — so neither
+        recomputes when the other would not, and the view path can route the
+        work off-thread instead of blocking. Returns ``None`` for cache hits,
+        known failures, missing/opt-out representations, an already-computed
+        primary, or an unloaded run.
+        """
+        if run_number is None:
+            return None
+        run_number = int(run_number)
+        cache = self._frequency_cache(rep_type)
+        cached = cache.get(run_number, [])
+        key = (run_number, rep_type)
+        pending, failures = self._ensure_recompute_tracking()
         # A cache hit short-circuits unless this run is still pending its
-        # one-time recipe recompute (where the cache holds only the legacy
-        # snapshot that the recipe should supersede).
+        # one-time recipe recompute (cache holds only the legacy snapshot the
+        # recipe should supersede).
         if cached and key not in pending:
-            return cached
+            return None
         if key in failures:
-            # Recipe already failed this session; fall back to the snapshot if
-            # we kept one, else nothing.
-            return cached
+            return None
+        container = self._project_model.datasets.get(run_number)
+        representation = container.get(rep_type) if container is not None else None
+        if representation is None or not representation.recompute_on_load:
+            return None
+        if representation.primary is not None:
+            return None
+        dataset = (
+            self._data_browser.get_dataset(run_number)
+            if hasattr(self._data_browser, "get_dataset")
+            else None
+        )
+        run = getattr(dataset, "run", None)
+        if run is None:
+            # Run not loaded (e.g. its file was skipped). A later load may make
+            # it computable; keep the pending marker and don't mark a failure.
+            return None
+        return representation, run
 
+    def _frequency_spectra_from_cache(
+        self,
+        run_number: int,
+        rep_type: RepresentationType,
+    ) -> list:
+        """Promote a freshly-computed primary into the cache and return spectra.
+
+        Called after :meth:`_frequency_recompute_target` declined (no heavy work
+        due) or after a recompute has populated ``representation.primary``. A
+        present primary supersedes any legacy snapshot and clears the pending
+        marker; otherwise the stored snapshot (or nothing) is returned.
+        """
+        cache = self._frequency_cache(rep_type)
+        key = (run_number, rep_type)
+        pending, _failures = self._ensure_recompute_tracking()
+        cached = cache.get(run_number, [])
+        # Plain cache hit already resolved (not awaiting a one-time recipe
+        # recompute): return the stored list untouched. Promoting [primary]
+        # here would truncate a multi-element cached spectra list.
+        if cached and key not in pending:
+            return list(cached)
         container = self._project_model.datasets.get(run_number)
         representation = container.get(rep_type) if container is not None else None
         if representation is None or not representation.recompute_on_load:
             pending.discard(key)
-            return cached
-        if representation.primary is None:
-            dataset = (
-                self._data_browser.get_dataset(run_number)
-                if hasattr(self._data_browser, "get_dataset")
-                else None
-            )
-            run = getattr(dataset, "run", None)
-            if run is None:
-                # Run not loaded (e.g. its file was skipped). Keep any legacy
-                # snapshot as the fallback and leave the recompute pending —
-                # a later load may make it computable. Don't mark a failure.
-                return cached
-            started_at = time.perf_counter()
-            try:
-                representation.ensure_computed(run)
-            except Exception as exc:  # noqa: BLE001 - a bad recipe must not break view sync
-                representation.invalidate()
-                pending.discard(key)
-                if cached:
-                    # The recipe no longer reproduces, but the saved snapshot
-                    # is still valid — fall back to it rather than blank out.
-                    self._log_panel.log(
-                        f"WARNING: saved {self._frequency_status_name(rep_type)} recipe for "
-                        f"run {run_number} no longer recomputes ({exc}); showing the stored "
-                        "spectrum. Recompute to refresh it."
-                    )
-                    return cached
-                failures.add(key)
-                self._log_panel.log(
-                    f"WARNING: could not recompute the saved "
-                    f"{self._frequency_status_name(rep_type)} spectrum for run "
-                    f"{run_number} from its recipe: {exc}"
-                )
-                return []
-            self._log_perf_event("lazy_spectrum_recompute", started_at, run=run_number)
-        if representation.primary is None:
-            return cached
+            return list(cache.get(run_number, []))
+        if representation.primary is not None:
+            pending.discard(key)
+            cache[run_number] = [representation.primary]
+            return [representation.primary]
+        return list(cache.get(run_number, []))
+
+    def _frequency_recompute_failed(
+        self,
+        run_number: int,
+        rep_type: RepresentationType,
+        representation: object,
+        exc: object,
+    ) -> list:
+        """Handle a recipe recompute that raised; return the fallback spectra.
+
+        Shared by the synchronous and async paths so the snapshot-fallback,
+        failure-marking and warning text stay single-sourced.
+        """
+        representation.invalidate()
+        pending, failures = self._ensure_recompute_tracking()
+        key = (run_number, rep_type)
         pending.discard(key)
-        cache[run_number] = [representation.primary]
-        return [representation.primary]
+        cached = list(self._frequency_cache(rep_type).get(run_number, []))
+        name = self._frequency_status_name(rep_type)
+        if cached:
+            # The recipe no longer reproduces, but the saved snapshot is still
+            # valid — fall back to it rather than blank out.
+            self._log_panel.log(
+                f"WARNING: saved {name} recipe for run {run_number} no longer "
+                f"recomputes ({exc}); showing the stored spectrum. Recompute to refresh it."
+            )
+            return cached
+        failures.add(key)
+        self._log_panel.log(
+            f"WARNING: could not recompute the saved {name} spectrum for run "
+            f"{run_number} from its recipe: {exc}"
+        )
+        return []
+
+    def _ensure_frequency_spectra_for_run(
+        self,
+        run_number: int | None,
+        rep_type: RepresentationType,
+    ) -> list:
+        """Return spectra for *run_number*, computing from its recipe on demand.
+
+        The lazy counterpart of the old recompute-everything-on-load: a cache
+        miss with a stored recipe recomputes just that run's spectrum. This is
+        the **synchronous** path used by non-view callers (spectral-moments
+        send-to-trend, apply-Fourier-to-selection) that need the result inline.
+        The plot view path uses the async recompute in
+        :meth:`_sync_frequency_plot_for_run`, which shares
+        :meth:`_frequency_recompute_target` so a project open never blocks the
+        GUI thread on an FFT. MaxEnt keeps its explicit-run-only contract
+        (``recompute_on_load`` is false). A recipe that fails to recompute is
+        logged and remembered so view syncs don't retry it forever; an explicit
+        recompute (Compute FFT) clears the marker via
+        :meth:`_store_frequency_spectra_for_run`.
+        """
+        if run_number is None:
+            return []
+        run_number = int(run_number)
+        target = self._frequency_recompute_target(run_number, rep_type)
+        if target is None:
+            return self._frequency_spectra_from_cache(run_number, rep_type)
+        if (run_number, rep_type) in self._frequency_recompute_inflight:
+            # An async view recompute for this run is already running off-thread;
+            # don't start a second, concurrent compute on the same representation.
+            # Return what is cached now — the async completion will populate it.
+            return self._frequency_spectra_from_cache(run_number, rep_type)
+        representation, run = target
+        started_at = time.perf_counter()
+        try:
+            representation.ensure_computed(run)
+        except Exception as exc:  # noqa: BLE001 - a bad recipe must not break view sync
+            return self._frequency_recompute_failed(run_number, rep_type, representation, exc)
+        self._log_perf_event("lazy_spectrum_recompute", started_at, run=run_number)
+        return self._frequency_spectra_from_cache(run_number, rep_type)
 
     def _serialize_frequency_spectra_state(self) -> dict[str, list[dict[str, object]]]:
         """Return a serializable snapshot of cached Fourier spectra."""
@@ -5142,6 +5246,9 @@ class MainWindow(QMainWindow):
                 preserved_y_limits = (float(y_min), float(y_max))
 
         if run_number is None:
+            # Record that nothing is displayed so an async recompute completing
+            # for a switched-away run does not redraw over the current view.
+            self._frequency_display_key = None
             self._frequency_plot_panel.clear()
             if preserved_x_limits is not None and preserved_y_limits is not None:
                 self._frequency_plot_panel.set_view_limits(
@@ -5154,7 +5261,35 @@ class MainWindow(QMainWindow):
             return
 
         rep_type = self._active_frequency_rep_type()
-        spectra = self._ensure_frequency_spectra_for_run(int(run_number), rep_type)
+        # Record the displayed (run, rep) so a completing recompute for a
+        # switched-away run *or representation* (e.g. FFT finishing after the
+        # user toggled to MaxEnt) does not redraw over the current view.
+        self._frequency_display_key = (int(run_number), rep_type)
+        target = self._frequency_recompute_target(int(run_number), rep_type)
+        if target is None:
+            # Nothing heavy to do (cache hit, snapshot, or not recomputable):
+            # resolve from the cache — it cannot block — and render now. Calling
+            # the cache helper directly avoids re-evaluating the target.
+            spectra = self._frequency_spectra_from_cache(int(run_number), rep_type)
+            self._render_frequency_spectra(
+                int(run_number), rep_type, spectra, preserved_x_limits, preserved_y_limits
+            )
+            return
+        # A recipe recompute (an FFT) is due: run it off the GUI thread behind
+        # the panel overlay so the window stays responsive on project open.
+        self._start_async_frequency_recompute(
+            int(run_number), rep_type, target, preserved_x_limits, preserved_y_limits
+        )
+
+    def _render_frequency_spectra(
+        self,
+        run_number: int,
+        rep_type: RepresentationType,
+        spectra: list,
+        preserved_x_limits: tuple[float, float] | None,
+        preserved_y_limits: tuple[float, float] | None,
+    ) -> None:
+        """Draw *spectra* (or clear + status when empty) on the frequency tab."""
         if not spectra:
             self._frequency_plot_panel.clear()
             if preserved_x_limits is not None and preserved_y_limits is not None:
@@ -5195,6 +5330,114 @@ class MainWindow(QMainWindow):
             self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
             self._set_frequency_fit_datasets_for_selection()
         self._refresh_spectral_moments()
+
+    def _start_async_frequency_recompute(
+        self,
+        run_number: int,
+        rep_type: RepresentationType,
+        target: tuple[object, object],
+        preserved_x_limits: tuple[float, float] | None,
+        preserved_y_limits: tuple[float, float] | None,
+    ) -> None:
+        """Recompute one run's spectrum off-thread, overlaying the panel."""
+        representation, run = target
+        key = (run_number, rep_type)
+        name = self._frequency_status_name(rep_type)
+        # Always record the latest requested view limits for this key, so a
+        # duplicate request (run switched away and back) refreshes them even when
+        # an earlier recompute is still in flight; the completion reads them here.
+        self._frequency_recompute_limits[key] = (preserved_x_limits, preserved_y_limits)
+        # Overlay + status reflect the just-requested run even if an earlier
+        # run's recompute is still finishing.
+        self._frequency_overlay.show_message(f"Computing {name} for run {run_number}…")
+        self._set_status_state(f"Computing {name}…")
+        if key in self._frequency_recompute_inflight:
+            # This exact run/rep is already recomputing; the overlay + refreshed
+            # limits above are enough.
+            return
+        self._frequency_recompute_inflight.add(key)
+        started_at = time.perf_counter()
+        # compute() is pure (returns curves; mutates nothing), so it is safe to
+        # run on the worker thread; the result is promoted into the shared
+        # representation back on the GUI thread in the completion handler.
+        self._tasks.start(
+            lambda _worker: representation.compute(run),
+            on_finished=lambda spectra: self._on_frequency_recompute_finished(
+                run_number, rep_type, representation, spectra, started_at
+            ),
+            on_error=lambda message: self._on_frequency_recompute_error(
+                run_number, rep_type, representation, message
+            ),
+        )
+
+    def _finish_frequency_recompute_ui(self) -> None:
+        """Drop the overlay/status once no frequency recompute remains."""
+        if not self._frequency_recompute_inflight:
+            self._frequency_overlay.hide()
+        self._clear_status_state_if_idle()
+
+    def _revert_to_time_if_frequency_empty(self) -> None:
+        """Fall back to the time view when the frequency view has no content.
+
+        Skipped while a recompute is in flight — the content is still coming, so
+        the async completion handler re-runs this once the result has landed (or
+        confirmed empty).
+        """
+        if (
+            self._plot_workspace.active_domain() == "frequency"
+            and not self._frequency_recompute_active
+            and hasattr(self._frequency_plot_panel, "has_plot_content")
+            and not self._frequency_plot_panel.has_plot_content()
+        ):
+            self._plot_workspace.set_active_domain("time")
+
+    def _on_frequency_recompute_finished(
+        self,
+        run_number: int,
+        rep_type: RepresentationType,
+        representation: object,
+        spectra: object,
+        started_at: float,
+    ) -> None:
+        key = (run_number, rep_type)
+        self._frequency_recompute_inflight.discard(key)
+        preserved_x_limits, preserved_y_limits = self._frequency_recompute_limits.pop(
+            key, (None, None)
+        )
+        # Promote the worker-computed curves into the shared representation on
+        # the GUI thread, then let the cache helper cache + clear pending.
+        representation.cache_datasets(list(spectra) if spectra else [])
+        resolved = self._frequency_spectra_from_cache(run_number, rep_type)
+        self._lazy_recompute_failures.discard(key)
+        self._log_perf_event("lazy_spectrum_recompute", started_at, run=run_number)
+        self._finish_frequency_recompute_ui()
+        # Only redraw if this exact (run, rep) is still displayed — a rapid run
+        # switch or representation toggle may have moved on while in flight.
+        if self._frequency_display_key == key:
+            self._render_frequency_spectra(
+                run_number, rep_type, resolved, preserved_x_limits, preserved_y_limits
+            )
+            self._revert_to_time_if_frequency_empty()
+
+    def _on_frequency_recompute_error(
+        self,
+        run_number: int,
+        rep_type: RepresentationType,
+        representation: object,
+        message: str,
+    ) -> None:
+        key = (run_number, rep_type)
+        self._frequency_recompute_inflight.discard(key)
+        preserved_x_limits, preserved_y_limits = self._frequency_recompute_limits.pop(
+            key, (None, None)
+        )
+        spectra = self._frequency_recompute_failed(run_number, rep_type, representation, message)
+        self._finish_frequency_recompute_ui()
+        if self._frequency_display_key == key:
+            self._render_frequency_spectra(
+                run_number, rep_type, spectra, preserved_x_limits, preserved_y_limits
+            )
+            self._revert_to_time_if_frequency_empty()
 
     # ── spectral moments ───────────────────────────────────────────────────
 
@@ -8589,6 +8832,7 @@ class MainWindow(QMainWindow):
             self._maxent_active
             or self._fourier_compute_active
             or self._fourier_phase_estimate_active
+            or self._frequency_recompute_active
             or self._project_save_active
         ):
             self._set_status_state("Idle")
@@ -9527,12 +9771,10 @@ class MainWindow(QMainWindow):
                             float(y_min),
                             float(y_max),
                         )
-        if (
-            self._plot_workspace.active_domain() == "frequency"
-            and hasattr(self._frequency_plot_panel, "has_plot_content")
-            and not self._frequency_plot_panel.has_plot_content()
-        ):
-            self._plot_workspace.set_active_domain("time")
+        # If the frequency view is active but empty, fall back to the time view.
+        # When a lazy recompute is in flight the content is still coming, so the
+        # async completion handler re-runs this check once the result lands.
+        self._revert_to_time_if_frequency_empty()
 
         # Propagate current dataset to fit panel.
         if current_dataset is not None:
@@ -9707,6 +9949,13 @@ class MainWindow(QMainWindow):
         }
         self._lazy_recompute_failures = set()
         self._pending_recipe_recompute = set()
+        # Drop any stale in-flight recompute bookkeeping; a cleared session has
+        # nothing displayed and the overlay must not survive into it.
+        self._frequency_recompute_inflight = set()
+        self._frequency_recompute_limits = {}
+        self._frequency_display_key = None
+        if hasattr(self, "_frequency_overlay"):
+            self._frequency_overlay.hide()
         self._maxent_state_by_run = {}
         self._maxent_panel_state_by_run = {}
         self._fourier_group_phase_state_by_run = {}
@@ -9792,6 +10041,11 @@ class MainWindow(QMainWindow):
         fit_panel = getattr(self, "_fit_panel", None)
         if fit_panel is not None and hasattr(fit_panel, "shutdown_workers"):
             fit_panel.shutdown_workers()
+        # Trend-curve recompute worker in the fit-parameters panel (a docked
+        # widget, so its own closeEvent never fires — shut it down here).
+        params_panel = getattr(self, "_fit_parameters_panel", None)
+        if params_panel is not None and hasattr(params_panel, "shutdown_workers"):
+            params_panel.shutdown_workers()
         if hasattr(self, "_plot_panel") and hasattr(self._plot_panel, "get_view_limits"):
             x_min, x_max, y_min, y_max = self._plot_panel.get_view_limits()
             self._settings.setValue("plot/time_x_min", float(x_min))

@@ -138,6 +138,7 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "tests/test_gui_panels_basic.py" = ["E402"]
 "tests/test_gui_shell.py" = ["E402"]
 "tests/test_latex_renderer.py" = ["E402"]
+"tests/test_loading_overlay.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/test_mainwindow_additional.py" = ["E402"]
 "tests/test_mainwindow_phase4_inspector.py" = ["E402"]
 "tests/test_mainwindow_toolbar_styles.py" = ["E402"]

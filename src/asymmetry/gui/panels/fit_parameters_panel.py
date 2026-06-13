@@ -67,9 +67,16 @@ from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDi
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles.widgets import apply_param_table_style, style_group_state_button
+from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
+from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
+
+#: Sentinel distinguishing "x_domain not provided" (GUI callers — read it live
+#: from the rows) from an explicitly-passed snapshot that may itself be ``None``
+#: (the off-thread worker — must never read ``self`` for it).
+_UNSET = object()
 
 
 def _format_param_label(name: str) -> str:
@@ -235,6 +242,32 @@ class FitParametersPanel(QWidget):
         #: :meth:`load_representation_series` + ``series_selection_changed``).
         self._series_run_numbers: dict[str, list[int]] = {}
 
+        # Background machinery for the trend-overlay model evaluation, which runs
+        # model.function (and optional components) per fit range over an 800-pt
+        # axis and would otherwise block the GUI thread when a saved project's
+        # trend fits are drawn on open.
+        self._tasks = TaskRunner(self)
+        self._trend_curve_compute_active = False
+        #: The (active, sig) of a recompute requested while one was already in
+        #: flight; a burst of refreshes collapses to this single rerun, dispatched
+        #: once the running compute finishes. ``None`` means nothing pending.
+        self._pending_trend_request: tuple[list[str], tuple] | None = None
+        #: Cache of computed overlay curves —
+        #: ``{param_name: [(range_index, xs, ys, components_or_None), ...]}`` —
+        #: reused for pure-render redraws (log/scale/plot-mode toggles) and
+        #: recomputed off-thread only when :attr:`_trend_cache_sig` changes.
+        self._precomputed_trend_curves: dict[str, list] | None = None
+        #: Signature (x-key, show-components, rows identity, per-param fit
+        #: identity) the cache was computed for; a mismatch triggers an async
+        #: recompute. ``None`` forces the first compute.
+        self._trend_cache_sig: tuple | None = None
+        #: Suppresses synchronous plot draws while a bulk state change (project
+        #: restore) is in progress — every intermediate trigger (checkbox
+        #: setChecked signals, group-selection sync) would otherwise evaluate the
+        #: trend overlay inline on the GUI thread. The bulk operation issues a
+        #: single async recompute when it finishes.
+        self._suspend_plot_refresh = False
+
         layout = QVBoxLayout(self)
 
         controls_group = QGroupBox("Parameter settings")
@@ -387,8 +420,11 @@ class FitParametersPanel(QWidget):
             self._canvas.mpl_connect("button_press_event", self._on_plot_button_press)
             self._canvas.mpl_connect("motion_notify_event", self._on_plot_motion)
             self._canvas.mpl_connect("button_release_event", self._on_plot_button_release)
+            # Covers the trend plot while its overlay curves recompute off-thread.
+            self._trend_overlay: LoadingOverlay | None = LoadingOverlay(self._canvas)
         except ImportError:
             plot_layout.addWidget(QLabel("matplotlib not installed - plotting disabled"), 1)
+            self._trend_overlay = None
 
         self._plot_export_bar = QWidget(self._plot_group)
         export_row = QHBoxLayout(self._plot_export_bar)
@@ -514,6 +550,24 @@ class FitParametersPanel(QWidget):
         }
 
     def restore_state(self, state: dict) -> None:
+        # Suppress the heavy synchronous plot draws each intermediate restore step
+        # would otherwise trigger (checkbox setChecked signals, group-selection
+        # sync); a single off-thread recompute runs at the end. try/finally
+        # guarantees the guard clears even if a malformed project raises mid-way,
+        # so the plot is never left permanently suspended.
+        self._suspend_plot_refresh = True
+        try:
+            self._restore_state_locked(state)
+        finally:
+            self._suspend_plot_refresh = False
+        # The table is cheap; _refresh_plot routes the heavy overlay curves
+        # (model eval per fit range over an 800-pt axis — e.g. DiffusionLF_2D runs
+        # scipy quadrature per sample) onto a worker behind the overlay, so a
+        # saved project's trend fits don't block the GUI thread on open.
+        self._refresh_table()
+        self._refresh_plot()
+
+    def _restore_state_locked(self, state: dict) -> None:
         rows_data = state.get("rows", [])
         self._composite_parameters = self._deserialize_composite_parameters(
             state.get("composite_parameters", [])
@@ -668,7 +722,6 @@ class FitParametersPanel(QWidget):
                 self._plot_mode_combo.setCurrentIndex(idx)
 
         self._update_x_axis_auto_hint()
-        self._refresh_views()
 
     def set_fit_results(
         self,
@@ -2889,22 +2942,48 @@ class FitParametersPanel(QWidget):
         show_components = self._show_components_check.isChecked()
         component_colors = ["#8ecae6", "#90be6d", "#f4a261", "#e5989b", "#bdb2ff", "#ffd166"]
 
-        curves = self._sampled_fit_curves(
-            param_name,
-            x_key=fit.x_key,
-            num_points=_PARAMETER_FIT_CURVE_SAMPLE_COUNT,
-        )
+        # Consume the off-thread cache when present. A missing key means the
+        # worker produced no curves for this param — draw nothing rather than
+        # re-evaluating the (possibly very slow) model on the GUI thread, which
+        # would defeat the off-thread design and re-run on every redraw.
+        if self._precomputed_trend_curves is not None:
+            precomputed = self._precomputed_trend_curves.get(param_name) or []
+            curves = [(ri, xs, ys) for (ri, xs, ys, _comp) in precomputed]
+            components_by_range = {ri: comp for (ri, _xs, _ys, comp) in precomputed}
+        else:
+            # No cache yet (defensive: the _refresh_plot router only reaches
+            # _draw_plot with active overlays once the cache is populated).
+            curves = self._sampled_fit_curves(
+                param_name,
+                x_key=fit.x_key,
+                num_points=_PARAMETER_FIT_CURVE_SAMPLE_COUNT,
+            )
+            components_by_range = None
+
         for idx, (range_index, xs, ys) in enumerate(curves):
             line_color = _fit_overlay_color(idx) if len(curves) > 1 else color
 
-            if show_components and range_index < len(fit.ranges):
-                fit_range = fit.ranges[range_index]
-                result = fit_range.result
-                if result is not None and result.success:
-                    kwargs = {p.name: p.value for p in result.parameters}
-                    components = fit_range.model.evaluate_components(
-                        xs, additive_only=True, **kwargs
-                    )
+            if show_components:
+                if components_by_range is not None:
+                    # Precompute path: components already evaluated off-thread;
+                    # use them directly and never read the (possibly-changed)
+                    # live fit.ranges, so a stale index can't mismatch.
+                    components = components_by_range.get(range_index)
+                elif range_index < len(fit.ranges):
+                    components = None
+                    fit_range = fit.ranges[range_index]
+                    result = fit_range.result
+                    if result is not None and result.success:
+                        kwargs = {p.name: p.value for p in result.parameters}
+                        try:
+                            components = fit_range.model.evaluate_components(
+                                xs, additive_only=True, **kwargs
+                            )
+                        except Exception:  # noqa: BLE001 - bad model → skip components, keep curve
+                            components = None
+                else:
+                    components = None
+                if components is not None:
                     ordered_components = self._ordered_components_for_stacking(components)
                     cumulative = np.zeros_like(xs, dtype=float)
                     for cidx, (_cname, comp_y) in enumerate(ordered_components):
@@ -2962,7 +3041,57 @@ class FitParametersPanel(QWidget):
         scored.sort(key=lambda t: (t[0], t[1], t[2], t[3]))
         return [item for *_meta, item in scored]
 
+    def _active_overlay_params(self) -> list[str]:
+        """Selected y-parameters that have an active model-fit overlay to draw."""
+        x_key = self._effective_x_key()
+        return [
+            name
+            for name in self._selected_y_parameters()
+            if (fit := self._model_fits.get(name)) is not None and fit.active and fit.x_key == x_key
+        ]
+
+    def _trend_overlay_signature(self, active: list[str]) -> tuple:
+        """Inputs the overlay curves depend on; a change invalidates the cache.
+
+        Captures the x-axis key, the show-components flag, the data sampling
+        domain (the span for open-ended fit ranges — taken as a value, not as
+        ``id(self._rows)``, because composite-parameter edits mutate row values
+        in place without replacing the rows list), and each active fit's object
+        identity (fits are *replaced*, not mutated, on edit/re-fit). Pure-render
+        toggles (log scale, plot mode, share-x) leave this unchanged, so they
+        redraw from the cache instead of re-evaluating the model.
+        """
+        x_key = self._effective_x_key()
+        return (
+            x_key,
+            bool(self._show_components_check.isChecked()),
+            self._x_domain_for_sampling(x_key),
+            tuple((name, id(self._model_fits.get(name))) for name in active),
+        )
+
     def _refresh_plot(self) -> None:
+        """Redraw the trend plot, recomputing overlay curves off-thread if stale.
+
+        Routing entry point: the scatter is cheap, but the model-fit overlays can
+        be very slow (e.g. DiffusionLF_2D runs scipy quadrature per sample). When
+        the overlay inputs changed since the cache was built, recompute them on a
+        worker behind the overlay; otherwise (pure-render toggles, or no active
+        overlays) draw synchronously now.
+        """
+        if not self._has_mpl:
+            return
+        if self._suspend_plot_refresh:
+            # A bulk state change (project restore) is in progress; it issues a
+            # single recompute when done. Skip the intermediate draw.
+            return
+        active = self._active_overlay_params()
+        sig = self._trend_overlay_signature(active)
+        if active and sig != self._trend_cache_sig:
+            self._start_trend_curve_compute(active, sig)
+            return
+        self._draw_plot()
+
+    def _draw_plot(self) -> None:
         if not self._has_mpl:
             return
 
@@ -3507,7 +3636,17 @@ class FitParametersPanel(QWidget):
         fit_range: ModelFitRange,
         x_key: str,
         num_points: int = _PARAMETER_FIT_CURVE_SAMPLE_COUNT,
+        *,
+        x_domain: object = _UNSET,
     ) -> tuple[np.ndarray, np.ndarray] | None:
+        """Sample one fit range's overlay curve.
+
+        ``x_domain`` lets the off-thread trend recompute pass a GUI-thread
+        snapshot of the data x-range. When it is omitted (``_UNSET``) the
+        GUI-thread callers read it live from the rows; when passed explicitly
+        (even as ``None``) the snapshot is used as-is, so the worker thread never
+        touches ``self._rows``.
+        """
         result = fit_range.result
         if result is None or not result.success:
             return None
@@ -3519,7 +3658,7 @@ class FitParametersPanel(QWidget):
         except ValueError:
             return None
         if x_min is None or x_max is None:
-            domain = self._x_domain_for_sampling(x_key)
+            domain = self._x_domain_for_sampling(x_key) if x_domain is _UNSET else x_domain
             if domain is None:
                 return None
             if x_min is None:
@@ -3567,6 +3706,139 @@ class FitParametersPanel(QWidget):
             xs, ys = sampled
             curves.append((idx, xs, ys))
         return curves
+
+    def _compute_trend_curves(
+        self,
+        model_fits: dict,
+        x_key: str,
+        x_domain: tuple[float, float] | None,
+        y_params: list[str],
+        show_components: bool,
+        num_points: int = _PARAMETER_FIT_CURVE_SAMPLE_COUNT,
+    ) -> dict[str, list]:
+        """Sample the model-fit overlay curves for *y_params* (worker-thread safe).
+
+        Pure: operates only on the passed snapshots (model_fits / x_key / x_domain)
+        — no widget reads — so the trend recompute can run off the GUI thread.
+        Returns ``{param_name: [(range_index, xs, ys, components_or_None), ...]}``
+        for :meth:`_draw_model_overlay_mpl` to consume.
+        """
+        result: dict[str, list] = {}
+        for param_name in y_params:
+            # Isolate per-parameter failures: a single bad model must not raise
+            # out of the worker (which would blank *every* overlay via on_error).
+            try:
+                fit = model_fits.get(param_name)
+                if fit is None or not fit.active or fit.x_key != x_key:
+                    continue
+                ranges_out: list = []
+                for idx, fit_range in enumerate(fit.ranges):
+                    sampled = self._sample_fit_range_curve(
+                        fit_range, x_key=x_key, num_points=num_points, x_domain=x_domain
+                    )
+                    if sampled is None:
+                        continue
+                    xs, ys = sampled
+                    components = None
+                    fit_result = fit_range.result
+                    if show_components and fit_result is not None and fit_result.success:
+                        kwargs = {p.name: p.value for p in fit_result.parameters}
+                        try:
+                            components = fit_range.model.evaluate_components(
+                                xs, additive_only=True, **kwargs
+                            )
+                        except Exception:  # noqa: BLE001 - bad model → no components, keep curve
+                            components = None
+                    ranges_out.append((idx, xs, ys, components))
+            except Exception:  # noqa: BLE001 - skip this parameter, keep the others
+                continue
+            if ranges_out:
+                result[param_name] = ranges_out
+        return result
+
+    def _start_trend_curve_compute(
+        self, active: list[str] | None = None, sig: tuple | None = None
+    ) -> None:
+        """Recompute the *active* overlay curves off-thread behind the overlay.
+
+        Called by :meth:`_refresh_plot` when the overlay cache is stale. ``active``
+        / ``sig`` are passed in to avoid recomputing them; when omitted (a direct
+        force-recompute) they are derived here.
+        """
+        if not self._has_mpl:
+            return
+        if active is None:
+            active = self._active_overlay_params()
+        if sig is None:
+            sig = self._trend_overlay_signature(active)
+        if not active:
+            # Nothing heavy to draw. Drop any stale overlay from an earlier
+            # in-flight compute, mark the (empty) cache current, and draw now.
+            if self._trend_overlay is not None:
+                self._trend_overlay.hide()
+            self._precomputed_trend_curves = None
+            self._trend_cache_sig = sig
+            self._draw_plot()
+            return
+        if self._trend_curve_compute_active:
+            # A compute is already running; fold this request into a single
+            # rerun carrying the latest (active, sig).
+            self._pending_trend_request = (active, sig)
+            return
+        # Snapshot everything the worker needs so it never reads GUI state that a
+        # concurrent edit could mutate.
+        model_fits = dict(self._model_fits)
+        x_key = self._effective_x_key()
+        x_domain = self._x_domain_for_sampling(x_key)
+        show_components = self._show_components_check.isChecked()
+        if self._trend_overlay is not None:
+            self._trend_overlay.show_message("Computing trend curves…")
+        self._trend_curve_compute_active = True
+        self._tasks.start(
+            lambda _worker: self._compute_trend_curves(
+                model_fits, x_key, x_domain, active, show_components
+            ),
+            on_finished=lambda curves: self._on_trend_curves_ready(curves, sig),
+            on_error=lambda message: self._on_trend_curves_error(message, sig),
+        )
+
+    def _redispatch_pending_trend_compute(self) -> bool:
+        """If a recompute was requested mid-flight, start it now. Returns True then."""
+        request = self._pending_trend_request
+        if request is None:
+            return False
+        self._pending_trend_request = None
+        self._start_trend_curve_compute(*request)
+        return True
+
+    def _on_trend_curves_ready(self, curves: object, sig: tuple) -> None:
+        self._trend_curve_compute_active = False
+        if self._redispatch_pending_trend_compute():
+            # Inputs changed mid-compute; this result is stale — skip drawing it.
+            return
+        if self._trend_overlay is not None:
+            self._trend_overlay.hide()
+        # Cache the curves (keyed by the signature they were computed for) so
+        # pure-render redraws reuse them instead of re-evaluating the model.
+        self._precomputed_trend_curves = curves if isinstance(curves, dict) else {}
+        self._trend_cache_sig = sig
+        self._draw_plot()
+
+    def _on_trend_curves_error(self, message: str, sig: tuple) -> None:
+        self._trend_curve_compute_active = False
+        if self._redispatch_pending_trend_compute():
+            return
+        if self._trend_overlay is not None:
+            self._trend_overlay.hide()
+        # Draw the data points without overlay curves; mark the (empty) cache
+        # current so the failure isn't retried on every redraw for this signature.
+        self._precomputed_trend_curves = {}
+        self._trend_cache_sig = sig
+        self._draw_plot()
+
+    def shutdown_workers(self) -> None:
+        """Cancel and join the trend-curve recompute worker (called on close)."""
+        self._tasks.shutdown()
 
     def _write_fit_files(
         self, gle_path: Path, x_key: str, y_params: list[str]

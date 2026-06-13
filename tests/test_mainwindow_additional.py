@@ -43,6 +43,19 @@ def _compute_fourier_sync(window: MainWindow, timeout_s: float = 15.0) -> None:
     )
 
 
+def _wait_frequency_idle(window: MainWindow, timeout_s: float = 15.0) -> None:
+    """Block until any lazy FFT recompute (project open / run switch) lands.
+
+    The frequency view path recomputes a restored run's spectrum off the GUI
+    thread behind the panel overlay; spin the loop until the busy flag clears.
+    """
+    wait_for(
+        lambda: not window._frequency_recompute_active,
+        QApplication.instance(),
+        timeout_s=timeout_s,
+    )
+
+
 @pytest.fixture(scope="module")
 def qapp() -> QApplication:
     """Ensure a QApplication exists for widget tests."""
@@ -504,6 +517,9 @@ class TestMainWindowFourier:
         assert 8821 not in mainwindow._frequency_spectra_by_run
 
         mainwindow._sync_frequency_plot_for_run(8821)
+        # The view path now recomputes off-thread behind the overlay; wait for
+        # it to land before asserting the cache is warm.
+        _wait_frequency_idle(mainwindow)
         assert 8821 in mainwindow._frequency_spectra_by_run
 
     def test_restored_recipe_falls_back_to_legacy_snapshot_on_failure(
@@ -544,6 +560,134 @@ class TestMainWindowFourier:
         spectra = mainwindow._ensure_frequency_spectra_for_run(8823, RepresentationType.FREQ_FFT)
         # Fell back to the saved snapshot rather than returning nothing.
         assert spectra == [snapshot]
+
+    def _restore_recipe_only(self, mainwindow: MainWindow, state: dict) -> None:
+        """Drop the in-memory FFT cache and reload recipe-only project state."""
+        mainwindow._frequency_spectra_by_run = {}
+        mainwindow._frequency_spectra_by_rep[RepresentationType.FREQ_FFT] = (
+            mainwindow._frequency_spectra_by_run
+        )
+        mainwindow._restore_frequency_representations(state)
+
+    def test_async_recompute_overlays_then_clears_and_populates(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """Viewing a restored run recomputes off-thread behind the overlay."""
+        dataset = _make_fourier_ready_dataset(8826, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8826)
+        _compute_fourier_sync(mainwindow)
+        state = mainwindow.collect_project_state()
+
+        self._restore_recipe_only(mainwindow, state)
+        assert 8826 not in mainwindow._frequency_spectra_by_run
+
+        mainwindow._sync_frequency_plot_for_run(8826)
+        # Mid-flight: the overlay covers the panel and the cache is not yet warm.
+        # (The window is never shown in tests, so isVisible() — which folds in
+        # ancestor visibility — is always False; assert the overlay's own
+        # explicit shown/hidden state instead.)
+        assert mainwindow._frequency_recompute_active
+        assert not mainwindow._frequency_overlay.isHidden()
+        assert 8826 not in mainwindow._frequency_spectra_by_run
+
+        _wait_frequency_idle(mainwindow)
+        # Landed: overlay cleared, cache warm, spectrum drawn.
+        assert not mainwindow._frequency_recompute_active
+        assert mainwindow._frequency_overlay.isHidden()
+        assert 8826 in mainwindow._frequency_spectra_by_run
+        assert mainwindow._frequency_plot_panel._current_dataset is not None
+
+    def test_async_recompute_failure_clears_overlay_and_logs(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A recipe that no longer recomputes surfaces a warning, not a wedge."""
+        dataset = _make_fourier_ready_dataset(8827, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8827)
+        _compute_fourier_sync(mainwindow)
+        state = mainwindow.collect_project_state()
+
+        self._restore_recipe_only(mainwindow, state)
+        rep = mainwindow._project_model.representation(8827, RepresentationType.FREQ_FFT)
+        assert rep is not None
+
+        def _boom(run, **kwargs):
+            raise RuntimeError("recipe no longer reproduces")
+
+        monkeypatch.setattr(rep, "compute", _boom)
+
+        mainwindow._sync_frequency_plot_for_run(8827)
+        _wait_frequency_idle(mainwindow)
+
+        # Overlay/status always clear, even on failure.
+        assert not mainwindow._frequency_recompute_active
+        assert mainwindow._frequency_overlay.isHidden()
+        assert "could not recompute" in mainwindow._log_panel.to_plain_text()
+        # No snapshot was kept, so nothing is cached and the marker prevents a
+        # retry loop on subsequent views.
+        assert 8827 not in mainwindow._frequency_spectra_by_run
+        assert (8827, RepresentationType.FREQ_FFT) in mainwindow._lazy_recompute_failures
+
+    def test_stale_recompute_result_is_not_drawn(self, mainwindow: MainWindow) -> None:
+        """A recompute completing for a switched-away run does not redraw."""
+        dataset = _make_fourier_ready_dataset(8828, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8828)
+        _compute_fourier_sync(mainwindow)
+        rep = mainwindow._project_model.representation(8828, RepresentationType.FREQ_FFT)
+        assert rep is not None
+        spectra = list(mainwindow._frequency_spectra_by_run[8828])
+
+        # The view has moved on to another run while run 8828 was computing.
+        mainwindow._frequency_display_key = (9999, RepresentationType.FREQ_FFT)
+        before = mainwindow._frequency_plot_panel._current_dataset
+        mainwindow._on_frequency_recompute_finished(
+            8828, RepresentationType.FREQ_FFT, rep, spectra, 0.0
+        )
+        # The stale run is not drawn over the current view…
+        assert mainwindow._frequency_plot_panel._current_dataset is before
+        # …but its cache is warmed so a later switch back is instant.
+        assert 8828 in mainwindow._frequency_spectra_by_run
+        assert not mainwindow._frequency_recompute_active
+
+    def test_recompute_for_other_representation_does_not_redraw(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """An FFT recompute finishing after a toggle to MaxEnt (same run) is not drawn."""
+        dataset = _make_fourier_ready_dataset(8833, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8833)
+        _compute_fourier_sync(mainwindow)
+        rep = mainwindow._project_model.representation(8833, RepresentationType.FREQ_FFT)
+        assert rep is not None
+        spectra = list(mainwindow._frequency_spectra_by_run[8833])
+
+        # Same run, but the user toggled the view to MaxEnt while the FFT was in
+        # flight. The display key is (run, rep), so the FFT completion must not
+        # redraw over the MaxEnt view.
+        mainwindow._frequency_display_key = (8833, RepresentationType.FREQ_MAXENT)
+        before = mainwindow._frequency_plot_panel._current_dataset
+        mainwindow._on_frequency_recompute_finished(
+            8833, RepresentationType.FREQ_FFT, rep, spectra, 0.0
+        )
+        assert mainwindow._frequency_plot_panel._current_dataset is before
+
+    def test_close_with_pending_recompute_shuts_down(self, mainwindow: MainWindow) -> None:
+        """Closing mid-recompute tears the worker down within the bounded wait."""
+        dataset = _make_fourier_ready_dataset(8829, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8829)
+        _compute_fourier_sync(mainwindow)
+        state = mainwindow.collect_project_state()
+
+        self._restore_recipe_only(mainwindow, state)
+        mainwindow._sync_frequency_plot_for_run(8829)
+        assert mainwindow._frequency_recompute_active
+
+        mainwindow.close()
+        # shutdown() cancelled, quit and joined every live worker thread.
+        assert mainwindow._tasks.active_count == 0
 
     def test_apply_fourier_settings_to_selected_runs(
         self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
@@ -1203,6 +1347,9 @@ class TestMainWindowFourier:
         monkeypatch.setattr(restored_window, "_load_file", _fake_load_file)
 
         restored_window.restore_project_state(state, str(tmp_path / "restored.asymp"))
+        # Restore syncs the frequency plot, which recomputes the run's spectrum
+        # off-thread behind the overlay; wait for it before asserting the plot.
+        _wait_frequency_idle(restored_window)
 
         assert restored_window._plot_workspace.active_domain() == "frequency"
         restored_dataset = restored_window._frequency_plot_panel._current_dataset
@@ -1292,6 +1439,8 @@ class TestMainWindowFourier:
         monkeypatch.setattr(restored_window, "_load_file", _fake_load_file)
 
         restored_window.restore_project_state(loaded_state, str(project_path))
+        # Let the off-thread frequency recompute triggered by restore settle.
+        _wait_frequency_idle(restored_window)
 
         restored_global_table = restored_window._fit_panel._global_tab._param_table
         restored_single_table = restored_window._fit_panel._single_tab._param_table
