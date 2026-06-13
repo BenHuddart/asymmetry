@@ -2625,6 +2625,81 @@ class TestMainWindowBasic:
         assert payload_out is not None
         assert [p["label"] for p in payload_out["projections"]] == ["P_x", "P_y", "P_z"]
 
+    def test_partial_projection_set_applies_without_keyerror(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """A projection set with no canonical P_z must not crash the apply path."""
+        dataset = _make_dataset(7454, with_grouping=False)
+        payload = {
+            "groups": {1: [1], 2: [2], 3: [1], 4: [2]},
+            "group_names": {1: "TB Fwd", 2: "TB Bwd", 3: "FB Fwd", 4: "FB Bwd"},
+            "projections": [
+                {"label": "Top-Bottom", "forward_group": 1, "backward_group": 2},
+                {"label": "Fwd-Back", "forward_group": 3, "backward_group": 4},
+            ],
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert dataset.run is not None
+        # With no P_z, the first declared projection's pair is selected.
+        assert dataset.run.grouping["forward_group"] == 1
+        assert dataset.run.grouping["backward_group"] == 2
+
+    def test_switching_off_vector_preset_clears_stale_projections(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """An explicit empty projections list must not inherit the old ones."""
+        dataset = _make_dataset(7455, with_grouping=False)
+        vector_payload = {
+            "groups": {1: [1], 2: [2], 3: [1], 4: [2], 5: [1], 6: [2]},
+            "projections": [
+                {"label": "P_x", "forward_group": 5, "backward_group": 6},
+                {"label": "P_y", "forward_group": 3, "backward_group": 4},
+                {"label": "P_z", "forward_group": 1, "backward_group": 2},
+            ],
+            "forward_group": 1,
+            "backward_group": 2,
+            "vector_axis": "P_z",
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+        mainwindow._apply_grouping_settings_to_dataset(dataset, vector_payload)
+        assert "projections" in dataset.run.grouping
+
+        # Re-apply a single-pair grouping that explicitly carries no projections
+        # (the dialog now always emits an empty list).
+        longitudinal_payload = {
+            "groups": {1: [1], 2: [2]},
+            "group_names": {1: "Forward", 2: "Backward"},
+            "projections": [],
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+        mainwindow._apply_grouping_settings_to_dataset(dataset, longitudinal_payload)
+
+        assert "projections" not in dataset.run.grouping
+        pairs, _axis = mainwindow._vector_axis_state_for_dataset(dataset)
+        assert pairs == {}
+
     def test_extract_grouping_overrides_includes_period_mode(
         self,
         mainwindow: MainWindow,

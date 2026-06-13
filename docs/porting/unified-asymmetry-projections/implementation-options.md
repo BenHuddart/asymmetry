@@ -98,6 +98,26 @@ Shape per-projection storage to mirror `FitSeries.results_by_run` (as
 existing global-fit engine indexed by projection instead of run", not a new
 subsystem. Not implemented this pass.
 
+## Carried into Step 2 (from the Step 1 code review)
+
+The core `derive_projection_pairs` was generalized (arbitrary labels, partial
+subsets) ahead of the GUI, which is still canonical-`P_x/P_y/P_z`-only. The two
+*crashes/correctness* bugs from that mismatch were fixed in Step 1.5 (KeyError on
+a `P_z`-less subset; stale projections resurrected when switching off a vector
+preset). The remaining *latent* gaps are deliberately deferred to this step,
+because fixing them piecemeal would half-build the chip-bar generality:
+
+- **Plot selector hardcodes `axis_order = ["P_x","P_y","P_z"]`**
+  (`_refresh_vector_axis_selector`, `_build_vector_axis_datasets`) — a
+  non-canonical projection set resolves in the core but is dropped before the
+  selector. The chip bar replaces this filter with the declared projection order.
+- **`AsymmetryProjection.alpha` is declared/persisted but not consumed** — per-
+  projection alpha still comes from `alpha_x/y/z`. Wire the chip-bar per-
+  projection alpha to seed from / reconcile with the declared `alpha`.
+- **`[dict(p) for p in … if isinstance(p, dict)]` repeated across files** — when
+  the chip bar adds more projection handling, introduce a single
+  `normalize_projection_payload` / `AsymmetryProjection.from_payload` helper.
+
 ## Suggested implementation order
 
 1. B1 data model (`AsymmetryProjection` + schema field) with migration; retire

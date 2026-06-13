@@ -1589,6 +1589,19 @@ class MainWindow(QMainWindow):
         """
         return derive_projection_pairs(groups, group_names, projections)
 
+    @staticmethod
+    def _store_projections(grouping: dict, projections: list[dict] | None) -> None:
+        """Write the resolved projections onto *grouping*, clearing when empty.
+
+        ``projections`` is already a freshly built list of fresh dicts, so it is
+        stored directly (no further copy). Shared by the time-domain and
+        count/global apply branches.
+        """
+        if projections:
+            grouping["projections"] = projections
+        else:
+            grouping.pop("projections", None)
+
     def _vector_axis_state_for_dataset(
         self, dataset
     ) -> tuple[dict[str, tuple[int, int]], str | None]:
@@ -3225,9 +3238,17 @@ class MainWindow(QMainWindow):
         group_names_for_axis = grouping_result.get("group_names")
         if not isinstance(group_names_for_axis, dict) and isinstance(existing_grouping, dict):
             group_names_for_axis = existing_grouping.get("group_names")
-        projections_for_axis = grouping_result.get("projections")
-        if not projections_for_axis and isinstance(existing_grouping, dict):
+        # An explicit "projections" key (even an empty list, which the dialog
+        # always emits) is authoritative; only inherit from the existing grouping
+        # when the caller is a partial update that omits the key entirely.
+        # Otherwise switching a vector dataset to a single-pair preset would
+        # resurrect the stale vector projections.
+        if "projections" in grouping_result:
+            projections_for_axis = grouping_result.get("projections")
+        elif isinstance(existing_grouping, dict):
             projections_for_axis = existing_grouping.get("projections")
+        else:
+            projections_for_axis = None
         projections_to_store = (
             [dict(p) for p in projections_for_axis if isinstance(p, dict)]
             if isinstance(projections_for_axis, list) and projections_for_axis
@@ -3240,8 +3261,12 @@ class MainWindow(QMainWindow):
             grouping_result.get("vector_axis", existing_grouping.get("vector_axis"))
         )
         if axis_pairs:
+            # The selected axis may not be present (a partial subset, or a
+            # non-canonical projection set whose labels _normalize_vector_axis
+            # cannot represent); fall back to P_z when available, else the first
+            # declared projection, never indexing a missing key.
             if vector_axis not in axis_pairs:
-                vector_axis = "P_z"
+                vector_axis = "P_z" if "P_z" in axis_pairs else next(iter(axis_pairs))
             forward_gid, backward_gid = axis_pairs[vector_axis]
 
         vector_alphas = self._resolve_vector_alpha_values(grouping_result, existing_grouping)
@@ -3419,10 +3444,7 @@ class MainWindow(QMainWindow):
                 }
             if vector_axis and axis_pairs:
                 run.grouping["vector_axis"] = vector_axis
-            if projections_to_store:
-                run.grouping["projections"] = [dict(p) for p in projections_to_store]
-            else:
-                run.grouping.pop("projections", None)
+            self._store_projections(run.grouping, projections_to_store)
             preset_name = grouping_result.get("grouping_preset")
             if preset_name:
                 run.grouping["grouping_preset"] = str(preset_name)
@@ -3767,10 +3789,7 @@ class MainWindow(QMainWindow):
             run.grouping["included_groups"] = {int(k): bool(v) for k, v in included_groups.items()}
         if vector_axis and axis_pairs:
             run.grouping["vector_axis"] = vector_axis
-        if projections_to_store:
-            run.grouping["projections"] = [dict(p) for p in projections_to_store]
-        else:
-            run.grouping.pop("projections", None)
+        self._store_projections(run.grouping, projections_to_store)
         preset_name = grouping_result.get("grouping_preset")
         if preset_name:
             run.grouping["grouping_preset"] = str(preset_name)

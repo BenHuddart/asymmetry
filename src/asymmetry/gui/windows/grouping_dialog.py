@@ -2162,7 +2162,9 @@ class GroupingDialog(QDialog):
             )
             | alpha_provenance
             | (self._vector_alpha_payload() if vector_mode else {})
-            | ({"projections": list(self._projection_specs)} if self._projection_specs else {})
+            # Always emit projections (empty when none) so the apply path can
+            # distinguish "no projections" from "key omitted / don't touch".
+            | {"projections": list(self._projection_specs or [])}
             | deadtime_payload
         )
 
