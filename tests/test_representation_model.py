@@ -242,6 +242,60 @@ def test_representation_to_dict_excludes_arrays_and_round_trips():
     assert restored.primary is None  # arrays not restored
 
 
+def test_fit_property_aliases_default_slot():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.fit = FitSlot(provenance="single")
+    # The default slot is the None-keyed entry; fit_for(None) is the same object.
+    assert rep.fit_for(None) is rep.fit
+    assert rep.fit.provenance == "single"
+    assert rep.projection_fits == {}
+
+
+def test_per_projection_fits_round_trip():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.fit = FitSlot(provenance="single")  # default (non-projection) slot
+    rep.set_fit_for("P_x", FitSlot(provenance="single", result={"chi2": 1.1}))
+    rep.set_fit_for("P_z", FitSlot(provenance="single", result={"chi2": 0.9}))
+
+    data = rep.to_dict()
+    assert set(data["projection_fits"]) == {"P_x", "P_z"}
+
+    restored = representation_from_dict(data)
+    assert restored.fit.provenance == "single"
+    assert restored.fit_for("P_x").result == {"chi2": 1.1}
+    assert restored.fit_for("P_z").result == {"chi2": 0.9}
+    assert set(restored.projection_fits) == {"P_x", "P_z"}
+    # An unfit projection yields a fresh empty slot, not a crash.
+    assert restored.fit_for("P_y").is_empty()
+
+
+def test_to_dict_omits_projection_fits_when_none():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.fit = FitSlot(provenance="single")
+    assert "projection_fits" not in rep.to_dict()
+
+
+def test_pre_v9_representation_loads_without_projection_fits():
+    """A representation dict lacking projection_fits (pre-v9) loads cleanly."""
+    legacy = {
+        "rep_type": "time_fb_asymmetry",
+        "recipe": {},
+        "fit": FitSlot(provenance="single").to_dict(),
+        "trend_state": {},
+        "result_metadata": {},
+    }
+    rep = representation_from_dict(legacy)
+    assert rep.fit.provenance == "single"
+    assert rep.projection_fits == {}
+
+
+def test_iter_fit_slots_includes_default_and_projections():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.set_fit_for("P_x", FitSlot(provenance="single"))
+    keys = {key for key, _slot in rep.iter_fit_slots()}
+    assert keys == {None, "P_x"}
+
+
 # ── DatasetRepresentations container ───────────────────────────────────────
 
 

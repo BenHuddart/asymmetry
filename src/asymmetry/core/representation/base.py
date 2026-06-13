@@ -133,12 +133,57 @@ class Representation(ABC):
         fit: FitSlot | None = None,
         trend_state: dict | None = None,
         result_metadata: dict | None = None,
+        projection_fits: dict[str, FitSlot] | None = None,
     ) -> None:
         self.recipe: dict[str, Any] = dict(recipe or {})
-        self.fit: FitSlot = fit if isinstance(fit, FitSlot) else FitSlot()
+        # Fits keyed by projection label; the ``None`` key is the default
+        # (non-projection / single-pair) slot, exposed as the ``fit`` property so
+        # every existing ``representation.fit`` read/write keeps operating on it.
+        # Per-projection slots (P_x/P_y/P_z, transverse-field labels, …) let each
+        # projection of a vector grouping remember its own fit.
+        self._fits: dict[str | None, FitSlot] = {
+            None: fit if isinstance(fit, FitSlot) else FitSlot()
+        }
+        if isinstance(projection_fits, dict):
+            for key, slot in projection_fits.items():
+                if key is not None and isinstance(slot, FitSlot):
+                    self._fits[str(key)] = slot
         self.trend_state: dict[str, Any] = dict(trend_state or {})
         self.result_metadata: dict[str, Any] = dict(result_metadata or {})
         self._datasets: list[MuonDataset] | None = None
+
+    # ── fit slots (per projection) ─────────────────────────────────────────
+
+    @property
+    def fit(self) -> FitSlot:
+        """The default (non-projection) fit slot."""
+        return self._fits[None]
+
+    @fit.setter
+    def fit(self, slot: FitSlot) -> None:
+        self._fits[None] = slot if isinstance(slot, FitSlot) else FitSlot()
+
+    @staticmethod
+    def _fit_key(projection: str | None) -> str | None:
+        """Normalise a projection label to a fit-slot key (empty → default)."""
+        return projection if projection else None
+
+    def fit_for(self, projection: str | None) -> FitSlot:
+        """Return the fit slot for *projection*, creating an empty one if absent."""
+        return self._fits.setdefault(self._fit_key(projection), FitSlot())
+
+    def set_fit_for(self, projection: str | None, slot: FitSlot) -> None:
+        """Store *slot* as the fit for *projection*."""
+        self._fits[self._fit_key(projection)] = slot if isinstance(slot, FitSlot) else FitSlot()
+
+    @property
+    def projection_fits(self) -> dict[str, FitSlot]:
+        """Return the per-projection (non-default) fit slots, keyed by label."""
+        return {key: slot for key, slot in self._fits.items() if key is not None}
+
+    def iter_fit_slots(self) -> list[tuple[str | None, FitSlot]]:
+        """Return ``(projection_key, slot)`` for every stored fit (default + projections)."""
+        return list(self._fits.items())
 
     # ── identity ───────────────────────────────────────────────────────────
 
@@ -196,13 +241,19 @@ class Representation(ABC):
 
     def to_dict(self) -> dict:
         """Return the serialisable recipe/fit/trend state (no arrays)."""
-        return {
+        payload = {
             "rep_type": self.rep_type.value,
             "recipe": dict(self.recipe),
             "fit": self.fit.to_dict(),
             "trend_state": dict(self.trend_state),
             "result_metadata": dict(self.result_metadata),
         }
+        projection_fits = self.projection_fits
+        if projection_fits:
+            payload["projection_fits"] = {
+                key: slot.to_dict() for key, slot in projection_fits.items()
+            }
+        return payload
 
     def __repr__(self) -> str:
         computed = "uncomputed" if self._datasets is None else f"{len(self._datasets)} curve(s)"
