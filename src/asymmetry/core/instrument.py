@@ -24,10 +24,13 @@ __all__ = [
     "DetectorSegment",
     "BankLayout",
     "GroupDefinition",
+    "AsymmetryProjection",
     "PresetGrouping",
     "ReferenceArrow",
     "InstrumentLayout",
     "INSTRUMENT_NAMES",
+    "PROJECTION_TINTS",
+    "derive_projection_pairs",
     "get_instrument_layout",
     "detect_instrument",
 ]
@@ -128,6 +131,60 @@ class GroupDefinition:
 
 
 @dataclass(frozen=True)
+class AsymmetryProjection:
+    """One named asymmetry projection within a multi-projection preset.
+
+    A forward/backward asymmetry *is* the muon polarization projected onto the
+    axis joining that detector pair, so a preset that exposes several such pairs
+    (EMU vector polarization, transverse-field dual grouping) is a set of
+    projections.  Declaring them explicitly here replaces inferring them from
+    canonical group-name strings.
+
+    Parameters
+    ----------
+    label:
+        Display/identity label, e.g. ``"P_x"``, ``"P_z"``, ``"Top-Bottom"``.
+    forward_group:
+        Group ID supplying the forward histogram of this projection's pair.
+    backward_group:
+        Group ID supplying the backward histogram of this projection's pair.
+    alpha:
+        Default per-projection alpha balance.
+    tint:
+        Fixed semantic frame colour (hex) used for the chip and subplot frame.
+        This is *projection identity* and is deliberately distinct from a data
+        trace colour (which encodes run identity in RG mode).
+    """
+
+    label: str
+    forward_group: int
+    backward_group: int
+    alpha: float = 1.0
+    tint: str | None = None
+
+    def to_payload(self) -> dict[str, object]:
+        """Return the plain-dict form persisted in a dataset grouping payload."""
+        payload: dict[str, object] = {
+            "label": self.label,
+            "forward_group": int(self.forward_group),
+            "backward_group": int(self.backward_group),
+            "alpha": float(self.alpha),
+        }
+        if self.tint is not None:
+            payload["tint"] = self.tint
+        return payload
+
+
+#: Fixed semantic frame tints for the canonical EMU vector projections.  Chosen
+#: away from the common run-colour palette so they read as chrome, not data.
+PROJECTION_TINTS: Final[dict[str, str]] = {
+    "P_x": "#534AB7",  # purple
+    "P_y": "#BA7517",  # amber
+    "P_z": "#0F6E56",  # teal
+}
+
+
+@dataclass(frozen=True)
 class PresetGrouping:
     """A named, complete grouping assignment for an instrument.
 
@@ -142,12 +199,16 @@ class PresetGrouping:
         Group ID of the default forward group.
     backward_group:
         Group ID of the default backward group.
+    projections:
+        Ordered projections exposed by this preset, when it is a multi-projection
+        (vector / dual-grouping) preset.  Empty for ordinary single-pair presets.
     """
 
     name: str
     groups: dict[int, GroupDefinition]
     forward_group: int
     backward_group: int
+    projections: tuple[AsymmetryProjection, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -200,6 +261,99 @@ class InstrumentLayout:
     def default_preset_name(self) -> str:
         """Name of the first (default) preset."""
         return next(iter(self.presets))
+
+
+# ---------------------------------------------------------------------------
+# Projection derivation
+# ---------------------------------------------------------------------------
+
+#: Legacy canonical vector group names → axis label, used to infer projections
+#: for grouping payloads saved before projections were declared explicitly.
+_LEGACY_VECTOR_AXIS_NAMES: Final[dict[str, tuple[tuple[str, ...], tuple[str, ...]]]] = {
+    "P_x": (("px left",), ("px right",)),
+    "P_y": (("py top", "py up"), ("py bottom", "py down")),
+    "P_z": (("pz forward",), ("pz backward",)),
+}
+
+
+def derive_projection_pairs(
+    groups: dict | None,
+    group_names: dict | None = None,
+    projections: object = None,
+) -> dict[str, tuple[int, int]]:
+    """Return ordered ``{label: (forward_gid, backward_gid)}`` for a grouping.
+
+    This is the single source of truth for resolving a multi-projection grouping
+    into its forward/backward pairs, shared by the grouping dialog and the main
+    window.
+
+    Resolution order:
+
+    1. An explicit ``projections`` declaration — a sequence of
+       :class:`AsymmetryProjection` or plain
+       ``{"label", "forward_group", "backward_group"}`` dicts.  Only projections
+       whose group IDs exist and are non-empty in ``groups`` are returned, in
+       declaration order.
+    2. Fallback: the legacy canonical EMU vector group names in ``group_names``,
+       so groupings saved before projections were declared still resolve.  This
+       path is all-or-nothing (it returns ``{}`` unless all three axes resolve),
+       matching the original behaviour.
+    """
+    if not isinstance(groups, dict) or not groups:
+        return {}
+
+    norm_groups: dict[int, object] = {}
+    for gid, members in groups.items():
+        try:
+            norm_groups[int(gid)] = members
+        except (TypeError, ValueError):
+            continue
+
+    def _has(gid: int) -> bool:
+        return gid in norm_groups and bool(norm_groups.get(gid))
+
+    if projections:
+        pairs: dict[str, tuple[int, int]] = {}
+        for proj in projections:
+            if isinstance(proj, AsymmetryProjection):
+                label, fwd, bwd = proj.label, proj.forward_group, proj.backward_group
+            elif isinstance(proj, dict):
+                label = proj.get("label")
+                fwd = proj.get("forward_group")
+                bwd = proj.get("backward_group")
+            else:
+                continue
+            try:
+                fwd_i, bwd_i = int(fwd), int(bwd)
+            except (TypeError, ValueError):
+                continue
+            if label and _has(fwd_i) and _has(bwd_i):
+                pairs[str(label)] = (fwd_i, bwd_i)
+        return pairs
+
+    names = group_names if isinstance(group_names, dict) else {}
+    by_name: dict[str, int] = {}
+    for gid, name in names.items():
+        try:
+            by_name[str(name).strip().lower()] = int(gid)
+        except (TypeError, ValueError):
+            continue
+
+    def _find(candidates: tuple[str, ...]) -> int | None:
+        for cand in candidates:
+            gid = by_name.get(cand)
+            if gid is not None and _has(gid):
+                return gid
+        return None
+
+    legacy_pairs: dict[str, tuple[int, int]] = {}
+    for label, (fwd_names, bwd_names) in _LEGACY_VECTOR_AXIS_NAMES.items():
+        fwd = _find(fwd_names)
+        bwd = _find(bwd_names)
+        if fwd is None or bwd is None:
+            return {}
+        legacy_pairs[label] = (fwd, bwd)
+    return legacy_pairs
 
 
 # ---------------------------------------------------------------------------
@@ -580,6 +734,11 @@ def _build_emu() -> InstrumentLayout:
         },
         forward_group=1,
         backward_group=2,
+        projections=(
+            AsymmetryProjection("P_x", 5, 6, tint=PROJECTION_TINTS["P_x"]),
+            AsymmetryProjection("P_y", 3, 4, tint=PROJECTION_TINTS["P_y"]),
+            AsymmetryProjection("P_z", 1, 2, tint=PROJECTION_TINTS["P_z"]),
+        ),
     )
 
     return InstrumentLayout(

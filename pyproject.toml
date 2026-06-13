@@ -151,6 +151,7 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "tests/test_nexus_loader.py" = ["E402"]
 "tests/test_plot_panel.py" = ["E402"]
 "tests/test_plot_panel_styling.py" = ["E402"]
+"tests/test_projection_chip_bar.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/test_project_schema.py" = ["E402", "N802"]  # Split module-level GUI fixtures and Qt test doubles
 "tests/test_psi_loader.py" = ["E402"]
 "tests/test_root_loader.py" = ["E402"]

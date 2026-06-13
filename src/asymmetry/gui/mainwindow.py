@@ -81,6 +81,7 @@ from asymmetry.core.fourier import (
 )
 from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
 from asymmetry.core.fourier.units import FieldUnit, convert
+from asymmetry.core.instrument import PROJECTION_TINTS, derive_projection_pairs
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
     combine_mapped_periods,
@@ -1436,7 +1437,13 @@ class MainWindow(QMainWindow):
             self._plot_panel.polarization_axis_changed.connect(
                 self._on_plot_polarization_axis_changed
             )
+        if hasattr(self._plot_panel, "fit_target_projection_changed"):
+            self._plot_panel.fit_target_projection_changed.connect(
+                self._on_fit_target_projection_changed
+            )
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
+        if hasattr(self._fit_panel, "set_single_fit_restore_provider"):
+            self._fit_panel.set_single_fit_restore_provider(self._single_fit_restore_payload)
         # Auto-couple the single composite fit to the plot's RRF display: when
         # the rotating frame is active there, the fit runs in that frame.
         if hasattr(self._fit_panel, "set_rrf_frequency_provider"):
@@ -1647,42 +1654,28 @@ class MainWindow(QMainWindow):
         self,
         groups: dict[int, list[int]],
         group_names: dict[int, str] | None,
+        projections: object = None,
     ) -> dict[str, tuple[int, int]]:
-        """Return vector-axis pair mapping for EMU-style group names when present."""
-        if not isinstance(groups, dict) or not groups:
-            return {}
+        """Return projection pair mapping for a grouping.
 
-        names = group_names if isinstance(group_names, dict) else {}
-        by_name: dict[str, int] = {}
-        for gid, name in names.items():
-            try:
-                gid_int = int(gid)
-            except (TypeError, ValueError):
-                continue
-            by_name[str(name).strip().lower()] = gid_int
+        Prefers an explicit ``projections`` declaration and falls back to the
+        legacy canonical vector group names; see
+        :func:`asymmetry.core.instrument.derive_projection_pairs`.
+        """
+        return derive_projection_pairs(groups, group_names, projections)
 
-        def _find(*candidates: str) -> int | None:
-            for cand in candidates:
-                gid = by_name.get(cand)
-                if gid in groups and groups.get(gid):
-                    return gid
-            return None
+    @staticmethod
+    def _store_projections(grouping: dict, projections: list[dict] | None) -> None:
+        """Write the resolved projections onto *grouping*, clearing when empty.
 
-        pz_f = _find("pz forward")
-        pz_b = _find("pz backward")
-        py_a = _find("py top", "py up")
-        py_b = _find("py bottom", "py down")
-        px_a = _find("px left")
-        px_b = _find("px right")
-
-        if None in {pz_f, pz_b, py_a, py_b, px_a, px_b}:
-            return {}
-
-        return {
-            "P_z": (int(pz_f), int(pz_b)),
-            "P_y": (int(py_a), int(py_b)),
-            "P_x": (int(px_a), int(px_b)),
-        }
+        ``projections`` is already a freshly built list of fresh dicts, so it is
+        stored directly (no further copy). Shared by the time-domain and
+        count/global apply branches.
+        """
+        if projections:
+            grouping["projections"] = projections
+        else:
+            grouping.pop("projections", None)
 
     def _vector_axis_state_for_dataset(
         self, dataset
@@ -1712,7 +1705,9 @@ class MainWindow(QMainWindow):
                 if det_ids:
                     groups[gid] = det_ids
 
-        pairs = self._vector_axis_pairs_for_grouping(groups, grouping.get("group_names"))
+        pairs = self._vector_axis_pairs_for_grouping(
+            groups, grouping.get("group_names"), grouping.get("projections")
+        )
         if not pairs:
             return {}, None
 
@@ -1721,19 +1716,46 @@ class MainWindow(QMainWindow):
             axis = "P_z"
         return pairs, axis
 
+    def _projection_specs_for_dataset(
+        self,
+        dataset: MuonDataset,
+        pairs: dict[str, tuple[int, int]],
+    ) -> list[dict]:
+        """Return ordered ``[{"label", "tint"}]`` specs for *pairs*.
+
+        Tints come from the dataset's declared projections when present, else
+        the canonical :data:`PROJECTION_TINTS` fallback by label.
+        """
+        tint_by_label: dict[str, str] = {}
+        run = getattr(dataset, "run", None)
+        grouping = getattr(run, "grouping", None)
+        if isinstance(grouping, dict):
+            for proj in grouping.get("projections") or []:
+                if isinstance(proj, dict) and proj.get("label") and proj.get("tint"):
+                    tint_by_label[str(proj["label"])] = str(proj["tint"])
+
+        specs: list[dict] = []
+        for label in pairs:
+            spec: dict = {"label": label}
+            tint = tint_by_label.get(label) or PROJECTION_TINTS.get(label)
+            if tint:
+                spec["tint"] = tint
+            specs.append(spec)
+        return specs
+
     def _refresh_vector_axis_selector(self) -> None:
-        """Show/hide and synchronize the plot polarization selector."""
-        if not hasattr(self._plot_panel, "set_polarization_axes"):
+        """Show/hide and synchronize the projection chip bar."""
+        if not hasattr(self._plot_panel, "set_projections"):
             return
 
         if hasattr(self, "_plot_workspace") and self._plot_workspace.active_domain() != "time":
-            self._plot_panel.set_polarization_axes([])
+            self._plot_panel.set_projections([])
             return
         if (
             hasattr(self._plot_panel, "current_time_view_mode")
             and self._plot_panel.current_time_view_mode() != "fb_asymmetry"
         ):
-            self._plot_panel.set_polarization_axes([])
+            self._plot_panel.set_projections([])
             return
 
         selected = list(self._data_browser.get_selected_datasets())
@@ -1743,33 +1765,48 @@ class MainWindow(QMainWindow):
             targets = [self._current_dataset] if self._current_dataset else []
         targets = [ds for ds in targets if ds is not None]
         if not targets:
-            self._plot_panel.set_polarization_axes([])
+            self._plot_panel.set_projections([])
             return
 
         first_pairs, first_axis = self._vector_axis_state_for_dataset(targets[0])
         if not first_pairs:
-            self._plot_panel.set_polarization_axes([])
+            self._plot_panel.set_projections([])
             return
 
         for dataset in targets[1:]:
             pairs, _axis = self._vector_axis_state_for_dataset(dataset)
             if pairs != first_pairs:
-                self._plot_panel.set_polarization_axes([])
+                self._plot_panel.set_projections([])
                 return
 
-        axis_order = ["P_x", "P_y", "P_z"]
-        available = [axis for axis in axis_order if axis in first_pairs]
-        if available:
-            available = ["ALL", *available]
+        specs = self._projection_specs_for_dataset(targets[0], first_pairs)
+        labels = [spec["label"] for spec in specs]
 
-        current = None
+        # Preserve the live chip selection where it still applies; otherwise
+        # honour a restored ``ALL``/single axis (so a saved subplot view reopens
+        # as subplots), then fall back to the dataset's active single axis —
+        # which preserves the immediate fit workflow, since multi-select is a
+        # deliberate user action.
+        prior: list[str] = []
+        if hasattr(self._plot_panel, "selected_projection_labels"):
+            prior = [lbl for lbl in self._plot_panel.selected_projection_labels() if lbl in labels]
+        current_axis = None
         if hasattr(self._plot_panel, "get_current_polarization_axis"):
-            current = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
-        if current not in available:
-            current = (
-                first_axis if first_axis in available else (available[0] if available else None)
+            current_axis = self._normalize_vector_axis(
+                self._plot_panel.get_current_polarization_axis()
             )
-        self._plot_panel.set_polarization_axes(available, current)
+        if prior:
+            chosen = prior
+        elif current_axis == "ALL":
+            chosen = list(labels)
+        elif current_axis in labels:
+            chosen = [current_axis]
+        elif first_axis in labels:
+            chosen = [first_axis]
+        else:
+            chosen = labels[:1]
+
+        self._plot_panel.set_projections(specs, chosen)
 
     def _refresh_time_view_selector(self) -> None:
         """Keep the top-level plot tabs and internal time-view state in sync."""
@@ -1908,10 +1945,16 @@ class MainWindow(QMainWindow):
     def _build_vector_axis_datasets(
         self,
         datasets: list[MuonDataset],
+        labels: list[str] | None = None,
     ) -> dict[str, list[MuonDataset]]:
-        """Return per-axis cloned datasets for vector ``ALL`` subplot rendering."""
-        axis_map: dict[str, list[MuonDataset]] = {"P_x": [], "P_y": [], "P_z": []}
-        for axis in ("P_x", "P_y", "P_z"):
+        """Return per-projection cloned datasets for stacked-subplot rendering.
+
+        ``labels`` selects which projections to build (defaults to the canonical
+        vector triple); each clone is reduced with that projection's pair.
+        """
+        axis_labels = list(labels) if labels else ["P_x", "P_y", "P_z"]
+        axis_map: dict[str, list[MuonDataset]] = {label: [] for label in axis_labels}
+        for axis in axis_labels:
             for dataset in datasets:
                 payload = self._extract_grouping_overrides(dataset)
                 if not isinstance(payload, dict):
@@ -1921,7 +1964,9 @@ class MainWindow(QMainWindow):
                     continue
                 groups = payload.get("groups", {})
                 names = payload.get("group_names")
-                pairs = self._vector_axis_pairs_for_grouping(groups, names)
+                pairs = self._vector_axis_pairs_for_grouping(
+                    groups, names, payload.get("projections")
+                )
                 if axis not in pairs:
                     continue
 
@@ -1963,6 +2008,7 @@ class MainWindow(QMainWindow):
             pairs = self._vector_axis_pairs_for_grouping(
                 payload.get("groups", {}),
                 payload.get("group_names"),
+                payload.get("projections"),
             )
             if axis not in pairs:
                 continue
@@ -2031,13 +2077,16 @@ class MainWindow(QMainWindow):
                 )
 
             if active_axis == "ALL" and hasattr(self._plot_panel, "plot_vector_subplots"):
-                axis_datasets = self._build_vector_axis_datasets(targets)
-                if all(axis_datasets.get(axis) for axis in ("P_x", "P_y", "P_z")):
+                labels = (
+                    list(self._plot_panel.selected_projection_labels())
+                    if hasattr(self._plot_panel, "selected_projection_labels")
+                    else []
+                )
+                axis_datasets = self._build_vector_axis_datasets(targets, labels)
+                if labels and all(axis_datasets.get(label) for label in labels):
                     render_mode = "vector_all"
                     rendered_targets = [
-                        dataset
-                        for axis in ("P_x", "P_y", "P_z")
-                        for dataset in axis_datasets.get(axis, [])
+                        dataset for label in labels for dataset in axis_datasets.get(label, [])
                     ]
                     self._plot_panel.plot_vector_subplots(axis_datasets)
                     return
@@ -2074,8 +2123,10 @@ class MainWindow(QMainWindow):
                 self._plot_panel.get_current_polarization_axis()
             )
 
-        blocked = active_axis == "ALL"
-        reason = "Vector All mode is ambiguous for fitting. Select x, y, or z before running a fit."
+        # In the stacked multi-subplot view a fit acts on the selected subplot
+        # (the fit target). Only block if somehow nothing is selected.
+        blocked = active_axis == "ALL" and self._current_single_fit_projection() is None
+        reason = "Click a subplot to choose the projection to fit."
         return blocked, reason if blocked else ""
 
     def _update_fit_block_state(self) -> None:
@@ -2090,8 +2141,32 @@ class MainWindow(QMainWindow):
         blocked, reason = self._current_fit_block_state()
         if hasattr(self._fit_panel, "set_fit_blocked"):
             self._fit_panel.set_fit_blocked(blocked, reason)
+        if hasattr(self._fit_panel, "set_active_projection_label"):
+            projection = self._current_single_fit_projection()
+            tint = (
+                self._plot_panel.projection_tint(projection)
+                if projection and hasattr(self._plot_panel, "projection_tint")
+                else None
+            )
+            self._fit_panel.set_active_projection_label(projection, tint)
         if self._multi_group_fit_window is not None:
             self._multi_group_fit_window.set_fit_blocked(blocked, reason)
+
+    def _on_fit_target_projection_changed(self, label: str) -> None:
+        """Re-target the single fit when the user clicks a different subplot.
+
+        Critically, the fit must run on the *selected* projection's asymmetry,
+        not whatever axis the underlying dataset was last reduced to. The
+        stacked subplots are rendered from per-projection clones, so we re-reduce
+        the live target dataset(s) onto the selected projection's forward/backward
+        pair before rebinding the fit panel — otherwise a fit clicked on P_y would
+        minimise against P_x's curve yet be recorded under P_y.
+        """
+        projection = self._normalize_vector_axis(label)
+        if projection in ("P_x", "P_y", "P_z"):
+            self._synchronize_targets_to_axis(self._selected_or_current_datasets(), projection)
+        self._rebind_single_fit_to_active_projection()
+        self._update_fit_block_state()
 
     def _on_plot_polarization_axis_changed(self, axis_text: str) -> None:
         """Recompute displayed datasets using the selected vector polarization axis."""
@@ -2102,6 +2177,7 @@ class MainWindow(QMainWindow):
         if axis == "ALL":
             self._render_current_selection_plot()
             self._refresh_vector_axis_selector()
+            self._rebind_single_fit_to_active_projection()
             self._update_fit_block_state()
             self._log_panel.log("Set vector polarization axis to ALL.")
             return
@@ -2126,6 +2202,7 @@ class MainWindow(QMainWindow):
             pairs = self._vector_axis_pairs_for_grouping(
                 payload.get("groups", {}),
                 payload.get("group_names"),
+                payload.get("projections"),
             )
             if axis not in pairs:
                 continue
@@ -2144,8 +2221,23 @@ class MainWindow(QMainWindow):
         self._data_browser._rebuild_table()
         self._render_current_selection_plot()
         self._refresh_vector_axis_selector()
+        self._rebind_single_fit_to_active_projection()
         self._update_fit_block_state()
         self._log_panel.log(f"Set vector polarization axis to {axis} for {updated} dataset(s).")
+
+    def _rebind_single_fit_to_active_projection(self) -> None:
+        """Re-point the single-fit panel at the current dataset's active projection.
+
+        Switching the displayed polarization axis changes which per-projection
+        ``FitSlot`` the single-fit form should show. ``set_dataset`` re-runs the
+        restore mediator, so the form follows the selected projection's stored
+        fit (or blanks for an unfit one).
+        """
+        if self._current_dataset is None:
+            return
+        if self._plot_workspace.active_domain() != "time":
+            return
+        self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
 
     # ── slots ──────────────────────────────────────────────────────────
 
@@ -3211,6 +3303,10 @@ class MainWindow(QMainWindow):
         if vector_axis is not None:
             payload["vector_axis"] = vector_axis
 
+        projections_raw = grouping.get("projections")
+        if isinstance(projections_raw, list) and projections_raw:
+            payload["projections"] = [dict(p) for p in projections_raw if isinstance(p, dict)]
+
         group_names_raw = grouping.get("group_names")
         if isinstance(group_names_raw, dict) and group_names_raw:
             payload["group_names"] = {int(k): str(v) for k, v in group_names_raw.items()}
@@ -3373,13 +3469,35 @@ class MainWindow(QMainWindow):
         group_names_for_axis = grouping_result.get("group_names")
         if not isinstance(group_names_for_axis, dict) and isinstance(existing_grouping, dict):
             group_names_for_axis = existing_grouping.get("group_names")
-        axis_pairs = self._vector_axis_pairs_for_grouping(groups, group_names_for_axis)
+        # An explicit "projections" key (even an empty list, which the dialog
+        # always emits) is authoritative; only inherit from the existing grouping
+        # when the caller is a partial update that omits the key entirely.
+        # Otherwise switching a vector dataset to a single-pair preset would
+        # resurrect the stale vector projections.
+        if "projections" in grouping_result:
+            projections_for_axis = grouping_result.get("projections")
+        elif isinstance(existing_grouping, dict):
+            projections_for_axis = existing_grouping.get("projections")
+        else:
+            projections_for_axis = None
+        projections_to_store = (
+            [dict(p) for p in projections_for_axis if isinstance(p, dict)]
+            if isinstance(projections_for_axis, list) and projections_for_axis
+            else None
+        )
+        axis_pairs = self._vector_axis_pairs_for_grouping(
+            groups, group_names_for_axis, projections_for_axis
+        )
         vector_axis = self._normalize_vector_axis(
             grouping_result.get("vector_axis", existing_grouping.get("vector_axis"))
         )
         if axis_pairs:
+            # The selected axis may not be present (a partial subset, or a
+            # non-canonical projection set whose labels _normalize_vector_axis
+            # cannot represent); fall back to P_z when available, else the first
+            # declared projection, never indexing a missing key.
             if vector_axis not in axis_pairs:
-                vector_axis = "P_z"
+                vector_axis = "P_z" if "P_z" in axis_pairs else next(iter(axis_pairs))
             forward_gid, backward_gid = axis_pairs[vector_axis]
 
         vector_alphas = self._resolve_vector_alpha_values(grouping_result, existing_grouping)
@@ -3557,6 +3675,7 @@ class MainWindow(QMainWindow):
                 }
             if vector_axis and axis_pairs:
                 run.grouping["vector_axis"] = vector_axis
+            self._store_projections(run.grouping, projections_to_store)
             preset_name = grouping_result.get("grouping_preset")
             if preset_name:
                 run.grouping["grouping_preset"] = str(preset_name)
@@ -3901,6 +4020,7 @@ class MainWindow(QMainWindow):
             run.grouping["included_groups"] = {int(k): bool(v) for k, v in included_groups.items()}
         if vector_axis and axis_pairs:
             run.grouping["vector_axis"] = vector_axis
+        self._store_projections(run.grouping, projections_to_store)
         preset_name = grouping_result.get("grouping_preset")
         if preset_name:
             run.grouping["grouping_preset"] = str(preset_name)
@@ -4322,11 +4442,15 @@ class MainWindow(QMainWindow):
         records: list[tuple[str, dict]] = []
         for run_number, container in sorted(self._project_model.datasets.items()):
             for rep_type, representation in container.by_type.items():
-                slot = getattr(representation, "fit", None)
-                result = getattr(slot, "result", None) if slot is not None else None
-                if isinstance(result, dict) and result.get("parameters"):
-                    rep_label = getattr(rep_type, "value", str(rep_type))
-                    records.append((f"Run {run_number} · {rep_label}", result))
+                rep_label = getattr(rep_type, "value", str(rep_type))
+                # Include every stored slot — the default fit and each
+                # per-projection single fit — so a fit taken in a vector
+                # projection view is not silently absent from the report.
+                for projection, slot in representation.iter_fit_slots():
+                    result = getattr(slot, "result", None)
+                    if isinstance(result, dict) and result.get("parameters"):
+                        suffix = f" · {projection}" if projection else ""
+                        records.append((f"Run {run_number} · {rep_label}{suffix}", result))
         return records
 
     def _on_export_fit_report(self) -> None:
@@ -6989,13 +7113,13 @@ class MainWindow(QMainWindow):
                 self._sync_fourier_panel_for_dataset(dataset)
                 if hasattr(self._frequency_plot_panel, "update_frequency_reference"):
                     self._frequency_plot_panel.update_frequency_reference(dataset)
-                active_axis = None
-                if hasattr(self._plot_panel, "get_current_polarization_axis"):
-                    active_axis = self._normalize_vector_axis(
-                        self._plot_panel.get_current_polarization_axis()
-                    )
-                if active_axis in {"P_x", "P_y", "P_z"}:
-                    self._synchronize_targets_to_axis([dataset], active_axis)
+                # Reduce the newly selected run to the projection the fit will run
+                # on — the selected single axis, or the fit-target subplot in the
+                # stacked (ALL) view — so a fit binds to that projection's curve
+                # rather than whatever axis the run was last reduced to.
+                fit_projection = self._current_single_fit_projection()
+                if fit_projection in {"P_x", "P_y", "P_z"}:
+                    self._synchronize_targets_to_axis([dataset], fit_projection)
                 self._render_current_selection_plot()
                 self._sync_frequency_plot_for_current_dataset()
                 self._refresh_vector_axis_selector()
@@ -7559,34 +7683,106 @@ class MainWindow(QMainWindow):
         self._on_fit_parameters_group_fits_deleted(batch_id, runs)
         self._refresh_trend_panel()
 
+    def _current_single_fit_projection(self) -> str | None:
+        """Return the projection a single fit should be keyed under, or ``None``.
+
+        A single-axis vector view (``P_x``/``P_y``/``P_z``) keys the fit onto
+        that projection; the ``ALL`` aggregate, a non-vector view, and the
+        frequency domain all key onto the default slot (``None``). Reading the
+        main time plot's axis only in the time domain avoids mis-keying a
+        frequency fit onto a stale polarization axis.
+        """
+        if self._plot_workspace.active_domain() != "time":
+            return None
+        if not hasattr(self._plot_panel, "get_current_polarization_axis"):
+            return None
+        axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
+        if axis == "ALL":
+            # Stacked multi-subplot view: the selected subplot is the fit target.
+            if hasattr(self._plot_panel, "fit_target_projection"):
+                return self._plot_panel.fit_target_projection()
+            return None
+        return axis if axis is not None else None
+
+    def _single_fit_restore_payload(self, dataset) -> dict | None:
+        """Resolve the persisted single-fit form payload for *dataset*'s active slot.
+
+        Mediator for ``FitPanel.set_dataset`` (installed via
+        ``set_single_fit_restore_provider``). Returns the active ``(run,
+        representation, projection)`` slot's ``ui_state`` when present; an empty
+        dict to force a blank form for a genuine-but-unfit *projection* (so
+        projections never inherit each other's fit); or ``None`` to defer to the
+        panel's run-keyed restore (the default slot and legacy projects with no
+        stored ``ui_state``).
+        """
+        if dataset is None:
+            return None
+        rep_type = self._active_representation_type()
+        if rep_type is None:
+            return None
+        try:
+            run_number = int(dataset.run_number)
+        except (TypeError, ValueError):
+            return None
+        representation = self._project_model.representation(run_number, rep_type)
+        if representation is None:
+            return None
+        projection = self._current_single_fit_projection()
+        slot = representation.fit_for(projection)
+        ui_state = slot.ui_state if isinstance(slot.ui_state, dict) else {}
+        if ui_state:
+            return copy.deepcopy(ui_state)
+        # No persisted form payload for this slot. A genuine projection always
+        # blanks (it must never inherit another projection's fit). The default
+        # slot blanks too once *any* projection has been fit, because recording
+        # a projection fit writes that projection's form into the panel's
+        # run-keyed blob (`_on_single_fit_completed`) — deferring to it would let
+        # the ALL/aggregate view inherit a single projection's fit. Only a run
+        # with no projection fits defers to the blob (the default-slot and
+        # legacy-project path, where the blob is the authoritative single store).
+        if projection is not None or representation.projection_fits:
+            return {}
+        return None
+
     def _record_single_fit_slot(self, fit_result) -> None:
         """Write the active representation's single FitSlot into the project model."""
         rep_type = self._active_representation_type()
         if rep_type is None or self._current_dataset is None:
             return
-        if not hasattr(self._fit_panel, "get_single_state"):
+        if not hasattr(self._fit_panel, "get_single_form_state"):
             return
-        state = self._fit_panel.get_single_state()
-        if not isinstance(state, dict):
+        # One serialise of the single-fit form feeds both the structured slot
+        # fields and its ``ui_state`` restore payload.
+        form_state = self._fit_panel.get_single_form_state()
+        if not isinstance(form_state, dict):
             return
         run_number = int(self._current_dataset.run_number)
+        projection = self._current_single_fit_projection()
         representation = self._project_model.ensure_dataset(run_number).ensure(rep_type)
-        representation.fit = FitSlot(
-            model=state.get("composite_model"),
-            parameters=[dict(p) for p in state.get("parameters", []) if isinstance(p, dict)],
-            result={
-                **self._fit_result_summary(
-                    fit_result,
-                    provenance="single",
-                    model_name=self._composite_model_label(state.get("composite_model")),
-                    fit_range=self._fit_panel.single_fit_range_text(),
-                    timestamp=self._fit_record_timestamp(),
-                ),
-                "result_html": state.get("result_html"),
-            },
-            provenance="single",
+        representation.set_fit_for(
+            projection,
+            FitSlot(
+                model=form_state.get("composite_model"),
+                parameters=[
+                    dict(p) for p in form_state.get("parameters", []) if isinstance(p, dict)
+                ],
+                result={
+                    **self._fit_result_summary(
+                        fit_result,
+                        provenance="single",
+                        model_name=self._composite_model_label(form_state.get("composite_model")),
+                        fit_range=self._fit_panel.single_fit_range_text(),
+                        timestamp=self._fit_record_timestamp(),
+                    ),
+                    "result_html": form_state.get("result_html"),
+                },
+                provenance="single",
+                ui_state=form_state,
+            ),
         )
-        # Editing a batch member's model via a single fit may diverge it.
+        # A single fit on the default slot (non-vector / ALL view) can change a
+        # batch member's model and diverge it; per-projection single fits are
+        # not series members, so they never affect divergence.
         self._project_model.refresh_divergence()
 
     def _record_global_fit_batch(self, normalized_payloads: dict, global_params) -> None:
@@ -8881,14 +9077,12 @@ class MainWindow(QMainWindow):
     def _update_selected_datasets(self, *_args) -> None:
         """Update the fit panel with currently selected datasets."""
         selected = self._data_browser.get_selected_datasets()
-        active_axis = None
-        if hasattr(self._plot_panel, "get_current_polarization_axis"):
-            active_axis = self._normalize_vector_axis(
-                self._plot_panel.get_current_polarization_axis()
-            )
+        # Reduce the selection to the projection a fit will run on — the active
+        # single axis, or the fit-target subplot in the stacked (ALL) view.
+        fit_projection = self._current_single_fit_projection()
 
-        if selected and active_axis in {"P_x", "P_y", "P_z"}:
-            updated = self._synchronize_targets_to_axis(selected, active_axis)
+        if selected and fit_projection in {"P_x", "P_y", "P_z"}:
+            updated = self._synchronize_targets_to_axis(selected, fit_projection)
             if updated > 0:
                 self._data_browser._rebuild_table()
                 selected = self._data_browser.get_selected_datasets()

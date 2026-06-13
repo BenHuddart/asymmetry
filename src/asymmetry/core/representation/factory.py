@@ -33,6 +33,7 @@ def make_representation(
     fit: FitSlot | None = None,
     trend_state: dict | None = None,
     result_metadata: dict | None = None,
+    projection_fits: dict[str, FitSlot] | None = None,
 ) -> Representation:
     """Construct a representation of *rep_type* with the given recipe/state."""
     resolved = _coerce_type(rep_type)
@@ -42,6 +43,7 @@ def make_representation(
         fit=fit,
         trend_state=trend_state,
         result_metadata=result_metadata,
+        projection_fits=projection_fits,
     )
 
 
@@ -50,12 +52,23 @@ def representation_from_dict(data: dict) -> Representation:
     if not isinstance(data, dict):
         raise ValueError("Representation data must be a dict.")
     rep_type = _coerce_type(data["rep_type"])
+    raw_projection_fits = data.get("projection_fits")
+    projection_fits = (
+        {
+            str(key): FitSlot.from_dict(slot)
+            for key, slot in raw_projection_fits.items()
+            if isinstance(slot, dict)
+        }
+        if isinstance(raw_projection_fits, dict)
+        else None
+    )
     return make_representation(
         rep_type,
         recipe=data.get("recipe"),
         fit=FitSlot.from_dict(data.get("fit")),
         trend_state=data.get("trend_state"),
         result_metadata=data.get("result_metadata"),
+        projection_fits=projection_fits,
     )
 
 

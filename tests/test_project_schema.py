@@ -87,19 +87,25 @@ class TestSchemaMigration:
     def test_current_version_passes_through(self):
         state = {"schema_version": 7, "datasets": []}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 8
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
         assert result["datasets"] == []
+
+    def test_v8_migrates_to_v9(self):
+        # v9 adds optional per-projection fit slots; the migration is a lossless
+        # version bump (pre-v9 representations simply carry no projection_fits).
+        result = migrate_to_current({"schema_version": 8, "datasets": []})
+        assert result["schema_version"] == 9
 
     def test_v1_migrates_to_v2(self):
         state = {"schema_version": 1, "datasets": []}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 8
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
         assert "browser_state" in result
 
     def test_v2_migrates_to_v3_with_extra_columns(self):
         state = {"schema_version": 2, "datasets": [], "browser_state": {}}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 8
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
         assert result["browser_state"]["extra_columns"] == []
 
     def test_v3_vector_grouping_adds_per_axis_alpha_fields(self):
@@ -136,7 +142,7 @@ class TestSchemaMigration:
         }
 
         result = migrate_to_current(state)
-        assert result["schema_version"] == 8
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
         grouping = result["datasets"][0]["grouping_overrides"]
         assert grouping["alpha_x"] == pytest.approx(1.7)
         assert grouping["alpha_y"] == pytest.approx(1.7)
@@ -145,7 +151,7 @@ class TestSchemaMigration:
     def test_v4_migrates_to_v5_with_frequency_fit_state(self):
         state = {"schema_version": 4, "datasets": []}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 8
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
         assert result["frequency_fit_state"]["domain"] == "frequency"
 
     def test_unsupported_future_version_raises(self):
@@ -175,7 +181,7 @@ class TestSchemaMigration:
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 8
+        assert CURRENT_SCHEMA_VERSION == 9
 
 
 def _composite_model_dict(component: str = "Exponential") -> dict:
@@ -242,7 +248,7 @@ class TestSchemaMigrationV5toV6:
 
     def test_sets_version_and_empty_batches(self):
         result = migrate_to_current(self._v5_state())
-        assert result["schema_version"] == 8
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
         assert result["batches"] == []
 
     def test_per_run_single_fit_lands_on_right_dataset(self):
@@ -296,7 +302,7 @@ class TestSchemaMigrationV5toV6:
     def test_migration_without_fits_adds_only_batches(self):
         state = {"schema_version": 5, "datasets": [{"run_number": 1}]}
         result = migrate_to_current(state)
-        assert result["schema_version"] == 8
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
         assert result["batches"] == []
         assert "representations" not in result["datasets"][0]
 
@@ -306,7 +312,7 @@ class TestSchemaMigrationV6toV7:
 
     def test_sets_version(self):
         result = migrate_to_current({"schema_version": 6, "datasets": []})
-        assert result["schema_version"] == 8
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
 
     def test_series_gain_member_kind_and_defaults(self):
         state = {
@@ -348,7 +354,7 @@ class TestSchemaMigrationV7toV8:
             ],
         }
         result = migrate_to_current(state)
-        assert result["schema_version"] == 8
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
         assert result["batches"][0]["extra"] == {}
 
     def test_existing_extra_preserved(self):
@@ -378,9 +384,12 @@ class TestSchemaMigrationV7toV8:
 
     def test_handles_missing_or_malformed_batches(self):
         # batches absent, None, or carrying a non-dict element must not crash.
-        assert migrate_to_current({"schema_version": 7, "datasets": []})["schema_version"] == 8
+        assert (
+            migrate_to_current({"schema_version": 7, "datasets": []})["schema_version"]
+            == CURRENT_SCHEMA_VERSION
+        )
         none_batches = {"schema_version": 7, "datasets": [], "batches": None}
-        assert migrate_to_current(none_batches)["schema_version"] == 8
+        assert migrate_to_current(none_batches)["schema_version"] == CURRENT_SCHEMA_VERSION
         out = migrate_to_current(
             {"schema_version": 7, "datasets": [], "batches": ["stray", {"batch_id": "b"}]}
         )
@@ -430,7 +439,7 @@ class TestProjectIO:
         save_project(state, path)
 
         loaded = load_project(path)
-        assert loaded["schema_version"] == 8
+        assert loaded["schema_version"] == CURRENT_SCHEMA_VERSION
         assert loaded["datasets"] == []
 
     def test_vector_alpha_xyz_persist_in_project_round_trip(self, tmp_path):
@@ -481,12 +490,55 @@ class TestProjectIO:
         assert grouping["alpha_y"] == pytest.approx(1.22)
         assert grouping["alpha_z"] == pytest.approx(1.33)
 
+    def test_per_projection_fit_ui_state_persists_independently(self, tmp_path):
+        """Each projection's single-fit UI payload survives save/load on its own slot."""
+        from asymmetry.core.representation import (
+            FitSlot,
+            RepresentationType,
+            make_representation,
+            representation_from_dict,
+        )
+
+        rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+        rep.set_fit_for(
+            "P_x",
+            FitSlot(provenance="single", result={"chi2": 1.1}, ui_state={"result_html": "x-fit"}),
+        )
+        rep.set_fit_for(
+            "P_z",
+            FitSlot(provenance="single", result={"chi2": 0.9}, ui_state={"result_html": "z-fit"}),
+        )
+
+        state = _minimal_state()
+        state["datasets"] = [
+            {
+                "run_number": 7100,
+                "source_file": "/tmp/run7100.nxs",
+                "metadata_overrides": {"field": 100.0},
+                "grouping_overrides": {},
+                "representations": {RepresentationType.TIME_FB_ASYMMETRY.value: rep.to_dict()},
+            }
+        ]
+        path = tmp_path / "projection_fit_roundtrip.asymp"
+
+        save_project(state, path)
+        loaded = load_project(path)
+
+        rep_dict = loaded["datasets"][0]["representations"][
+            RepresentationType.TIME_FB_ASYMMETRY.value
+        ]
+        restored = representation_from_dict(rep_dict)
+        assert restored.fit_for("P_x").ui_state == {"result_html": "x-fit"}
+        assert restored.fit_for("P_z").ui_state == {"result_html": "z-fit"}
+        # The default slot stays empty — the fits live only on their projections.
+        assert restored.fit.is_empty()
+
     def test_file_is_valid_json(self, tmp_path):
         state = _minimal_state()
         path = tmp_path / "test.asymp"
         save_project(state, path)
         raw = json.loads(path.read_text(encoding="utf-8"))
-        assert raw["schema_version"] == 8
+        assert raw["schema_version"] == CURRENT_SCHEMA_VERSION
 
     def test_optional_wizard_cache_state_round_trips(self, tmp_path):
         state = _minimal_state()

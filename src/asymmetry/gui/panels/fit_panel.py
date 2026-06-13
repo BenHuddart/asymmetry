@@ -6146,6 +6146,12 @@ class FitPanel(QWidget):
 
         self._single_state_by_run: dict[int, dict] = {}
         self._active_single_run_number: int | None = None
+        # Optional mediator that supplies a per-(run, representation, projection)
+        # single-fit restore payload, installed by the main window.  It keeps the
+        # panel decoupled from the project model: ``set_dataset`` asks it for the
+        # form payload to show, falling back to the run-keyed blob when unset or
+        # when it returns ``None``.  See ``set_single_fit_restore_provider``.
+        self._single_fit_restore_provider: Callable[[MuonDataset | None], dict | None] | None = None
         self._all_datasets: list[MuonDataset] = []  # Track all datasets for group sharing
         self._domain = "time"
         self._single_state_by_domain: dict[str, dict] = {}
@@ -6177,7 +6183,31 @@ class FitPanel(QWidget):
         self._global_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
         self._tabs.addTab(self._global_tab, "Batch")
 
+        # Echo of the projection a single fit is currently bound to (vector
+        # multi-subplot view); hidden when fitting the default/non-projection
+        # asymmetry. Driven by the main window via set_active_projection_label.
+        self._projection_echo = QLabel("")
+        self._projection_echo.setContentsMargins(6, 2, 6, 2)
+        self._projection_echo.hide()
+        layout.addWidget(self._projection_echo)
+
         layout.addWidget(self._tabs)
+
+    def set_active_projection_label(self, projection: str | None, tint: str | None = None) -> None:
+        """Show/hide the 'Fitting: <projection>' echo for the bound projection.
+
+        ``tint`` colours the text to match the projection's subplot frame.
+        """
+        if not hasattr(self, "_projection_echo"):
+            return
+        if projection:
+            self._projection_echo.setText(f"Fitting: {projection}")
+            self._projection_echo.setStyleSheet(f"color: {tint}; font-weight: 500;" if tint else "")
+            self._projection_echo.show()
+        else:
+            self._projection_echo.clear()
+            self._projection_echo.setStyleSheet("")
+            self._projection_echo.hide()
 
     def set_batch_seeding_mode(self, mode: str) -> None:
         """Forward the batch-series seeding mode to the Batch tab."""
@@ -6269,17 +6299,68 @@ class FitPanel(QWidget):
         if run_number is None:
             return
 
-        if run_number in self._single_state_by_run:
+        # The main window's restore mediator is authoritative when it has an
+        # opinion: a payload (possibly an empty dict, meaning "blank this unfit
+        # projection") restores from the per-(run, representation, projection)
+        # slot — the canonical store for single fits. ``None`` means "no
+        # opinion", so fall back to the run-keyed blob (default slot / legacy
+        # projects). Consulting it first avoids restoring the form twice.
+        payload = (
+            self._single_fit_restore_provider(dataset)
+            if self._single_fit_restore_provider is not None
+            else None
+        )
+        if payload is not None:
+            self.restore_single_fit_ui(payload)
+        elif run_number in self._single_state_by_run:
             self._single_tab.restore_state(self._single_state_by_run[run_number])
         else:
             # Unseen datasets should not inherit another run's fit UI/result state.
-            default_model = (
-                default_frequency_model()
-                if self._domain == "frequency"
-                else CompositeModel(["Exponential", "Constant"], operators=["+"])
-            )
-            self._single_tab._set_composite_model(default_model)
-            self._single_tab._result_label.setText("No fit performed yet")
+            self._reset_single_fit_form()
+
+    def _reset_single_fit_form(self) -> None:
+        """Blank the single-fit form to its domain default ("No fit yet")."""
+        default_model = (
+            default_frequency_model()
+            if self._domain == "frequency"
+            else CompositeModel(["Exponential", "Constant"], operators=["+"])
+        )
+        self._single_tab._set_composite_model(default_model)
+        self._single_tab._result_label.setText("No fit performed yet")
+
+    def set_single_fit_restore_provider(
+        self, provider: Callable[[MuonDataset | None], dict | None] | None
+    ) -> None:
+        """Install the per-projection single-fit restore mediator (or clear it).
+
+        The main window passes a callable that maps the dataset being bound to
+        the persisted single-fit form payload for the active ``(run,
+        representation, projection)`` slot — or ``None`` to defer to the
+        panel's own run-keyed state (the default / legacy-project path).
+        """
+        self._single_fit_restore_provider = provider
+
+    def get_single_form_state(self) -> dict:
+        """Return the single-fit *form* payload (no per-run/domain wrapping).
+
+        This is exactly what :meth:`restore_single_fit_ui` consumes, so it is the
+        payload the main window stores as a slot's ``ui_state``.
+        """
+        return copy.deepcopy(self._single_tab.get_state())
+
+    def restore_single_fit_ui(self, payload: dict | None) -> None:
+        """Restore (or blank) the single-fit form from a slot ``ui_state`` payload.
+
+        A populated dict restores the form verbatim; an empty dict (or ``None``)
+        blanks it — an unfit projection must never inherit another projection's
+        fit. The run-keyed blob is deliberately *not* touched: it stays the
+        per-run store that global seeding and group sharing read, while the
+        per-projection slot is the source of truth for the single-fit form.
+        """
+        if isinstance(payload, dict) and payload:
+            self._single_tab.restore_state(payload)
+        else:
+            self._reset_single_fit_form()
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting tab and track for group sharing."""

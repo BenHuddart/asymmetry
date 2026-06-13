@@ -24,7 +24,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterGroupData,
 )
 from asymmetry.core.project import load_project, save_project
-from asymmetry.core.representation import RepresentationType
+from asymmetry.core.representation import FitSlot, RepresentationType
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.styles import tokens
 from tests._qt_helpers import wait_for
@@ -1884,17 +1884,17 @@ class TestMainWindowBasic:
         mainwindow._current_dataset = dataset
         mainwindow._refresh_vector_axis_selector()
 
-        assert mainwindow._plot_panel._polarization_combo.count() == 4
-        assert not mainwindow._plot_panel._polarization_combo.isHidden()
+        assert len(mainwindow._plot_panel._projection_bar._chips) == 3
+        assert not mainwindow._plot_panel._projection_bar.isHidden()
 
         mainwindow._plot_workspace.set_active_view("frequency")
 
-        assert mainwindow._plot_panel._polarization_combo.isHidden()
+        assert mainwindow._plot_panel._projection_bar.isHidden()
 
         mainwindow._plot_workspace.set_active_view("fb_asymmetry")
 
-        assert mainwindow._plot_panel._polarization_combo.count() == 4
-        assert not mainwindow._plot_panel._polarization_combo.isHidden()
+        assert len(mainwindow._plot_panel._projection_bar._chips) == 3
+        assert not mainwindow._plot_panel._projection_bar.isHidden()
 
     def test_grouped_view_hides_vector_selector_until_fb_returns(
         self,
@@ -1937,17 +1937,17 @@ class TestMainWindowBasic:
         mainwindow._refresh_time_view_selector()
         mainwindow._refresh_vector_axis_selector()
 
-        assert mainwindow._plot_panel._polarization_combo.count() == 4
-        assert not mainwindow._plot_panel._polarization_combo.isHidden()
+        assert len(mainwindow._plot_panel._projection_bar._chips) == 3
+        assert not mainwindow._plot_panel._projection_bar.isHidden()
 
         mainwindow._plot_workspace.set_active_view("groups")
 
-        assert mainwindow._plot_panel._polarization_combo.isHidden()
+        assert mainwindow._plot_panel._projection_bar.isHidden()
 
         mainwindow._plot_workspace.set_active_view("fb_asymmetry")
 
-        assert mainwindow._plot_panel._polarization_combo.count() == 4
-        assert not mainwindow._plot_panel._polarization_combo.isHidden()
+        assert len(mainwindow._plot_panel._projection_bar._chips) == 3
+        assert not mainwindow._plot_panel._projection_bar.isHidden()
 
     def test_set_compact_mode_is_legacy_no_op(self, mainwindow: MainWindow) -> None:
         """Legacy compact-mode API should leave the standard shell intact."""
@@ -2564,6 +2564,89 @@ class TestMainWindowBasic:
         assert dataset.run.grouping["alpha_y"] == pytest.approx(1.3)
         assert dataset.run.grouping["alpha_z"] == pytest.approx(1.1)
 
+    def test_fit_target_change_reduces_dataset_to_that_projection(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """A subplot fit-target change must re-reduce the live dataset to that
+        projection's pair, so the fit runs on the selected projection's curve."""
+        dataset = _make_dataset(7461, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.grouping.update(
+            {
+                "groups": {1: [1], 2: [2], 3: [1], 4: [2], 5: [1], 6: [2]},
+                "projections": [
+                    {"label": "P_x", "forward_group": 5, "backward_group": 6},
+                    {"label": "P_y", "forward_group": 3, "backward_group": 4},
+                    {"label": "P_z", "forward_group": 1, "backward_group": 2},
+                ],
+                "forward_group": 5,
+                "backward_group": 6,
+                "vector_axis": "P_x",
+                "instrument": "EMU",
+                "alpha": 1.0,
+                "first_good_bin": 0,
+                "last_good_bin": 3,
+                "bunching_factor": 1,
+                "deadtime_correction": False,
+            }
+        )
+        mainwindow._current_dataset = dataset
+        mainwindow._data_browser.get_selected_datasets = lambda: [dataset]
+        # Plot panel reports the stacked (ALL) view with P_y as the fit target.
+        mainwindow._plot_panel.get_current_polarization_axis = lambda: "ALL"
+        mainwindow._plot_panel.fit_target_projection = lambda: "P_y"
+
+        mainwindow._on_fit_target_projection_changed("P_y")
+
+        # The dataset is now reduced to P_y's forward/backward pair (3/4), so a
+        # fit will minimise against P_y's asymmetry — not the stale P_x curve.
+        assert dataset.run.grouping["vector_axis"] == "P_y"
+        assert dataset.run.grouping["forward_group"] == 3
+        assert dataset.run.grouping["backward_group"] == 4
+
+    def test_selecting_dataset_in_all_mode_reduces_to_fit_target(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Selecting a run in the stacked (ALL) view re-reduces it to the carried
+        fit-target projection, so a fit binds to that projection's curve."""
+        dataset = _make_dataset(7462, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.grouping.update(
+            {
+                "groups": {1: [1], 2: [2], 3: [1], 4: [2], 5: [1], 6: [2]},
+                "projections": [
+                    {"label": "P_x", "forward_group": 5, "backward_group": 6},
+                    {"label": "P_y", "forward_group": 3, "backward_group": 4},
+                    {"label": "P_z", "forward_group": 1, "backward_group": 2},
+                ],
+                "forward_group": 5,
+                "backward_group": 6,
+                "vector_axis": "P_x",
+                "instrument": "EMU",
+                "alpha": 1.0,
+                "first_good_bin": 0,
+                "last_good_bin": 3,
+                "bunching_factor": 1,
+                "deadtime_correction": False,
+            }
+        )
+        mainwindow._current_dataset = dataset
+        mainwindow._data_browser.get_selected_datasets = lambda: [dataset]
+        mainwindow._plot_panel.get_current_polarization_axis = lambda: "ALL"
+        mainwindow._plot_panel.fit_target_projection = lambda: "P_z"
+        monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: None)
+        monkeypatch.setattr(mainwindow, "_refresh_vector_axis_selector", lambda: None)
+
+        mainwindow._update_selected_datasets()
+
+        # Re-reduced to the fit target P_z's pair (1/2), not left at P_x.
+        assert dataset.run.grouping["vector_axis"] == "P_z"
+        assert dataset.run.grouping["forward_group"] == 1
+        assert dataset.run.grouping["backward_group"] == 2
+
     def test_extract_grouping_overrides_includes_vector_axis(
         self,
         mainwindow: MainWindow,
@@ -2584,6 +2667,121 @@ class TestMainWindowBasic:
         assert payload["alpha_x"] == pytest.approx(1.05)
         assert payload["alpha_y"] == pytest.approx(1.15)
         assert payload["alpha_z"] == pytest.approx(1.25)
+
+    def test_declared_projections_drive_axis_without_canonical_names(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Explicit projections resolve even when group names are non-canonical."""
+        dataset = _make_dataset(7452, with_grouping=False)
+        payload = {
+            "groups": {1: [1], 2: [2], 3: [1], 4: [2], 5: [1], 6: [2]},
+            "group_names": {1: "G1", 2: "G2", 3: "G3", 4: "G4", 5: "G5", 6: "G6"},
+            "projections": [
+                {"label": "P_x", "forward_group": 5, "backward_group": 6},
+                {"label": "P_y", "forward_group": 3, "backward_group": 4},
+                {"label": "P_z", "forward_group": 1, "backward_group": 2},
+            ],
+            "forward_group": 1,
+            "backward_group": 2,
+            "vector_axis": "P_x",
+            "instrument": "EMU",
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert dataset.run is not None
+        # The declared P_x pair (5/6) overrides forward/backward despite the
+        # generic group names that the legacy name-matching could never resolve.
+        assert dataset.run.grouping["forward_group"] == 5
+        assert dataset.run.grouping["backward_group"] == 6
+        stored = dataset.run.grouping["projections"]
+        assert [p["label"] for p in stored] == ["P_x", "P_y", "P_z"]
+        # Projections survive extraction for project save.
+        payload_out = mainwindow._extract_grouping_overrides(dataset)
+        assert payload_out is not None
+        assert [p["label"] for p in payload_out["projections"]] == ["P_x", "P_y", "P_z"]
+
+    def test_partial_projection_set_applies_without_keyerror(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """A projection set with no canonical P_z must not crash the apply path."""
+        dataset = _make_dataset(7454, with_grouping=False)
+        payload = {
+            "groups": {1: [1], 2: [2], 3: [1], 4: [2]},
+            "group_names": {1: "TB Fwd", 2: "TB Bwd", 3: "FB Fwd", 4: "FB Bwd"},
+            "projections": [
+                {"label": "Top-Bottom", "forward_group": 1, "backward_group": 2},
+                {"label": "Fwd-Back", "forward_group": 3, "backward_group": 4},
+            ],
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert dataset.run is not None
+        # With no P_z, the first declared projection's pair is selected.
+        assert dataset.run.grouping["forward_group"] == 1
+        assert dataset.run.grouping["backward_group"] == 2
+
+    def test_switching_off_vector_preset_clears_stale_projections(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """An explicit empty projections list must not inherit the old ones."""
+        dataset = _make_dataset(7455, with_grouping=False)
+        vector_payload = {
+            "groups": {1: [1], 2: [2], 3: [1], 4: [2], 5: [1], 6: [2]},
+            "projections": [
+                {"label": "P_x", "forward_group": 5, "backward_group": 6},
+                {"label": "P_y", "forward_group": 3, "backward_group": 4},
+                {"label": "P_z", "forward_group": 1, "backward_group": 2},
+            ],
+            "forward_group": 1,
+            "backward_group": 2,
+            "vector_axis": "P_z",
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+        mainwindow._apply_grouping_settings_to_dataset(dataset, vector_payload)
+        assert "projections" in dataset.run.grouping
+
+        # Re-apply a single-pair grouping that explicitly carries no projections
+        # (the dialog now always emits an empty list).
+        longitudinal_payload = {
+            "groups": {1: [1], 2: [2]},
+            "group_names": {1: "Forward", 2: "Backward"},
+            "projections": [],
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+        }
+        mainwindow._apply_grouping_settings_to_dataset(dataset, longitudinal_payload)
+
+        assert "projections" not in dataset.run.grouping
+        pairs, _axis = mainwindow._vector_axis_state_for_dataset(dataset)
+        assert pairs == {}
 
     def test_extract_grouping_overrides_includes_period_mode(
         self,
@@ -2886,6 +3084,150 @@ class TestMainWindowBasic:
         assert calls["render"] == 1
         assert calls["apply"] == 0
 
+    # ── per-projection single-fit storage (Step 3 part 2) ─────────────────
+
+    @staticmethod
+    def _single_fit_result() -> SimpleNamespace:
+        return SimpleNamespace(
+            success=True,
+            chi_squared=10.0,
+            reduced_chi_squared=0.5,
+            parameters=None,
+            uncertainties={},
+        )
+
+    def test_single_fit_slot_recorded_under_active_projection(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_dataset(8801, with_grouping=True)
+        mainwindow._current_dataset = dataset
+        # Sanity: the default view is the time F-B asymmetry these slots key off.
+        assert mainwindow._active_representation_type() == RepresentationType.TIME_FB_ASYMMETRY
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "P_x")
+        state = {
+            "composite_model": {"component_names": ["Gaussian"]},
+            "parameters": [{"name": "A", "value": 0.2}],
+            "result_html": "x-fit",
+        }
+        monkeypatch.setattr(mainwindow._fit_panel, "get_single_form_state", lambda: dict(state))
+
+        mainwindow._record_single_fit_slot(self._single_fit_result())
+
+        rep = mainwindow._project_model.representation(8801, RepresentationType.TIME_FB_ASYMMETRY)
+        assert rep is not None
+        # The default slot is untouched; the fit lands on the active projection.
+        assert rep.fit.is_empty()
+        px = rep.fit_for("P_x")
+        assert px.provenance == "single"
+        assert px.ui_state == state
+
+    def test_single_fit_slot_recorded_on_default_for_all_axis(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_dataset(8802, with_grouping=True)
+        mainwindow._current_dataset = dataset
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "ALL")
+        state = {"composite_model": {"component_names": ["Gaussian"]}, "result_html": "all"}
+        monkeypatch.setattr(mainwindow._fit_panel, "get_single_form_state", lambda: dict(state))
+
+        mainwindow._record_single_fit_slot(self._single_fit_result())
+
+        rep = mainwindow._project_model.representation(8802, RepresentationType.TIME_FB_ASYMMETRY)
+        assert rep is not None
+        # ALL is the aggregate sentinel — it keys onto the default slot.
+        assert rep.fit.provenance == "single"
+        assert rep.projection_fits == {}
+
+    def test_restore_payload_resolves_per_projection(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_dataset(8803, with_grouping=True)
+        rep = mainwindow._project_model.ensure_dataset(8803).ensure(
+            RepresentationType.TIME_FB_ASYMMETRY
+        )
+        rep.set_fit_for("P_x", FitSlot(provenance="single", ui_state={"result_html": "x"}))
+
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "P_x")
+        assert mainwindow._single_fit_restore_payload(dataset) == {"result_html": "x"}
+
+        # An unfit projection forces a blank form, never another projection's fit.
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "P_z")
+        assert mainwindow._single_fit_restore_payload(dataset) == {}
+
+        # The ALL/aggregate view also blanks once any projection has been fit:
+        # recording a projection fit contaminates the run blob, so deferring to
+        # it would let ALL inherit P_x's fit.
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "ALL")
+        assert mainwindow._single_fit_restore_payload(dataset) == {}
+
+    def test_restore_payload_defers_to_run_blob_for_plain_run(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A run with no projection fits defers to the panel's run-keyed blob."""
+        dataset = _make_dataset(8807, with_grouping=True)
+        mainwindow._project_model.ensure_dataset(8807).ensure(RepresentationType.TIME_FB_ASYMMETRY)
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "ALL")
+        # No default ui_state and no projection fits → defer (legacy / plain run).
+        assert mainwindow._single_fit_restore_payload(dataset) is None
+
+    def test_export_fit_report_includes_per_projection_fits(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """The fit report lists each per-projection single fit, not just the default slot."""
+        rep = mainwindow._project_model.ensure_dataset(8808).ensure(
+            RepresentationType.TIME_FB_ASYMMETRY
+        )
+        rep.set_fit_for(None, FitSlot(provenance="single", result={"parameters": {"A": 0.1}}))
+        rep.set_fit_for("P_x", FitSlot(provenance="single", result={"parameters": {"A": 0.2}}))
+        rep.set_fit_for("P_z", FitSlot(provenance="single", result={"parameters": {"A": 0.3}}))
+
+        titles = [title for title, _ in mainwindow._collect_latest_fit_records()]
+
+        rep_label = RepresentationType.TIME_FB_ASYMMETRY.value
+        assert f"Run 8808 · {rep_label}" in titles  # default slot (no projection suffix)
+        assert f"Run 8808 · {rep_label} · P_x" in titles
+        assert f"Run 8808 · {rep_label} · P_z" in titles
+
+    def test_in_session_projection_swap_restores_each_fit(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_dataset(8804, with_grouping=True)
+        mainwindow._current_dataset = dataset
+        monkeypatch.setattr(mainwindow, "_get_fit_dataset", lambda ds: ds)
+        panel = mainwindow._fit_panel
+        rep = mainwindow._project_model.ensure_dataset(8804).ensure(
+            RepresentationType.TIME_FB_ASYMMETRY
+        )
+
+        # Capture a distinctive P_x form payload, then persist it on the P_x slot.
+        panel.set_dataset(dataset)
+        panel._single_tab._set_composite_model(
+            CompositeModel(["Gaussian", "Constant"], operators=["+"])
+        )
+        rep.set_fit_for("P_x", FitSlot(provenance="single", ui_state=panel.get_single_form_state()))
+        # P_z is left unfit.
+
+        # Viewing the unfit P_z blanks the form (no inherited P_x fit).
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "P_z")
+        mainwindow._rebind_single_fit_to_active_projection()
+        assert panel._single_tab._composite_model.component_names == ["Exponential", "Constant"]
+
+        # Switching back to P_x restores its stored fit verbatim.
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "P_x")
+        mainwindow._rebind_single_fit_to_active_projection()
+        assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
+
     def test_update_selected_datasets_syncs_selected_runs_to_active_vector_axis(
         self,
         mainwindow: MainWindow,
@@ -3155,15 +3497,23 @@ class TestMainWindowBasic:
         monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: None)
         monkeypatch.setattr(mainwindow, "_refresh_vector_axis_selector", lambda: None)
 
+        # Stacked multi-subplot view with NO subplot chosen yet → fitting is
+        # blocked, prompting the user to pick a fit-target subplot.
         if hasattr(mainwindow._plot_panel, "get_current_polarization_axis"):
             mainwindow._plot_panel.get_current_polarization_axis = lambda: "ALL"
+        mainwindow._plot_panel.fit_target_projection = lambda: None
         mainwindow._update_selected_datasets()
 
         assert not mainwindow._fit_panel._single_tab._fit_btn.isEnabled()
         assert not mainwindow._fit_panel._single_tab._preview_btn.isEnabled()
         assert not mainwindow._fit_panel._global_tab._fit_btn.isEnabled()
-        assert "Vector All mode" in mainwindow._fit_panel._single_tab._fit_btn.toolTip()
-        assert "x, y, or z" in mainwindow._fit_panel._single_tab._fit_btn.toolTip()
+        assert "Click a subplot" in mainwindow._fit_panel._single_tab._fit_btn.toolTip()
+
+        # Once a subplot is selected as the fit target, fitting is allowed and
+        # acts on that projection.
+        mainwindow._plot_panel.fit_target_projection = lambda: "P_x"
+        mainwindow._update_selected_datasets()
+        assert mainwindow._fit_panel._single_tab._fit_btn.isEnabled()
 
         if hasattr(mainwindow._plot_panel, "get_current_polarization_axis"):
             mainwindow._plot_panel.get_current_polarization_axis = lambda: "P_x"

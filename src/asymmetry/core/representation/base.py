@@ -69,6 +69,13 @@ class FitSlot:
     batch_id: str | None = None
     diverged: bool = False
     include_in_trend: bool = True
+    #: The fit panel's single-fit *form* payload (composite_model, parameters,
+    #: result_html, wizard_state) for restoring the editor when this slot is
+    #: re-selected.  It carries the GUI-only extras (result HTML, wizard cache)
+    #: that ``model``/``parameters`` do not, so a per-projection single fit can
+    #: be restored verbatim.  Empty for slots produced outside the single-fit
+    #: GUI path (batch/global members) and for pre-this-change projects.
+    ui_state: dict = field(default_factory=dict)
 
     def is_empty(self) -> bool:
         """Return ``True`` when no model or result has been stored."""
@@ -76,7 +83,7 @@ class FitSlot:
 
     def to_dict(self) -> dict:
         """Return a JSON-serialisable copy of the slot."""
-        return {
+        payload = {
             "model": None if self.model is None else dict(self.model),
             "parameters": [dict(p) for p in self.parameters],
             "result": None if self.result is None else dict(self.result),
@@ -85,6 +92,12 @@ class FitSlot:
             "diverged": bool(self.diverged),
             "include_in_trend": bool(self.include_in_trend),
         }
+        # Only persist ``ui_state`` when populated — batch/global members and
+        # pre-this-change slots carry none, and an empty dict would bloat every
+        # saved slot for no gain.
+        if self.ui_state:
+            payload["ui_state"] = dict(self.ui_state)
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict | None) -> FitSlot:
@@ -102,6 +115,7 @@ class FitSlot:
         )
         model = data.get("model")
         result = data.get("result")
+        raw_ui_state = data.get("ui_state")
         return cls(
             model=dict(model) if isinstance(model, dict) else None,
             parameters=parameters,
@@ -110,6 +124,7 @@ class FitSlot:
             batch_id=(str(data["batch_id"]) if data.get("batch_id") is not None else None),
             diverged=bool(data.get("diverged", False)),
             include_in_trend=bool(data.get("include_in_trend", True)),
+            ui_state=dict(raw_ui_state) if isinstance(raw_ui_state, dict) else {},
         )
 
 
@@ -133,12 +148,61 @@ class Representation(ABC):
         fit: FitSlot | None = None,
         trend_state: dict | None = None,
         result_metadata: dict | None = None,
+        projection_fits: dict[str, FitSlot] | None = None,
     ) -> None:
         self.recipe: dict[str, Any] = dict(recipe or {})
+        # ``fit`` is the default (non-projection / single-pair) slot — a plain
+        # attribute, so every existing ``representation.fit`` read/write/in-place
+        # mutation is unchanged. ``projection_fits`` holds the per-projection
+        # slots (P_x/P_y/P_z, transverse-field labels, …), letting each
+        # projection of a vector grouping remember its own fit.
         self.fit: FitSlot = fit if isinstance(fit, FitSlot) else FitSlot()
+        self.projection_fits: dict[str, FitSlot] = {}
+        if isinstance(projection_fits, dict):
+            for key, slot in projection_fits.items():
+                if key and isinstance(slot, FitSlot):
+                    self.projection_fits[str(key)] = slot
         self.trend_state: dict[str, Any] = dict(trend_state or {})
         self.result_metadata: dict[str, Any] = dict(result_metadata or {})
         self._datasets: list[MuonDataset] | None = None
+
+    # ── fit slots (per projection) ─────────────────────────────────────────
+
+    @staticmethod
+    def _fit_key(projection: str | None) -> str | None:
+        """Normalise a projection label to a projection-fit key.
+
+        Falsy labels and the ``"ALL"`` aggregate sentinel (which is not a
+        physical projection and is never fit) map to ``None`` — the default
+        ``fit`` slot — so they never create a phantom projection entry.
+        """
+        if not projection or projection == "ALL":
+            return None
+        return str(projection)
+
+    def fit_for(self, projection: str | None) -> FitSlot:
+        """Return the fit slot for *projection* (a fresh empty slot if unfit).
+
+        This is a pure read — it never inserts, so inspecting an unfit
+        projection does not leak an empty slot into the saved project.
+        """
+        key = self._fit_key(projection)
+        if key is None:
+            return self.fit
+        return self.projection_fits.get(key, FitSlot())
+
+    def set_fit_for(self, projection: str | None, slot: FitSlot) -> None:
+        """Store *slot* as the fit for *projection*."""
+        resolved = slot if isinstance(slot, FitSlot) else FitSlot()
+        key = self._fit_key(projection)
+        if key is None:
+            self.fit = resolved
+        else:
+            self.projection_fits[key] = resolved
+
+    def iter_fit_slots(self) -> list[tuple[str | None, FitSlot]]:
+        """Return ``(projection_key, slot)`` for every stored fit (default + projections)."""
+        return [(None, self.fit), *self.projection_fits.items()]
 
     # ── identity ───────────────────────────────────────────────────────────
 
@@ -196,13 +260,20 @@ class Representation(ABC):
 
     def to_dict(self) -> dict:
         """Return the serialisable recipe/fit/trend state (no arrays)."""
-        return {
+        payload = {
             "rep_type": self.rep_type.value,
             "recipe": dict(self.recipe),
             "fit": self.fit.to_dict(),
             "trend_state": dict(self.trend_state),
             "result_metadata": dict(self.result_metadata),
         }
+        # Only persist projections that actually carry a fit — never empty slots.
+        projection_fits = {
+            key: slot.to_dict() for key, slot in self.projection_fits.items() if not slot.is_empty()
+        }
+        if projection_fits:
+            payload["projection_fits"] = projection_fits
+        return payload
 
     def __repr__(self) -> str:
         computed = "uncomputed" if self._datasets is None else f"{len(self._datasets)} curve(s)"

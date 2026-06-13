@@ -468,7 +468,7 @@ class TestRefreshTrendPanel:
         mw._on_dataset_selected(12)
         monkeypatch.setattr(
             mw._fit_panel,
-            "get_single_state",
+            "get_single_form_state",
             lambda: {"composite_model": model, "parameters": [], "result_html": ""},
         )
         mw._on_fit_completed(_result(), _CURVE, [])

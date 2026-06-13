@@ -192,6 +192,31 @@ class TestPresetApplication:
         assert "Px Left" in names
         assert "Px Right" in names
 
+    def test_apply_emu_vector_polarization_emits_projections(self, qapp):
+        layout = get_instrument_layout("EMU")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        dlg._preset_combo.setCurrentText("Vector Polarization")
+        dlg._on_apply_preset()
+        result = dlg.get_result()
+        projections = result["projections"]
+        assert [p["label"] for p in projections] == ["P_x", "P_y", "P_z"]
+        by_label = {p["label"]: p for p in projections}
+        assert (by_label["P_z"]["forward_group"], by_label["P_z"]["backward_group"]) == (1, 2)
+        assert all(p["tint"] for p in projections)
+
+    def test_longitudinal_preset_emits_no_projections(self, qapp):
+        layout = get_instrument_layout("EMU")
+        dlg = DetectorLayoutDialog(layout, groups={})
+        dlg._preset_combo.setCurrentText("Longitudinal")
+        dlg._on_apply_preset()
+        assert dlg.get_result()["projections"] == []
+
+    def test_seeded_projections_survive_open_without_reapply(self, qapp):
+        layout = get_instrument_layout("EMU")
+        seeded = [{"label": "P_x", "forward_group": 5, "backward_group": 6}]
+        dlg = DetectorLayoutDialog(layout, groups={}, projections=seeded)
+        assert dlg.get_result()["projections"] == seeded
+
     def test_apply_flame_transverse(self, qapp):
         layout = get_instrument_layout("FLAME")
         dlg = DetectorLayoutDialog(layout, groups={})
