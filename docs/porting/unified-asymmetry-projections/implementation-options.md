@@ -135,6 +135,53 @@ because fixing them piecemeal would half-build the chip-bar generality:
   default slot, so a fit taken in single-axis mode lands on that axis and one
   taken outside vector mode lands on the default.
 
+### Step 3 part 2 — chosen approach (Option B, for a fresh session)
+
+**Decision (Ben, 2026-06-13):** the fit panel restores single-fit state from the
+structured per-`(run, rep_type, projection)` `FitSlot` storage (built in part 1),
+**not** from its own parallel run-keyed blob. One source of truth; the projection
+dimension lives only in the `FitSlot` lookup.
+
+**Why the naive wire-up doesn't work:** the fit panel caches single-fit *form*
+state in `_single_state_by_run: dict[int, dict]` (composite_model, parameters,
+result_html, wizard_state), keyed by run across ~15 sites in `fit_panel.py`, and
+that same dict is shared with global-fit seeding, the fit-wizard cache, and
+group-sharing — all of which are intrinsically per-run, not per-projection.
+Re-keying it wholesale is the trap (Option A). Also: `set_dataset` is **not**
+currently called when the projection changes, and `FitSlot` doesn't yet carry the
+fit panel's full UI payload (it has model/parameters/result; the panel also needs
+result_html + wizard_state).
+
+**Concrete plan:**
+
+1. **FitSlot gains a `ui_state: dict` field** (additive; serialize like the rest)
+   carrying exactly what the single-fit form needs to restore — composite_model,
+   parameters, result_html, wizard_state. This makes the slot the complete
+   restore payload for one `(run, rep, projection)`.
+2. **Mainwindow mediates restore** (the panel stays decoupled from `ProjectModel`).
+   On the dataset/axis-change binding, after `_fit_panel.set_dataset(dataset)`,
+   mainwindow looks up `representation.fit_for(projection)` (projection =
+   `_normalize_vector_axis(plot_panel.get_current_polarization_axis())`) and pushes
+   its `ui_state` into the panel via a new `restore_single_fit_ui(payload)` (or
+   `set_dataset(dataset, restore=payload)`).
+3. **Rebind on projection switch.** `_on_plot_polarization_axis_changed` (single-axis
+   branch) must call `_fit_panel.set_dataset(_get_fit_dataset(current))` so the
+   panel re-points at the selected axis's curve and triggers the slot restore.
+4. **Write site** `_record_single_fit_slot` writes the full slot (incl. `ui_state`)
+   via `set_fit_for(projection, slot)` (`_fit_key` already routes `"ALL"`/falsy →
+   default).
+5. **Leave global/wizard/group machinery run-keyed** — out of scope (batch/global
+   per-projection is the deferred prize). Only the *single-fit* tab becomes
+   projection-aware.
+6. **Legacy `single_fit_state` blob:** keep reading it on restore for back-compat
+   (pre-this-change projects), but the slot `ui_state` is the new canonical store.
+
+**Test obligations:** in-session swap (fit P_x, switch to P_z → empty form, fit
+P_z, back to P_x → P_x's fit restored); save/load round-trip preserves each
+projection's fit independently; **no regression** to single (non-vector), global,
+group, and wizard fits; the fit panel still works with no ProjectModel present
+(stub tests).
+
 ### From the Step 2 review (deferred to Step 4/5)
 
 - **The `"ALL"` sentinel collapses the subset.** Multi-select is mapped onto the
