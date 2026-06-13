@@ -321,6 +321,43 @@ def test_all_sentinel_maps_to_default_slot():
     assert rep.projection_fits == {}
 
 
+def test_fit_slot_ui_state_round_trips():
+    ui_state = {
+        "composite_model": {"components": ["Exponential"]},
+        "parameters": [{"name": "A", "value": 0.2}],
+        "result_html": "<b>χ²ᵣ = 1.05</b>",
+        "wizard_state": {"signature": {"run_number": 7}},
+    }
+    slot = FitSlot(provenance="single", ui_state=ui_state)
+    restored = FitSlot.from_dict(slot.to_dict())
+    assert restored.ui_state == ui_state
+    # The stored copy is independent of the source dict.
+    restored.ui_state["result_html"] = "mutated"
+    assert ui_state["result_html"] == "<b>χ²ᵣ = 1.05</b>"
+
+
+def test_fit_slot_to_dict_omits_empty_ui_state():
+    slot = FitSlot(provenance="single", result={"chi2": 1.0})
+    assert "ui_state" not in slot.to_dict()
+
+
+def test_fit_slot_from_dict_without_ui_state_defaults_empty():
+    """A pre-this-change slot dict (no ui_state) loads with an empty dict."""
+    legacy = FitSlot(provenance="single", result={"chi2": 1.0}).to_dict()
+    assert "ui_state" not in legacy
+    assert FitSlot.from_dict(legacy).ui_state == {}
+
+
+def test_per_projection_ui_state_round_trips_through_representation():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.set_fit_for(
+        "P_x",
+        FitSlot(provenance="single", result={"chi2": 1.1}, ui_state={"result_html": "x-fit"}),
+    )
+    restored = representation_from_dict(rep.to_dict())
+    assert restored.fit_for("P_x").ui_state == {"result_html": "x-fit"}
+
+
 # ── DatasetRepresentations container ───────────────────────────────────────
 
 

@@ -69,6 +69,13 @@ class FitSlot:
     batch_id: str | None = None
     diverged: bool = False
     include_in_trend: bool = True
+    #: The fit panel's single-fit *form* payload (composite_model, parameters,
+    #: result_html, wizard_state) for restoring the editor when this slot is
+    #: re-selected.  It carries the GUI-only extras (result HTML, wizard cache)
+    #: that ``model``/``parameters`` do not, so a per-projection single fit can
+    #: be restored verbatim.  Empty for slots produced outside the single-fit
+    #: GUI path (batch/global members) and for pre-this-change projects.
+    ui_state: dict = field(default_factory=dict)
 
     def is_empty(self) -> bool:
         """Return ``True`` when no model or result has been stored."""
@@ -76,7 +83,7 @@ class FitSlot:
 
     def to_dict(self) -> dict:
         """Return a JSON-serialisable copy of the slot."""
-        return {
+        payload = {
             "model": None if self.model is None else dict(self.model),
             "parameters": [dict(p) for p in self.parameters],
             "result": None if self.result is None else dict(self.result),
@@ -85,6 +92,12 @@ class FitSlot:
             "diverged": bool(self.diverged),
             "include_in_trend": bool(self.include_in_trend),
         }
+        # Only persist ``ui_state`` when populated — batch/global members and
+        # pre-this-change slots carry none, and an empty dict would bloat every
+        # saved slot for no gain.
+        if self.ui_state:
+            payload["ui_state"] = dict(self.ui_state)
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict | None) -> FitSlot:
@@ -102,6 +115,7 @@ class FitSlot:
         )
         model = data.get("model")
         result = data.get("result")
+        raw_ui_state = data.get("ui_state")
         return cls(
             model=dict(model) if isinstance(model, dict) else None,
             parameters=parameters,
@@ -110,6 +124,7 @@ class FitSlot:
             batch_id=(str(data["batch_id"]) if data.get("batch_id") is not None else None),
             diverged=bool(data.get("diverged", False)),
             include_in_trend=bool(data.get("include_in_trend", True)),
+            ui_state=dict(raw_ui_state) if isinstance(raw_ui_state, dict) else {},
         )
 
 
