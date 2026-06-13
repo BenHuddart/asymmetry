@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import header_font
@@ -416,6 +417,8 @@ class DataBrowserPanel(QWidget):
         "run_info.bins": "Bins",
         "run_info.bin_width_us": "Bin Width (us)",
         "run_info.counts_mev": "Counts (MEv)",
+        "run_info.good_events_mev": "Good Events (MEv)",
+        "run_info.events_per_frame": "Events/frame",
         "run_info.counts_per_detector": "Counts per Detector",
         "nexus_fields.sample.shape": "Orientation",
     }
@@ -1477,6 +1480,21 @@ class DataBrowserPanel(QWidget):
         if key == "bin_width_us":
             return h0.bin_width
 
+        if key in ("good_events_mev", "events_per_frame"):
+            grouping = run.grouping if isinstance(getattr(run, "grouping", None), dict) else None
+            if grouping is None and isinstance(dataset.metadata.get("grouping"), dict):
+                grouping = dataset.metadata["grouping"]
+            good = good_event_count(run.histograms, grouping)
+            if good is None:
+                return None
+            if key == "good_events_mev":
+                return good / 1.0e6
+            # Events per frame: good events over the dead-time frame normaliser.
+            frames = good_frames(grouping, 0.0)
+            if frames <= 0:
+                return None
+            return good / frames
+
         total_counts = float(np.sum([np.sum(h.counts) for h in run.histograms]))
         if key == "counts_mev":
             return total_counts / 1.0e6
@@ -2436,26 +2454,52 @@ class DataBrowserPanel(QWidget):
         return super().eventFilter(watched, event)
 
     def _open_header_context_menu(self, col_idx: int) -> None:
-        """Open right-click header menu for filtering or dynamic-column removal."""
+        """Right-click header menu: filter (base) / remove (extra) / add column."""
         if col_idx < 0:
             return
 
-        if col_idx < len(self._COLUMNS):
-            self._open_filter_dialog(col_idx)
-            return
-
-        extra_index = col_idx - len(self._COLUMNS)
-        visible_extra_columns = self._visible_extra_columns()
-        if extra_index < 0 or extra_index >= len(visible_extra_columns):
-            return
-
-        field_key = visible_extra_columns[extra_index]
         menu = QMenu(self)
-        menu.addAction(
-            "Remove from Data Browser",
-            lambda fk=field_key: self.remove_extra_column(fk),
-        )
-        menu.exec(self.cursor().pos())
+        if col_idx < len(self._COLUMNS):
+            menu.addAction("Filter…", lambda ci=col_idx: self._open_filter_dialog(ci))
+        else:
+            extra_index = col_idx - len(self._COLUMNS)
+            visible_extra_columns = self._visible_extra_columns()
+            if 0 <= extra_index < len(visible_extra_columns):
+                field_key = visible_extra_columns[extra_index]
+                menu.addAction(
+                    "Remove from Data Browser",
+                    lambda fk=field_key: self.remove_extra_column(fk),
+                )
+
+        self._append_add_column_menu(menu)
+        if not menu.isEmpty():
+            menu.exec(self.cursor().pos())
+
+    def _append_add_column_menu(self, menu: QMenu) -> None:
+        """Append an "Add column…" submenu of hideable run-quality columns.
+
+        The browser previously had no end-user way to *add* a metadata column
+        (only removal via this menu). This lists the ``run_info.*`` run-quality
+        fields — including the good-range events and events/frame columns — that
+        are not already shown, mirroring the Remove path.
+        """
+        available = self._addable_run_info_columns()
+        if not available:
+            return
+        if not menu.isEmpty():
+            menu.addSeparator()
+        submenu = menu.addMenu("Add column…")
+        for key in available:
+            label = self._RUN_INFO_FIELD_LABELS.get(key, key)
+            submenu.addAction(label, lambda fk=key: self.add_extra_column(fk))
+
+    def _addable_run_info_columns(self) -> list[str]:
+        """``run_info.*`` run-quality columns not currently shown."""
+        return [
+            key
+            for key in self._RUN_INFO_FIELD_LABELS
+            if key.startswith("run_info.") and key not in self._extra_columns
+        ]
 
     def _on_header_clicked(self, logical_index: int) -> None:
         if logical_index == self._current_sort_column:

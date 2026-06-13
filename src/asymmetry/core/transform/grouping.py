@@ -122,6 +122,70 @@ def good_frames(grouping: dict | None, default: float = 1.0) -> float:
     return value if value > 0.0 else default
 
 
+def good_event_count(
+    histograms: list[Histogram] | None,
+    grouping: dict | None,
+) -> float | None:
+    """Total raw counts in the good-bin range over the forward+backward groups.
+
+    Mirrors WiMDA's logbook "good events" (``LogbookUnit.pas``): the sum of
+    detector counts between ``first_good_bin`` and ``last_good_bin`` (inclusive)
+    across the detectors of the forward and backward groups. Returns ``None``
+    when the grouping lacks a good-bin range or named forward/backward groups
+    (e.g. an ungrouped run), so callers can fall back to a total-count display.
+
+    Detector ids in ``grouping['groups']`` are 1-based (WiMDA convention), so
+    histogram index = id − 1. This is the single source of truth for the
+    good-range event total: the data-browser "Good Events" column and the
+    export ``events_grouped`` header both call it, so they agree by construction.
+    """
+    if not histograms or not isinstance(grouping, dict):
+        return None
+
+    def _safe_int(raw: object) -> int | None:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
+    first_good = _safe_int(grouping.get("first_good_bin"))
+    last_good = _safe_int(grouping.get("last_good_bin"))
+    if first_good is None or last_good is None:
+        return None
+    lo = max(0, min(first_good, last_good))
+    hi = max(first_good, last_good)
+
+    groups_raw = grouping.get("groups")
+    if not isinstance(groups_raw, dict):
+        return None
+    f_gid = _safe_int(grouping.get("forward_group"))
+    b_gid = _safe_int(grouping.get("backward_group"))
+    selected: list[object] = []
+    if f_gid is not None and f_gid in groups_raw:
+        selected.extend(groups_raw[f_gid])
+    if b_gid is not None and b_gid in groups_raw:
+        selected.extend(groups_raw[b_gid])
+    if not selected:
+        return None
+
+    n_hist = len(histograms)
+    total = 0.0
+    for det in selected:
+        det_idx = _safe_int(det)
+        if det_idx is None:
+            continue
+        hist_idx = det_idx - 1
+        if hist_idx < 0 or hist_idx >= n_hist:
+            continue
+        counts = np.asarray(histograms[hist_idx].counts, dtype=float)
+        if counts.size == 0:
+            continue
+        hi_clamped = min(hi, counts.size - 1)
+        if hi_clamped >= lo:
+            total += float(np.sum(counts[lo : hi_clamped + 1]))
+    return total if total > 0 else None
+
+
 def excluded_detector_indices(grouping: dict | None) -> frozenset[int]:
     """0-based indices of detectors excluded by the grouping.
 

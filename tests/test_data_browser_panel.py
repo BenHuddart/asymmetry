@@ -409,6 +409,62 @@ def test_run_info_synthetic_extra_columns_render_values(qapp: QApplication) -> N
     assert float(panel._table.item(0, mev_col).text()) == pytest.approx(9.0e-05)
 
 
+def test_good_events_and_events_per_frame_columns(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    # good_frames present -> events/frame is finite.
+    ds = _dataset_with_run(
+        303,
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "first_good_bin": 0,
+            "last_good_bin": 2,
+            "good_frames": 1000.0,
+        },
+    )
+    panel.add_dataset(ds)
+
+    panel.add_extra_column("run_info.good_events_mev")
+    panel.add_extra_column("run_info.events_per_frame")
+
+    labels = [
+        panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())
+    ]
+    good_col = labels.index("Good Events (MEv)")
+    frame_col = labels.index("Events/frame")
+
+    # Good-range [0,2] over both detectors: (10+20+30)+(5+10+15) = 90.
+    assert float(panel._table.item(0, good_col).text()) == pytest.approx(9.0e-05)
+    # Events per frame = 90 / 1000.
+    assert float(panel._table.item(0, frame_col).text()) == pytest.approx(0.09)
+
+
+def test_events_per_frame_dashes_without_good_frames(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _dataset_with_run(305)  # default grouping carries no good_frames
+    panel.add_dataset(ds)
+    panel.add_extra_column("run_info.events_per_frame")
+    labels = [
+        panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())
+    ]
+    frame_col = labels.index("Events/frame")
+    assert panel._table.item(0, frame_col).text() == "—"
+
+
+def test_add_column_menu_lists_hideable_run_info_fields(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _dataset_with_run(306)
+    panel.add_dataset(ds)
+    panel.add_extra_column("run_info.good_events_mev")
+
+    available = panel._addable_run_info_columns()
+    # Already-shown column is excluded; others remain offered.
+    assert "run_info.good_events_mev" not in available
+    assert "run_info.events_per_frame" in available
+    assert "run_info.counts_mev" in available
+
+
 def test_temperature_include_replaces_browser_value_with_log_mean(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     ds = _dataset(304)

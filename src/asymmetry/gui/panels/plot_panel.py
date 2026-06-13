@@ -50,7 +50,7 @@ from asymmetry.core.transform.background import (
     available_background_modes,
     resolve_background_mode,
 )
-from asymmetry.core.transform.grouping import group_forward_backward
+from asymmetry.core.transform.grouping import good_event_count, group_forward_backward
 from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
     PeriodMode,
@@ -4824,46 +4824,9 @@ class PlotPanel(QWidget):
                         "events_total": total_events,
                     }
 
-                    def _safe_int(raw: object) -> int | None:
-                        try:
-                            return int(raw)
-                        except (TypeError, ValueError):
-                            return None
-
-                    if isinstance(grouping, dict):
-                        first_good = _safe_int(grouping.get("first_good_bin"))
-                        last_good = _safe_int(grouping.get("last_good_bin"))
-                        if first_good is not None and last_good is not None:
-                            lo = max(0, min(first_good, last_good))
-                            hi = max(first_good, last_good)
-
-                            grouped_total = 0.0
-                            n_hist = len(histograms)
-                            groups_raw = grouping.get("groups")
-                            if isinstance(groups_raw, dict):
-                                f_gid = _safe_int(grouping.get("forward_group"))
-                                b_gid = _safe_int(grouping.get("backward_group"))
-                                selected = []
-                                if f_gid is not None and f_gid in groups_raw:
-                                    selected.extend(groups_raw[f_gid])
-                                if b_gid is not None and b_gid in groups_raw:
-                                    selected.extend(groups_raw[b_gid])
-                                for det in selected:
-                                    det_idx = _safe_int(det)
-                                    if det_idx is None:
-                                        continue
-                                    hist_idx = det_idx - 1
-                                    if hist_idx < 0 or hist_idx >= n_hist:
-                                        continue
-                                    counts = np.asarray(histograms[hist_idx].counts, dtype=float)
-                                    if counts.size == 0:
-                                        continue
-                                    hi_clamped = min(hi, counts.size - 1)
-                                    if hi_clamped >= lo:
-                                        grouped_total += float(np.sum(counts[lo : hi_clamped + 1]))
-
-                            if grouped_total > 0:
-                                histogram_info["events_grouped"] = grouped_total
+                    grouped_total = good_event_count(histograms, grouping)
+                    if grouped_total is not None and grouped_total > 0:
+                        histogram_info["events_grouped"] = grouped_total
 
             rn = dataset.run_number
             fit_data = self._fit_curve_for_dataset(dataset)
