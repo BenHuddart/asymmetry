@@ -951,6 +951,74 @@ class TestPlotPanel:
         assert labels == ["FB Asymmetry", "Individual Groups"]
         assert panel.current_time_view_mode() == "groups"
 
+    def test_log_counts_checkbox_visible_only_on_raw_counts(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.set_time_view_modes(
+            ["fb_asymmetry", "raw_counts"], current_mode="fb_asymmetry"
+        )
+        assert not panel._log_counts_checkbox.isVisible()
+
+        panel.set_current_time_view_mode("raw_counts")
+        # Visibility tracks the raw-counts view (widget may need show() to report
+        # isVisible reliably offscreen; assert the gating predicate directly).
+        assert panel._current_time_view_mode == "raw_counts"
+        panel._refresh_log_counts_visibility()
+        assert panel._log_counts_checkbox.isVisibleTo(panel) is True
+
+        panel.set_current_time_view_mode("fb_asymmetry")
+        assert panel._log_counts_checkbox.isVisibleTo(panel) is False
+
+    def test_log_counts_applies_log_yscale_on_raw_counts(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.set_time_view_modes(["fb_asymmetry", "raw_counts"], current_mode="raw_counts")
+        panel._log_counts_checkbox.setChecked(True)  # toggles _on_log_counts_toggled
+
+        datasets = [
+            MuonDataset(
+                time=np.array([0.0, 1.0, 2.0, 3.0]),
+                asymmetry=np.array([1000.0, 500.0, 250.0, 0.0]),  # 0 bin -> dropped on log
+                error=np.array([31.6, 22.4, 15.8, 1.0]),
+                metadata={
+                    "run_number": -1,
+                    "grouped_time_domain_lifetime_corrected": False,
+                },
+            )
+        ]
+        panel.plot_grouped_time_domain_subplots(datasets)
+
+        axes = list(panel._subplot_axes_by_polarization.values())
+        assert axes
+        assert all(ax.get_yscale() == "log" for ax in axes)
+
+        # Turning it off restores a linear axis.
+        panel._log_counts_checkbox.setChecked(False)
+        panel.plot_grouped_time_domain_subplots(datasets)
+        axes = list(panel._subplot_axes_by_polarization.values())
+        assert all(ax.get_yscale() == "linear" for ax in axes)
+
+    def test_log_counts_scale_round_trips_through_state(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.set_time_view_modes(["fb_asymmetry", "raw_counts"], current_mode="raw_counts")
+        panel._log_counts_checkbox.setChecked(True)
+        state = panel.get_state()
+        assert state["log_counts_scale"] is True
+
+        fresh = PlotPanel()
+        try:
+            fresh.set_time_view_modes(["fb_asymmetry", "raw_counts"])
+            fresh.restore_state(state)
+            assert fresh._log_counts_enabled is True
+            assert fresh._log_counts_checkbox.isChecked() is True
+        finally:
+            fresh.close()
+            fresh.deleteLater()
+
     def test_grouped_subplots_expand_canvas_height_for_scrolling(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")

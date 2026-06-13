@@ -288,6 +288,7 @@ class PlotPanel(QWidget):
                 nav_row.addWidget(self._label_field_combo)
             nav_row.addWidget(self._time_view_label)
             nav_row.addWidget(self._time_view_combo)
+            nav_row.addWidget(self._log_counts_checkbox)
             nav_row.addWidget(self._overlay_checkbox)
             nav_row.addStretch()
             nav_row.addWidget(self._polarization_label)
@@ -464,6 +465,21 @@ class PlotPanel(QWidget):
         self.set_time_view_modes(self._available_time_view_modes, self._current_time_view_mode)
         self._time_view_label.hide()
         self._time_view_combo.hide()
+
+        # Log-count diagnostic: a log-y toggle that applies only on the
+        # raw-counts view. A pure muon-decay histogram is a straight line on a
+        # log count axis, so a mis-placed t0, a wrong background level, or
+        # high-rate deadtime curvature jump out without a fit.
+        self._log_counts_enabled = False
+        self._log_counts_checkbox = QCheckBox("Log scale")
+        self._log_counts_checkbox.setChecked(False)
+        self._log_counts_checkbox.setToolTip(
+            "Plot raw counts on a logarithmic y-axis — a pure decay is a "
+            "straight line, so t0, background and deadtime deviations are "
+            "obvious. Non-positive bins are dropped (log undefined)."
+        )
+        self._log_counts_checkbox.toggled.connect(self._on_log_counts_toggled)
+        self._log_counts_checkbox.hide()
 
         self._overlay_checkbox = QCheckBox("Overlay")
         self._overlay_checkbox.setChecked(False)
@@ -1409,6 +1425,7 @@ class PlotPanel(QWidget):
         if mode == self._current_time_view_mode:
             return
         self._current_time_view_mode = mode
+        self._refresh_log_counts_visibility()
         self.time_view_changed.emit(mode)
 
     def current_time_view_mode(self) -> str:
@@ -1451,6 +1468,7 @@ class PlotPanel(QWidget):
         self._time_view_combo.setCurrentIndex(idx)
         self._time_view_combo.blockSignals(False)
         self._time_view_combo.setEnabled(len(cleaned) > 1)
+        self._refresh_log_counts_visibility()
 
     def set_current_time_view_mode(self, mode: str, *, emit_signal: bool = False) -> None:
         """Select the active time-domain view mode."""
@@ -1467,6 +1485,44 @@ class PlotPanel(QWidget):
         self._time_view_combo.setCurrentIndex(idx)
         self._time_view_combo.blockSignals(previous)
         self._current_time_view_mode = normalized
+        self._refresh_log_counts_visibility()
+
+    def _refresh_log_counts_visibility(self) -> None:
+        """Show the log-scale toggle only on the raw-counts view."""
+        checkbox = getattr(self, "_log_counts_checkbox", None)
+        if checkbox is None:
+            return
+        checkbox.setVisible(self._current_time_view_mode == "raw_counts")
+
+    def _log_counts_active(self) -> bool:
+        """True when the log-count diagnostic should apply to the render."""
+        return bool(
+            getattr(self, "_log_counts_enabled", False)
+            and self._current_time_view_mode == "raw_counts"
+        )
+
+    def _on_log_counts_toggled(self, checked: bool) -> None:
+        """Persist and apply the log-count diagnostic scale."""
+        self._log_counts_enabled = bool(checked)
+        self._redraw_current_view()
+
+    def _apply_log_counts_scale(self) -> None:
+        """Switch the raw-count subplots to a log y-axis (diagnostic view).
+
+        Applied after the linear limits so the axis is converted from already
+        positive count limits — matplotlib then autoscales to the positive data
+        and silently drops the non-positive (e.g. empty) bins.
+        """
+        if not self._has_mpl or not self._log_counts_active():
+            return
+        axes = list(getattr(self, "_subplot_axes_by_polarization", {}).values())
+        if not axes:
+            return
+        for ax in axes:
+            ax.set_yscale("log")
+            ax.relim()
+            ax.autoscale(axis="y")
+        self._canvas.draw_idle()
 
     def is_overlay_enabled(self) -> bool:
         """Return whether multi-selection overlays are currently enabled."""
@@ -2676,6 +2732,7 @@ class PlotPanel(QWidget):
         self._update_y_limit_controls_for_axis(self._current_polarization_axis)
         self._apply_limits(schedule_viewport_refresh=True)
         self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
+        self._apply_log_counts_scale()
 
     def plot_maxent_reconstruction(
         self, datasets: list[MuonDataset], *, combined: bool = False
@@ -5598,6 +5655,7 @@ class PlotPanel(QWidget):
                 self._current_dataset.run_number if self._current_dataset is not None else None
             ),
             "time_view_mode": self.current_time_view_mode(),
+            "log_counts_scale": bool(getattr(self, "_log_counts_enabled", False)),
             "label_field": self._label_field_combo.currentData() if self._has_mpl else "run",
             "default_label_field": self._default_label_field,
             "label_field_by_group": dict(self._label_field_by_group),
@@ -5763,6 +5821,12 @@ class PlotPanel(QWidget):
             self._available_time_view_modes,
             current_mode=state.get("time_view_mode", self._current_time_view_mode),
         )
+        self._log_counts_enabled = bool(state.get("log_counts_scale", False))
+        if hasattr(self, "_log_counts_checkbox"):
+            self._log_counts_checkbox.blockSignals(True)
+            self._log_counts_checkbox.setChecked(self._log_counts_enabled)
+            self._log_counts_checkbox.blockSignals(False)
+        self._refresh_log_counts_visibility()
 
         if self._is_frequency_plot_panel():
             self._frequency_x_limits_by_unit = {}
