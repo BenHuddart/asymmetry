@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import functools
 import re
+from collections.abc import Callable
 
 import numpy as np
 from PySide6.QtCore import QEventLoop, QSignalBlocker, Qt, QTimer, Signal
@@ -6009,6 +6010,12 @@ class FitPanel(QWidget):
 
         self._single_state_by_run: dict[int, dict] = {}
         self._active_single_run_number: int | None = None
+        # Optional mediator that supplies a per-(run, representation, projection)
+        # single-fit restore payload, installed by the main window.  It keeps the
+        # panel decoupled from the project model: ``set_dataset`` asks it for the
+        # form payload to show, falling back to the run-keyed blob when unset or
+        # when it returns ``None``.  See ``set_single_fit_restore_provider``.
+        self._single_fit_restore_provider: Callable[[MuonDataset | None], dict | None] | None = None
         self._all_datasets: list[MuonDataset] = []  # Track all datasets for group sharing
         self._domain = "time"
         self._single_state_by_domain: dict[str, dict] = {}
@@ -6132,13 +6139,60 @@ class FitPanel(QWidget):
             self._single_tab.restore_state(self._single_state_by_run[run_number])
         else:
             # Unseen datasets should not inherit another run's fit UI/result state.
-            default_model = (
-                default_frequency_model()
-                if self._domain == "frequency"
-                else CompositeModel(["Exponential", "Constant"], operators=["+"])
-            )
-            self._single_tab._set_composite_model(default_model)
-            self._single_tab._result_label.setText("No fit performed yet")
+            self._reset_single_fit_form()
+
+        # The main window may override the run-keyed restore with the persisted
+        # per-(run, representation, projection) slot — the canonical store for
+        # single fits. ``None`` means "no opinion": keep the run-blob restore.
+        if self._single_fit_restore_provider is not None:
+            payload = self._single_fit_restore_provider(dataset)
+            if payload is not None:
+                self.restore_single_fit_ui(payload)
+
+    def _reset_single_fit_form(self) -> None:
+        """Blank the single-fit form to its domain default ("No fit yet")."""
+        default_model = (
+            default_frequency_model()
+            if self._domain == "frequency"
+            else CompositeModel(["Exponential", "Constant"], operators=["+"])
+        )
+        self._single_tab._set_composite_model(default_model)
+        self._single_tab._result_label.setText("No fit performed yet")
+
+    def set_single_fit_restore_provider(
+        self, provider: Callable[[MuonDataset | None], dict | None] | None
+    ) -> None:
+        """Install the per-projection single-fit restore mediator (or clear it).
+
+        The main window passes a callable that maps the dataset being bound to
+        the persisted single-fit form payload for the active ``(run,
+        representation, projection)`` slot — or ``None`` to defer to the
+        panel's own run-keyed state (the default / legacy-project path).
+        """
+        self._single_fit_restore_provider = provider
+
+    def get_single_form_state(self) -> dict:
+        """Return the single-fit *form* payload (no per-run/domain wrapping).
+
+        This is exactly what :meth:`restore_single_fit_ui` consumes, so it is the
+        payload the main window stores as a slot's ``ui_state``.
+        """
+        return copy.deepcopy(self._single_tab.get_state())
+
+    def restore_single_fit_ui(self, payload: dict | None) -> None:
+        """Restore (or blank) the single-fit form from a slot ``ui_state`` payload.
+
+        A populated dict restores the form verbatim; an empty dict (or ``None``)
+        blanks it — an unfit projection must never inherit another projection's
+        fit. The active run's run-keyed blob is kept in sync so downstream
+        run-keyed consumers (global seeding, group sharing) see the same form.
+        """
+        if isinstance(payload, dict) and payload:
+            self._single_tab.restore_state(payload)
+        else:
+            self._reset_single_fit_form()
+        if self._active_single_run_number is not None:
+            self._single_state_by_run[self._active_single_run_number] = self._single_tab.get_state()
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting tab and track for group sharing."""

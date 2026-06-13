@@ -408,6 +408,114 @@ def test_fit_panel_forwards_single_tab_preview(qapp: QApplication, dataset: Muon
     assert len(emitted["curve"][0]) == 500
 
 
+def test_get_single_form_state_returns_independent_copy(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+
+    state = panel.get_single_form_state()
+    assert state["composite_model"]["component_names"] == ["Gaussian", "Constant"]
+    # Mutating the returned payload must not corrupt the live tab.
+    state["composite_model"]["component_names"] = ["mutated"]
+    assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
+
+
+def test_restore_single_fit_ui_restores_form_from_payload(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+    payload = panel.get_single_form_state()
+
+    # Move the form elsewhere, then restore the captured payload.
+    panel._single_tab._set_composite_model(CompositeModel(["Exponential"], operators=[]))
+    panel.restore_single_fit_ui(payload)
+
+    assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
+    # The active run's run-keyed blob is kept in sync with the restored form.
+    assert panel._single_state_by_run[int(dataset.run_number)]["composite_model"][
+        "component_names"
+    ] == ["Gaussian", "Constant"]
+
+
+def test_restore_single_fit_ui_empty_blanks_form(qapp: QApplication, dataset: MuonDataset) -> None:
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+    panel._single_tab._result_label.setText("a stale fit result")
+
+    panel.restore_single_fit_ui({})
+
+    assert panel._single_tab._composite_model.component_names == ["Exponential", "Constant"]
+    assert panel._single_tab._result_label.text() == "No fit performed yet"
+
+
+def test_set_dataset_restore_provider_overrides_run_blob(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+    persisted = panel.get_single_form_state()
+
+    # The run blob would restore the Exponential default; the provider supplies
+    # a different persisted payload that must win.
+    panel.set_dataset(None)
+    panel.set_single_fit_restore_provider(lambda _ds: persisted)
+    panel.set_dataset(dataset)
+
+    assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
+
+
+def test_set_dataset_restore_provider_none_falls_back_to_run_blob(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    panel = FitPanel()
+    calls: list = []
+    panel.set_single_fit_restore_provider(lambda ds: calls.append(ds) or None)
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+
+    # Navigate away and back; provider returns None so the run blob restores.
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 999})
+    panel.set_dataset(d2)
+    panel.set_dataset(dataset)
+
+    assert calls  # provider was consulted
+    assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
+
+
+def test_set_dataset_provider_empty_blanks_unfit_projection(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    """An empty payload from the provider blanks the form (unfit projection)."""
+    panel = FitPanel()
+    panel.set_dataset(dataset)
+    panel._single_tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+
+    # Re-bind the same run with a provider that reports "no fit for this projection".
+    panel.set_single_fit_restore_provider(lambda _ds: {})
+    panel.set_dataset(dataset)
+
+    assert panel._single_tab._composite_model.component_names == ["Exponential", "Constant"]
+    assert panel._single_tab._result_label.text() == "No fit performed yet"
+
+
 def test_single_fit_invalid_value_shows_error(qapp: QApplication, dataset: MuonDataset) -> None:
     tab = SingleFitTab()
     tab.set_dataset(dataset)
