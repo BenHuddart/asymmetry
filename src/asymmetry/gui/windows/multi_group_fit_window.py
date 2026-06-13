@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -27,6 +26,7 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.transform import resolve_background_mode
 from asymmetry.gui.panels.fit_panel import GlobalFitTab
+from asymmetry.gui.styles.widgets import make_section_header
 
 #: Fit-target choices (label, mode key) shown in the count-domain selector.
 _FIT_TARGETS: tuple[tuple[str, str], ...] = (
@@ -72,9 +72,14 @@ class MultiGroupFitWindow(QWidget):
 
     def _build_target_controls(self) -> QWidget:
         """Build the count-domain fit-target / cost / side selector row."""
-        box = QGroupBox("Fit target")
-        form = QFormLayout(box)
-        form.setContentsMargins(8, 4, 8, 4)
+        box = QWidget()
+        outer = QVBoxLayout(box)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
+        outer.addWidget(make_section_header("Fit target"))
+        form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        outer.addLayout(form)
 
         # Store the mode key as item data so reordering the dropdowns can't remap
         # a selection to the wrong key.
