@@ -19,8 +19,8 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -99,13 +99,16 @@ from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.widgets import (
-    RESULTS_GROUP_SUCCESS_STYLE,
+    RESULT_BOX_NEUTRAL_STYLE,
+    RESULT_BOX_OBJECT_NAME,
+    RESULT_BOX_SUCCESS_STYLE,
     apply_param_table_style,
     build_primary_button_qss,
     configure_formula_label,
     error_html,
     fit_quality_chip_html,
     fit_quality_tooltip,
+    make_section_header,
     success_html,
 )
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
@@ -957,8 +960,10 @@ class SingleFitTab(QWidget):
         self._model_generation = 0
 
         # Model selection
-        model_group = QGroupBox("Model")
+        layout.addWidget(make_section_header("Model"))
+        model_group = QWidget()
         model_layout = QFormLayout(model_group)
+        model_layout.setContentsMargins(0, 0, 0, 0)
         self._formula_label = QLabel()
         _configure_formula_label(self._formula_label)
         self._edit_model_btn = QPushButton("Edit Function...")
@@ -1007,9 +1012,10 @@ class SingleFitTab(QWidget):
         layout.addWidget(model_group)
 
         # Fit range section
-        fit_range_group = QGroupBox("Fit range")
+        layout.addWidget(make_section_header("Fit range"))
+        fit_range_group = QWidget()
         fit_range_layout = QHBoxLayout(fit_range_group)
-        fit_range_layout.setContentsMargins(6, 4, 6, 4)
+        fit_range_layout.setContentsMargins(0, 0, 0, 0)
         fit_range_layout.setSpacing(4)
 
         self._fit_range_min_spin = QDoubleSpinBox()
@@ -1042,8 +1048,10 @@ class SingleFitTab(QWidget):
         self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
 
         # Parameter table
-        param_group = QGroupBox("Parameters")
+        layout.addWidget(make_section_header("Parameters"))
+        param_group = QWidget()
         param_layout = QVBoxLayout(param_group)
+        param_layout.setContentsMargins(0, 0, 0, 0)
         self._param_table = QTableWidget(0, 7)
         self._param_table.setHorizontalHeaderLabels(
             ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link"]
@@ -1116,7 +1124,10 @@ class SingleFitTab(QWidget):
         layout.addLayout(btn_layout)
 
         # Results
-        self._results_group = QGroupBox("Fit Results")
+        layout.addWidget(make_section_header("Fit Results"))
+        self._results_group = QFrame()
+        self._results_group.setObjectName(RESULT_BOX_OBJECT_NAME)
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         results_layout = QVBoxLayout(self._results_group)
         self._result_label = QLabel("No fit performed yet")
         self._result_label.setWordWrap(True)
@@ -1576,7 +1587,7 @@ class SingleFitTab(QWidget):
         wizard_note = f"Fit Wizard — {assessment.template.title}"
         if assessment.residual_gate_reasons:
             wizard_note += " ⚠"
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         detail = _fit_success_html(result).split("<br>", 1)[1]
         self._result_label.setText(success_html(wizard_note, detail=detail))
 
@@ -1759,7 +1770,7 @@ class SingleFitTab(QWidget):
             return
 
         # Run the fit on a worker thread; the GUI (and Stop button) stay live.
-        self._results_group.setStyleSheet("")
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         self._result_label.setText("Fitting...")
 
         # Snapshot launch-time context: the user may switch run or model while
@@ -1810,7 +1821,7 @@ class SingleFitTab(QWidget):
         """Handle a cancelled single fit: restore the panel, record nothing."""
         self._set_fit_busy(False)
         self._fit_worker = None
-        self._results_group.setStyleSheet("")
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         self._result_label.setText("Fit cancelled — no result recorded.")
 
     def _on_single_fit_error(self, message: str) -> None:
@@ -1834,7 +1845,7 @@ class SingleFitTab(QWidget):
         self._fit_worker = None
 
         if not result.success:
-            self._results_group.setStyleSheet("")
+            self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_label.setText(f"<b>Fit failed:</b> {result.message}")
             return
 
@@ -1849,7 +1860,7 @@ class SingleFitTab(QWidget):
         )
         dataset_unchanged = self._current_dataset is dataset
 
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_label.setText(_fit_success_html(result))
         self._result_label.setToolTip(fit_quality_tooltip(_fit_quality_dict(result)))
 
@@ -2205,8 +2216,10 @@ class GlobalFitTab(QWidget):
         self._group_param_group_specs: list[tuple[object, str]] = []
 
         # Model selection
-        model_group = QGroupBox("Model")
+        layout.addWidget(make_section_header("Model"))
+        model_group = QWidget()
         model_layout = QFormLayout(model_group)
+        model_layout.setContentsMargins(0, 0, 0, 0)
         self._formula_label = QLabel()
         _configure_formula_label(self._formula_label)
         self._edit_model_btn = QPushButton("Edit Function...")
@@ -2230,9 +2243,10 @@ class GlobalFitTab(QWidget):
         layout.addWidget(model_group)
 
         # Fit range section
-        _fr_group = QGroupBox("Fit range")
+        layout.addWidget(make_section_header("Fit range"))
+        _fr_group = QWidget()
         _fr_layout = QHBoxLayout(_fr_group)
-        _fr_layout.setContentsMargins(6, 4, 6, 4)
+        _fr_layout.setContentsMargins(0, 0, 0, 0)
         _fr_layout.setSpacing(4)
 
         self._fit_range_min_spin = QDoubleSpinBox()
@@ -2264,8 +2278,10 @@ class GlobalFitTab(QWidget):
         self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
 
         # Parameter classification table
-        self._param_group = QGroupBox("Parameter Classification")
+        self._param_group = QWidget()
         param_layout = QVBoxLayout(self._param_group)
+        param_layout.setContentsMargins(0, 0, 0, 0)
+        param_layout.addWidget(make_section_header("Parameter Classification"))
 
         param_header_layout = QHBoxLayout()
         param_header_layout.addStretch()
@@ -2293,8 +2309,10 @@ class GlobalFitTab(QWidget):
         self._grouped_context_label.hide()
         layout.addWidget(self._grouped_context_label)
 
-        self._group_param_group = QGroupBox("Per-Group Parameters")
+        self._group_param_group = QWidget()
         group_param_layout = QVBoxLayout(self._group_param_group)
+        group_param_layout.setContentsMargins(0, 0, 0, 0)
+        group_param_layout.addWidget(make_section_header("Per-Group Parameters"))
         self._group_param_table = QTableWidget(0, 4)
         self._group_param_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
         self._group_param_table.horizontalHeader().setStretchLastSection(False)
@@ -2314,8 +2332,10 @@ class GlobalFitTab(QWidget):
         group_param_layout.addLayout(group_param_button_layout)
         layout.addWidget(self._group_param_group)
 
-        self._group_model_group = QGroupBox("Fit-Function Parameters")
+        self._group_model_group = QWidget()
         group_model_layout = QVBoxLayout(self._group_model_group)
+        group_model_layout.setContentsMargins(0, 0, 0, 0)
+        group_model_layout.addWidget(make_section_header("Fit-Function Parameters"))
         self._group_model_table = QTableWidget(0, 4)
         self._group_model_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
         self._group_model_table.horizontalHeader().setStretchLastSection(False)
@@ -2361,7 +2381,10 @@ class GlobalFitTab(QWidget):
         layout.addLayout(btn_layout)
 
         # Results display
-        self._results_group = QGroupBox("Batch Fit Results")
+        layout.addWidget(make_section_header("Batch Fit Results"))
+        self._results_group = QFrame()
+        self._results_group.setObjectName(RESULT_BOX_OBJECT_NAME)
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         results_layout = QVBoxLayout(self._results_group)
         self._result_text = QTextEdit()
         self._result_text.setReadOnly(True)
@@ -3771,7 +3794,7 @@ class GlobalFitTab(QWidget):
         )
         before = next(iter(change["before"].values()), 0.0)
         after = next(iter(change["after"].values()), 0.0)
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(
             success_html(
                 "Deadtime promoted to grouping",
@@ -3978,7 +4001,7 @@ class GlobalFitTab(QWidget):
     def _on_count_fit_error(self, message: str) -> None:
         self._set_series_busy(False)
         self._count_fit_worker = None
-        self._results_group.setStyleSheet("")
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         self._result_text.setHtml(error_html(f"Count-domain fit failed: {message}"))
 
     def _on_count_fit_cancelled(self) -> None:
@@ -3991,7 +4014,7 @@ class GlobalFitTab(QWidget):
     ) -> None:
         cost = cost if cost is not None else self._count_fit_cost
         if not result.success:
-            self._results_group.setStyleSheet("")
+            self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_text.setHtml(error_html(result.message or "Forward/backward fit failed"))
             return
         fwd = result.group_results[forward]
@@ -4005,7 +4028,7 @@ class GlobalFitTab(QWidget):
             f"α = {self._fmt_value(alpha, alpha_err)} · χ²/ν = {fwd.reduced_chi_squared:.4f}{chip} "
             f"(cost: {cost})<br>" + "<br>".join(rows)
         )
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(
             success_html(f"Forward/backward fit · groups {forward}/{backward}", detail=detail)
         )
@@ -4030,14 +4053,14 @@ class GlobalFitTab(QWidget):
         cost = cost if cost is not None else self._count_fit_cost
         side = side if side is not None else self._count_single_side
         if not result.success:
-            self._results_group.setStyleSheet("")
+            self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_text.setHtml(error_html(result.message or "Single-histogram fit failed"))
             return
         self._store_count_deadtime(result, group_id)
         self._store_count_single_extras(dataset, result, group_id)
         rows = [self._count_param_row(result, name) for name in result.parameters.names]
         detail = f"χ²/ν = {result.reduced_chi_squared:.4f} (cost: {cost})<br>" + "<br>".join(rows)
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(
             success_html(
                 f"Single-histogram fit · group {group_id} ({side})",
@@ -4276,7 +4299,7 @@ class GlobalFitTab(QWidget):
 
     def _announce_promote(self, title: str, detail: str) -> None:
         """Render a success banner for a calibration promote and notify the host."""
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(success_html(title, detail=detail))
         if self._current_dataset is not None:
             self.count_grouping_promoted.emit(self._current_dataset)
@@ -4354,7 +4377,7 @@ class GlobalFitTab(QWidget):
         """Handle a cancelled series fit: restore the panel, record nothing."""
         self._set_series_busy(False)
         self._fit_worker = None
-        self._results_group.setStyleSheet("")
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         self._result_text.setText("Fit cancelled — no result recorded.")
 
     @staticmethod
@@ -4490,7 +4513,7 @@ class GlobalFitTab(QWidget):
         seeding_reason = getattr(series_result, "seeding_reason", "")
         if seeding_reason:
             stats += f"<br>Seeding: {seeding_reason}"
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(success_html("Grouped series fit converged", detail=stats))
         self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
 
@@ -4640,7 +4663,7 @@ class GlobalFitTab(QWidget):
         avg_red_chi2 = sum(r.reduced_chi_squared for r in results_dict.values()) / n_datasets
         npar = len(global_param_names)
         stats = f"avg χ²/ν = {avg_red_chi2:.4f} · {n_datasets} datasets · npar = {npar}"
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(success_html("Batch fit converged", detail=stats))
 
     def _results_with_curves(
@@ -4861,7 +4884,7 @@ class GlobalFitTab(QWidget):
             failed = [run for run, r in results_dict.items() if not r.success]
             run_label_by_number = {ds.run_number: ds.run_label for ds in self._datasets}
             failed_labels = [run_label_by_number.get(run, str(run)) for run in failed]
-            self._results_group.setStyleSheet("")
+            self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
             self._result_text.setText(
                 f"<b>Batch fit failed</b><br>Failed datasets: {failed_labels}"
             )
@@ -4871,7 +4894,7 @@ class GlobalFitTab(QWidget):
         self._set_series_busy(False)
         self._fit_worker = None
         self._update_mode_ui(preserve_result=True)
-        self._results_group.setStyleSheet("")
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         mode_label = "grouped fit" if self.is_grouped_time_domain_mode() else "global fit"
         self._result_text.setText(f"<b>Error during {mode_label}:</b><br>{error_msg}")
 
@@ -5069,7 +5092,7 @@ class GlobalFitTab(QWidget):
         )
         n_shared = len(grouped_result.shared_parameters)
         stats = f"{n_groups} groups · avg χ²/ν = {avg_red_chi2:.4f} · shared = {n_shared}"
-        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
         self._result_text.setHtml(success_html("Grouped fit converged", detail=stats))
         self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
 
