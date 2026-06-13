@@ -237,6 +237,11 @@ background file, no schema break.**
 - **Configurable R** — deferred; fixed 0.95, helper already supports configurability.
 - **In-batch co-add / re-fit-coadded; `fgAll`→Poisson cost-factory unification** —
   follow-ons per the directive (run-arithmetic dependency / separate refactor).
+  *Update (2026-06-13): the `fgAll`→Poisson cost-factory unification landed on
+  `feat/rrf-engine-pass`* — `FitEngine` gained the `cost_factory` seam and
+  grouped fits route through Poisson Cash by default; see
+  `docs/porting/count-domain-fit-modes/implementation-options.md` follow-on 1
+  for the design and the quantified low-count shift.
 - **Dedicated "Fit log" window** — rejected; existing surfaces suffice (Ben).
 
 ## Recorded follow-ons (built nothing; noted for later)
