@@ -828,12 +828,27 @@ class GlobalParameterFitWindow(QMainWindow):
             return
         groups = list(self._groups)
         show_components = self._show_components_check.isChecked()
+        # Snapshot the model/result/x-range references so the worker never reads
+        # state that a concurrent set_results may rebind on the GUI thread.
+        result = self._result
+        model = self._model
+        fit_x_min = self._fit_x_min
+        fit_x_max = self._fit_x_max
+        x_key = self._x_key
         if self._fit_overlay is not None:
             self._fit_overlay.show_message("Computing fit curves…")
         self._fit_curve_compute_active = True
         self._tasks.start(
             lambda _worker: {
-                group.group_id: self._compute_group_fit_curve(group, show_components)
+                group.group_id: self._compute_group_fit_curve(
+                    group,
+                    show_components,
+                    result=result,
+                    model=model,
+                    fit_x_min=fit_x_min,
+                    fit_x_max=fit_x_max,
+                    x_key=x_key,
+                )
                 for group in groups
             },
             on_finished=self._on_fit_curves_ready,
@@ -932,23 +947,33 @@ class GlobalParameterFitWindow(QMainWindow):
         token = "_".join(part for part in token.split("_") if part)
         return (token or "series").lower()
 
-    def _model_kwargs_for_group(self, group_id: str) -> dict[str, float]:
-        if self._result is None:
-            return {}
-        kwargs = {p.name: p.value for p in self._result.global_parameters}
-        for p in self._result.fixed_parameters:
+    @staticmethod
+    def _model_kwargs(result, model, group_id: str) -> dict[str, float]:
+        """Build a group's model kwargs (global + fixed + local, defaults-filled).
+
+        Pure — takes ``result``/``model`` explicitly so it is safe to call from
+        the off-thread fit-curve worker as well as the GUI thread.
+        """
+        kwargs = {p.name: p.value for p in result.global_parameters}
+        for p in result.fixed_parameters:
             kwargs[p.name] = p.value
-        local = self._result.local_parameters.get(group_id)
+        local = result.local_parameters.get(group_id)
         if local is not None:
             for p in local:
                 kwargs[p.name] = p.value
-
-        missing = [name for name in getattr(self._model, "param_names", []) if name not in kwargs]
-        defaults = getattr(self._model, "param_defaults", {})
+        # Backward-compatible restore support: older saved cross-group states may
+        # miss newer model parameters (e.g. D_perp). Fill from model defaults.
+        missing = [name for name in getattr(model, "param_names", []) if name not in kwargs]
+        defaults = getattr(model, "param_defaults", {})
         for name in missing:
             if isinstance(defaults, dict) and name in defaults:
                 kwargs[name] = float(defaults[name])
         return kwargs
+
+    def _model_kwargs_for_group(self, group_id: str) -> dict[str, float]:
+        if self._result is None:
+            return {}
+        return self._model_kwargs(self._result, self._model, group_id)
 
     def _sample_group_fit_curve(
         self, group: ParameterGroupData
@@ -1083,32 +1108,29 @@ class GlobalParameterFitWindow(QMainWindow):
         self._params_table.resizeColumnsToContents()
 
     def _compute_group_fit_curve(
-        self, group: ParameterGroupData, show_components: bool
+        self,
+        group: ParameterGroupData,
+        show_components: bool,
+        *,
+        result,
+        model,
+        fit_x_min: float,
+        fit_x_max: float,
+        x_key: str,
     ) -> dict | None:
         """Evaluate one group's cross-group fit curve (and optional components).
 
-        Pure: reads only the captured model/result/x-range state and the passed
-        ``show_components`` flag — no widget or matplotlib access — so it is safe
-        to run on a worker thread. Returns ``{"xx", "yy", "components"}``,
+        Pure: operates only on the explicitly-passed ``result``/``model``/x-range
+        and the ``show_components`` flag — never ``self`` GUI state, no widget or
+        matplotlib access — so the fit-curve worker can call it off the GUI
+        thread without racing ``set_results`` (which rebinds ``self._result`` /
+        ``self._model`` on the GUI thread). Returns ``{"xx", "yy", "components"}``,
         ``{"error": msg}`` when the model rejects the parameters, or ``None``
         when there is nothing to draw.
         """
-        if self._model is None or self._result is None:
+        if model is None or result is None:
             return None
-        kwargs = {p.name: p.value for p in self._result.global_parameters}
-        for p in self._result.fixed_parameters:
-            kwargs[p.name] = p.value
-        local = self._result.local_parameters.get(group.group_id)
-        if local is not None:
-            for p in local:
-                kwargs[p.name] = p.value
-        # Backward-compatible restore support: older saved cross-group states may
-        # miss newer model parameters (e.g. D_perp). Fill from model defaults.
-        missing = [name for name in getattr(self._model, "param_names", []) if name not in kwargs]
-        defaults = getattr(self._model, "param_defaults", {})
-        for name in missing:
-            if isinstance(defaults, dict) and name in defaults:
-                kwargs[name] = float(defaults[name])
+        kwargs = self._model_kwargs(result, model, group.group_id)
         if not kwargs:
             return None
 
@@ -1116,28 +1138,24 @@ class GlobalParameterFitWindow(QMainWindow):
         if xx.size >= 2:
             xx = xx.copy()
             xx.sort()
-        if (
-            np.isfinite(self._fit_x_min)
-            and np.isfinite(self._fit_x_max)
-            and self._fit_x_max > self._fit_x_min
-        ):
-            mask = (xx >= self._fit_x_min) & (xx <= self._fit_x_max)
+        if np.isfinite(fit_x_min) and np.isfinite(fit_x_max) and fit_x_max > fit_x_min:
+            mask = (xx >= fit_x_min) & (xx <= fit_x_max)
             xx = xx[mask]
         if xx.size >= 2:
             x_min = float(np.nanmin(xx))
             x_max = float(np.nanmax(xx))
-            if self._x_key == "field" and x_min > 0.0 and x_max > 0.0:
+            if x_key == "field" and x_min > 0.0 and x_max > 0.0:
                 xx = np.geomspace(x_min, x_max, _PARAMETER_FIT_CURVE_SAMPLE_COUNT)
             else:
                 xx = np.linspace(x_min, x_max, _PARAMETER_FIT_CURVE_SAMPLE_COUNT)
 
         try:
             components = (
-                self._model.evaluate_components(xx, additive_only=True, **kwargs)
+                model.evaluate_components(xx, additive_only=True, **kwargs)
                 if show_components
                 else None
             )
-            yy = np.asarray(self._model.function(xx, **kwargs), dtype=float)
+            yy = np.asarray(model.function(xx, **kwargs), dtype=float)
         except KeyError as exc:
             return {"error": str(exc)}
         return {"xx": xx, "yy": yy, "components": components}
@@ -1178,7 +1196,13 @@ class GlobalParameterFitWindow(QMainWindow):
                 curve = self._precomputed_left_curves.get(group.group_id)
             else:
                 curve = self._compute_group_fit_curve(
-                    group, self._show_components_check.isChecked()
+                    group,
+                    self._show_components_check.isChecked(),
+                    result=self._result,
+                    model=self._model,
+                    fit_x_min=self._fit_x_min,
+                    fit_x_max=self._fit_x_max,
+                    x_key=self._x_key,
                 )
 
             if curve is not None and "error" in curve:

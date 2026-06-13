@@ -640,16 +640,38 @@ class TestMainWindowFourier:
         spectra = list(mainwindow._frequency_spectra_by_run[8828])
 
         # The view has moved on to another run while run 8828 was computing.
-        mainwindow._frequency_display_run = 9999
+        mainwindow._frequency_display_key = (9999, RepresentationType.FREQ_FFT)
         before = mainwindow._frequency_plot_panel._current_dataset
         mainwindow._on_frequency_recompute_finished(
-            8828, RepresentationType.FREQ_FFT, rep, spectra, 0.0, None, None
+            8828, RepresentationType.FREQ_FFT, rep, spectra, 0.0
         )
         # The stale run is not drawn over the current view…
         assert mainwindow._frequency_plot_panel._current_dataset is before
         # …but its cache is warmed so a later switch back is instant.
         assert 8828 in mainwindow._frequency_spectra_by_run
         assert not mainwindow._frequency_recompute_active
+
+    def test_recompute_for_other_representation_does_not_redraw(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """An FFT recompute finishing after a toggle to MaxEnt (same run) is not drawn."""
+        dataset = _make_fourier_ready_dataset(8833, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8833)
+        _compute_fourier_sync(mainwindow)
+        rep = mainwindow._project_model.representation(8833, RepresentationType.FREQ_FFT)
+        assert rep is not None
+        spectra = list(mainwindow._frequency_spectra_by_run[8833])
+
+        # Same run, but the user toggled the view to MaxEnt while the FFT was in
+        # flight. The display key is (run, rep), so the FFT completion must not
+        # redraw over the MaxEnt view.
+        mainwindow._frequency_display_key = (8833, RepresentationType.FREQ_MAXENT)
+        before = mainwindow._frequency_plot_panel._current_dataset
+        mainwindow._on_frequency_recompute_finished(
+            8833, RepresentationType.FREQ_FFT, rep, spectra, 0.0
+        )
+        assert mainwindow._frequency_plot_panel._current_dataset is before
 
     def test_close_with_pending_recompute_shuts_down(self, mainwindow: MainWindow) -> None:
         """Closing mid-recompute tears the worker down within the bounded wait."""

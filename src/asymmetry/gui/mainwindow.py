@@ -449,12 +449,14 @@ class MainWindow(QMainWindow):
         self._project_save_active = False  # True while a background save is writing
         self._fourier_compute_active = False  # True while a background FFT runs
         self._fourier_phase_estimate_active = False  # True while auto-phase runs
-        # True while a lazy FFT recompute (project open / run switch) runs off
-        # the GUI thread; the keys of in-flight (run, rep) recomputes coalesce
-        # duplicate requests, and the last-requested run guards stale redraws.
-        self._frequency_recompute_active = False
+        # In-flight (run, rep) lazy-FFT recompute keys: coalesce duplicate
+        # requests and, via the _frequency_recompute_active property, drive the
+        # overlay/idle state. _frequency_recompute_limits keeps the latest
+        # requested view limits per key (so a re-request refreshes them), and
+        # _frequency_display_key (the displayed (run, rep)) guards stale redraws.
         self._frequency_recompute_inflight: set[tuple[int, RepresentationType]] = set()
-        self._frequency_display_run: int | None = None
+        self._frequency_recompute_limits: dict[tuple[int, RepresentationType], tuple] = {}
+        self._frequency_display_key: tuple[int, RepresentationType] | None = None
         # Set when a project open is cancelled mid-prefetch: the loaded set is
         # known-incomplete, so saving would silently drop the unloaded runs.
         self._project_load_incomplete = False
@@ -4991,6 +4993,15 @@ class MainWindow(QMainWindow):
             self._lazy_recompute_failures = failures
         return pending, failures
 
+    @property
+    def _frequency_recompute_active(self) -> bool:
+        """True while any lazy FFT recompute is in flight (derived state).
+
+        Single source of truth is :attr:`_frequency_recompute_inflight`; deriving
+        the flag avoids the two drifting out of sync.
+        """
+        return bool(getattr(self, "_frequency_recompute_inflight", None))
+
     def _frequency_recompute_target(
         self,
         run_number: int | None,
@@ -5054,6 +5065,12 @@ class MainWindow(QMainWindow):
         cache = self._frequency_cache(rep_type)
         key = (run_number, rep_type)
         pending, _failures = self._ensure_recompute_tracking()
+        cached = cache.get(run_number, [])
+        # Plain cache hit already resolved (not awaiting a one-time recipe
+        # recompute): return the stored list untouched. Promoting [primary]
+        # here would truncate a multi-element cached spectra list.
+        if cached and key not in pending:
+            return list(cached)
         container = self._project_model.datasets.get(run_number)
         representation = container.get(rep_type) if container is not None else None
         if representation is None or not representation.recompute_on_load:
@@ -5123,6 +5140,11 @@ class MainWindow(QMainWindow):
         run_number = int(run_number)
         target = self._frequency_recompute_target(run_number, rep_type)
         if target is None:
+            return self._frequency_spectra_from_cache(run_number, rep_type)
+        if (run_number, rep_type) in self._frequency_recompute_inflight:
+            # An async view recompute for this run is already running off-thread;
+            # don't start a second, concurrent compute on the same representation.
+            # Return what is cached now — the async completion will populate it.
             return self._frequency_spectra_from_cache(run_number, rep_type)
         representation, run = target
         started_at = time.perf_counter()
@@ -5223,11 +5245,10 @@ class MainWindow(QMainWindow):
                 preserved_x_limits = (float(x_min), float(x_max))
                 preserved_y_limits = (float(y_min), float(y_max))
 
-        # Record the run the view is showing so an async recompute completing
-        # for a switched-away run does not redraw over the current one.
-        self._frequency_display_run = None if run_number is None else int(run_number)
-
         if run_number is None:
+            # Record that nothing is displayed so an async recompute completing
+            # for a switched-away run does not redraw over the current view.
+            self._frequency_display_key = None
             self._frequency_plot_panel.clear()
             if preserved_x_limits is not None and preserved_y_limits is not None:
                 self._frequency_plot_panel.set_view_limits(
@@ -5240,11 +5261,16 @@ class MainWindow(QMainWindow):
             return
 
         rep_type = self._active_frequency_rep_type()
+        # Record the displayed (run, rep) so a completing recompute for a
+        # switched-away run *or representation* (e.g. FFT finishing after the
+        # user toggled to MaxEnt) does not redraw over the current view.
+        self._frequency_display_key = (int(run_number), rep_type)
         target = self._frequency_recompute_target(int(run_number), rep_type)
         if target is None:
             # Nothing heavy to do (cache hit, snapshot, or not recomputable):
-            # resolve synchronously — it cannot block — and render now.
-            spectra = self._ensure_frequency_spectra_for_run(int(run_number), rep_type)
+            # resolve from the cache — it cannot block — and render now. Calling
+            # the cache helper directly avoids re-evaluating the target.
+            spectra = self._frequency_spectra_from_cache(int(run_number), rep_type)
             self._render_frequency_spectra(
                 int(run_number), rep_type, spectra, preserved_x_limits, preserved_y_limits
             )
@@ -5317,13 +5343,17 @@ class MainWindow(QMainWindow):
         representation, run = target
         key = (run_number, rep_type)
         name = self._frequency_status_name(rep_type)
+        # Always record the latest requested view limits for this key, so a
+        # duplicate request (run switched away and back) refreshes them even when
+        # an earlier recompute is still in flight; the completion reads them here.
+        self._frequency_recompute_limits[key] = (preserved_x_limits, preserved_y_limits)
         # Overlay + status reflect the just-requested run even if an earlier
         # run's recompute is still finishing.
         self._frequency_overlay.show_message(f"Computing {name} for run {run_number}…")
-        self._frequency_recompute_active = True
         self._set_status_state(f"Computing {name}…")
         if key in self._frequency_recompute_inflight:
-            # This exact run/rep is already recomputing; the overlay is enough.
+            # This exact run/rep is already recomputing; the overlay + refreshed
+            # limits above are enough.
             return
         self._frequency_recompute_inflight.add(key)
         started_at = time.perf_counter()
@@ -5333,28 +5363,16 @@ class MainWindow(QMainWindow):
         self._tasks.start(
             lambda _worker: representation.compute(run),
             on_finished=lambda spectra: self._on_frequency_recompute_finished(
-                run_number,
-                rep_type,
-                representation,
-                spectra,
-                started_at,
-                preserved_x_limits,
-                preserved_y_limits,
+                run_number, rep_type, representation, spectra, started_at
             ),
             on_error=lambda message: self._on_frequency_recompute_error(
-                run_number,
-                rep_type,
-                representation,
-                message,
-                preserved_x_limits,
-                preserved_y_limits,
+                run_number, rep_type, representation, message
             ),
         )
 
     def _finish_frequency_recompute_ui(self) -> None:
         """Drop the overlay/status once no frequency recompute remains."""
         if not self._frequency_recompute_inflight:
-            self._frequency_recompute_active = False
             self._frequency_overlay.hide()
         self._clear_status_state_if_idle()
 
@@ -5380,20 +5398,22 @@ class MainWindow(QMainWindow):
         representation: object,
         spectra: object,
         started_at: float,
-        preserved_x_limits: tuple[float, float] | None,
-        preserved_y_limits: tuple[float, float] | None,
     ) -> None:
-        self._frequency_recompute_inflight.discard((run_number, rep_type))
+        key = (run_number, rep_type)
+        self._frequency_recompute_inflight.discard(key)
+        preserved_x_limits, preserved_y_limits = self._frequency_recompute_limits.pop(
+            key, (None, None)
+        )
         # Promote the worker-computed curves into the shared representation on
         # the GUI thread, then let the cache helper cache + clear pending.
         representation.cache_datasets(list(spectra) if spectra else [])
         resolved = self._frequency_spectra_from_cache(run_number, rep_type)
-        self._lazy_recompute_failures.discard((run_number, rep_type))
+        self._lazy_recompute_failures.discard(key)
         self._log_perf_event("lazy_spectrum_recompute", started_at, run=run_number)
         self._finish_frequency_recompute_ui()
-        # Only redraw if this run is still the displayed one — a rapid switch
-        # may have moved on while the recompute was in flight.
-        if self._frequency_display_run == run_number:
+        # Only redraw if this exact (run, rep) is still displayed — a rapid run
+        # switch or representation toggle may have moved on while in flight.
+        if self._frequency_display_key == key:
             self._render_frequency_spectra(
                 run_number, rep_type, resolved, preserved_x_limits, preserved_y_limits
             )
@@ -5405,13 +5425,15 @@ class MainWindow(QMainWindow):
         rep_type: RepresentationType,
         representation: object,
         message: str,
-        preserved_x_limits: tuple[float, float] | None,
-        preserved_y_limits: tuple[float, float] | None,
     ) -> None:
-        self._frequency_recompute_inflight.discard((run_number, rep_type))
+        key = (run_number, rep_type)
+        self._frequency_recompute_inflight.discard(key)
+        preserved_x_limits, preserved_y_limits = self._frequency_recompute_limits.pop(
+            key, (None, None)
+        )
         spectra = self._frequency_recompute_failed(run_number, rep_type, representation, message)
         self._finish_frequency_recompute_ui()
-        if self._frequency_display_run == run_number:
+        if self._frequency_display_key == key:
             self._render_frequency_spectra(
                 run_number, rep_type, spectra, preserved_x_limits, preserved_y_limits
             )
@@ -9930,8 +9952,8 @@ class MainWindow(QMainWindow):
         # Drop any stale in-flight recompute bookkeeping; a cleared session has
         # nothing displayed and the overlay must not survive into it.
         self._frequency_recompute_inflight = set()
-        self._frequency_display_run = None
-        self._frequency_recompute_active = False
+        self._frequency_recompute_limits = {}
+        self._frequency_display_key = None
         if hasattr(self, "_frequency_overlay"):
             self._frequency_overlay.hide()
         self._maxent_state_by_run = {}
