@@ -24,6 +24,7 @@ import hashlib
 import os
 import time
 from contextlib import nullcontext
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -57,6 +58,7 @@ from asymmetry.core.fitting import (
     FitLog,
     as_composite_model,
     build_grouped_time_domain_datasets,
+    enrich_summary_provenance,
     fit_result_summary,
     fit_scan_baseline,
     fit_scan_model,
@@ -140,6 +142,7 @@ from asymmetry.core.utils.constants import (
     PeriodMode,
 )
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
+from asymmetry.gui.fit_settings import fit_quality_confidence, set_fit_quality_confidence
 from asymmetry.gui.gle_settings import GleSetupDialog
 from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
@@ -186,6 +189,9 @@ _VIEW_MODE_COUNT = 3
 _PERF_LOGGING_SETTINGS_KEY = "debug/perf_logging"
 _PERF_LOGGING_ENV_VAR = "ASYMMETRY_PERF_LOGGING"
 _PLOT_DECIMATION_SETTINGS_KEY = "plot/enable_decimation"
+#: Options → Advanced → "Rotating reference frame" — an app-level chrome
+#: preference (like the dock/visibility toggles), NOT per-project. Default off.
+_RRF_ADVANCED_SETTINGS_KEY = "ui/rrf_advanced"
 _MAXENT_WARN_PEAK_MATRIX_BYTES = 1 * 1024**3
 _MAXENT_WARN_TOTAL_MATRIX_BYTES = 8 * 1024**3
 
@@ -556,6 +562,11 @@ class MainWindow(QMainWindow):
         # until the first selection event runs the sync.
         self._sync_available_views()
 
+        # Apply the persisted Advanced RRF toggle to the plot panel now that it
+        # exists (the menu action's setChecked ran before the panel was built,
+        # so its toggled signal did not reach the panel).
+        self._apply_rrf_advanced_to_panels(self._rrf_advanced_is_enabled())
+
         # Check for SciPy availability and warn if using fallback
         from asymmetry.core.fitting.diffusion import is_scipy_available
 
@@ -585,6 +596,38 @@ class MainWindow(QMainWindow):
     def _plot_decimation_is_enabled(self) -> bool:
         """Return whether plot display decimation is enabled."""
         return _coerce_bool(self._settings.value(_PLOT_DECIMATION_SETTINGS_KEY), default=True)
+
+    def _rrf_advanced_is_enabled(self) -> bool:
+        """Return whether the Advanced rotating-reference-frame toggle is on."""
+        return _coerce_bool(self._settings.value(_RRF_ADVANCED_SETTINGS_KEY), default=False)
+
+    def _apply_rrf_advanced_to_panels(self, enabled: bool) -> None:
+        """Push the RRF feature flag to the time-domain plot panel."""
+        panel = getattr(self, "_plot_panel", None)
+        if panel is not None and hasattr(panel, "set_rrf_feature_enabled"):
+            panel.set_rrf_feature_enabled(enabled)
+
+    def _auto_enable_rrf_for_active_project(self) -> None:
+        """Auto-enable the Advanced RRF toggle when an opened project uses RRF.
+
+        If the restored project carries an active RRF frame but the app-level
+        toggle is off, reveal it so the user's configured rotating-frame
+        analysis is not silently hidden — for this session only. The persisted
+        global preference is the user's own explicit choice and is deliberately
+        left untouched (opening a project must not permanently opt a user into
+        an advanced feature); the action is checked with its signal blocked and
+        the feature applied directly, so a fresh launch returns to the user's
+        default until they reopen this project.
+        """
+        action = getattr(self, "_rrf_advanced_action", None)
+        panel = getattr(self, "_plot_panel", None)
+        if action is None or action.isChecked() or panel is None:
+            return
+        if hasattr(panel, "rrf_has_active_parameters") and panel.rrf_has_active_parameters():
+            action.blockSignals(True)
+            action.setChecked(True)
+            action.blockSignals(False)
+            self._apply_rrf_advanced_to_panels(True)
 
     def _perf_dataset_metrics(
         self, datasets: MuonDataset | list[MuonDataset] | None
@@ -722,6 +765,14 @@ class MainWindow(QMainWindow):
         self._use_temperature_from_log_action.toggled.connect(
             self._on_use_temperature_from_log_toggled
         )
+        self._use_field_from_log_action = options_menu.addAction("Use field from log")
+        self._use_field_from_log_action.setCheckable(True)
+        self._use_field_from_log_action.setToolTip(
+            "Show the mean of the magnetic-field log channel in the B column "
+            "instead of the header value (the analogue of 'Use temperature "
+            "from log')."
+        )
+        self._use_field_from_log_action.toggled.connect(self._on_use_field_from_log_toggled)
         self._perf_logging_action = options_menu.addAction("Enable performance logging")
         self._perf_logging_action.setCheckable(True)
         self._perf_logging_action.setChecked(self._perf_logging_is_enabled())
@@ -730,6 +781,20 @@ class MainWindow(QMainWindow):
         self._plot_decimation_action.setCheckable(True)
         self._plot_decimation_action.setChecked(self._plot_decimation_is_enabled())
         self._plot_decimation_action.toggled.connect(self._on_plot_decimation_toggled)
+        options_menu.addAction("Fit quality confidence…", self._on_fit_quality_confidence)
+
+        # Options → Advanced: home for niche toggles that should not consume
+        # layout for the majority of users. Scoped to RRF for now.
+        advanced_menu = options_menu.addMenu("Advanced")
+        self._rrf_advanced_action = advanced_menu.addAction("Rotating reference frame")
+        self._rrf_advanced_action.setCheckable(True)
+        self._rrf_advanced_action.setToolTip(
+            "Show the rotating-reference-frame display controls on the time plot "
+            "and fit the FB asymmetry in the rotating frame. Advanced/niche; off "
+            "by default so it consumes no plot-panel space."
+        )
+        self._rrf_advanced_action.setChecked(self._rrf_advanced_is_enabled())
+        self._rrf_advanced_action.toggled.connect(self._on_rrf_advanced_toggled)
 
         # Setup
         setup_menu = mb.addMenu("&Setup")
@@ -1379,6 +1444,10 @@ class MainWindow(QMainWindow):
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
         if hasattr(self._fit_panel, "set_single_fit_restore_provider"):
             self._fit_panel.set_single_fit_restore_provider(self._single_fit_restore_payload)
+        # Auto-couple the single composite fit to the plot's RRF display: when
+        # the rotating frame is active there, the fit runs in that frame.
+        if hasattr(self._fit_panel, "set_rrf_frequency_provider"):
+            self._fit_panel.set_rrf_frequency_provider(self._plot_panel.rrf_fit_frequency_mhz)
         if hasattr(self._fit_panel, "global_fit_started"):
             self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
@@ -2803,6 +2872,10 @@ class MainWindow(QMainWindow):
             included.add("temperature")
         else:
             included.discard("temperature")
+        if self._data_browser.dataset_uses_field_from_log(run_number):
+            included.add("field")
+        else:
+            included.discard("field")
         return included
 
     def _on_run_info_field_inclusion_changed(
@@ -2815,18 +2888,29 @@ class MainWindow(QMainWindow):
         if field_key == "temperature" and run_number is not None:
             self._data_browser.set_dataset_temperature_from_log(run_number, include)
             return
+        if field_key == "field" and run_number is not None:
+            self._data_browser.set_dataset_field_from_log(run_number, include)
+            return
         if include:
             self._data_browser.add_extra_column(field_key)
         else:
             self._data_browser.remove_extra_column(field_key)
         if field_key == "temperature":
             self._sync_temperature_log_option_action()
+        elif field_key == "field":
+            self._sync_field_log_option_action()
 
     def _on_use_temperature_from_log_toggled(self, checked: bool) -> None:
         """Toggle Data Browser temperature display between header and log mean."""
         if not hasattr(self, "_data_browser"):
             return
         self._data_browser.set_use_temperature_from_log(checked)
+
+    def _on_use_field_from_log_toggled(self, checked: bool) -> None:
+        """Toggle Data Browser field display between header and log mean."""
+        if not hasattr(self, "_data_browser"):
+            return
+        self._data_browser.set_use_field_from_log(checked)
 
     def _on_perf_logging_toggled(self, checked: bool) -> None:
         """Persist and report GUI performance logging state."""
@@ -2853,6 +2937,45 @@ class MainWindow(QMainWindow):
         self._log_panel.log(f"Plot decimation {state}.")
         self.statusBar().showMessage(f"Plot decimation {state}")
 
+    def _on_rrf_advanced_toggled(self, checked: bool) -> None:
+        """Persist and apply the Advanced rotating-reference-frame toggle.
+
+        App-level chrome (QSettings), not per-project. Gates the entire RRF
+        surface: the plot controls and the rotating-frame fit. RRF *parameters*
+        continue to live in ``plot_state["rrf"]``.
+        """
+        enabled = bool(checked)
+        self._settings.setValue(_RRF_ADVANCED_SETTINGS_KEY, enabled)
+        self._apply_rrf_advanced_to_panels(enabled)
+        state = "enabled" if enabled else "disabled"
+        self._log_panel.log(f"Rotating reference frame {state}.")
+        self.statusBar().showMessage(f"Rotating reference frame {state}")
+
+    def _on_fit_quality_confidence(self) -> None:
+        """Prompt for and persist the χ² quality-band confidence level (percent).
+
+        The band is the χ²ᵣ good/poor/overdone target; raising the confidence
+        widens it toward χ²ᵣ = 1. Stored in QSettings and read by every fit
+        surface (recorded records, the live fit-panel chip, the model-fit dialog)
+        on the next fit — a settings entry, not a per-fit control.
+        """
+        current = fit_quality_confidence(self._settings)
+        percent, ok = QInputDialog.getDouble(
+            self,
+            "Fit quality confidence",
+            "Two-sided χ² confidence level R (%):\n"
+            "the good/poor/overdone band; higher = more forgiving.",
+            value=current * 100.0,
+            minValue=50.0,
+            maxValue=99.9,
+            decimals=1,
+        )
+        if not ok:
+            return
+        stored = set_fit_quality_confidence(percent / 100.0, self._settings)
+        self._log_panel.log(f"Fit quality confidence set to {stored:.1%}.")
+        self.statusBar().showMessage(f"Fit quality confidence: {stored:.1%}")
+
     def _sync_temperature_log_option_action(self) -> None:
         """Keep the Options menu temperature action aligned with browser state."""
         action = getattr(self, "_use_temperature_from_log_action", None)
@@ -2860,6 +2983,15 @@ class MainWindow(QMainWindow):
             return
         action.blockSignals(True)
         action.setChecked(self._data_browser.use_temperature_from_log())
+        action.blockSignals(False)
+
+    def _sync_field_log_option_action(self) -> None:
+        """Keep the Options menu field action aligned with browser state."""
+        action = getattr(self, "_use_field_from_log_action", None)
+        if action is None or not hasattr(self, "_data_browser"):
+            return
+        action.blockSignals(True)
+        action.setChecked(self._data_browser.use_field_from_log())
         action.blockSignals(False)
 
     def _on_grouping_requested(self, run_number: int) -> None:
@@ -7288,13 +7420,63 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     @staticmethod
-    def _fit_result_summary(fit_result) -> dict:
+    def _composite_model_label(composite: object) -> str | None:
+        """Human-readable model expression from a serialised composite model.
+
+        e.g. ``{"component_names": ["Exponential", "Constant"], "operators":
+        ["+"]}`` -> ``"Exponential + Constant"``. Returns ``None`` when the
+        structure is missing or empty.
+        """
+        if not isinstance(composite, dict):
+            return None
+        names = composite.get("component_names") or []
+        operators = composite.get("operators") or []
+        if not names:
+            return None
+        parts = [str(names[0])]
+        for op, name in zip(operators, names[1:]):
+            parts.append(str(op))
+            parts.append(str(name))
+        return " ".join(parts)
+
+    def _fit_result_summary(
+        self,
+        fit_result,
+        *,
+        provenance: str | None = None,
+        model_name: str | None = None,
+        fit_range: str | None = None,
+        timestamp: str | None = None,
+    ) -> dict:
         """Return a JSON-serialisable summary of a fit result.
 
         Delegates to the shared core helper so the run-batch and grouped-series
-        recording paths produce identically shaped ``results_by_run`` entries.
+        recording paths produce identically shaped ``results_by_run`` entries,
+        then stamps the additive provenance keys (``model_name``, ``fit_range``,
+        ``timestamp``, ``provenance``, ``npar``, ``ndof``) the Qt-free core
+        cannot source. ``npar`` is the free-parameter count (those carrying a
+        HESSE σ) and ``ndof`` is read back from the χ² quality block; both are
+        omitted when unavailable.
         """
-        return fit_result_summary(fit_result)
+        summary = fit_result_summary(fit_result, confidence=fit_quality_confidence(self._settings))
+        uncertainties = summary.get("uncertainties") or {}
+        quality = summary.get("quality") or {}
+        ndof = quality.get("dof") if isinstance(quality, dict) else None
+        enrich_summary_provenance(
+            summary,
+            model_name=model_name,
+            fit_range=fit_range,
+            timestamp=timestamp,
+            provenance=provenance,
+            npar=(len(uncertainties) or None),
+            ndof=ndof,
+        )
+        return summary
+
+    @staticmethod
+    def _fit_record_timestamp() -> str:
+        """ISO-8601 local timestamp for a freshly recorded fit (the core stays clock-free)."""
+        return datetime.now().astimezone().isoformat(timespec="seconds")
 
     # ── Representation-aware trend panel (Phase 4) ────────────────────────────
 
@@ -7585,7 +7767,13 @@ class MainWindow(QMainWindow):
                     dict(p) for p in form_state.get("parameters", []) if isinstance(p, dict)
                 ],
                 result={
-                    **self._fit_result_summary(fit_result),
+                    **self._fit_result_summary(
+                        fit_result,
+                        provenance="single",
+                        model_name=self._composite_model_label(form_state.get("composite_model")),
+                        fit_range=self._fit_panel.single_fit_range_text(),
+                        timestamp=self._fit_record_timestamp(),
+                    ),
                     "result_html": form_state.get("result_html"),
                 },
                 provenance="single",
@@ -7626,8 +7814,17 @@ class MainWindow(QMainWindow):
 
         member_runs = sorted(int(r) for r in normalized_payloads)
         canonical_model = state.get("composite_model")
+        model_label = self._composite_model_label(canonical_model)
+        fit_range = self._fit_panel.batch_fit_range_text()
+        timestamp = self._fit_record_timestamp()
         results_by_run = {
-            int(run): self._fit_result_summary(payload[0])
+            int(run): self._fit_result_summary(
+                payload[0],
+                provenance=provenance,
+                model_name=model_label,
+                fit_range=fit_range,
+                timestamp=timestamp,
+            )
             for run, payload in normalized_payloads.items()
         }
         batch = FitSeries(
@@ -7656,7 +7853,7 @@ class MainWindow(QMainWindow):
             representation.fit = FitSlot(
                 model=canonical_model,
                 parameters=template_parameters,
-                result=self._fit_result_summary(payload[0]),
+                result=dict(results_by_run[int(run)]),
                 provenance=provenance,
                 batch_id=batch.batch_id,
             )
@@ -8004,6 +8201,24 @@ class MainWindow(QMainWindow):
                 continue
             source_by_key[key] = int(metadata.get("source_run_number", abs(key) // 1000))
 
+        physics_roles = {
+            str(name): str(role)
+            for name, role in (state.get("param_roles") or {}).items()
+            if role in ("global", "local", "fixed")
+        }
+        nuisance_params = [str(name) for name in (state.get("nuisance_params") or [])]
+        canonical_model = state.get("composite_model")
+        provenance = "global" if any(r == "global" for r in physics_roles.values()) else "batch"
+        model_label = self._composite_model_label(canonical_model)
+        fit_range = None
+        if self._multi_group_fit_window is not None and hasattr(
+            self._multi_group_fit_window, "current_fit_range_text"
+        ):
+            fit_range = self._multi_group_fit_window.current_fit_range_text()
+        if fit_range is None:
+            fit_range = self._fit_panel.batch_fit_range_text()
+        timestamp = self._fit_record_timestamp()
+
         member_keys: list[int] = []
         member_source_run: dict[int, int] = {}
         results_by_run: dict[int, dict] = {}
@@ -8015,18 +8230,15 @@ class MainWindow(QMainWindow):
             fit_result = payload[0] if isinstance(payload, tuple) and payload else payload
             member_keys.append(key)
             member_source_run[key] = source_by_key.get(key, abs(key) // 1000)
-            results_by_run[key] = self._fit_result_summary(fit_result)
+            results_by_run[key] = self._fit_result_summary(
+                fit_result,
+                provenance=provenance,
+                model_name=model_label,
+                fit_range=fit_range,
+                timestamp=timestamp,
+            )
         if not member_keys:
             return
-
-        physics_roles = {
-            str(name): str(role)
-            for name, role in (state.get("param_roles") or {}).items()
-            if role in ("global", "local", "fixed")
-        }
-        nuisance_params = [str(name) for name in (state.get("nuisance_params") or [])]
-        canonical_model = state.get("composite_model")
-        provenance = "global" if any(r == "global" for r in physics_roles.values()) else "batch"
 
         series = FitSeries(
             f"batch-{self._next_batch_index}",
@@ -9031,20 +9243,36 @@ class MainWindow(QMainWindow):
         ):
             self._set_status_state("Idle")
 
-    def _on_cursor_coords_changed(self, x: object, y: object) -> None:
-        """Update the status bar right label with the current cursor position."""
+    def _on_cursor_coords_changed(self, payload: object) -> None:
+        """Update the status bar right label with the cursor readout.
+
+        *payload* is the dict emitted by the plot panel (snapped coordinate plus
+        the optional spectrum-reading readouts), or ``None`` to clear.
+        """
         if not hasattr(self, "_status_coords_label"):
             return
-        if x is None or y is None:
+        if not isinstance(payload, dict) or payload.get("x") is None or payload.get("y") is None:
             self._status_coords_label.setText("")
             return
+        x = float(payload["x"])
+        y = float(payload["y"])
         domain = self._plot_workspace.active_view() if hasattr(self, "_plot_workspace") else ""
         if domain == "frequency":
-            text = f"ν = {float(x):.3f} MHz  |F| = {float(y):.4g}"
+            text = f"ν = {x:.3f} MHz  |F| = {y:.4g}"
         else:
             # χ²/ν lives in its own permanent label (_status_chi2_label);
             # appending it here would show it twice.
-            text = f"x = {float(x):.3f} μs  y = {float(y):.2f} %"
+            text = f"t = {x:.3f} μs  A = {y:.2f} %"
+        snr = payload.get("snr")
+        if snr is not None:
+            text += f"  S/N = {float(snr):.3g}"
+        peak = payload.get("peak")
+        if peak is not None:
+            text += f"  peak {float(peak[0]):.3f}={float(peak[1]):.4g}"
+        window = payload.get("window")
+        if window is not None:
+            mean, mean_err, n = window
+            text += f"  ⟨{float(mean):.4g}±{float(mean_err):.2g}⟩ ({int(n)} pts)"
         self._status_coords_label.setText(text)
 
     def _get_fit_dataset(self, dataset):
@@ -9914,6 +10142,7 @@ class MainWindow(QMainWindow):
             ]
         self._data_browser.restore_state(browser_state)
         self._sync_temperature_log_option_action()
+        self._sync_field_log_option_action()
 
         # ── restore plot state ─────────────────────────────────────────
         plot_state = state.get("plot_state", {})
@@ -9926,6 +10155,7 @@ class MainWindow(QMainWindow):
         if current_dataset is not None:
             self._current_dataset = current_dataset
         self._plot_panel.restore_state(plot_state, current_dataset)
+        self._auto_enable_rrf_for_active_project()
         self._frequency_plot_panel.restore_state(plot_state.get("frequency_plot_state", {}), None)
         self._restore_view_modes_state(state.get("view_modes_state"))
         if state.get("view_modes_state") is not None:
@@ -10171,6 +10401,7 @@ class MainWindow(QMainWindow):
             self._global_parameter_fit_window = None
         self._update_global_parameter_fit_menu_style(False)
         self._sync_temperature_log_option_action()
+        self._sync_field_log_option_action()
 
     def _add_recent_project(self, path: str) -> None:
         """Add *path* to the front of the recent-projects list in QSettings."""

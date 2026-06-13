@@ -904,6 +904,25 @@
       "src_path": "src/asymmetry/core/instrument.py",
       "updated": "2026-06-13",
       "notes": "Internal unification (not an external port). Vector polarization (EMU P_x/P_y/P_z) and TF dual detector grouping (MuSR/HiFi) are one abstraction: a set of named projections, each a (fwd,bwd,alpha) F/B pair of the same run. Converged design w/ Ben 2026-06-13: (1) first-class AsymmetryProjection on PresetGrouping + schema, retiring magic group-name string-matching in 3 GUI sites (grouping_dialog._detect_vector_axis_pairs, mainwindow._vector_axis_pairs_for_grouping/_vector_axis_state_for_dataset); (2) multi-select projection chip bar replacing the x/y/z/All combo, floor-of-one, NO 'All' chip (redundant in multi-select; optional 'all' text-action open micro-decision), one projection = one stacked subplot, never co-plotted; (3) frame-tint = projection identity vs trace-colour = run identity (RG mode) kept orthogonal; (4) selectable subplots set the fit target (ring+pill, fit-panel echo), requiring projection-keyed FitSlot map (currently (run,rep_type)-only, axis-agnostic; plot panel has transient (run,axis_key) curve caches only) → schema v9 + migration; (5) joint RF fitting deferred but door left open by shaping per-projection storage to mirror FitSeries.results_by_run as results_by_projection. NOT IMPLEMENTED."
+    },
+    {
+      "slug": "workflow-visualisation",
+      "feature_name": "Workflow-feel basket (WiMDA run stepping, ASCII export, plot diagnostics, snapped cursor) weighed against the Asymmetry browser-centric workflow",
+      "status": "study",
+      "path": "docs/porting/workflow-visualisation",
+      "references": [
+        "WiMDA",
+        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
+      ],
+      "docs": {
+        "readme": "docs/porting/workflow-visualisation/README.md",
+        "comparison": "docs/porting/workflow-visualisation/comparison.md",
+        "implementation_options": "docs/porting/workflow-visualisation/implementation-options.md",
+        "test_data": "docs/porting/workflow-visualisation/test-data.md",
+        "verification_plan": "docs/porting/workflow-visualisation/verification-plan.md"
+      },
+      "updated": "2026-06-13",
+      "notes": "Wave C (alone — touches plot_panel/data_browser/mainwindow). Governing test: benefit to the established browser-centric Asymmetry workflow, NOT WiMDA mimicry; every item gets ADOPT/ADAPT/REJECT. Verdicts: ADOPT events columns (good-range MEv + events/frame + add-column UI; LogbookUnit.pas:595-626), B-from-log (mirror the temperature-from-log machinery; WiMDA_Main.pas:729-733), log-count diagnostic (log-y toggle on the #53 raw-counts view; Plot.pas:1542-1548). ADAPT data-only/ASCII export (strengthen the existing GLE .dat path, content switch, NO second button; WiMDA_Main.pas:1414-1869), snapped cursor readouts FULL SET (snap+S/N + windowed-avg via integrate_curve + 3-pt parabolic peak on the existing cursor signal; Plot.pas:106-186,1159-1228 — belongs to the spectrum-reading workflow), REJECT F,B balance overlay (checkpoint 2026-06-13: estimator suite + alpha-free fit already serve calibration). Checkpoint accepted 2026-06-13. REJECT run-stepping pattern-walker (browser + native arrow-key auto-load is a superset), F,B balance overlay, deadtime-file auto-discovery+staleness (estimate/calibrate/promote + project persistence is fresher), cosmetic basket (UI-polish territory). DESIGN-ONLY live current-run monitoring (refreshable-loader hook). No schema bumps; additive panel-state keys only; GPL oracle-only."
     }
   ]
 }

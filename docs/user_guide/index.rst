@@ -25,6 +25,7 @@ material.
    detector_grouping
    simulation
    gui_usage
+   workflow_conveniences
    project_files
    data_reduction/index
    exclusions

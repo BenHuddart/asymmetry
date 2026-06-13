@@ -36,6 +36,7 @@ from asymmetry.core.fitting.engine import (
     _make_cancel_guard,
     _minuit_status_message,
     drive_minuit,
+    poisson_cash,
 )
 from asymmetry.core.fitting.grouped_time_domain import (
     GroupedTimeDomainFitResult,
@@ -118,24 +119,12 @@ def _gaussian_chi2(counts: NDArray[np.float64], model: NDArray[np.float64]) -> f
     return float(np.sum(((counts - model) / sigma) ** 2))
 
 
-def _poisson_cash(counts: NDArray[np.float64], model: NDArray[np.float64]) -> float:
-    """Cash statistic 2*sum(mu - n + n*ln(n/mu)).
-
-    Scaled so that ``errordef = 1`` yields correct parameter errors (Delta C
-    behaves like Delta chi-square near the minimum). The ``n = 0`` bins reduce to
-    ``2*mu`` with no logarithm.
-    """
-    mu = np.clip(model, 1.0e-12, None)
-    term = mu - counts
-    positive = counts > 0.0
-    term[positive] += counts[positive] * np.log(counts[positive] / mu[positive])
-    return 2.0 * float(np.sum(term))
-
-
 def _cost_value(counts: NDArray[np.float64], model: NDArray[np.float64], cost: str) -> float:
     if cost == "gaussian":
         return _gaussian_chi2(counts, model)
-    return _poisson_cash(counts, model)
+    # Cash statistic — the single primitive shared with the grouped/global
+    # driver (factored into engine.poisson_cash).
+    return poisson_cash(counts, model)
 
 
 def _validate_cost(cost: str) -> str:

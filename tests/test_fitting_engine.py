@@ -244,6 +244,8 @@ def test_global_fit_all_local_reuses_single_fit_path(monkeypatch: pytest.MonkeyP
         method="migrad",
         minos=False,
         cancel_callback=None,
+        frequency_offsets=None,
+        cost_factory=None,
     ):
         captured_calls.append((int(dataset.run_number), method))
         return FitResult(
@@ -269,3 +271,111 @@ def test_global_fit_all_local_reuses_single_fit_path(monkeypatch: pytest.MonkeyP
     assert len(fitted_global) == 0
     assert results[1].message == "single-fit-1"
     assert results[2].message == "single-fit-2"
+
+
+# --- selectable fit cost (Gaussian √N vs Poisson Cash) ----------------------
+
+
+def _count_dataset(counts: np.ndarray, times: np.ndarray) -> MuonDataset:
+    """A raw-count dataset: ``asymmetry`` holds the counts, error = √N (Cash ignores it)."""
+    return MuonDataset(
+        time=times,
+        asymmetry=counts.astype(float),
+        error=np.sqrt(np.clip(counts, 1.0, None)),
+        metadata={},
+    )
+
+
+def _decay_count_model(t, N0, tau):  # noqa: N803 — physics names
+    """Expected counts N0·e^(−t/τ) — a positive count expectation for Cash."""
+    return N0 * np.exp(-t / tau)
+
+
+def test_cost_factory_gaussian_matches_default_least_squares():
+    """GAUSSIAN_COST must reproduce the no-factory least-squares fit exactly."""
+    from asymmetry.core.fitting.engine import GAUSSIAN_COST
+
+    t = np.linspace(0.05, 6.0, 120)
+    rng = np.random.default_rng(7)
+    counts = rng.poisson(800.0 * np.exp(-t / 2.2)).astype(float)
+    ds = _count_dataset(counts, t)
+    params = ParameterSet([Parameter("N0", 700.0, min=1.0), Parameter("tau", 2.0, min=0.1)])
+    engine = FitEngine()
+
+    base = engine.fit(ds, _decay_count_model, params)
+    via_factory = engine.fit(ds, _decay_count_model, params, cost_factory=GAUSSIAN_COST)
+    assert base.success and via_factory.success
+    assert via_factory.chi_squared == pytest.approx(base.chi_squared, rel=1e-12)
+    assert via_factory.parameters["N0"].value == pytest.approx(
+        base.parameters["N0"].value, rel=1e-9
+    )
+    assert via_factory.parameters["tau"].value == pytest.approx(
+        base.parameters["tau"].value, rel=1e-9
+    )
+
+
+def test_cost_factory_poisson_and_gaussian_agree_at_high_counts():
+    """At high counts the Poisson and Gaussian fits converge to the same answer."""
+    from asymmetry.core.fitting.engine import GAUSSIAN_COST, POISSON_COST
+
+    t = np.linspace(0.05, 6.0, 200)
+    rng = np.random.default_rng(11)
+    counts = rng.poisson(5000.0 * np.exp(-t / 2.2)).astype(float)
+    ds = _count_dataset(counts, t)
+    params = ParameterSet([Parameter("N0", 4000.0, min=1.0), Parameter("tau", 2.0, min=0.1)])
+    engine = FitEngine()
+
+    gauss = engine.fit(ds, _decay_count_model, params, cost_factory=GAUSSIAN_COST)
+    pois = engine.fit(ds, _decay_count_model, params, cost_factory=POISSON_COST)
+    assert gauss.success and pois.success
+    # √N weighting and Cash agree to <0.5% when every bin is well-populated.
+    assert pois.parameters["N0"].value == pytest.approx(gauss.parameters["N0"].value, rel=5e-3)
+    assert pois.parameters["tau"].value == pytest.approx(gauss.parameters["tau"].value, rel=5e-3)
+
+
+def test_cost_factory_poisson_less_biased_than_gaussian_at_low_counts():
+    """√N weighting biases the fitted normalisation low at low counts; Cash does not.
+
+    A small Monte-Carlo over independent low-count realisations: the mean Poisson
+    estimate of N0 sits closer to the truth than the mean Gaussian estimate, and
+    the Gaussian mean is biased *low* (the known √N-weighting pathology). This is
+    the bias the fgAll→Poisson migration removes by default.
+    """
+    from asymmetry.core.fitting.engine import GAUSSIAN_COST, POISSON_COST
+
+    t = np.linspace(0.05, 6.0, 60)
+    n0_true, tau_true = 12.0, 2.2
+    mean_counts = n0_true * np.exp(-t / tau_true)
+    rng = np.random.default_rng(2024)
+    engine = FitEngine()
+
+    gauss_n0: list[float] = []
+    pois_n0: list[float] = []
+    for _ in range(120):
+        counts = rng.poisson(mean_counts).astype(float)
+        ds = _count_dataset(counts, t)
+        seed = ParameterSet([Parameter("N0", 12.0, min=0.1), Parameter("tau", 2.2, min=0.1)])
+        g = engine.fit(ds, _decay_count_model, seed, cost_factory=GAUSSIAN_COST)
+        p = engine.fit(ds, _decay_count_model, seed, cost_factory=POISSON_COST)
+        if g.success:
+            gauss_n0.append(g.parameters["N0"].value)
+        if p.success:
+            pois_n0.append(p.parameters["N0"].value)
+
+    gauss_mean = float(np.mean(gauss_n0))
+    pois_mean = float(np.mean(pois_n0))
+    # Gaussian √N is biased low; Poisson Cash recovers the truth far better.
+    assert gauss_mean < n0_true
+    assert abs(pois_mean - n0_true) < abs(gauss_mean - n0_true)
+
+
+def test_poisson_cash_primitive_matches_definition():
+    """engine.poisson_cash == 2·Σ(μ − n + n·ln(n/μ)), with n=0 → 2μ."""
+    from asymmetry.core.fitting.engine import poisson_cash
+
+    n = np.array([0.0, 5.0, 10.0])
+    mu = np.array([3.0, 5.0, 8.0])
+    expected = 2.0 * np.sum(mu - n + np.where(n > 0, n * np.log(np.where(n > 0, n, 1.0) / mu), 0.0))
+    assert poisson_cash(n, mu) == pytest.approx(expected)
+    # Exact minimum at μ = n (for n > 0): Cash → 0.
+    assert poisson_cash(np.array([7.0]), np.array([7.0])) == pytest.approx(0.0, abs=1e-12)

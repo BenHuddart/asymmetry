@@ -232,9 +232,39 @@ Status reflects the second implementation session (2026-06-10), which landed
 follow-ons 2–7 below. Items 1, 8, 9 remain genuinely deferred / out of scope.
 
 1. **Unify `fgAll` onto the raw-count Poisson driver** (give `FitEngine` a
-   cost-factory; route grouped fits through Poisson). **Deferred** — touches
-   `engine.py`, owned by the next-wave `fit-workflow-diagnostics` project; revisit
-   only if asked and that project hasn't started.
+   cost-factory; route grouped fits through Poisson). **Done (2026-06-13,
+   feat/rrf-engine-pass).** `FitEngine.fit`/`global_fit` gained a
+   `cost_factory` argument (`GAUSSIAN_COST` / `POISSON_COST`, a `CostFactory`
+   carrying a `build` + per-dataset `pointwise`); the Cash primitive
+   (`poisson_cash`) is factored out of `count_domain.py` so both surfaces share
+   one implementation. `fit_grouped_time_domain` / `fit_grouped_series` take a
+   `cost="poisson"` default: Poisson inverts the lifetime correction to recover
+   raw Poisson counts and predicts them with the count model × `e^(−t/τ_μ)`;
+   Gaussian keeps the historical lifetime-corrected √N least squares
+   (`cost_factory=None`, byte-for-byte — and √N is invariant to the lifetime
+   correction, so it is literally the pre-change fit). The multi-group window's
+   cost selector, previously disabled for the `all` target, now drives it too.
+
+   *Quantified shift (corpus run emu00124254 — real EMU two-group structure,
+   time axis and per-group count normalisation; planted exp-relaxation truth
+   Λ=1.5, averaged over realisations):*
+
+   | regime | raw cts/bin | Gaussian √N Λ bias | Poisson Λ bias | Poisson−Gaussian |
+   |---|---|---|---|---|
+   | native | ~19 000 | −0.1 % | −0.2 % | −0.3 % |
+   | /100 | ~194 | −1.3 % | −1.3 % | −0.0 % |
+   | /300 | ~65 | +10.4 % | +2.8 % | −6.8 % |
+   | /1000 | ~19 | **−28.8 %** | **−3.5 %** | +35.6 % |
+
+   The two costs agree to a fraction of a percent while every bin is
+   well-populated, and diverge as counts fall: at ~19 raw counts/bin the
+   √N-Gaussian estimate of the relaxation rate is biased ~29 % while Cash holds
+   to ~3.5 %. Removing that low-count bias is the point of the migration; the
+   clean, well-determined demonstration is the Monte-Carlo in
+   `tests/test_fitting_engine.py::test_cost_factory_poisson_less_biased_than_gaussian_at_low_counts`.
+   (Caveat: with all four per-group nuisances free below ~10 cts/bin the fit is
+   also degenerate, so the *direction* of the shift there is noise-dominated —
+   the controlled engine test isolates the statistics effect.)
 2. **Free muon lifetime** (musrfit-style) as an optional count-fit parameter.
    **Done** (this session) — a `tau` parameter frees τ_μ in the single-histogram
    and F+B modes (default fixed; off-state byte-identical; rejected with

@@ -39,6 +39,9 @@ _FIT_WIZARD_TITLES = {
     "static_gkt_exp_constant": "Static GKT * Exponential + Constant",
     "oscillatory_exp_constant": "Oscillatory * Exponential + Constant",
     "oscillatory_gaussian_constant": "Oscillatory * Gaussian + Constant",
+    "bessel_exp_constant": "Bessel * Exponential + Constant",
+    "gbkt_constant": "Gaussian-broadened KT + Constant",
+    "risch_kehr_constant": "Risch-Kehr + Constant",
     "current_model": "Current Fit Function",
 }
 
@@ -388,6 +391,19 @@ def build_candidate_templates(
         rationale="Adds one shape parameter when relaxation looks broader than a simple exponential.",
     )
 
+    if fingerprint.multi_rate_hint:
+        # Risch-Kehr: 1D-diffusion relaxation e^{Gt}erfc(sqrt(Gt)), curved on a
+        # semilog axis (fast early, ~(pi G t)^{-1/2} tail). A natural automatic
+        # alternative to the stretched exponential for broader-than-exponential
+        # monotonic decay; one shape parameter, closed form (A1 in the
+        # wimda-fit-function-parity study).
+        _add(
+            "risch_kehr_constant",
+            CompositeModel(["RischKehr", "Constant"], operators=["+"]),
+            category="Multi-rate",
+            rationale="Curved semilog envelope is consistent with Risch-Kehr 1D-diffusion relaxation.",
+        )
+
     if fingerprint.kt_like_hint:
         _add(
             "static_gkt_constant",
@@ -400,6 +416,15 @@ def build_candidate_templates(
             CompositeModel(["StaticGKT_ZF", "Exponential", "Constant"], operators=["*", "+"]),
             category="KT-like",
             rationale="Adds a phenomenological exponential envelope to a static KT-like shape.",
+        )
+        # Gaussian-broadened KT: a distribution of Delta for disordered/dilute
+        # moments where a single static KT is too sharp. Competes directly with
+        # StaticGKT_ZF in the same regime; defaults to ZF (B_L = 0).
+        _add(
+            "gbkt_constant",
+            CompositeModel(["GaussianBroadenedKT", "Constant"], operators=["+"]),
+            category="KT-like",
+            rationale="Dip-and-recovery with a softened minimum suggests a distribution of KT widths (disordered moments).",
         )
 
     if fingerprint.oscillatory_hint:
@@ -414,6 +439,16 @@ def build_candidate_templates(
             CompositeModel(["Oscillatory", "Gaussian", "Constant"], operators=["*", "+"]),
             category="Oscillatory",
             rationale="Oscillatory candidate with Gaussian envelope for broader field distributions.",
+        )
+        # Bessel j0 oscillation (Overhauser): the field distribution of an
+        # incommensurate/SDW internal field gives a J0 line shape rather than a
+        # cosine. Offered alongside the cosine oscillatory candidates so the
+        # wizard can distinguish the two envelopes on oscillatory data.
+        _add(
+            "bessel_exp_constant",
+            CompositeModel(["Bessel", "Exponential", "Constant"], operators=["*", "+"]),
+            category="Oscillatory",
+            rationale="A J0 (Bessel) line shape fits incommensurate/SDW internal-field distributions better than a cosine.",
         )
 
     if current_model is not None:
@@ -1311,6 +1346,18 @@ def _parameter_bounds(
         return 0.0, max(10.0, 4.0 * abs(value))
     if base_name == "theta":
         return 0.0, 180.0
+    if base_name == "Gamma":
+        # Risch-Kehr 1D-diffusion rate (>= 0); a finite cap keeps the fit and
+        # the χ²-quality verdict away from the degenerate Gamma -> 0 plateau.
+        return 0.0, max(8.0 * abs(value), 20.0 / max(duration, _EPS), 1.0)
+    if base_name == "B_L":
+        # Longitudinal field magnitude (Gauss) >= 0; an unbounded-negative B_L
+        # lets a Gaussian-broadened-KT candidate wander into a spurious
+        # alternate minimum with structured residuals.
+        return 0.0, max(8.0 * abs(value), 1000.0)
+    if base_name == "w_rel":
+        # Relative width of the Δ distribution (dimensionless, >= 0).
+        return 0.0, max(4.0 * abs(value), 2.0)
 
     info = get_param_info(base_name)
     lower = float(info.default_min) if info.default_min is not None else -float("inf")
@@ -1722,7 +1769,17 @@ def _max_abs_autocorrelation(values: NDArray[np.float64]) -> float:
 def _bound_hit_names(parameters: ParameterSet) -> list[str]:
     hits: list[str] = []
     for parameter in parameters:
-        tol = 1e-6 * max(abs(parameter.value), abs(parameter.min), abs(parameter.max), 1.0)
+        # The tolerance scale must ignore infinite bounds: an infinite |max|
+        # would make ``tol`` infinite and flag every value as "at lower bound"
+        # (any finite offset is <= inf). Components with one-sided bounds — e.g.
+        # Risch-Kehr's Gamma in [0, inf) — would otherwise be spuriously gated.
+        scale = max(
+            abs(parameter.value),
+            abs(parameter.min) if np.isfinite(parameter.min) else 0.0,
+            abs(parameter.max) if np.isfinite(parameter.max) else 0.0,
+            1.0,
+        )
+        tol = 1e-6 * scale
         if np.isfinite(parameter.min) and abs(parameter.value - parameter.min) <= tol:
             hits.append(f"{parameter.name} at lower bound")
         elif np.isfinite(parameter.max) and abs(parameter.value - parameter.max) <= tol:

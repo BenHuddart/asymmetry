@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import header_font
@@ -416,10 +417,12 @@ class DataBrowserPanel(QWidget):
         "run_info.bins": "Bins",
         "run_info.bin_width_us": "Bin Width (us)",
         "run_info.counts_mev": "Counts (MEv)",
+        "run_info.good_events_mev": "Good Events (MEv)",
+        "run_info.events_per_frame": "Events/frame",
         "run_info.counts_per_detector": "Counts per Detector",
         "nexus_fields.sample.shape": "Orientation",
     }
-    _BASE_COLUMN_OVERRIDE_KEYS = {"temperature"}
+    _BASE_COLUMN_OVERRIDE_KEYS = {"temperature", "field"}
     _GROUP_ROLE = Qt.ItemDataRole.UserRole
     _GROUP_SENTINEL_PREFIX = "group:"
 
@@ -441,6 +444,8 @@ class DataBrowserPanel(QWidget):
         self._extra_columns: list[str] = []
         self._use_temperature_from_log = False
         self._temperature_from_log_overrides: dict[int, bool] = {}
+        self._use_field_from_log = False
+        self._field_from_log_overrides: dict[int, bool] = {}
         self._current_sort_column: int = -1
         self._current_sort_order: Qt.SortOrder = Qt.SortOrder.AscendingOrder
         self._selection_anchor_row: int | None = None
@@ -968,10 +973,16 @@ class DataBrowserPanel(QWidget):
             temp_item.setForeground(_LOG_TEMPERATURE_FOREGROUND)
         self._table.setItem(row, 2, temp_item)
 
-        field = float(meta.get("field", 0.0))
+        field = self._field_for_display(dataset)
         field_item = NumericTableWidgetItem(f"{field:.1f}")
-        field_item.setFlags(field_item.flags() | Qt.ItemFlag.ItemIsEditable)
         field_item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        if self._field_uses_log_for_display(dataset):
+            # Log-sourced value: display-only and tinted, like the temperature
+            # column (editing a log mean is meaningless).
+            field_item.setFlags(field_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            field_item.setForeground(_LOG_TEMPERATURE_FOREGROUND)
+        else:
+            field_item.setFlags(field_item.flags() | Qt.ItemFlag.ItemIsEditable)
         self._table.setItem(row, 3, field_item)
 
         for i, field_key in enumerate(self._visible_extra_columns(), start=len(self._COLUMNS)):
@@ -1279,6 +1290,9 @@ class DataBrowserPanel(QWidget):
         if key == "temperature":
             self.set_use_temperature_from_log(True)
             return
+        if key == "field":
+            self.set_use_field_from_log(True)
+            return
         if not key or key in self._extra_columns:
             return
         self._extra_columns.append(key)
@@ -1290,6 +1304,9 @@ class DataBrowserPanel(QWidget):
         """Remove a dynamic metadata column from the browser table."""
         if field_key == "temperature":
             self.set_use_temperature_from_log(False)
+            return
+        if field_key == "field":
+            self.set_use_field_from_log(False)
             return
         if field_key not in self._extra_columns:
             return
@@ -1303,6 +1320,8 @@ class DataBrowserPanel(QWidget):
         columns = list(self._extra_columns)
         if self._use_temperature_from_log:
             columns.append("temperature")
+        if self._use_field_from_log:
+            columns.append("field")
         return columns
 
     def set_use_temperature_from_log(self, enabled: bool) -> None:
@@ -1339,6 +1358,44 @@ class DataBrowserPanel(QWidget):
         """Return whether one dataset is configured to show log temperature."""
         rn = int(run_number)
         return bool(self._temperature_from_log_overrides.get(rn, self._use_temperature_from_log))
+
+    def set_use_field_from_log(self, enabled: bool) -> None:
+        """Set the global field-from-log display option (B from the data log).
+
+        The analogue of :meth:`set_use_temperature_from_log` (WiMDA's
+        ``Bfromaveinblog``): show the mean of the magnetic-field log channel in
+        the B column instead of the header scalar.
+        """
+        enabled = bool(enabled)
+        changed = self._use_field_from_log != enabled or bool(self._field_from_log_overrides)
+        self._use_field_from_log = enabled
+        self._field_from_log_overrides.clear()
+        if changed:
+            self._rebuild_table()
+            self._resize_columns_to_content()
+
+    def use_field_from_log(self) -> bool:
+        """Return the global field-from-log display option."""
+        return bool(self._use_field_from_log)
+
+    def set_dataset_field_from_log(self, run_number: int, enabled: bool) -> None:
+        """Override field-from-log display for a single dataset."""
+        rn = int(run_number)
+        enabled = bool(enabled)
+        if enabled == self._use_field_from_log:
+            changed = rn in self._field_from_log_overrides
+            self._field_from_log_overrides.pop(rn, None)
+        else:
+            changed = self._field_from_log_overrides.get(rn) != enabled
+            self._field_from_log_overrides[rn] = enabled
+        if changed:
+            self._rebuild_table()
+            self._resize_columns_to_content()
+
+    def dataset_uses_field_from_log(self, run_number: int) -> bool:
+        """Return whether one dataset is configured to show log field."""
+        rn = int(run_number)
+        return bool(self._field_from_log_overrides.get(rn, self._use_field_from_log))
 
     def _resolve_metadata_path(self, dataset: MuonDataset, field_key: str):
         """Resolve a metadata/synthetic key to a value for dynamic columns."""
@@ -1398,6 +1455,47 @@ class DataBrowserPanel(QWidget):
                 return float(np.mean(fallback_temperatures))
         return self._series_mean_for_field(dataset, "temperature")
 
+    def _field_for_display(self, dataset: MuonDataset) -> float:
+        """Return the field shown in the fixed browser B column."""
+        if self.dataset_uses_field_from_log(int(dataset.run_number)):
+            log_field = self._field_from_log_for_display(dataset)
+            if log_field is not None:
+                return float(log_field)
+        try:
+            return float(dataset.metadata.get("field", 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _field_uses_log_for_display(self, dataset: MuonDataset) -> bool:
+        """Return whether the displayed field value came from a log."""
+        return (
+            self.dataset_uses_field_from_log(int(dataset.run_number))
+            and self._field_from_log_for_display(dataset) is not None
+        )
+
+    def _field_from_log_for_display(self, dataset: MuonDataset) -> float | None:
+        """Return the log-derived field used by the browser B column."""
+        source_datasets = self.get_combined_source_datasets(int(dataset.run_number))
+        if source_datasets:
+            weighted_sum = 0.0
+            total_weight = 0.0
+            fallback_fields: list[float] = []
+            for source_dataset in source_datasets:
+                source_field = self._series_mean_for_field(source_dataset, "field")
+                if source_field is None:
+                    continue
+                fallback_fields.append(float(source_field))
+                event_count = self._event_count_for_dataset(source_dataset)
+                if event_count is None or event_count <= 0.0:
+                    continue
+                weighted_sum += float(source_field) * event_count
+                total_weight += event_count
+            if total_weight > 0.0:
+                return weighted_sum / total_weight
+            if fallback_fields:
+                return float(np.mean(fallback_fields))
+        return self._series_mean_for_field(dataset, "field")
+
     def _event_count_for_dataset(self, dataset: MuonDataset) -> float | None:
         """Return the total histogram counts used to weight combined-run summaries."""
         run = dataset.run
@@ -1437,9 +1535,19 @@ class DataBrowserPanel(QWidget):
         role = str(info.get("role", "")).strip().lower()
         if field_key == "temperature" and role == "sample_temperature":
             return 100 if bool(info.get("primary", False)) else 70
+        if field_key == "field" and role == "sample_field":
+            return 80 if bool(info.get("primary", False)) else 60
 
         normalized = " ".join(str(series_path).replace("_", " ").replace("/", " ").lower().split())
         compact = normalized.replace(" ", "")
+        if field_key == "field":
+            # Mirror RunInfoDialog._series_path_score: a magnetic-field log.
+            if "field" not in normalized and "magnet" not in normalized:
+                return 0
+            score = 10
+            if "sample" in normalized:
+                score += 10
+            return score
         if field_key == "temperature":
             if not (
                 "temp" in compact
@@ -1476,6 +1584,21 @@ class DataBrowserPanel(QWidget):
             return h0.n_bins
         if key == "bin_width_us":
             return h0.bin_width
+
+        if key in ("good_events_mev", "events_per_frame"):
+            grouping = run.grouping if isinstance(getattr(run, "grouping", None), dict) else None
+            if grouping is None and isinstance(dataset.metadata.get("grouping"), dict):
+                grouping = dataset.metadata["grouping"]
+            good = good_event_count(run.histograms, grouping)
+            if good is None:
+                return None
+            if key == "good_events_mev":
+                return good / 1.0e6
+            # Events per frame: good events over the dead-time frame normaliser.
+            frames = good_frames(grouping, 0.0)
+            if frames <= 0:
+                return None
+            return good / frames
 
         total_counts = float(np.sum([np.sum(h.counts) for h in run.histograms]))
         if key == "counts_mev":
@@ -2112,6 +2235,7 @@ class DataBrowserPanel(QWidget):
         self._combined_source_datasets.pop(run_number, None)
         self._combined_signs.pop(run_number, None)
         self._temperature_from_log_overrides.pop(int(run_number), None)
+        self._field_from_log_overrides.pop(int(run_number), None)
 
         gid = self._run_to_group.get(run_number)
         if gid is not None:
@@ -2436,26 +2560,52 @@ class DataBrowserPanel(QWidget):
         return super().eventFilter(watched, event)
 
     def _open_header_context_menu(self, col_idx: int) -> None:
-        """Open right-click header menu for filtering or dynamic-column removal."""
+        """Right-click header menu: filter (base) / remove (extra) / add column."""
         if col_idx < 0:
             return
 
-        if col_idx < len(self._COLUMNS):
-            self._open_filter_dialog(col_idx)
-            return
-
-        extra_index = col_idx - len(self._COLUMNS)
-        visible_extra_columns = self._visible_extra_columns()
-        if extra_index < 0 or extra_index >= len(visible_extra_columns):
-            return
-
-        field_key = visible_extra_columns[extra_index]
         menu = QMenu(self)
-        menu.addAction(
-            "Remove from Data Browser",
-            lambda fk=field_key: self.remove_extra_column(fk),
-        )
-        menu.exec(self.cursor().pos())
+        if col_idx < len(self._COLUMNS):
+            menu.addAction("Filter…", lambda ci=col_idx: self._open_filter_dialog(ci))
+        else:
+            extra_index = col_idx - len(self._COLUMNS)
+            visible_extra_columns = self._visible_extra_columns()
+            if 0 <= extra_index < len(visible_extra_columns):
+                field_key = visible_extra_columns[extra_index]
+                menu.addAction(
+                    "Remove from Data Browser",
+                    lambda fk=field_key: self.remove_extra_column(fk),
+                )
+
+        self._append_add_column_menu(menu)
+        if not menu.isEmpty():
+            menu.exec(self.cursor().pos())
+
+    def _append_add_column_menu(self, menu: QMenu) -> None:
+        """Append an "Add column…" submenu of hideable run-quality columns.
+
+        The browser previously had no end-user way to *add* a metadata column
+        (only removal via this menu). This lists the ``run_info.*`` run-quality
+        fields — including the good-range events and events/frame columns — that
+        are not already shown, mirroring the Remove path.
+        """
+        available = self._addable_run_info_columns()
+        if not available:
+            return
+        if not menu.isEmpty():
+            menu.addSeparator()
+        submenu = menu.addMenu("Add column…")
+        for key in available:
+            label = self._RUN_INFO_FIELD_LABELS.get(key, key)
+            submenu.addAction(label, lambda fk=key: self.add_extra_column(fk))
+
+    def _addable_run_info_columns(self) -> list[str]:
+        """``run_info.*`` run-quality columns not currently shown."""
+        return [
+            key
+            for key in self._RUN_INFO_FIELD_LABELS
+            if key.startswith("run_info.") and key not in self._extra_columns
+        ]
 
     def _on_header_clicked(self, logical_index: int) -> None:
         if logical_index == self._current_sort_column:
@@ -2978,6 +3128,8 @@ class DataBrowserPanel(QWidget):
         self._extra_columns.clear()
         self._use_temperature_from_log = False
         self._temperature_from_log_overrides.clear()
+        self._use_field_from_log = False
+        self._field_from_log_overrides.clear()
         self._current_sort_column = -1
         self._current_sort_order = Qt.SortOrder.AscendingOrder
         # Clear series-highlight state so stale run numbers from the previous
@@ -3071,6 +3223,11 @@ class DataBrowserPanel(QWidget):
                 str(rn): bool(enabled)
                 for rn, enabled in sorted(self._temperature_from_log_overrides.items())
             },
+            "use_field_from_log": bool(self._use_field_from_log),
+            "field_from_log_overrides": {
+                str(rn): bool(enabled)
+                for rn, enabled in sorted(self._field_from_log_overrides.items())
+            },
         }
 
     def restore_state(self, state: dict) -> None:
@@ -3111,7 +3268,15 @@ class DataBrowserPanel(QWidget):
         self._use_temperature_from_log = bool(
             state.get("use_temperature_from_log", "temperature" in saved_extra_columns)
         )
-        self._extra_columns = [key for key in saved_extra_columns if key != "temperature"]
+        # Default OFF when the key is absent: unlike "temperature" (always a
+        # from-log pseudo-key), older projects could save "field" as an ordinary
+        # "Magnetic Field (G)" extra column, so a present "field" must not be
+        # read as a request for field-from-log (which would silently switch the
+        # B column to the log mean on open).
+        self._use_field_from_log = bool(state.get("use_field_from_log", False))
+        self._extra_columns = [
+            key for key in saved_extra_columns if key not in self._BASE_COLUMN_OVERRIDE_KEYS
+        ]
         self._temperature_from_log_overrides = {}
         for run_number, enabled in state.get("temperature_from_log_overrides", {}).items():
             try:
@@ -3120,6 +3285,14 @@ class DataBrowserPanel(QWidget):
                 continue
             if rn in self._datasets:
                 self._temperature_from_log_overrides[rn] = bool(enabled)
+        self._field_from_log_overrides = {}
+        for run_number, enabled in state.get("field_from_log_overrides", {}).items():
+            try:
+                rn = int(run_number)
+            except (TypeError, ValueError):
+                continue
+            if rn in self._datasets:
+                self._field_from_log_overrides[rn] = bool(enabled)
         self._refresh_column_headers()
 
         for group_entry in state.get("data_groups", []):

@@ -352,9 +352,132 @@ def test_fit_grouped_time_domain_builds_lifetime_corrected_count_model(monkeypat
         global_params=["frequency"],
         local_params=["N0", "background", "amplitude", "relative_phase"],
         initial_params=initial,
+        # Pin the lifetime-corrected count model: that is the Gaussian path's
+        # contract. The Poisson default instead passes the raw model (× e^(−t/τ))
+        # — covered by test_fit_grouped_time_domain_poisson_uses_raw_count_model.
+        cost="gaussian",
     )
 
     assert result.success is True
+
+
+def test_fit_grouped_time_domain_poisson_uses_raw_count_model(monkeypatch) -> None:
+    """The Poisson default fits raw counts against a raw-count (× e^(−t/τ)) model.
+
+    Cash needs true Poisson counts, so the grouped driver inverts the lifetime
+    correction on the data and multiplies the lifetime-corrected count model by
+    ``e^(−t/τ_μ)`` to predict raw counts. Both pieces are pinned here.
+    """
+    t_probe = 0.25
+    corrected_counts = np.array([99.0, 88.0])
+    times = np.array([0.0, t_probe])
+    groups = [
+        GroupedTimeDomainGroup(
+            group_id="g1",
+            group_name="Group 1",
+            time=times.copy(),
+            counts=corrected_counts.copy(),
+            error=np.array([1.0, 1.0]),
+            metadata={"grouped_time_domain_lifetime_corrected": True},
+        ),
+        GroupedTimeDomainGroup(
+            group_id="g2",
+            group_name="Group 2",
+            time=times.copy(),
+            counts=corrected_counts.copy(),
+            error=np.array([1.0, 1.0]),
+            metadata={"grouped_time_domain_lifetime_corrected": True},
+        ),
+    ]
+    initial = {"g1": _initial_group_params(), "g2": _initial_group_params()}
+
+    def _fake_global_fit(
+        _self,
+        datasets,
+        model_fn,
+        global_params,
+        local_params,
+        initial_params,
+        **kwargs,
+    ):
+        # The Poisson cost-factory must be the one routed to the engine.
+        from asymmetry.core.fitting.engine import POISSON_COST
+
+        assert kwargs.get("cost_factory") is POISSON_COST
+        # The observed counts must be the raw (de-corrected) Poisson counts.
+        decay = np.exp(-times / float(MUON_LIFETIME_US))
+        for dataset in datasets:
+            np.testing.assert_allclose(dataset.asymmetry, corrected_counts * decay)
+        # The model must predict raw counts: corrected model × e^(−t/τ).
+        probe = np.array([t_probe], dtype=float)
+        predicted = model_fn(
+            probe,
+            N0=100.0,
+            background=5.0,
+            amplitude=0.2,
+            relative_phase=np.pi / 2.0,
+            frequency=1.0,
+            phase=0.1,
+        )
+        corrected = 100.0 * (
+            1.0 + 0.2 * np.cos(2.0 * np.pi * probe + 0.1 + np.pi / 2.0)
+        ) + 5.0 * np.exp(probe / float(MUON_LIFETIME_US))
+        expected = corrected * np.exp(-probe / float(MUON_LIFETIME_US))
+        np.testing.assert_allclose(predicted, expected)
+        results = {
+            int(dataset.run_number): FitResult(
+                success=True,
+                chi_squared=1.0,
+                reduced_chi_squared=0.1,
+                parameters=initial_params[int(dataset.run_number)],
+            )
+            for dataset in datasets
+        }
+        return results, ParameterSet([Parameter("frequency", 1.0)])
+
+    monkeypatch.setattr(
+        "asymmetry.core.fitting.grouped_time_domain.FitEngine.global_fit",
+        _fake_global_fit,
+    )
+
+    result = fit_grouped_time_domain(
+        groups,
+        _cosine_polarization,
+        global_params=["frequency"],
+        local_params=["N0", "background", "amplitude", "relative_phase"],
+        initial_params=initial,
+        cost="poisson",
+    )
+    assert result.success is True
+
+
+def test_fit_grouped_time_domain_rejects_unknown_cost() -> None:
+    groups = [
+        GroupedTimeDomainGroup(
+            group_id="g1",
+            group_name="Group 1",
+            time=np.array([0.0, 0.25]),
+            counts=np.array([99.0, 88.0]),
+            error=np.array([1.0, 1.0]),
+        ),
+        GroupedTimeDomainGroup(
+            group_id="g2",
+            group_name="Group 2",
+            time=np.array([0.0, 0.25]),
+            counts=np.array([99.0, 88.0]),
+            error=np.array([1.0, 1.0]),
+        ),
+    ]
+    initial = {"g1": _initial_group_params(), "g2": _initial_group_params()}
+    with pytest.raises(ValueError, match="Unknown grouped fit cost"):
+        fit_grouped_time_domain(
+            groups,
+            _cosine_polarization,
+            global_params=["frequency"],
+            local_params=["N0", "background", "amplitude", "relative_phase"],
+            initial_params=initial,
+            cost="bogus",
+        )
 
 
 def test_grouped_count_model_applies_relative_phase_to_numbered_phase_parameters() -> None:
@@ -674,6 +797,8 @@ def test_fit_grouped_time_domain_allows_phase_less_model_when_relative_phase_is_
         global_params=["Lambda"],
         local_params=["N0", "background", "amplitude", "relative_phase"],
         initial_params=initial,
+        # Probes the lifetime-corrected model directly → the Gaussian path.
+        cost="gaussian",
     )
 
     assert result.success is True

@@ -1125,6 +1125,124 @@ class TestPlotPanel:
         assert labels == ["FB Asymmetry", "Individual Groups"]
         assert panel.current_time_view_mode() == "groups"
 
+    def test_log_counts_checkbox_visible_only_on_raw_counts(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.set_time_view_modes(["fb_asymmetry", "raw_counts"], current_mode="fb_asymmetry")
+        assert not panel._log_counts_checkbox.isVisible()
+
+        panel.set_current_time_view_mode("raw_counts")
+        # Visibility tracks the raw-counts view (widget may need show() to report
+        # isVisible reliably offscreen; assert the gating predicate directly).
+        assert panel._current_time_view_mode == "raw_counts"
+        panel._refresh_log_counts_visibility()
+        assert panel._log_counts_checkbox.isVisibleTo(panel) is True
+
+        panel.set_current_time_view_mode("fb_asymmetry")
+        assert panel._log_counts_checkbox.isVisibleTo(panel) is False
+
+    def test_log_counts_applies_log_yscale_on_raw_counts(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.set_time_view_modes(["fb_asymmetry", "raw_counts"], current_mode="raw_counts")
+        panel._log_counts_checkbox.setChecked(True)  # toggles _on_log_counts_toggled
+
+        datasets = [
+            MuonDataset(
+                time=np.array([0.0, 1.0, 2.0, 3.0]),
+                asymmetry=np.array([1000.0, 500.0, 250.0, 0.0]),  # 0 bin -> dropped on log
+                error=np.array([31.6, 22.4, 15.8, 1.0]),
+                metadata={
+                    "run_number": -1,
+                    "grouped_time_domain_lifetime_corrected": False,
+                },
+            )
+        ]
+        panel.plot_grouped_time_domain_subplots(datasets)
+
+        axes = list(panel._subplot_axes_by_polarization.values())
+        assert axes
+        assert all(ax.get_yscale() == "log" for ax in axes)
+
+        # Turning it off restores a linear axis.
+        panel._log_counts_checkbox.setChecked(False)
+        panel.plot_grouped_time_domain_subplots(datasets)
+        axes = list(panel._subplot_axes_by_polarization.values())
+        assert all(ax.get_yscale() == "linear" for ax in axes)
+
+    def test_log_counts_scale_round_trips_through_state(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.set_time_view_modes(["fb_asymmetry", "raw_counts"], current_mode="raw_counts")
+        panel._log_counts_checkbox.setChecked(True)
+        state = panel.get_state()
+        assert state["log_counts_scale"] is True
+
+        fresh = PlotPanel()
+        try:
+            fresh.set_time_view_modes(["fb_asymmetry", "raw_counts"])
+            fresh.restore_state(state)
+            assert fresh._log_counts_enabled is True
+            assert fresh._log_counts_checkbox.isChecked() is True
+        finally:
+            fresh.close()
+            fresh.deleteLater()
+
+    def test_cursor_readout_snaps_and_windows(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        from asymmetry.core.transform.integral import integrate_curve
+
+        panel.plot_dataset(sample_dataset)
+        t_arr = panel._last_plot_time
+        assert t_arr is not None
+        i = 40
+
+        payload = panel._build_cursor_readout(float(t_arr[i]) + 1e-6, 0.0)
+        assert payload["snapped"] is True
+        assert payload["x"] == pytest.approx(float(t_arr[i]))
+        assert payload["y"] == pytest.approx(float(panel._last_plot_asymmetry[i]))
+        # S/N at the snapped point.
+        assert payload["snr"] == pytest.approx(
+            abs(float(panel._last_plot_asymmetry[i]) / float(panel._last_plot_error[i]))
+        )
+
+        # Windowed average matches integrate_curve over the visible x-range.
+        lo = float(panel._x_min.value())
+        hi = float(panel._x_max.value())
+        mean, mean_err = integrate_curve(
+            panel._last_plot_time,
+            panel._last_plot_asymmetry,
+            panel._last_plot_error,
+            t_min=min(lo, hi),
+            t_max=max(lo, hi),
+        )
+        assert payload["window"][0] == pytest.approx(mean)
+        assert payload["window"][1] == pytest.approx(mean_err)
+
+    def test_cursor_readout_declines_snap_on_grouped_subplots(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        datasets = [
+            MuonDataset(
+                time=np.array([0.0, 1.0, 2.0]),
+                asymmetry=np.array([10.0, 9.0, 8.0]),
+                error=np.array([1.0, 1.0, 1.0]),
+                metadata={"run_number": -(idx + 1)},
+            )
+            for idx in range(2)
+        ]
+        panel.plot_grouped_time_domain_subplots(datasets)
+        payload = panel._build_cursor_readout(1.0, 5.0)
+        # Multi-subplot: snapping is declined, raw coordinate is reported.
+        assert payload["snapped"] is False
+        assert payload["x"] == pytest.approx(1.0)
+
     def test_grouped_subplots_expand_canvas_height_for_scrolling(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
@@ -2363,6 +2481,102 @@ class TestPlotPanel:
 
         assert warnings
         assert "No plotted data" in warnings[0]
+
+    def _parse_dat_columns(self, path: Path) -> np.ndarray:
+        rows = [line for line in path.read_text().splitlines() if line and not line.startswith("!")]
+        return np.array([[float(v) for v in r.split()] for r in rows])
+
+    def test_export_plotted_data_as_text_data_only_round_trips(
+        self,
+        panel: PlotPanel,
+        sample_dataset: MuonDataset,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        target = tmp_path / "run12345.dat"
+        monkeypatch.setattr(panel, "_prompt_text_export_options", lambda: ("data", False))
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target), "Data files (*.dat)"),
+        )
+        monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *a: None)
+
+        panel.export_plotted_data_as_text()
+
+        assert target.exists()
+        # No fit was plotted, so data-only must not emit a .fit sidecar.
+        assert not target.with_suffix(".fit").exists()
+        text = target.read_text()
+        assert "START OF RUN INFORMATION" in text  # provenance header present
+        parsed = self._parse_dat_columns(target)
+        np.testing.assert_allclose(parsed[:, 0], sample_dataset.time, rtol=1e-5)
+        np.testing.assert_allclose(parsed[:, 1], sample_dataset.asymmetry, rtol=1e-5)
+
+    def test_export_plotted_data_as_text_data_fit_and_xrange(
+        self,
+        panel: PlotPanel,
+        sample_dataset: MuonDataset,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        t_fit = np.linspace(0.0, 10.0, 50)
+        panel.plot_fit(t_fit, 0.18 * np.exp(-0.45 * t_fit), label="Fit")
+        panel._x_min.setValue(2.0)
+        panel._x_max.setValue(6.0)
+
+        target = tmp_path / "run12345.dat"
+        monkeypatch.setattr(panel, "_prompt_text_export_options", lambda: ("data_fit", True))
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target), "Data files (*.dat)"),
+        )
+        monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *a: None)
+
+        panel.export_plotted_data_as_text()
+
+        assert target.exists()
+        assert target.with_suffix(".fit").exists()  # data+fit -> both sidecars
+        parsed = self._parse_dat_columns(target)
+        # x-range limiting: every written time within [2, 6].
+        assert parsed[:, 0].min() >= 2.0 - 1e-9
+        assert parsed[:, 0].max() <= 6.0 + 1e-9
+
+    def test_export_plotted_data_as_text_fit_only_without_fit_warns(
+        self,
+        panel: PlotPanel,
+        sample_dataset: MuonDataset,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)  # no fit on the plot
+        target = tmp_path / "run12345.dat"
+        monkeypatch.setattr(panel, "_prompt_text_export_options", lambda: ("fit", False))
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
+            lambda *_a, **_k: (str(target), "Data files (*.dat)"),
+        )
+        warnings: list[str] = []
+        monkeypatch.setattr(
+            "asymmetry.gui.panels.plot_panel.QMessageBox.warning",
+            lambda *a, **k: warnings.append(a[2] if len(a) > 2 else ""),
+        )
+
+        panel.export_plotted_data_as_text()
+
+        assert not target.exists()
+        assert not target.with_suffix(".fit").exists()
+        assert warnings and "no files" in warnings[-1].lower()
 
     def test_export_current_plot_writes_gle_and_compiles_pdf(
         self,
