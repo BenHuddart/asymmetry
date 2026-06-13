@@ -10,6 +10,7 @@ from asymmetry.core.transform.grouping import (
     apply_grouping,
     apply_grouping_aligned,
     common_t0_for_groups,
+    good_event_count,
     good_frames,
     group_forward_backward,
 )
@@ -32,6 +33,69 @@ def test_good_frames_accessor() -> None:
     assert good_frames({}, default=0.0) == 0.0
     assert (good_frames({}, default=0.0) or None) is None
     assert good_frames({"good_frames": 250.0}, default=0.0) == 250.0
+
+
+def test_good_event_count_sums_good_range_over_fb_groups() -> None:
+    # Four detectors; forward = {1,2}, backward = {3,4} (1-based ids).
+    hists = [
+        Histogram(counts=np.arange(0, 10, dtype=float), bin_width=0.01),  # det 1
+        Histogram(counts=np.arange(10, 20, dtype=float), bin_width=0.01),  # det 2
+        Histogram(counts=np.arange(20, 30, dtype=float), bin_width=0.01),  # det 3
+        Histogram(counts=np.arange(30, 40, dtype=float), bin_width=0.01),  # det 4
+    ]
+    grouping = {
+        "groups": {1: [1, 2], 2: [3, 4]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "first_good_bin": 2,
+        "last_good_bin": 5,
+    }
+    # Sum bins [2..5] inclusive over all four detectors.
+    expected = sum(float(np.sum(h.counts[2:6])) for h in hists)
+    assert good_event_count(hists, grouping) == pytest.approx(expected)
+
+
+def test_good_event_count_clamps_range_and_ignores_missing_detectors() -> None:
+    hists = [
+        Histogram(counts=np.ones(5, dtype=float), bin_width=0.01),  # det 1
+        Histogram(counts=np.full(5, 2.0, dtype=float), bin_width=0.01),  # det 2
+    ]
+    grouping = {
+        "groups": {1: [1], 2: [2, 99]},  # det 99 absent from the run
+        "forward_group": 1,
+        "backward_group": 2,
+        "first_good_bin": 3,
+        "last_good_bin": 100,  # past the end -> clamped to last bin
+    }
+    # det1 bins[3..4] = 1+1 = 2; det2 bins[3..4] = 2+2 = 4; det99 skipped.
+    assert good_event_count(hists, grouping) == pytest.approx(6.0)
+
+
+def test_good_event_count_matches_string_keyed_groups() -> None:
+    # A JSON-restored grouping carries string group ids; they must still match
+    # the int forward/backward ids.
+    hists = [
+        Histogram(counts=np.arange(0, 10, dtype=float), bin_width=0.01),
+        Histogram(counts=np.arange(10, 20, dtype=float), bin_width=0.01),
+    ]
+    grouping = {
+        "groups": {"1": [1], "2": [2]},  # string keys
+        "forward_group": 1,
+        "backward_group": 2,
+        "first_good_bin": 0,
+        "last_good_bin": 9,
+    }
+    expected = float(np.sum(hists[0].counts)) + float(np.sum(hists[1].counts))
+    assert good_event_count(hists, grouping) == pytest.approx(expected)
+
+
+def test_good_event_count_returns_none_when_undetermined() -> None:
+    h = [Histogram(counts=np.ones(5, dtype=float), bin_width=0.01)]
+    # No grouping / no good-bin range / no named groups -> None (caller falls back).
+    assert good_event_count(h, None) is None
+    assert good_event_count(h, {}) is None
+    assert good_event_count(h, {"first_good_bin": 0, "last_good_bin": 4}) is None
+    assert good_event_count([], {"groups": {1: [1]}}) is None
 
 
 def test_apply_grouping_sums_and_truncates_to_shortest() -> None:
