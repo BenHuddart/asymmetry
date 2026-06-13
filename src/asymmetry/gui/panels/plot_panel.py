@@ -2436,12 +2436,23 @@ class PlotPanel(QWidget):
 
         from matplotlib.patches import FancyBboxPatch
 
+        # Enclose the WHOLE subplot — tick labels and y-axis label included — by
+        # using the axes' tight bbox (display coords) rather than just the data
+        # area; fall back to the data-area position if no renderer is available.
         pos = ax.get_position()
+        try:
+            renderer = self._figure.canvas.get_renderer()
+            tight = ax.get_tightbbox(renderer)
+            if tight is not None:
+                pos = tight.transformed(self._figure.transFigure.inverted())
+        except Exception:
+            pass
+        margin = 0.006  # small gap so the ring doesn't touch the labels
         ring = FancyBboxPatch(
-            (pos.x0, pos.y0),
-            pos.width,
-            pos.height,
-            boxstyle="round,pad=0.004",
+            (pos.x0 - margin, pos.y0 - margin),
+            pos.width + 2 * margin,
+            pos.height + 2 * margin,
+            boxstyle="round,pad=0.002",
             transform=self._figure.transFigure,
             fill=False,
             edgecolor=tokens.TEXT,
