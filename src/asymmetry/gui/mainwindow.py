@@ -172,6 +172,11 @@ from asymmetry.gui.windows.simulate_dialog import SimulateDialog
 
 _MAX_RECENT_PROJECTS = 10
 _PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
+#: After the user cancels a bulk load, how long to wait for the worker to stop
+#: cooperatively (cancel is polled between files) before abandoning the nested
+#: event loop and leaving the worker to finish in the background. Keeps the
+#: window closable even when a single file read is wedged (e.g. a dead mount).
+_BULK_LOAD_ABANDON_GRACE_MS = 5000
 _COMPACT_MODE_SETTINGS_KEY = "ui/compact_mode"
 _UI_SCALE_SETTINGS_KEY = UI_SCALE_SETTINGS_KEY
 _UI_SCALE_OPTIONS = UI_SCALE_OPTIONS
@@ -499,6 +504,14 @@ class MainWindow(QMainWindow):
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
             RepresentationType.FREQ_MAXENT: {},
         }
+        #: (run, rep_type) whose recipe failed to recompute this session — not
+        #: retried on every view sync.
+        self._lazy_recompute_failures: set[tuple[int, RepresentationType]] = set()
+        #: (run, rep_type) restored from a recipe with only the transitional
+        #: legacy array snapshot cached: the recipe supersedes the snapshot,
+        #: but only once it recomputes successfully on first view (else we fall
+        #: back to the snapshot rather than show a blank plot).
+        self._pending_recipe_recompute: set[tuple[int, RepresentationType]] = set()
         self._maxent_state_by_run: dict[int, MaxEntState] = {}
         # The most recent full result + config per run, for spectrum/log export.
         self._maxent_result_by_run: dict[int, tuple] = {}
@@ -2311,16 +2324,25 @@ class MainWindow(QMainWindow):
 
         loop = QEventLoop()
         outcome: dict[str, object] = {}
+        # Once we abandon a wedged load, late progress/finished callbacks must
+        # not touch the (closed) dialog or re-quit the loop.
+        abandoned = {"value": False}
 
         def on_progress(current: int, total: int, name: str) -> None:
+            if abandoned["value"]:
+                return
             dialog.setValue(current)
             dialog.setLabelText(f"Loading {name} ({current + 1}/{total})…")
 
         def on_finished(results: object) -> None:
+            if abandoned["value"]:
+                return
             outcome["results"] = results
             loop.quit()
 
         def on_error(message: str) -> None:
+            if abandoned["value"]:
+                return
             outcome["error"] = message
             loop.quit()
 
@@ -2331,16 +2353,40 @@ class MainWindow(QMainWindow):
             on_error=on_error,
             on_cancelled=loop.quit,
         )
-        # A receiver-less callable runs in the EMITTER's thread — the GUI
-        # thread here — so the cancel flag is set immediately. Connecting the
-        # worker's bound method instead would QUEUE the call to the worker
-        # thread, whose event loop is blocked inside the task until it
-        # finishes: Cancel would never be delivered mid-load.
-        dialog.canceled.connect(lambda: worker.cancel())
+
+        def abandon_if_running() -> None:
+            # Cancel is polled only between files; a single wedged read (dead
+            # mount, corrupt file) never reaches the next poll, so the worker
+            # would never emit a terminal and loop.exec() would never return —
+            # leaving _bulk_load_active stuck and the window unclosable. After
+            # the grace period, give up on the nested loop and let the worker
+            # run on under the TaskRunner (shutdown() reaps it).
+            if loop.isRunning():
+                abandoned["value"] = True
+                self._log_panel.log(
+                    "File load did not stop promptly; abandoning it in the "
+                    "background so the window stays responsive."
+                )
+                loop.quit()
+
+        def request_cancel() -> None:
+            # A receiver-less callable runs in the EMITTER's thread — the GUI
+            # thread here — so the cancel flag is set immediately. Connecting
+            # the worker's bound method instead would QUEUE the call to the
+            # worker thread, whose event loop is blocked inside the task until
+            # it finishes: Cancel would never be delivered mid-load.
+            worker.cancel()
+            QTimer.singleShot(_BULK_LOAD_ABANDON_GRACE_MS, abandon_if_running)
+
+        # Lets closeEvent (which cannot see these locals) kick off the same
+        # cooperative-cancel-then-abandon escape while a load is in flight.
+        self._bulk_load_cancel = request_cancel
+        dialog.canceled.connect(request_cancel)
         try:
             loop.exec()
         finally:
             self._bulk_load_active = False
+            self._bulk_load_cancel = None
         was_cancelled = dialog.wasCanceled()
         dialog.close()
         dialog.deleteLater()
@@ -2677,6 +2723,10 @@ class MainWindow(QMainWindow):
     def _on_perf_logging_toggled(self, checked: bool) -> None:
         """Persist and report GUI performance logging state."""
         self._settings.setValue(_PERF_LOGGING_SETTINGS_KEY, bool(checked))
+        # Worker threads read this cached value (QSettings is not shared across
+        # threads); refresh it now so a load started right after the toggle
+        # logs (or stops logging) timings as the user just asked.
+        self._perf_logging_cached = bool(checked)
         state = "enabled" if checked else "disabled"
         self._log_panel.log(f"Performance logging {state}.")
         self.statusBar().showMessage(f"Performance logging {state}")
@@ -4854,6 +4904,7 @@ class MainWindow(QMainWindow):
         """
         self._project_model = ProjectModel.from_project_state(state)
         self._lazy_recompute_failures = set()
+        self._pending_recipe_recompute = set()
         for run_number, container in self._project_model.datasets.items():
             for rep_type in (RepresentationType.FREQ_FFT, RepresentationType.FREQ_MAXENT):
                 representation = container.get(rep_type)
@@ -4862,12 +4913,15 @@ class MainWindow(QMainWindow):
                 if representation.primary is not None:
                     self._frequency_cache(rep_type)[int(run_number)] = [representation.primary]
                 elif representation.recompute_on_load and representation.recipe:
-                    # Recipes are authoritative over the transitional legacy
-                    # array snapshot (restored just before this): drop the
-                    # snapshot so the first view recomputes from the recipe
-                    # against the freshly loaded, override-applied run —
-                    # exactly what the eager path used to guarantee.
-                    self._frequency_cache(rep_type).pop(int(run_number), None)
+                    # A recipe supersedes the transitional legacy array snapshot
+                    # (restored just before this) so the first view recomputes
+                    # against the freshly loaded, override-applied run — but
+                    # only once it recomputes successfully. Mark it pending and
+                    # KEEP the snapshot: a recipe that no longer reproduces
+                    # (file moved, grouping changed) then falls back to the
+                    # saved spectrum instead of leaving a blank plot, and an
+                    # unviewed run's snapshot still round-trips through save.
+                    self._pending_recipe_recompute.add((int(run_number), rep_type))
 
     def _ensure_frequency_spectra_for_run(
         self,
@@ -4889,20 +4943,32 @@ class MainWindow(QMainWindow):
             return []
         run_number = int(run_number)
         cache = self._frequency_cache(rep_type)
-        spectra = list(cache.get(run_number, []))
-        if spectra:
-            return spectra
+        cached = list(cache.get(run_number, []))
+        key = (run_number, rep_type)
+        pending = getattr(self, "_pending_recipe_recompute", None)
+        if pending is None:
+            pending = set()
+            self._pending_recipe_recompute = pending
         failures = getattr(self, "_lazy_recompute_failures", None)
         if failures is None:
             failures = set()
             self._lazy_recompute_failures = failures
-        if (run_number, rep_type) in failures:
-            return []
+
+        # A cache hit short-circuits unless this run is still pending its
+        # one-time recipe recompute (where the cache holds only the legacy
+        # snapshot that the recipe should supersede).
+        if cached and key not in pending:
+            return cached
+        if key in failures:
+            # Recipe already failed this session; fall back to the snapshot if
+            # we kept one, else nothing.
+            return cached
 
         container = self._project_model.datasets.get(run_number)
         representation = container.get(rep_type) if container is not None else None
         if representation is None or not representation.recompute_on_load:
-            return []
+            pending.discard(key)
+            return cached
         if representation.primary is None:
             dataset = (
                 self._data_browser.get_dataset(run_number)
@@ -4911,13 +4977,26 @@ class MainWindow(QMainWindow):
             )
             run = getattr(dataset, "run", None)
             if run is None:
-                return []
+                # Run not loaded (e.g. its file was skipped). Keep any legacy
+                # snapshot as the fallback and leave the recompute pending —
+                # a later load may make it computable. Don't mark a failure.
+                return cached
             started_at = time.perf_counter()
             try:
                 representation.ensure_computed(run)
             except Exception as exc:  # noqa: BLE001 - a bad recipe must not break view sync
                 representation.invalidate()
-                failures.add((run_number, rep_type))
+                pending.discard(key)
+                if cached:
+                    # The recipe no longer reproduces, but the saved snapshot
+                    # is still valid — fall back to it rather than blank out.
+                    self._log_panel.log(
+                        f"WARNING: saved {self._frequency_status_name(rep_type)} recipe for "
+                        f"run {run_number} no longer recomputes ({exc}); showing the stored "
+                        "spectrum. Recompute to refresh it."
+                    )
+                    return cached
+                failures.add(key)
                 self._log_panel.log(
                     f"WARNING: could not recompute the saved "
                     f"{self._frequency_status_name(rep_type)} spectrum for run "
@@ -4926,7 +5005,8 @@ class MainWindow(QMainWindow):
                 return []
             self._log_perf_event("lazy_spectrum_recompute", started_at, run=run_number)
         if representation.primary is None:
-            return []
+            return cached
+        pending.discard(key)
         cache[run_number] = [representation.primary]
         return [representation.primary]
 
@@ -8608,6 +8688,16 @@ class MainWindow(QMainWindow):
 
     def _open_project_file(self, path: str) -> None:
         """Load and restore a project from *path*."""
+        if getattr(self, "_bulk_load_active", False):
+            # Restoring clears all state first, then prefetches data files via
+            # _load_paths_with_progress — which the in-progress bulk load's
+            # re-entrancy guard would refuse, leaving a wiped, run-less session
+            # labelled as the project. Refuse the open up front instead.
+            self.statusBar().showMessage(
+                "Finish or cancel the current file load before opening a project."
+            )
+            self._log_panel.log("Project open ignored: a file load is in progress.")
+            return
         try:
             state = load_project(path)
         except UnsupportedSchemaVersion as e:
@@ -9390,6 +9480,7 @@ class MainWindow(QMainWindow):
             RepresentationType.FREQ_MAXENT: {},
         }
         self._lazy_recompute_failures = set()
+        self._pending_recipe_recompute = set()
         self._maxent_state_by_run = {}
         self._maxent_panel_state_by_run = {}
         self._fourier_group_phase_state_by_run = {}
@@ -9456,9 +9547,15 @@ class MainWindow(QMainWindow):
         """Stop background work and save plot axis ranges before closing."""
         # A bulk load's nested event loop is on the stack: destroying the
         # window underneath it would leave the resumed frame touching dead
-        # widgets. The progress dialog's Cancel is the supported way out.
+        # widgets. Refuse this close, but kick off the same cooperative-cancel
+        # -then-abandon escape the Cancel button uses, so the load unwinds
+        # within the grace period and the next close attempt succeeds (rather
+        # than the window being stuck until the load happens to finish).
         if getattr(self, "_bulk_load_active", False):
-            self.statusBar().showMessage("Cancel or finish the file load before closing.")
+            cancel = getattr(self, "_bulk_load_cancel", None)
+            if callable(cancel):
+                cancel()
+            self.statusBar().showMessage("Stopping file load — try closing again in a moment.")
             event.ignore()
             return
         # All TaskRunner work (file loads, fits, …): cancel, quit and wait.

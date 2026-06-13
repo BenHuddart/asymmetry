@@ -189,3 +189,44 @@ def test_two_tasks_run_concurrently_and_both_finish():
 
     assert sorted(results) == ["a", "b"]
     runner.shutdown()
+
+
+def test_shutdown_keeps_unjoinable_thread_alive_until_it_finishes():
+    """A worker that outlasts the shutdown wait is parked, not dropped.
+
+    Dropping the last Python reference to a still-running QThread lets GC
+    destroy the C++ object mid-run, which qFatal-aborts the process — the very
+    failure the unparent/keep-alive path exists to prevent. The reaper must
+    hold the thread until it genuinely finishes, then prune it.
+    """
+    from asymmetry.gui import tasks as tasks_mod
+
+    runner = TaskRunner()
+    started = threading.Event()
+    release = threading.Event()
+
+    def fn(worker: TaskWorker):
+        started.set()
+        # Ignores cancellation; only stops when the test releases it. Models a
+        # worker wedged between cancel polls when shutdown's wait times out.
+        release.wait(10.0)
+        return "done"
+
+    runner.start(fn)
+    assert started.wait(10.0)
+
+    reaper_before = tasks_mod._orphan_reaper
+    parked_before = len(reaper_before._threads) if reaper_before is not None else 0
+
+    # Short timeout so wait() expires while the worker is still running.
+    runner.shutdown(timeout_ms=200)
+    assert runner.active_count == 0
+
+    reaper = tasks_mod._orphan_reaper
+    assert reaper is not None
+    # The running thread is held by the reaper (strong ref), not dropped.
+    assert len(reaper._threads) == parked_before + 1
+
+    # Let it finish; the reaper prunes it on the GUI thread via finished.
+    release.set()
+    _wait_until(lambda: len(reaper._threads) == parked_before)

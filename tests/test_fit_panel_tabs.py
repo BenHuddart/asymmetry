@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from dataclasses import replace
 from types import SimpleNamespace
@@ -548,6 +549,76 @@ def test_single_fit_stop_button_cancels_worker(qapp: QApplication, dataset: Muon
     assert tab._stop_btn.isHidden()
     # Nothing recorded from a cancelled fit.
     assert tab._last_fit_result is None
+
+
+def _blocking_fit_engine(release: threading.Event, model):
+    def _fit(ds, model_fn, parameters, *, minos=False, cancel_callback=None):
+        release.wait(10.0)
+        return FitResult(
+            success=True,
+            chi_squared=1.0,
+            reduced_chi_squared=0.1,
+            parameters=ParameterSet(
+                [Parameter(name=p, value=float(i + 1)) for i, p in enumerate(model.param_names)]
+            ),
+            uncertainties={p: 0.01 for p in model.param_names},
+        )
+
+    return SimpleNamespace(fit=_fit)
+
+
+def test_single_fit_result_not_applied_after_run_switch(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    """A fit that completes after the user navigated away is shown, not applied.
+
+    Applying it would arm the pull diagnostic against the wrong run and record
+    a FitSlot for a run the result was not computed on.
+    """
+    tab = SingleFitTab()
+    tab.set_dataset(dataset)
+    emitted: list = []
+    tab.fit_completed.connect(lambda *a: emitted.append(a))
+
+    release = threading.Event()
+    tab._fit_engine = _blocking_fit_engine(release, tab._composite_model)
+
+    tab._run_fit()
+    # User clears the selection (e.g. removes the run) while the fit runs.
+    tab.set_dataset(None)
+    assert tab._last_fit_result is None  # set_dataset dropped any prior result
+    release.set()
+    assert tab.wait_for_fit()
+
+    # Stale result: not emitted (so no FitSlot recorded), diagnostic not armed.
+    assert emitted == []
+    assert tab._last_fit_result is None
+    assert "not applied" in tab._result_label.text().lower()
+
+
+def test_single_fit_result_not_applied_after_reset(
+    qapp: QApplication, dataset: MuonDataset
+) -> None:
+    """Reset during a fit (same model object) must still invalidate the result.
+
+    The model-generation counter catches this where object identity would not.
+    """
+    tab = SingleFitTab()
+    tab.set_dataset(dataset)
+    emitted: list = []
+    tab.fit_completed.connect(lambda *a: emitted.append(a))
+
+    release = threading.Event()
+    tab._fit_engine = _blocking_fit_engine(release, tab._composite_model)
+
+    tab._run_fit()
+    tab._reset_parameters()  # reuses the same CompositeModel object, bumps generation
+    release.set()
+    assert tab.wait_for_fit()
+
+    assert emitted == []
+    assert tab._last_fit_result is None
+    assert "not applied" in tab._result_label.text().lower()
 
 
 def test_global_tab_set_datasets_states(qapp: QApplication, dataset: MuonDataset) -> None:

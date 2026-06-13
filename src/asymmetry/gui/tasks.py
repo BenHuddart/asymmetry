@@ -23,11 +23,61 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QCoreApplication, QObject, QThread, Signal
 
 
 class TaskCancelledError(Exception):
     """Raise from a task function to signal cooperative cancellation."""
+
+
+class _OrphanThreadReaper(QObject):
+    """Process-level keep-alive for worker threads that timed out on a bounded wait.
+
+    Destroying a *running* QThread qFatal-aborts the process, so a thread we
+    could not join must be kept alive until it genuinely finishes — and the
+    keep-alive must outlive any owning TaskRunner/window (closeEvent destroys
+    both). This reaper lives on the GUI thread for the life of the process, so
+    ``finished`` (emitted in the worker thread) is delivered to :meth:`_reap`
+    as a queued connection — pruning never races the worker thread. A thread
+    that never finishes simply stays referenced here, the deliberate trade for
+    not aborting.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._threads: list[tuple[QThread, object]] = []
+
+    def adopt(self, thread: QThread, worker: object | None) -> None:
+        self._threads.append((thread, worker))
+        thread.finished.connect(self._reap)
+
+    def _reap(self) -> None:
+        sender = self.sender()
+        self._threads = [(t, w) for (t, w) in self._threads if t is not sender]
+        if isinstance(sender, QThread):
+            sender.deleteLater()
+
+
+_orphan_reaper: _OrphanThreadReaper | None = None
+
+
+def retire_thread(thread: QThread, worker: object | None = None) -> None:
+    """Keep a still-running QThread alive until it finishes, then delete it.
+
+    Call after a bounded ``wait()`` times out and the caller must drop its own
+    reference (window teardown, or reusing a one-thread slot). The reference
+    held by the reaper is process-level, so neither GC nor parent destruction
+    can free the C++ thread mid-run. Call from the GUI thread.
+    """
+    global _orphan_reaper
+    if _orphan_reaper is None:
+        _orphan_reaper = _OrphanThreadReaper()
+        app = QCoreApplication.instance()
+        if app is not None:
+            # Re-parent to the application so the reaper outlives every window
+            # but is still destroyed at process exit; keeps GUI-thread affinity.
+            _orphan_reaper.setParent(app)
+    _orphan_reaper.adopt(thread, worker)
 
 
 class TaskWorker(QObject):
@@ -205,12 +255,13 @@ class TaskRunner(QObject):
                 # The worker's C++ object can already be gone if its terminal
                 # signal fired but the queued bookkeeping hasn't run yet.
                 pass
-        for thread, _worker in list(self._live):
+        for thread, worker in list(self._live):
             thread.quit()
             if not thread.wait(timeout_ms):
                 # Still inside the task (e.g. a long numpy call between cancel
-                # polls): unparent so window destruction leaks the thread
-                # instead of qFatal-aborting the process.
+                # polls). Unparent it from this runner and hand it to the
+                # process-level keep-alive: clearing _live below drops our
+                # only other reference, and GC-ing a running QThread aborts.
                 thread.setParent(None)
-                thread.finished.connect(thread.deleteLater)
+                retire_thread(thread, worker)
         self._live.clear()

@@ -8,6 +8,8 @@ ratio, independent of the oscillation model.
 
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 import pytest
 
@@ -65,6 +67,45 @@ def test_fb_count_fit_runs_and_recovers_alpha(qapp, fb_dataset):
     assert result.success
     alpha = result.group_results[1].parameters["alpha"].value
     assert alpha == pytest.approx(1.25, abs=0.05)
+
+
+def test_count_fit_uses_separate_worker_handle(qapp, fb_dataset, monkeypatch):
+    """A count-domain fit owns its own worker handle, not the legacy _fit_worker.
+
+    The legacy global/grouped cleanup is keyed on _fit_thread; if the count fit
+    shared _fit_worker, a stale legacy _cleanup_thread could deleteLater the
+    live count-fit worker and silently kill its Stop button.
+    """
+    import asymmetry.gui.panels.fit_panel as fit_panel_mod
+    from asymmetry.core.fitting.engine import FitCancelledError
+
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(1)  # fb
+    tab = window._single_fit_tab
+
+    idle = threading.Event()  # never set; used only as an interruptible sleep
+
+    def blocking_fb(*args, cancel_callback=None, **kwargs):
+        while cancel_callback is None or not cancel_callback():
+            idle.wait(0.005)
+        raise FitCancelledError("cancelled")
+
+    monkeypatch.setattr(fit_panel_mod, "fit_fb_alpha", blocking_fb)
+
+    tab._run_count_domain_fit()
+    # The count fit owns its own handle; the legacy worker slot stays empty.
+    assert tab._count_fit_worker is not None
+    assert tab._fit_worker is None
+
+    # A stale legacy cleanup (no current _fit_thread) must not touch the count
+    # handle — this is the collision the separate attribute prevents.
+    tab._cleanup_thread()
+    assert tab._count_fit_worker is not None
+
+    tab._on_stop_fit()
+    assert tab.wait_for_fit()
+    assert tab._count_fit_worker is None
 
 
 def test_single_count_fit_runs_and_emits(qapp, fb_dataset):

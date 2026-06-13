@@ -108,7 +108,7 @@ from asymmetry.gui.styles.widgets import (
     fit_quality_tooltip,
     success_html,
 )
-from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.tasks import TaskRunner, retire_thread
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
@@ -1130,6 +1130,11 @@ class SingleFitTab(QWidget):
         #: worker handle exists only so the Stop button can cancel it.
         self._fit_call_runner = TaskRunner(self)
         self._fit_worker = None
+        #: Bumped on every model (re)configuration. A fit snapshots it at
+        #: launch; a mismatch at completion means the model was changed or
+        #: Reset while the fit ran (Reset reuses the same object, so object
+        #: identity alone would miss it), so the stale result is not applied.
+        self._model_generation = 0
 
         # Model selection
         model_group = QGroupBox("Model")
@@ -1499,6 +1504,9 @@ class SingleFitTab(QWidget):
         """Set the active composite model and rebuild the parameter table."""
         self._updating_fraction_values = True
         self._composite_model = model
+        # Any model (re)build — including Reset, which reuses the same object —
+        # invalidates an in-flight fit's table/diagnostic write-back.
+        self._model_generation += 1
         _set_formula_label_text(self._formula_label, model.formula_string())
         _apply_domain_mismatch_warning(self._formula_label, model, self._domain)
 
@@ -1950,8 +1958,8 @@ class SingleFitTab(QWidget):
                 parameters,
                 minos=self._minos_checkbox.isChecked(),
             ),
-            on_finished=lambda result, p=parameters, d=dataset, m=model: (
-                self._apply_single_fit_result(result, p, d, m)
+            on_finished=lambda result, p=parameters, d=dataset, m=model, g=self._model_generation: (
+                self._apply_single_fit_result(result, p, d, m, g)
             ),
             on_error=self._on_single_fit_error,
             on_cancelled=self._on_single_fit_cancelled,
@@ -1960,10 +1968,15 @@ class SingleFitTab(QWidget):
 
     def _set_fit_busy(self, busy: bool) -> None:
         """Swap the Fit button for a Stop button (and back) around a worker fit."""
-        self._fit_btn.setVisible(not busy)
-        self._fit_btn.setEnabled(not busy)
         self._stop_btn.setVisible(busy)
         self._stop_btn.setEnabled(busy)
+        self._fit_btn.setVisible(not busy)
+        if busy:
+            self._fit_btn.setEnabled(False)
+        else:
+            # Re-derive from the gating contract rather than force-enable: the
+            # run may have been removed or the panel blocked while the fit ran.
+            self._fit_btn.setEnabled(self._current_dataset is not None and not self._fit_blocked)
 
     def _on_stop_fit(self) -> None:
         """Request cancellation of the active worker-based fit."""
@@ -1993,94 +2006,90 @@ class SingleFitTab(QWidget):
         """Block (with a live event loop) until the launched fit completes."""
         return _wait_for_fit_thread(self, timeout_ms)
 
-    def _apply_single_fit_result(self, result, parameters, dataset, model) -> None:
+    def _apply_single_fit_result(
+        self, result, parameters, dataset, model, model_generation
+    ) -> None:
         """Apply a completed single fit to the panel (GUI thread)."""
         self._set_fit_busy(False)
         self._fit_worker = None
 
-        # Update results display
-        if result.success:
-            # The table and the pull diagnostic interpret the result against
-            # the CURRENT model; if the user swapped models mid-fit, writing
-            # this result's values into a different model's seed table (or
-            # arming the diagnostic against it) would silently mix models.
-            model_unchanged = self._composite_model is model
-            if model_unchanged:
-                # Remember the converged fit so the pull-distribution
-                # diagnostic can re-simulate and refit it.
-                self._last_fit_result = result
-                self._last_fit_parameters = parameters
-                if self._pull_diagnostic_btn is not None:
-                    self._pull_diagnostic_btn.setEnabled(self._can_run_pull_diagnostic())
-            display_values = _normalized_model_param_values(
-                model,
-                {parameter.name: parameter.value for parameter in result.parameters},
-            )
-            self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
-            self._result_label.setText(_fit_success_html(result))
-            self._result_label.setToolTip(fit_quality_tooltip(_fit_quality_dict(result)))
-
-            # Update table with fit results (only when it still shows the
-            # fitted model — name-matched write-back into a swapped model's
-            # table would corrupt its seed values).
-            if model_unchanged:
-                minos_errors = result.minos_errors or {}
-                self._updating_fraction_values = True
-                for i in range(self._param_table.rowCount()):
-                    name_item = self._param_table.item(i, 0)
-                    param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-                    if not isinstance(param_name, str):
-                        param_name = name_item.text() if name_item else ""
-                    if param_name in result.parameters:
-                        fitted_value = display_values.get(
-                            param_name, result.parameters[param_name].value
-                        )
-                        val_item = self._param_table.item(i, 1)
-                        val_item.setText(f"{fitted_value:.6f}")
-                        unc = result.uncertainties.get(param_name, None)
-                        val_item.setData(_ValueUncertaintyDelegate._UNC_ROLE, unc)
-                        val_item.setData(
-                            _ValueUncertaintyDelegate._MINOS_ROLE, minos_errors.get(param_name)
-                        )
-                        # A fresh single fit supersedes any piped-back batch role.
-                        _set_param_batch_role_cell(self._param_table, i, None)
-                self._updating_fraction_values = False
-                self._synchronize_fraction_value_rows()
-
-            param_dict = {p.name: p.value for p in result.parameters}
-            n_samples = _fit_curve_sample_count(
-                model,
-                param_dict,
-                float(dataset.time.min()),
-                float(dataset.time.max()),
-            )
-
-            # Generate fitted curve for plotting
-            t_fit = np.linspace(
-                dataset.time.min(),
-                dataset.time.max(),
-                n_samples,
-            )
-            y_fit = model.function(t_fit, **param_dict)
-
-            component_curves = model.evaluate_components(
-                t_fit,
-                additive_only=True,
-                **param_dict,
-            )
-            if self._current_dataset is dataset:
-                self.fit_completed.emit(result, (t_fit, y_fit), component_curves)
-            else:
-                # The user switched run while the fit ran: keep the result and
-                # table, but don't overlay this curve on a different run's plot.
-                self._result_label.setText(
-                    _fit_success_html(result)
-                    + f"<br><i>Fitted run {dataset.metadata.get('run_number', '?')} — "
-                    "reselect it to see the fit curve.</i>"
-                )
-        else:
+        if not result.success:
             self._results_group.setStyleSheet("")
             self._result_label.setText(f"<b>Fit failed:</b> {result.message}")
+            return
+
+        # A result is only "fresh" when the panel still shows the model AND run
+        # it was fitted on. Otherwise the user navigated away mid-fit: applying
+        # the values would corrupt a different model's seed table, arm the pull
+        # diagnostic against the wrong run, overlay the curve on the wrong plot,
+        # or record a FitSlot for the wrong run. The generation counter catches
+        # Reset (which reuses the same model object, so identity alone misses).
+        model_unchanged = (
+            self._composite_model is model and self._model_generation == model_generation
+        )
+        dataset_unchanged = self._current_dataset is dataset
+
+        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._result_label.setText(_fit_success_html(result))
+        self._result_label.setToolTip(fit_quality_tooltip(_fit_quality_dict(result)))
+
+        if not (model_unchanged and dataset_unchanged):
+            if not model_unchanged:
+                reason = "the model was changed or reset while it ran"
+            else:
+                run_id = dataset.metadata.get("run_number", "?")
+                reason = f"run {run_id} is no longer selected"
+            self._result_label.setText(
+                _fit_success_html(result)
+                + f"<br><i>This fit was not applied or recorded because {reason}. "
+                "Restore the original model and run, then refit to keep it.</i>"
+            )
+            return
+
+        # Fresh: remember the converged fit for the pull-distribution diagnostic.
+        self._last_fit_result = result
+        self._last_fit_parameters = parameters
+        if self._pull_diagnostic_btn is not None:
+            self._pull_diagnostic_btn.setEnabled(self._can_run_pull_diagnostic())
+
+        display_values = _normalized_model_param_values(
+            model,
+            {parameter.name: parameter.value for parameter in result.parameters},
+        )
+
+        # Update table with fit results.
+        minos_errors = result.minos_errors or {}
+        self._updating_fraction_values = True
+        for i in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(i, 0)
+            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(param_name, str):
+                param_name = name_item.text() if name_item else ""
+            if param_name in result.parameters:
+                fitted_value = display_values.get(param_name, result.parameters[param_name].value)
+                val_item = self._param_table.item(i, 1)
+                val_item.setText(f"{fitted_value:.6f}")
+                unc = result.uncertainties.get(param_name, None)
+                val_item.setData(_ValueUncertaintyDelegate._UNC_ROLE, unc)
+                val_item.setData(
+                    _ValueUncertaintyDelegate._MINOS_ROLE, minos_errors.get(param_name)
+                )
+                # A fresh single fit supersedes any piped-back batch role.
+                _set_param_batch_role_cell(self._param_table, i, None)
+        self._updating_fraction_values = False
+        self._synchronize_fraction_value_rows()
+
+        param_dict = {p.name: p.value for p in result.parameters}
+        n_samples = _fit_curve_sample_count(
+            model,
+            param_dict,
+            float(dataset.time.min()),
+            float(dataset.time.max()),
+        )
+        t_fit = np.linspace(dataset.time.min(), dataset.time.max(), n_samples)
+        y_fit = model.function(t_fit, **param_dict)
+        component_curves = model.evaluate_components(t_fit, additive_only=True, **param_dict)
+        self.fit_completed.emit(result, (t_fit, y_fit), component_curves)
 
     # ── project state helpers ──────────────────────────────────────────
 
@@ -2546,8 +2555,12 @@ class GlobalFitTab(QWidget):
         # Thread management for non-blocking fits. Global/grouped fits use the
         # legacy _fit_thread workers; count-domain fit calls run on the shared
         # TaskRunner machinery (bounded shutdown, GUI-thread callback relay).
+        # The two keep SEPARATE worker handles: count fits never touch
+        # _fit_thread, so a stale legacy _cleanup_thread (keyed on _fit_thread)
+        # must not be able to reach in and delete a live count-fit worker.
         self._fit_thread: QThread | None = None
         self._fit_worker: GlobalFitWorker | None = None
+        self._count_fit_worker = None
         self._fit_call_runner = TaskRunner(self)
 
         self._setup_group_nuisance_table()
@@ -3767,10 +3780,14 @@ class GlobalFitTab(QWidget):
         self._result_text.setText("Fitting... This may take a moment for many datasets...")
         self._set_series_busy(True)
 
-        # Clean up any existing thread
+        # Clean up any existing thread. On a timed-out wait the old thread is
+        # still running; reassigning _fit_thread below would drop its last
+        # reference and GC would destroy a running QThread (qFatal), so hand
+        # it to the process-level keep-alive instead.
         if self._fit_thread is not None:
             self._fit_thread.quit()
-            self._fit_thread.wait(10_000)
+            if not self._fit_thread.wait(10_000):
+                retire_thread(self._fit_thread, self._fit_worker)
 
         # Create worker and thread
         self._fit_thread = QThread()
@@ -3862,7 +3879,8 @@ class GlobalFitTab(QWidget):
 
         if self._fit_thread is not None:
             self._fit_thread.quit()
-            self._fit_thread.wait(10_000)
+            if not self._fit_thread.wait(10_000):
+                retire_thread(self._fit_thread, self._fit_worker)
 
         self._fit_thread = QThread()
         self._fit_worker = GroupedTimeDomainFitWorker(
@@ -4126,7 +4144,7 @@ class GlobalFitTab(QWidget):
 
             def on_finished(result, d=dataset, f=forward, b=backward, c=cost):
                 self._set_series_busy(False)
-                self._fit_worker = None
+                self._count_fit_worker = None
                 self._render_count_fb_result(d, result, f, b, cost=c)
 
         else:
@@ -4148,10 +4166,10 @@ class GlobalFitTab(QWidget):
 
             def on_finished(result, d=dataset, t=target, c=cost, s=side):
                 self._set_series_busy(False)
-                self._fit_worker = None
+                self._count_fit_worker = None
                 self._render_count_single_result(d, result, t, cost=c, side=s)
 
-        self._fit_worker = _start_fit_call(
+        self._count_fit_worker = _start_fit_call(
             self,
             call,
             on_finished=on_finished,
@@ -4162,13 +4180,13 @@ class GlobalFitTab(QWidget):
 
     def _on_count_fit_error(self, message: str) -> None:
         self._set_series_busy(False)
-        self._fit_worker = None
+        self._count_fit_worker = None
         self._results_group.setStyleSheet("")
         self._result_text.setHtml(error_html(f"Count-domain fit failed: {message}"))
 
     def _on_count_fit_cancelled(self) -> None:
         """Handle a cancelled count-domain fit: restore the panel, record nothing."""
-        self._fit_worker = None
+        self._count_fit_worker = None
         self._on_series_fit_cancelled()
 
     def _render_count_fb_result(
@@ -4513,14 +4531,22 @@ class GlobalFitTab(QWidget):
 
     def _set_series_busy(self, busy: bool) -> None:
         """Swap the Fit button for a Stop button (and back) around a worker fit."""
-        self._fit_btn.setVisible(not busy)
-        self._fit_btn.setEnabled(not busy)
         self._stop_btn.setVisible(busy)
         self._stop_btn.setEnabled(busy)
+        self._fit_btn.setVisible(not busy)
+        if busy:
+            self._fit_btn.setEnabled(False)
+        else:
+            # Re-derive Fit/Preview enabled state from the real gating contract
+            # (member count, grouped readiness, _fit_blocked) rather than
+            # force-enable — the selection may have changed while the fit ran.
+            self._update_mode_ui(preserve_result=True)
 
     def _on_stop_fit(self) -> None:
         """Request cancellation of the active worker-based fit."""
-        worker = self._fit_worker
+        # Only one fit runs at a time (shared Fit button), but it may be either
+        # a legacy series/global worker or a count-domain TaskRunner worker.
+        worker = self._count_fit_worker or self._fit_worker
         if worker is not None and hasattr(worker, "cancel"):
             self._stop_btn.setEnabled(False)
             self._result_text.setText("Cancelling fit…")
@@ -4592,7 +4618,8 @@ class GlobalFitTab(QWidget):
 
         if self._fit_thread is not None:
             self._fit_thread.quit()
-            self._fit_thread.wait(10_000)
+            if not self._fit_thread.wait(10_000):
+                retire_thread(self._fit_thread, self._fit_worker)
 
         self._fit_thread = QThread()
         self._fit_worker = GroupedSeriesFitWorker(
@@ -5278,7 +5305,9 @@ class GlobalFitTab(QWidget):
             self._fit_worker.cancel()
         if self._fit_thread is not None:
             self._fit_thread.quit()
-            self._fit_thread.wait(10_000)
+            if not self._fit_thread.wait(10_000):
+                retire_thread(self._fit_thread, self._fit_worker)
+            self._fit_thread = None
         self._fit_call_runner.shutdown()
 
     def wait_for_fit(self, timeout_ms: int = 30_000) -> bool:

@@ -488,6 +488,45 @@ class TestMainWindowFourier:
         mainwindow._sync_frequency_plot_for_run(8821)
         assert 8821 in mainwindow._frequency_spectra_by_run
 
+    def test_restored_recipe_falls_back_to_legacy_snapshot_on_failure(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A recipe that no longer recomputes falls back to the saved spectrum.
+
+        Restore keeps the transitional legacy array snapshot until the recipe
+        recomputes successfully; if it can't (file moved, grouping changed),
+        the first view returns the snapshot rather than blanking the plot.
+        """
+        dataset = _make_fourier_ready_dataset(8823, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8823)
+        mainwindow._on_compute_fourier()
+        snapshot = mainwindow._frequency_spectra_by_run[8823][0]
+        state = mainwindow.collect_project_state()
+
+        # Simulate reload: legacy array snapshot present, then recipe state.
+        mainwindow._frequency_spectra_by_run = {8823: [snapshot]}
+        mainwindow._frequency_spectra_by_rep[RepresentationType.FREQ_FFT] = (
+            mainwindow._frequency_spectra_by_run
+        )
+        mainwindow._restore_frequency_representations(state)
+        # The snapshot must be RETAINED (not popped) pending a recompute.
+        assert 8823 in mainwindow._frequency_spectra_by_run
+
+        # Force the recipe recompute to fail on first view.
+        rep = mainwindow._project_model.representation(8823, RepresentationType.FREQ_FFT)
+        assert rep is not None
+
+        def _boom(run, **kwargs):
+            raise RuntimeError("recipe no longer reproduces")
+
+        monkeypatch.setattr(rep, "ensure_computed", _boom)
+        monkeypatch.setattr(rep, "invalidate", lambda: None)
+
+        spectra = mainwindow._ensure_frequency_spectra_for_run(8823, RepresentationType.FREQ_FFT)
+        # Fell back to the saved snapshot rather than returning nothing.
+        assert spectra == [snapshot]
+
     def test_apply_fourier_settings_to_selected_runs(
         self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
     ) -> None:
