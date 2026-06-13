@@ -43,8 +43,19 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python tools/harness.py test -- tests/test_d
 
 ## Recorded follow-ons (out of scope here)
 
-- Symmetric two-run / N-run signed co-subtract (decision 1).
-- In-batch co-add during sequential fitting (fit-workflow-diagnostics).
+- ~~Symmetric two-run / N-run signed co-subtract (decision 1).~~ **Done on
+  `feat/batch-arithmetic` (2026-06-13).** `combine_runs` gained
+  `subtract_method="signed"` (default stays `"reference"`, byte-identical):
+  `runs[0] − Σ scaleₖ·runsₖ` over N runs, every term contributing its own
+  Poisson variance through the `subtract_scaled_counts` chokepoint (F9). The
+  Data Browser exposes it as "Subtract Selected (signed)…" on a ≥2-run
+  selection (sample picker, all-source hide, `_combined_methods` tracks the
+  operation for sign-aware rebuild and `.asymp` round-trip via
+  `operation="subtract_signed"`). Unit scales only — frame-scaled per-run
+  weights remain a possible extension.
+- ~~In-batch co-add during sequential fitting (fit-workflow-diagnostics).~~
+  **Done on `feat/batch-arithmetic`** — see that study and
+  `core.data.combine.coadd_member_windows`.
 - Co-subtract across multi-period runs beyond the reference-run case.
 
 ### From the high-effort code review (deferred, not churned)

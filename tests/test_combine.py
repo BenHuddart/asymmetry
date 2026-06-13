@@ -98,10 +98,16 @@ def test_rejects_bin_width_mismatch():
         combine_runs([a, b])
 
 
-def test_subtract_requires_exactly_two():
+def test_reference_subtract_requires_exactly_two():
     runs = [simulate_run(_template(), _cos, total_events=1e5, seed=i) for i in range(3)]
     with pytest.raises(CombineError, match="exactly two"):
-        combine_runs(runs, sign=-1)
+        combine_runs(runs, sign=-1)  # default subtract_method="reference"
+
+
+def test_invalid_subtract_method_rejected():
+    runs = [simulate_run(_template(), _cos, total_events=1e5, seed=i) for i in range(2)]
+    with pytest.raises(CombineError, match="subtract_method"):
+        combine_runs(runs, sign=-1, subtract_method="bogus")
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +316,78 @@ def test_subtract_reduces_with_propagated_errors():
     single = reduce_run_to_dataset(a)
     n = min(ds.n_points, single.n_points)
     assert float(np.median(ds.error[:n])) > float(np.median(single.error[:n]))
+
+
+# ---------------------------------------------------------------------------
+# Symmetric N-run signed co-subtract
+# ---------------------------------------------------------------------------
+
+
+def test_signed_subtract_two_identical_runs_is_zero_with_propagated_errors():
+    """A − A = 0 with variance = 2·A (every term contributes its own Poisson)."""
+    a = simulate_run(_template(), _cos, total_events=2e5, seed=7)
+    b = simulate_run(_template(), _cos, total_events=2e5, seed=7)
+    d = combine_runs([a, b], sign=-1, subtract_method="signed")
+    assert d.metadata["combination"]["method"] == "subtract_signed"
+    assert "reference_run_number" not in d.metadata["combination"]
+    for det in range(2):
+        np.testing.assert_array_equal(d.histograms[det].counts, np.zeros(N_BINS))
+    var = d.metadata["combination"]["detector_variance"][0]
+    expected = a.histograms[0].counts + b.histograms[0].counts  # = 2·A
+    populated = expected > 0
+    np.testing.assert_allclose(var[populated], expected[populated], rtol=1e-12)
+
+
+def test_signed_subtract_three_runs_difference_and_variance():
+    """runs[0] − runs[1] − runs[2]; variance = c0 + c1 + c2 (all add)."""
+    a = simulate_run(_template(), _cos, total_events=3e5, seed=11)
+    b = simulate_run(_template(), _cos, total_events=3e5, seed=22)
+    c = simulate_run(_template(), _cos, total_events=3e5, seed=33)
+    d = combine_runs([a, b, c], sign=-1, subtract_method="signed")
+    for det in range(2):
+        np.testing.assert_allclose(
+            d.histograms[det].counts,
+            a.histograms[det].counts - b.histograms[det].counts - c.histograms[det].counts,
+            rtol=1e-12,
+        )
+    var = d.metadata["combination"]["detector_variance"][0]
+    expected_var = (
+        a.histograms[0].counts + b.histograms[0].counts + c.histograms[0].counts
+    )
+    populated = expected_var > 0
+    np.testing.assert_allclose(var[populated], expected_var[populated], rtol=1e-12)
+    assert d.metadata["combined_from"] == [1000, 1000, 1000]
+    assert d.metadata["combination"]["scales"] == [1.0, 1.0, 1.0]
+
+
+def test_signed_subtract_respects_per_run_scales():
+    a = simulate_run(_template(), _cos, total_events=3e5, seed=11)
+    b = simulate_run(_template(), _cos, total_events=3e5, seed=22)
+    c = simulate_run(_template(), _cos, total_events=3e5, seed=33)
+    d = combine_runs([a, b, c], sign=-1, subtract_method="signed", scales=[1.0, 0.5, 0.25])
+    np.testing.assert_allclose(
+        d.histograms[0].counts,
+        a.histograms[0].counts - 0.5 * b.histograms[0].counts - 0.25 * c.histograms[0].counts,
+        rtol=1e-12,
+    )
+    var = d.metadata["combination"]["detector_variance"][0]
+    expected_var = (
+        a.histograms[0].counts
+        + 0.25 * b.histograms[0].counts
+        + 0.0625 * c.histograms[0].counts
+    )
+    populated = expected_var > 0
+    np.testing.assert_allclose(var[populated], expected_var[populated], rtol=1e-12)
+
+
+def test_signed_subtract_reduces_with_finite_errors():
+    a = simulate_run(_template(), _cos, total_events=3e5, seed=11)
+    b = simulate_run(_template(), _cos, total_events=3e5, seed=22)
+    c = simulate_run(_template(), _cos, total_events=3e5, seed=33)
+    ds = reduce_combined_run(combine_runs([a, b, c], sign=-1, subtract_method="signed"))
+    assert ds.n_points > 0
+    assert np.all(np.isfinite(ds.asymmetry))
+    assert np.all(np.isfinite(ds.error))
 
 
 # ---------------------------------------------------------------------------

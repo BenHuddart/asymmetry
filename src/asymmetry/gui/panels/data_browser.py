@@ -431,9 +431,14 @@ class DataBrowserPanel(QWidget):
         self._datasets: dict[int, MuonDataset] = {}
         self._combined_datasets: dict[int, list[int]] = {}
         self._combined_source_datasets: dict[int, list[MuonDataset]] = {}
-        # Combine sign per combined id: +1 co-add (default), -1 reference
-        # subtraction. Absent ⇒ co-add, so existing projects are unaffected.
+        # Combine sign per combined id: +1 co-add (default), -1 any subtraction.
+        # Absent ⇒ co-add, so existing projects are unaffected.
         self._combined_signs: dict[int, int] = {}
+        # Combine method per combined id, only set for the subtractions that need
+        # to be distinguished from the default reference path on rebuild/persist:
+        # "subtract_signed" ⇒ symmetric N-run signed co-subtract. Absent ⇒ the
+        # default for its sign (co-add or reference subtraction).
+        self._combined_methods: dict[int, str] = {}
         self._next_combined_id = -1
 
         self._groups: dict[str, DataGroup] = {}
@@ -1824,6 +1829,14 @@ class DataBrowserPanel(QWidget):
             return []
         return list(self._combined_source_datasets.get(combined_rn, []))
 
+    def _combine_builder_for(self, combined_rn: int):
+        """Return the rebuild builder matching a combined row's operation."""
+        if self._combined_methods.get(combined_rn) == "subtract_signed":
+            return self._signed_subtract_datasets
+        if self._combined_signs.get(combined_rn, 1) == -1:
+            return self._subtract_datasets
+        return self._coadd_datasets
+
     def rebuild_combined_dataset(self, run_number: int) -> MuonDataset | None:
         """Recompute one combined dataset from its hidden source datasets."""
         try:
@@ -1841,11 +1854,7 @@ class DataBrowserPanel(QWidget):
         )
         from asymmetry.core.data.combine import CombineError
 
-        builder = (
-            self._subtract_datasets
-            if self._combined_signs.get(combined_rn, 1) == -1
-            else self._coadd_datasets
-        )
+        builder = self._combine_builder_for(combined_rn)
         try:
             rebuilt = builder(
                 source_datasets,
@@ -2234,6 +2243,7 @@ class DataBrowserPanel(QWidget):
         self._combined_datasets.pop(run_number, None)
         self._combined_source_datasets.pop(run_number, None)
         self._combined_signs.pop(run_number, None)
+        self._combined_methods.pop(run_number, None)
         self._temperature_from_log_overrides.pop(int(run_number), None)
         self._field_from_log_overrides.pop(int(run_number), None)
 
@@ -2284,6 +2294,7 @@ class DataBrowserPanel(QWidget):
 
         if len(regular_runs) >= 2 and not combined_runs:
             menu.addAction("Co-add Selected", self._coadd_selected)
+            menu.addAction("Subtract Selected (signed)…", self._signed_subtract_selected)
         if len(expanded_selected_runs) >= 2 and not selected_group_ids:
             menu.addAction("Form Data Group", self._form_data_group)
         if len(selected_runs) == 1 and not selected_group_ids:
@@ -2899,6 +2910,105 @@ class DataBrowserPanel(QWidget):
         self._rebuild_table()
         self.select_runs({combined_rn})
 
+    def _signed_subtract_selected(self) -> None:
+        """Symmetric N-run signed co-subtract of the selected runs (sample − rest).
+
+        Opens a small dialog to pick the sample (positive) run; every other
+        selected run is subtracted at unit scale. The difference becomes a
+        combined row hiding all constituents, restorable with "Separate
+        Combined".
+        """
+        run_numbers = [rn for rn in self._get_selected_run_numbers()]
+        regular = [rn for rn in run_numbers if rn not in self._combined_datasets]
+        if len(regular) < 2:
+            return
+        for rn in regular:
+            dataset = self._datasets.get(rn)
+            if dataset is None or dataset.run is None or not dataset.run.histograms:
+                QMessageBox.warning(
+                    self,
+                    "Cannot Subtract Selected Runs",
+                    "Every selected run needs detector histograms to co-subtract.",
+                )
+                return
+
+        ordered = self._prompt_signed_subtract(regular)
+        if ordered is None:
+            return
+
+        from asymmetry.core.data.combine import CombineError
+
+        source_datasets = [self._datasets[rn] for rn in ordered]
+        insert_index = min(self._display_index_for_run(rn) for rn in ordered)
+        combined_rn = self._next_combined_id
+        try:
+            combined_dataset = self._signed_subtract_datasets(
+                source_datasets,
+                ordered,
+                combined_run_number=combined_rn,
+            )
+        except CombineError as exc:
+            QMessageBox.warning(self, "Cannot Subtract Selected Runs", str(exc))
+            return
+
+        self._next_combined_id -= 1
+        self._datasets[combined_rn] = combined_dataset
+        self._combined_datasets[combined_rn] = ordered
+        self._combined_source_datasets[combined_rn] = source_datasets
+        self._combined_signs[combined_rn] = -1
+        self._combined_methods[combined_rn] = "subtract_signed"
+
+        for rn in ordered:
+            self._remove_run_number(rn)
+
+        self._display_order.insert(insert_index, combined_rn)
+        self._rebuild_table()
+        self.select_runs({combined_rn})
+
+    def _prompt_signed_subtract(self, run_numbers: list[int]) -> list[int] | None:
+        """Pick the sample (positive) run; return [sample, *others] or None.
+
+        Others keep their ascending order so the displayed formula is stable.
+        """
+        ordered_runs = sorted(run_numbers)
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Subtract Selected Runs")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(
+            QLabel(
+                "Symmetric signed co-subtract: the sample run minus every other\n"
+                "selected run (unit scale). Counts subtract bin-by-bin; each run's\n"
+                "Poisson errors add in quadrature."
+            )
+        )
+        layout.addWidget(QLabel("Sample (positive) run:"))
+        combo = QComboBox(dialog)
+        for rn in ordered_runs:
+            combo.addItem(self._datasets[rn].run_label, rn)
+        layout.addWidget(combo)
+        preview = QLabel()
+        layout.addWidget(preview)
+
+        def _update_preview() -> None:
+            sample = int(combo.currentData())
+            rest = [rn for rn in ordered_runs if rn != sample]
+            labels = [self._datasets[sample].run_label] + [self._datasets[r].run_label for r in rest]
+            preview.setText("Result:  " + " − ".join(labels))
+
+        combo.currentIndexChanged.connect(_update_preview)
+        _update_preview()
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        sample = int(combo.currentData())
+        return [sample] + [rn for rn in ordered_runs if rn != sample]
+
     def _reference_subtraction_candidates(self, sample_rn: int) -> list[int]:
         """Loaded, non-combined runs (with histograms) usable as a reference."""
         return [
@@ -3019,6 +3129,37 @@ class DataBrowserPanel(QWidget):
         reduced = reduce_combined_run(combined_run)
         return self._store_combined_reduction(reduced, existing_dataset)
 
+    def _signed_subtract_datasets(
+        self,
+        datasets: list[MuonDataset],
+        run_numbers: list[int],
+        *,
+        combined_run_number: int,
+        existing_dataset: MuonDataset | None = None,
+    ) -> MuonDataset:
+        """Symmetric N-run signed co-subtract ``runs[0] − Σ runs[k≥1]``.
+
+        ``datasets[0]`` is the sample (positive term); every other selected run
+        is subtracted at unit scale, each contributing its own Poisson variance.
+        The per-detector arithmetic runs through ``subtract_scaled_counts``
+        inside ``combine_runs`` (``subtract_method="signed"``, F9). Unlike the
+        reference path this takes two *or more* runs and applies no frame scaling
+        — for photo-µSR laser-on/off and background-style differences.
+        """
+        from asymmetry.core.data.combine import combine_runs, reduce_combined_run
+
+        runs = self._runs_for_combine(datasets)
+        combined_run = combine_runs(
+            runs,
+            sign=-1,
+            subtract_method="signed",
+            scales=[1.0] * len(runs),
+            run_number=combined_run_number,
+            label=" − ".join(map(str, run_numbers)),
+        )
+        reduced = reduce_combined_run(combined_run)
+        return self._store_combined_reduction(reduced, existing_dataset)
+
     def _runs_for_combine(self, datasets: list[MuonDataset]) -> list:
         """Shallow run copies whose metadata reflects the browser's scalars.
 
@@ -3080,6 +3221,7 @@ class DataBrowserPanel(QWidget):
             self._combined_datasets.pop(rn, None)
             self._combined_source_datasets.pop(rn, None)
             self._combined_signs.pop(rn, None)
+            self._combined_methods.pop(rn, None)
             if group is not None:
                 try:
                     member_index = group.member_run_numbers.index(rn)
@@ -3120,6 +3262,7 @@ class DataBrowserPanel(QWidget):
         self._combined_datasets.clear()
         self._combined_source_datasets.clear()
         self._combined_signs.clear()
+        self._combined_methods.clear()
         self._next_combined_id = -1
         self._groups.clear()
         self._run_to_group.clear()
@@ -3138,13 +3281,22 @@ class DataBrowserPanel(QWidget):
         self._refresh_column_headers()
         self._table.setRowCount(0)
 
-    def add_combined_dataset(self, source_run_numbers: list[int], *, sign: int = 1) -> int | None:
+    def add_combined_dataset(
+        self,
+        source_run_numbers: list[int],
+        *,
+        sign: int = 1,
+        operation: str | None = None,
+    ) -> int | None:
         """Recreate a combined row programmatically (``.asymp`` load).
 
-        ``sign=+1`` co-adds; ``sign=-1`` subtracts the second source (reference)
-        from the first (sample). Co-add requires identical grouping; a reference
-        subtraction only needs the count-level invariants (combine_runs checks
-        them), so the stricter grouping gate is skipped for it.
+        ``sign=+1`` co-adds; ``sign=-1`` subtracts. ``operation`` disambiguates
+        the subtractions: ``"subtract_signed"`` is the symmetric N-run signed
+        co-subtract (sample − every other source), any other value (or ``None``
+        with ``sign=-1``) is the two-run reference subtraction. Co-add requires
+        identical grouping; the subtractions only need the count-level
+        invariants (``combine_runs`` checks them), so the stricter grouping gate
+        is skipped for them.
         """
         datasets_to_combine = []
         for rn in source_run_numbers:
@@ -3156,16 +3308,23 @@ class DataBrowserPanel(QWidget):
         if len(datasets_to_combine) < 2:
             return None
 
+        signed = sign == -1 and operation == "subtract_signed"
         if sign == 1:
             incompatibility = self._coadd_compatibility_error(datasets_to_combine)
             if incompatibility is not None:
                 return None
-        elif len(datasets_to_combine) != 2:
+        elif not signed and len(datasets_to_combine) != 2:
+            # The reference subtraction is sample + one reference.
             return None
 
         from asymmetry.core.data.combine import CombineError
 
-        builder = self._subtract_datasets if sign == -1 else self._coadd_datasets
+        if sign != -1:
+            builder = self._coadd_datasets
+        elif signed:
+            builder = self._signed_subtract_datasets
+        else:
+            builder = self._subtract_datasets
         combined_rn = self._next_combined_id
         source_datasets = [self._datasets[rn] for rn in source_run_numbers if rn in self._datasets]
         try:
@@ -3183,6 +3342,8 @@ class DataBrowserPanel(QWidget):
         self._combined_source_datasets[combined_rn] = source_datasets
         if sign == -1:
             self._combined_signs[combined_rn] = -1
+        if signed:
+            self._combined_methods[combined_rn] = "subtract_signed"
 
         insert_index = min(self._display_index_for_run(rn) for rn in source_run_numbers)
         for rn in source_run_numbers:

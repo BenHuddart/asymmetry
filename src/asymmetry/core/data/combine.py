@@ -82,6 +82,7 @@ def combine_runs(
     scales: Sequence[float] | None = None,
     run_number: int | None = None,
     label: str | None = None,
+    subtract_method: str = "reference",
 ) -> Run:
     """Combine the raw histograms of ``runs`` at the count level.
 
@@ -106,6 +107,13 @@ def combine_runs(
     label
         Optional explicit ``run_label``; otherwise built from the constituents
         (``"a + b"`` for add, ``"a − b"`` for subtract).
+    subtract_method
+        For ``sign == -1`` only. ``"reference"`` (default) is the frame-scaled
+        reference subtraction ``[sample, reference]`` with ``scales =
+        [1.0, frame_ratio]`` (exactly two runs). ``"signed"`` is the symmetric
+        N-run signed co-subtract ``runs[0] − Σ scaleₖ·runsₖ`` (``k ≥ 1``), every
+        term contributing its own Poisson variance — for photo-µSR laser-on/off
+        and background-style differences over more than two runs.
 
     Returns
     -------
@@ -125,15 +133,17 @@ def combine_runs(
     sign = int(sign)
     if sign not in (1, -1):
         raise CombineError("sign must be +1 (co-add) or -1 (co-subtract)")
+    subtract_method = str(subtract_method)
+    if sign == -1 and subtract_method not in ("reference", "signed"):
+        raise CombineError("subtract_method must be 'reference' or 'signed'")
 
     runs = list(runs)
     if len(runs) < 2:
         raise CombineError("combine_runs needs at least two runs")
-    if sign == -1 and len(runs) != 2:
-        # The shipped co-subtract surface is reference-run only (one sample,
-        # one reference); symmetric / N-run signed subtraction is a recorded
-        # follow-on (docs/porting/run-arithmetic).
-        raise CombineError("co-subtract takes exactly two runs (sample, reference)")
+    if sign == -1 and subtract_method == "reference" and len(runs) != 2:
+        # The reference-run co-subtract is one sample, one reference. The
+        # symmetric N-run signed subtraction uses subtract_method="signed".
+        raise CombineError("reference co-subtract takes exactly two runs (sample, reference)")
 
     if scales is None:
         scales = [1.0] * len(runs)
@@ -170,6 +180,7 @@ def combine_runs(
         runs,
         scales=scales,
         sign=sign,
+        subtract_method=subtract_method,
         number=number,
         label=label,
         exposure=exposure,
@@ -379,36 +390,49 @@ def _combine_histograms_subtract(
     runs: list[Run],
     scales: list[float],
 ) -> tuple[list[Histogram], list[NDArray[np.float64]], int]:
-    """Detector-wise ``sample − scale·reference`` via ``subtract_scaled_counts``.
+    """Detector-wise ``runs[0] − Σ scaleₖ·runsₖ`` via ``subtract_scaled_counts``.
 
     Returns the difference histograms, the per-detector variances (error²) so
     the reduction can propagate them, and the count of negative difference bins
-    (the unphysical-counts guard, RA5). ``runs`` is ``[sample, reference]``; the
-    reference scale is ``scales[1]``. The sample is taken at unit scale (a
-    reference subtraction is ``sample − scale·reference``, so ``scales[0]`` is
-    1.0 by contract and recorded for provenance only); passing it through the
-    chokepoint's variance term would give the wrong, linear-in-scale variance.
+    (the unphysical-counts guard, RA5). ``runs[0]`` is the sample, taken at unit
+    Poisson variance (its scale is recorded for provenance only — passing it
+    through the chokepoint's variance term would give the wrong, linear-in-scale
+    variance). Each reference ``runs[k≥1]`` contributes ``scaleₖ·counts`` to the
+    difference and ``scaleₖ²·counts`` to the variance.
+
+    For the two-run reference case this is byte-identical to a single
+    ``subtract_scaled_counts(sample, reference, scaleₖ)`` call. The symmetric
+    N-run signed subtract folds the extra references in through the same seam
+    against a zero accumulator, so the running difference (no longer Poisson)
+    carries its variance separately while every count-level subtraction still
+    flows through ``subtract_scaled_counts`` (F9).
     """
-    sample, reference = runs
-    reference_scale = scales[1]
+    sample = runs[0]
     n_detectors = len(sample.histograms)
     out: list[Histogram] = []
     variances: list[NDArray[np.float64]] = []
     negative_bins = 0
     for det in range(n_detectors):
-        arrays = [
-            np.asarray(sample.histograms[det].counts, dtype=np.float64),
-            np.asarray(reference.histograms[det].counts, dtype=np.float64),
-        ]
-        t0s = [int(sample.histograms[det].t0_bin), int(reference.histograms[det].t0_bin)]
-        (s_counts, r_counts), common_t0 = _aligned_detector_arrays(arrays, t0s)
-        # subtract_scaled_counts is the single count-level subtraction seam
-        # (F9): difference = sample − reference_scale·reference,
-        # variance = sample + reference_scale²·reference.
-        diff, error = subtract_scaled_counts(s_counts, r_counts, reference_scale)
+        arrays = [np.asarray(run.histograms[det].counts, dtype=np.float64) for run in runs]
+        t0s = [int(run.histograms[det].t0_bin) for run in runs]
+        aligned, common_t0 = _aligned_detector_arrays(arrays, t0s)
+        s_counts = aligned[0]
+        # First reference through the seam (exact two-run reference path):
+        # difference = sample − scale₁·ref₁, variance = sample + scale₁²·ref₁.
+        diff, error = subtract_scaled_counts(s_counts, aligned[1], scales[1])
+        variance = error * error
+        # Additional references (symmetric N-run subtract): subtract each scaled
+        # reference and add only its scaleₖ²·counts variance term — routed through
+        # the same chokepoint against a zero accumulator.
+        for ref_counts, ref_scale in zip(aligned[2:], scales[2:], strict=True):
+            contrib, contrib_error = subtract_scaled_counts(
+                np.zeros_like(ref_counts), ref_counts, ref_scale
+            )
+            diff = diff + contrib
+            variance = variance + contrib_error * contrib_error
         negative_bins += int(np.count_nonzero(diff < 0.0))
         out.append(_clone_geometry(sample.histograms[det], diff, common_t0))
-        variances.append(error * error)
+        variances.append(variance)
     return out, variances, negative_bins
 
 
@@ -530,6 +554,7 @@ def _combined_metadata(
     *,
     scales: list[float],
     sign: int,
+    subtract_method: str = "reference",
     number: int,
     label: str | None,
     exposure: float,
@@ -575,8 +600,12 @@ def _combined_metadata(
         }
         for run in runs
     ]
+    if sign == 1:
+        method = "coadd"
+    else:
+        method = "subtract_reference" if subtract_method == "reference" else "subtract_signed"
     combination: dict[str, Any] = {
-        "method": "coadd" if sign == 1 else "subtract_reference",
+        "method": method,
         "sign": sign,
         "scales": list(scales),
         "constituents": constituents,
@@ -585,11 +614,13 @@ def _combined_metadata(
     if good > 0.0:
         metadata.setdefault("good_frames", good)
     if sign == -1:
-        combination["reference_run_number"] = int(runs[1].run_number)
-        combination["reference_scale"] = float(scales[1])
         combination["negative_count_bins"] = int(negative_bins)
         if detector_variance is not None:
             combination["detector_variance"] = detector_variance
+        if subtract_method == "reference":
+            # The reference-run path records its single designated reference.
+            combination["reference_run_number"] = int(runs[1].run_number)
+            combination["reference_scale"] = float(scales[1])
 
     metadata["combination"] = combination
     return metadata

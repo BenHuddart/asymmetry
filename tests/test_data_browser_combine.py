@@ -134,3 +134,69 @@ def test_rebuild_combined_dataset_preserves_sign():
     assert rebuilt is not None
     assert rebuilt.metadata["combination"]["method"] == "subtract_reference"
     assert rebuilt.metadata["combination"]["reference_scale"] == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------------
+# Symmetric N-run signed co-subtract
+# ---------------------------------------------------------------------------
+
+
+def test_signed_subtract_action_combines_three_runs(monkeypatch):
+    panel = DataBrowserPanel()
+    for rn in (501, 502, 503):
+        panel.add_dataset(_dataset(rn, frames=1000, seed=rn))
+    panel.select_runs({501, 502, 503})
+    # Drive the dialog to pick 501 as the sample (positive) run.
+    monkeypatch.setattr(panel, "_prompt_signed_subtract", lambda runs: [501, 502, 503])
+    panel._signed_subtract_selected()
+
+    combined = next(iter(panel._combined_datasets))
+    assert panel._combined_datasets[combined] == [501, 502, 503]
+    assert panel._combined_signs[combined] == -1
+    assert panel._combined_methods[combined] == "subtract_signed"
+    ds = panel.get_dataset(combined)
+    assert ds.metadata["combination"]["method"] == "subtract_signed"
+    assert "reference_run_number" not in ds.metadata["combination"]
+    assert panel._combined_run_display(combined) == "501 − 502 − 503"
+    # Sources are hidden under the combined row.
+    for rn in (501, 502, 503):
+        assert rn not in panel._datasets
+
+
+def test_signed_subtract_rebuild_preserves_method(monkeypatch):
+    panel = DataBrowserPanel()
+    for rn in (501, 502, 503):
+        panel.add_dataset(_dataset(rn, frames=1000, seed=rn))
+    panel.select_runs({501, 502, 503})
+    monkeypatch.setattr(panel, "_prompt_signed_subtract", lambda runs: [501, 502, 503])
+    panel._signed_subtract_selected()
+    combined = next(iter(panel._combined_datasets))
+    rebuilt = panel.rebuild_combined_dataset(combined)
+    assert rebuilt is not None
+    assert rebuilt.metadata["combination"]["method"] == "subtract_signed"
+
+
+def test_signed_subtract_separate_restores_all_sources(monkeypatch):
+    panel = DataBrowserPanel()
+    for rn in (501, 502, 503):
+        panel.add_dataset(_dataset(rn, frames=1000, seed=rn))
+    panel.select_runs({501, 502, 503})
+    monkeypatch.setattr(panel, "_prompt_signed_subtract", lambda runs: [501, 502, 503])
+    panel._signed_subtract_selected()
+    combined = next(iter(panel._combined_datasets))
+    panel._separate_combined()
+    for rn in (501, 502, 503):
+        assert rn in panel._datasets
+    assert combined not in panel._combined_methods
+    assert combined not in panel._combined_signs
+
+
+def test_signed_subtract_restores_via_add_combined_dataset():
+    """Mirrors the .asymp restore path (operation='subtract_signed')."""
+    panel = DataBrowserPanel()
+    for rn in (501, 502, 503):
+        panel.add_dataset(_dataset(rn, frames=1000, seed=rn))
+    crn = panel.add_combined_dataset([501, 502, 503], sign=-1, operation="subtract_signed")
+    assert crn is not None
+    assert panel._combined_methods[crn] == "subtract_signed"
+    assert panel.get_dataset(crn).metadata["combination"]["method"] == "subtract_signed"

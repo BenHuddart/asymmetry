@@ -9655,16 +9655,19 @@ class MainWindow(QMainWindow):
                 _append_dataset_entry(dataset)
 
         # Combined dataset definitions. The optional "operation" field is
-        # written only for reference subtractions, so co-add entries round-trip
+        # written only for subtractions, so co-add entries round-trip
         # byte-for-byte as before (additive schema; no version bump).
         combined_signs = getattr(self._data_browser, "_combined_signs", {})
+        combined_methods = getattr(self._data_browser, "_combined_methods", {})
         combined_datasets = []
         for crn, src_runs in self._data_browser._combined_datasets.items():
             entry = {
                 "combined_run_number": int(crn),
                 "source_run_numbers": [int(r) for r in src_runs],
             }
-            if combined_signs.get(crn, 1) == -1:
+            if combined_methods.get(crn) == "subtract_signed":
+                entry["operation"] = "subtract_signed"
+            elif combined_signs.get(crn, 1) == -1:
                 entry["operation"] = "subtract_reference"
             combined_datasets.append(entry)
 
@@ -10116,9 +10119,12 @@ class MainWindow(QMainWindow):
             for combined_info in state.get("combined_datasets", []):
                 old_id = combined_info.get("combined_run_number")
                 src_runs = combined_info.get("source_run_numbers", [])
-                sign = -1 if combined_info.get("operation") == "subtract_reference" else 1
+                operation = combined_info.get("operation")
+                sign = -1 if operation in ("subtract_reference", "subtract_signed") else 1
                 if all(rn in loaded_run_numbers for rn in src_runs):
-                    new_id = self._data_browser.add_combined_dataset(src_runs, sign=sign)
+                    new_id = self._data_browser.add_combined_dataset(
+                        src_runs, sign=sign, operation=operation
+                    )
                     if new_id is not None and old_id is not None:
                         combined_id_map[int(old_id)] = new_id
                     elif new_id is None:
