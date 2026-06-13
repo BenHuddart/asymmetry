@@ -55,7 +55,7 @@ class _OrphanThreadReaper(QObject):
         # sender() can return None in queued cross-thread connections on some
         # PySide6 builds, leaving stale entries in _threads. Scan all entries
         # and prune any thread that is no longer running instead: Qt sets
-        # running=false before emitting finished(), so isRunning() is reliable
+        # running=False before emitting finished(), so isRunning() is reliable
         # here even when called from a queued slot.
         remaining = []
         for t, w in self._threads:
