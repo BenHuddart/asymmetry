@@ -63,8 +63,8 @@ The lifetime table
 
 Lifetimes are transcribed from Table C.1 of Blundell, De Renzi, Lancaster &
 Pratt, *Muon Spectroscopy: An Introduction* (OUP, 2022), Appendix C, which
-combines measurements from Suzuki, Measday & Roalsvig (1987). Values for 62
-elements from H (Z = 1) to U (Z = 92) are included. A small number of entries
+combines measurements from Suzuki, Measday & Roalsvig (1987). Values for 79
+elements from H (Z = 1) to Np (Z = 93) are included. A small number of entries
 marked ``source="WiMDA-provisional"`` carry no published uncertainty and are
 drawn from WiMDA's older table where the primary compilation has no entry.
 

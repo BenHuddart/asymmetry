@@ -1,65 +1,72 @@
 """No-GUI and no-registry isolation guards for core/negmu (verification-plan §4).
 
 These tests ensure the μ⁻ package is invisible to the GUI fit builders and does
-not import count_domain or Qt. They execute after the other negmu imports so the
-modules are already in sys.modules and the assertions are fast.
+not import count_domain or Qt.
 """
 
 from __future__ import annotations
 
+import subprocess
 import sys
+import textwrap
 
 import pytest
 
 # ---------------------------------------------------------------------------
-# Qt-free imports
+# Qt-free imports (subprocess: the only reliable probe)
 # ---------------------------------------------------------------------------
 
+# An in-process sys.modules diff is a NO-OP here: the autouse _cleanup_qt_widgets
+# fixture in tests/conftest.py imports PySide6 before every test body, so Qt is
+# always already loaded by the time a test runs. A fresh interpreter is the only
+# way to verify that importing a negmu module pulls in no Qt / GUI.
 
-_QT_KEYS = ("PySide6.QtCore", "PySide6.QtWidgets")
-
-
-def _qt_loaded_by(import_stmt: str) -> set[str]:
-    """Return the set of Qt keys added to sys.modules by executing import_stmt."""
-    before = {k for k in _QT_KEYS if k in sys.modules}
-    exec(import_stmt, {})  # noqa: S102
-    after = {k for k in _QT_KEYS if k in sys.modules}
-    return after - before
-
-
-def test_lifetimes_no_qt():
-    new = _qt_loaded_by("import asymmetry.core.negmu.lifetimes")
-    assert not new, f"negmu.lifetimes triggered Qt load: {new}"
-
-
-def test_model_no_qt():
-    new = _qt_loaded_by("import asymmetry.core.negmu.model")
-    assert not new, f"negmu.model triggered Qt load: {new}"
+_NEGMU_MODULES = [
+    "asymmetry.core.negmu",
+    "asymmetry.core.negmu.lifetimes",
+    "asymmetry.core.negmu.model",
+    "asymmetry.core.negmu.fit",
+    "asymmetry.core.negmu.ratio",
+    "asymmetry.core.negmu.background",
+    "asymmetry.core.negmu.polarisation",
+    "asymmetry.core.simulate",
+]
 
 
-def test_fit_no_qt():
-    new = _qt_loaded_by("import asymmetry.core.negmu.fit")
-    assert not new, f"negmu.fit triggered Qt load: {new}"
+def _gui_modules_pulled_in_by(module: str) -> tuple[int, str]:
+    """Import ``module`` in a fresh interpreter; report any Qt/GUI modules loaded.
+
+    Returns ``(returncode, leaked)`` where ``leaked`` is a ``;``-joined list of
+    offending ``sys.modules`` keys (empty when clean).
+    """
+    code = textwrap.dedent(f"""
+        import sys
+        import {module}  # noqa: F401
+
+        leaked = sorted(
+            name for name in sys.modules
+            if name == "PySide6" or name.startswith("PySide6.")
+            or name == "asymmetry.gui" or name.startswith("asymmetry.gui.")
+        )
+        if leaked:
+            print(";".join(leaked))
+            sys.exit(1)
+        sys.exit(0)
+    """)
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.returncode, proc.stdout.strip()
 
 
-def test_ratio_no_qt():
-    new = _qt_loaded_by("import asymmetry.core.negmu.ratio")
-    assert not new, f"negmu.ratio triggered Qt load: {new}"
-
-
-def test_background_no_qt():
-    new = _qt_loaded_by("import asymmetry.core.negmu.background")
-    assert not new, f"negmu.background triggered Qt load: {new}"
-
-
-def test_polarisation_no_qt():
-    new = _qt_loaded_by("import asymmetry.core.negmu.polarisation")
-    assert not new, f"negmu.polarisation triggered Qt load: {new}"
-
-
-def test_simulate_capture_no_qt():
-    new = _qt_loaded_by("import asymmetry.core.simulate")
-    assert not new, f"core.simulate triggered Qt load: {new}"
+@pytest.mark.parametrize("module", _NEGMU_MODULES)
+def test_negmu_module_imports_without_qt_or_gui(module):
+    """Importing any negmu module in a clean interpreter pulls in no Qt / GUI."""
+    returncode, leaked = _gui_modules_pulled_in_by(module)
+    assert returncode == 0, f"{module} pulled in Qt/GUI modules: {leaked or '(import failed)'}"
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +119,26 @@ def test_negmu_labels_not_in_models():
     negmu_labels = ["CaptureComponent", "CaptureModelSpec", "capture_count_model"]
     for label in negmu_labels:
         assert label not in MODELS, f"{label!r} found in MODELS registry"
+
+
+def test_no_registry_entry_resolves_to_negmu():
+    """No COMPONENTS/MODELS entry's function is defined in asymmetry.core.negmu.
+
+    Stronger than the label checks above: it catches an accidental registration
+    under *any* label (e.g. 'NegativeMuonCapture') by inspecting where each
+    registered function actually lives, not just the keys.
+    """
+    from asymmetry.core.fitting.composite import COMPONENTS
+    from asymmetry.core.fitting.models import MODELS
+
+    offenders: list[str] = []
+    for registry_name, registry in (("COMPONENTS", COMPONENTS), ("MODELS", MODELS)):
+        for key, definition in registry.items():
+            fn = getattr(definition, "function", None)
+            module = getattr(fn, "__module__", "") or ""
+            if module == "asymmetry.core.negmu" or module.startswith("asymmetry.core.negmu."):
+                offenders.append(f"{registry_name}[{key!r}] → {module}")
+    assert not offenders, f"negmu functions leaked into GUI registries: {offenders}"
 
 
 def test_negmu_init_not_imported_by_gui_init():

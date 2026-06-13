@@ -119,8 +119,9 @@ def default_capture_parameters(
     ``amp_<label>`` (free, ≥0) — derived from the signal window integral using
     the exact telescoping normalisation so that seeds scale correctly with τ:
     amp_seed_i = (signal / n_comp) · (1 − exp(−Δt/τ_i)) / (1 − exp(−T/τ_i)).
-    ``tau_<label>`` (fixed unless label in spec.free_tau; freed τ bounded ±50 %).
-    ``background`` (free, ≥0) — seeded from the late-time floor.
+    ``tau_<label>`` (fixed unless label in spec.free_tau; freed τ bounded to
+    ``[0.5×, 2×]`` the table value, widened to include any explicit seed
+    override). ``background`` (free, ≥0) — seeded from the late-time floor.
     ``seeds`` overrides any amp_/tau_/background value before Parameter creation.
     """
     comps = spec.components()
@@ -156,9 +157,12 @@ def default_capture_parameters(
         tau_name = f"tau_{comp.label}"
         tau_seed_val = float(comp.tau_us)
         if comp.label in spec.free_tau:
-            tau_lo = max(1e-4, tau_seed_val * 0.5)
-            tau_hi = tau_seed_val * 2.0
             tau_val = float(override.get(tau_name, tau_seed_val))
+            # Default ±window around the table value, widened to include an
+            # explicit seed override so it is honoured rather than silently
+            # clamped into the limits by iminuit.
+            tau_lo = min(max(1e-4, tau_seed_val * 0.5), tau_val)
+            tau_hi = max(tau_seed_val * 2.0, tau_val)
             params.add(Parameter(name=tau_name, value=tau_val, min=tau_lo, max=tau_hi))
         else:
             tau_val = float(override.get(tau_name, tau_seed_val))

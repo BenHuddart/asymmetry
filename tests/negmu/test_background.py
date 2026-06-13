@@ -337,6 +337,72 @@ class TestCaptureBackgroundRun:
             f"derived={derived_group.time[0]:.4f})"
         )
 
+    def test_time_axis_preserved_with_bunching_and_offset(self, cfe_bg_fit):
+        """Combined regime: bunching_factor>1 AND first_good_bin>common_t0.
+
+        Regression guard. The earlier hand-derived geometry computed
+        axis_start_bins = first_good − common_t0 in *pre-bunch* (fine) bins but
+        applied it as the good_bin_start of a histogram whose bin_width was the
+        *post-bunch* width, stretching the time-axis offset by the bunch factor.
+        The two existing tests exercised bunching (offset 0) and offset
+        (bunch 1) separately and missed this combination.
+        """
+        dataset, fit, spec, *_ = cfe_bg_fit
+        source_run = dataset.run
+
+        offset = 10
+        pad = np.zeros(offset, dtype=np.float64)
+        shifted_hists = [
+            Histogram(
+                counts=np.concatenate([pad, h.counts]),
+                bin_width=h.bin_width,
+                t0_bin=0,
+                good_bin_start=offset,
+                good_bin_end=offset + len(h.counts) - 1,
+            )
+            for h in source_run.histograms
+        ]
+        grouping = {
+            **source_run.grouping,
+            "first_good_bin": offset,
+            "last_good_bin": offset + N_BINS - 1,
+            "bunching_factor": 2,
+        }
+        run = Run(
+            run_number=source_run.run_number,
+            histograms=shifted_hists,
+            metadata=source_run.metadata,
+            grouping=grouping,
+            source_file=source_run.source_file,
+        )
+        ds = MuonDataset(
+            time=dataset.time,
+            asymmetry=dataset.asymmetry,
+            error=dataset.error,
+            metadata=dataset.metadata,
+            run=run,
+        )
+
+        src_group = build_count_group(ds, GROUP_ID, lifetime_corrected=False)
+        derived_run = capture_background_run(ds, GROUP_ID, fit, spec, unwanted=[])
+        derived_dataset = MuonDataset(
+            time=np.array([]),
+            asymmetry=np.array([]),
+            error=np.array([]),
+            metadata={},
+            run=derived_run,
+        )
+        derived_group = build_count_group(derived_dataset, GROUP_ID, lifetime_corrected=False)
+
+        # Tolerance is the inherent ≤ ½ pre-rebin-bin midpoint shift, NOT the
+        # factor-of-bunch error the old code produced (~0.15 μs here).
+        bin_width_fine = float(source_run.histograms[0].bin_width)
+        err = abs(float(derived_group.time[0]) - float(src_group.time[0]))
+        assert err <= 0.5 * bin_width_fine + 1e-9, (
+            f"Time axis off by more than half a pre-rebin bin with bunching+offset: "
+            f"err={err:.6f} μs (src={src_group.time[0]:.4f}, derived={derived_group.time[0]:.4f})"
+        )
+
     def test_time_axis_preserved_with_nonzero_offset(self, cfe_bg_fit):
         """Derived Run preserves time[0] when source group has first_good_bin > 0."""
         dataset, fit, spec, *_ = cfe_bg_fit

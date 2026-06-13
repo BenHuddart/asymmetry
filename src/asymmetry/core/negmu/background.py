@@ -51,6 +51,14 @@ def subtract_capture_background(
     the identity — the counts are returned unchanged.  (WiMDA SetBgButtonClick
     adapted as a histogram-level model subtraction, comparison.md §7.)
 
+    .. note::
+
+       The unwanted components are evaluated from the **non-polarised** model
+       (plain ``amp·exp(−t/τ)``).  If the fit was run with a Phase-4
+       ``polarisation`` multiplier, that ``(1 + P_pol(t))`` modulation is *not*
+       reproduced here, so the subtraction is only exact for the unpolarised
+       capture model.
+
     Parameters
     ----------
     time
@@ -142,34 +150,32 @@ def capture_background_run(
     run_number
         Run number for the derived Run.  Defaults to the source run's number.
     """
-    # Read source geometry before grouping to keep the integer arithmetic together.
     source_run = dataset.run
-    source_grouping = source_run.grouping
-    source_detectors = source_grouping.get("groups", {}).get(group_id, [1])
-    if not source_detectors:
-        raise ValueError(
-            f"capture_background_run: group {group_id!r} has no detector assignments "
-            f"in the source run grouping."
-        )
 
-    # axis_start = first_good − common_t0 (both integers in the source grouping).
-    # Reading these directly avoids a floating-point round-trip through the post-rebin
-    # time axis, which uses bin midpoints after rebinning and therefore yields a
-    # non-integer when divided by bin_width_post whenever bunching_factor > 1.
-    first_good = int(source_grouping.get("first_good_bin", 0))
-    common_t0 = max(int(source_run.histograms[int(det) - 1].t0_bin) for det in source_detectors)
-    axis_start_bins = max(0, first_good - common_t0)
-
-    # Authoritative bin_width from source histogram, scaled by bunching factor.
-    # Avoids the single-bin fallback (len(group.time) <= 1) using a hardcoded default.
-    bunch = int(source_grouping.get("bunching_factor", 1))
-    bin_width = (
-        float(source_run.histograms[int(next(iter(source_detectors))) - 1].bin_width) * bunch
-    )
-
+    # build_count_group owns the t0 alignment, bunching, good-bin window and the
+    # detector resolution (excluded_detectors, string-keyed group ids). Derive the
+    # derived-run geometry from the trace it returns rather than re-deriving it by
+    # hand from the raw grouping. The hand path mixed pre-bunch bin indices
+    # (first_good − common_t0, in fine bins) with a post-bunch bin width, giving a
+    # time axis off by a factor of the bunching whenever bunching_factor > 1 and
+    # the good window started after t0; it also read the raw group detector list
+    # (ignoring excluded_detectors) and used an int-keyed .get that silently fell
+    # back to detector [1] for string-keyed groupings.
     group = build_count_group(dataset, group_id, lifetime_corrected=False)
     corrected = subtract_capture_background(group.time, group.counts, fit, spec, unwanted=unwanted)
     n_corrected = len(corrected)
+
+    # Post-rebin bin width straight from the trace (group.time is evenly spaced).
+    if len(group.time) > 1:
+        bin_width = float(group.time[1] - group.time[0])
+    else:
+        bunch = max(1, int(source_run.grouping.get("bunching_factor", 1)))
+        bin_width = float(source_run.histograms[0].bin_width) * bunch
+
+    # group.time[0] is the post-rebin bin-centre offset from t0; rounding to the
+    # nearest whole post-rebin bin carries at most the ½-bin midpoint shift that
+    # rebinning already imposes (and that the original trace itself carries).
+    axis_start_bins = max(0, int(round(float(group.time[0]) / bin_width))) if bin_width > 0 else 0
 
     last_good = axis_start_bins + n_corrected - 1
     if axis_start_bins > 0:

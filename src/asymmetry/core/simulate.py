@@ -1673,7 +1673,8 @@ def simulate_capture_run(
         objects (duck-typed: need ``.label`` and ``.tau_us``).
     weights
         Relative weight per component label. Normalised over the components
-        present; missing labels default to zero weight.
+        present; missing labels default to zero weight. The provenance block
+        records the **raw** (pre-normalisation) weights as passed.
     total_events
         Expected number of detected capture events in the post-t0 window,
         summed over all signal detectors.
