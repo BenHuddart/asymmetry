@@ -5187,3 +5187,57 @@ class TestMaxEntBatchReconstructSend:
         assert widget._batch_btn.isVisibleTo(widget)
         fourier = mainwindow._fourier_panel.moments_widget
         assert not fourier._batch_btn.isVisibleTo(fourier)
+
+    def test_cancel_with_live_worker_aborts_batch_so_late_finish_sends_nothing(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Cancel aborts immediately; a racing normal completion records no send.
+
+        MaxEnt cancel is cooperative, so the in-flight run can still emit
+        `finished` after Cancel. Aborting the batch in `_on_cancel_maxent` (not
+        only in the cancelled callback) makes the terminal handler's
+        `if self._maxent_batch_active` guard False, so no moments send fires.
+        """
+        sends: list[object] = []
+        monkeypatch.setattr(mainwindow, "_on_moments_send_to_trend", lambda w: sends.append(w))
+        cancelled = {"flag": False}
+        mainwindow._maxent_worker = SimpleNamespace(
+            cancel=lambda: cancelled.__setitem__("flag", True)
+        )
+        mainwindow._maxent_batch_active = True
+        mainwindow._maxent_batch_queue = [802]
+        mainwindow._maxent_batch_widget = mainwindow._maxent_panel.moments_widget
+
+        mainwindow._on_cancel_maxent()
+
+        assert cancelled["flag"] is True  # the live worker was asked to stop
+        assert mainwindow._maxent_batch_active is False  # batch aborted up front
+
+        # Simulate the in-flight run finishing normally despite the cancel: the
+        # finished-callback tail must NOT advance/send because the batch is gone.
+        mainwindow._maxent_batch_done += 1 if mainwindow._maxent_batch_active else 0
+        if mainwindow._maxent_batch_active:
+            mainwindow._advance_maxent_batch()
+        assert sends == []
+
+    def test_batch_run_config_prefers_per_run_stored_state(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A run with its own stored MaxEnt settings reconstructs with those."""
+        dataset = _make_dataset(901, with_grouping=True)
+        stored = {"selected_group_ids": [1, 2], "spectrum_points": 64}
+        mainwindow._maxent_panel_state_by_run[901] = stored
+
+        captured: dict = {}
+
+        def _norm(state, _names):
+            captured["state"] = state
+            return {}
+
+        monkeypatch.setattr(mainwindow, "_normalise_maxent_panel_state", _norm)
+        config = mainwindow._maxent_config_for_batch_run(dataset)
+
+        # The run's own stored state was consulted (not the active panel), and
+        # the batch cycle budget was threaded in.
+        assert captured["state"] == stored
+        assert config.outer_cycles == mainwindow._MAXENT_BATCH_CYCLES

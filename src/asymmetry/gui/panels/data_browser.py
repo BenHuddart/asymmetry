@@ -3175,24 +3175,13 @@ class DataBrowserPanel(QWidget):
     def _runs_for_combine(self, datasets: list[MuonDataset]) -> list:
         """Shallow run copies whose metadata reflects the browser's scalars.
 
-        The dataset metadata is the browser's source of truth for the displayed
-        scalars (field overrides, etc., that may not be on ``run.metadata``).
-        Merge them onto a shallow run copy — sharing histograms/grouping, which
-        ``combine_runs`` never mutates — so the event-weighted T/field reflect
-        what the browser shows.
+        Thin wrapper over :func:`asymmetry.core.data.combine.runs_with_dataset_metadata`
+        — the dataset metadata is the browser's source of truth for the displayed
+        scalars (field overrides, from-log, …) that may not be on ``run.metadata``.
         """
-        from dataclasses import replace
+        from asymmetry.core.data.combine import runs_with_dataset_metadata
 
-        runs = []
-        for ds in datasets:
-            if ds.run is None:
-                continue
-            merged = dict(ds.run.metadata)
-            for key in ("temperature", "field", "title"):
-                if key in ds.metadata:
-                    merged[key] = ds.metadata[key]
-            runs.append(replace(ds.run, metadata=merged))
-        return runs
+        return runs_with_dataset_metadata(datasets)
 
     def _store_combined_reduction(
         self,

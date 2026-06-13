@@ -142,8 +142,10 @@ class SpectralMomentsWidget(QGroupBox):
         # until the MaxEnt host enables it.
         self._batch_btn = QPushButton("Reconstruct selection & send")
         self._batch_btn.setToolTip(
-            "Reconstruct any MaxEnt spectra missing for the selected runs, then "
-            "send their moments to the trend. Cancel from the MaxEnt panel."
+            "Reconstruct any MaxEnt spectra missing for the selected runs — each "
+            "with its own stored settings, or the current panel settings if it "
+            "has none — then send their moments to the trend. Cancel from the "
+            "MaxEnt panel."
         )
         self._batch_btn.clicked.connect(self.batch_reconstruct_send_requested.emit)
         self._batch_btn.hide()

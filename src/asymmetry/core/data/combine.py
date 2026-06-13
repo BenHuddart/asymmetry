@@ -54,7 +54,12 @@ __all__ = [
     "coadd_member_windows",
     "combine_runs",
     "reduce_combined_run",
+    "runs_with_dataset_metadata",
 ]
+
+#: Scalar metadata keys a dataset may override (display/log scalars not on the
+#: underlying run); merged onto run copies for combine's event-weighting.
+_DATASET_SCALAR_KEYS = ("temperature", "field", "title")
 
 #: Bin-width agreement tolerance (µs) for the count-level compatibility check.
 _BIN_WIDTH_RTOL = 1e-6
@@ -253,6 +258,34 @@ def reduce_combined_run(run: Run) -> MuonDataset:
 # --- in-batch co-add windowing ------------------------------------------------
 
 
+def runs_with_dataset_metadata(datasets: Sequence[MuonDataset]) -> list[Run]:
+    """Shallow run copies whose scalar metadata reflects each dataset's overrides.
+
+    A :class:`MuonDataset`'s metadata is the display source of truth for scalars
+    like temperature/field (it may carry browser or from-log overrides that the
+    underlying :attr:`MuonDataset.run` metadata does not). Combining the raw runs
+    directly would event-weight on the stale run scalars, so this merges the
+    dataset's :data:`_DATASET_SCALAR_KEYS` onto a shallow run copy (sharing
+    histograms/grouping, which :func:`combine_runs` never mutates). Datasets
+    without a backing run are skipped. Use this to feed :func:`combine_runs` from
+    GUI datasets so the combined run's scalars match what the user sees.
+    """
+    from dataclasses import replace
+
+    runs: list[Run] = []
+    for dataset in datasets:
+        run = getattr(dataset, "run", None)
+        if run is None:
+            continue
+        merged = dict(run.metadata)
+        ds_metadata = dataset.metadata if isinstance(dataset.metadata, dict) else {}
+        for key in _DATASET_SCALAR_KEYS:
+            if key in ds_metadata:
+                merged[key] = ds_metadata[key]
+        runs.append(replace(run, metadata=merged))
+    return runs
+
+
 def coadd_member_windows(
     n_members: int,
     *,
@@ -425,11 +458,16 @@ def _combine_histograms_subtract(
         # reference and add only its scaleₖ²·counts variance term — routed through
         # the same chokepoint against a zero accumulator.
         for ref_counts, ref_scale in zip(aligned[2:], scales[2:], strict=True):
-            contrib, contrib_error = subtract_scaled_counts(
+            contrib, _contrib_error = subtract_scaled_counts(
                 np.zeros_like(ref_counts), ref_counts, ref_scale
             )
             diff = diff + contrib
-            variance = variance + contrib_error * contrib_error
+            # Add only this reference's Poisson variance (scaleₖ²·counts) directly,
+            # matching subtract_scaled_counts' own variance term. Reading it off the
+            # returned error instead would fold in that helper's empty-bin 1.0
+            # sentinel for every extra reference, over-stating the variance wherever
+            # a reference bin is zero.
+            variance = variance + ref_scale * ref_scale * np.clip(ref_counts, 0.0, None)
         negative_bins += int(np.count_nonzero(diff < 0.0))
         out.append(_clone_geometry(sample.histograms[det], diff, common_t0))
         variances.append(variance)

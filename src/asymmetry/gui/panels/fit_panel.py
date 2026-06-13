@@ -44,6 +44,7 @@ from asymmetry.core.data.combine import (
     coadd_member_windows,
     combine_runs,
     reduce_combined_run,
+    runs_with_dataset_metadata,
 )
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
@@ -5694,7 +5695,9 @@ class GlobalFitTab(QWidget):
         failures = 0
         for indices in windows:
             window_datasets = [member_datasets[i] for i in indices]
-            runs = [ds.run for ds in window_datasets if getattr(ds, "run", None) is not None]
+            # Carry each dataset's displayed scalar overrides onto the run copies
+            # so the combined member's event-weighted T/field match the browser.
+            runs = runs_with_dataset_metadata(window_datasets)
             if len(runs) != len(window_datasets):
                 # A member without source histograms can't be co-added; keep the
                 # window's members un-combined rather than silently dropping data.

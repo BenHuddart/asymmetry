@@ -18,8 +18,9 @@ from asymmetry.core.data.combine import (
     coadd_member_windows,
     combine_runs,
     reduce_combined_run,
+    runs_with_dataset_metadata,
 )
-from asymmetry.core.data.dataset import Histogram, Run
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.simulate import (
     PeriodSpec,
     reduce_run_to_dataset,
@@ -113,6 +114,50 @@ def test_invalid_subtract_method_rejected():
 # ---------------------------------------------------------------------------
 # Co-add
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Dataset-scalar metadata merge (display/from-log overrides)
+# ---------------------------------------------------------------------------
+
+
+def test_runs_with_dataset_metadata_merges_display_scalars():
+    """A dataset's overridden temperature wins over the run's loader value."""
+    run = simulate_run(_template(), _cos, total_events=1e5, seed=0)
+    # run.metadata["temperature"] == 5.0 (the template); dataset overrides it.
+    dataset = MuonDataset(
+        time=np.zeros(1),
+        asymmetry=np.zeros(1),
+        error=np.ones(1),
+        metadata={"temperature": 42.0, "field": 250.0},
+        run=run,
+    )
+    merged = runs_with_dataset_metadata([dataset])
+    assert len(merged) == 1
+    assert merged[0].metadata["temperature"] == 42.0
+    assert merged[0].metadata["field"] == 250.0
+    # Shares histograms (combine never mutates them) and leaves the source intact.
+    assert merged[0].histograms is run.histograms
+    assert run.metadata["temperature"] == 5.0
+
+
+def test_runs_with_dataset_metadata_skips_runless_datasets():
+    runless = MuonDataset(
+        time=np.zeros(1), asymmetry=np.zeros(1), error=np.ones(1), metadata={}, run=None
+    )
+    assert runs_with_dataset_metadata([runless]) == []
+
+
+def test_coadd_event_weights_use_dataset_override_via_helper():
+    """Co-add through the helper event-weights on the overridden temperature."""
+    run_a = simulate_run(_template(good_frames=1000.0), _cos, total_events=1e5, seed=1)
+    run_b = simulate_run(_template(good_frames=1000.0), _cos, total_events=1e5, seed=2)
+    ds_a = MuonDataset(np.zeros(1), np.zeros(1), np.ones(1), {"temperature": 10.0}, run=run_a)
+    ds_b = MuonDataset(np.zeros(1), np.zeros(1), np.ones(1), {"temperature": 20.0}, run=run_b)
+    combined = combine_runs(runs_with_dataset_metadata([ds_a, ds_b]), sign=1)
+    # Equal good frames -> mean of the overridden 10 and 20 = 15 (not the
+    # template's loader value of 5.0 on both).
+    assert combined.metadata["temperature"] == pytest.approx(15.0)
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +399,27 @@ def test_signed_subtract_three_runs_difference_and_variance():
     np.testing.assert_allclose(var[populated], expected_var[populated], rtol=1e-12)
     assert d.metadata["combined_from"] == [1000, 1000, 1000]
     assert d.metadata["combination"]["scales"] == [1.0, 1.0, 1.0]
+
+
+def test_signed_subtract_extra_reference_empty_bin_no_sentinel():
+    """An empty reference bin adds 0 variance, not the chokepoint's 1.0 sentinel.
+
+    For runs[k>=2] the variance is taken as scaleₖ²·counts directly; reading it
+    off ``subtract_scaled_counts``'s error would fold in the empty-bin 1.0
+    sentinel for every extra reference, over-stating the variance where the
+    reference is zero.
+    """
+    a = simulate_run(_template(), _cos, total_events=3e5, seed=11)
+    b = simulate_run(_template(), _cos, total_events=3e5, seed=22)
+    c = simulate_run(_template(), _cos, total_events=3e5, seed=33)
+    # Zero out a populated bin in the *third* run (the extra reference, k=2).
+    zero_bin = int(N_BINS // 2)
+    c.histograms[0].counts[zero_bin] = 0.0
+    d = combine_runs([a, b, c], sign=-1, subtract_method="signed")
+    var = d.metadata["combination"]["detector_variance"][0]
+    # variance at the zeroed bin = a + b + 0 (c contributes 0, no 1.0 sentinel).
+    expected = a.histograms[0].counts[zero_bin] + b.histograms[0].counts[zero_bin]
+    assert var[zero_bin] == pytest.approx(expected, rel=1e-12)
 
 
 def test_signed_subtract_respects_per_run_scales():

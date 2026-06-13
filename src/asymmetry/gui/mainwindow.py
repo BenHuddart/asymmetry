@@ -6818,14 +6818,16 @@ class MainWindow(QMainWindow):
 
     def _on_cancel_maxent(self) -> None:
         """Request cancellation of the active MaxEnt worker (and any batch)."""
-        if self._maxent_batch_active:
-            # Stop launching further runs; the active worker's cancelled callback
-            # aborts the batch (or, with no live worker, abort right here).
-            self._maxent_batch_queue = []
+        was_batch = self._maxent_batch_active
+        if was_batch:
+            # Abort the batch now (clears _maxent_batch_active), so that even if
+            # the in-flight run's cooperative cancel loses the race and it emits
+            # `finished` instead of `cancelled`, the terminal handler's
+            # `if self._maxent_batch_active` guard is already False — no further
+            # run launches and no moments send fires for a cancelled batch.
+            self._abort_maxent_batch()
         if self._maxent_worker is None:
-            if self._maxent_batch_active:
-                self._abort_maxent_batch()
-            else:
+            if not was_batch:
                 self._set_fourier_status("No MaxEnt calculation is running.")
             return
         self._maxent_worker.cancel()
@@ -7018,8 +7020,9 @@ class MainWindow(QMainWindow):
         Closes the spectral-moments gap that MaxEnt's per-run, lazy
         reconstruction leaves: a multi-run moments send records only runs whose
         reconstruction already exists. This queues the missing reconstructions —
-        driving the single-run worker one run at a time (reusing each run's
-        resumable state) with the current MaxEnt settings — then performs the
+        driving the single-run worker one run at a time, reusing each run's
+        resumable state and its **own** stored MaxEnt settings (falling back to
+        the current panel settings for runs that have none) — then performs the
         moments send, so a B_rms(T) series builds in one action. Cancel from the
         MaxEnt panel aborts the whole queue.
         """
@@ -7036,15 +7039,17 @@ class MainWindow(QMainWindow):
             self._set_fourier_status("Select grouped runs to reconstruct before sending moments.")
             return
 
-        config = self._maxent_panel.maxent_config(cycles=self._MAXENT_BATCH_CYCLES)
+        # Validate the active panel config — the fallback used for any run that
+        # has no stored MaxEnt settings of its own.
+        fallback = self._maxent_panel.maxent_config(cycles=self._MAXENT_BATCH_CYCLES)
         if (
-            config.t_min_us is not None
-            and config.t_max_us is not None
-            and config.t_max_us <= config.t_min_us
+            fallback.t_min_us is not None
+            and fallback.t_max_us is not None
+            and fallback.t_max_us <= fallback.t_min_us
         ):
             self._set_fourier_status("MaxEnt end time must be greater than the start time.")
             return
-        if config.mode == "zf_lf" and len(self._maxent_panel.selected_group_ids()) != 2:
+        if fallback.mode == "zf_lf" and len(self._maxent_panel.selected_group_ids()) != 2:
             self._set_fourier_status(
                 "ZF/LF mode needs exactly two included groups (forward and backward)."
             )
@@ -7058,12 +7063,33 @@ class MainWindow(QMainWindow):
             self._on_moments_send_to_trend(widget)
             return
 
-        self._maxent_batch_config = config
+        self._maxent_batch_config = fallback
         self._maxent_batch_active = True
         self._maxent_batch_queue = list(queue)
         self._maxent_batch_total = len(queue)
         self._maxent_batch_done = 0
         self._advance_maxent_batch()
+
+    def _maxent_config_for_batch_run(self, dataset) -> MaxEntConfig:
+        """MaxEnt config for one batch run: its own stored settings, else fallback.
+
+        A run that has been visited or carries a persisted MaxEnt recipe is
+        reconstructed with *its* group selection / phases / window — not whichever
+        run happens to be displayed — so a heterogeneous selection reconstructs
+        each run faithfully. Runs with no settings of their own use the active
+        panel config captured at batch start (``_maxent_batch_config``).
+        """
+        run_number = int(dataset.run_number)
+        group_names = self._fourier_group_names_for_dataset(dataset)
+        state = self._maxent_panel_state_by_run.get(run_number)
+        if state is None:
+            state = self._maxent_state_from_representation(run_number, group_names)
+        if state is None:
+            return self._maxent_batch_config or self._maxent_panel.maxent_config(
+                cycles=self._MAXENT_BATCH_CYCLES
+            )
+        normalised = self._normalise_maxent_panel_state(dict(state), group_names)
+        return MaxEntConfig.from_dict({**normalised, "outer_cycles": self._MAXENT_BATCH_CYCLES})
 
     def _advance_maxent_batch(self) -> None:
         """Launch the next queued reconstruction, or send moments when drained."""
@@ -7078,7 +7104,7 @@ class MainWindow(QMainWindow):
             )
             self._launch_maxent_worker(
                 run=dataset.run,
-                config=self._maxent_batch_config or MaxEntConfig(),
+                config=self._maxent_config_for_batch_run(dataset),
                 cycles=self._MAXENT_BATCH_CYCLES,
                 state=self._maxent_state_by_run.get(run_number),
                 run_number=run_number,
@@ -9112,6 +9138,12 @@ class MainWindow(QMainWindow):
         A deterministic ``batch_id`` (model + member set) means re-running the
         same selection replaces its row rather than duplicating it.
         """
+        from asymmetry.core.data.combine import (
+            combine_runs,
+            reduce_combined_run,
+            runs_with_dataset_metadata,
+        )
+
         runs = sorted({int(r) for r in (run_numbers or [])})
         if len(runs) < 2:
             return
@@ -9119,7 +9151,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("A co-added re-fit is already running.")
             return
 
-        source_runs = []
+        source_datasets = []
         for rn in runs:
             dataset = self._data_browser.get_dataset(rn)
             if dataset is None or dataset.run is None or not dataset.run.histograms:
@@ -9129,7 +9161,11 @@ class MainWindow(QMainWindow):
                     "Every selected run needs detector histograms to co-add and fit.",
                 )
                 return
-            source_runs.append(dataset.run)
+            source_datasets.append(dataset)
+        # Carry the browser's displayed scalar overrides onto the run copies so
+        # the combined member's event-weighted temperature/field — the trend
+        # row's x-coordinate — match what the user sees.
+        source_runs = runs_with_dataset_metadata(source_datasets)
 
         rep_type = self._active_representation_type()
         if rep_type is None:
@@ -9150,7 +9186,6 @@ class MainWindow(QMainWindow):
         member_key = self._refit_coadded_member_key(runs)
         label = " + ".join(str(r) for r in runs)
 
-        from asymmetry.core.data.combine import combine_runs, reduce_combined_run
         from asymmetry.core.fitting.engine import FitEngine
 
         def _work(_worker, src=source_runs, key=member_key, lbl=label, mdl=model, sd=seed):
