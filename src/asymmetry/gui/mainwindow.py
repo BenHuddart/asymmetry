@@ -1372,6 +1372,10 @@ class MainWindow(QMainWindow):
             self._plot_panel.polarization_axis_changed.connect(
                 self._on_plot_polarization_axis_changed
             )
+        if hasattr(self._plot_panel, "fit_target_projection_changed"):
+            self._plot_panel.fit_target_projection_changed.connect(
+                self._on_fit_target_projection_changed
+            )
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
         if hasattr(self._fit_panel, "set_single_fit_restore_provider"):
             self._fit_panel.set_single_fit_restore_provider(self._single_fit_restore_payload)
@@ -2050,8 +2054,10 @@ class MainWindow(QMainWindow):
                 self._plot_panel.get_current_polarization_axis()
             )
 
-        blocked = active_axis == "ALL"
-        reason = "Vector All mode is ambiguous for fitting. Select x, y, or z before running a fit."
+        # In the stacked multi-subplot view a fit acts on the selected subplot
+        # (the fit target). Only block if somehow nothing is selected.
+        blocked = active_axis == "ALL" and self._current_single_fit_projection() is None
+        reason = "Click a subplot to choose the projection to fit."
         return blocked, reason if blocked else ""
 
     def _update_fit_block_state(self) -> None:
@@ -2068,6 +2074,15 @@ class MainWindow(QMainWindow):
             self._fit_panel.set_fit_blocked(blocked, reason)
         if self._multi_group_fit_window is not None:
             self._multi_group_fit_window.set_fit_blocked(blocked, reason)
+
+    def _on_fit_target_projection_changed(self, _label: str) -> None:
+        """Re-target the single fit when the user clicks a different subplot.
+
+        Rebinds the fit panel to the selected projection's slot (so its form
+        shows that projection's fit) and refreshes the fit-block state.
+        """
+        self._rebind_single_fit_to_active_projection()
+        self._update_fit_block_state()
 
     def _on_plot_polarization_axis_changed(self, axis_text: str) -> None:
         """Recompute displayed datasets using the selected vector polarization axis."""
@@ -7485,7 +7500,12 @@ class MainWindow(QMainWindow):
         if not hasattr(self._plot_panel, "get_current_polarization_axis"):
             return None
         axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
-        return axis if axis not in (None, "ALL") else None
+        if axis == "ALL":
+            # Stacked multi-subplot view: the selected subplot is the fit target.
+            if hasattr(self._plot_panel, "fit_target_projection"):
+                return self._plot_panel.fit_target_projection()
+            return None
+        return axis if axis is not None else None
 
     def _single_fit_restore_payload(self, dataset) -> dict | None:
         """Resolve the persisted single-fit form payload for *dataset*'s active slot.

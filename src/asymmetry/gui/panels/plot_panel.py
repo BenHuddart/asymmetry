@@ -2200,9 +2200,19 @@ class PlotPanel(QWidget):
         meta = self._fit_metadata.get(run_number)
         return meta if isinstance(meta, dict) else {}
 
+    def _active_y_axis(self) -> str | None:
+        """The axis whose y-limits the manual controls reflect and drive.
+
+        In the stacked multi-subplot view that is the selected (fit-target)
+        subplot; otherwise it is the single visible polarization axis.
+        """
+        if self._subplot_axes_by_polarization:
+            return self.fit_target_projection()
+        return self._current_polarization_axis
+
     def _cache_current_y_limits_for_axis(self) -> None:
-        """Store current y-limits under the active polarization axis, if any."""
-        axis = self._current_polarization_axis
+        """Store current y-limits under the active (focused) axis, if any."""
+        axis = self._active_y_axis()
         if axis is None or axis == "ALL":
             return
         y0 = float(self._y_min.value())
@@ -2211,10 +2221,18 @@ class PlotPanel(QWidget):
         self._y_limits_by_polarization[axis] = (lo, hi)
 
     def _restore_y_limits_for_axis(self, axis: str | None) -> None:
-        """Restore cached y-limits for the selected polarization axis."""
+        """Restore the y-limit controls to *axis*'s cached (or live) limits."""
         if axis is None or axis == "ALL":
             return
         limits = self._y_limits_by_polarization.get(axis)
+        if limits is None:
+            # No cached value yet — reflect the subplot's actual current limits.
+            ax = self._subplot_axes_by_polarization.get(axis)
+            if ax is not None and hasattr(ax, "get_ylim"):
+                try:
+                    limits = ax.get_ylim()
+                except Exception:
+                    limits = None
         if limits is None:
             return
         self._y_min.setValue(float(limits[0]))
@@ -2247,21 +2265,21 @@ class PlotPanel(QWidget):
         self.polarization_axis_changed.emit(str(axis))
 
     def _update_y_limit_controls_for_axis(self, axis: str | None) -> None:
-        """Enable per-axis Y editing except when in vector ALL mode."""
-        disable_y_edit = bool(self._subplot_axes_by_polarization) and axis == "ALL"
+        """Keep the Y controls enabled, driving the focused (selected) subplot.
+
+        In the stacked view, manual Y now applies to the selected (fit-target)
+        subplot rather than being disabled; auto Y still rescales every
+        projection subplot.
+        """
+        in_subplots = bool(self._subplot_axes_by_polarization)
         manual_tooltip = (
-            "In All mode, Y limits are inherited from x, y, and z. "
-            "Select each polarization to set limits."
-            if disable_y_edit
+            "Y limits apply to the selected subplot — click another subplot to switch."
+            if in_subplots
             else ""
         )
-        auto_tooltip = (
-            "In All mode, Auto Y updates the visible x, y, and z polarization limits."
-            if disable_y_edit
-            else ""
-        )
-        self._y_min.setEnabled(not disable_y_edit)
-        self._y_max.setEnabled(not disable_y_edit)
+        auto_tooltip = "Auto Y rescales every projection subplot." if in_subplots else ""
+        self._y_min.setEnabled(True)
+        self._y_max.setEnabled(True)
         self._y_min.setToolTip(manual_tooltip)
         self._y_max.setToolTip(manual_tooltip)
         if hasattr(self, "_auto_y_btn"):
@@ -2280,11 +2298,14 @@ class PlotPanel(QWidget):
         return list(self._subplot_axes_by_polarization)
 
     def _sync_y_controls_with_visible_axis(self) -> None:
-        """Keep Y controls aligned with currently visible polarization context."""
+        """Align the Y controls with the focused (selected) subplot's limits."""
         if not self._subplot_axes_by_polarization:
             return
 
-        axis = self._current_polarization_axis
+        # The Y fields reflect the focused (fit-target) subplot, so a global
+        # auto-Y leaves them showing the selected projection's own range rather
+        # than a span across all of them.
+        axis = self._active_y_axis()
         if axis in self._subplot_axes_by_polarization:
             limits = self._y_limits_by_polarization.get(axis)
             if limits is not None:
@@ -2292,7 +2313,8 @@ class PlotPanel(QWidget):
                 self._y_max.setValue(float(limits[1]))
             return
 
-        # For ALL, show a global y-range spanning all visible subplot axes.
+        # No focused subplot (e.g. nothing selected yet): show a global y-range
+        # spanning all visible subplot axes.
         ranges: list[tuple[float, float]] = []
         for axis_key in self._all_mode_axes_order():
             limits = self._y_limits_by_polarization.get(axis_key)
@@ -2375,11 +2397,22 @@ class PlotPanel(QWidget):
         return None
 
     def set_fit_target_projection(self, label: str | None, *, emit: bool = True) -> None:
-        """Mark *label*'s subplot as the single-fit target and redraw its box."""
+        """Mark *label*'s subplot as the single-fit target and redraw its box.
+
+        The fit target is also the focus for the manual Y-limit controls, so a
+        change caches the outgoing subplot's limits and surfaces the incoming
+        subplot's into the Y fields.
+        """
         if label is not None and label not in self._subplot_axes_by_polarization:
             return
         changed = label != self._fit_target_projection
+        in_subplots = bool(self._subplot_axes_by_polarization)
+        if changed and in_subplots:
+            self._cache_current_y_limits_for_axis()  # caches the outgoing target
         self._fit_target_projection = label
+        if changed and in_subplots:
+            self._restore_y_limits_for_axis(label)
+            self._update_y_limit_controls_for_axis(self._current_polarization_axis)
         self._refresh_fit_target_decoration()
         if changed and emit and label is not None:
             self.fit_target_projection_changed.emit(str(label))
@@ -3580,9 +3613,11 @@ class PlotPanel(QWidget):
             self._draw_fit_range_artists()
             self._syncing_limits_from_axes = True
             try:
+                focused_axis = self._active_y_axis()
                 for axis_key, axis_obj in self._subplot_axes_by_polarization.items():
                     axis_obj.set_xlim(x0, x1)
-                    if self._current_polarization_axis == axis_key:
+                    # Manual Y applies only to the focused (selected) subplot.
+                    if focused_axis == axis_key:
                         lo, hi = (y0, y1) if y0 <= y1 else (y1, y0)
                         self._y_limits_by_polarization[axis_key] = (lo, hi)
                     limits = self._y_limits_by_polarization.get(axis_key)

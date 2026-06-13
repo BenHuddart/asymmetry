@@ -3414,15 +3414,23 @@ class TestMainWindowBasic:
         monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: None)
         monkeypatch.setattr(mainwindow, "_refresh_vector_axis_selector", lambda: None)
 
+        # Stacked multi-subplot view with NO subplot chosen yet → fitting is
+        # blocked, prompting the user to pick a fit-target subplot.
         if hasattr(mainwindow._plot_panel, "get_current_polarization_axis"):
             mainwindow._plot_panel.get_current_polarization_axis = lambda: "ALL"
+        mainwindow._plot_panel.fit_target_projection = lambda: None
         mainwindow._update_selected_datasets()
 
         assert not mainwindow._fit_panel._single_tab._fit_btn.isEnabled()
         assert not mainwindow._fit_panel._single_tab._preview_btn.isEnabled()
         assert not mainwindow._fit_panel._global_tab._fit_btn.isEnabled()
-        assert "Vector All mode" in mainwindow._fit_panel._single_tab._fit_btn.toolTip()
-        assert "x, y, or z" in mainwindow._fit_panel._single_tab._fit_btn.toolTip()
+        assert "Click a subplot" in mainwindow._fit_panel._single_tab._fit_btn.toolTip()
+
+        # Once a subplot is selected as the fit target, fitting is allowed and
+        # acts on that projection.
+        mainwindow._plot_panel.fit_target_projection = lambda: "P_x"
+        mainwindow._update_selected_datasets()
+        assert mainwindow._fit_panel._single_tab._fit_btn.isEnabled()
 
         if hasattr(mainwindow._plot_panel, "get_current_polarization_axis"):
             mainwindow._plot_panel.get_current_polarization_axis = lambda: "P_x"

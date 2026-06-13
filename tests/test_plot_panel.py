@@ -1033,6 +1033,36 @@ class TestPlotPanel:
         panel._current_polarization_axis = "ALL"
         assert panel._default_fit_target() == "P_x"
 
+    def test_active_y_axis_follows_fit_target_in_subplots(self, panel: PlotPanel) -> None:
+        panel._subplot_axes_by_polarization = {"P_x": _FakeAxis(), "P_z": _FakeAxis()}
+        panel._current_polarization_axis = "ALL"
+        panel.set_fit_target_projection("P_z")
+        assert panel._active_y_axis() == "P_z"
+        # Outside the stacked view, the focus is the single visible axis.
+        panel._subplot_axes_by_polarization = {}
+        panel._current_polarization_axis = "P_x"
+        assert panel._active_y_axis() == "P_x"
+
+    def test_switching_fit_target_swaps_cached_y_limits(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        panel._subplot_axes_by_polarization = {"P_x": _FakeAxis(), "P_z": _FakeAxis()}
+        panel._current_polarization_axis = "ALL"
+        # Set a Y range while P_x is the target → it caches under P_x.
+        panel.set_fit_target_projection("P_x", emit=False)
+        panel._y_min.setValue(-0.2)
+        panel._y_max.setValue(0.4)
+        panel._cache_current_y_limits_for_axis()
+        # Switch target to P_z, give it its own range.
+        panel.set_fit_target_projection("P_z", emit=False)
+        panel._y_min.setValue(-1.0)
+        panel._y_max.setValue(1.0)
+        panel._cache_current_y_limits_for_axis()
+        # Back to P_x restores its cached range, not P_z's.
+        panel.set_fit_target_projection("P_x", emit=False)
+        assert panel._y_min.value() == pytest.approx(-0.2)
+        assert panel._y_max.value() == pytest.approx(0.4)
+
     def test_time_view_selector_supports_group_mode(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
@@ -2733,7 +2763,7 @@ class TestPlotPanel:
         assert ax_py.ylim_calls[-1] == pytest.approx((-1.0, 1.0))
         assert ax_pz.ylim_calls[-1] == pytest.approx((-0.05, 0.2))
 
-    def test_all_mode_disables_y_controls_and_sets_tooltips(self, panel: PlotPanel) -> None:
+    def test_all_mode_y_controls_drive_selected_subplot(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
@@ -2744,17 +2774,20 @@ class TestPlotPanel:
         }
         _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "ALL")
 
-        assert not panel._y_min.isEnabled()
-        assert not panel._y_max.isEnabled()
-        assert panel._auto_y_btn.isEnabled()
-        assert "x, y, and z" in panel._y_min.toolTip()
-        assert "Auto Y updates" in panel._auto_y_btn.toolTip()
-        assert panel._y_min.toolTip() == panel._y_max.toolTip()
-
-        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "P_x")
+        # Manual Y stays enabled in the stacked view — it drives the selected
+        # (fit-target) subplot; auto Y still rescales every projection.
         assert panel._y_min.isEnabled()
         assert panel._y_max.isEnabled()
         assert panel._auto_y_btn.isEnabled()
+        assert "selected subplot" in panel._y_min.toolTip()
+        assert "every projection" in panel._auto_y_btn.toolTip()
+        assert panel._y_min.toolTip() == panel._y_max.toolTip()
+
+        # Single-axis view (no stacked subplots): plain Y controls, no tooltip.
+        panel._subplot_axes_by_polarization = {}
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "P_x")
+        assert panel._y_min.isEnabled()
+        assert panel._y_max.isEnabled()
         assert panel._y_min.toolTip() == ""
 
     def test_auto_y_in_all_mode_updates_each_polarization(self, panel: PlotPanel) -> None:
