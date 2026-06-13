@@ -14,10 +14,57 @@ from PySide6.QtWidgets import QGroupBox, QLabel, QPushButton, QSizePolicy, QTabl
 
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.typography import header_font
+from asymmetry.gui.styles.typography import header_font, section_label_font
 
-# ── Result group ──────────────────────────────────────────────────────────────
+# ── Flat section header ───────────────────────────────────────────────────────
 
+#: objectName used to scope flat section-header QSS without touching other labels.
+SECTION_HEADER_OBJECT_NAME = "benchSectionHeader"
+
+
+def make_section_header(text: str) -> QLabel:
+    """Return a flat uppercase BENCH section-header label.
+
+    The inspector tabs (Fit, Parameters, Multi-group fit) introduce each block
+    with one of these instead of wrapping it in a QGroupBox — the design
+    handoff's "BSection": 9.5pt bold, +0.4px tracking, muted grey, uppercased.
+
+    Qt QSS ``text-transform`` is unreliable across platforms, so the text is
+    uppercased here in Python.
+    """
+    label = QLabel(text.upper())
+    label.setObjectName(SECTION_HEADER_OBJECT_NAME)
+    label.setFont(section_label_font())
+    label.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
+    return label
+
+
+# ── Result box ────────────────────────────────────────────────────────────────
+
+#: objectName on the result-box QFrame so the tint rules below never cascade
+#: onto the child result label.
+RESULT_BOX_OBJECT_NAME = "benchResultBox"
+
+#: Neutral (no fit yet / cleared) result box — plain surface with a 1px border.
+RESULT_BOX_NEUTRAL_STYLE = (
+    f"QFrame#{RESULT_BOX_OBJECT_NAME} {{"
+    f" background-color: {tokens.SURFACE};"
+    f" border: 1px solid {tokens.BORDER};"
+    " border-radius: 4px;"
+    "}"
+)
+
+#: Converged result box — green success tint, matching the handoff's converged box.
+RESULT_BOX_SUCCESS_STYLE = (
+    f"QFrame#{RESULT_BOX_OBJECT_NAME} {{"
+    f" background-color: {tokens.SUCCESS_BG};"
+    f" border: 1px solid {tokens.SUCCESS_BORDER};"
+    " border-radius: 4px;"
+    "}"
+)
+
+#: Back-compat: a few call sites still toggle a results QGroupBox by this name.
+#: New code should build a QFrame result box (RESULT_BOX_OBJECT_NAME) instead.
 RESULTS_GROUP_SUCCESS_STYLE = (
     "QGroupBox {"
     f" background-color: {tokens.SUCCESS_BG};"
