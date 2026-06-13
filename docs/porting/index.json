@@ -884,6 +884,25 @@
       "depends_on": [],
       "updated": "2026-06-12",
       "notes": "SUPERSEDES the deferred brief wimda-parity-gap/projects/negative-muon-analysis.md (promotion with changed scope). API-ONLY, work-in-progress: no GUI/panels/dialogs/menus and NO COMPONENTS/MODELS registration (the μ⁻ models live in a new core/negmu/ package, never inserted via registration.insert_definition, so invisible to the GUI pickers by construction). Adapt-not-port: salvage physics+data from WiMDA NegMuAnalyse.pas, discard form structure (p[213..223] slots, GLE export). KEY REUSE FINDING: count_domain (single exp(-t/τ_μ) envelope) and FitEngine (Gaussian-on-asymmetry) CANNOT fit the multi-τ capture sum Σ N_i exp(-t/τ_i)+bg; new fitter reuses drive_minuit/FitResult/Parameter/ParameterSet and replicates only the ~6-line Cash cost (count_domain's is private + off-limits). Element lifetimes literature-anchored to textbook Table C.1 (= Suzuki/Measday/Roalsvig 1987), NOT WiMDA: caught WiMDA's mystrings 69-vs-67 length mismatch, myelements[66]='Ti' typo for 'Tl', and value divergences (Ne 1.520→1.461, Zn 0.169→0.161, Sr 0.142→0.132, Ba 0.072→0.0949). Decisions (Ben): EVERYTHING phased across multiple Sonnet sessions; τ fixed-at-table by default (freeable); ALSO add α-coupled F+B fit; new core/negmu/ package; add simulate_capture_run to core/simulate.py reusing _sample_and_build_run. Plan = plan.md: 5 phases (1 table+model+single-fit+sim; 2 F+B+ratio; 3 Set-as-BG; 4 μ⁻SR polarisation; 5 docs), full signatures, reuse audit, constants table w/ citations, test plan w/ expected values, WIP disclaimer verbatim, ready-to-paste Phase-1 implementer prompt. Promotion trigger for GUI: real ISIS μ⁻ data + a user. STUDY+PLAN ONLY this session — no src/tests changes."
+    },
+    {
+      "slug": "workflow-visualisation",
+      "feature_name": "Workflow-feel basket (WiMDA run stepping, ASCII export, plot diagnostics, snapped cursor) weighed against the Asymmetry browser-centric workflow",
+      "status": "study",
+      "path": "docs/porting/workflow-visualisation",
+      "references": [
+        "WiMDA",
+        "Blundell/De Renzi/Lancaster/Pratt, Muon Spectroscopy (OUP, 2022)"
+      ],
+      "docs": {
+        "readme": "docs/porting/workflow-visualisation/README.md",
+        "comparison": "docs/porting/workflow-visualisation/comparison.md",
+        "implementation_options": "docs/porting/workflow-visualisation/implementation-options.md",
+        "test_data": "docs/porting/workflow-visualisation/test-data.md",
+        "verification_plan": "docs/porting/workflow-visualisation/verification-plan.md"
+      },
+      "updated": "2026-06-13",
+      "notes": "Wave C (alone — touches plot_panel/data_browser/mainwindow). Governing test: benefit to the established browser-centric Asymmetry workflow, NOT WiMDA mimicry; every item gets ADOPT/ADAPT/REJECT. Verdicts: ADOPT events columns (good-range MEv + events/frame + add-column UI; LogbookUnit.pas:595-626), B-from-log (mirror the temperature-from-log machinery; WiMDA_Main.pas:729-733), log-count diagnostic (log-y toggle on the #53 raw-counts view; Plot.pas:1542-1548). ADAPT data-only/ASCII export (strengthen the existing GLE .dat path, content switch, NO second button; WiMDA_Main.pas:1414-1869), snapped cursor readouts (windowed-avg via integrate_curve + 3-pt parabolic peak + S/N on the existing cursor signal; Plot.pas:106-186,1159-1228 — belongs to the spectrum-reading workflow), F,B balance overlay (F vs alpha*B on shared axes; borderline, may drop to REJECT). REJECT run-stepping pattern-walker (browser + native arrow-key auto-load is a superset), deadtime-file auto-discovery+staleness (estimate/calibrate/promote + project persistence is fresher), cosmetic basket (UI-polish territory). DESIGN-ONLY live current-run monitoring (refreshable-loader hook). No schema bumps; additive panel-state keys only; GPL oracle-only."
     }
   ]
 }
