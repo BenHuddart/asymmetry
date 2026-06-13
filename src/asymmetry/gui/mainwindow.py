@@ -763,6 +763,12 @@ class MainWindow(QMainWindow):
         self._main_toolbar.setMovable(False)
         self.addToolBar(self._main_toolbar)
 
+        # A little air before the first action so Open doesn't sit flush
+        # against the window's left edge.
+        _left_pad = QWidget()
+        _left_pad.setFixedWidth(6)
+        self._main_toolbar.addWidget(_left_pad)
+
         self._main_toolbar.addAction("Open", self._on_open)
         self._main_toolbar.addAction("Export logbook", self._on_export_logbook)
         self._main_toolbar.addSeparator()
@@ -793,9 +799,10 @@ class MainWindow(QMainWindow):
             # internal dividers, outer corners only.
             container = QWidget()
             column = QVBoxLayout(container)
-            # A little air below the segmented control so the cluster doesn't
-            # sit flush on the toolbar's bottom edge.
-            column.setContentsMargins(0, 0, 0, 3)
+            # Horizontal padding gives the Time/Frequency-domain header and its
+            # segmented toggle breathing room from neighbouring toolbar items;
+            # the bottom margin keeps the cluster off the toolbar's edge.
+            column.setContentsMargins(8, 0, 8, 3)
             column.setSpacing(2)
             heading = QLabel(header.upper())
             heading.setFont(header_font())
@@ -1303,7 +1310,9 @@ class MainWindow(QMainWindow):
         # Design-handoff status line: ● state · selection/view · cursor · χ²/ν.
         self._status_state_label = QLabel("● Idle")
         self._status_state_label.setFont(mono_font(10.5))
-        self._status_state_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        # Right padding separates the state tracker from the run-number /
+        # selection text that follows it, which otherwise read as cramped.
+        self._status_state_label.setStyleSheet(f"color: {tokens.TEXT_MUTED}; padding-right: 10px;")
         _sb.addPermanentWidget(self._status_state_label)
 
         self._status_sel_label = QLabel("")
