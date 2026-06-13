@@ -24,6 +24,7 @@ import hashlib
 import os
 import time
 from contextlib import nullcontext
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -57,6 +58,7 @@ from asymmetry.core.fitting import (
     FitLog,
     as_composite_model,
     build_grouped_time_domain_datasets,
+    enrich_summary_provenance,
     fit_result_summary,
     fit_scan_baseline,
     fit_scan_model,
@@ -7164,13 +7166,63 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     @staticmethod
-    def _fit_result_summary(fit_result) -> dict:
+    def _composite_model_label(composite: object) -> str | None:
+        """Human-readable model expression from a serialised composite model.
+
+        e.g. ``{"component_names": ["Exponential", "Constant"], "operators":
+        ["+"]}`` -> ``"Exponential + Constant"``. Returns ``None`` when the
+        structure is missing or empty.
+        """
+        if not isinstance(composite, dict):
+            return None
+        names = composite.get("component_names") or []
+        operators = composite.get("operators") or []
+        if not names:
+            return None
+        parts = [str(names[0])]
+        for op, name in zip(operators, names[1:]):
+            parts.append(str(op))
+            parts.append(str(name))
+        return " ".join(parts)
+
+    def _fit_result_summary(
+        self,
+        fit_result,
+        *,
+        provenance: str | None = None,
+        model_name: str | None = None,
+        fit_range: str | None = None,
+        timestamp: str | None = None,
+    ) -> dict:
         """Return a JSON-serialisable summary of a fit result.
 
         Delegates to the shared core helper so the run-batch and grouped-series
-        recording paths produce identically shaped ``results_by_run`` entries.
+        recording paths produce identically shaped ``results_by_run`` entries,
+        then stamps the additive provenance keys (``model_name``, ``fit_range``,
+        ``timestamp``, ``provenance``, ``npar``, ``ndof``) the Qt-free core
+        cannot source. ``npar`` is the free-parameter count (those carrying a
+        HESSE σ) and ``ndof`` is read back from the χ² quality block; both are
+        omitted when unavailable.
         """
-        return fit_result_summary(fit_result)
+        summary = fit_result_summary(fit_result)
+        uncertainties = summary.get("uncertainties") or {}
+        quality = summary.get("quality") or {}
+        ndof = quality.get("dof") if isinstance(quality, dict) else None
+        enrich_summary_provenance(
+            summary,
+            model_name=model_name,
+            fit_range=fit_range,
+            timestamp=timestamp,
+            provenance=provenance,
+            npar=(len(uncertainties) or None),
+            ndof=ndof,
+        )
+        return summary
+
+    @staticmethod
+    def _fit_record_timestamp() -> str:
+        """ISO-8601 local timestamp for a freshly recorded fit (the core stays clock-free)."""
+        return datetime.now().astimezone().isoformat(timespec="seconds")
 
     # ── Representation-aware trend panel (Phase 4) ────────────────────────────
 
@@ -7393,7 +7445,13 @@ class MainWindow(QMainWindow):
             model=state.get("composite_model"),
             parameters=[dict(p) for p in state.get("parameters", []) if isinstance(p, dict)],
             result={
-                **self._fit_result_summary(fit_result),
+                **self._fit_result_summary(
+                    fit_result,
+                    provenance="single",
+                    model_name=self._composite_model_label(state.get("composite_model")),
+                    fit_range=self._fit_panel.single_fit_range_text(),
+                    timestamp=self._fit_record_timestamp(),
+                ),
                 "result_html": state.get("result_html"),
             },
             provenance="single",
@@ -7430,8 +7488,17 @@ class MainWindow(QMainWindow):
 
         member_runs = sorted(int(r) for r in normalized_payloads)
         canonical_model = state.get("composite_model")
+        model_label = self._composite_model_label(canonical_model)
+        fit_range = self._fit_panel.batch_fit_range_text()
+        timestamp = self._fit_record_timestamp()
         results_by_run = {
-            int(run): self._fit_result_summary(payload[0])
+            int(run): self._fit_result_summary(
+                payload[0],
+                provenance=provenance,
+                model_name=model_label,
+                fit_range=fit_range,
+                timestamp=timestamp,
+            )
             for run, payload in normalized_payloads.items()
         }
         batch = FitSeries(
@@ -7460,7 +7527,7 @@ class MainWindow(QMainWindow):
             representation.fit = FitSlot(
                 model=canonical_model,
                 parameters=template_parameters,
-                result=self._fit_result_summary(payload[0]),
+                result=dict(results_by_run[int(run)]),
                 provenance=provenance,
                 batch_id=batch.batch_id,
             )
@@ -7808,6 +7875,24 @@ class MainWindow(QMainWindow):
                 continue
             source_by_key[key] = int(metadata.get("source_run_number", abs(key) // 1000))
 
+        physics_roles = {
+            str(name): str(role)
+            for name, role in (state.get("param_roles") or {}).items()
+            if role in ("global", "local", "fixed")
+        }
+        nuisance_params = [str(name) for name in (state.get("nuisance_params") or [])]
+        canonical_model = state.get("composite_model")
+        provenance = "global" if any(r == "global" for r in physics_roles.values()) else "batch"
+        model_label = self._composite_model_label(canonical_model)
+        fit_range = None
+        if self._multi_group_fit_window is not None and hasattr(
+            self._multi_group_fit_window, "current_fit_range_text"
+        ):
+            fit_range = self._multi_group_fit_window.current_fit_range_text()
+        if fit_range is None:
+            fit_range = self._fit_panel.batch_fit_range_text()
+        timestamp = self._fit_record_timestamp()
+
         member_keys: list[int] = []
         member_source_run: dict[int, int] = {}
         results_by_run: dict[int, dict] = {}
@@ -7819,18 +7904,15 @@ class MainWindow(QMainWindow):
             fit_result = payload[0] if isinstance(payload, tuple) and payload else payload
             member_keys.append(key)
             member_source_run[key] = source_by_key.get(key, abs(key) // 1000)
-            results_by_run[key] = self._fit_result_summary(fit_result)
+            results_by_run[key] = self._fit_result_summary(
+                fit_result,
+                provenance=provenance,
+                model_name=model_label,
+                fit_range=fit_range,
+                timestamp=timestamp,
+            )
         if not member_keys:
             return
-
-        physics_roles = {
-            str(name): str(role)
-            for name, role in (state.get("param_roles") or {}).items()
-            if role in ("global", "local", "fixed")
-        }
-        nuisance_params = [str(name) for name in (state.get("nuisance_params") or [])]
-        canonical_model = state.get("composite_model")
-        provenance = "global" if any(r == "global" for r in physics_roles.values()) else "batch"
 
         series = FitSeries(
             f"batch-{self._next_batch_index}",

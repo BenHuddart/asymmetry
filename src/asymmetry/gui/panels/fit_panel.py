@@ -1264,6 +1264,24 @@ class SingleFitTab(QWidget):
             self._fit_range_max_spin.value(),
         )
 
+    def current_fit_range_text(self) -> str | None:
+        """Return the active fit range as a provenance string, or ``None``.
+
+        Reads the fit-range spinboxes and the current domain's unit label (µs in
+        time domain, MHz in frequency), e.g. ``"0.100–10.000 µs"``. Used to stamp
+        ``fit_range`` onto persisted fit records; returns ``None`` when the range
+        is degenerate or the spinboxes are disabled.
+        """
+        if not self._fit_range_min_spin.isEnabled():
+            return None
+        lo = float(self._fit_range_min_spin.value())
+        hi = float(self._fit_range_max_spin.value())
+        if not hi > lo:
+            return None
+        decimals = self._fit_range_min_spin.decimals()
+        unit = self._fit_range_unit_label.text()
+        return f"{lo:.{decimals}f}–{hi:.{decimals}f} {unit}"
+
     def _wizard_context_signature(self) -> dict[str, object]:
         return {
             "run_number": (
@@ -2836,6 +2854,24 @@ class GlobalFitTab(QWidget):
             self._fit_range_min_spin.value(),
             self._fit_range_max_spin.value(),
         )
+
+    def current_fit_range_text(self) -> str | None:
+        """Return the active fit range as a provenance string, or ``None``.
+
+        Reads the fit-range spinboxes and the current domain's unit label (µs in
+        time domain, MHz in frequency), e.g. ``"0.100–10.000 µs"``. Used to stamp
+        ``fit_range`` onto persisted fit records; returns ``None`` when the range
+        is degenerate or the spinboxes are disabled.
+        """
+        if not self._fit_range_min_spin.isEnabled():
+            return None
+        lo = float(self._fit_range_min_spin.value())
+        hi = float(self._fit_range_max_spin.value())
+        if not hi > lo:
+            return None
+        decimals = self._fit_range_min_spin.decimals()
+        unit = self._fit_range_unit_label.text()
+        return f"{lo:.{decimals}f}–{hi:.{decimals}f} {unit}"
 
     def _refresh_inherited_single_fit_defaults(self) -> None:
         """Apply single-fit seeds when every selected dataset shares one model."""
@@ -6570,6 +6606,14 @@ class FitPanel(QWidget):
     def get_grouped_state(self) -> dict:
         """Return the grouped-fit classification (physics roles + nuisance block)."""
         return self._global_tab.get_grouped_state()
+
+    def single_fit_range_text(self) -> str | None:
+        """Active single-fit range as a provenance string (see SingleFitTab)."""
+        return self._single_tab.current_fit_range_text()
+
+    def batch_fit_range_text(self) -> str | None:
+        """Active batch/global/grouped fit range as a provenance string."""
+        return self._global_tab.current_fit_range_text()
 
     def send_single_model_to_batch(self) -> bool:
         """Copy the single-fit tab's model/fit function into the Batch tab.
