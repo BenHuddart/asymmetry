@@ -1353,8 +1353,8 @@ def test_footer_hint_exists(qapp: QApplication) -> None:
     assert "shift" in panel._footer_hint.text()
 
 
-def test_numeric_columns_right_aligned(qapp: QApplication) -> None:
-    """Temperature and field cells are right-aligned; run-number cells are not forced right."""
+def test_numeric_columns_centre_aligned(qapp: QApplication) -> None:
+    """Temperature and field cells centre-align (keeps headers clear of the sort arrow)."""
     panel = DataBrowserPanel()
     panel.add_dataset(_dataset(701))
 
@@ -1362,8 +1362,8 @@ def test_numeric_columns_right_aligned(qapp: QApplication) -> None:
     b_item = panel._table.item(0, 3)
     assert t_item is not None
     assert b_item is not None
-    assert t_item.textAlignment() & Qt.AlignmentFlag.AlignRight
-    assert b_item.textAlignment() & Qt.AlignmentFlag.AlignRight
+    assert t_item.textAlignment() & Qt.AlignmentFlag.AlignHCenter
+    assert b_item.textAlignment() & Qt.AlignmentFlag.AlignHCenter
 
 
 def test_chevron_click_toggles_group_collapse(qapp: QApplication) -> None:

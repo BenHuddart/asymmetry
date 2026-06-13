@@ -52,10 +52,18 @@ class _OrphanThreadReaper(QObject):
         thread.finished.connect(self._reap)
 
     def _reap(self) -> None:
-        sender = self.sender()
-        self._threads = [(t, w) for (t, w) in self._threads if t is not sender]
-        if isinstance(sender, QThread):
-            sender.deleteLater()
+        # sender() can return None in queued cross-thread connections on some
+        # PySide6 builds, leaving stale entries in _threads. Scan all entries
+        # and prune any thread that is no longer running instead: Qt sets
+        # running=False before emitting finished(), so isRunning() is reliable
+        # here even when called from a queued slot.
+        remaining = []
+        for t, w in self._threads:
+            if t.isRunning():
+                remaining.append((t, w))
+            else:
+                t.deleteLater()
+        self._threads = remaining
 
 
 _orphan_reaper: _OrphanThreadReaper | None = None
