@@ -141,6 +141,7 @@ from asymmetry.core.utils.constants import (
     PeriodMode,
 )
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
+from asymmetry.gui.fit_settings import fit_quality_confidence, set_fit_quality_confidence
 from asymmetry.gui.gle_settings import GleSetupDialog
 from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
@@ -731,6 +732,7 @@ class MainWindow(QMainWindow):
         self._plot_decimation_action.setCheckable(True)
         self._plot_decimation_action.setChecked(self._plot_decimation_is_enabled())
         self._plot_decimation_action.toggled.connect(self._on_plot_decimation_toggled)
+        options_menu.addAction("Fit quality confidence…", self._on_fit_quality_confidence)
 
         # Setup
         setup_menu = mb.addMenu("&Setup")
@@ -2762,6 +2764,31 @@ class MainWindow(QMainWindow):
         state = "enabled" if enabled else "disabled"
         self._log_panel.log(f"Plot decimation {state}.")
         self.statusBar().showMessage(f"Plot decimation {state}")
+
+    def _on_fit_quality_confidence(self) -> None:
+        """Prompt for and persist the χ² quality-band confidence level (percent).
+
+        The band is the χ²ᵣ good/poor/overdone target; raising the confidence
+        widens it toward χ²ᵣ = 1. Stored in QSettings and read by every fit
+        surface (recorded records, the live fit-panel chip, the model-fit dialog)
+        on the next fit — a settings entry, not a per-fit control.
+        """
+        current = fit_quality_confidence(self._settings)
+        percent, ok = QInputDialog.getDouble(
+            self,
+            "Fit quality confidence",
+            "Two-sided χ² confidence level R (%):\n"
+            "the good/poor/overdone band; higher = more forgiving.",
+            value=current * 100.0,
+            minValue=50.0,
+            maxValue=99.9,
+            decimals=1,
+        )
+        if not ok:
+            return
+        stored = set_fit_quality_confidence(percent / 100.0, self._settings)
+        self._log_panel.log(f"Fit quality confidence set to {stored:.1%}.")
+        self.statusBar().showMessage(f"Fit quality confidence: {stored:.1%}")
 
     def _sync_temperature_log_option_action(self) -> None:
         """Keep the Options menu temperature action aligned with browser state."""
@@ -7204,7 +7231,9 @@ class MainWindow(QMainWindow):
         HESSE σ) and ``ndof`` is read back from the χ² quality block; both are
         omitted when unavailable.
         """
-        summary = fit_result_summary(fit_result)
+        summary = fit_result_summary(
+            fit_result, confidence=fit_quality_confidence(self._settings)
+        )
         uncertainties = summary.get("uncertainties") or {}
         quality = summary.get("quality") or {}
         ndof = quality.get("dof") if isinstance(quality, dict) else None

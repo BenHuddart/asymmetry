@@ -83,6 +83,7 @@ from asymmetry.core.fitting.parameters import (
     split_parameter_name,
 )
 from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.core.fitting.spectral import (
     append_frequency_field_derived_parameters,
     default_frequency_model,
@@ -555,9 +556,13 @@ def _get_file_value_for_parameter(
 
 
 def _fit_quality_dict(result) -> dict | None:
-    """The χ² verdict dict for *result* via the shared summary (single source)."""
+    """The χ² verdict dict for *result* via the shared summary (single source).
+
+    Uses the user-configured quality-band confidence so the live fit-panel chip
+    matches the verdict persisted onto the fit record.
+    """
     try:
-        return fit_result_summary(result).get("quality")
+        return fit_result_summary(result, confidence=fit_quality_confidence()).get("quality")
     except Exception:
         return None
 

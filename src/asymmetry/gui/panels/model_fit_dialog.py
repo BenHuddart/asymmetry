@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.fitting.fit_quality import assess_fit_quality
+from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.core.fitting.parameter_models import (
     PARAMETER_MODEL_COMPONENTS,
     ErrorMode,
@@ -837,7 +838,9 @@ class ModelFitDialog(QDialog):
             # rather than implying the fit had no degrees of freedom.
             return ""
         n_free = len(fit_range.parameters.free_parameters)
-        quality = assess_fit_quality(result.chi_squared, result.n_points - n_free)
+        quality = assess_fit_quality(
+            result.chi_squared, result.n_points - n_free, fit_quality_confidence()
+        )
         if quality.verdict is None:
             return (
                 f'<span style="color:{tokens.ACCENT};">No χ² quality verdict '
