@@ -226,6 +226,18 @@ def _format_bytes(num_bytes: int) -> str:
     return f"{value:.1f} TiB"
 
 
+#: Sentinel for phase-window resolution: read the live frequency-plot view from
+#: the panel (GUI-thread default). The FFT compute runs on a worker thread, so it
+#: passes a snapshot captured on the GUI thread instead of reading the widget.
+_VIEW_FROM_WIDGET = object()
+
+
+def _write_text_file(path: str, content: str) -> None:
+    """Write *content* to *path* (used as a TaskRunner worker for exports)."""
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        handle.write(content)
+
+
 def _load_window_icon() -> QIcon | None:
     """Load window icon from package resources.
 
@@ -433,6 +445,12 @@ class MainWindow(QMainWindow):
         self._last_open_dir = self._settings.value("io/last_open_dir", "", str)
         self._current_dataset = None  # Track currently selected dataset
         self._current_project_path: str | None = None  # Path of currently open project
+        self._project_save_active = False  # True while a background save is writing
+        self._fourier_compute_active = False  # True while a background FFT runs
+        self._fourier_phase_estimate_active = False  # True while auto-phase runs
+        # Set when a project open is cancelled mid-prefetch: the loaded set is
+        # known-incomplete, so saving would silently drop the unloaded runs.
+        self._project_load_incomplete = False
         self._active_group_context: tuple[str, str] | None = None
         # Recipe-only representation/batch state for the redesign.  Frequency
         # spectra are recomputed from FrequencyFFT recipes on load; the
@@ -2202,19 +2220,39 @@ class MainWindow(QMainWindow):
 
         is_rtf = path_obj.suffix.lower() == ".rtf"
 
+        # Render the logbook on the GUI thread (it reads the table/grouping
+        # model), then write the file on the shared TaskRunner so a large export
+        # never blocks the GUI.
         try:
             if is_rtf:
-                exported_count = self._data_browser.export_logbook_rtf(path)
+                content, exported_count = self._data_browser.render_logbook_rtf()
                 fmt = "RTF"
             else:
-                exported_count = self._data_browser.export_logbook_tsv(path)
+                content, exported_count = self._data_browser.render_logbook_tsv()
                 fmt = "TSV"
-            remember_export_path(path)
-            self._log_panel.log(f"Exported logbook ({fmt}) to {path} ({exported_count} datasets).")
-            self.statusBar().showMessage(f"Logbook exported: {Path(path).name}")
         except Exception as e:
             QMessageBox.critical(self, "Export Failed", f"Could not export logbook:\n{e}")
             self._log_panel.log(f"ERROR exporting logbook: {e}")
+            return
+        self.statusBar().showMessage(f"Exporting logbook: {Path(path).name}…")
+        self._tasks.start(
+            lambda w, path=path, content=content: _write_text_file(path, content),
+            on_finished=lambda _result, path=path, fmt=fmt, count=exported_count: (
+                self._on_logbook_export_finished(path, fmt, count)
+            ),
+            on_error=self._on_logbook_export_error,
+        )
+
+    def _on_logbook_export_finished(self, path: str, fmt: str, exported_count: int) -> None:
+        """Record a completed background logbook export (GUI thread)."""
+        remember_export_path(path)
+        self._log_panel.log(f"Exported logbook ({fmt}) to {path} ({exported_count} datasets).")
+        self.statusBar().showMessage(f"Logbook exported: {Path(path).name}")
+
+    def _on_logbook_export_error(self, message: str) -> None:
+        """Report a failed background logbook export (GUI thread)."""
+        QMessageBox.critical(self, "Export Failed", f"Could not export logbook:\n{message}")
+        self._log_panel.log(f"ERROR exporting logbook: {message}")
 
     def _default_logbook_export_name(self) -> str:
         """Return default logbook export filename, preferring project name."""
@@ -4584,8 +4622,15 @@ class MainWindow(QMainWindow):
             return
         self._fourier_group_phase_state_by_run[run_number] = self._fourier_panel.group_phase_state()
 
-    def _estimate_dataset_fourier_phase(self, dataset: MuonDataset, state: dict) -> float:
-        """Estimate a single phase correction for one time-domain dataset."""
+    def _estimate_dataset_fourier_phase(
+        self, dataset: MuonDataset, state: dict, *, plot_window=_VIEW_FROM_WIDGET
+    ) -> float:
+        """Estimate a single phase correction for one time-domain dataset.
+
+        ``plot_window`` is the captured frequency-plot view snapshot; off-thread
+        callers pass it so this never reads the live widget (see
+        :meth:`_capture_fourier_plot_window`).
+        """
         freqs, spectrum = fft_complex_asymmetry(
             dataset,
             window=str(state.get("window", "none")),
@@ -4596,7 +4641,9 @@ class MainWindow(QMainWindow):
             filter_start_us=float(state.get("filter_start_us", 0.0)),
             filter_time_constant_us=float(state.get("filter_time_constant_us", 1.5)),
         )
-        min_frequency, max_frequency = self._resolve_fourier_phase_window_mhz(dataset, freqs)
+        min_frequency, max_frequency = self._resolve_fourier_phase_window_mhz(
+            dataset, freqs, plot_window=plot_window
+        )
         return estimate_fft_phase(
             freqs,
             spectrum,
@@ -4618,42 +4665,60 @@ class MainWindow(QMainWindow):
             return None
         return field_gauss * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
 
+    def _capture_fourier_plot_window(self, dataset: MuonDataset) -> tuple[object, bool]:
+        """Snapshot the frequency-plot view window for off-thread phase estimation.
+
+        Reads the two GUI-thread getters once (the window is per-dataset, not
+        per-group), so the worker can resolve phase windows without touching the
+        live widget. Returns ``(raw_window_or_None, is_relative)``.
+        """
+        panel = self._frequency_plot_panel
+        raw_window = None
+        if hasattr(panel, "get_frequency_view_window_mhz"):
+            raw_window = panel.get_frequency_view_window_mhz(reference_dataset=dataset)
+        is_relative = False
+        if hasattr(panel, "is_frequency_axis_relative_to_reference"):
+            is_relative = bool(panel.is_frequency_axis_relative_to_reference())
+        return (raw_window, is_relative)
+
     def _resolve_fourier_phase_window_mhz(
         self,
         dataset: MuonDataset,
         freqs: np.ndarray,
+        *,
+        plot_window=_VIEW_FROM_WIDGET,
     ) -> tuple[float, float | None]:
-        """Return the MHz window that should drive automatic phase estimation."""
+        """Return the MHz window that should drive automatic phase estimation.
+
+        ``plot_window`` is either the :data:`_VIEW_FROM_WIDGET` sentinel (read the
+        live frequency plot — GUI thread only) or a captured
+        ``(raw_window, is_relative)`` snapshot for off-thread use.
+        """
         frequencies = np.asarray(freqs, dtype=float)
         positive = frequencies[np.isfinite(frequencies) & (frequencies > 0.0)]
         if positive.size == 0:
             return 0.0, None
 
+        if plot_window is _VIEW_FROM_WIDGET:
+            raw_window, is_relative = self._capture_fourier_plot_window(dataset)
+        else:
+            raw_window, is_relative = plot_window
+
         expected_center = self._fourier_center_frequency_mhz(dataset)
         preferred_half_width_mhz = 10.0
         candidate_window: tuple[float, float] | None = None
-        if hasattr(self._frequency_plot_panel, "get_frequency_view_window_mhz"):
-            raw_window = self._frequency_plot_panel.get_frequency_view_window_mhz(
-                reference_dataset=dataset
-            )
-            if raw_window is not None:
-                lo, hi = sorted((float(raw_window[0]), float(raw_window[1])))
-                if hi > 0.0:
-                    if expected_center is None:
+        if raw_window is not None:
+            lo, hi = sorted((float(raw_window[0]), float(raw_window[1])))
+            if hi > 0.0:
+                if expected_center is None:
+                    candidate_window = (max(0.0, lo), hi)
+                elif is_relative or (lo <= expected_center <= hi):
+                    narrowed_lo = max(lo, expected_center - preferred_half_width_mhz)
+                    narrowed_hi = min(hi, expected_center + preferred_half_width_mhz)
+                    if narrowed_hi > narrowed_lo:
+                        candidate_window = (max(0.0, narrowed_lo), narrowed_hi)
+                    else:
                         candidate_window = (max(0.0, lo), hi)
-                    elif (
-                        hasattr(
-                            self._frequency_plot_panel,
-                            "is_frequency_axis_relative_to_reference",
-                        )
-                        and self._frequency_plot_panel.is_frequency_axis_relative_to_reference()
-                    ) or (lo <= expected_center <= hi):
-                        narrowed_lo = max(lo, expected_center - preferred_half_width_mhz)
-                        narrowed_hi = min(hi, expected_center + preferred_half_width_mhz)
-                        if narrowed_hi > narrowed_lo:
-                            candidate_window = (max(0.0, narrowed_lo), narrowed_hi)
-                        else:
-                            candidate_window = (max(0.0, lo), hi)
 
         if candidate_window is None and expected_center is not None:
             candidate_window = (
@@ -4677,8 +4742,13 @@ class MainWindow(QMainWindow):
 
         return 0.0, None
 
-    def _estimate_group_fourier_phases(self, dataset: MuonDataset, state: dict) -> dict[int, float]:
-        """Estimate one phase correction per detector group."""
+    def _estimate_group_fourier_phases(
+        self, dataset: MuonDataset, state: dict, *, plot_window=_VIEW_FROM_WIDGET
+    ) -> dict[int, float]:
+        """Estimate one phase correction per detector group.
+
+        ``plot_window`` snapshots the frequency-plot view for off-thread use.
+        """
         if dataset.run is None:
             return {}
         phases: dict[int, float] = {}
@@ -4695,11 +4765,14 @@ class MainWindow(QMainWindow):
                 prepared_histograms=prepared_histograms,
                 background_reference_cache=background_reference_cache,
             )
-            phases[group_id] = self._estimate_dataset_fourier_phase(group_dataset, state)
+            phases[group_id] = self._estimate_dataset_fourier_phase(
+                group_dataset, state, plot_window=plot_window
+            )
         return phases
 
     def _resolve_group_phase_degrees(
         self,
+        dataset: MuonDataset,
         selected_group_ids: list[int],
         state: dict,
         *,
@@ -4710,17 +4783,17 @@ class MainWindow(QMainWindow):
         group_phase_table: dict[int, float],
         prepared_histograms: list[Histogram] | None,
         reference_t0_bin: int | None,
+        plot_window=_VIEW_FROM_WIDGET,
     ) -> dict[int, float]:
-        """Resolve concrete per-group phase corrections for the active run.
+        """Resolve concrete per-group phase corrections for *dataset*.
 
         Mirrors the previous inline auto/table/manual selection so the shared
         spectrum core (and recipe recompute) receives fully-resolved phases.
+        Takes ``dataset`` explicitly (rather than reading ``_current_dataset``)
+        so it is safe to run on a worker thread; ``plot_window`` snapshots the
+        frequency-plot view for the same reason.
         """
-        if (
-            not apply_phase_correction
-            or self._current_dataset is None
-            or self._current_dataset.run is None
-        ):
+        if not apply_phase_correction or dataset is None or dataset.run is None:
             return {}
         resolved: dict[int, float] = {}
         # Shared so a reference_run background loads + deadtime-prepares once
@@ -4729,14 +4802,16 @@ class MainWindow(QMainWindow):
         for group_id in selected_group_ids:
             if auto_phase and not use_phase_table:
                 group_dataset = build_group_signal_dataset(
-                    self._current_dataset.run,
+                    dataset.run,
                     group_id,
                     center_signal=False,
                     reference_t0_bin=reference_t0_bin,
                     prepared_histograms=prepared_histograms,
                     background_reference_cache=background_reference_cache,
                 )
-                resolved[group_id] = self._estimate_dataset_fourier_phase(group_dataset, state)
+                resolved[group_id] = self._estimate_dataset_fourier_phase(
+                    group_dataset, state, plot_window=plot_window
+                )
             elif use_phase_table:
                 resolved[group_id] = group_phase_table.get(group_id, manual_phase)
             else:
@@ -5423,16 +5498,36 @@ class MainWindow(QMainWindow):
         return t_min, t_max
 
     def _on_fill_fourier_phases(self) -> None:
-        """Estimate one phase correction per included detector group."""
+        """Estimate one phase correction per included detector group (off-thread)."""
         state = self._fourier_panel.get_state()
         if self._current_dataset is None:
             self._set_fourier_status("Select a run before estimating group phases.")
+            return
+        if self._fourier_phase_estimate_active:
+            self._set_fourier_status("Phase estimation is already running.")
             return
         # Preserve any live MaxEnt panel edits across the cascaded re-sync below
         # (the Fourier sync also refreshes the MaxEnt group table).
         self._store_maxent_panel_state_for_dataset(self._current_dataset)
         self._sync_fourier_panel_for_dataset(self._current_dataset)
-        phases = self._estimate_group_fourier_phases(self._current_dataset, state)
+        # Snapshot launch-time context on the GUI thread; the estimation (FFT per
+        # group + a reference-run load) runs on the shared TaskRunner.
+        dataset = self._current_dataset
+        plot_window = self._capture_fourier_plot_window(dataset)
+        self._fourier_phase_estimate_active = True
+        self._set_status_state("Estimating phases…")
+        self._tasks.start(
+            lambda w, dataset=dataset, state=state, plot_window=plot_window: (
+                self._estimate_group_fourier_phases(dataset, state, plot_window=plot_window)
+            ),
+            on_finished=self._on_fourier_phase_estimate_finished,
+            on_error=self._on_fourier_phase_estimate_error,
+        )
+
+    def _on_fourier_phase_estimate_finished(self, phases: dict) -> None:
+        """Apply estimated group phases to the panel (GUI thread)."""
+        self._fourier_phase_estimate_active = False
+        self._set_status_state("Idle")
         if not phases:
             self._set_fourier_status("No detector groups are available for phase estimation.")
             return
@@ -5442,122 +5537,237 @@ class MainWindow(QMainWindow):
             f"Estimated phases for {len(phases)} detector groups.", success=True
         )
 
+    def _on_fourier_phase_estimate_error(self, message: str) -> None:
+        """Report a failed background phase estimation (GUI thread)."""
+        self._fourier_phase_estimate_active = False
+        self._set_status_state("Idle")
+        self._set_fourier_status(f"Phase estimation failed: {message}")
+        self._log_panel.log(f"Phase estimation failed: {message}")
+
     def _on_compute_fourier(self) -> None:
-        """Compute one averaged grouped FFT spectrum for the active run."""
-        started_at = time.perf_counter()
+        """Compute one averaged grouped FFT spectrum for the active run.
+
+        Validates the selection and snapshots launch-time context on the GUI
+        thread, then runs the phase estimation + averaged grouped FFT on the
+        shared TaskRunner so the GUI stays live; results are applied in
+        :meth:`_on_fourier_payload_finished`.
+        """
         state = self._fourier_panel.get_state()
         display = str(state.get("display", "Real"))
-        padding = int(state.get("padding", 1))
-        selected_group_ids: list[int] = []
-        spectra: list[MuonDataset] = []
         apply_phase_correction = fourier_mode_uses_phase_correction(display)
-        window = str(state.get("window", "none"))
-        filter_start_us = float(state.get("filter_start_us", 0.0))
-        filter_time_constant_us = float(state.get("filter_time_constant_us", 1.5))
-        t0_offset_us = float(state.get("t0_offset_us", 0.0))
-        manual_phase = float(state.get("phase_degrees", 0.0))
         auto_phase = bool(state.get("auto_phase", False))
         use_phase_table = bool(state.get("use_phase_table", False))
-        estimate_average_error = bool(state.get("estimate_average_error", False))
-        subtract_average_signal = bool(state.get("subtract_average_signal", True))
+        manual_phase = float(state.get("phase_degrees", 0.0))
         group_phase_table = {
             int(group_id): float(phase)
             for group_id, phase in self._fourier_panel.group_phase_table().items()
         }
         self._fourier_panel.clear_average_summary()
 
-        spectra_by_run: dict[int, list[MuonDataset]] = {}
+        if self._fourier_compute_active:
+            self._set_fourier_status("A Fourier transform is already being computed.")
+            return
+        if self._current_dataset is None or self._current_dataset.run is None:
+            self._set_fourier_status(
+                "Select a grouped run before computing the Fourier transform."
+            )
+            return
 
+        # Preserve any live MaxEnt panel edits across the cascaded re-sync below
+        # (the Fourier sync also refreshes the MaxEnt group table).
+        self._store_maxent_panel_state_for_dataset(self._current_dataset)
+        self._sync_fourier_panel_for_dataset(self._current_dataset)
+
+        group_names = self._fourier_group_names_for_dataset(self._current_dataset)
+        if not group_names:
+            self._set_fourier_status("The active run does not define detector groups.")
+            return
+        selected_group_ids = self._selected_fourier_group_ids(self._current_dataset)
+        if not selected_group_ids:
+            self._set_fourier_status(
+                "Select at least one detector group before computing the Fourier transform."
+            )
+            return
+
+        fourier_t_min_us, fourier_t_max_us = self._current_fourier_time_window_us()
+
+        # Snapshot everything the compute needs; the worker must not read widgets
+        # or _current_dataset (the user may navigate while it runs).
+        dataset = self._current_dataset
+        run_number = int(dataset.run_number)
+        plot_window = self._capture_fourier_plot_window(dataset)
+        started_at = time.perf_counter()
+
+        self._fourier_compute_active = True
+        self._set_status_state("Computing Fourier…")
+        self._set_fourier_status(f"Computing Fourier transform for run {run_number}…")
+        self._tasks.start(
+            lambda w, dataset=dataset, state=state, ids=list(selected_group_ids): (
+                self._compute_fourier_payload(
+                    dataset=dataset,
+                    state=state,
+                    selected_group_ids=ids,
+                    apply_phase_correction=apply_phase_correction,
+                    auto_phase=auto_phase,
+                    use_phase_table=use_phase_table,
+                    manual_phase=manual_phase,
+                    group_phase_table=dict(group_phase_table),
+                    t_min_us=fourier_t_min_us,
+                    t_max_us=fourier_t_max_us,
+                    plot_window=plot_window,
+                )
+            ),
+            on_finished=lambda payload, started_at=started_at: (
+                self._on_fourier_payload_finished(payload, started_at)
+            ),
+            on_error=lambda message, started_at=started_at: (
+                self._on_fourier_payload_error(message, started_at)
+            ),
+        )
+
+    def _compute_fourier_payload(
+        self,
+        *,
+        dataset: MuonDataset,
+        state: dict,
+        selected_group_ids: list[int],
+        apply_phase_correction: bool,
+        auto_phase: bool,
+        use_phase_table: bool,
+        manual_phase: float,
+        group_phase_table: dict[int, float],
+        t_min_us: float | None,
+        t_max_us: float | None,
+        plot_window,
+    ) -> dict:
+        """Run the averaged grouped FFT off the GUI thread; return a result bundle.
+
+        Pure compute: reads only the snapshot arguments (no widgets, no
+        ``_current_dataset``), so it is safe on a worker thread. The S/N summary
+        numbers are computed here too, leaving the GUI callback to only set the
+        label.
+        """
+        run = dataset.run
+        prepared_histograms, reference_t0_bin = self._precompute_group_fourier_inputs(dataset)
+
+        estimated_phases: dict[int, float] = {}
+        if auto_phase and apply_phase_correction:
+            estimated_phases = self._estimate_group_fourier_phases(
+                dataset, state, plot_window=plot_window
+            )
+            if use_phase_table and estimated_phases:
+                group_phase_table.update(estimated_phases)
+
+        group_phase_degrees = self._resolve_group_phase_degrees(
+            dataset,
+            selected_group_ids,
+            state,
+            apply_phase_correction=apply_phase_correction,
+            auto_phase=auto_phase,
+            use_phase_table=use_phase_table,
+            manual_phase=manual_phase,
+            group_phase_table=group_phase_table,
+            prepared_histograms=prepared_histograms,
+            reference_t0_bin=reference_t0_bin,
+            plot_window=plot_window,
+        )
+
+        fourier_config = GroupSpectrumConfig(
+            display=str(state.get("display", "Real")),
+            window=str(state.get("window", "none")),
+            padding=int(state.get("padding", 1)),
+            filter_start_us=float(state.get("filter_start_us", 0.0)),
+            filter_time_constant_us=float(state.get("filter_time_constant_us", 1.5)),
+            t0_offset_us=float(state.get("t0_offset_us", 0.0)),
+            subtract_average_signal=bool(state.get("subtract_average_signal", True)),
+            estimate_average_error=bool(state.get("estimate_average_error", False)),
+            t_min_us=t_min_us,
+            t_max_us=t_max_us,
+            selected_group_ids=list(selected_group_ids),
+            group_phase_degrees=group_phase_degrees,
+            pulse_compensation=bool(state.get("pulse_compensation", False)),
+            pulse_half_width_us=float(state.get("pulse_half_width_us", 0.0)),
+            pulse_max_gain=float(state.get("pulse_max_gain", 25.0)),
+            baseline_mode=str(state.get("baseline_mode", "none")),
+            baseline_kappa=float(state.get("baseline_kappa", 2.0)),
+            exclude_enabled=bool(state.get("exclude_enabled", False)),
+            exclusion_ranges=[
+                (float(pair[0]), float(pair[1]))
+                for pair in state.get("exclusion_ranges", [])
+                if isinstance(pair, (list, tuple)) and len(pair) == 2
+            ],
+            diamag_exclusion=bool(state.get("diamag_exclusion", False)),
+            diamag_half_width_mhz=float(state.get("diamag_half_width_mhz", 0.3)),
+            remove_diamag=bool(state.get("remove_diamag", False)),
+            burg_order_min=int(state.get("burg_order_min", 2)),
+            burg_order_max=int(state.get("burg_order_max", 40)),
+            correlation_reference_field_gauss=(
+                float(state["correlation_reference_field_gauss"])
+                if state.get("correlation_reference_field_gauss") is not None
+                else None
+            ),
+            correlation_order=int(state.get("correlation_order", 2)),
+        )
+        average_dataset = compute_average_group_spectrum(
+            run,
+            fourier_config,
+            prepared_histograms=prepared_histograms,
+            reference_t0_bin=reference_t0_bin,
+        )
+
+        summary: dict | None = None
+        if average_dataset is not None:
+            averaged_display = average_dataset.asymmetry
+            averaged_error = average_dataset.error
+            if averaged_error.size > 0 and np.any(averaged_error > 0.0):
+                sn = np.divide(
+                    np.abs(averaged_display),
+                    averaged_error,
+                    out=np.zeros_like(averaged_display),
+                    where=averaged_error > 0.0,
+                )
+                # Exclude the DC bin from the peak search: the average-signal
+                # subtraction leaves a near-zero error there that can spike S/N.
+                if sn.size > 1:
+                    sn = sn[1:]
+                finite_sn = sn[np.isfinite(sn)]
+                peak_signal_to_noise = float(np.max(finite_sn)) if finite_sn.size else 0.0
+                summary = {
+                    "mean_error": float(np.nanmean(averaged_error))
+                    if averaged_error.size
+                    else 0.0,
+                    "peak_signal_to_noise": peak_signal_to_noise,
+                    "group_count": len(selected_group_ids),
+                }
+
+        return {
+            "average_dataset": average_dataset,
+            "config": fourier_config,
+            "estimated_phases": estimated_phases,
+            "use_phase_table": use_phase_table,
+            "summary": summary,
+            "run_number": int(dataset.run_number),
+            "selected_group_count": len(selected_group_ids),
+            "display": str(state.get("display", "Real")),
+            "padding": int(state.get("padding", 1)),
+        }
+
+    def _on_fourier_payload_finished(self, payload: dict, started_at: float) -> None:
+        """Apply a completed averaged grouped FFT to the GUI (GUI thread)."""
+        self._fourier_compute_active = False
+        self._set_status_state("Idle")
+        average_dataset = payload["average_dataset"]
+        fourier_config = payload["config"]
+        run_number = int(payload["run_number"])
+        display = str(payload["display"])
+        spectra: list[MuonDataset] = []
         try:
-            if self._current_dataset is None or self._current_dataset.run is None:
-                self._set_fourier_status(
-                    "Select a grouped run before computing the Fourier transform."
+            # Auto-filled phases were estimated on the worker's table copy; reflect
+            # them into the panel here (the only widget write of the result path).
+            if payload["use_phase_table"] and payload["estimated_phases"]:
+                self._fourier_panel.set_group_phases(
+                    payload["estimated_phases"], auto_filled=True
                 )
-                return
-
-            # Preserve any live MaxEnt panel edits across the cascaded re-sync
-            # below (the Fourier sync also refreshes the MaxEnt group table).
-            self._store_maxent_panel_state_for_dataset(self._current_dataset)
-            self._sync_fourier_panel_for_dataset(self._current_dataset)
-            if auto_phase and apply_phase_correction:
-                estimated = self._estimate_group_fourier_phases(self._current_dataset, state)
-                if use_phase_table and estimated:
-                    self._fourier_panel.set_group_phases(estimated, auto_filled=True)
-                    group_phase_table.update(estimated)
-            group_names = self._fourier_group_names_for_dataset(self._current_dataset)
-            if not group_names:
-                self._set_fourier_status("The active run does not define detector groups.")
-                return
-
-            selected_group_ids = self._selected_fourier_group_ids(self._current_dataset)
-            if not selected_group_ids:
-                self._set_fourier_status(
-                    "Select at least one detector group before computing the Fourier transform."
-                )
-                return
-
-            fourier_t_min_us, fourier_t_max_us = self._current_fourier_time_window_us()
-            prepared_histograms, reference_t0_bin = self._precompute_group_fourier_inputs(
-                self._current_dataset
-            )
-
-            # Resolve the auto/table/manual phase choice into concrete per-group
-            # values, then delegate the spectrum maths to the shared core so a
-            # generated spectrum and a recipe-recomputed one are identical.
-            group_phase_degrees = self._resolve_group_phase_degrees(
-                selected_group_ids,
-                state,
-                apply_phase_correction=apply_phase_correction,
-                auto_phase=auto_phase,
-                use_phase_table=use_phase_table,
-                manual_phase=manual_phase,
-                group_phase_table=group_phase_table,
-                prepared_histograms=prepared_histograms,
-                reference_t0_bin=reference_t0_bin,
-            )
-
-            fourier_config = GroupSpectrumConfig(
-                display=display,
-                window=window,
-                padding=padding,
-                filter_start_us=filter_start_us,
-                filter_time_constant_us=filter_time_constant_us,
-                t0_offset_us=t0_offset_us,
-                subtract_average_signal=subtract_average_signal,
-                estimate_average_error=estimate_average_error,
-                t_min_us=fourier_t_min_us,
-                t_max_us=fourier_t_max_us,
-                selected_group_ids=list(selected_group_ids),
-                group_phase_degrees=group_phase_degrees,
-                pulse_compensation=bool(state.get("pulse_compensation", False)),
-                pulse_half_width_us=float(state.get("pulse_half_width_us", 0.0)),
-                pulse_max_gain=float(state.get("pulse_max_gain", 25.0)),
-                baseline_mode=str(state.get("baseline_mode", "none")),
-                baseline_kappa=float(state.get("baseline_kappa", 2.0)),
-                exclude_enabled=bool(state.get("exclude_enabled", False)),
-                exclusion_ranges=[
-                    (float(pair[0]), float(pair[1]))
-                    for pair in state.get("exclusion_ranges", [])
-                    if isinstance(pair, (list, tuple)) and len(pair) == 2
-                ],
-                diamag_exclusion=bool(state.get("diamag_exclusion", False)),
-                diamag_half_width_mhz=float(state.get("diamag_half_width_mhz", 0.3)),
-                remove_diamag=bool(state.get("remove_diamag", False)),
-                burg_order_min=int(state.get("burg_order_min", 2)),
-                burg_order_max=int(state.get("burg_order_max", 40)),
-                correlation_reference_field_gauss=(
-                    float(state["correlation_reference_field_gauss"])
-                    if state.get("correlation_reference_field_gauss") is not None
-                    else None
-                ),
-                correlation_order=int(state.get("correlation_order", 2)),
-            )
-            average_dataset = compute_average_group_spectrum(
-                self._current_dataset.run,
-                fourier_config,
-                prepared_histograms=prepared_histograms,
-                reference_t0_bin=reference_t0_bin,
-            )
 
             if (
                 average_dataset is not None
@@ -5574,36 +5784,11 @@ class MainWindow(QMainWindow):
                 )
                 return
             if average_dataset is not None:
-                averaged_display = average_dataset.asymmetry
-                averaged_error = average_dataset.error
-                if averaged_error.size > 0 and np.any(averaged_error > 0.0):
-                    sn = np.divide(
-                        np.abs(averaged_display),
-                        averaged_error,
-                        out=np.zeros_like(averaged_display),
-                        where=averaged_error > 0.0,
-                    )
-                    # Exclude the DC bin from the peak search: the average-signal
-                    # subtraction leaves a near-zero error there that can spike S/N.
-                    if sn.size > 1:
-                        sn = sn[1:]
-                    finite_sn = sn[np.isfinite(sn)]
-                    peak_signal_to_noise = float(np.max(finite_sn)) if finite_sn.size else 0.0
-                    self._fourier_panel.set_average_summary(
-                        mean_error=float(np.nanmean(averaged_error))
-                        if averaged_error.size
-                        else 0.0,
-                        peak_signal_to_noise=peak_signal_to_noise,
-                        group_count=len(selected_group_ids),
-                    )
+                if payload["summary"] is not None:
+                    self._fourier_panel.set_average_summary(**payload["summary"])
                 self._report_fourier_diagnostics(average_dataset)
                 spectra.append(average_dataset)
-                spectra_by_run[int(self._current_dataset.run_number)] = list(spectra)
-                self._record_frequency_fft_recipe(
-                    int(self._current_dataset.run_number),
-                    fourier_config,
-                    average_dataset,
-                )
+                self._record_frequency_fft_recipe(run_number, fourier_config, average_dataset)
 
             if not spectra:
                 self._set_fourier_status(
@@ -5611,24 +5796,21 @@ class MainWindow(QMainWindow):
                 )
                 return
 
-            for run_number, run_spectra in spectra_by_run.items():
-                self._store_frequency_spectra_for_run(
-                    run_number,
-                    run_spectra,
-                    rep_type=RepresentationType.FREQ_FFT,
-                )
+            self._store_frequency_spectra_for_run(
+                run_number,
+                list(spectra),
+                rep_type=RepresentationType.FREQ_FFT,
+            )
 
-            active_run_number = None
-            if self._current_dataset is not None:
-                current_run_number = int(self._current_dataset.run_number)
-                if current_run_number in spectra_by_run:
-                    active_run_number = current_run_number
-            if active_run_number is None and spectra_by_run:
-                active_run_number = next(iter(spectra_by_run))
-
-            self._sync_frequency_plot_for_run(active_run_number, preserve_x_limits=True)
-            self._plot_workspace.set_active_view("frequency")
-            self._show_panel("fourier")
+            # Only steal the view if the computed run is still selected; if the
+            # user navigated away mid-compute, the spectrum stays cached for later.
+            current_run = (
+                None if self._current_dataset is None else int(self._current_dataset.run_number)
+            )
+            if current_run == run_number:
+                self._sync_frequency_plot_for_run(run_number, preserve_x_limits=True)
+                self._plot_workspace.set_active_view("frequency")
+                self._show_panel("fourier")
             suffix = "s" if len(spectra) != 1 else ""
             # Disclose a fit-and-subtract that silently no-opped (e.g. below the
             # 5 G seed field) so the spectrum is not mistaken for diamag-removed.
@@ -5656,14 +5838,20 @@ class MainWindow(QMainWindow):
             self._log_perf_event(
                 "compute_fourier",
                 started_at,
-                run=None
-                if self._current_dataset is None
-                else int(self._current_dataset.run_number),
-                groups=len(selected_group_ids),
-                padding=padding,
+                run=run_number,
+                groups=int(payload["selected_group_count"]),
+                padding=int(payload["padding"]),
                 display=display,
                 spectra=len(spectra),
             )
+
+    def _on_fourier_payload_error(self, message: str, started_at: float) -> None:
+        """Report a failed background Fourier compute (GUI thread)."""
+        self._fourier_compute_active = False
+        self._set_status_state("Idle")
+        self._set_fourier_status(f"Fourier transform failed: {message}")
+        self._log_panel.log(f"Fourier transform failed: {message}")
+        self._log_perf_event("compute_fourier", started_at, spectra=0)
 
     def _on_apply_fourier_to_selection(self) -> None:
         """Copy the active run's FFT recipe to the other selected runs.
@@ -8629,21 +8817,74 @@ class MainWindow(QMainWindow):
         )
         return answer == QMessageBox.StandardButton.Save
 
+    def _confirm_save_with_incomplete_load(self) -> bool:
+        """Hard-confirm a save when the open project is known to be incomplete.
+
+        A project open cancelled mid-prefetch loads only the runs read before
+        the cancel; the rest are absent. Saving over the project file in that
+        state silently drops them, so require an explicit confirmation.
+        """
+        if not self._project_load_incomplete:
+            return True
+        answer = QMessageBox.warning(
+            self,
+            "Project not fully loaded",
+            "This project was not fully loaded — its file load was cancelled, so "
+            "some runs are missing from the session. Saving now will drop those "
+            "runs from the project file permanently.\n\n"
+            "Re-open the project and let it finish loading to keep them. "
+            "Save the partial project anyway?",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Save
+
     def _write_project(self, path: str) -> None:
-        """Collect state and write to *path*, updating recent projects."""
+        """Collect state on the GUI thread, then write *path* off-thread.
+
+        ``collect_project_state`` reads widgets, so it must run here; the file
+        write (the only blocking part) is handed to the shared TaskRunner so the
+        GUI stays live. Recent-projects/title bookkeeping runs in the GUI-thread
+        completion callback.
+        """
         if not self._confirm_save_with_unsaved_synthetic_runs():
+            return
+        if not self._confirm_save_with_incomplete_load():
+            return
+        if self._project_save_active:
+            self.statusBar().showMessage("A project save is already in progress…")
             return
         try:
             state = self.collect_project_state()
-            save_project(state, path)
-            self._current_project_path = path
-            self._add_recent_project(path)
-            self._update_window_title()
-            self._log_panel.log(f"Project saved: {path}")
-            self.statusBar().showMessage(f"Saved: {Path(path).name}")
         except Exception as e:
             QMessageBox.critical(self, "Save Failed", f"Could not save project:\n{e}")
             self._log_panel.log(f"ERROR saving project: {e}")
+            return
+        self._project_save_active = True
+        self._set_status_state("Saving project…")
+        self.statusBar().showMessage(f"Saving {Path(path).name}…")
+        self._tasks.start(
+            lambda w, state=state, path=path: save_project(state, path),
+            on_finished=lambda _result, path=path: self._on_project_save_finished(path),
+            on_error=lambda message, path=path: self._on_project_save_error(path, message),
+        )
+
+    def _on_project_save_finished(self, path: str) -> None:
+        """Record a completed background save (GUI thread)."""
+        self._project_save_active = False
+        self._set_status_state("Idle")
+        self._current_project_path = path
+        self._add_recent_project(path)
+        self._update_window_title()
+        self._log_panel.log(f"Project saved: {path}")
+        self.statusBar().showMessage(f"Saved: {Path(path).name}")
+
+    def _on_project_save_error(self, path: str, message: str) -> None:
+        """Report a failed background save (GUI thread)."""
+        self._project_save_active = False
+        self._set_status_state("Idle")
+        QMessageBox.critical(self, "Save Failed", f"Could not save project:\n{message}")
+        self._log_panel.log(f"ERROR saving project: {message}")
 
     def _open_project_file(self, path: str) -> None:
         """Load and restore a project from *path*."""
@@ -9083,6 +9324,9 @@ class MainWindow(QMainWindow):
                 unique_paths.append(resolved)
         prefetched = self._load_paths_with_progress(unique_paths)
         if len(prefetched) < len(unique_paths):
+            # Mark the session incomplete so a later save hard-confirms rather
+            # than silently writing a project file missing the unloaded runs.
+            self._project_load_incomplete = True
             self._log_panel.log(
                 "WARNING: project loading was cancelled before all data files were "
                 f"read ({len(prefetched)} of {len(unique_paths)}). The project is "
@@ -9431,6 +9675,9 @@ class MainWindow(QMainWindow):
     def _clear_all_state(self) -> None:
         """Reset every panel to its empty initial state."""
         self._current_dataset = None
+        # A fresh/cleared session is complete by definition; a later cancelled
+        # restore re-sets this before any save can see it.
+        self._project_load_incomplete = False
         self._last_fit_chi2 = None
         self._set_status_chi2(None)
         self._frequency_spectra_by_run = {}
