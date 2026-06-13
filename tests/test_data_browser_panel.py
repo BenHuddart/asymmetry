@@ -409,6 +409,62 @@ def test_run_info_synthetic_extra_columns_render_values(qapp: QApplication) -> N
     assert float(panel._table.item(0, mev_col).text()) == pytest.approx(9.0e-05)
 
 
+def test_good_events_and_events_per_frame_columns(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    # good_frames present -> events/frame is finite.
+    ds = _dataset_with_run(
+        303,
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "first_good_bin": 0,
+            "last_good_bin": 2,
+            "good_frames": 1000.0,
+        },
+    )
+    panel.add_dataset(ds)
+
+    panel.add_extra_column("run_info.good_events_mev")
+    panel.add_extra_column("run_info.events_per_frame")
+
+    labels = [
+        panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())
+    ]
+    good_col = labels.index("Good Events (MEv)")
+    frame_col = labels.index("Events/frame")
+
+    # Good-range [0,2] over both detectors: (10+20+30)+(5+10+15) = 90.
+    assert float(panel._table.item(0, good_col).text()) == pytest.approx(9.0e-05)
+    # Events per frame = 90 / 1000.
+    assert float(panel._table.item(0, frame_col).text()) == pytest.approx(0.09)
+
+
+def test_events_per_frame_dashes_without_good_frames(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _dataset_with_run(305)  # default grouping carries no good_frames
+    panel.add_dataset(ds)
+    panel.add_extra_column("run_info.events_per_frame")
+    labels = [
+        panel._table.horizontalHeaderItem(i).text() for i in range(panel._table.columnCount())
+    ]
+    frame_col = labels.index("Events/frame")
+    assert panel._table.item(0, frame_col).text() == "—"
+
+
+def test_add_column_menu_lists_hideable_run_info_fields(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _dataset_with_run(306)
+    panel.add_dataset(ds)
+    panel.add_extra_column("run_info.good_events_mev")
+
+    available = panel._addable_run_info_columns()
+    # Already-shown column is excluded; others remain offered.
+    assert "run_info.good_events_mev" not in available
+    assert "run_info.events_per_frame" in available
+    assert "run_info.counts_mev" in available
+
+
 def test_temperature_include_replaces_browser_value_with_log_mean(qapp: QApplication) -> None:
     panel = DataBrowserPanel()
     ds = _dataset(304)
@@ -439,6 +495,102 @@ def test_temperature_include_replaces_browser_value_with_log_mean(qapp: QApplica
     panel.remove_extra_column("temperature")
 
     assert panel._table.item(0, 2).text() == "50.00"
+
+
+def _field_log_dataset(run_number: int) -> MuonDataset:
+    ds = _dataset(run_number)
+    ds.metadata["field"] = 100.0
+    ds.metadata["nexus_time_series"] = {
+        "entry/sample/magnetic_field": {
+            "units": "G",
+            "time": [0.0, 10.0],
+            "values": [99.0, 101.0],
+            "mean": 100.5,
+            "role": "sample_field",
+            "primary": True,
+        }
+    }
+    return ds
+
+
+def test_field_from_log_replaces_browser_value_with_log_mean(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _field_log_dataset(307)
+    panel.add_dataset(ds)
+
+    # Header value first (B column is index 3), editable.
+    assert panel._table.item(0, 3).text() == "100.0"
+    assert panel._table.item(0, 3).flags() & Qt.ItemFlag.ItemIsEditable
+
+    panel.set_use_field_from_log(True)
+    assert panel.use_field_from_log() is True
+    assert panel.get_extra_columns() == ["field"]
+    # Now shows the log mean and is display-only (like the temperature column).
+    assert panel._table.item(0, 3).text() == "100.5"
+    assert not (panel._table.item(0, 3).flags() & Qt.ItemFlag.ItemIsEditable)
+
+    panel.set_use_field_from_log(False)
+    assert panel._table.item(0, 3).text() == "100.0"
+    assert panel._table.item(0, 3).flags() & Qt.ItemFlag.ItemIsEditable
+
+
+def test_field_from_log_per_run_override(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _field_log_dataset(308)
+    panel.add_dataset(ds)
+    # Global off, but override this run on.
+    panel.set_dataset_field_from_log(308, True)
+    assert panel.dataset_uses_field_from_log(308) is True
+    assert panel._table.item(0, 3).text() == "100.5"
+
+
+def test_field_from_log_falls_back_to_header_when_no_log(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _dataset(309)
+    ds.metadata["field"] = 250.0  # no nexus_time_series field channel
+    panel.add_dataset(ds)
+    panel.set_use_field_from_log(True)
+    # No field log -> header scalar, cell stays editable (not log-tinted).
+    assert panel._table.item(0, 3).text() == "250.0"
+    assert panel._table.item(0, 3).flags() & Qt.ItemFlag.ItemIsEditable
+
+
+def test_field_from_log_state_round_trips(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds = _field_log_dataset(310)
+    panel.add_dataset(ds)
+    panel.set_use_field_from_log(True)
+
+    state = panel.get_state()
+    assert state["use_field_from_log"] is True
+
+    restored = DataBrowserPanel()
+    restored.add_dataset(_field_log_dataset(310))
+    restored.restore_state(state)
+    assert restored.use_field_from_log() is True
+    assert restored._table.item(0, 3).text() == "100.5"
+
+
+def test_legacy_field_extra_column_does_not_enable_field_from_log(
+    qapp: QApplication,
+) -> None:
+    # An old project (pre-field-from-log) could save "field" as an ordinary
+    # extra column with no "use_field_from_log" key. Restoring it must NOT
+    # silently switch the B column into log-mean mode.
+    panel = DataBrowserPanel()
+    ds = _field_log_dataset(311)
+    panel.add_dataset(ds)
+    panel.restore_state(
+        {
+            "sort_column": -1,
+            "filters": {},
+            "extra_columns": ["field"],  # legacy: no use_field_from_log key
+        }
+    )
+    assert panel.use_field_from_log() is False
+    # B column shows the header scalar, not the log mean, and stays editable.
+    assert panel._table.item(0, 3).text() == "100.0"
+    assert panel._table.item(0, 3).flags() & Qt.ItemFlag.ItemIsEditable
 
 
 def test_nexus_temperature_include_replaces_browser_value_with_log_mean(

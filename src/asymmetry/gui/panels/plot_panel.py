@@ -25,12 +25,14 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -50,7 +52,9 @@ from asymmetry.core.transform.background import (
     available_background_modes,
     resolve_background_mode,
 )
-from asymmetry.core.transform.grouping import group_forward_backward
+from asymmetry.core.transform.grouping import good_event_count, group_forward_backward
+from asymmetry.core.transform.integral import integrate_curve
+from asymmetry.core.transform.peakfit import parabolic_peak
 from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
     PeriodMode,
@@ -165,7 +169,10 @@ class PlotPanel(QWidget):
     polarization_axis_changed = Signal(str)
     overlay_toggled = Signal(bool)
     time_view_changed = Signal(str)
-    cursor_coords_changed = Signal(object, object)  # (x: float|None, y: float|None)
+    # Payload dict for the status-bar cursor readout, or None to clear. Keys:
+    # x, y (snapped where possible), err, snr, peak (x,y)|None,
+    # window (mean,err,n)|None. See _build_cursor_readout.
+    cursor_coords_changed = Signal(object)
     #: Spectral-moments overlay drags (frequency panel): window in canonical MHz.
     moments_window_changed = Signal(float, float)
     moments_cutoff_changed = Signal(float)  # new cutoff fraction in [0, 1)
@@ -288,6 +295,7 @@ class PlotPanel(QWidget):
                 nav_row.addWidget(self._label_field_combo)
             nav_row.addWidget(self._time_view_label)
             nav_row.addWidget(self._time_view_combo)
+            nav_row.addWidget(self._log_counts_checkbox)
             nav_row.addWidget(self._overlay_checkbox)
             nav_row.addStretch()
             nav_row.addWidget(self._polarization_label)
@@ -465,6 +473,21 @@ class PlotPanel(QWidget):
         self._time_view_label.hide()
         self._time_view_combo.hide()
 
+        # Log-count diagnostic: a log-y toggle that applies only on the
+        # raw-counts view. A pure muon-decay histogram is a straight line on a
+        # log count axis, so a mis-placed t0, a wrong background level, or
+        # high-rate deadtime curvature jump out without a fit.
+        self._log_counts_enabled = False
+        self._log_counts_checkbox = QCheckBox("Log scale")
+        self._log_counts_checkbox.setChecked(False)
+        self._log_counts_checkbox.setToolTip(
+            "Plot raw counts on a logarithmic y-axis — a pure decay is a "
+            "straight line, so t0, background and deadtime deviations are "
+            "obvious. Non-positive bins are dropped (log undefined)."
+        )
+        self._log_counts_checkbox.toggled.connect(self._on_log_counts_toggled)
+        self._log_counts_checkbox.hide()
+
         self._overlay_checkbox = QCheckBox("Overlay")
         self._overlay_checkbox.setChecked(False)
         self._overlay_checkbox.toggled.connect(self.overlay_toggled.emit)
@@ -573,9 +596,15 @@ class PlotPanel(QWidget):
         row.addWidget(self._add_label_btn)
         row.addStretch()
 
-        self._export_gle_btn = QPushButton("Export Plot(s) to GLE")
+        # One export button hosting a menu (no second export button, per the
+        # workflow-visualisation brief): GLE export and a plain-text data
+        # export that skips the GLE folder/script/compile.
+        self._export_gle_btn = QPushButton("Export…")
         self._export_gle_btn.setEnabled(False)
-        self._export_gle_btn.clicked.connect(self.export_plots_to_gle)
+        self._export_menu = QMenu(self._export_gle_btn)
+        self._export_menu.addAction("Export to GLE…", self.export_plots_to_gle)
+        self._export_menu.addAction("Export plotted data (text)…", self.export_plotted_data_as_text)
+        self._export_gle_btn.setMenu(self._export_menu)
         row.addWidget(self._export_gle_btn)
 
         row.addWidget(QLabel("Format:"))
@@ -1409,6 +1438,7 @@ class PlotPanel(QWidget):
         if mode == self._current_time_view_mode:
             return
         self._current_time_view_mode = mode
+        self._refresh_log_counts_visibility()
         self.time_view_changed.emit(mode)
 
     def current_time_view_mode(self) -> str:
@@ -1451,6 +1481,7 @@ class PlotPanel(QWidget):
         self._time_view_combo.setCurrentIndex(idx)
         self._time_view_combo.blockSignals(False)
         self._time_view_combo.setEnabled(len(cleaned) > 1)
+        self._refresh_log_counts_visibility()
 
     def set_current_time_view_mode(self, mode: str, *, emit_signal: bool = False) -> None:
         """Select the active time-domain view mode."""
@@ -1467,6 +1498,44 @@ class PlotPanel(QWidget):
         self._time_view_combo.setCurrentIndex(idx)
         self._time_view_combo.blockSignals(previous)
         self._current_time_view_mode = normalized
+        self._refresh_log_counts_visibility()
+
+    def _refresh_log_counts_visibility(self) -> None:
+        """Show the log-scale toggle only on the raw-counts view."""
+        checkbox = getattr(self, "_log_counts_checkbox", None)
+        if checkbox is None:
+            return
+        checkbox.setVisible(self._current_time_view_mode == "raw_counts")
+
+    def _log_counts_active(self) -> bool:
+        """True when the log-count diagnostic should apply to the render."""
+        return bool(
+            getattr(self, "_log_counts_enabled", False)
+            and self._current_time_view_mode == "raw_counts"
+        )
+
+    def _on_log_counts_toggled(self, checked: bool) -> None:
+        """Persist and apply the log-count diagnostic scale."""
+        self._log_counts_enabled = bool(checked)
+        self._redraw_current_view()
+
+    def _apply_log_counts_scale(self) -> None:
+        """Switch the raw-count subplots to a log y-axis (diagnostic view).
+
+        Applied after the linear limits so the axis is converted from already
+        positive count limits — matplotlib then autoscales to the positive data
+        and silently drops the non-positive (e.g. empty) bins.
+        """
+        if not self._has_mpl or not self._log_counts_active():
+            return
+        axes = list(getattr(self, "_subplot_axes_by_polarization", {}).values())
+        if not axes:
+            return
+        for ax in axes:
+            ax.set_yscale("log")
+            ax.relim()
+            ax.autoscale(axis="y")
+        self._canvas.draw_idle()
 
     def is_overlay_enabled(self) -> bool:
         """Return whether multi-selection overlays are currently enabled."""
@@ -2676,6 +2745,7 @@ class PlotPanel(QWidget):
         self._update_y_limit_controls_for_axis(self._current_polarization_axis)
         self._apply_limits(schedule_viewport_refresh=True)
         self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
+        self._apply_log_counts_scale()
 
     def plot_maxent_reconstruction(
         self, datasets: list[MuonDataset], *, combined: bool = False
@@ -4393,7 +4463,7 @@ class PlotPanel(QWidget):
                 artist.set_position((ann["x"], ann["y"]))
                 self._canvas.draw_idle()
 
-        # Emit cursor position for the status bar (no-op during drags).
+        # Emit cursor readout for the status bar (no-op during drags).
         if (
             self._active_fit_handle is None
             and self._active_annotation_idx is None
@@ -4402,9 +4472,83 @@ class PlotPanel(QWidget):
             and event.xdata is not None
             and event.ydata is not None
         ):
-            self.cursor_coords_changed.emit(float(event.xdata), float(event.ydata))
+            self.cursor_coords_changed.emit(
+                self._build_cursor_readout(float(event.xdata), float(event.ydata))
+            )
         else:
-            self.cursor_coords_changed.emit(None, None)
+            self.cursor_coords_changed.emit(None)
+
+    def _cursor_snap_arrays(self):
+        """Cached (t, y, err) for snapping, or None on multi-curve views.
+
+        Snapping is only well-defined when the cached arrays correspond to the
+        main axis. On stacked grouped/vector subplots the cache holds the last
+        subplot's data, so we decline to snap and report the raw cursor instead.
+        """
+        if getattr(self, "_grouped_time_subplot_datasets", None) or getattr(
+            self, "_vector_subplot_datasets", None
+        ):
+            return None
+        t = self._last_plot_time
+        y = self._last_plot_asymmetry
+        if t is None or y is None or len(t) == 0:
+            return None
+        return t, y, self._last_plot_error
+
+    def _build_cursor_readout(self, xdata: float, ydata: float) -> dict:
+        """Build the status-bar cursor payload, snapping to the nearest point.
+
+        Adds the spectrum-reading readouts (S/N, a 3-point parabolic peak, and
+        the windowed average over the visible x-range) when a single curve is in
+        view; falls back to the raw coordinate otherwise.
+        """
+        arrays = self._cursor_snap_arrays()
+        if arrays is None:
+            return {"x": xdata, "y": ydata, "snapped": False}
+
+        t, y, e = arrays
+        t = np.asarray(t, dtype=float)
+        y = np.asarray(y, dtype=float)
+        idx = int(np.argmin(np.abs(t - xdata)))
+        tx = float(t[idx])
+        ty = float(y[idx])
+        err = None
+        if e is not None and idx < len(e):
+            try:
+                err = float(e[idx])
+            except (TypeError, ValueError):
+                err = None
+        snr = None
+        if err is not None and np.isfinite(err) and err != 0.0:
+            snr = abs(ty / err)
+
+        peak = None
+        if 1 <= idx < len(t) - 1:
+            peak = parabolic_peak(t[idx - 1 : idx + 2], y[idx - 1 : idx + 2])
+
+        window = None
+        if not self._is_frequency_plot_panel():
+            lo = float(self._x_min.value())
+            hi = float(self._x_max.value())
+            err_arr = np.asarray(e, dtype=float) if e is not None else np.zeros_like(y)
+            try:
+                mean, mean_err = integrate_curve(
+                    t, y, err_arr, t_min=min(lo, hi), t_max=max(lo, hi)
+                )
+                n = int(np.count_nonzero((t >= min(lo, hi)) & (t <= max(lo, hi))))
+                window = (float(mean), float(mean_err), n)
+            except (ValueError, ZeroDivisionError):
+                window = None
+
+        return {
+            "x": tx,
+            "y": ty,
+            "err": err,
+            "snr": snr,
+            "peak": peak,
+            "window": window,
+            "snapped": True,
+        }
 
     def _on_canvas_button_release(self, event) -> None:
         """End drag and open numeric editor on click without drag."""
@@ -4824,46 +4968,9 @@ class PlotPanel(QWidget):
                         "events_total": total_events,
                     }
 
-                    def _safe_int(raw: object) -> int | None:
-                        try:
-                            return int(raw)
-                        except (TypeError, ValueError):
-                            return None
-
-                    if isinstance(grouping, dict):
-                        first_good = _safe_int(grouping.get("first_good_bin"))
-                        last_good = _safe_int(grouping.get("last_good_bin"))
-                        if first_good is not None and last_good is not None:
-                            lo = max(0, min(first_good, last_good))
-                            hi = max(first_good, last_good)
-
-                            grouped_total = 0.0
-                            n_hist = len(histograms)
-                            groups_raw = grouping.get("groups")
-                            if isinstance(groups_raw, dict):
-                                f_gid = _safe_int(grouping.get("forward_group"))
-                                b_gid = _safe_int(grouping.get("backward_group"))
-                                selected = []
-                                if f_gid is not None and f_gid in groups_raw:
-                                    selected.extend(groups_raw[f_gid])
-                                if b_gid is not None and b_gid in groups_raw:
-                                    selected.extend(groups_raw[b_gid])
-                                for det in selected:
-                                    det_idx = _safe_int(det)
-                                    if det_idx is None:
-                                        continue
-                                    hist_idx = det_idx - 1
-                                    if hist_idx < 0 or hist_idx >= n_hist:
-                                        continue
-                                    counts = np.asarray(histograms[hist_idx].counts, dtype=float)
-                                    if counts.size == 0:
-                                        continue
-                                    hi_clamped = min(hi, counts.size - 1)
-                                    if hi_clamped >= lo:
-                                        grouped_total += float(np.sum(counts[lo : hi_clamped + 1]))
-
-                            if grouped_total > 0:
-                                histogram_info["events_grouped"] = grouped_total
+                    grouped_total = good_event_count(histograms, grouping)
+                    if grouped_total is not None and grouped_total > 0:
+                        histogram_info["events_grouped"] = grouped_total
 
             rn = dataset.run_number
             fit_data = self._fit_curve_for_dataset(dataset)
@@ -5026,8 +5133,14 @@ class PlotPanel(QWidget):
         if show_legend:
             style_legend(ax.legend(loc="best"))
 
-    def _write_fit_file(self, fit_path: Path, payload: dict) -> None:
-        """Write a .fit file with fit-curve data and metadata header."""
+    def _write_fit_file(
+        self, fit_path: Path, payload: dict, *, x_range: tuple[float, float] | None = None
+    ) -> None:
+        """Write a .fit file with fit-curve data and metadata header.
+
+        ``x_range`` optionally restricts the written rows to ``[lo, hi]``;
+        ``None`` (the GLE-export default) writes the whole curve.
+        """
         fit = payload.get("fit") or {}
         t_fit = fit.get("t")
         y_fit = fit.get("y")
@@ -5057,13 +5170,27 @@ class PlotPanel(QWidget):
                         f.write(f"!   {p['name']} = {p['value']:.8g}\n")
             f.write("!\n")
             f.write("! time  asymmetry_fit\n")
+            lo, hi = (None, None) if x_range is None else (min(x_range), max(x_range))
             for t_val, y_val in zip(t_fit, y_fit):
-                f.write(f"{float(t_val):.10g} {float(y_val):.10g}\n")
+                tf = float(t_val)
+                if lo is not None and (tf < lo or tf > hi):
+                    continue
+                f.write(f"{tf:.10g} {float(y_val):.10g}\n")
 
     def _write_data_file(
-        self, dat_path: Path, payload: dict, *, label_text: object | None = None
+        self,
+        dat_path: Path,
+        payload: dict,
+        *,
+        label_text: object | None = None,
+        x_range: tuple[float, float] | None = None,
     ) -> None:
-        """Write a .dat file with spectra data and metadata header."""
+        """Write a .dat file with spectra data and metadata header.
+
+        ``x_range`` optionally restricts the written rows to ``[lo, hi]``
+        (inclusive); ``None`` (the default, used by the GLE export) writes every
+        point.
+        """
         data = payload.get("data") or {}
         t_data = data.get("t")
         y_data = data.get("y")
@@ -5250,8 +5377,12 @@ class PlotPanel(QWidget):
             f.write("! END OF DATA SET INFORMATION\n")
             f.write("! time  asymmetry  error\n")
             err_arr = y_err if y_err is not None else np.zeros_like(y_data)
+            lo, hi = (None, None) if x_range is None else (min(x_range), max(x_range))
             for t_val, y_val, e_val in zip(t_data, y_data, err_arr):
-                f.write(f"{float(t_val):.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
+                tf = float(t_val)
+                if lo is not None and (tf < lo or tf > hi):
+                    continue
+                f.write(f"{tf:.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
 
     def _show_export_result_dialog(self, title: str, summary: str, details: str) -> None:
         """Show export results with scrollable details and fixed bottom button."""
@@ -5368,12 +5499,11 @@ class PlotPanel(QWidget):
             # Preview is best-effort only; export should still succeed.
             return
 
-    def export_plots_to_gle(self) -> None:
-        """Export current main-plot view as GLE using gleplot.
+    def _collect_export_payloads(self) -> list[dict] | None:
+        """Assemble the current plot's export payloads (with the ALL fallback).
 
-        Data is plotted with error bars (no connecting lines), fit curves
-        with lines (no markers).  File names are derived from the Label
-        dropdown value for each dataset.
+        Shared by the GLE export and the plain-text data export so both see the
+        same per-dataset payloads.
         """
         payloads = self.get_current_plot_export_data()
         if (
@@ -5381,13 +5511,152 @@ class PlotPanel(QWidget):
             and self._current_polarization_axis == "ALL"
             and self._vector_subplot_datasets
         ):
-            first_axis_payloads = self.get_current_plot_export_data(
+            payloads = self.get_current_plot_export_data(
                 self._vector_subplot_datasets.get("P_x")
                 or self._vector_subplot_datasets.get("P_y")
                 or self._vector_subplot_datasets.get("P_z")
                 or []
             )
-            payloads = first_axis_payloads
+        return payloads
+
+    def _prompt_text_export_options(self) -> tuple[str, bool] | None:
+        """Ask for the data-only export content and x-range option.
+
+        Returns ``(content, limit_to_range)`` where content is one of
+        ``"data"`` / ``"data_fit"`` / ``"fit"``, or ``None`` if cancelled.
+        """
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Export plotted data (text)")
+        dialog.setModal(True)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Content to export:"))
+        content_combo = QComboBox(dialog)
+        content_combo.addItem("Data only", "data")
+        content_combo.addItem("Data + fit", "data_fit")
+        content_combo.addItem("Fit only", "fit")
+        layout.addWidget(content_combo)
+        range_box = QCheckBox("Limit to current x-range", dialog)
+        range_box.setChecked(False)
+        layout.addWidget(range_box)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return str(content_combo.currentData()), bool(range_box.isChecked())
+
+    def export_plotted_data_as_text(self) -> None:
+        """Export the plotted curve(s) as plain text, without the GLE machinery.
+
+        Reuses the same ``.dat``/``.fit`` writers (and their provenance header)
+        as the GLE export, but writes only the text files — no ``.gleplot``
+        folder, GLE script, or compile. The content switch (data only / data +
+        fit / fit only) mirrors WiMDA's stData/stBoth/stFit.
+        """
+        payloads = self._collect_export_payloads()
+        if not payloads:
+            QMessageBox.warning(
+                self,
+                "Export unavailable",
+                "No plotted data is available to export.",
+            )
+            return
+
+        options = self._prompt_text_export_options()
+        if options is None:
+            return
+        content, limit_to_range = options
+        x_range = None
+        if limit_to_range:
+            x0 = float(self._x_min.value())
+            x1 = float(self._x_max.value())
+            if self._is_frequency_plot_panel():
+                x0 = self._convert_frequency_control_value_to_axis_limit(x0)
+                x1 = self._convert_frequency_control_value_to_axis_limit(x1)
+            x_range = (x0, x1)
+
+        if len(payloads) == 1:
+            token = self._safe_file_token(str(payloads[0].get("label", "dataset")))
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export plotted data (text)",
+                default_export_path(f"{token}.dat"),
+                "Data files (*.dat);;Text files (*.txt);;All files (*)",
+            )
+            if not path:
+                return
+            remember_export_path(path)
+            base = Path(path).with_suffix("")
+            written = self._write_payload_text_files(base, payloads[0], content, x_range)
+        else:
+            directory = QFileDialog.getExistingDirectory(
+                self,
+                "Export plotted data (text) — choose a folder",
+                default_export_path(""),
+            )
+            if not directory:
+                return
+            remember_export_path(directory)
+            export_dir = Path(directory)
+            written = []
+            for i, payload in enumerate(payloads):
+                token = self._safe_file_token(str(payload.get("label", f"dataset_{i}")))
+                written.extend(
+                    self._write_payload_text_files(export_dir / token, payload, content, x_range)
+                )
+
+        if not written:
+            QMessageBox.warning(
+                self,
+                "Nothing written",
+                "The selected content produced no files (for example 'fit only' "
+                "with no fit on the plot).",
+            )
+            return
+        files_text = "\n".join(str(p) for p in written)
+        self._show_export_result_dialog(
+            "Export Successful",
+            f"Wrote {len(written)} text file(s).",
+            files_text,
+        )
+
+    def _write_payload_text_files(
+        self,
+        base: Path,
+        payload: dict,
+        content: str,
+        x_range: tuple[float, float] | None,
+    ) -> list[Path]:
+        """Write the .dat and/or .fit text files for one payload."""
+        written: list[Path] = []
+        if content in ("data", "data_fit"):
+            dat_path = base.with_suffix(".dat")
+            self._write_data_file(
+                dat_path, payload, label_text=payload.get("label"), x_range=x_range
+            )
+            if dat_path.exists():
+                written.append(dat_path)
+        if content in ("data_fit", "fit"):
+            fit = payload.get("fit") or {}
+            if fit.get("t") is not None and fit.get("y") is not None:
+                fit_path = base.with_suffix(".fit")
+                self._write_fit_file(fit_path, payload, x_range=x_range)
+                if fit_path.exists():
+                    written.append(fit_path)
+        return written
+
+    def export_plots_to_gle(self) -> None:
+        """Export current main-plot view as GLE using gleplot.
+
+        Data is plotted with error bars (no connecting lines), fit curves
+        with lines (no markers).  File names are derived from the Label
+        dropdown value for each dataset.
+        """
+        payloads = self._collect_export_payloads()
         if not payloads:
             QMessageBox.warning(
                 self,
@@ -5635,6 +5904,7 @@ class PlotPanel(QWidget):
                 self._current_dataset.run_number if self._current_dataset is not None else None
             ),
             "time_view_mode": self.current_time_view_mode(),
+            "log_counts_scale": bool(getattr(self, "_log_counts_enabled", False)),
             "label_field": self._label_field_combo.currentData() if self._has_mpl else "run",
             "default_label_field": self._default_label_field,
             "label_field_by_group": dict(self._label_field_by_group),
@@ -5800,6 +6070,12 @@ class PlotPanel(QWidget):
             self._available_time_view_modes,
             current_mode=state.get("time_view_mode", self._current_time_view_mode),
         )
+        self._log_counts_enabled = bool(state.get("log_counts_scale", False))
+        if hasattr(self, "_log_counts_checkbox"):
+            self._log_counts_checkbox.blockSignals(True)
+            self._log_counts_checkbox.setChecked(self._log_counts_enabled)
+            self._log_counts_checkbox.blockSignals(False)
+        self._refresh_log_counts_visibility()
 
         if self._is_frequency_plot_panel():
             self._frequency_x_limits_by_unit = {}

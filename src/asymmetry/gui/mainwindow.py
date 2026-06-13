@@ -764,6 +764,14 @@ class MainWindow(QMainWindow):
         self._use_temperature_from_log_action.toggled.connect(
             self._on_use_temperature_from_log_toggled
         )
+        self._use_field_from_log_action = options_menu.addAction("Use field from log")
+        self._use_field_from_log_action.setCheckable(True)
+        self._use_field_from_log_action.setToolTip(
+            "Show the mean of the magnetic-field log channel in the B column "
+            "instead of the header value (the analogue of 'Use temperature "
+            "from log')."
+        )
+        self._use_field_from_log_action.toggled.connect(self._on_use_field_from_log_toggled)
         self._perf_logging_action = options_menu.addAction("Enable performance logging")
         self._perf_logging_action.setCheckable(True)
         self._perf_logging_action.setChecked(self._perf_logging_is_enabled())
@@ -2772,6 +2780,10 @@ class MainWindow(QMainWindow):
             included.add("temperature")
         else:
             included.discard("temperature")
+        if self._data_browser.dataset_uses_field_from_log(run_number):
+            included.add("field")
+        else:
+            included.discard("field")
         return included
 
     def _on_run_info_field_inclusion_changed(
@@ -2784,18 +2796,29 @@ class MainWindow(QMainWindow):
         if field_key == "temperature" and run_number is not None:
             self._data_browser.set_dataset_temperature_from_log(run_number, include)
             return
+        if field_key == "field" and run_number is not None:
+            self._data_browser.set_dataset_field_from_log(run_number, include)
+            return
         if include:
             self._data_browser.add_extra_column(field_key)
         else:
             self._data_browser.remove_extra_column(field_key)
         if field_key == "temperature":
             self._sync_temperature_log_option_action()
+        elif field_key == "field":
+            self._sync_field_log_option_action()
 
     def _on_use_temperature_from_log_toggled(self, checked: bool) -> None:
         """Toggle Data Browser temperature display between header and log mean."""
         if not hasattr(self, "_data_browser"):
             return
         self._data_browser.set_use_temperature_from_log(checked)
+
+    def _on_use_field_from_log_toggled(self, checked: bool) -> None:
+        """Toggle Data Browser field display between header and log mean."""
+        if not hasattr(self, "_data_browser"):
+            return
+        self._data_browser.set_use_field_from_log(checked)
 
     def _on_perf_logging_toggled(self, checked: bool) -> None:
         """Persist and report GUI performance logging state."""
@@ -2868,6 +2891,15 @@ class MainWindow(QMainWindow):
             return
         action.blockSignals(True)
         action.setChecked(self._data_browser.use_temperature_from_log())
+        action.blockSignals(False)
+
+    def _sync_field_log_option_action(self) -> None:
+        """Keep the Options menu field action aligned with browser state."""
+        action = getattr(self, "_use_field_from_log_action", None)
+        if action is None or not hasattr(self, "_data_browser"):
+            return
+        action.blockSignals(True)
+        action.setChecked(self._data_browser.use_field_from_log())
         action.blockSignals(False)
 
     def _on_grouping_requested(self, run_number: int) -> None:
@@ -9017,20 +9049,36 @@ class MainWindow(QMainWindow):
         ):
             self._set_status_state("Idle")
 
-    def _on_cursor_coords_changed(self, x: object, y: object) -> None:
-        """Update the status bar right label with the current cursor position."""
+    def _on_cursor_coords_changed(self, payload: object) -> None:
+        """Update the status bar right label with the cursor readout.
+
+        *payload* is the dict emitted by the plot panel (snapped coordinate plus
+        the optional spectrum-reading readouts), or ``None`` to clear.
+        """
         if not hasattr(self, "_status_coords_label"):
             return
-        if x is None or y is None:
+        if not isinstance(payload, dict) or payload.get("x") is None or payload.get("y") is None:
             self._status_coords_label.setText("")
             return
+        x = float(payload["x"])
+        y = float(payload["y"])
         domain = self._plot_workspace.active_view() if hasattr(self, "_plot_workspace") else ""
         if domain == "frequency":
-            text = f"ν = {float(x):.3f} MHz  |F| = {float(y):.4g}"
+            text = f"ν = {x:.3f} MHz  |F| = {y:.4g}"
         else:
             # χ²/ν lives in its own permanent label (_status_chi2_label);
             # appending it here would show it twice.
-            text = f"x = {float(x):.3f} μs  y = {float(y):.2f} %"
+            text = f"t = {x:.3f} μs  A = {y:.2f} %"
+        snr = payload.get("snr")
+        if snr is not None:
+            text += f"  S/N = {float(snr):.3g}"
+        peak = payload.get("peak")
+        if peak is not None:
+            text += f"  peak {float(peak[0]):.3f}={float(peak[1]):.4g}"
+        window = payload.get("window")
+        if window is not None:
+            mean, mean_err, n = window
+            text += f"  ⟨{float(mean):.4g}±{float(mean_err):.2g}⟩ ({int(n)} pts)"
         self._status_coords_label.setText(text)
 
     def _get_fit_dataset(self, dataset):
@@ -9900,6 +9948,7 @@ class MainWindow(QMainWindow):
             ]
         self._data_browser.restore_state(browser_state)
         self._sync_temperature_log_option_action()
+        self._sync_field_log_option_action()
 
         # ── restore plot state ─────────────────────────────────────────
         plot_state = state.get("plot_state", {})
@@ -10158,6 +10207,7 @@ class MainWindow(QMainWindow):
             self._global_parameter_fit_window = None
         self._update_global_parameter_fit_menu_style(False)
         self._sync_temperature_log_option_action()
+        self._sync_field_log_option_action()
 
     def _add_recent_project(self, path: str) -> None:
         """Add *path* to the front of the recent-projects list in QSettings."""

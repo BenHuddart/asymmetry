@@ -1030,6 +1030,7 @@ class _StubDataBrowserWithState(_StubDataBrowser):
         self._combined_datasets = {}
         self._was_cleared = False
         self._use_temperature_from_log = False
+        self._use_field_from_log = False
 
     def clear(self):
         self._was_cleared = True
@@ -1054,6 +1055,12 @@ class _StubDataBrowserWithState(_StubDataBrowser):
 
     def set_use_temperature_from_log(self, enabled):
         self._use_temperature_from_log = bool(enabled)
+
+    def use_field_from_log(self):
+        return bool(self._use_field_from_log)
+
+    def set_use_field_from_log(self, enabled):
+        self._use_field_from_log = bool(enabled)
 
 
 class _StubFitParamsClear(_StubFitParams):

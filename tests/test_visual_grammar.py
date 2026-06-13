@@ -151,8 +151,32 @@ def test_status_bar_has_state_dot_and_chi2_slot(win: MainWindow) -> None:
 def test_cursor_coords_do_not_duplicate_chi2(win: MainWindow) -> None:
     """χ²/ν lives in its own label; the coords read-out must not repeat it."""
     win._last_fit_chi2 = 1.23
-    win._on_cursor_coords_changed(3.4, 12.8)
+    win._on_cursor_coords_changed({"x": 3.4, "y": 12.8})
     assert "χ²" not in win._status_coords_label.text()
+
+
+def test_cursor_readout_renders_snr_peak_and_window(win: MainWindow) -> None:
+    """The cursor payload's S/N, parabolic peak and windowed average render."""
+    win._on_cursor_coords_changed(
+        {
+            "x": 2.5,
+            "y": 1.8,
+            "snr": 12.3,
+            "peak": (2.47, 1.83),
+            "window": (0.42, 0.03, 128),
+        }
+    )
+    text = win._status_coords_label.text()
+    assert "S/N = 12.3" in text
+    assert "peak 2.470" in text
+    assert "128 pts" in text
+
+
+def test_cursor_readout_clears_on_none(win: MainWindow) -> None:
+    win._on_cursor_coords_changed({"x": 1.0, "y": 2.0})
+    assert win._status_coords_label.text()
+    win._on_cursor_coords_changed(None)
+    assert win._status_coords_label.text() == ""
 
 
 def test_clear_all_state_resets_chi2(win: MainWindow) -> None:

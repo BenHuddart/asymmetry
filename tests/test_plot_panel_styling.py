@@ -249,8 +249,13 @@ class TestPlotFooter:
         from PySide6.QtWidgets import QPushButton
 
         btns = footer.findChildren(QPushButton)
-        btn_texts = [b.text() for b in btns]
-        assert "Export Plot(s) to GLE" in btn_texts
+        assert panel._export_gle_btn in btns
+        # A single export button hosts both actions via a menu (no second button).
+        menu = panel._export_gle_btn.menu()
+        assert menu is not None
+        action_texts = [a.text() for a in menu.actions()]
+        assert "Export to GLE…" in action_texts
+        assert "Export plotted data (text)…" in action_texts
 
     def test_format_combo_exists_in_footer(self, panel) -> None:
         assert hasattr(panel, "_gle_format_combo"), "_gle_format_combo missing"
