@@ -23,6 +23,16 @@ from asymmetry.core.fitting.parameter_models import (
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.windows.global_parameter_fit_window import GlobalParameterFitWindow
+from tests._qt_helpers import wait_for
+
+
+def _wait_fit_curves(window: GlobalParameterFitWindow, timeout_s: float = 10.0) -> None:
+    """Block until the off-thread cross-group fit-curve recompute lands."""
+    wait_for(
+        lambda: not window._fit_curve_compute_active,
+        QApplication.instance(),
+        timeout_s=timeout_s,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -71,7 +81,7 @@ def test_refresh_plot_tolerates_missing_model_parameter_in_restored_result(
     )
 
     # Should not raise even though the restored result omits a now-required
-    # model parameter.
+    # model parameter — the off-thread compute fills model defaults.
     window.set_results(
         parameter_name="Lambda",
         x_key="field",
@@ -79,6 +89,98 @@ def test_refresh_plot_tolerates_missing_model_parameter_in_restored_result(
         model=model,
         result=result,
     )
+    _wait_fit_curves(window)
+    assert not window._fit_curve_compute_active
+
+
+def test_set_results_computes_fit_curves_off_thread_behind_overlay(
+    qapp: QApplication,
+) -> None:
+    """The cross-group fit curves are recomputed off-thread under the overlay."""
+    window = GlobalParameterFitWindow()
+    model = ParameterCompositeModel(["Linear"])
+    groups = [
+        ParameterGroupData(
+            group_id="g0",
+            group_name="G0",
+            x=np.array([10.0, 20.0, 30.0], dtype=float),
+            y=np.array([0.2, 0.15, 0.1], dtype=float),
+            yerr=np.array([0.01, 0.01, 0.01], dtype=float),
+            group_variable_value=0.1,
+        )
+    ]
+    result = CrossGroupFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        global_parameters=ParameterSet(
+            [Parameter("m", value=-0.005), Parameter("b", value=0.25)]
+        ),
+        local_parameters={},
+        fixed_parameters=ParameterSet(),
+    )
+
+    window.set_results(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=groups,
+        model=model,
+        result=result,
+    )
+    # Mid-flight: the overlay covers the plot and the compute is active.
+    assert window._fit_curve_compute_active
+    assert window._fit_overlay is not None and not window._fit_overlay.isHidden()
+
+    _wait_fit_curves(window)
+
+    # Landed: overlay cleared, the precompute consumed-then-dropped, and the
+    # red model curve drawn on the fit plot.
+    assert not window._fit_curve_compute_active
+    assert window._fit_overlay.isHidden()
+    assert window._precomputed_left_curves is None
+    assert window._left_figure is not None and window._left_figure.axes
+    red_lines = [
+        line
+        for ax in window._left_figure.axes
+        for line in ax.get_lines()
+        if line.get_color() == "red"
+    ]
+    assert red_lines, "the cross-group fit curve should be drawn after the compute"
+
+
+def test_close_with_pending_fit_curve_compute_shuts_down(qapp: QApplication) -> None:
+    """Closing mid-recompute tears the worker down within the bounded wait."""
+    window = GlobalParameterFitWindow()
+    model = ParameterCompositeModel(["Linear"])
+    groups = [
+        ParameterGroupData(
+            group_id="g0",
+            group_name="G0",
+            x=np.array([10.0, 20.0, 30.0], dtype=float),
+            y=np.array([0.2, 0.15, 0.1], dtype=float),
+            yerr=np.array([0.01, 0.01, 0.01], dtype=float),
+            group_variable_value=0.1,
+        )
+    ]
+    result = CrossGroupFitResult(
+        success=True,
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+        global_parameters=ParameterSet([Parameter("m", value=1.0), Parameter("b", value=0.0)]),
+        local_parameters={},
+        fixed_parameters=ParameterSet(),
+    )
+    window.set_results(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=groups,
+        model=model,
+        result=result,
+    )
+    assert window._fit_curve_compute_active
+
+    window.close()
+    assert window._tasks.active_count == 0
 
 
 def test_local_parameter_plot_uses_complementary_group_axis_label(qapp: QApplication) -> None:

@@ -50,6 +50,8 @@ from asymmetry.gui.export_paths import (
 from asymmetry.gui.gle_settings import get_gle_executable
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles.widgets import apply_param_table_style
+from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
@@ -99,6 +101,20 @@ class GlobalParameterFitWindow(QMainWindow):
         self._add_label_mode = False
         self._dragging_annotation: dict[str, object] | None = None
 
+        # Background machinery for the cross-group fit-curve evaluation, which
+        # runs per group over an 800-point axis and would otherwise block the
+        # GUI thread when a saved fit is restored on project open.
+        self._tasks = TaskRunner(self)
+        self._fit_curve_compute_active = False
+        # Set when a fresh recompute is requested while one is in flight (the
+        # set_results + restore_state + restore_decorations burst on project
+        # open), so the burst collapses to a single rerun instead of a thread
+        # per call.
+        self._fit_curve_recompute_pending = False
+        #: Per-group precomputed fit curves consumed by the *next* _refresh_plot
+        #: draw, then dropped so user-driven redraws (toggles) evaluate inline.
+        self._precomputed_left_curves: dict[str, dict] | None = None
+
         root = QWidget(self)
         self.setCentralWidget(root)
         root_layout = QHBoxLayout(root)
@@ -123,6 +139,12 @@ class GlobalParameterFitWindow(QMainWindow):
             self._left_canvas.mpl_connect("button_release_event", self._on_canvas_button_release)
         except ImportError:
             pass
+
+        # Covers the fit plot while its per-group curves are recomputed off the
+        # GUI thread (created only when the canvas exists).
+        self._fit_overlay = (
+            LoadingOverlay(self._left_canvas) if self._left_canvas is not None else None
+        )
 
         fit_controls_row = QHBoxLayout()
         self._show_components_check = QCheckBox("Show components")
@@ -527,7 +549,10 @@ class GlobalParameterFitWindow(QMainWindow):
 
         self._sync_fit_scale_controls()
         if self.has_result():
-            self._refresh_plot()
+            # Recompute the fit curves off-thread (controls like Show Components
+            # change what is evaluated); coalesced with the set_results compute
+            # already in flight during project restore.
+            self._start_fit_curve_compute()
             self._refresh_local_parameter_plots()
 
     def _apply_decoration_state(self, state: dict) -> None:
@@ -588,7 +613,7 @@ class GlobalParameterFitWindow(QMainWindow):
             return
         self._apply_decoration_state(state)
         if self.has_result():
-            self._refresh_plot()
+            self._start_fit_curve_compute()
             self._refresh_local_parameter_plots()
 
     def _selected_local_y_parameters(self) -> list[str]:
@@ -781,8 +806,74 @@ class GlobalParameterFitWindow(QMainWindow):
         self._fit_x_min = float(fit_x_min)
         self._fit_x_max = float(fit_x_max)
         self._refresh_table()
-        self._refresh_plot()
         self._refresh_local_parameter_plots()
+        # The cross-group fit curves are the heavy part (per-group model eval
+        # over an 800-point axis); compute them off-thread behind the overlay so
+        # restoring a saved fit on project open does not block the GUI.
+        self._start_fit_curve_compute()
+
+    def _start_fit_curve_compute(self) -> None:
+        """Recompute the cross-group fit curves off-thread, overlaying the plot."""
+        if self._left_canvas is None or self._left_figure is None:
+            return
+        if self._result is None or self._model is None:
+            # Nothing to evaluate; _refresh_plot just clears the canvas (cheap).
+            self._precomputed_left_curves = None
+            self._refresh_plot()
+            return
+        if self._fit_curve_compute_active:
+            # A compute is already running; fold this request into a single
+            # rerun rather than spawning another worker.
+            self._fit_curve_recompute_pending = True
+            return
+        groups = list(self._groups)
+        show_components = self._show_components_check.isChecked()
+        if self._fit_overlay is not None:
+            self._fit_overlay.show_message("Computing fit curves…")
+        self._fit_curve_compute_active = True
+        self._tasks.start(
+            lambda _worker: {
+                group.group_id: self._compute_group_fit_curve(group, show_components)
+                for group in groups
+            },
+            on_finished=self._on_fit_curves_ready,
+            on_error=self._on_fit_curves_error,
+        )
+
+    def _on_fit_curves_ready(self, curves: object) -> None:
+        self._fit_curve_compute_active = False
+        if self._fit_curve_recompute_pending:
+            # Controls changed mid-compute (restore burst); recompute with the
+            # latest state and skip drawing this now-stale result.
+            self._fit_curve_recompute_pending = False
+            self._start_fit_curve_compute()
+            return
+        if self._fit_overlay is not None:
+            self._fit_overlay.hide()
+        # Consume the precompute for this one draw, then drop it so later
+        # user-driven redraws (control toggles) evaluate inline.
+        self._precomputed_left_curves = curves if isinstance(curves, dict) else None
+        self._refresh_plot()
+        self._precomputed_left_curves = None
+
+    def _on_fit_curves_error(self, message: str) -> None:
+        self._fit_curve_compute_active = False
+        if self._fit_curve_recompute_pending:
+            self._fit_curve_recompute_pending = False
+            self._start_fit_curve_compute()
+            return
+        if self._fit_overlay is not None:
+            self._fit_overlay.hide()
+        # Draw the data points without curves rather than re-evaluating inline,
+        # which would re-raise the same error on the GUI thread.
+        self._precomputed_left_curves = {}
+        self._refresh_plot()
+        self._precomputed_left_curves = None
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        """Cancel and join any in-flight fit-curve recompute before closing."""
+        self._tasks.shutdown()
+        super().closeEvent(event)
 
     def _x_label(self) -> str:
         return {
@@ -991,6 +1082,66 @@ class GlobalParameterFitWindow(QMainWindow):
 
         self._params_table.resizeColumnsToContents()
 
+    def _compute_group_fit_curve(
+        self, group: ParameterGroupData, show_components: bool
+    ) -> dict | None:
+        """Evaluate one group's cross-group fit curve (and optional components).
+
+        Pure: reads only the captured model/result/x-range state and the passed
+        ``show_components`` flag — no widget or matplotlib access — so it is safe
+        to run on a worker thread. Returns ``{"xx", "yy", "components"}``,
+        ``{"error": msg}`` when the model rejects the parameters, or ``None``
+        when there is nothing to draw.
+        """
+        if self._model is None or self._result is None:
+            return None
+        kwargs = {p.name: p.value for p in self._result.global_parameters}
+        for p in self._result.fixed_parameters:
+            kwargs[p.name] = p.value
+        local = self._result.local_parameters.get(group.group_id)
+        if local is not None:
+            for p in local:
+                kwargs[p.name] = p.value
+        # Backward-compatible restore support: older saved cross-group states may
+        # miss newer model parameters (e.g. D_perp). Fill from model defaults.
+        missing = [name for name in getattr(self._model, "param_names", []) if name not in kwargs]
+        defaults = getattr(self._model, "param_defaults", {})
+        for name in missing:
+            if isinstance(defaults, dict) and name in defaults:
+                kwargs[name] = float(defaults[name])
+        if not kwargs:
+            return None
+
+        xx = np.asarray(group.x, dtype=float)
+        if xx.size >= 2:
+            xx = xx.copy()
+            xx.sort()
+        if (
+            np.isfinite(self._fit_x_min)
+            and np.isfinite(self._fit_x_max)
+            and self._fit_x_max > self._fit_x_min
+        ):
+            mask = (xx >= self._fit_x_min) & (xx <= self._fit_x_max)
+            xx = xx[mask]
+        if xx.size >= 2:
+            x_min = float(np.nanmin(xx))
+            x_max = float(np.nanmax(xx))
+            if self._x_key == "field" and x_min > 0.0 and x_max > 0.0:
+                xx = np.geomspace(x_min, x_max, _PARAMETER_FIT_CURVE_SAMPLE_COUNT)
+            else:
+                xx = np.linspace(x_min, x_max, _PARAMETER_FIT_CURVE_SAMPLE_COUNT)
+
+        try:
+            components = (
+                self._model.evaluate_components(xx, additive_only=True, **kwargs)
+                if show_components
+                else None
+            )
+            yy = np.asarray(self._model.function(xx, **kwargs), dtype=float)
+        except KeyError as exc:
+            return {"error": str(exc)}
+        return {"xx": xx, "yy": yy, "components": components}
+
     def _refresh_plot(self) -> None:
         if self._left_canvas is None or self._left_figure is None:
             return
@@ -1020,91 +1171,57 @@ class GlobalParameterFitWindow(QMainWindow):
             e = group.yerr
             ax.errorbar(x, y, yerr=e, fmt="o", linestyle="none", color="black", capsize=2)
 
-            kwargs = {p.name: p.value for p in self._result.global_parameters}
-            for p in self._result.fixed_parameters:
-                kwargs[p.name] = p.value
-            local = self._result.local_parameters.get(group.group_id)
-            if local is not None:
-                for p in local:
-                    kwargs[p.name] = p.value
+            # The per-group curve is heavy (model eval over an 800-point axis):
+            # consume the off-thread precompute when present (project open), else
+            # evaluate inline for direct/interactive redraws (control toggles).
+            if self._precomputed_left_curves is not None:
+                curve = self._precomputed_left_curves.get(group.group_id)
+            else:
+                curve = self._compute_group_fit_curve(
+                    group, self._show_components_check.isChecked()
+                )
 
-            # Backward-compatible restore support: older saved cross-group
-            # states may miss newer model parameters (e.g. D_perp). Fill from
-            # model defaults before evaluating.
-            missing = [
-                name for name in getattr(self._model, "param_names", []) if name not in kwargs
-            ]
-            defaults = getattr(self._model, "param_defaults", {})
-            for name in missing:
-                if isinstance(defaults, dict) and name in defaults:
-                    kwargs[name] = float(defaults[name])
-
-            if kwargs:
-                xx = x
-                if xx.size >= 2:
-                    xx = xx.copy()
-                    xx.sort()
-
-                if (
-                    np.isfinite(self._fit_x_min)
-                    and np.isfinite(self._fit_x_max)
-                    and self._fit_x_max > self._fit_x_min
-                ):
-                    mask = (xx >= self._fit_x_min) & (xx <= self._fit_x_max)
-                    xx = xx[mask]
-
-                if xx.size >= 2:
-                    x_min = float(np.nanmin(xx))
-                    x_max = float(np.nanmax(xx))
-                    if self._x_key == "field" and x_min > 0.0 and x_max > 0.0:
-                        xx = np.geomspace(x_min, x_max, _PARAMETER_FIT_CURVE_SAMPLE_COUNT)
-                    else:
-                        xx = np.linspace(x_min, x_max, _PARAMETER_FIT_CURVE_SAMPLE_COUNT)
-
-                try:
-                    if self._show_components_check.isChecked():
-                        components = self._model.evaluate_components(
-                            xx, additive_only=True, **kwargs
+            if curve is not None and "error" in curve:
+                ax.text(
+                    0.02,
+                    0.95,
+                    f"Fit curve unavailable: {curve['error']}",
+                    transform=ax.transAxes,
+                    fontsize=9,
+                    va="top",
+                    color="tab:red",
+                )
+            elif curve is not None:
+                xx = curve["xx"]
+                components = curve.get("components")
+                if components is not None:
+                    ordered = self._ordered_components_for_stacking(components)
+                    cumulative = np.zeros_like(xx, dtype=float)
+                    component_colors = [
+                        "#8ecae6",
+                        "#90be6d",
+                        "#f4a261",
+                        "#e5989b",
+                        "#bdb2ff",
+                        "#ffd166",
+                    ]
+                    for cidx, (_name, comp_y) in enumerate(ordered):
+                        fill_color = component_colors[cidx % len(component_colors)]
+                        comp_fill = np.maximum(np.asarray(comp_y, dtype=float), 0.0)
+                        lower = cumulative
+                        upper = cumulative + comp_fill
+                        ax.fill_between(xx, lower, upper, color=fill_color, alpha=0.3, zorder=1)
+                        ax.plot(
+                            xx,
+                            upper,
+                            linestyle="--",
+                            linewidth=0.8,
+                            color=fill_color,
+                            alpha=0.9,
+                            zorder=2,
                         )
-                        ordered = self._ordered_components_for_stacking(components)
-                        cumulative = np.zeros_like(xx, dtype=float)
-                        component_colors = [
-                            "#8ecae6",
-                            "#90be6d",
-                            "#f4a261",
-                            "#e5989b",
-                            "#bdb2ff",
-                            "#ffd166",
-                        ]
-                        for cidx, (_name, comp_y) in enumerate(ordered):
-                            fill_color = component_colors[cidx % len(component_colors)]
-                            comp_fill = np.maximum(np.asarray(comp_y, dtype=float), 0.0)
-                            lower = cumulative
-                            upper = cumulative + comp_fill
-                            ax.fill_between(xx, lower, upper, color=fill_color, alpha=0.3, zorder=1)
-                            ax.plot(
-                                xx,
-                                upper,
-                                linestyle="--",
-                                linewidth=0.8,
-                                color=fill_color,
-                                alpha=0.9,
-                                zorder=2,
-                            )
-                            cumulative = upper
-
-                    yy = self._model.function(xx, **kwargs)
-                    ax.plot(xx, yy, color="red", linewidth=1.5)
-                except KeyError as exc:
-                    ax.text(
-                        0.02,
-                        0.95,
-                        f"Fit curve unavailable: {exc}",
-                        transform=ax.transAxes,
-                        fontsize=9,
-                        va="top",
-                        color="tab:red",
-                    )
+                        cumulative = upper
+                ax.plot(xx, curve["yy"], color="red", linewidth=1.5)
             if share_x_axis:
                 self._ensure_group_label_annotation(group.group_id, group.group_name, ax)
                 ax.set_title("")
