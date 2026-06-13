@@ -1019,6 +1019,58 @@ class TestPlotPanel:
             fresh.close()
             fresh.deleteLater()
 
+    def test_cursor_readout_snaps_and_windows(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        from asymmetry.core.transform.integral import integrate_curve
+
+        panel.plot_dataset(sample_dataset)
+        t_arr = panel._last_plot_time
+        assert t_arr is not None
+        i = 40
+
+        payload = panel._build_cursor_readout(float(t_arr[i]) + 1e-6, 0.0)
+        assert payload["snapped"] is True
+        assert payload["x"] == pytest.approx(float(t_arr[i]))
+        assert payload["y"] == pytest.approx(float(panel._last_plot_asymmetry[i]))
+        # S/N at the snapped point.
+        assert payload["snr"] == pytest.approx(
+            abs(float(panel._last_plot_asymmetry[i]) / float(panel._last_plot_error[i]))
+        )
+
+        # Windowed average matches integrate_curve over the visible x-range.
+        lo = float(panel._x_min.value())
+        hi = float(panel._x_max.value())
+        mean, mean_err = integrate_curve(
+            panel._last_plot_time,
+            panel._last_plot_asymmetry,
+            panel._last_plot_error,
+            t_min=min(lo, hi),
+            t_max=max(lo, hi),
+        )
+        assert payload["window"][0] == pytest.approx(mean)
+        assert payload["window"][1] == pytest.approx(mean_err)
+
+    def test_cursor_readout_declines_snap_on_grouped_subplots(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        datasets = [
+            MuonDataset(
+                time=np.array([0.0, 1.0, 2.0]),
+                asymmetry=np.array([10.0, 9.0, 8.0]),
+                error=np.array([1.0, 1.0, 1.0]),
+                metadata={"run_number": -(idx + 1)},
+            )
+            for idx in range(2)
+        ]
+        panel.plot_grouped_time_domain_subplots(datasets)
+        payload = panel._build_cursor_readout(1.0, 5.0)
+        # Multi-subplot: snapping is declined, raw coordinate is reported.
+        assert payload["snapped"] is False
+        assert payload["x"] == pytest.approx(1.0)
+
     def test_grouped_subplots_expand_canvas_height_for_scrolling(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")

@@ -53,6 +53,8 @@ from asymmetry.core.transform.background import (
     resolve_background_mode,
 )
 from asymmetry.core.transform.grouping import good_event_count, group_forward_backward
+from asymmetry.core.transform.integral import integrate_curve
+from asymmetry.core.transform.peakfit import parabolic_peak
 from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
 from asymmetry.core.utils.constants import (
     PeriodMode,
@@ -167,7 +169,10 @@ class PlotPanel(QWidget):
     polarization_axis_changed = Signal(str)
     overlay_toggled = Signal(bool)
     time_view_changed = Signal(str)
-    cursor_coords_changed = Signal(object, object)  # (x: float|None, y: float|None)
+    # Payload dict for the status-bar cursor readout, or None to clear. Keys:
+    # x, y (snapped where possible), err, snr, peak (x,y)|None,
+    # window (mean,err,n)|None. See _build_cursor_readout.
+    cursor_coords_changed = Signal(object)
     #: Spectral-moments overlay drags (frequency panel): window in canonical MHz.
     moments_window_changed = Signal(float, float)
     moments_cutoff_changed = Signal(float)  # new cutoff fraction in [0, 1)
@@ -4460,7 +4465,7 @@ class PlotPanel(QWidget):
                 artist.set_position((ann["x"], ann["y"]))
                 self._canvas.draw_idle()
 
-        # Emit cursor position for the status bar (no-op during drags).
+        # Emit cursor readout for the status bar (no-op during drags).
         if (
             self._active_fit_handle is None
             and self._active_annotation_idx is None
@@ -4469,9 +4474,83 @@ class PlotPanel(QWidget):
             and event.xdata is not None
             and event.ydata is not None
         ):
-            self.cursor_coords_changed.emit(float(event.xdata), float(event.ydata))
+            self.cursor_coords_changed.emit(
+                self._build_cursor_readout(float(event.xdata), float(event.ydata))
+            )
         else:
-            self.cursor_coords_changed.emit(None, None)
+            self.cursor_coords_changed.emit(None)
+
+    def _cursor_snap_arrays(self):
+        """Cached (t, y, err) for snapping, or None on multi-curve views.
+
+        Snapping is only well-defined when the cached arrays correspond to the
+        main axis. On stacked grouped/vector subplots the cache holds the last
+        subplot's data, so we decline to snap and report the raw cursor instead.
+        """
+        if getattr(self, "_grouped_time_subplot_datasets", None) or getattr(
+            self, "_vector_subplot_datasets", None
+        ):
+            return None
+        t = self._last_plot_time
+        y = self._last_plot_asymmetry
+        if t is None or y is None or len(t) == 0:
+            return None
+        return t, y, self._last_plot_error
+
+    def _build_cursor_readout(self, xdata: float, ydata: float) -> dict:
+        """Build the status-bar cursor payload, snapping to the nearest point.
+
+        Adds the spectrum-reading readouts (S/N, a 3-point parabolic peak, and
+        the windowed average over the visible x-range) when a single curve is in
+        view; falls back to the raw coordinate otherwise.
+        """
+        arrays = self._cursor_snap_arrays()
+        if arrays is None:
+            return {"x": xdata, "y": ydata, "snapped": False}
+
+        t, y, e = arrays
+        t = np.asarray(t, dtype=float)
+        y = np.asarray(y, dtype=float)
+        idx = int(np.argmin(np.abs(t - xdata)))
+        tx = float(t[idx])
+        ty = float(y[idx])
+        err = None
+        if e is not None and idx < len(e):
+            try:
+                err = float(e[idx])
+            except (TypeError, ValueError):
+                err = None
+        snr = None
+        if err is not None and np.isfinite(err) and err != 0.0:
+            snr = abs(ty / err)
+
+        peak = None
+        if 1 <= idx < len(t) - 1:
+            peak = parabolic_peak(t[idx - 1 : idx + 2], y[idx - 1 : idx + 2])
+
+        window = None
+        if not self._is_frequency_plot_panel():
+            lo = float(self._x_min.value())
+            hi = float(self._x_max.value())
+            err_arr = np.asarray(e, dtype=float) if e is not None else np.zeros_like(y)
+            try:
+                mean, mean_err = integrate_curve(
+                    t, y, err_arr, t_min=min(lo, hi), t_max=max(lo, hi)
+                )
+                n = int(np.count_nonzero((t >= min(lo, hi)) & (t <= max(lo, hi))))
+                window = (float(mean), float(mean_err), n)
+            except (ValueError, ZeroDivisionError):
+                window = None
+
+        return {
+            "x": tx,
+            "y": ty,
+            "err": err,
+            "snr": snr,
+            "peak": peak,
+            "window": window,
+            "snapped": True,
+        }
 
     def _on_canvas_button_release(self, event) -> None:
         """End drag and open numeric editor on click without drag."""

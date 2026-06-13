@@ -9049,20 +9049,36 @@ class MainWindow(QMainWindow):
         ):
             self._set_status_state("Idle")
 
-    def _on_cursor_coords_changed(self, x: object, y: object) -> None:
-        """Update the status bar right label with the current cursor position."""
+    def _on_cursor_coords_changed(self, payload: object) -> None:
+        """Update the status bar right label with the cursor readout.
+
+        *payload* is the dict emitted by the plot panel (snapped coordinate plus
+        the optional spectrum-reading readouts), or ``None`` to clear.
+        """
         if not hasattr(self, "_status_coords_label"):
             return
-        if x is None or y is None:
+        if not isinstance(payload, dict) or payload.get("x") is None or payload.get("y") is None:
             self._status_coords_label.setText("")
             return
+        x = float(payload["x"])
+        y = float(payload["y"])
         domain = self._plot_workspace.active_view() if hasattr(self, "_plot_workspace") else ""
         if domain == "frequency":
-            text = f"ν = {float(x):.3f} MHz  |F| = {float(y):.4g}"
+            text = f"ν = {x:.3f} MHz  |F| = {y:.4g}"
         else:
             # χ²/ν lives in its own permanent label (_status_chi2_label);
             # appending it here would show it twice.
-            text = f"x = {float(x):.3f} μs  y = {float(y):.2f} %"
+            text = f"t = {x:.3f} μs  A = {y:.2f} %"
+        snr = payload.get("snr")
+        if snr is not None:
+            text += f"  S/N = {float(snr):.3g}"
+        peak = payload.get("peak")
+        if peak is not None:
+            text += f"  peak {float(peak[0]):.3f}={float(peak[1]):.4g}"
+        window = payload.get("window")
+        if window is not None:
+            mean, mean_err, n = window
+            text += f"  ⟨{float(mean):.4g}±{float(mean_err):.2g}⟩ ({int(n)} pts)"
         self._status_coords_label.setText(text)
 
     def _get_fit_dataset(self, dataset):
