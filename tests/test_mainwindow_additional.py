@@ -2605,6 +2605,48 @@ class TestMainWindowBasic:
         assert dataset.run.grouping["forward_group"] == 3
         assert dataset.run.grouping["backward_group"] == 4
 
+    def test_selecting_dataset_in_all_mode_reduces_to_fit_target(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Selecting a run in the stacked (ALL) view re-reduces it to the carried
+        fit-target projection, so a fit binds to that projection's curve."""
+        dataset = _make_dataset(7462, with_grouping=False)
+        assert dataset.run is not None
+        dataset.run.grouping.update(
+            {
+                "groups": {1: [1], 2: [2], 3: [1], 4: [2], 5: [1], 6: [2]},
+                "projections": [
+                    {"label": "P_x", "forward_group": 5, "backward_group": 6},
+                    {"label": "P_y", "forward_group": 3, "backward_group": 4},
+                    {"label": "P_z", "forward_group": 1, "backward_group": 2},
+                ],
+                "forward_group": 5,
+                "backward_group": 6,
+                "vector_axis": "P_x",
+                "instrument": "EMU",
+                "alpha": 1.0,
+                "first_good_bin": 0,
+                "last_good_bin": 3,
+                "bunching_factor": 1,
+                "deadtime_correction": False,
+            }
+        )
+        mainwindow._current_dataset = dataset
+        mainwindow._data_browser.get_selected_datasets = lambda: [dataset]
+        mainwindow._plot_panel.get_current_polarization_axis = lambda: "ALL"
+        mainwindow._plot_panel.fit_target_projection = lambda: "P_z"
+        monkeypatch.setattr(mainwindow, "_render_current_selection_plot", lambda: None)
+        monkeypatch.setattr(mainwindow, "_refresh_vector_axis_selector", lambda: None)
+
+        mainwindow._update_selected_datasets()
+
+        # Re-reduced to the fit target P_z's pair (1/2), not left at P_x.
+        assert dataset.run.grouping["vector_axis"] == "P_z"
+        assert dataset.run.grouping["forward_group"] == 1
+        assert dataset.run.grouping["backward_group"] == 2
+
     def test_extract_grouping_overrides_includes_vector_axis(
         self,
         mainwindow: MainWindow,

@@ -6981,13 +6981,13 @@ class MainWindow(QMainWindow):
                 self._sync_fourier_panel_for_dataset(dataset)
                 if hasattr(self._frequency_plot_panel, "update_frequency_reference"):
                     self._frequency_plot_panel.update_frequency_reference(dataset)
-                active_axis = None
-                if hasattr(self._plot_panel, "get_current_polarization_axis"):
-                    active_axis = self._normalize_vector_axis(
-                        self._plot_panel.get_current_polarization_axis()
-                    )
-                if active_axis in {"P_x", "P_y", "P_z"}:
-                    self._synchronize_targets_to_axis([dataset], active_axis)
+                # Reduce the newly selected run to the projection the fit will run
+                # on — the selected single axis, or the fit-target subplot in the
+                # stacked (ALL) view — so a fit binds to that projection's curve
+                # rather than whatever axis the run was last reduced to.
+                fit_projection = self._current_single_fit_projection()
+                if fit_projection in {"P_x", "P_y", "P_z"}:
+                    self._synchronize_targets_to_axis([dataset], fit_projection)
                 self._render_current_selection_plot()
                 self._sync_frequency_plot_for_current_dataset()
                 self._refresh_vector_axis_selector()
@@ -8865,14 +8865,12 @@ class MainWindow(QMainWindow):
     def _update_selected_datasets(self, *_args) -> None:
         """Update the fit panel with currently selected datasets."""
         selected = self._data_browser.get_selected_datasets()
-        active_axis = None
-        if hasattr(self._plot_panel, "get_current_polarization_axis"):
-            active_axis = self._normalize_vector_axis(
-                self._plot_panel.get_current_polarization_axis()
-            )
+        # Reduce the selection to the projection a fit will run on — the active
+        # single axis, or the fit-target subplot in the stacked (ALL) view.
+        fit_projection = self._current_single_fit_projection()
 
-        if selected and active_axis in {"P_x", "P_y", "P_z"}:
-            updated = self._synchronize_targets_to_axis(selected, active_axis)
+        if selected and fit_projection in {"P_x", "P_y", "P_z"}:
+            updated = self._synchronize_targets_to_axis(selected, fit_projection)
             if updated > 0:
                 self._data_browser._rebuild_table()
                 selected = self._data_browser.get_selected_datasets()

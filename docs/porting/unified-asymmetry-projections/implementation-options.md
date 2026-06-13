@@ -1,5 +1,28 @@
 # Implementation options
 
+## Deferred Step-4 follow-ups (from the second review, agreed with Ben)
+
+Real but lower-severity findings deferred to a follow-up session (the common-case
+correctness bugs — fit on wrong curve, overlay on wrong subplot, run-switch
+re-reduce — were all fixed):
+
+- **Multi-run overlay + stacked + single fit: run-key split.** In a multi-run
+  overlay ALL view, `plot_fit` keys the curve under the plot panel's
+  `_current_dataset` (the *first* projection clone's run) while
+  `_record_single_fit_slot` keys the slot under the main window's
+  `_current_dataset` (the clicked run). When those runs differ the displayed
+  overlay and the persisted slot disagree on the run. Edge case (single fit in a
+  multi-run overlay is already ambiguous); decide whether to block it there or
+  source the run from one place.
+- **Non-canonical projection labels skip the re-reduce.**
+  `_on_fit_target_projection_changed` / the bind paths only re-reduce for
+  `P_x/P_y/P_z`. When Step 5 adds TF dual-grouping subplots with non-canonical
+  labels, clicking one won't re-reduce — reopening the fit-on-wrong-curve bug for
+  those labels. Tie this to generalizing `_normalize_vector_axis` in Step 5.
+- **Empty-projection subplot y-range.** Dropping the `elif ALL` y-fallback means a
+  selected subplot whose data is all-NaN keeps matplotlib's default `(0,1)` when
+  Auto-Y is off. Cosmetic; only a projection with no finite asymmetry.
+
 ## Known pre-existing bug (deferred, surfaced during Step 4 testing)
 
 **Auto-X ↔ display-decimation interaction.** Setting Auto X while *coming from a
