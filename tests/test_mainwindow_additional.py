@@ -24,7 +24,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterGroupData,
 )
 from asymmetry.core.project import load_project, save_project
-from asymmetry.core.representation import RepresentationType
+from asymmetry.core.representation import FitSlot, RepresentationType
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.styles import tokens
 from tests._qt_helpers import wait_for
@@ -3000,6 +3000,119 @@ class TestMainWindowBasic:
 
         assert calls["render"] == 1
         assert calls["apply"] == 0
+
+    # ── per-projection single-fit storage (Step 3 part 2) ─────────────────
+
+    @staticmethod
+    def _single_fit_result() -> SimpleNamespace:
+        return SimpleNamespace(
+            success=True,
+            chi_squared=10.0,
+            reduced_chi_squared=0.5,
+            parameters=None,
+            uncertainties={},
+        )
+
+    def test_single_fit_slot_recorded_under_active_projection(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_dataset(8801, with_grouping=True)
+        mainwindow._current_dataset = dataset
+        # Sanity: the default view is the time F-B asymmetry these slots key off.
+        assert mainwindow._active_representation_type() == RepresentationType.TIME_FB_ASYMMETRY
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "P_x")
+        state = {
+            "composite_model": {"component_names": ["Gaussian"]},
+            "parameters": [{"name": "A", "value": 0.2}],
+            "result_html": "x-fit",
+        }
+        monkeypatch.setattr(mainwindow._fit_panel, "get_single_state", lambda: state)
+        monkeypatch.setattr(mainwindow._fit_panel, "get_single_form_state", lambda: dict(state))
+
+        mainwindow._record_single_fit_slot(self._single_fit_result())
+
+        rep = mainwindow._project_model.representation(8801, RepresentationType.TIME_FB_ASYMMETRY)
+        assert rep is not None
+        # The default slot is untouched; the fit lands on the active projection.
+        assert rep.fit.is_empty()
+        px = rep.fit_for("P_x")
+        assert px.provenance == "single"
+        assert px.ui_state == state
+
+    def test_single_fit_slot_recorded_on_default_for_all_axis(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_dataset(8802, with_grouping=True)
+        mainwindow._current_dataset = dataset
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "ALL")
+        state = {"composite_model": {"component_names": ["Gaussian"]}, "result_html": "all"}
+        monkeypatch.setattr(mainwindow._fit_panel, "get_single_state", lambda: state)
+        monkeypatch.setattr(mainwindow._fit_panel, "get_single_form_state", lambda: dict(state))
+
+        mainwindow._record_single_fit_slot(self._single_fit_result())
+
+        rep = mainwindow._project_model.representation(8802, RepresentationType.TIME_FB_ASYMMETRY)
+        assert rep is not None
+        # ALL is the aggregate sentinel — it keys onto the default slot.
+        assert rep.fit.provenance == "single"
+        assert rep.projection_fits == {}
+
+    def test_restore_payload_resolves_per_projection(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_dataset(8803, with_grouping=True)
+        rep = mainwindow._project_model.ensure_dataset(8803).ensure(
+            RepresentationType.TIME_FB_ASYMMETRY
+        )
+        rep.set_fit_for("P_x", FitSlot(provenance="single", ui_state={"result_html": "x"}))
+
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "P_x")
+        assert mainwindow._single_fit_restore_payload(dataset) == {"result_html": "x"}
+
+        # An unfit projection forces a blank form, never another projection's fit.
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "P_z")
+        assert mainwindow._single_fit_restore_payload(dataset) == {}
+
+        # The default slot (here empty) defers to the panel's run-keyed restore.
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "ALL")
+        assert mainwindow._single_fit_restore_payload(dataset) is None
+
+    def test_in_session_projection_swap_restores_each_fit(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        dataset = _make_dataset(8804, with_grouping=True)
+        mainwindow._current_dataset = dataset
+        monkeypatch.setattr(mainwindow, "_get_fit_dataset", lambda ds: ds)
+        panel = mainwindow._fit_panel
+        rep = mainwindow._project_model.ensure_dataset(8804).ensure(
+            RepresentationType.TIME_FB_ASYMMETRY
+        )
+
+        # Capture a distinctive P_x form payload, then persist it on the P_x slot.
+        panel.set_dataset(dataset)
+        panel._single_tab._set_composite_model(
+            CompositeModel(["Gaussian", "Constant"], operators=["+"])
+        )
+        rep.set_fit_for("P_x", FitSlot(provenance="single", ui_state=panel.get_single_form_state()))
+        # P_z is left unfit.
+
+        # Viewing the unfit P_z blanks the form (no inherited P_x fit).
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "P_z")
+        mainwindow._rebind_single_fit_to_active_projection()
+        assert panel._single_tab._composite_model.component_names == ["Exponential", "Constant"]
+
+        # Switching back to P_x restores its stored fit verbatim.
+        monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "P_x")
+        mainwindow._rebind_single_fit_to_active_projection()
+        assert panel._single_tab._composite_model.component_names == ["Gaussian", "Constant"]
 
     def test_update_selected_datasets_syncs_selected_runs_to_active_vector_axis(
         self,

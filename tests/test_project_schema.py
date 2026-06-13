@@ -490,6 +490,49 @@ class TestProjectIO:
         assert grouping["alpha_y"] == pytest.approx(1.22)
         assert grouping["alpha_z"] == pytest.approx(1.33)
 
+    def test_per_projection_fit_ui_state_persists_independently(self, tmp_path):
+        """Each projection's single-fit UI payload survives save/load on its own slot."""
+        from asymmetry.core.representation import (
+            FitSlot,
+            RepresentationType,
+            make_representation,
+            representation_from_dict,
+        )
+
+        rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+        rep.set_fit_for(
+            "P_x",
+            FitSlot(provenance="single", result={"chi2": 1.1}, ui_state={"result_html": "x-fit"}),
+        )
+        rep.set_fit_for(
+            "P_z",
+            FitSlot(provenance="single", result={"chi2": 0.9}, ui_state={"result_html": "z-fit"}),
+        )
+
+        state = _minimal_state()
+        state["datasets"] = [
+            {
+                "run_number": 7100,
+                "source_file": "/tmp/run7100.nxs",
+                "metadata_overrides": {"field": 100.0},
+                "grouping_overrides": {},
+                "representations": {RepresentationType.TIME_FB_ASYMMETRY.value: rep.to_dict()},
+            }
+        ]
+        path = tmp_path / "projection_fit_roundtrip.asymp"
+
+        save_project(state, path)
+        loaded = load_project(path)
+
+        rep_dict = loaded["datasets"][0]["representations"][
+            RepresentationType.TIME_FB_ASYMMETRY.value
+        ]
+        restored = representation_from_dict(rep_dict)
+        assert restored.fit_for("P_x").ui_state == {"result_html": "x-fit"}
+        assert restored.fit_for("P_z").ui_state == {"result_html": "z-fit"}
+        # The default slot stays empty — the fits live only on their projections.
+        assert restored.fit.is_empty()
+
     def test_file_is_valid_json(self, tmp_path):
         state = _minimal_state()
         path = tmp_path / "test.asymp"

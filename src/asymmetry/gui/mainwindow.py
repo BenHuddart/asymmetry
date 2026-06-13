@@ -1373,6 +1373,8 @@ class MainWindow(QMainWindow):
                 self._on_plot_polarization_axis_changed
             )
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
+        if hasattr(self._fit_panel, "set_single_fit_restore_provider"):
+            self._fit_panel.set_single_fit_restore_provider(self._single_fit_restore_payload)
         if hasattr(self._fit_panel, "global_fit_started"):
             self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
@@ -2076,6 +2078,7 @@ class MainWindow(QMainWindow):
         if axis == "ALL":
             self._render_current_selection_plot()
             self._refresh_vector_axis_selector()
+            self._rebind_single_fit_to_active_projection()
             self._update_fit_block_state()
             self._log_panel.log("Set vector polarization axis to ALL.")
             return
@@ -2119,8 +2122,23 @@ class MainWindow(QMainWindow):
         self._data_browser._rebuild_table()
         self._render_current_selection_plot()
         self._refresh_vector_axis_selector()
+        self._rebind_single_fit_to_active_projection()
         self._update_fit_block_state()
         self._log_panel.log(f"Set vector polarization axis to {axis} for {updated} dataset(s).")
+
+    def _rebind_single_fit_to_active_projection(self) -> None:
+        """Re-point the single-fit panel at the current dataset's active projection.
+
+        Switching the displayed polarization axis changes which per-projection
+        ``FitSlot`` the single-fit form should show. ``set_dataset`` re-runs the
+        restore mediator, so the form follows the selected projection's stored
+        fit (or blanks for an unfit one).
+        """
+        if self._current_dataset is None:
+            return
+        if self._plot_workspace.active_domain() != "time":
+            return
+        self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
 
     # ── slots ──────────────────────────────────────────────────────────
 
@@ -7449,6 +7467,54 @@ class MainWindow(QMainWindow):
         self._on_fit_parameters_group_fits_deleted(batch_id, runs)
         self._refresh_trend_panel()
 
+    def _current_single_fit_projection(self) -> str | None:
+        """Return the projection a single fit should be keyed under, or ``None``.
+
+        A single-axis vector view (``P_x``/``P_y``/``P_z``) keys the fit onto
+        that projection; the ``ALL`` aggregate, a non-vector view, and the
+        frequency domain all key onto the default slot (``None``). Reading the
+        main time plot's axis only in the time domain avoids mis-keying a
+        frequency fit onto a stale polarization axis.
+        """
+        if self._plot_workspace.active_domain() != "time":
+            return None
+        if not hasattr(self._plot_panel, "get_current_polarization_axis"):
+            return None
+        axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
+        return axis if axis not in (None, "ALL") else None
+
+    def _single_fit_restore_payload(self, dataset) -> dict | None:
+        """Resolve the persisted single-fit form payload for *dataset*'s active slot.
+
+        Mediator for ``FitPanel.set_dataset`` (installed via
+        ``set_single_fit_restore_provider``). Returns the active ``(run,
+        representation, projection)`` slot's ``ui_state`` when present; an empty
+        dict to force a blank form for a genuine-but-unfit *projection* (so
+        projections never inherit each other's fit); or ``None`` to defer to the
+        panel's run-keyed restore (the default slot and legacy projects with no
+        stored ``ui_state``).
+        """
+        if dataset is None:
+            return None
+        rep_type = self._active_representation_type()
+        if rep_type is None:
+            return None
+        try:
+            run_number = int(dataset.run_number)
+        except (TypeError, ValueError):
+            return None
+        representation = self._project_model.representation(run_number, rep_type)
+        if representation is None:
+            return None
+        projection = self._current_single_fit_projection()
+        slot = representation.fit_for(projection)
+        ui_state = slot.ui_state if isinstance(slot.ui_state, dict) else {}
+        if ui_state:
+            return copy.deepcopy(ui_state)
+        # No persisted form payload: a real projection must blank (it must not
+        # inherit the run blob's other-projection fit); the default slot defers.
+        return {} if projection is not None else None
+
     def _record_single_fit_slot(self, fit_result) -> None:
         """Write the active representation's single FitSlot into the project model."""
         rep_type = self._active_representation_type()
@@ -7460,15 +7526,25 @@ class MainWindow(QMainWindow):
         if not isinstance(state, dict):
             return
         run_number = int(self._current_dataset.run_number)
+        projection = self._current_single_fit_projection()
         representation = self._project_model.ensure_dataset(run_number).ensure(rep_type)
-        representation.fit = FitSlot(
-            model=state.get("composite_model"),
-            parameters=[dict(p) for p in state.get("parameters", []) if isinstance(p, dict)],
-            result={
-                **self._fit_result_summary(fit_result),
-                "result_html": state.get("result_html"),
-            },
-            provenance="single",
+        ui_state = (
+            self._fit_panel.get_single_form_state()
+            if hasattr(self._fit_panel, "get_single_form_state")
+            else {}
+        )
+        representation.set_fit_for(
+            projection,
+            FitSlot(
+                model=state.get("composite_model"),
+                parameters=[dict(p) for p in state.get("parameters", []) if isinstance(p, dict)],
+                result={
+                    **self._fit_result_summary(fit_result),
+                    "result_html": state.get("result_html"),
+                },
+                provenance="single",
+                ui_state=ui_state,
+            ),
         )
         # Editing a batch member's model via a single fit may diverge it.
         self._project_model.refresh_divergence()
