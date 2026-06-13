@@ -11,7 +11,7 @@ import functools
 import re
 
 import numpy as np
-from PySide6.QtCore import QEventLoop, QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtCore import QEventLoop, QSignalBlocker, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
@@ -6041,6 +6041,37 @@ class GlobalFitTab(QWidget):
         )
 
 
+class _CurrentPageTabWidget(QTabWidget):
+    """A QTabWidget sized by its *current* tab, not the maximum over all tabs.
+
+    A plain QTabWidget reports the largest size hint across every page, so the
+    wide Batch tab would impose its width on the dock even while the compact
+    Single tab is showing — forcing the inspector scroll area to scroll
+    horizontally (a second scrollbar on top of the parameter table's own). This
+    mirrors :class:`asymmetry.gui.mainwindow._InspectorStack` for the inner
+    Single/Batch tabs, so the dock can follow the visible tab's width.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        # Tab switches change the (current-tab-derived) hints; tell the layout.
+        self.currentChanged.connect(lambda _index: self.updateGeometry())
+
+    def _hint(self, *, minimum: bool) -> QSize:
+        current = self.currentWidget()
+        if current is None:
+            return super().minimumSizeHint() if minimum else super().sizeHint()
+        page = current.minimumSizeHint() if minimum else current.sizeHint()
+        tab_bar = self.tabBar().sizeHint()
+        return QSize(max(page.width(), tab_bar.width()), page.height() + tab_bar.height())
+
+    def sizeHint(self) -> QSize:  # noqa: N802 — Qt override
+        return self._hint(minimum=False)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 — Qt override
+        return self._hint(minimum=True)
+
+
 class FitPanel(QWidget):
     """Fit setup and results panel with tabbed interface.
 
@@ -6072,8 +6103,10 @@ class FitPanel(QWidget):
         self._global_state_by_domain: dict[str, dict] = {}
         self._ui_state_by_domain: dict[str, dict] = {}
 
-        # Create tab widget
-        self._tabs = QTabWidget()
+        # Create tab widget (sized to the visible tab so the wide Batch tab
+        # doesn't force the dock — and a window-level horizontal scrollbar —
+        # while the compact Single tab is showing).
+        self._tabs = _CurrentPageTabWidget()
 
         # Single fit tab
         self._single_tab = SingleFitTab()
