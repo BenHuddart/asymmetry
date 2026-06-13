@@ -901,6 +901,23 @@ class _ValueUncertaintyDelegate(QStyledItemDelegate):
         super().setModelData(editor, model, index)
 
 
+def _size_param_table_to_content(table: QTableWidget) -> None:
+    """Fix a parameter table's height to exactly its rows.
+
+    The inspector dock scrolls vertically as a whole, so the table does not need
+    to grow and scroll internally; sizing it to its content means a few-parameter
+    model leaves no empty rows, while a many-parameter model simply makes the
+    panel taller (and the dock scrolls — the natural axis). The horizontal
+    scrollbar's height is reserved so wide column sets never clip the last row.
+    """
+    table.resizeRowsToContents()
+    rows_height = table.verticalHeader().length()
+    header_height = table.horizontalHeader().sizeHint().height()
+    frame = 2 * table.frameWidth()
+    scrollbar = table.horizontalScrollBar().sizeHint().height()
+    table.setFixedHeight(rows_height + header_height + frame + scrollbar)
+
+
 class SingleFitTab(QWidget):
     """Single dataset fitting interface.
 
@@ -986,26 +1003,22 @@ class SingleFitTab(QWidget):
         )
         self._add_to_series_btn.clicked.connect(self.add_to_series_requested.emit)
 
-        model_button_layout = QGridLayout()
+        # Single column of natural-width buttons. A side-by-side grid forced the
+        # two button columns (~110px each) to set the whole Fit tab's minimum
+        # width; stacking them lets the dock get genuinely narrow on a 13" screen,
+        # and dropping the Expanding policy keeps each button only as wide as its
+        # label needs (left-aligned) instead of stretching to fill the row.
+        model_button_layout = QVBoxLayout()
         model_button_layout.setContentsMargins(0, 0, 0, 0)
-        model_button_layout.setHorizontalSpacing(6)
-        model_button_layout.setVerticalSpacing(6)
-        self._edit_model_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._fit_wizard_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._share_group_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._send_to_batch_btn.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        self._add_to_series_btn.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        model_button_layout.addWidget(self._edit_model_btn, 0, 0)
-        model_button_layout.addWidget(self._fit_wizard_btn, 0, 1)
-        model_button_layout.addWidget(self._share_group_btn, 1, 0, 1, 2)
-        model_button_layout.addWidget(self._send_to_batch_btn, 2, 0)
-        model_button_layout.addWidget(self._add_to_series_btn, 2, 1)
-        model_button_layout.setColumnStretch(0, 1)
-        model_button_layout.setColumnStretch(1, 1)
+        model_button_layout.setSpacing(4)
+        for _model_btn in (
+            self._edit_model_btn,
+            self._fit_wizard_btn,
+            self._share_group_btn,
+            self._send_to_batch_btn,
+            self._add_to_series_btn,
+        ):
+            model_button_layout.addWidget(_model_btn, 0, Qt.AlignmentFlag.AlignLeft)
 
         self._formula_row_label = QLabel("A(t):")
         model_layout.addRow(self._formula_row_label, self._formula_label)
@@ -1077,19 +1090,20 @@ class SingleFitTab(QWidget):
         _apply_param_table_style(self._param_table)
         self._param_table.setItemDelegateForColumn(1, _ValueUncertaintyDelegate(self._param_table))
 
-        # Let the table grow with the dock and scroll when it can't show every
-        # row. A many-parameter model (e.g. the 13-param CdS three-line fit) must
-        # keep all rows reachable; without this the table collapses to a handful
-        # of rows with no scrollbar and the lower parameters become unreachable.
-        self._param_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._param_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._param_table.setMinimumHeight(160)
+        # Size the table to its rows (see _size_param_table_to_content). The
+        # inspector dock scrolls vertically, so the table itself never needs an
+        # internal vertical scrollbar; a 13-parameter model just makes the panel
+        # taller. This removes the empty rows a few-parameter model showed when
+        # the table expanded to fill the dock height.
+        self._param_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._param_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Elide long names on one line rather than wrapping to two rows when the
+        # Name column is narrow (the unit suffix would otherwise wrap).
+        self._param_table.setWordWrap(False)
 
         self._param_table.itemChanged.connect(self._on_param_table_item_changed)
         param_layout.addWidget(self._param_table)
-        # Stretch factor 1 lets the Parameters group claim the dock's free
-        # vertical space ahead of the fixed-height Results group below it.
-        layout.addWidget(param_group, 1)
+        layout.addWidget(param_group)
 
         # Buttons
         btn_layout = QGridLayout()
@@ -1142,6 +1156,10 @@ class SingleFitTab(QWidget):
         self._result_label.setWordWrap(True)
         results_layout.addWidget(self._result_label)
         layout.addWidget(self._results_group)
+
+        # Spare vertical height pools here, below the results box, instead of
+        # being claimed by an expanding parameter table.
+        layout.addStretch(1)
 
         self._set_composite_model(self._composite_model)
 
@@ -1420,6 +1438,7 @@ class SingleFitTab(QWidget):
         )
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
+        _size_param_table_to_content(self._param_table)
 
     def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
         self._updating_fraction_values = True

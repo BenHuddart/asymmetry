@@ -2862,10 +2862,16 @@ def test_many_parameter_model_keeps_every_row_reachable(qapp: QApplication) -> N
     tab._param_table.item(last_row, 1).setText("3.5")
     assert float(tab._param_table.item(last_row, 1).text()) == pytest.approx(3.5)
 
-    # The table is configured to scroll rather than clip: it grows with the
-    # dock and shows a scrollbar on demand instead of suppressing it.
-    assert tab._param_table.verticalScrollBarPolicy() != Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-    assert tab._param_table.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Expanding
+    # Reachability now comes from sizing the table to its content so every row
+    # is rendered (no internal clipping) while the inspector dock scrolls
+    # vertically — not from an internal table scrollbar. The fixed height must
+    # cover all 13 rows plus the header.
+    tab.show()
+    qapp.processEvents()
+    table = tab._param_table
+    assert table.height() >= table.verticalHeader().length() + table.horizontalHeader().height()
+    assert table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert table.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Fixed
 
 
 def _set_row_link_group(tab: SingleFitTab, param_name: str, group: int | None) -> None:
