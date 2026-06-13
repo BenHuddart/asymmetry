@@ -637,18 +637,28 @@ class _FloatLimitField(QLineEdit):
     def _format(self, value: float) -> str:
         return f"{float(value):.{self._decimals}f}"
 
+    def _clamp(self, value: float) -> float:
+        """Clamp to the validator's range, matching QDoubleSpinBox.
+
+        ``QDoubleValidator`` only rejects out-of-range *keystrokes*; it does not
+        bound a programmatic ``setValue`` or an Intermediate entry committed on
+        focus-out. The spinbox this replaces clamped both, so do the same here —
+        otherwise an out-of-range fit limit could reach the engine.
+        """
+        return min(max(float(value), self._validator.bottom()), self._validator.top())
+
     def _normalise_text(self) -> None:
         self.setText(self._format(self.value()))
 
     def value(self) -> float:
-        """Current value, falling back to the last programmatic value if blank."""
+        """Current value (clamped to range), or the last set value if blank."""
         try:
-            return float(self.text())
+            return self._clamp(float(self.text()))
         except ValueError:
             return self._value
 
     def setValue(self, value: float) -> None:  # noqa: N802 — spinbox-API shim
-        self._value = float(value)
+        self._value = self._clamp(value)
         self.setText(self._format(self._value))
 
     def decimals(self) -> int:
