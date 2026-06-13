@@ -1023,7 +1023,11 @@ class SingleFitTab(QWidget):
         self._fit_range_min_spin.setDecimals(3)
         self._fit_range_min_spin.setRange(-1000.0, 1000.0)
         self._fit_range_min_spin.setSingleStep(0.1)
-        self._fit_range_min_spin.setMinimumWidth(72)
+        self._fit_range_min_spin.setMinimumWidth(64)
+        # Cap the width: the wide ±1000 range otherwise inflates the spinbox's
+        # natural minimum to ~119px (it sizes for "-1000.000"), which on its own
+        # set the fit-range row near 280px. Realistic fit times need far less.
+        self._fit_range_min_spin.setMaximumWidth(84)
         self._fit_range_min_spin.setFont(mono_font(11.0))
 
         self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
@@ -1033,7 +1037,8 @@ class SingleFitTab(QWidget):
         self._fit_range_max_spin.setDecimals(3)
         self._fit_range_max_spin.setRange(-1000.0, 1000.0)
         self._fit_range_max_spin.setSingleStep(0.1)
-        self._fit_range_max_spin.setMinimumWidth(72)
+        self._fit_range_max_spin.setMinimumWidth(64)
+        self._fit_range_max_spin.setMaximumWidth(84)
         self._fit_range_max_spin.setFont(mono_font(11.0))
 
         self._fit_range_unit_label = QLabel("μs")
@@ -1111,7 +1116,7 @@ class SingleFitTab(QWidget):
         )
         self._pull_diagnostic_btn.clicked.connect(self._on_pull_diagnostic)
         self._pull_diagnostic_btn.setEnabled(False)
-        self._minos_checkbox = QCheckBox("Asymmetric errors (MINOS)")
+        self._minos_checkbox = QCheckBox("Asymmetric errors")
         self._minos_checkbox.setToolTip(
             "After fitting, walk the χ² profile of each free parameter to get its "
             "asymmetric +/− 1σ interval (MINOS). Slower than the default symmetric "
@@ -2258,7 +2263,11 @@ class GlobalFitTab(QWidget):
         self._fit_range_min_spin.setDecimals(3)
         self._fit_range_min_spin.setRange(-1000.0, 1000.0)
         self._fit_range_min_spin.setSingleStep(0.1)
-        self._fit_range_min_spin.setMinimumWidth(72)
+        self._fit_range_min_spin.setMinimumWidth(64)
+        # Cap the width: the wide ±1000 range otherwise inflates the spinbox's
+        # natural minimum to ~119px (it sizes for "-1000.000"), which on its own
+        # set the fit-range row near 280px. Realistic fit times need far less.
+        self._fit_range_min_spin.setMaximumWidth(84)
         self._fit_range_min_spin.setFont(mono_font(11.0))
 
         self._fit_range_mid_label = QLabel("≤ <i>t</i> ≤")
@@ -2268,7 +2277,8 @@ class GlobalFitTab(QWidget):
         self._fit_range_max_spin.setDecimals(3)
         self._fit_range_max_spin.setRange(-1000.0, 1000.0)
         self._fit_range_max_spin.setSingleStep(0.1)
-        self._fit_range_max_spin.setMinimumWidth(72)
+        self._fit_range_max_spin.setMinimumWidth(64)
+        self._fit_range_max_spin.setMaximumWidth(84)
         self._fit_range_max_spin.setFont(mono_font(11.0))
 
         _fr_layout.addWidget(self._fit_range_min_spin)
@@ -2376,7 +2386,7 @@ class GlobalFitTab(QWidget):
         )
         self._initial_values_btn.clicked.connect(self._open_initial_values_dialog)
         btn_layout.addWidget(self._initial_values_btn)
-        self._minos_checkbox = QCheckBox("Asymmetric errors (MINOS)")
+        self._minos_checkbox = QCheckBox("Asymmetric errors")
         self._minos_checkbox.setToolTip(
             "After fitting, report asymmetric +/− 1σ MINOS intervals (slower; most "
             "useful at low statistics or near parameter bounds)."
