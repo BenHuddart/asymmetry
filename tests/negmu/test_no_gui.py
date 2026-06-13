@@ -52,6 +52,11 @@ def test_background_no_qt():
     assert not new, f"negmu.background triggered Qt load: {new}"
 
 
+def test_polarisation_no_qt():
+    new = _qt_loaded_by("import asymmetry.core.negmu.polarisation")
+    assert not new, f"negmu.polarisation triggered Qt load: {new}"
+
+
 def test_simulate_capture_no_qt():
     new = _qt_loaded_by("import asymmetry.core.simulate")
     assert not new, f"core.simulate triggered Qt load: {new}"
@@ -74,6 +79,7 @@ def test_negmu_does_not_import_count_domain():
     import asymmetry.core.negmu.fit  # noqa: F401
     import asymmetry.core.negmu.lifetimes  # noqa: F401
     import asymmetry.core.negmu.model  # noqa: F401
+    import asymmetry.core.negmu.polarisation  # noqa: F401
     import asymmetry.core.negmu.ratio  # noqa: F401
 
     negmu_dir = pathlib.Path(asymmetry.core.negmu.fit.__file__).parent

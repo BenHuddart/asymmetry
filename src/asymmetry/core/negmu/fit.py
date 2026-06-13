@@ -40,6 +40,10 @@ from asymmetry.core.fitting.grouped_time_domain import (
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.negmu.lifetimes import DECAY_BACKGROUND_LABEL, tau_us
 from asymmetry.core.negmu.model import CaptureComponent, build_capture_count_model
+from asymmetry.core.negmu.polarisation import (
+    POLARISATION_MODES,
+    build_capture_count_model_with_polarisation,
+)
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 COUNT_COSTS: tuple[str, ...] = ("poisson", "gaussian")
@@ -168,6 +172,46 @@ def default_capture_parameters(
 # ---------------------------------------------------------------------------
 
 
+def _default_polarisation_parameters(
+    polarisation: str,
+    seeds: Mapping[str, float] | None = None,
+) -> list[Parameter]:
+    """Return a seeded list of Parameter objects for the chosen polarisation mode.
+
+    Conservative seeds: ``pol_a0 = 0.1``, ``pol_lam = 0.1``, ``pol_freq = 0.5``,
+    ``pol_phase = 0.0``.  Any value can be overridden via ``seeds``.
+    """
+    override = dict(seeds) if seeds else {}
+    params: list[Parameter] = [
+        Parameter(
+            name="pol_a0",
+            value=float(override.get("pol_a0", 0.1)),
+            min=0.0,
+        ),
+        Parameter(
+            name="pol_freq",
+            value=float(override.get("pol_freq", 0.5)),
+            min=0.0,
+        ),
+        Parameter(
+            name="pol_phase",
+            value=float(override.get("pol_phase", 0.0)),
+            min=-np.pi,
+            max=np.pi,
+        ),
+    ]
+    if polarisation == "lorgau":
+        params.insert(
+            1,
+            Parameter(
+                name="pol_lam",
+                value=float(override.get("pol_lam", 0.1)),
+                min=0.0,
+            ),
+        )
+    return params
+
+
 def fit_capture_histogram(
     time: NDArray[np.float64],
     counts: NDArray[np.float64],
@@ -176,31 +220,49 @@ def fit_capture_histogram(
     variance: NDArray[np.float64] | None = None,
     cost: str = "poisson",
     parameters: ParameterSet | None = None,
+    polarisation: str | None = None,
     minos: bool = False,
     cancel_callback: Callable[[], bool] | None = None,
 ) -> FitResult:
-    """Fit raw counts to Σ_i amp_i·exp(−t/τ_i)+bg.
+    """Fit raw counts to Σ_i amp_i·exp(−t/τ_i)+bg, with optional polarisation.
 
     The array-level entry: testable without a dataset. ``variance`` (if given)
     is used by the Gaussian cost; Poisson (Cash) ignores it. Returns a
     :class:`FitResult` with ``dof`` set so
     :func:`~asymmetry.core.fitting.fit_quality.assess_fit_quality` applies.
+
+    Parameters
+    ----------
+    polarisation:
+        ``None`` (no polarisation; result identical to the base model),
+        ``"lorgau"`` (Lorentzian-damped oscillation), or ``"diamagnetic"``
+        (undamped precession).  When not ``None``, the exponential sum is
+        multiplied by ``(1 + P_pol(t))`` and extra parameters ``pol_a0``,
+        ``pol_freq``, ``pol_phase`` (and ``pol_lam`` for "lorgau") are added to
+        the fit.  Pass them via ``parameters`` or rely on the conservative
+        default seeds (pol_freq = 0.5 MHz).
     """
     if cost not in COUNT_COSTS:
         raise ValueError(f"Unknown cost {cost!r}; expected one of {COUNT_COSTS}")
+    if polarisation is not None and polarisation not in POLARISATION_MODES:
+        raise ValueError(
+            f"Unknown polarisation {polarisation!r}; expected one of {POLARISATION_MODES} or None"
+        )
 
     from iminuit import Minuit
 
     time_arr = np.asarray(time, dtype=np.float64)
     counts_arr = np.asarray(counts, dtype=np.float64)
 
-    params = (
-        parameters
-        if parameters is not None
-        else default_capture_parameters(spec, time=time_arr, counts=counts_arr)
-    )
+    if parameters is not None:
+        params = parameters
+    else:
+        params = default_capture_parameters(spec, time=time_arr, counts=counts_arr)
+        if polarisation is not None:
+            for pol_p in _default_polarisation_parameters(polarisation):
+                params.add(pol_p)
 
-    model_fn = build_capture_count_model(spec.components())
+    model_fn = build_capture_count_model_with_polarisation(spec.components(), polarisation)
     free = params.free_parameters
     free_names = [p.name for p in free]
     fixed_vals = {p.name: p.value for p in params if p.name not in set(free_names)}
@@ -309,6 +371,7 @@ def fit_capture_group(
     t_max: float | None = None,
     cost: str = "poisson",
     parameters: ParameterSet | None = None,
+    polarisation: str | None = None,
     exclude: tuple[float, float] | None = None,
     minos: bool = False,
     cancel_callback: Callable[[], bool] | None = None,
@@ -318,7 +381,7 @@ def fit_capture_group(
     Uses :func:`~asymmetry.core.fitting.grouped_time_domain.build_count_group`
     with ``lifetime_corrected=False`` to obtain raw counts on which the Poisson
     cost is exact, then delegates to :func:`fit_capture_histogram`.
-    ``parameters`` is forwarded verbatim to allow chain-seeding across fits.
+    ``parameters`` and ``polarisation`` are forwarded verbatim.
     """
     group = build_count_group(
         dataset,
@@ -334,6 +397,7 @@ def fit_capture_group(
         spec,
         cost=cost,
         parameters=parameters,
+        polarisation=polarisation,
         minos=minos,
         cancel_callback=cancel_callback,
     )
