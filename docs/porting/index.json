@@ -597,7 +597,7 @@
     {
       "slug": "wimda-parity-gap",
       "feature_name": "WiMDA functionality-parity gap study (umbrella)",
-      "status": "study",
+      "status": "complete",
       "path": "docs/porting/wimda-parity-gap",
       "references": [
         "WiMDA"
@@ -611,8 +611,8 @@
       },
       "tests_path": null,
       "src_path": null,
-      "updated": "2026-06-10",
-      "notes": "UMBRELLA study: full WiMDA source sweep (every unit in wimda.dpr) vs fresh Asymmetry scan at 474534e; supersedes the WiMDA column of comparison-matrix.md. Output: consolidated gap inventory (comparison.md) + 12-project parallel portfolio + 1 deferred brief (projects/*.md), partitioned for parallel worktree sessions in three waves (implementation-options.md). Decisions 2026-06-10: Burg all-poles MEM INCLUDED as diagnostic (reverses prior exclusion); Eigen.pas excluded permanently (old roadmap mislabel - Hermitian eigensolvers for FmuF models, not a spectral estimator); Kramers-Kronig dropped (optical spectroscopy, not muSR); HDF4 stays out; NegMu deferred brief (adapt-not-port); live-run monitoring = optional phase. KEY FINDINGS: fit-function parity verified complete against WiMDA source (all remaining gaps are machinery/workflow); curve-averaging co-add is statistically wrong (run-arithmetic project is a correctness fix); Multifit is subsumed by the Global tab; WiMDA's own MUD loader is a non-functional stub (not a parity item); WiMDA KTBArray low-field bug documented (never oracle against it). Each project still requires its own five-doc study pass before implementation; briefs are pre-studies."
+      "updated": "2026-06-13",
+      "notes": "UMBRELLA study, now PROGRAMME COMPLETE (2026-06-13) — see programme-complete.md for the authoritative final status + full PR ledger (#29-#75). Full WiMDA source sweep (every unit in wimda.dpr) vs fresh Asymmetry scan at 474534e; supersedes the WiMDA column of comparison-matrix.md. Delivered: 12-project portfolio across Wave A (#30-#44) + collision reconciliation (#46-#51) + Wave B (#54-#58) + post-Wave-B follow-on tranche (#69/#71/#72/#73/#75), plus emergent projects (exact-Poisson error #35, radical correlation #43) and the API-only negmu WIP port (#69). Functional parity complete; everything unshipped is trigger-parked by design (follow-on-triage.md DEFER tier). Decisions: Burg all-poles MEM INCLUDED as diagnostic; Eigen.pas/Kramers-Kronig/HDF4/MUD permanently out (see decision-record.md). Physics: the MuoniumLFRelax (1-delta) prefactor was checked against Kadono and removed as spurious (#71). WiMDA-bug ledger (KTBArray low-field, General-alpha no-interior-minimum, ZFdipgen J>1/2, etc.) in decision-record.md section 3 = standing 'do not oracle against' list."
     },
     {
       "slug": "model-function-parity",

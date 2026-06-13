@@ -16,25 +16,32 @@ study-first pass (`docs/porting/<slug>/`, five-doc template) when it starts;
 the briefs in `projects/` are pre-studies that fix scope, size, phasing and
 integration direction.
 
-## Status (2026-06-11): Wave A COMPLETE
+## Status (2026-06-13): PROGRAMME COMPLETE
 
-All six Wave A projects shipped, with follow-on PRs, plus two emergent
-projects (exact asymmetry-error propagation #35; radical correlation
-spectrum #43) and the two stray handoffs (#44) — PRs #32–#44; every
-functionality item in the Wave A scope is on main. See
-[wave-a-closeout.md](wave-a-closeout.md) for the audit (status table, stray
-handoffs, Wave B brief revisions, collision watchlist) and
-[decision-record.md](decision-record.md) for the consolidated record of
-exclusions, deviations from WiMDA, and the reference-program bug ledger.
-Wave B briefs require the revisions listed in the closeout before launch.
-The collision-reconciliation study is done (2026-06-11): every watchlist
-flag has an agreed verdict in
-[reconciliation-study.md](reconciliation-study.md) and a scheduled phase in
-[reconciliation-plan.md](reconciliation-plan.md); reconciliation Phase 2
-must merge before `fit-workflow-diagnostics` starts.
+Functional parity is complete — every portable WiMDA capability is in
+Asymmetry, plus beyond-WiMDA improvements the ports surfaced. No parity
+work is open; what remains is the trigger-parked tier (deferred against a
+recorded trigger, not unfinished). **See
+[programme-complete.md](programme-complete.md) for the authoritative final
+status, the full PR ledger (#29–#75), and the deferred-by-design tier.**
+
+Milestones, in order: Wave A (analysis-capability parity) + two emergent
+projects + strays, PRs #30–#44; collision reconciliation, five phases
+#46–#51; Wave B (workflow machinery) #54–#58; post-Wave-B follow-on
+tranche #69/#71/#72/#73/#75. The
+[follow-on-triage.md](follow-on-triage.md) that scoped the final tranche,
+the [wave-a-closeout.md](wave-a-closeout.md) audit, the
+[reconciliation-study.md](reconciliation-study.md) verdicts, and the
+[decision-record.md](decision-record.md) (divergences + WiMDA-bug ledger)
+remain as the durable record.
 
 ## Documents
 
+- [programme-complete.md](programme-complete.md) — **authoritative final
+  status** (2026-06-13): verdict, full PR ledger, trigger-parked tier,
+  reopening path.
+- [follow-on-triage.md](follow-on-triage.md) — post-Wave-B triage that
+  scoped the final follow-on tranche (NOW vs DEFER).
 - [comparison.md](comparison.md) — the consolidated WiMDA → Asymmetry gap
   inventory (the canonical record; supersedes the WiMDA column of
   `docs/porting/comparison-matrix.md`).

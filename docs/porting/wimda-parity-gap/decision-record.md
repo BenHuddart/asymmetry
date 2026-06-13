@@ -6,7 +6,12 @@ docs; citations point at the owning study. Programme rule throughout:
 physical correctness; document every divergence with both behaviours.*
 
 This is the durable reference. The point-in-time closeout (status, Wave B
-impact, collision watchlist) is [wave-a-closeout.md](wave-a-closeout.md).
+impact, collision watchlist) is [wave-a-closeout.md](wave-a-closeout.md);
+the authoritative final programme status is
+[programme-complete.md](programme-complete.md) (2026-06-13). The per-project
+"open follow-ons" lists below are point-in-time at Wave A closeout — for the
+current open/closed picture see programme-complete.md and
+[follow-on-triage.md](follow-on-triage.md).
 
 ## 1. Programme-wide exclusions
 
@@ -39,15 +44,18 @@ closeout).
   WiMDA's own withdrawn functions (`rtHH`, `otKTdist`, `otDelayRot`).
 - **Deviations**: RischKehr via `erfcx` (no unphysical Γ<0 mirror);
   MuoniumHighTFAniso exact 4-level diagonalisation (**fitted D not
-  WiMDA-comparable**); MuoniumLFRelax exact Breit–Rabi λ(B), (1−δ) factor
-  retained pending reviewer sign-off; DynamicFmuF Abragam-form crossover
+  WiMDA-comparable**); MuoniumLFRelax exact Breit–Rabi λ(B) — the WiMDA
+  `(1−δ)` prefactor was checked against Kadono and **removed as spurious**
+  (PR #71, 2026-06-13); the rate is now the clean BPP/Redfield form
+  `λ(B)=δ_ex²τ_c/(1+(ω₁₂τ_c)²)`; DynamicFmuF Abragam-form crossover
   (WiMDA seam up to ~30%); FmuF_Triangle all six couplings + full powder
   average (**fitted distances not comparable**); DipolarSpinJ signed mixing
   angle (WiMDA wrong for J > ½); Bessel re-introduced (beyond parity);
   radians/positive-frequency/CODATA conventions throughout; GBKT via
   Gauss–Hermite.
-- **Open**: fit-wizard opt-in for new components; reviewer sign-off on
-  non-textbook sources incl. the MuLFRelax (1−δ) factor.
+- **Closed (PR #71, 2026-06-13)**: fit-wizard opt-in for the new components;
+  reviewer sign-off on the non-textbook sources completed; the MuLFRelax
+  (1−δ) prefactor resolved (removed as spurious, see Deviations above).
 
 ### model-function-parity + follow-ons (PRs #32, #38, #39)
 
