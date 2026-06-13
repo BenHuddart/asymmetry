@@ -12,7 +12,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFrame,
-    QGroupBox,
     QLabel,
     QPushButton,
     QScrollArea,
@@ -70,28 +69,6 @@ RESULT_BOX_SUCCESS_STYLE = (
     " border-radius: 4px;"
     "}"
 )
-
-#: Back-compat: a few call sites still toggle a results QGroupBox by this name.
-#: New code should build a QFrame result box (RESULT_BOX_OBJECT_NAME) instead.
-RESULTS_GROUP_SUCCESS_STYLE = (
-    "QGroupBox {"
-    f" background-color: {tokens.SUCCESS_BG};"
-    f" border: 1px solid {tokens.SUCCESS_BORDER};"
-    " border-radius: 4px;"
-    " margin-top: 10px;"
-    "}"
-)
-
-
-def apply_results_group_success(group: QGroupBox) -> None:
-    """Apply green-tint success style to a results QGroupBox."""
-    group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
-
-
-def clear_results_group_style(group: QGroupBox) -> None:
-    """Remove any inline style from a results QGroupBox (revert to bench.qss default)."""
-    group.setStyleSheet("")
-
 
 # ── Table style ───────────────────────────────────────────────────────────────
 
@@ -160,7 +137,11 @@ def insert_formula_break_points(formula: str) -> str:
             continue
         nxt = formula[index + 1]
         is_top_level_join = (
-            depth == 0 and char in "*+-" and formula[index - 1] == " " and nxt == " "
+            depth == 0
+            and index > 0  # guard: index-0 would read formula[-1] (the last char)
+            and char in "*+-"
+            and formula[index - 1] == " "
+            and nxt == " "
         )
         if is_top_level_join:
             out.append(_FORMULA_BREAK)
