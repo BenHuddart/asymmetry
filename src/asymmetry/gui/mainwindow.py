@@ -10041,6 +10041,11 @@ class MainWindow(QMainWindow):
         fit_panel = getattr(self, "_fit_panel", None)
         if fit_panel is not None and hasattr(fit_panel, "shutdown_workers"):
             fit_panel.shutdown_workers()
+        # Trend-curve recompute worker in the fit-parameters panel (a docked
+        # widget, so its own closeEvent never fires — shut it down here).
+        params_panel = getattr(self, "_fit_parameters_panel", None)
+        if params_panel is not None and hasattr(params_panel, "shutdown_workers"):
+            params_panel.shutdown_workers()
         if hasattr(self, "_plot_panel") and hasattr(self._plot_panel, "get_view_limits"):
             x_min, x_max, y_min, y_max = self._plot_panel.get_view_limits()
             self._settings.setValue("plot/time_x_min", float(x_min))

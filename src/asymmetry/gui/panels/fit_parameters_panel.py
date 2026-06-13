@@ -67,7 +67,9 @@ from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDi
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles.widgets import apply_param_table_style, style_group_state_button
+from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.collapsible_section import CollapsibleSection
+from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
@@ -235,6 +237,20 @@ class FitParametersPanel(QWidget):
         #: :meth:`load_representation_series` + ``series_selection_changed``).
         self._series_run_numbers: dict[str, list[int]] = {}
 
+        # Background machinery for the trend-overlay model evaluation, which runs
+        # model.function (and optional components) per fit range over an 800-pt
+        # axis and would otherwise block the GUI thread when a saved project's
+        # trend fits are drawn on open.
+        self._tasks = TaskRunner(self)
+        self._trend_curve_compute_active = False
+        #: Set while a fresh recompute is requested mid-flight, so a burst of
+        #: refreshes collapses to a single rerun.
+        self._trend_curve_recompute_pending = False
+        #: ``{param_name: [(range_index, xs, ys, components_or_None), ...]}``
+        #: consumed by the *next* _refresh_plot draw, then dropped so interactive
+        #: redraws (control toggles) evaluate inline.
+        self._precomputed_trend_curves: dict[str, list] | None = None
+
         layout = QVBoxLayout(self)
 
         controls_group = QGroupBox("Parameter settings")
@@ -387,8 +403,11 @@ class FitParametersPanel(QWidget):
             self._canvas.mpl_connect("button_press_event", self._on_plot_button_press)
             self._canvas.mpl_connect("motion_notify_event", self._on_plot_motion)
             self._canvas.mpl_connect("button_release_event", self._on_plot_button_release)
+            # Covers the trend plot while its overlay curves recompute off-thread.
+            self._trend_overlay: LoadingOverlay | None = LoadingOverlay(self._canvas)
         except ImportError:
             plot_layout.addWidget(QLabel("matplotlib not installed - plotting disabled"), 1)
+            self._trend_overlay = None
 
         self._plot_export_bar = QWidget(self._plot_group)
         export_row = QHBoxLayout(self._plot_export_bar)
@@ -668,7 +687,11 @@ class FitParametersPanel(QWidget):
                 self._plot_mode_combo.setCurrentIndex(idx)
 
         self._update_x_axis_auto_hint()
-        self._refresh_views()
+        # The table is cheap; the trend-overlay curves (model eval per fit range
+        # over an 800-pt axis) recompute off-thread behind the overlay so a saved
+        # project's trend fits don't block the GUI thread on open.
+        self._refresh_table()
+        self._start_trend_curve_compute()
 
     def set_fit_results(
         self,
@@ -2889,22 +2912,40 @@ class FitParametersPanel(QWidget):
         show_components = self._show_components_check.isChecked()
         component_colors = ["#8ecae6", "#90be6d", "#f4a261", "#e5989b", "#bdb2ff", "#ffd166"]
 
-        curves = self._sampled_fit_curves(
-            param_name,
-            x_key=fit.x_key,
-            num_points=_PARAMETER_FIT_CURVE_SAMPLE_COUNT,
+        # Consume the off-thread precompute when present (project open); else
+        # sample inline for interactive redraws (control toggles).
+        precomputed = (
+            self._precomputed_trend_curves.get(param_name)
+            if self._precomputed_trend_curves is not None
+            else None
         )
+        if precomputed is not None:
+            curves = [(ri, xs, ys) for (ri, xs, ys, _comp) in precomputed]
+            components_by_range = {ri: comp for (ri, _xs, _ys, comp) in precomputed}
+        else:
+            curves = self._sampled_fit_curves(
+                param_name,
+                x_key=fit.x_key,
+                num_points=_PARAMETER_FIT_CURVE_SAMPLE_COUNT,
+            )
+            components_by_range = None
+
         for idx, (range_index, xs, ys) in enumerate(curves):
             line_color = _fit_overlay_color(idx) if len(curves) > 1 else color
 
             if show_components and range_index < len(fit.ranges):
-                fit_range = fit.ranges[range_index]
-                result = fit_range.result
-                if result is not None and result.success:
-                    kwargs = {p.name: p.value for p in result.parameters}
-                    components = fit_range.model.evaluate_components(
-                        xs, additive_only=True, **kwargs
-                    )
+                if components_by_range is not None:
+                    components = components_by_range.get(range_index)
+                else:
+                    components = None
+                    fit_range = fit.ranges[range_index]
+                    result = fit_range.result
+                    if result is not None and result.success:
+                        kwargs = {p.name: p.value for p in result.parameters}
+                        components = fit_range.model.evaluate_components(
+                            xs, additive_only=True, **kwargs
+                        )
+                if components is not None:
                     ordered_components = self._ordered_components_for_stacking(components)
                     cumulative = np.zeros_like(xs, dtype=float)
                     for cidx, (_cname, comp_y) in enumerate(ordered_components):
@@ -3507,7 +3548,15 @@ class FitParametersPanel(QWidget):
         fit_range: ModelFitRange,
         x_key: str,
         num_points: int = _PARAMETER_FIT_CURVE_SAMPLE_COUNT,
+        *,
+        x_domain: tuple[float, float] | None = None,
     ) -> tuple[np.ndarray, np.ndarray] | None:
+        """Sample one fit range's overlay curve.
+
+        ``x_domain`` lets the off-thread trend recompute pass a GUI-thread
+        snapshot of the data x-range; when omitted the (GUI-thread) callers read
+        it live from the rows.
+        """
         result = fit_range.result
         if result is None or not result.success:
             return None
@@ -3519,7 +3568,7 @@ class FitParametersPanel(QWidget):
         except ValueError:
             return None
         if x_min is None or x_max is None:
-            domain = self._x_domain_for_sampling(x_key)
+            domain = x_domain if x_domain is not None else self._x_domain_for_sampling(x_key)
             if domain is None:
                 return None
             if x_min is None:
@@ -3567,6 +3616,124 @@ class FitParametersPanel(QWidget):
             xs, ys = sampled
             curves.append((idx, xs, ys))
         return curves
+
+    def _compute_trend_curves(
+        self,
+        model_fits: dict,
+        x_key: str,
+        x_domain: tuple[float, float] | None,
+        y_params: list[str],
+        show_components: bool,
+        num_points: int = _PARAMETER_FIT_CURVE_SAMPLE_COUNT,
+    ) -> dict[str, list]:
+        """Sample the model-fit overlay curves for *y_params* (worker-thread safe).
+
+        Pure: operates only on the passed snapshots (model_fits / x_key / x_domain)
+        — no widget reads — so the trend recompute can run off the GUI thread.
+        Returns ``{param_name: [(range_index, xs, ys, components_or_None), ...]}``
+        for :meth:`_draw_model_overlay_mpl` to consume.
+        """
+        result: dict[str, list] = {}
+        for param_name in y_params:
+            fit = model_fits.get(param_name)
+            if fit is None or not fit.active or fit.x_key != x_key:
+                continue
+            ranges_out: list = []
+            for idx, fit_range in enumerate(fit.ranges):
+                sampled = self._sample_fit_range_curve(
+                    fit_range, x_key=x_key, num_points=num_points, x_domain=x_domain
+                )
+                if sampled is None:
+                    continue
+                xs, ys = sampled
+                components = None
+                fit_result = fit_range.result
+                if show_components and fit_result is not None and fit_result.success:
+                    kwargs = {p.name: p.value for p in fit_result.parameters}
+                    try:
+                        components = fit_range.model.evaluate_components(
+                            xs, additive_only=True, **kwargs
+                        )
+                    except KeyError:
+                        components = None
+                ranges_out.append((idx, xs, ys, components))
+            if ranges_out:
+                result[param_name] = ranges_out
+        return result
+
+    def _start_trend_curve_compute(self) -> None:
+        """Recompute the trend-overlay curves off-thread, overlaying the plot.
+
+        Falls back to a synchronous :meth:`_refresh_plot` when there is nothing
+        heavy to do (no matplotlib, or no active model-fit overlays to evaluate),
+        so the scatter still draws immediately in the common no-fit case.
+        """
+        if not self._has_mpl:
+            return
+        x_key = self._effective_x_key()
+        active = [
+            name
+            for name in self._selected_y_parameters()
+            if (fit := self._model_fits.get(name)) is not None and fit.active and fit.x_key == x_key
+        ]
+        if not active:
+            self._precomputed_trend_curves = None
+            self._refresh_plot()
+            return
+        if self._trend_curve_compute_active:
+            # A compute is already running; fold this request into a single
+            # rerun rather than spawning another worker.
+            self._trend_curve_recompute_pending = True
+            return
+        # Snapshot everything the worker needs so it never reads GUI state that a
+        # concurrent edit could mutate.
+        model_fits = dict(self._model_fits)
+        x_domain = self._x_domain_for_sampling(x_key)
+        show_components = self._show_components_check.isChecked()
+        if self._trend_overlay is not None:
+            self._trend_overlay.show_message("Computing trend curves…")
+        self._trend_curve_compute_active = True
+        self._tasks.start(
+            lambda _worker: self._compute_trend_curves(
+                model_fits, x_key, x_domain, active, show_components
+            ),
+            on_finished=self._on_trend_curves_ready,
+            on_error=self._on_trend_curves_error,
+        )
+
+    def _on_trend_curves_ready(self, curves: object) -> None:
+        self._trend_curve_compute_active = False
+        if self._trend_curve_recompute_pending:
+            # Controls changed mid-compute; recompute with the latest state and
+            # skip drawing this now-stale result.
+            self._trend_curve_recompute_pending = False
+            self._start_trend_curve_compute()
+            return
+        if self._trend_overlay is not None:
+            self._trend_overlay.hide()
+        # Consume the precompute for this one draw, then drop it so later
+        # interactive redraws (control toggles) evaluate inline.
+        self._precomputed_trend_curves = curves if isinstance(curves, dict) else None
+        self._refresh_plot()
+        self._precomputed_trend_curves = None
+
+    def _on_trend_curves_error(self, message: str) -> None:
+        self._trend_curve_compute_active = False
+        if self._trend_curve_recompute_pending:
+            self._trend_curve_recompute_pending = False
+            self._start_trend_curve_compute()
+            return
+        if self._trend_overlay is not None:
+            self._trend_overlay.hide()
+        # Draw the data points without overlay curves rather than re-evaluating
+        # inline, which would re-raise the same error on the GUI thread.
+        self._precomputed_trend_curves = {}
+        self._refresh_plot()
+        self._precomputed_trend_curves = None
+
+    def shutdown_workers(self) -> None:
+        """Cancel and join the trend-curve recompute worker (called on close)."""
+        self._tasks.shutdown()
 
     def _write_fit_files(
         self, gle_path: Path, x_key: str, y_params: list[str]

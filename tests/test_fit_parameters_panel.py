@@ -42,6 +42,22 @@ from asymmetry.gui.panels.fit_parameters_panel import (
     _format_plot_legend_label,
     _GroupFitData,
 )
+from tests._qt_helpers import wait_for
+
+
+def _active_linear_fit(param: str, x_key: str = "field") -> ParameterModelFit:
+    """An active model fit with one solved range, for trend-overlay tests."""
+    model = ParameterCompositeModel(["Linear"])
+    params = ParameterSet([Parameter("m", value=0.001), Parameter("b", value=0.2)])
+    result = ParameterModelFitResult(success=True, parameters=params)
+    return ParameterModelFit(
+        parameter_name=param,
+        x_key=x_key,
+        active=True,
+        ranges=[
+            ModelFitRange(x_min=100.0, x_max=200.0, model=model, parameters=params, result=result)
+        ],
+    )
 
 
 @pytest.fixture(scope="module")
@@ -2098,3 +2114,63 @@ def test_fit_range_curve_sampler_spans_window_envelope(panel: FitParametersPanel
     # Invalid (inverted) windows skip the curve instead of raising.
     fit_range.windows = [(5.0, 1.0)]
     assert panel._sample_fit_range_curve(fit_range, x_key="field") is None
+
+
+def test_trend_curves_recompute_off_thread_behind_overlay(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An active trend fit recomputes its overlay off-thread under the overlay."""
+    if not panel._has_mpl:
+        pytest.skip("matplotlib not available")
+    panel._model_fits = {"A0": _active_linear_fit("A0")}
+    monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
+
+    panel._start_trend_curve_compute()
+    # Mid-flight: the overlay covers the plot and the compute is active.
+    assert panel._trend_curve_compute_active
+    assert panel._trend_overlay is not None and not panel._trend_overlay.isHidden()
+
+    wait_for(
+        lambda: not panel._trend_curve_compute_active,
+        QApplication.instance(),
+        timeout_s=10.0,
+    )
+
+    # Landed: overlay cleared, precompute consumed-then-dropped, model curve drawn.
+    assert not panel._trend_curve_compute_active
+    assert panel._trend_overlay.isHidden()
+    assert panel._precomputed_trend_curves is None
+    drawn = [line for ax in panel._figure.axes for line in ax.get_lines()]
+    assert drawn, "the trend overlay curve should be drawn after the compute"
+
+
+def test_trend_compute_without_active_fit_draws_synchronously(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no active overlay to evaluate, the scatter draws synchronously."""
+    if not panel._has_mpl:
+        pytest.skip("matplotlib not available")
+    panel._model_fits = {}
+    monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
+
+    panel._start_trend_curve_compute()
+
+    assert not panel._trend_curve_compute_active
+    assert panel._tasks.active_count == 0
+    assert panel._trend_overlay is not None and panel._trend_overlay.isHidden()
+
+
+def test_shutdown_workers_joins_trend_compute(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """shutdown_workers tears the trend worker down within the bounded wait."""
+    if not panel._has_mpl:
+        pytest.skip("matplotlib not available")
+    panel._model_fits = {"A0": _active_linear_fit("A0")}
+    monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
+
+    panel._start_trend_curve_compute()
+    assert panel._trend_curve_compute_active
+
+    panel.shutdown_workers()
+    assert panel._tasks.active_count == 0
