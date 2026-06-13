@@ -2304,3 +2304,35 @@ def test_show_components_toggle_recomputes_trend_overlay(
     wait_for(lambda: not panel._trend_curve_compute_active, QApplication.instance(), timeout_s=10.0)
     assert panel._trend_cache_sig != sig1
     panel.shutdown_workers()
+
+
+def test_cache_present_missing_param_does_not_sample_inline(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cache that omits an active param must not fall back to inline sampling.
+
+    Regression: when the off-thread worker produced no curves for a param (or the
+    error path stored an empty cache), _draw_model_overlay_mpl treated the missing
+    key as 'no cache' and re-evaluated the (possibly very slow) model on the GUI
+    thread — defeating the off-thread design and re-running on every redraw.
+    """
+    if not panel._has_mpl:
+        pytest.skip("matplotlib not available")
+    panel._model_fits = {"A0": _active_linear_fit("A0")}
+    monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
+
+    sampled_calls: list[int] = []
+    orig = panel._sampled_fit_curves
+    monkeypatch.setattr(
+        panel,
+        "_sampled_fit_curves",
+        lambda *a, **k: (sampled_calls.append(1), orig(*a, **k))[1],
+    )
+
+    # Cache present (non-None) but missing A0 — as after a worker that produced
+    # nothing for it, or the error path's empty cache.
+    panel._precomputed_trend_curves = {}
+    panel._trend_cache_sig = panel._trend_overlay_signature(panel._active_overlay_params())
+    panel._draw_plot()
+
+    assert sampled_calls == [], "must not sample the model inline when a cache is present"

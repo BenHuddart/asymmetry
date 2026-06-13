@@ -248,10 +248,9 @@ class FitParametersPanel(QWidget):
         # trend fits are drawn on open.
         self._tasks = TaskRunner(self)
         self._trend_curve_compute_active = False
-        #: Set while a fresh recompute is requested mid-flight, so a burst of
-        #: refreshes collapses to a single rerun; carries the (active, sig) of the
-        #: latest request to dispatch once the running one finishes.
-        self._trend_curve_recompute_pending = False
+        #: The (active, sig) of a recompute requested while one was already in
+        #: flight; a burst of refreshes collapses to this single rerun, dispatched
+        #: once the running compute finishes. ``None`` means nothing pending.
         self._pending_trend_request: tuple[list[str], tuple] | None = None
         #: Cache of computed overlay curves —
         #: ``{param_name: [(range_index, xs, ys, components_or_None), ...]}`` —
@@ -2943,17 +2942,17 @@ class FitParametersPanel(QWidget):
         show_components = self._show_components_check.isChecked()
         component_colors = ["#8ecae6", "#90be6d", "#f4a261", "#e5989b", "#bdb2ff", "#ffd166"]
 
-        # Consume the off-thread precompute when present (project open); else
-        # sample inline for interactive redraws (control toggles).
-        precomputed = (
-            self._precomputed_trend_curves.get(param_name)
-            if self._precomputed_trend_curves is not None
-            else None
-        )
-        if precomputed is not None:
+        # Consume the off-thread cache when present. A missing key means the
+        # worker produced no curves for this param — draw nothing rather than
+        # re-evaluating the (possibly very slow) model on the GUI thread, which
+        # would defeat the off-thread design and re-run on every redraw.
+        if self._precomputed_trend_curves is not None:
+            precomputed = self._precomputed_trend_curves.get(param_name) or []
             curves = [(ri, xs, ys) for (ri, xs, ys, _comp) in precomputed]
             components_by_range = {ri: comp for (ri, _xs, _ys, comp) in precomputed}
         else:
+            # No cache yet (defensive: the _refresh_plot router only reaches
+            # _draw_plot with active overlays once the cache is populated).
             curves = self._sampled_fit_curves(
                 param_name,
                 x_key=fit.x_key,
@@ -3054,16 +3053,19 @@ class FitParametersPanel(QWidget):
     def _trend_overlay_signature(self, active: list[str]) -> tuple:
         """Inputs the overlay curves depend on; a change invalidates the cache.
 
-        Captures the x-axis key, the show-components flag, the rows identity (the
-        sampling domain for open-ended ranges) and each active fit's object
+        Captures the x-axis key, the show-components flag, the data sampling
+        domain (the span for open-ended fit ranges — taken as a value, not as
+        ``id(self._rows)``, because composite-parameter edits mutate row values
+        in place without replacing the rows list), and each active fit's object
         identity (fits are *replaced*, not mutated, on edit/re-fit). Pure-render
         toggles (log scale, plot mode, share-x) leave this unchanged, so they
         redraw from the cache instead of re-evaluating the model.
         """
+        x_key = self._effective_x_key()
         return (
-            self._effective_x_key(),
+            x_key,
             bool(self._show_components_check.isChecked()),
-            id(self._rows),
+            self._x_domain_for_sampling(x_key),
             tuple((name, id(self._model_fits.get(name))) for name in active),
         )
 
@@ -3781,7 +3783,6 @@ class FitParametersPanel(QWidget):
         if self._trend_curve_compute_active:
             # A compute is already running; fold this request into a single
             # rerun carrying the latest (active, sig).
-            self._trend_curve_recompute_pending = True
             self._pending_trend_request = (active, sig)
             return
         # Snapshot everything the worker needs so it never reads GUI state that a
@@ -3803,15 +3804,11 @@ class FitParametersPanel(QWidget):
 
     def _redispatch_pending_trend_compute(self) -> bool:
         """If a recompute was requested mid-flight, start it now. Returns True then."""
-        if not self._trend_curve_recompute_pending:
-            return False
-        self._trend_curve_recompute_pending = False
         request = self._pending_trend_request
+        if request is None:
+            return False
         self._pending_trend_request = None
-        if request is not None:
-            self._start_trend_curve_compute(*request)
-        else:
-            self._start_trend_curve_compute()
+        self._start_trend_curve_compute(*request)
         return True
 
     def _on_trend_curves_ready(self, curves: object, sig: tuple) -> None:
