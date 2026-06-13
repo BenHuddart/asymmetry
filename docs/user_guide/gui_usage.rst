@@ -240,6 +240,24 @@ foreground points (excluding undefined/low-confidence bins when available).
 Default limits automatically adjust to fit the data including error bars, 
 with 5% padding.
 
+Dense-Data Display (Decimation)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Very dense traces (e.g. high-resolution ROOT histograms or many-point
+spectra) are *display-decimated*: only a bounded number of points is
+rendered so panning, zooming and switching runs stay responsive. A small
+corner chip — for example ``4.0k of 1.2M pts`` — appears whenever the
+current view is decimated, and disappears once you zoom in far enough that
+every visible point is drawn.
+
+Decimation affects the display only. Fits, transforms (FFT, MaxEnt,
+moments) and exports always use the full-resolution data.
+
+Time-domain scatter is decimated by uniform sampling, which is an unbiased
+visual sample of noisy data. Frequency-domain spectra instead keep the
+minimum and maximum of each display bucket, so a narrow spectral peak can
+never vanish from the screen.
+
 Legend Label Field
 ~~~~~~~~~~~~~~~~~~
 

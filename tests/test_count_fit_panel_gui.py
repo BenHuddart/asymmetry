@@ -8,6 +8,8 @@ ratio, independent of the oscillation model.
 
 from __future__ import annotations
 
+import threading
+
 import numpy as np
 import pytest
 
@@ -58,12 +60,52 @@ def test_fb_count_fit_runs_and_recovers_alpha(qapp, fb_dataset):
     captured = []
     window.count_fit_completed.connect(lambda dataset, payload: captured.append(payload["result"]))
     window._single_fit_tab._run_count_domain_fit()
+    assert window._single_fit_tab.wait_for_fit()
 
     assert len(captured) == 1
     result = captured[0]
     assert result.success
     alpha = result.group_results[1].parameters["alpha"].value
     assert alpha == pytest.approx(1.25, abs=0.05)
+
+
+def test_count_fit_uses_separate_worker_handle(qapp, fb_dataset, monkeypatch):
+    """A count-domain fit owns its own worker handle, not the legacy _fit_worker.
+
+    The legacy global/grouped cleanup is keyed on _fit_thread; if the count fit
+    shared _fit_worker, a stale legacy _cleanup_thread could deleteLater the
+    live count-fit worker and silently kill its Stop button.
+    """
+    import asymmetry.gui.panels.fit_panel as fit_panel_mod
+    from asymmetry.core.fitting.engine import FitCancelledError
+
+    window = MultiGroupFitWindow()
+    window.set_dataset(fb_dataset)
+    window._target_combo.setCurrentIndex(1)  # fb
+    tab = window._single_fit_tab
+
+    idle = threading.Event()  # never set; used only as an interruptible sleep
+
+    def blocking_fb(*args, cancel_callback=None, **kwargs):
+        while cancel_callback is None or not cancel_callback():
+            idle.wait(0.005)
+        raise FitCancelledError("cancelled")
+
+    monkeypatch.setattr(fit_panel_mod, "fit_fb_alpha", blocking_fb)
+
+    tab._run_count_domain_fit()
+    # The count fit owns its own handle; the legacy worker slot stays empty.
+    assert tab._count_fit_worker is not None
+    assert tab._fit_worker is None
+
+    # A stale legacy cleanup (no current _fit_thread) must not touch the count
+    # handle — this is the collision the separate attribute prevents.
+    tab._cleanup_thread()
+    assert tab._count_fit_worker is not None
+
+    tab._on_stop_fit()
+    assert tab.wait_for_fit()
+    assert tab._count_fit_worker is None
 
 
 def test_single_count_fit_runs_and_emits(qapp, fb_dataset):
@@ -77,6 +119,7 @@ def test_single_count_fit_runs_and_emits(qapp, fb_dataset):
     captured = []
     window.count_fit_completed.connect(lambda dataset, payload: captured.append(payload["result"]))
     window._single_fit_tab._run_count_domain_fit()
+    assert window._single_fit_tab.wait_for_fit()
     assert len(captured) == 1
     assert "N0" in captured[0].parameters.names
 
@@ -179,6 +222,7 @@ def test_promote_after_deadtime_fit_writes_grouping(qapp, fb_dataset):
     window._deadtime_check.setChecked(True)
     tab = window._single_fit_tab
     tab._run_count_domain_fit()
+    assert tab.wait_for_fit()
     assert tab._last_count_dt0 is not None
     window._on_promote_deadtime()
     grouping = fb_dataset.run.grouping
@@ -207,6 +251,7 @@ def test_fb_double_pulse_target_runs_via_dpsep_control(qapp):
     captured = []
     window.count_fit_completed.connect(lambda dataset, payload: captured.append(payload["result"]))
     window._single_fit_tab._run_count_domain_fit()
+    assert window._single_fit_tab.wait_for_fit()
 
     assert len(captured) == 1 and captured[0].success
     assert captured[0].group_results[1].parameters["alpha"].value == pytest.approx(1.2, abs=0.05)
@@ -223,6 +268,7 @@ def test_fb_fit_emits_overlay_for_both_banks(qapp, fb_dataset):
         lambda dataset, payload: overlays.append(payload["overlays"])
     )
     window._single_fit_tab._run_count_domain_fit()
+    assert window._single_fit_tab.wait_for_fit()
 
     assert len(overlays) == 1
     forward, backward = window._single_fit_tab._count_fb_groups(fb_dataset)
@@ -244,6 +290,7 @@ def test_single_fit_emits_overlay_for_target_group(qapp, fb_dataset):
         lambda dataset, payload: overlays.append(payload["overlays"])
     )
     window._single_fit_tab._run_count_domain_fit()
+    assert window._single_fit_tab.wait_for_fit()
 
     forward, _backward = window._single_fit_tab._count_fb_groups(fb_dataset)
     assert len(overlays) == 1
@@ -257,6 +304,7 @@ def test_promote_alpha_after_fb_fit_writes_grouping(qapp, fb_dataset):
     window._target_combo.setCurrentIndex(1)  # fb
     tab = window._single_fit_tab
     tab._run_count_domain_fit()
+    assert tab.wait_for_fit()
     assert tab._last_count_alpha is not None
 
     promoted = []
@@ -277,6 +325,7 @@ def test_switching_run_clears_captured_calibrations(qapp, fb_dataset):
     window._target_combo.setCurrentIndex(1)  # fb
     tab = window._single_fit_tab
     tab._run_count_domain_fit()
+    assert tab.wait_for_fit()
     assert tab._last_count_alpha is not None
 
     other = MuonDataset(
@@ -311,6 +360,7 @@ def test_promote_t0_after_fit_writes_t0_bin_and_discloses_residual(qapp, fb_data
     window._t0_check.setChecked(True)
     tab = window._single_fit_tab
     tab._run_count_domain_fit()
+    assert tab.wait_for_fit()
     assert tab._last_count_t0_us is not None
 
     window._promote_t0_btn.click()
@@ -328,6 +378,7 @@ def test_promote_background_after_fb_fit_sets_fixed_mode(qapp, fb_dataset):
     window._target_combo.setCurrentIndex(1)  # fb
     tab = window._single_fit_tab
     tab._run_count_domain_fit()
+    assert tab.wait_for_fit()
     assert tab._last_count_bg is not None
 
     window._promote_bg_btn.click()
@@ -381,6 +432,7 @@ def test_promote_uses_dedicated_signal_not_a_fit_none(qapp, fb_dataset):
     window._deadtime_check.setChecked(True)
     tab = window._single_fit_tab
     tab._run_count_domain_fit()
+    assert tab.wait_for_fit()
 
     fit_payloads = []
     promoted = []

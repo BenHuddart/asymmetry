@@ -72,6 +72,7 @@ def test_single_fit_blocks_fitting_with_missing_user_component(qapp):
     )
 
     tab._run_fit()
+    assert tab.wait_for_fit()
 
     text = tab._result_label.text()
     assert "missing user function" in text

@@ -24,7 +24,7 @@ def test_single_fit_minos_toggle_threads_and_populates_role(qapp: QApplication) 
     model = tab._composite_model
     captured: dict = {}
 
-    def _fit(ds, model_fn, parameters, *, minos=False):
+    def _fit(ds, model_fn, parameters, *, minos=False, cancel_callback=None):
         captured["minos"] = minos
         names = list(model.param_names)
         return FitResult(
@@ -44,6 +44,7 @@ def test_single_fit_minos_toggle_threads_and_populates_role(qapp: QApplication) 
     tab._fit_engine = SimpleNamespace(fit=_fit)
     tab._minos_checkbox.setChecked(True)
     tab._run_fit()
+    assert tab.wait_for_fit()
 
     assert captured["minos"] is True
     # The first parameter's value cell carries the asymmetric interval role.
@@ -58,7 +59,7 @@ def test_single_fit_minos_off_clears_role(qapp: QApplication) -> None:
     tab.set_dataset(_dataset())
     model = tab._composite_model
 
-    def _fit(ds, model_fn, parameters, *, minos=False):
+    def _fit(ds, model_fn, parameters, *, minos=False, cancel_callback=None):
         names = list(model.param_names)
         return FitResult(
             success=True,
@@ -74,6 +75,7 @@ def test_single_fit_minos_off_clears_role(qapp: QApplication) -> None:
     tab._fit_engine = SimpleNamespace(fit=_fit)
     tab._minos_checkbox.setChecked(False)
     tab._run_fit()
+    assert tab.wait_for_fit()
     value_item = tab._param_table.item(0, 1)
     assert value_item.data(_ValueUncertaintyDelegate._MINOS_ROLE) is None
 

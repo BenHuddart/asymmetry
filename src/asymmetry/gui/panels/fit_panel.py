@@ -7,10 +7,11 @@ parameters, run the fit, and inspect results.
 from __future__ import annotations
 
 import copy
+import functools
 import re
 
 import numpy as np
-from PySide6.QtCore import QObject, QSignalBlocker, Qt, QThread, Signal
+from PySide6.QtCore import QEventLoop, QObject, QSignalBlocker, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
@@ -107,6 +108,7 @@ from asymmetry.gui.styles.widgets import (
     fit_quality_tooltip,
     success_html,
 )
+from asymmetry.gui.tasks import TaskRunner, retire_thread
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
@@ -966,6 +968,70 @@ class GroupedSeriesFitWorker(QObject):
             self.error.emit(_format_fit_worker_exception(e))
 
 
+def _fit_work_pending(panel) -> bool:
+    """True while *panel* has a worker fit in flight (legacy thread or runner)."""
+    if getattr(panel, "_fit_thread", None) is not None:
+        return True
+    runner = getattr(panel, "_fit_call_runner", None)
+    return runner is not None and runner.active_count > 0
+
+
+def _wait_for_fit_thread(panel, timeout_ms: int = 30_000) -> bool:
+    """Run a nested event loop until *panel*'s worker fits fully complete.
+
+    Completion covers both the legacy ``_fit_thread`` workers (global /
+    grouped fits) and TaskRunner-based fit calls (single / count-domain).
+    Used by tests and synchronous callers; returns ``False`` on timeout.
+    """
+    if not _fit_work_pending(panel):
+        return True
+    loop = QEventLoop()
+    check = QTimer()
+    check.timeout.connect(lambda: None if _fit_work_pending(panel) else loop.quit())
+    check.start(10)
+    QTimer.singleShot(timeout_ms, loop.quit)
+    loop.exec()
+    check.stop()
+    return not _fit_work_pending(panel)
+
+
+def _start_fit_call(
+    panel,
+    call,
+    *,
+    on_finished,
+    on_error,
+    on_cancelled,
+):
+    """Start one prepared fit call on *panel*'s TaskRunner and return its worker.
+
+    The call is built on the GUI thread with every argument already bound
+    (e.g. ``functools.partial(engine.fit, dataset, fn, params, minos=...)``);
+    the engine's ``cancel_callback`` kwarg is supplied from the worker's own
+    cooperative flag. TaskRunner owns the whole thread lifecycle — including
+    the GUI-thread relay for the callbacks and a bounded, Windows-safe
+    shutdown — so the panel holds no thread state of its own. Engine errors
+    are reformatted via :func:`_format_fit_worker_exception` before reaching
+    ``on_error``.
+    """
+
+    def task(worker, call=call):
+        try:
+            return call(cancel_callback=worker.is_cancelled)
+        except FitCancelledError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(_format_fit_worker_exception(exc)) from exc
+
+    return panel._fit_call_runner.start(
+        task,
+        on_finished=on_finished,
+        on_error=on_error,
+        on_cancelled=on_cancelled,
+        cancel_exceptions=(FitCancelledError,),
+    )
+
+
 class _ValueUncertaintyDelegate(QStyledItemDelegate):
     """Paints 'value  ±σ' in a table cell; editing shows only the bare value.
 
@@ -1060,6 +1126,15 @@ class SingleFitTab(QWidget):
         self._last_fit_parameters: ParameterSet | None = None
         self._pull_diagnostic_btn: QPushButton | None = None
         self._pull_diagnostic_window: QWidget | None = None
+        #: Background fits run via the shared TaskRunner machinery; the
+        #: worker handle exists only so the Stop button can cancel it.
+        self._fit_call_runner = TaskRunner(self)
+        self._fit_worker = None
+        #: Bumped on every model (re)configuration. A fit snapshots it at
+        #: launch; a mismatch at completion means the model was changed or
+        #: Reset while the fit ran (Reset reuses the same object, so object
+        #: identity alone would miss it), so the stale result is not applied.
+        self._model_generation = 0
 
         # Model selection
         model_group = QGroupBox("Model")
@@ -1187,6 +1262,11 @@ class SingleFitTab(QWidget):
         self._fit_btn = QPushButton("Fit")
         self._fit_btn.setStyleSheet(build_primary_button_qss())
         self._fit_btn.clicked.connect(self._run_fit)
+        # Stop replaces the Fit button while a worker-based fit runs.
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setToolTip("Cancel the running fit; no result is recorded.")
+        self._stop_btn.clicked.connect(self._on_stop_fit)
+        self._stop_btn.hide()
         self._reset_btn = QPushButton("Reset")
         self._reset_btn.clicked.connect(self._reset_parameters)
         self._preview_btn = QPushButton("Preview")
@@ -1207,6 +1287,7 @@ class SingleFitTab(QWidget):
             "strongly correlated fits where the parabolic error is unreliable."
         )
         btn_layout.addWidget(self._fit_btn, 0, 0)
+        btn_layout.addWidget(self._stop_btn, 0, 0)
         btn_layout.addWidget(self._reset_btn, 0, 1)
         btn_layout.addWidget(self._preview_btn, 0, 2)
         btn_layout.addWidget(self._pull_diagnostic_btn, 1, 0, 1, 3)
@@ -1423,6 +1504,9 @@ class SingleFitTab(QWidget):
         """Set the active composite model and rebuild the parameter table."""
         self._updating_fraction_values = True
         self._composite_model = model
+        # Any model (re)build — including Reset, which reuses the same object —
+        # invalidates an in-flight fit's table/diagnostic write-back.
+        self._model_generation += 1
         _set_formula_label_text(self._formula_label, model.formula_string())
         _apply_domain_mismatch_warning(self._formula_label, model, self._domain)
 
@@ -1854,85 +1938,158 @@ class SingleFitTab(QWidget):
             self._result_label.setText(f"ERROR: {exc}")
             return
 
-        # Run the fit
+        # Run the fit on a worker thread; the GUI (and Stop button) stay live.
         self._results_group.setStyleSheet("")
         self._result_label.setText("Fitting...")
-        try:
-            result = self._fit_engine.fit(
-                self._current_dataset,
-                self._composite_model.function,
+
+        # Snapshot launch-time context: the user may switch run or model while
+        # the worker runs, and the result must be interpreted against what was
+        # actually fitted. The TaskRunner relay invokes these closures on the
+        # GUI thread with each launch's own context, so a late result can
+        # never be applied against a different launch's snapshot.
+        dataset = self._current_dataset
+        model = self._composite_model
+        self._fit_worker = _start_fit_call(
+            self,
+            functools.partial(
+                self._fit_engine.fit,
+                dataset,
+                model.function,
                 parameters,
                 minos=self._minos_checkbox.isChecked(),
-            )
-        except Exception as e:
-            self._result_label.setText(f"<b>Error during fit:</b><br>{str(e)}")
-            return
+            ),
+            on_finished=lambda result, p=parameters, d=dataset, m=model, g=self._model_generation: (
+                self._apply_single_fit_result(result, p, d, m, g)
+            ),
+            on_error=self._on_single_fit_error,
+            on_cancelled=self._on_single_fit_cancelled,
+        )
+        self._set_fit_busy(True)
 
-        # Update results display
-        if result.success:
-            # Remember the converged fit so the pull-distribution diagnostic can
-            # re-simulate and refit it (model, generating values and run).
-            self._last_fit_result = result
-            self._last_fit_parameters = parameters
-            if self._pull_diagnostic_btn is not None:
-                self._pull_diagnostic_btn.setEnabled(self._can_run_pull_diagnostic())
-            display_values = _normalized_model_param_values(
-                self._composite_model,
-                {parameter.name: parameter.value for parameter in result.parameters},
-            )
-            self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
-            self._result_label.setText(_fit_success_html(result))
-            self._result_label.setToolTip(fit_quality_tooltip(_fit_quality_dict(result)))
-
-            # Update table with fit results
-            minos_errors = result.minos_errors or {}
-            self._updating_fraction_values = True
-            for i in range(self._param_table.rowCount()):
-                name_item = self._param_table.item(i, 0)
-                param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-                if not isinstance(param_name, str):
-                    param_name = name_item.text() if name_item else ""
-                if param_name in result.parameters:
-                    fitted_value = display_values.get(
-                        param_name, result.parameters[param_name].value
-                    )
-                    val_item = self._param_table.item(i, 1)
-                    val_item.setText(f"{fitted_value:.6f}")
-                    unc = result.uncertainties.get(param_name, None)
-                    val_item.setData(_ValueUncertaintyDelegate._UNC_ROLE, unc)
-                    val_item.setData(
-                        _ValueUncertaintyDelegate._MINOS_ROLE, minos_errors.get(param_name)
-                    )
-                    # A fresh single fit supersedes any piped-back batch role.
-                    _set_param_batch_role_cell(self._param_table, i, None)
-            self._updating_fraction_values = False
-            self._synchronize_fraction_value_rows()
-
-            param_dict = {p.name: p.value for p in result.parameters}
-            n_samples = _fit_curve_sample_count(
-                self._composite_model,
-                param_dict,
-                float(self._current_dataset.time.min()),
-                float(self._current_dataset.time.max()),
-            )
-
-            # Generate fitted curve for plotting
-            t_fit = np.linspace(
-                self._current_dataset.time.min(),
-                self._current_dataset.time.max(),
-                n_samples,
-            )
-            y_fit = self._composite_model.function(t_fit, **param_dict)
-
-            component_curves = self._composite_model.evaluate_components(
-                t_fit,
-                additive_only=True,
-                **param_dict,
-            )
-            self.fit_completed.emit(result, (t_fit, y_fit), component_curves)
+    def _set_fit_busy(self, busy: bool) -> None:
+        """Swap the Fit button for a Stop button (and back) around a worker fit."""
+        self._stop_btn.setVisible(busy)
+        self._stop_btn.setEnabled(busy)
+        self._fit_btn.setVisible(not busy)
+        if busy:
+            self._fit_btn.setEnabled(False)
         else:
+            # Re-derive from the gating contract rather than force-enable: the
+            # run may have been removed or the panel blocked while the fit ran.
+            self._fit_btn.setEnabled(self._current_dataset is not None and not self._fit_blocked)
+
+    def _on_stop_fit(self) -> None:
+        """Request cancellation of the active worker-based fit."""
+        worker = self._fit_worker
+        if worker is not None:
+            self._stop_btn.setEnabled(False)
+            self._result_label.setText("Cancelling fit…")
+            worker.cancel()
+
+    def _on_single_fit_cancelled(self) -> None:
+        """Handle a cancelled single fit: restore the panel, record nothing."""
+        self._set_fit_busy(False)
+        self._fit_worker = None
+        self._results_group.setStyleSheet("")
+        self._result_label.setText("Fit cancelled — no result recorded.")
+
+    def _on_single_fit_error(self, message: str) -> None:
+        self._set_fit_busy(False)
+        self._fit_worker = None
+        self._result_label.setText(f"<b>Error during fit:</b><br>{message}")
+
+    def shutdown_workers(self) -> None:
+        """Cancel any running fit and wait for its thread (window close)."""
+        self._fit_call_runner.shutdown()
+
+    def wait_for_fit(self, timeout_ms: int = 30_000) -> bool:
+        """Block (with a live event loop) until the launched fit completes."""
+        return _wait_for_fit_thread(self, timeout_ms)
+
+    def _apply_single_fit_result(
+        self, result, parameters, dataset, model, model_generation
+    ) -> None:
+        """Apply a completed single fit to the panel (GUI thread)."""
+        self._set_fit_busy(False)
+        self._fit_worker = None
+
+        if not result.success:
             self._results_group.setStyleSheet("")
             self._result_label.setText(f"<b>Fit failed:</b> {result.message}")
+            return
+
+        # A result is only "fresh" when the panel still shows the model AND run
+        # it was fitted on. Otherwise the user navigated away mid-fit: applying
+        # the values would corrupt a different model's seed table, arm the pull
+        # diagnostic against the wrong run, overlay the curve on the wrong plot,
+        # or record a FitSlot for the wrong run. The generation counter catches
+        # Reset (which reuses the same model object, so identity alone misses).
+        model_unchanged = (
+            self._composite_model is model and self._model_generation == model_generation
+        )
+        dataset_unchanged = self._current_dataset is dataset
+
+        self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
+        self._result_label.setText(_fit_success_html(result))
+        self._result_label.setToolTip(fit_quality_tooltip(_fit_quality_dict(result)))
+
+        if not (model_unchanged and dataset_unchanged):
+            if not model_unchanged:
+                reason = "the model was changed or reset while it ran"
+            else:
+                run_id = dataset.metadata.get("run_number", "?")
+                reason = f"run {run_id} is no longer selected"
+            self._result_label.setText(
+                _fit_success_html(result)
+                + f"<br><i>This fit was not applied or recorded because {reason}. "
+                "Restore the original model and run, then refit to keep it.</i>"
+            )
+            return
+
+        # Fresh: remember the converged fit for the pull-distribution diagnostic.
+        self._last_fit_result = result
+        self._last_fit_parameters = parameters
+        if self._pull_diagnostic_btn is not None:
+            self._pull_diagnostic_btn.setEnabled(self._can_run_pull_diagnostic())
+
+        display_values = _normalized_model_param_values(
+            model,
+            {parameter.name: parameter.value for parameter in result.parameters},
+        )
+
+        # Update table with fit results.
+        minos_errors = result.minos_errors or {}
+        self._updating_fraction_values = True
+        for i in range(self._param_table.rowCount()):
+            name_item = self._param_table.item(i, 0)
+            param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+            if not isinstance(param_name, str):
+                param_name = name_item.text() if name_item else ""
+            if param_name in result.parameters:
+                fitted_value = display_values.get(param_name, result.parameters[param_name].value)
+                val_item = self._param_table.item(i, 1)
+                val_item.setText(f"{fitted_value:.6f}")
+                unc = result.uncertainties.get(param_name, None)
+                val_item.setData(_ValueUncertaintyDelegate._UNC_ROLE, unc)
+                val_item.setData(
+                    _ValueUncertaintyDelegate._MINOS_ROLE, minos_errors.get(param_name)
+                )
+                # A fresh single fit supersedes any piped-back batch role.
+                _set_param_batch_role_cell(self._param_table, i, None)
+        self._updating_fraction_values = False
+        self._synchronize_fraction_value_rows()
+
+        param_dict = {p.name: p.value for p in result.parameters}
+        n_samples = _fit_curve_sample_count(
+            model,
+            param_dict,
+            float(dataset.time.min()),
+            float(dataset.time.max()),
+        )
+        t_fit = np.linspace(dataset.time.min(), dataset.time.max(), n_samples)
+        y_fit = model.function(t_fit, **param_dict)
+        component_curves = model.evaluate_components(t_fit, additive_only=True, **param_dict)
+        self.fit_completed.emit(result, (t_fit, y_fit), component_curves)
 
     # ── project state helpers ──────────────────────────────────────────
 
@@ -2395,9 +2552,16 @@ class GlobalFitTab(QWidget):
 
         layout.addStretch()
 
-        # Thread management for non-blocking fits
+        # Thread management for non-blocking fits. Global/grouped fits use the
+        # legacy _fit_thread workers; count-domain fit calls run on the shared
+        # TaskRunner machinery (bounded shutdown, GUI-thread callback relay).
+        # The two keep SEPARATE worker handles: count fits never touch
+        # _fit_thread, so a stale legacy _cleanup_thread (keyed on _fit_thread)
+        # must not be able to reach in and delete a live count-fit worker.
         self._fit_thread: QThread | None = None
         self._fit_worker: GlobalFitWorker | None = None
+        self._count_fit_worker = None
+        self._fit_call_runner = TaskRunner(self)
 
         self._setup_group_nuisance_table()
         self._set_composite_model(self._composite_model)
@@ -3616,10 +3780,14 @@ class GlobalFitTab(QWidget):
         self._result_text.setText("Fitting... This may take a moment for many datasets...")
         self._set_series_busy(True)
 
-        # Clean up any existing thread
+        # Clean up any existing thread. On a timed-out wait the old thread is
+        # still running; reassigning _fit_thread below would drop its last
+        # reference and GC would destroy a running QThread (qFatal), so hand
+        # it to the process-level keep-alive instead.
         if self._fit_thread is not None:
             self._fit_thread.quit()
-            self._fit_thread.wait()
+            if not self._fit_thread.wait(10_000):
+                retire_thread(self._fit_thread, self._fit_worker)
 
         # Create worker and thread
         self._fit_thread = QThread()
@@ -3711,7 +3879,8 @@ class GlobalFitTab(QWidget):
 
         if self._fit_thread is not None:
             self._fit_thread.quit()
-            self._fit_thread.wait()
+            if not self._fit_thread.wait(10_000):
+                retire_thread(self._fit_thread, self._fit_worker)
 
         self._fit_thread = QThread()
         self._fit_worker = GroupedTimeDomainFitWorker(
@@ -3952,45 +4121,78 @@ class GlobalFitTab(QWidget):
         forward, backward = self._count_fb_groups(dataset)
 
         self._result_text.setText("Fitting count-domain data…")
-        self._fit_btn.setEnabled(False)
-        try:
-            minos = self._minos_checkbox.isChecked()
-            if self._count_fit_mode == "fb":
-                result = fit_fb_alpha(
-                    dataset,
-                    forward,
-                    backward,
-                    model.function,
-                    params,
-                    cost=cost,
-                    t_min=t_min,
-                    t_max=t_max,
-                    exclude=self._count_exclude,
-                    minos=minos,
-                )
-                self._render_count_fb_result(dataset, result, forward, backward)
-            else:
-                target = backward if self._count_single_side == "backward" else forward
-                result = fit_single_histogram(
-                    dataset,
-                    target,
-                    model.function,
-                    params,
-                    side=self._count_single_side,
-                    cost=cost,
-                    t_min=t_min,
-                    t_max=t_max,
-                    exclude=self._count_exclude,
-                    minos=minos,
-                )
-                self._render_count_single_result(dataset, result, target)
-        except (ValueError, RuntimeError) as exc:
-            self._results_group.setStyleSheet("")
-            self._result_text.setHtml(error_html(f"Count-domain fit failed: {exc}"))
-        finally:
-            self._fit_btn.setEnabled(True)
+        minos = self._minos_checkbox.isChecked()
+        # Launch-time context (dataset, groups, cost, side) is bound into the
+        # result closures: the user may flip the cost/side controls or switch
+        # run while the worker runs, and the rendered provenance must describe
+        # the fit that actually ran. The TaskRunner relay invokes the closures
+        # on the GUI thread.
+        if self._count_fit_mode == "fb":
+            call = functools.partial(
+                fit_fb_alpha,
+                dataset,
+                forward,
+                backward,
+                model.function,
+                params,
+                cost=cost,
+                t_min=t_min,
+                t_max=t_max,
+                exclude=self._count_exclude,
+                minos=minos,
+            )
 
-    def _render_count_fb_result(self, dataset, result, forward: int, backward: int) -> None:
+            def on_finished(result, d=dataset, f=forward, b=backward, c=cost):
+                self._set_series_busy(False)
+                self._count_fit_worker = None
+                self._render_count_fb_result(d, result, f, b, cost=c)
+
+        else:
+            target = backward if self._count_single_side == "backward" else forward
+            side = self._count_single_side
+            call = functools.partial(
+                fit_single_histogram,
+                dataset,
+                target,
+                model.function,
+                params,
+                side=side,
+                cost=cost,
+                t_min=t_min,
+                t_max=t_max,
+                exclude=self._count_exclude,
+                minos=minos,
+            )
+
+            def on_finished(result, d=dataset, t=target, c=cost, s=side):
+                self._set_series_busy(False)
+                self._count_fit_worker = None
+                self._render_count_single_result(d, result, t, cost=c, side=s)
+
+        self._count_fit_worker = _start_fit_call(
+            self,
+            call,
+            on_finished=on_finished,
+            on_error=self._on_count_fit_error,
+            on_cancelled=self._on_count_fit_cancelled,
+        )
+        self._set_series_busy(True)
+
+    def _on_count_fit_error(self, message: str) -> None:
+        self._set_series_busy(False)
+        self._count_fit_worker = None
+        self._results_group.setStyleSheet("")
+        self._result_text.setHtml(error_html(f"Count-domain fit failed: {message}"))
+
+    def _on_count_fit_cancelled(self) -> None:
+        """Handle a cancelled count-domain fit: restore the panel, record nothing."""
+        self._count_fit_worker = None
+        self._on_series_fit_cancelled()
+
+    def _render_count_fb_result(
+        self, dataset, result, forward: int, backward: int, *, cost: str | None = None
+    ) -> None:
+        cost = cost if cost is not None else self._count_fit_cost
         if not result.success:
             self._results_group.setStyleSheet("")
             self._result_text.setHtml(error_html(result.message or "Forward/backward fit failed"))
@@ -4004,21 +4206,32 @@ class GlobalFitTab(QWidget):
         chip = fit_quality_chip_html(_fit_quality_dict(fwd))
         detail = (
             f"α = {self._fmt_value(alpha, alpha_err)} · χ²/ν = {fwd.reduced_chi_squared:.4f}{chip} "
-            f"(cost: {self._count_fit_cost})<br>" + "<br>".join(rows)
+            f"(cost: {cost})<br>" + "<br>".join(rows)
         )
         self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
         self._result_text.setHtml(
             success_html(f"Forward/backward fit · groups {forward}/{backward}", detail=detail)
         )
-        self.count_fit_completed.emit(
-            dataset,
-            {
-                "result": result,
-                "overlays": self._count_overlays_for_fb(dataset, result, forward, backward),
-            },
-        )
+        if self._current_dataset is dataset:
+            self.count_fit_completed.emit(
+                dataset,
+                {
+                    "result": result,
+                    "overlays": self._count_overlays_for_fb(dataset, result, forward, backward),
+                },
+            )
 
-    def _render_count_single_result(self, dataset, result, group_id: int) -> None:
+    def _render_count_single_result(
+        self,
+        dataset,
+        result,
+        group_id: int,
+        *,
+        cost: str | None = None,
+        side: str | None = None,
+    ) -> None:
+        cost = cost if cost is not None else self._count_fit_cost
+        side = side if side is not None else self._count_single_side
         if not result.success:
             self._results_group.setStyleSheet("")
             self._result_text.setHtml(error_html(result.message or "Single-histogram fit failed"))
@@ -4026,24 +4239,22 @@ class GlobalFitTab(QWidget):
         self._store_count_deadtime(result, group_id)
         self._store_count_single_extras(dataset, result, group_id)
         rows = [self._count_param_row(result, name) for name in result.parameters.names]
-        detail = (
-            f"χ²/ν = {result.reduced_chi_squared:.4f} (cost: {self._count_fit_cost})<br>"
-            + "<br>".join(rows)
-        )
+        detail = f"χ²/ν = {result.reduced_chi_squared:.4f} (cost: {cost})<br>" + "<br>".join(rows)
         self._results_group.setStyleSheet(RESULTS_GROUP_SUCCESS_STYLE)
         self._result_text.setHtml(
             success_html(
-                f"Single-histogram fit · group {group_id} ({self._count_single_side})",
+                f"Single-histogram fit · group {group_id} ({side})",
                 detail=detail,
             )
         )
-        self.count_fit_completed.emit(
-            dataset,
-            {
-                "result": result,
-                "overlays": self._count_overlays_for_single(dataset, result, group_id),
-            },
-        )
+        if self._current_dataset is dataset:
+            self.count_fit_completed.emit(
+                dataset,
+                {
+                    "result": result,
+                    "overlays": self._count_overlays_for_single(dataset, result, group_id),
+                },
+            )
 
     def _count_overlays_for_single(self, dataset, result, group_id: int) -> dict:
         """Overlay curves for a single-histogram count fit (empty on failure)."""
@@ -4320,14 +4531,22 @@ class GlobalFitTab(QWidget):
 
     def _set_series_busy(self, busy: bool) -> None:
         """Swap the Fit button for a Stop button (and back) around a worker fit."""
-        self._fit_btn.setVisible(not busy)
-        self._fit_btn.setEnabled(not busy)
         self._stop_btn.setVisible(busy)
         self._stop_btn.setEnabled(busy)
+        self._fit_btn.setVisible(not busy)
+        if busy:
+            self._fit_btn.setEnabled(False)
+        else:
+            # Re-derive Fit/Preview enabled state from the real gating contract
+            # (member count, grouped readiness, _fit_blocked) rather than
+            # force-enable — the selection may have changed while the fit ran.
+            self._update_mode_ui(preserve_result=True)
 
     def _on_stop_fit(self) -> None:
         """Request cancellation of the active worker-based fit."""
-        worker = self._fit_worker
+        # Only one fit runs at a time (shared Fit button), but it may be either
+        # a legacy series/global worker or a count-domain TaskRunner worker.
+        worker = self._count_fit_worker or self._fit_worker
         if worker is not None and hasattr(worker, "cancel"):
             self._stop_btn.setEnabled(False)
             self._result_text.setText("Cancelling fit…")
@@ -4399,7 +4618,8 @@ class GlobalFitTab(QWidget):
 
         if self._fit_thread is not None:
             self._fit_thread.quit()
-            self._fit_thread.wait()
+            if not self._fit_thread.wait(10_000):
+                retire_thread(self._fit_thread, self._fit_worker)
 
         self._fit_thread = QThread()
         self._fit_worker = GroupedSeriesFitWorker(
@@ -5059,12 +5279,40 @@ class GlobalFitTab(QWidget):
 
     def _cleanup_thread(self) -> None:
         """Clean up thread resources."""
+        sender = self.sender()
+        if isinstance(sender, QThread) and sender is not self._fit_thread:
+            # Stale cleanup: a previous fit's thread.finished was still queued
+            # when a new fit was launched. Deleting the panel's CURRENT
+            # (running) thread here would qFatal; clean up only the sender.
+            sender.deleteLater()
+            return
         if self._fit_thread is not None:
             self._fit_thread.deleteLater()
             self._fit_thread = None
         if self._fit_worker is not None:
             self._fit_worker.deleteLater()
             self._fit_worker = None
+
+    def shutdown_workers(self) -> None:
+        """Cancel any running fit and wait for its thread (window close).
+
+        Bounded like TaskRunner.shutdown: cancellation is cooperative (polled
+        between cost evaluations), so an unbounded wait could hang closeEvent
+        for the rest of a long migrad/MINOS step. A timed-out wait degrades
+        to a leaked thread instead.
+        """
+        if self._fit_worker is not None and hasattr(self._fit_worker, "cancel"):
+            self._fit_worker.cancel()
+        if self._fit_thread is not None:
+            self._fit_thread.quit()
+            if not self._fit_thread.wait(10_000):
+                retire_thread(self._fit_thread, self._fit_worker)
+            self._fit_thread = None
+        self._fit_call_runner.shutdown()
+
+    def wait_for_fit(self, timeout_ms: int = 30_000) -> bool:
+        """Block (with a live event loop) until the launched fit completes."""
+        return _wait_for_fit_thread(self, timeout_ms)
 
     # ── project state helpers ──────────────────────────────────────────
 
@@ -6580,3 +6828,8 @@ class FitPanel(QWidget):
         index = state.get("active_tab_index")
         if isinstance(index, int) and 0 <= index < self._tabs.count():
             self._tabs.setCurrentIndex(index)
+
+    def shutdown_workers(self) -> None:
+        """Cancel running fits on both tabs and wait for their threads."""
+        self._single_tab.shutdown_workers()
+        self._global_tab.shutdown_workers()
