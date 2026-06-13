@@ -29,6 +29,7 @@ from asymmetry.core.maxent import MaxEntConfig
 from asymmetry.gui.panels.spectral_moments_widget import SpectralMomentsWidget
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.typography import status_font
 from asymmetry.gui.styles.widgets import apply_param_table_style, build_primary_button_qss
 
 
@@ -354,6 +355,7 @@ class MaxEntPanel(QWidget):
         content_layout.addWidget(self._moments_widget)
 
         self._status_label = QLabel("")
+        self._status_label.setFont(status_font())
         self._status_label.setWordWrap(True)
         content_layout.addWidget(self._status_label)
         content_layout.addStretch()
@@ -700,7 +702,7 @@ class MaxEntPanel(QWidget):
             )
         elif success:
             self._status_label.setText(
-                f'<span style="color: {tokens.OK};">{html.escape(str(message))}</span>'
+                f'<span style="color: {tokens.OK};">● {html.escape(str(message))}</span>'
             )
         else:
             self._status_label.setText(html.escape(str(message)))

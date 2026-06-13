@@ -37,6 +37,7 @@ from asymmetry.core.fourier.correlation import DEFAULT_CORR_ORDER
 from asymmetry.gui.panels.spectral_moments_widget import SpectralMomentsWidget
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.typography import status_font
 from asymmetry.gui.styles.widgets import apply_param_table_style, build_primary_button_qss
 from asymmetry.gui.utils.latex_renderer import render_latex_to_html_image
 
@@ -425,6 +426,8 @@ class FourierPanel(QWidget):
         content_layout.addWidget(self._apply_to_selection_btn)
 
         self._status_label = QLabel("")
+        self._status_label.setFont(status_font())
+        self._status_label.setWordWrap(True)
         content_layout.addWidget(self._status_label)
 
         content_layout.addStretch()
@@ -690,7 +693,7 @@ class FourierPanel(QWidget):
         """Set the status label below the Compute FFT button."""
         if success:
             self._status_label.setText(
-                f'<span style="color: {tokens.OK};">{html.escape(str(message))}</span>'
+                f'<span style="color: {tokens.OK};">● {html.escape(str(message))}</span>'
             )
         else:
             self._status_label.setText(str(message))
