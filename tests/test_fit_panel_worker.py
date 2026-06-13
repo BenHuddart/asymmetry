@@ -48,9 +48,7 @@ def _run_fit_call(call, timeout_ms: int = 5_000) -> dict:
         out["cancelled"] = True
         loop.quit()
 
-    _start_fit_call(
-        holder, call, on_finished=_finished, on_error=_error, on_cancelled=_cancelled
-    )
+    _start_fit_call(holder, call, on_finished=_finished, on_error=_error, on_cancelled=_cancelled)
     QTimer.singleShot(timeout_ms, loop.quit)
     loop.exec()
     holder._fit_call_runner.shutdown()

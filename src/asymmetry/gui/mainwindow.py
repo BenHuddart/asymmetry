@@ -5568,9 +5568,7 @@ class MainWindow(QMainWindow):
             self._set_fourier_status("A Fourier transform is already being computed.")
             return
         if self._current_dataset is None or self._current_dataset.run is None:
-            self._set_fourier_status(
-                "Select a grouped run before computing the Fourier transform."
-            )
+            self._set_fourier_status("Select a grouped run before computing the Fourier transform.")
             return
 
         # Preserve any live MaxEnt panel edits across the cascaded re-sync below
@@ -5617,11 +5615,11 @@ class MainWindow(QMainWindow):
                     plot_window=plot_window,
                 )
             ),
-            on_finished=lambda payload, started_at=started_at: (
-                self._on_fourier_payload_finished(payload, started_at)
+            on_finished=lambda payload, started_at=started_at: self._on_fourier_payload_finished(
+                payload, started_at
             ),
-            on_error=lambda message, started_at=started_at: (
-                self._on_fourier_payload_error(message, started_at)
+            on_error=lambda message, started_at=started_at: self._on_fourier_payload_error(
+                message, started_at
             ),
         )
 
@@ -5733,9 +5731,7 @@ class MainWindow(QMainWindow):
                 finite_sn = sn[np.isfinite(sn)]
                 peak_signal_to_noise = float(np.max(finite_sn)) if finite_sn.size else 0.0
                 summary = {
-                    "mean_error": float(np.nanmean(averaged_error))
-                    if averaged_error.size
-                    else 0.0,
+                    "mean_error": float(np.nanmean(averaged_error)) if averaged_error.size else 0.0,
                     "peak_signal_to_noise": peak_signal_to_noise,
                     "group_count": len(selected_group_ids),
                 }
@@ -5765,9 +5761,7 @@ class MainWindow(QMainWindow):
             # Auto-filled phases were estimated on the worker's table copy; reflect
             # them into the panel here (the only widget write of the result path).
             if payload["use_phase_table"] and payload["estimated_phases"]:
-                self._fourier_panel.set_group_phases(
-                    payload["estimated_phases"], auto_filled=True
-                )
+                self._fourier_panel.set_group_phases(payload["estimated_phases"], auto_filled=True)
 
             if (
                 average_dataset is not None
