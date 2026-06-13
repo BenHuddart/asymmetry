@@ -1843,7 +1843,19 @@ def test_formula_label_shows_raw_formula_and_tooltip(qapp: QApplication) -> None
 
     tab._set_composite_model(model)
 
-    assert tab._formula_label.text() == model.formula_string()
+    # The visible text carries invisible break markers (a ZWSP break point at
+    # top-level operators, a word joiner forbidding breaks everywhere else, and
+    # non-breaking spaces) so the box wraps only between functions; with those
+    # stripped, the text and the tooltip both round-trip to the raw formula.
+    from asymmetry.gui.styles.widgets import _FORMULA_BREAK, _FORMULA_JOIN
+
+    visible = (
+        tab._formula_label.text()
+        .replace(_FORMULA_BREAK, "")
+        .replace(_FORMULA_JOIN, "")
+        .replace("\u00a0", " ")
+    )
+    assert visible == model.formula_string()
     assert tab._formula_label.toolTip() == model.formula_string()
 
 

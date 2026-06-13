@@ -116,55 +116,145 @@ def apply_param_table_style(table: QTableWidget) -> None:
 # ── Formula label ─────────────────────────────────────────────────────────────
 
 
-def configure_formula_label(label: QLabel) -> None:
-    """Configure a QLabel as the inner, single-line formula text.
+#: Zero-width space — an allowed line-break point (after a top-level operator).
+_FORMULA_BREAK = "​"
+#: Word joiner — forbids a line break at this position.
+_FORMULA_JOIN = "⁠"
 
-    The label never wraps (so a single function is not broken across lines) and
-    is transparent — the surrounding code-box border/background lives on the
-    :func:`make_formula_box` scroll area, which also owns the horizontal
-    scrollbar that appears when the expression overflows. Keeping the label
-    transparent means the domain-mismatch warning (which sets the label's
-    stylesheet to recolour the text) cannot clobber the box chrome.
+
+def insert_formula_break_points(formula: str) -> str:
+    """Return ``formula`` with line-break opportunities only at top-level operators.
+
+    A fit-function expression should wrap where ``*``/``+``/``-`` *combine
+    different functions* (e.g. ``cos(...) * exp(...) + A_bg``) but never inside a
+    function's arguments (``cos(2*pi*f*t + phi)``, ``exp(-(Delta^2/nu^2)*...)``) or
+    between a coefficient and its function (``A_1*cos(...)``). Those joining
+    operators are exactly the ones at parenthesis depth 0 *with* surrounding
+    spaces.
+
+    Qt's line breaker would otherwise also break at ``/``, ``-``, ``)`` etc. inside
+    a tightly-packed argument, so a WORD JOINER is inserted between *every* adjacent
+    pair to forbid breaks, and a ZERO-WIDTH SPACE replaces it only at the chosen
+    top-level operators. The result wraps only between functions; a single function
+    wider than the box scrolls horizontally instead of breaking.
+    """
+
+    def _is_token_char(ch: str) -> bool:
+        # Letters, digits and underscore form a name (exp, Lambda, A_1, 2*pi);
+        # Qt never breaks inside such a run, so no joiner is needed between two
+        # of them — which keeps whole names searchable in the visible text.
+        return ch.isalnum() or ch == "_"
+
+    out: list[str] = []
+    depth = 0
+    length = len(formula)
+    for index, char in enumerate(formula):
+        # Spaces become non-breaking; the only place a line may break is the
+        # explicit ZWSP inserted after a top-level operator below.
+        out.append("\u00a0" if char == " " else char)
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+        if index == length - 1:
+            continue
+        nxt = formula[index + 1]
+        is_top_level_join = (
+            depth == 0 and char in "*+-" and formula[index - 1] == " " and nxt == " "
+        )
+        if is_top_level_join:
+            out.append(_FORMULA_BREAK)
+        elif not (_is_token_char(char) and _is_token_char(nxt)):
+            # A boundary touching an operator/parenthesis is where Qt would
+            # otherwise break (after '/', '-', ')', ...); forbid it.
+            out.append(_FORMULA_JOIN)
+    return "".join(out)
+
+
+def configure_formula_label(label: QLabel) -> None:
+    """Configure the inner QLabel of a :class:`FormulaBox` (or a bare code-box).
+
+    The label is transparent — the code-box border/background lives on the
+    surrounding scroll area, so the domain-mismatch warning (which sets the
+    label's stylesheet to recolour the text) cannot clobber the box chrome. Word
+    wrap is on, but :func:`insert_formula_break_points` restricts where it may
+    actually break.
     """
     label.setFont(mono_font(11.0))
-    label.setWordWrap(False)
-    label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    label.setWordWrap(True)
+    label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
     label.setTextFormat(Qt.TextFormat.PlainText)
-    label.setContentsMargins(6, 0, 6, 0)
+    label.setContentsMargins(6, 4, 6, 4)
     label.setStyleSheet("QLabel { background: transparent; }")
 
 
-def make_formula_box() -> tuple[QScrollArea, QLabel]:
-    """Return a ``(scroll_area, label)`` pair for displaying a fit-function formula.
+class FormulaBox(QScrollArea):
+    """A code-box for a fit-function expression.
 
-    A long expression scrolls horizontally inside the box rather than wrapping a
-    single function across several lines or dragging the inspector dock wide. The
-    box (border/background) is on the scroll area so it always fills the available
-    width; the no-wrap label sizes to its text, so the horizontal scrollbar only
-    appears when the formula is wider than the box. Keep the returned label for
-    :func:`set text/tooltip <_set_formula_label_text>`; add the scroll area to the
-    layout.
+    Wraps the expression only at the top-level operators joining its terms (see
+    :func:`insert_formula_break_points`), keeps each function and its arguments
+    intact, scrolls horizontally when a single function is wider than the box,
+    and sizes its height to the wrapped content (the inspector dock scrolls
+    vertically for a very tall expression). Set the text via :meth:`set_formula`;
+    ``self.label`` stays a plain QLabel so ``text()``/``toolTip()`` and the
+    domain-mismatch warning keep working.
     """
-    label = QLabel()
-    configure_formula_label(label)
 
-    area = QScrollArea()
-    area.setObjectName("formulaBox")
-    area.setWidgetResizable(True)
-    area.setFrameShape(QFrame.Shape.NoFrame)
-    area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-    area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    area.setWidget(label)
-    area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-    area.setStyleSheet(
-        f"QScrollArea#formulaBox {{ background-color: {tokens.SURFACE_ALT};"
-        f" border: 1px solid {tokens.BORDER}; border-radius: 3px; }}"
-        " QScrollArea#formulaBox > QWidget > QWidget { background: transparent; }"
-    )
-    line_height = label.fontMetrics().lineSpacing()
-    scrollbar = area.horizontalScrollBar().sizeHint().height() or 14
-    area.setFixedHeight(line_height + scrollbar + 10)
-    return area, label
+    def __init__(self, parent: QLabel | None = None) -> None:
+        super().__init__(parent)
+        self.label = QLabel()
+        configure_formula_label(self.label)
+        self.label._formula_box = self  # back-ref so text setters can re-measure
+        self.setObjectName("formulaBox")
+        self.setWidget(self.label)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setStyleSheet(
+            f"QScrollArea#formulaBox {{ background-color: {tokens.SURFACE_ALT};"
+            f" border: 1px solid {tokens.BORDER}; border-radius: 3px; }}"
+            " QScrollArea#formulaBox > QWidget > QWidget { background: transparent; }"
+        )
+        self.refresh_height()
+
+    def set_formula(self, formula: str) -> None:
+        """Display ``formula`` (break-marked) and keep the raw text in the tooltip."""
+        raw = str(formula)
+        self.label.setText(insert_formula_break_points(raw))
+        self.label.setToolTip(raw)
+        self.refresh_height()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 — Qt override
+        super().resizeEvent(event)
+        self.refresh_height()
+
+    def refresh_height(self) -> None:
+        """Resize the box to fit the wrapped content at the current width."""
+        viewport_width = max(1, self.viewport().width())
+        segment_width = self.label.minimumSizeHint().width()  # widest unbreakable run
+        content_width = max(viewport_width, segment_width)
+        if self.label.hasHeightForWidth():
+            text_height = self.label.heightForWidth(content_width)
+        else:
+            text_height = self.label.sizeHint().height()
+        scrollbar = (
+            self.horizontalScrollBar().sizeHint().height() if segment_width > viewport_width else 0
+        )
+        line = self.label.fontMetrics().lineSpacing()
+        self.setFixedHeight(max(text_height, line) + scrollbar + 2 * self.frameWidth() + 6)
+
+
+def make_formula_box() -> tuple[FormulaBox, QLabel]:
+    """Return a ``(box, label)`` pair for displaying a fit-function formula.
+
+    Add ``box`` to the layout; keep ``label`` for the formula text-setter and the
+    domain-mismatch warning (both go through the label, which re-measures the box
+    via its back-reference).
+    """
+    box = FormulaBox()
+    return box, box.label
 
 
 # ── Table header font ─────────────────────────────────────────────────────────

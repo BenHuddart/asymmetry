@@ -684,7 +684,15 @@ _make_formula_box = make_formula_box
 
 
 def _set_formula_label_text(label: QLabel, formula: str, **_kwargs) -> None:
-    """Set formula text; tooltip preserves the raw string for reference."""
+    """Set formula text; tooltip preserves the raw string for reference.
+
+    When the label lives in a FormulaBox, route through it so the expression is
+    break-marked (wraps only at top-level operators) and the box re-measures.
+    """
+    box = getattr(label, "_formula_box", None)
+    if box is not None:
+        box.set_formula(formula)
+        return
     raw_text = str(formula)
     label.setText(raw_text)
     label.setToolTip(raw_text)
@@ -713,6 +721,9 @@ def _apply_domain_mismatch_warning(label: QLabel, model: CompositeModel, domain:
         f"{domain} domain. The model is kept as saved and can still be fitted; "
         "use Edit Function to repair it."
     )
+    box = getattr(label, "_formula_box", None)
+    if box is not None:
+        box.refresh_height()
 
 
 def _format_bounds_pair(min_val: float, max_val: float) -> str:

@@ -1019,7 +1019,7 @@ class ModelFitDialog(QDialog):
             self._range_selector.setCurrentIndex(idx)
             self._range_selector.blockSignals(False)
 
-        self._formula_label.setText(f"y(x) = {fit_range.model.formula_string()}")
+        self._formula_box.set_formula(f"y(x) = {fit_range.model.formula_string()}")
 
         self._range_hint_label.setText(
             f"Editing parameters for Range {idx + 1}. Run Fit to update result values/uncertainties."
