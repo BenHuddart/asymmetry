@@ -249,29 +249,40 @@ def muonium_lf_relaxation(
     exchange) of amplitude ``delta_ex`` (MHz ≡ µs⁻¹, no 2π) and correlation time ``tau_c``
     (µs), sampled at the intratriplet ``nu_12`` transition (BPP/Redfield form):
 
-        lambda(B) = (1 - delta) delta_ex^2 tau_c / (1 + (omega_12 tau_c)^2),
+        lambda(B) = delta_ex^2 tau_c / (1 + (omega_12 tau_c)^2),
 
-    with ``omega_12 = 2 pi nu_12`` and ``delta = x/sqrt(1+x^2)`` the Breit-Rabi
-    mixing factor.  ``nu_12`` is computed from the *exact* Breit-Rabi levels
+    with ``omega_12 = 2 pi nu_12``.  This is Kadono's intra-triplet
+    approximation: with ``tau_c = 1/nu`` it is identically
+    ``lambda = delta_ex^2 nu / (omega_12^2 + nu^2)`` — the BPP/Redfield
+    Lorentzian sampled at the dominant low-frequency transition ``nu_12``.
+
+    ``nu_12`` is computed from the *exact* Breit-Rabi levels
     (:func:`_tf_levels`); WiMDA instead uses an approximate ``nu_12`` built with
     ``(gamma_e - gamma_mu)`` in both the linear and square-root terms (a
     convention also found in the quantum-diffusion literature) and contains a
     2π unit inconsistency — this implementation deliberately re-derives rather
     than transliterates (see docs/porting/wimda-fit-function-parity/).
 
-    The ``(1 - delta)`` prefactor quenches the relaxation as the muon
-    repolarizes in high longitudinal field; together with the growing
-    ``omega_12`` it reproduces the LF quenching curves used to extract hop
-    rates.  ``A_hf`` defaults to vacuum muonium and is normally held fixed.
+    Field decoupling enters *solely* through ``omega_12(B)``: as the field
+    grows the intra-triplet splitting moves the spectral density off the
+    fluctuation peak and the rate falls.  WiMDA additionally multiplies by a
+    ``(1 - delta)`` factor (``delta = x/sqrt(1+x^2)``, the Breit-Rabi mixing
+    parameter); that prefactor is **not** present in the cited source and is
+    *not* applied here — see the correction note in
+    docs/porting/wimda-fit-function-parity/comparison.md.  ``A_hf`` defaults to
+    vacuum muonium and is normally held fixed.
 
-    References: R. F. Kiefl et al., Phys. Rev. Lett. 62, 792 (1989);
-    R. Kadono et al., Phys. Rev. Lett. 64, 665 (1990).
+    References: R. Kadono et al., Phys. Rev. Lett. 64, 665 (1990) (the cited
+    source; the same intra-triplet form is restated as Eq. 22 of T. U. Ito &
+    R. Kadono, J. Phys. Soc. Jpn. 94, 064601 (2025), arXiv:2410.23575, where it
+    is attributed to that PRL); R. F. Kiefl et al., Phys. Rev. Lett. 62, 792
+    (1989).
     """
     t = np.asarray(t, dtype=float)
     _d, e1, e2, _e3, _e4 = _tf_levels(B_LF, A_hf)
     nu12 = abs(e1 - e2)  # MHz
     omega12_tau = _TWO_PI * nu12 * abs(float(tau_c))
-    lam = (1.0 - _d) * float(delta_ex) ** 2 * abs(float(tau_c)) / (1.0 + omega12_tau * omega12_tau)
+    lam = float(delta_ex) ** 2 * abs(float(tau_c)) / (1.0 + omega12_tau * omega12_tau)
     return np.exp(np.clip(-lam * np.abs(t), -700.0, 0.0))
 
 

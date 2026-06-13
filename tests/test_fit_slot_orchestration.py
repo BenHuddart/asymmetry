@@ -96,6 +96,11 @@ def test_single_fit_writes_representation_slot(mw, monkeypatch):
     assert rep.fit.model["component_names"] == ["Exponential"]
     assert rep.fit.result["reduced_chi_squared"] == pytest.approx(0.7)
     assert rep.fit.result["parameters"]["A"] == pytest.approx(0.2)
+    # Provenance is stamped onto the persisted record (Item 2: enrich wiring).
+    assert rep.fit.result["model_name"] == "Exponential"
+    assert rep.fit.result["provenance"] == "single"
+    assert "timestamp" in rep.fit.result
+    assert rep.fit.result["npar"] == 2  # both A and Lambda carry a HESSE sigma
 
 
 def test_single_fit_slot_targets_active_domain(mw, monkeypatch):
@@ -149,6 +154,14 @@ def test_global_fit_creates_batch_and_member_slots(mw, monkeypatch):
     rep = mw._project_model.representation(11, RepresentationType.TIME_FB_ASYMMETRY)
     assert rep.fit.provenance == "batch"
     assert rep.fit.batch_id == batch.batch_id
+    # Every batch member record carries the composite model name + provenance.
+    for summary in batch.results_by_run.values():
+        assert summary["model_name"] == "Exponential + Constant"
+        assert summary["provenance"] == "batch"
+        assert "timestamp" in summary
+    # The member FitSlot result mirrors the series entry (no recompute drift).
+    assert rep.fit.result["model_name"] == "Exponential + Constant"
+    assert rep.fit.result["provenance"] == "batch"
 
 
 def test_global_classified_parameter_yields_global_provenance(mw, monkeypatch):

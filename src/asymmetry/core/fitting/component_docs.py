@@ -265,8 +265,9 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "Use for the longitudinal-field spin-lattice (T₁) relaxation of muonium when a fluctuating coupling — "
         "nuclear hyperfine fields modulated by muonium hopping, or electron spin exchange with carriers — "
         "relaxes the muon spin via the intratriplet ν₁₂ transition. The rate takes the Redfield form "
-        "λ = (1 − δ)·δ_ex²·τ_c/[1 + (2πν₁₂τ_c)²], with ν₁₂ from the exact Breit–Rabi levels and "
-        "δ = x/√(1 + x²) the field-mixing factor that quenches the relaxation as the muon repolarizes. "
+        "λ = δ_ex²·τ_c/[1 + (2πν₁₂τ_c)²], with ν₁₂ from the exact Breit–Rabi levels; the field decoupling "
+        "enters solely through ν₁₂(B) moving the spectral density off the fluctuation peak (Kadono PRL 64, "
+        "665 (1990); WiMDA's extra (1 − δ) prefactor is not in that source and is not applied here). "
         "Measuring λ versus B and locating the T₁ minimum (2πν₁₂τ_c ≈ 1) determines both δ_ex and τ_c, the "
         "classic route to muonium hop rates. A_hf defaults to vacuum muonium (4463 MHz) and should normally "
         "be held fixed. This component is a relaxation envelope: multiply an oscillating component, or use it "
@@ -500,6 +501,7 @@ FIT_COMPONENT_REFERENCES: dict[str, tuple[str, ...]] = {
     "MuoniumLFRelax": (
         "R. F. Kiefl et al., Phys. Rev. Lett. 62, 792 (1989).",
         "R. Kadono et al., Phys. Rev. Lett. 64, 665 (1990).",
+        "T. U. Ito and R. Kadono, J. Phys. Soc. Jpn. 94, 064601 (2025).",
     ),
     "MuF": ("T. Lancaster et al., Phys. Rev. Lett. 99, 267601 (2007).",),
     "FmuF_Linear": ("J. H. Brewer et al., Phys. Rev. B 33, 7813 (1986).",),

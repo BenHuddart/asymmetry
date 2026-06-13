@@ -85,6 +85,36 @@ def test_fit_slot_round_trip_and_provenance_guard():
     assert FitSlot().is_empty()
 
 
+def test_fit_slot_result_provenance_keys_round_trip():
+    """The additive fit-log provenance keys (Item 2) survive .asymp persistence.
+
+    ``FitSlot.to_dict``/``from_dict`` pass the whole ``result`` dict through, so
+    the enriched model_name/fit_range/timestamp/provenance/npar/ndof keys stamped
+    by the GUI recorders persist verbatim.
+    """
+    result = {
+        "chi_squared": 2.0,
+        "reduced_chi_squared": 1.0,
+        "parameters": {"A": 0.2},
+        "uncertainties": {"A": 0.01},
+        "model_name": "Exponential + Constant",
+        "fit_range": "0.100–10.000 µs",
+        "timestamp": "2026-06-13T12:00:00+01:00",
+        "provenance": "single",
+        "npar": 1,
+        "ndof": 41,
+    }
+    slot = FitSlot(model={"component_names": ["Exponential"]}, result=result, provenance="single")
+    # Round-trip through JSON (the .asymp on-disk encoding), not just dict(): this
+    # also proves the provenance values are JSON-serialisable, which dict() alone
+    # would not catch.
+    import json
+
+    restored = FitSlot.from_dict(json.loads(json.dumps(slot.to_dict())))
+    for key in ("model_name", "fit_range", "timestamp", "provenance", "npar", "ndof"):
+        assert restored.result[key] == result[key]
+
+
 # ── TimeFBAsymmetry ────────────────────────────────────────────────────────
 
 

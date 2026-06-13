@@ -311,6 +311,12 @@ class MultiGroupFitWindow(QWidget):
         for tab in self._grouped_tabs():
             tab.set_fit_range_display(x_min, x_max)
 
+    def current_fit_range_text(self) -> str | None:
+        """Active grouped-fit range as a provenance string, from the current tab."""
+        tab = self._tabs.currentWidget()
+        getter = getattr(tab, "current_fit_range_text", None)
+        return getter() if callable(getter) else None
+
     def set_fit_blocked(self, blocked: bool, reason: str = "") -> None:
         """Apply fit blocking rules from the main window context to both surfaces."""
         for tab in self._grouped_tabs():
