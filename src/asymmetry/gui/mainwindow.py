@@ -24,6 +24,7 @@ import hashlib
 import os
 import time
 from contextlib import nullcontext
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -57,6 +58,7 @@ from asymmetry.core.fitting import (
     FitLog,
     as_composite_model,
     build_grouped_time_domain_datasets,
+    enrich_summary_provenance,
     fit_result_summary,
     fit_scan_baseline,
     fit_scan_model,
@@ -139,6 +141,7 @@ from asymmetry.core.utils.constants import (
     PeriodMode,
 )
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
+from asymmetry.gui.fit_settings import fit_quality_confidence, set_fit_quality_confidence
 from asymmetry.gui.gle_settings import GleSetupDialog
 from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
@@ -729,6 +732,7 @@ class MainWindow(QMainWindow):
         self._plot_decimation_action.setCheckable(True)
         self._plot_decimation_action.setChecked(self._plot_decimation_is_enabled())
         self._plot_decimation_action.toggled.connect(self._on_plot_decimation_toggled)
+        options_menu.addAction("Fit quality confidence…", self._on_fit_quality_confidence)
 
         # Setup
         setup_menu = mb.addMenu("&Setup")
@@ -2760,6 +2764,31 @@ class MainWindow(QMainWindow):
         state = "enabled" if enabled else "disabled"
         self._log_panel.log(f"Plot decimation {state}.")
         self.statusBar().showMessage(f"Plot decimation {state}")
+
+    def _on_fit_quality_confidence(self) -> None:
+        """Prompt for and persist the χ² quality-band confidence level (percent).
+
+        The band is the χ²ᵣ good/poor/overdone target; raising the confidence
+        widens it toward χ²ᵣ = 1. Stored in QSettings and read by every fit
+        surface (recorded records, the live fit-panel chip, the model-fit dialog)
+        on the next fit — a settings entry, not a per-fit control.
+        """
+        current = fit_quality_confidence(self._settings)
+        percent, ok = QInputDialog.getDouble(
+            self,
+            "Fit quality confidence",
+            "Two-sided χ² confidence level R (%):\n"
+            "the good/poor/overdone band; higher = more forgiving.",
+            value=current * 100.0,
+            minValue=50.0,
+            maxValue=99.9,
+            decimals=1,
+        )
+        if not ok:
+            return
+        stored = set_fit_quality_confidence(percent / 100.0, self._settings)
+        self._log_panel.log(f"Fit quality confidence set to {stored:.1%}.")
+        self.statusBar().showMessage(f"Fit quality confidence: {stored:.1%}")
 
     def _sync_temperature_log_option_action(self) -> None:
         """Keep the Options menu temperature action aligned with browser state."""
@@ -7164,13 +7193,63 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     @staticmethod
-    def _fit_result_summary(fit_result) -> dict:
+    def _composite_model_label(composite: object) -> str | None:
+        """Human-readable model expression from a serialised composite model.
+
+        e.g. ``{"component_names": ["Exponential", "Constant"], "operators":
+        ["+"]}`` -> ``"Exponential + Constant"``. Returns ``None`` when the
+        structure is missing or empty.
+        """
+        if not isinstance(composite, dict):
+            return None
+        names = composite.get("component_names") or []
+        operators = composite.get("operators") or []
+        if not names:
+            return None
+        parts = [str(names[0])]
+        for op, name in zip(operators, names[1:]):
+            parts.append(str(op))
+            parts.append(str(name))
+        return " ".join(parts)
+
+    def _fit_result_summary(
+        self,
+        fit_result,
+        *,
+        provenance: str | None = None,
+        model_name: str | None = None,
+        fit_range: str | None = None,
+        timestamp: str | None = None,
+    ) -> dict:
         """Return a JSON-serialisable summary of a fit result.
 
         Delegates to the shared core helper so the run-batch and grouped-series
-        recording paths produce identically shaped ``results_by_run`` entries.
+        recording paths produce identically shaped ``results_by_run`` entries,
+        then stamps the additive provenance keys (``model_name``, ``fit_range``,
+        ``timestamp``, ``provenance``, ``npar``, ``ndof``) the Qt-free core
+        cannot source. ``npar`` is the free-parameter count (those carrying a
+        HESSE σ) and ``ndof`` is read back from the χ² quality block; both are
+        omitted when unavailable.
         """
-        return fit_result_summary(fit_result)
+        summary = fit_result_summary(fit_result, confidence=fit_quality_confidence(self._settings))
+        uncertainties = summary.get("uncertainties") or {}
+        quality = summary.get("quality") or {}
+        ndof = quality.get("dof") if isinstance(quality, dict) else None
+        enrich_summary_provenance(
+            summary,
+            model_name=model_name,
+            fit_range=fit_range,
+            timestamp=timestamp,
+            provenance=provenance,
+            npar=(len(uncertainties) or None),
+            ndof=ndof,
+        )
+        return summary
+
+    @staticmethod
+    def _fit_record_timestamp() -> str:
+        """ISO-8601 local timestamp for a freshly recorded fit (the core stays clock-free)."""
+        return datetime.now().astimezone().isoformat(timespec="seconds")
 
     # ── Representation-aware trend panel (Phase 4) ────────────────────────────
 
@@ -7393,7 +7472,13 @@ class MainWindow(QMainWindow):
             model=state.get("composite_model"),
             parameters=[dict(p) for p in state.get("parameters", []) if isinstance(p, dict)],
             result={
-                **self._fit_result_summary(fit_result),
+                **self._fit_result_summary(
+                    fit_result,
+                    provenance="single",
+                    model_name=self._composite_model_label(state.get("composite_model")),
+                    fit_range=self._fit_panel.single_fit_range_text(),
+                    timestamp=self._fit_record_timestamp(),
+                ),
                 "result_html": state.get("result_html"),
             },
             provenance="single",
@@ -7430,8 +7515,17 @@ class MainWindow(QMainWindow):
 
         member_runs = sorted(int(r) for r in normalized_payloads)
         canonical_model = state.get("composite_model")
+        model_label = self._composite_model_label(canonical_model)
+        fit_range = self._fit_panel.batch_fit_range_text()
+        timestamp = self._fit_record_timestamp()
         results_by_run = {
-            int(run): self._fit_result_summary(payload[0])
+            int(run): self._fit_result_summary(
+                payload[0],
+                provenance=provenance,
+                model_name=model_label,
+                fit_range=fit_range,
+                timestamp=timestamp,
+            )
             for run, payload in normalized_payloads.items()
         }
         batch = FitSeries(
@@ -7460,7 +7554,7 @@ class MainWindow(QMainWindow):
             representation.fit = FitSlot(
                 model=canonical_model,
                 parameters=template_parameters,
-                result=self._fit_result_summary(payload[0]),
+                result=dict(results_by_run[int(run)]),
                 provenance=provenance,
                 batch_id=batch.batch_id,
             )
@@ -7808,6 +7902,24 @@ class MainWindow(QMainWindow):
                 continue
             source_by_key[key] = int(metadata.get("source_run_number", abs(key) // 1000))
 
+        physics_roles = {
+            str(name): str(role)
+            for name, role in (state.get("param_roles") or {}).items()
+            if role in ("global", "local", "fixed")
+        }
+        nuisance_params = [str(name) for name in (state.get("nuisance_params") or [])]
+        canonical_model = state.get("composite_model")
+        provenance = "global" if any(r == "global" for r in physics_roles.values()) else "batch"
+        model_label = self._composite_model_label(canonical_model)
+        fit_range = None
+        if self._multi_group_fit_window is not None and hasattr(
+            self._multi_group_fit_window, "current_fit_range_text"
+        ):
+            fit_range = self._multi_group_fit_window.current_fit_range_text()
+        if fit_range is None:
+            fit_range = self._fit_panel.batch_fit_range_text()
+        timestamp = self._fit_record_timestamp()
+
         member_keys: list[int] = []
         member_source_run: dict[int, int] = {}
         results_by_run: dict[int, dict] = {}
@@ -7819,18 +7931,15 @@ class MainWindow(QMainWindow):
             fit_result = payload[0] if isinstance(payload, tuple) and payload else payload
             member_keys.append(key)
             member_source_run[key] = source_by_key.get(key, abs(key) // 1000)
-            results_by_run[key] = self._fit_result_summary(fit_result)
+            results_by_run[key] = self._fit_result_summary(
+                fit_result,
+                provenance=provenance,
+                model_name=model_label,
+                fit_range=fit_range,
+                timestamp=timestamp,
+            )
         if not member_keys:
             return
-
-        physics_roles = {
-            str(name): str(role)
-            for name, role in (state.get("param_roles") or {}).items()
-            if role in ("global", "local", "fixed")
-        }
-        nuisance_params = [str(name) for name in (state.get("nuisance_params") or [])]
-        canonical_model = state.get("composite_model")
-        provenance = "global" if any(r == "global" for r in physics_roles.values()) else "batch"
 
         series = FitSeries(
             f"batch-{self._next_batch_index}",

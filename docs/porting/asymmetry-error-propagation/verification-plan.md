@@ -38,7 +38,10 @@ To run once Option A (exact propagation) is implemented.
 10. `python tools/harness.py validate` green after updating every test listed in
     the migration note of [`implementation-options.md`](implementation-options.md).
 11. Grep `Asymmetry-testing` worktree and any saved `.asymp` goldens for pinned
-    σ_A; regenerate as needed.
+    σ_A; regenerate as needed. **Done (2026-06-13):** no `.asymp` goldens exist;
+    the error-bearing CSV reports were already regenerated on post-fix `main`
+    (provenance + χ²ᵣ≥1.0 + engine spot-check). Audit recorded on the
+    `testing/wimda-eval` branch (`docs/testing/reports/sigma-A-golden-audit.md`).
 
 ## Acceptance
 

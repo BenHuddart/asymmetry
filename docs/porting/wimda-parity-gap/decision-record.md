@@ -112,7 +112,10 @@ closeout).
   outlier**; WiMDA/musrfit/textbook agree with the exact form. One-sided
   bins keep the 1.0 no-information sentinel. Measured pre-fix impact:
   amplitude σ +3.2%, χ²ᵣ biased low.
-- **Open**: regenerate pinned σ_A in testing-worktree golden artifacts.
+- **Closed (2026-06-13)**: testing-worktree σ_A goldens audited against the
+  exact-Poisson change — no `.asymp` goldens exist, and the error-bearing CSV
+  reports were regenerated on post-fix `main` (χ²ᵣ centres ≥1.0, the exact-σ
+  signature). See the audit note on the `testing/wimda-eval` branch.
 
 ### maxent-completion (PR #40)
 

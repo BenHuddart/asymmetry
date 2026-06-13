@@ -94,6 +94,7 @@ from asymmetry.core.utils.constants import (
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     MUON_LIFETIME_US,
 )
+from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
 from asymmetry.gui.styles import tokens
@@ -555,11 +556,33 @@ def _get_file_value_for_parameter(
 
 
 def _fit_quality_dict(result) -> dict | None:
-    """The χ² verdict dict for *result* via the shared summary (single source)."""
+    """The χ² verdict dict for *result* via the shared summary (single source).
+
+    Uses the user-configured quality-band confidence so the live fit-panel chip
+    matches the verdict persisted onto the fit record.
+    """
     try:
-        return fit_result_summary(result).get("quality")
+        return fit_result_summary(result, confidence=fit_quality_confidence()).get("quality")
     except Exception:
         return None
+
+
+def _fit_range_provenance_text(min_spin, max_spin, unit_label) -> str | None:
+    """Format the fit range as a provenance string, or ``None`` if degenerate.
+
+    Shared by the Single and Batch tabs (identical fit-range widgets) so the
+    ``fit_range`` stamped onto persisted records has one formatting source.
+    Reads the spin values, decimals, and the domain unit label (µs/MHz);
+    returns ``None`` when the spinboxes are disabled or the range is empty.
+    """
+    if not min_spin.isEnabled():
+        return None
+    lo = float(min_spin.value())
+    hi = float(max_spin.value())
+    if not hi > lo:
+        return None
+    decimals = min_spin.decimals()
+    return f"{lo:.{decimals}f}–{hi:.{decimals}f} {unit_label.text()}"
 
 
 def _fit_success_html(result) -> str:
@@ -1262,6 +1285,12 @@ class SingleFitTab(QWidget):
         self.fit_range_edit_committed.emit(
             self._fit_range_min_spin.value(),
             self._fit_range_max_spin.value(),
+        )
+
+    def current_fit_range_text(self) -> str | None:
+        """Active fit range as a provenance string (µs/MHz), or ``None``."""
+        return _fit_range_provenance_text(
+            self._fit_range_min_spin, self._fit_range_max_spin, self._fit_range_unit_label
         )
 
     def _wizard_context_signature(self) -> dict[str, object]:
@@ -2835,6 +2864,12 @@ class GlobalFitTab(QWidget):
         self.fit_range_edit_committed.emit(
             self._fit_range_min_spin.value(),
             self._fit_range_max_spin.value(),
+        )
+
+    def current_fit_range_text(self) -> str | None:
+        """Active fit range as a provenance string (µs/MHz), or ``None``."""
+        return _fit_range_provenance_text(
+            self._fit_range_min_spin, self._fit_range_max_spin, self._fit_range_unit_label
         )
 
     def _refresh_inherited_single_fit_defaults(self) -> None:
@@ -6570,6 +6605,14 @@ class FitPanel(QWidget):
     def get_grouped_state(self) -> dict:
         """Return the grouped-fit classification (physics roles + nuisance block)."""
         return self._global_tab.get_grouped_state()
+
+    def single_fit_range_text(self) -> str | None:
+        """Active single-fit range as a provenance string (see SingleFitTab)."""
+        return self._single_tab.current_fit_range_text()
+
+    def batch_fit_range_text(self) -> str | None:
+        """Active batch/global/grouped fit range as a provenance string."""
+        return self._global_tab.current_fit_range_text()
 
     def send_single_model_to_batch(self) -> bool:
         """Copy the single-fit tab's model/fit function into the Batch tab.

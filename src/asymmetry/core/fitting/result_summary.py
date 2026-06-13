@@ -36,16 +36,19 @@ def _infer_dof(fit_result: Any) -> int:
     return 0
 
 
-def _quality_summary(fit_result: Any) -> dict | None:
+def _quality_summary(fit_result: Any, confidence: float = FIT_QUALITY_CONFIDENCE) -> dict | None:
     """JSON-serialisable χ² verdict for *fit_result*, or ``None`` when none applies.
 
     Carries the good/poor/overdone verdict plus the target χ²ᵣ band so every fit
     surface can render the same chip and teaching tooltip (W7). ``None`` when no
     verdict is possible (ν < 1 or non-finite χ²) — surfaces then show χ²ᵣ bare.
+
+    ``confidence`` is the two-sided level R for the band (default WiMDA's
+    ``Rgoodfit`` = 0.95); the GUI passes the user-configured value.
     """
     chi2 = float(getattr(fit_result, "chi_squared", 0.0))
     dof = _infer_dof(fit_result)
-    quality = assess_fit_quality(chi2, dof, FIT_QUALITY_CONFIDENCE)
+    quality = assess_fit_quality(chi2, dof, confidence)
     if quality.verdict is None or not all(
         math.isfinite(v) for v in (quality.chi2_reduced, quality.band_low, quality.band_high)
     ):
@@ -60,7 +63,7 @@ def _quality_summary(fit_result: Any) -> dict | None:
     }
 
 
-def fit_result_summary(fit_result: Any) -> dict:
+def fit_result_summary(fit_result: Any, *, confidence: float = FIT_QUALITY_CONFIDENCE) -> dict:
     """Return a JSON-serialisable summary of *fit_result*.
 
     Includes the fitted parameter values and uncertainties so a series'
@@ -71,6 +74,9 @@ def fit_result_summary(fit_result: Any) -> dict:
     - ``"uncertainties_asymmetric"`` — opt-in MINOS intervals ``{name: [lo, hi]}``
       (``lo < 0 < hi``), a display-only overlay. ``"uncertainties"`` stays the
       symmetric HESSE σ that every downstream surface consumes.
+
+    ``confidence`` sets the two-sided level R of the χ² quality band (default
+    WiMDA's ``Rgoodfit`` = 0.95); the GUI threads the user-configured value here.
     """
     parameters: dict[str, float] = {}
     parameter_set = getattr(fit_result, "parameters", None)
@@ -94,5 +100,5 @@ def fit_result_summary(fit_result: Any) -> dict:
         "parameters": parameters,
         "uncertainties": uncertainties,
         "uncertainties_asymmetric": asymmetric,
-        "quality": _quality_summary(fit_result),
+        "quality": _quality_summary(fit_result, confidence),
     }
