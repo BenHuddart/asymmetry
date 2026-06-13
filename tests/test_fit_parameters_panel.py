@@ -2234,3 +2234,25 @@ def test_restore_state_defers_trend_overlay_to_async(
     )
     assert drew, "the overlay should be drawn once the async recompute lands"
     target.shutdown_workers()
+
+
+def test_restore_state_clears_suspend_flag_on_exception(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mid-restore exception must not leave the plot permanently suspended.
+
+    Regression: _suspend_plot_refresh is set for the duration of restore_state;
+    without the try/finally an exception (malformed project) would wedge it True,
+    silently disabling every subsequent plot refresh for the session.
+    """
+    panel = FitParametersPanel()
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("malformed project")
+
+    monkeypatch.setattr(panel, "_rebuild_y_controls", _boom)
+
+    with pytest.raises(RuntimeError):
+        panel.restore_state({"rows": []})
+
+    assert panel._suspend_plot_refresh is False, "suspend guard must clear after a failed restore"

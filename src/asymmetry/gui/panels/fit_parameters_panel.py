@@ -73,6 +73,11 @@ from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
+#: Sentinel distinguishing "x_domain not provided" (GUI callers — read it live
+#: from the rows) from an explicitly-passed snapshot that may itself be ``None``
+#: (the off-thread worker — must never read ``self`` for it).
+_UNSET = object()
+
 
 def _format_param_label(name: str) -> str:
     return get_param_info(name).unicode_label()
@@ -541,9 +546,22 @@ class FitParametersPanel(QWidget):
     def restore_state(self, state: dict) -> None:
         # Suppress the heavy synchronous plot draws each intermediate restore step
         # would otherwise trigger (checkbox setChecked signals, group-selection
-        # sync); a single off-thread recompute runs at the end. Reset first so a
-        # prior aborted restore can't leave the plot permanently suspended.
+        # sync); a single off-thread recompute runs at the end. try/finally
+        # guarantees the guard clears even if a malformed project raises mid-way,
+        # so the plot is never left permanently suspended.
         self._suspend_plot_refresh = True
+        try:
+            self._restore_state_locked(state)
+        finally:
+            self._suspend_plot_refresh = False
+        # The table is cheap; the trend-overlay curves (model eval per fit range
+        # over an 800-pt axis — e.g. DiffusionLF_2D runs scipy quadrature per
+        # sample) recompute off-thread behind the overlay so a saved project's
+        # trend fits don't block the GUI thread on open.
+        self._refresh_table()
+        self._start_trend_curve_compute()
+
+    def _restore_state_locked(self, state: dict) -> None:
         rows_data = state.get("rows", [])
         self._composite_parameters = self._deserialize_composite_parameters(
             state.get("composite_parameters", [])
@@ -698,14 +716,6 @@ class FitParametersPanel(QWidget):
                 self._plot_mode_combo.setCurrentIndex(idx)
 
         self._update_x_axis_auto_hint()
-        # Restore done: re-enable plotting and draw once. The table is cheap; the
-        # trend-overlay curves (model eval per fit range over an 800-pt axis —
-        # e.g. DiffusionLF_2D runs scipy quadrature per sample) recompute
-        # off-thread behind the overlay so a saved project's trend fits don't
-        # block the GUI thread on open.
-        self._suspend_plot_refresh = False
-        self._refresh_table()
-        self._start_trend_curve_compute()
 
     def set_fit_results(
         self,
@@ -2947,18 +2957,26 @@ class FitParametersPanel(QWidget):
         for idx, (range_index, xs, ys) in enumerate(curves):
             line_color = _fit_overlay_color(idx) if len(curves) > 1 else color
 
-            if show_components and range_index < len(fit.ranges):
+            if show_components:
                 if components_by_range is not None:
+                    # Precompute path: components already evaluated off-thread;
+                    # use them directly and never read the (possibly-changed)
+                    # live fit.ranges, so a stale index can't mismatch.
                     components = components_by_range.get(range_index)
-                else:
+                elif range_index < len(fit.ranges):
                     components = None
                     fit_range = fit.ranges[range_index]
                     result = fit_range.result
                     if result is not None and result.success:
                         kwargs = {p.name: p.value for p in result.parameters}
-                        components = fit_range.model.evaluate_components(
-                            xs, additive_only=True, **kwargs
-                        )
+                        try:
+                            components = fit_range.model.evaluate_components(
+                                xs, additive_only=True, **kwargs
+                            )
+                        except Exception:  # noqa: BLE001 - bad model → skip components, keep curve
+                            components = None
+                else:
+                    components = None
                 if components is not None:
                     ordered_components = self._ordered_components_for_stacking(components)
                     cumulative = np.zeros_like(xs, dtype=float)
@@ -3567,13 +3585,15 @@ class FitParametersPanel(QWidget):
         x_key: str,
         num_points: int = _PARAMETER_FIT_CURVE_SAMPLE_COUNT,
         *,
-        x_domain: tuple[float, float] | None = None,
+        x_domain: object = _UNSET,
     ) -> tuple[np.ndarray, np.ndarray] | None:
         """Sample one fit range's overlay curve.
 
         ``x_domain`` lets the off-thread trend recompute pass a GUI-thread
-        snapshot of the data x-range; when omitted the (GUI-thread) callers read
-        it live from the rows.
+        snapshot of the data x-range. When it is omitted (``_UNSET``) the
+        GUI-thread callers read it live from the rows; when passed explicitly
+        (even as ``None``) the snapshot is used as-is, so the worker thread never
+        touches ``self._rows``.
         """
         result = fit_range.result
         if result is None or not result.success:
@@ -3586,7 +3606,7 @@ class FitParametersPanel(QWidget):
         except ValueError:
             return None
         if x_min is None or x_max is None:
-            domain = x_domain if x_domain is not None else self._x_domain_for_sampling(x_key)
+            domain = self._x_domain_for_sampling(x_key) if x_domain is _UNSET else x_domain
             if domain is None:
                 return None
             if x_min is None:
@@ -3653,28 +3673,33 @@ class FitParametersPanel(QWidget):
         """
         result: dict[str, list] = {}
         for param_name in y_params:
-            fit = model_fits.get(param_name)
-            if fit is None or not fit.active or fit.x_key != x_key:
-                continue
-            ranges_out: list = []
-            for idx, fit_range in enumerate(fit.ranges):
-                sampled = self._sample_fit_range_curve(
-                    fit_range, x_key=x_key, num_points=num_points, x_domain=x_domain
-                )
-                if sampled is None:
+            # Isolate per-parameter failures: a single bad model must not raise
+            # out of the worker (which would blank *every* overlay via on_error).
+            try:
+                fit = model_fits.get(param_name)
+                if fit is None or not fit.active or fit.x_key != x_key:
                     continue
-                xs, ys = sampled
-                components = None
-                fit_result = fit_range.result
-                if show_components and fit_result is not None and fit_result.success:
-                    kwargs = {p.name: p.value for p in fit_result.parameters}
-                    try:
-                        components = fit_range.model.evaluate_components(
-                            xs, additive_only=True, **kwargs
-                        )
-                    except KeyError:
-                        components = None
-                ranges_out.append((idx, xs, ys, components))
+                ranges_out: list = []
+                for idx, fit_range in enumerate(fit.ranges):
+                    sampled = self._sample_fit_range_curve(
+                        fit_range, x_key=x_key, num_points=num_points, x_domain=x_domain
+                    )
+                    if sampled is None:
+                        continue
+                    xs, ys = sampled
+                    components = None
+                    fit_result = fit_range.result
+                    if show_components and fit_result is not None and fit_result.success:
+                        kwargs = {p.name: p.value for p in fit_result.parameters}
+                        try:
+                            components = fit_range.model.evaluate_components(
+                                xs, additive_only=True, **kwargs
+                            )
+                        except Exception:  # noqa: BLE001 - bad model → no components, keep curve
+                            components = None
+                    ranges_out.append((idx, xs, ys, components))
+            except Exception:  # noqa: BLE001 - skip this parameter, keep the others
+                continue
             if ranges_out:
                 result[param_name] = ranges_out
         return result
@@ -3695,6 +3720,11 @@ class FitParametersPanel(QWidget):
             if (fit := self._model_fits.get(name)) is not None and fit.active and fit.x_key == x_key
         ]
         if not active:
+            # Nothing heavy to draw. Clear any overlay still showing from an
+            # earlier in-flight compute (e.g. a prior project's trend recompute
+            # that has not landed yet) so it can't scrim this finalized draw.
+            if self._trend_overlay is not None:
+                self._trend_overlay.hide()
             self._precomputed_trend_curves = None
             self._refresh_plot()
             return
