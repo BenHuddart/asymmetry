@@ -4901,3 +4901,162 @@ class TestReductionSettingsPersistence:
         mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
 
         assert "binning_mode" not in dataset.run.grouping
+
+
+class TestRefitCoadded:
+    """Browser "Re-fit as Co-added": combine selection, fit, record trend row."""
+
+    @staticmethod
+    def _fake_result(params: dict[str, float]):
+        return SimpleNamespace(
+            success=True,
+            chi_squared=2.0,
+            reduced_chi_squared=0.9,
+            parameters=[SimpleNamespace(name=k, value=v) for k, v in params.items()],
+            uncertainties={k: 0.01 for k in params},
+        )
+
+    @staticmethod
+    def _combined_dataset(temperature: float, field: float) -> MuonDataset:
+        run = Run(
+            run_number=-2_100_000_001,
+            histograms=[Histogram(counts=np.ones(4), bin_width=0.01)],
+            metadata={"temperature": temperature, "field": field},
+            grouping={},
+        )
+        return MuonDataset(
+            time=np.arange(4.0),
+            asymmetry=np.zeros(4),
+            error=np.ones(4),
+            metadata={"temperature": temperature, "field": field, "combined_from": [501, 502]},
+            run=run,
+        )
+
+    def test_member_key_and_batch_id_deterministic(self, mainwindow: MainWindow) -> None:
+        model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+        key1 = mainwindow._refit_coadded_member_key([501, 502])
+        key2 = mainwindow._refit_coadded_member_key([501, 502])
+        assert key1 == key2 < -2_000_000_000
+        assert mainwindow._refit_coadded_member_key([501, 503]) != key1
+
+        bid1 = mainwindow._refit_coadded_batch_id(model, [501, 502])
+        assert bid1.startswith("refit-coadded-")
+        assert bid1 == mainwindow._refit_coadded_batch_id(model, [501, 502])
+        assert mainwindow._refit_coadded_batch_id(model, [501, 503]) != bid1
+        other = CompositeModel(["Gaussian"], operators=[])
+        assert mainwindow._refit_coadded_batch_id(other, [501, 502]) != bid1
+
+    def test_finished_records_computed_series_with_provenance(
+        self, mainwindow: MainWindow
+    ) -> None:
+        model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+        member_key = mainwindow._refit_coadded_member_key([501, 502])
+        rep_type = RepresentationType.TIME_FB_ASYMMETRY
+        payload = (self._combined_dataset(7.5, 120.0), self._fake_result({"A": 0.2, "lambda": 1.3}))
+
+        mainwindow._on_refit_coadded_finished(
+            payload, [501, 502], model, member_key, rep_type, "501 + 502"
+        )
+
+        batch_id = mainwindow._refit_coadded_batch_id(model, [501, 502])
+        series = mainwindow._project_model.batch(batch_id)
+        assert series is not None
+        assert series.is_computed  # model-less computed trend row
+        assert series.member_run_numbers == [member_key]
+        row = series.results_by_run[member_key]
+        assert row["combined_from"] == [501, 502]
+        assert row["parameters"]["A"] == pytest.approx(0.2)
+        assert row["temperature"] == pytest.approx(7.5)
+        assert row["field"] == pytest.approx(120.0)
+        assert series.extra["combined_from"] == [501, 502]
+
+    def test_rerun_same_selection_replaces_series(self, mainwindow: MainWindow) -> None:
+        model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+        member_key = mainwindow._refit_coadded_member_key([501, 502])
+        rep_type = RepresentationType.TIME_FB_ASYMMETRY
+
+        mainwindow._on_refit_coadded_finished(
+            (self._combined_dataset(7.5, 120.0), self._fake_result({"A": 0.2})),
+            [501, 502], model, member_key, rep_type, "501 + 502",
+        )
+        mainwindow._on_refit_coadded_finished(
+            (self._combined_dataset(7.5, 120.0), self._fake_result({"A": 0.9})),
+            [501, 502], model, member_key, rep_type, "501 + 502",
+        )
+
+        batch_id = mainwindow._refit_coadded_batch_id(model, [501, 502])
+        matching = [bid for bid in mainwindow._project_model.batches if bid == batch_id]
+        assert len(matching) == 1  # replaced, not duplicated
+        assert mainwindow._project_model.batch(batch_id).results_by_run[member_key][
+            "parameters"
+        ]["A"] == pytest.approx(0.9)
+
+    def test_failed_fit_records_nothing(self, mainwindow: MainWindow) -> None:
+        model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+        member_key = mainwindow._refit_coadded_member_key([501, 502])
+        failed = SimpleNamespace(success=False)
+        mainwindow._on_refit_coadded_finished(
+            (self._combined_dataset(7.5, 120.0), failed),
+            [501, 502], model, member_key, RepresentationType.TIME_FB_ASYMMETRY, "501 + 502",
+        )
+        assert mainwindow._refit_coadded_batch_id(model, [501, 502]) not in (
+            mainwindow._project_model.batches
+        )
+
+    def test_requested_combines_and_fits_end_to_end(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The real async path: combine the runs and fit off-thread, then record."""
+
+        class _FakeEngine:
+            def fit(self, dataset, _fn, seed, **_kw):
+                return SimpleNamespace(
+                    success=True,
+                    chi_squared=1.0,
+                    reduced_chi_squared=0.8,
+                    parameters=list(seed),
+                    uncertainties={},
+                )
+
+        monkeypatch.setattr("asymmetry.core.fitting.engine.FitEngine", _FakeEngine)
+        for rn in (501, 502):
+            mainwindow._data_browser.add_dataset(_make_dataset(rn, with_grouping=True))
+        # A view that maps to a real representation type.
+        monkeypatch.setattr(
+            mainwindow, "_active_representation_type", lambda: RepresentationType.TIME_FB_ASYMMETRY
+        )
+
+        mainwindow._on_refit_coadded_requested([501, 502])
+        wait_for(
+            lambda: mainwindow._refit_coadded_worker is None,
+            QApplication.instance(),
+            timeout_s=15.0,
+        )
+
+        model, _seed = mainwindow._fit_panel.single_fit_model_and_seed()
+        batch_id = mainwindow._refit_coadded_batch_id(model, [501, 502])
+        series = mainwindow._project_model.batch(batch_id)
+        assert series is not None
+        member_key = mainwindow._refit_coadded_member_key([501, 502])
+        assert series.results_by_run[member_key]["combined_from"] == [501, 502]
+
+    def test_recorded_series_survives_asymp_round_trip(
+        self, mainwindow: MainWindow, tmp_path: Path
+    ) -> None:
+        model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+        member_key = mainwindow._refit_coadded_member_key([501, 502])
+        mainwindow._on_refit_coadded_finished(
+            (self._combined_dataset(7.5, 120.0), self._fake_result({"A": 0.2})),
+            [501, 502], model, member_key, RepresentationType.TIME_FB_ASYMMETRY, "501 + 502",
+        )
+        batch_id = mainwindow._refit_coadded_batch_id(model, [501, 502])
+
+        # The computed series round-trips through the project model dict like any
+        # other results series (shared _add_results_series recorder).
+        from asymmetry.core.representation.project_model import ProjectModel
+
+        restored = ProjectModel.from_dict(mainwindow._project_model.to_dict())
+        series = restored.batch(batch_id)
+        assert series is not None
+        assert series.results_by_run[member_key]["combined_from"] == [501, 502]
+        assert series.extra["combined_from"] == [501, 502]

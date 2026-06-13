@@ -250,8 +250,14 @@ background file, no schema break.**
   sliding step 1, Bin = non-overlapping step W, trailing partial dropped — WiMDA
   `BatchFit.pas` ~375) then `combine_runs` + `reduce_combined_run` before the
   grouped-series fit, so chain-seeding and the normalised-polarisation seed
-  contract see ordinary runs. Re-fit-coadded lives as a Data Browser
-  context-menu action (see `docs/porting/run-arithmetic/`).
+  contract see ordinary runs. Re-fit-coadded is the Data Browser context-menu
+  action "Re-fit as Co-added" (WiMDA `FitTableUnit.pas` right-click rows,
+  adapted): it combines the selected runs (`combine_runs`), fits them off-thread
+  with the active single-fit model (`FitPanel.single_fit_model_and_seed`), and
+  records a one-member computed `FitSeries` trend row with `combined_from`
+  provenance under a deterministic `refit-coadded-<digest>` batch id (model +
+  member set), so re-running the same selection replaces rather than duplicates
+  — mirroring the moments replace-not-duplicate pattern.
 - **Dedicated "Fit log" window** — rejected; existing surfaces suffice (Ben).
 
 ## Recorded follow-ons (built nothing; noted for later)

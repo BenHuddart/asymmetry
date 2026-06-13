@@ -393,6 +393,9 @@ class DataBrowserPanel(QWidget):
     group_selected = Signal(str)
     get_info_requested = Signal(int)
     grouping_requested = Signal(int)
+    # Re-fit a co-added selection: the host combines the runs, fits with the
+    # active single-fit model, and records a computed trend row (combined_from).
+    refit_coadded_requested = Signal(object)  # list[int] source run numbers
 
     # The comment rides as the Title cell's second line (see
     # _RowHighlightDelegate) instead of its own column, so long comments never
@@ -2295,6 +2298,7 @@ class DataBrowserPanel(QWidget):
         if len(regular_runs) >= 2 and not combined_runs:
             menu.addAction("Co-add Selected", self._coadd_selected)
             menu.addAction("Subtract Selected (signed)…", self._signed_subtract_selected)
+            menu.addAction("Re-fit as Co-added", self._emit_refit_coadded)
         if len(expanded_selected_runs) >= 2 and not selected_group_ids:
             menu.addAction("Form Data Group", self._form_data_group)
         if len(selected_runs) == 1 and not selected_group_ids:
@@ -2808,6 +2812,12 @@ class DataBrowserPanel(QWidget):
     # ------------------------------------------------------------------
     # Co-add and separate
     # ------------------------------------------------------------------
+
+    def _emit_refit_coadded(self) -> None:
+        """Ask the host to combine the selection and re-fit it as one run."""
+        runs = [rn for rn in self._get_selected_run_numbers() if rn not in self._combined_datasets]
+        if len(runs) >= 2:
+            self.refit_coadded_requested.emit(list(runs))
 
     def _coadd_selected(self) -> None:
         run_numbers = self._get_selected_run_numbers()

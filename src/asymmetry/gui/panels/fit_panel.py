@@ -1754,6 +1754,15 @@ class SingleFitTab(QWidget):
         preview_result = object()
         self.preview_requested.emit(preview_result, (t_fit, y_fit), component_curves)
 
+    def model_and_seed(self) -> tuple[CompositeModel, ParameterSet]:
+        """Return the active single-fit model and its current parameter seed.
+
+        For headless fits (e.g. the Data Browser's "Re-fit as co-added") that
+        reuse the configured single-fit model without touching the form. Raises
+        :class:`ValueError` on a malformed parameter value, like the fit run.
+        """
+        return self._composite_model, self._parameter_set_from_table()
+
     def _parameter_set_from_table(self) -> ParameterSet:
         """Build a :class:`ParameterSet` from the parameter table.
 
@@ -6514,6 +6523,10 @@ class FitPanel(QWidget):
             return str(model.formula_string())
         except Exception:
             return None
+
+    def single_fit_model_and_seed(self) -> tuple[CompositeModel, ParameterSet]:
+        """Return the active single-fit model and seed (for headless re-fits)."""
+        return self._single_tab.model_and_seed()
 
     def global_fit_formula_string(self) -> str | None:
         """Return the active global-fit formula string, if available."""

@@ -516,6 +516,9 @@ class MainWindow(QMainWindow):
         self._maxent_active_config: MaxEntConfig | None = None
         self._maxent_active_cycles: int = 0
         self._maxent_started_at: float | None = None
+        # Live worker for the Data Browser "Re-fit as Co-added" action (one at a
+        # time; the handler gates relaunch while one is in flight).
+        self._refit_coadded_worker: TaskWorker | None = None
         # Frequency representation the fit-panel datasets were last collected
         # from, and its snapshot at global-fit launch.  The async completion
         # handler resolves run datasets against the LAUNCH snapshot: the
@@ -1398,6 +1401,8 @@ class MainWindow(QMainWindow):
             self._data_browser.grouping_requested.connect(self._on_grouping_requested)
         if hasattr(self._data_browser, "group_selected"):
             self._data_browser.group_selected.connect(self._on_group_selected)
+        if hasattr(self._data_browser, "refit_coadded_requested"):
+            self._data_browser.refit_coadded_requested.connect(self._on_refit_coadded_requested)
         self._data_browser.selection_changed.connect(self._update_selected_datasets)
         self._plot_panel.fit_range_changed.connect(self._on_fit_range_changed)
         if hasattr(self._frequency_plot_panel, "fit_range_changed"):
@@ -8967,6 +8972,136 @@ class MainWindow(QMainWindow):
                 extra=extra,
             )
         )
+
+    def _on_refit_coadded_requested(self, run_numbers) -> None:
+        """Combine the selected runs and re-fit them as one co-added member.
+
+        Mirrors WiMDA's right-click "co-add and re-fit" (``FitTableUnit.pas``):
+        the selected runs are summed at the raw-count level (``combine_runs``)
+        and fitted off-thread with the active single-fit model, then recorded as
+        a one-member computed trend series carrying ``combined_from`` provenance.
+        A deterministic ``batch_id`` (model + member set) means re-running the
+        same selection replaces its row rather than duplicating it.
+        """
+        runs = sorted({int(r) for r in (run_numbers or [])})
+        if len(runs) < 2:
+            return
+        if self._refit_coadded_worker is not None:
+            self.statusBar().showMessage("A co-added re-fit is already running.")
+            return
+
+        source_runs = []
+        for rn in runs:
+            dataset = self._data_browser.get_dataset(rn)
+            if dataset is None or dataset.run is None or not dataset.run.histograms:
+                QMessageBox.warning(
+                    self,
+                    "Re-fit as Co-added",
+                    "Every selected run needs detector histograms to co-add and fit.",
+                )
+                return
+            source_runs.append(dataset.run)
+
+        rep_type = self._active_representation_type()
+        if rep_type is None:
+            QMessageBox.warning(
+                self,
+                "Re-fit as Co-added",
+                "Select a fittable representation before re-fitting a co-added selection.",
+            )
+            return
+        try:
+            model, seed = self._fit_panel.single_fit_model_and_seed()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Re-fit as Co-added", f"Fix the fit parameters first: {exc}")
+            return
+        if model is None or seed is None:
+            return
+
+        member_key = self._refit_coadded_member_key(runs)
+        label = " + ".join(str(r) for r in runs)
+
+        from asymmetry.core.data.combine import combine_runs, reduce_combined_run
+        from asymmetry.core.fitting.engine import FitEngine
+
+        def _work(_worker, src=source_runs, key=member_key, lbl=label, mdl=model, sd=seed):
+            combined_run = combine_runs(src, sign=1, run_number=key, label=lbl)
+            combined_dataset = reduce_combined_run(combined_run)
+            result = FitEngine().fit(combined_dataset, mdl.function, sd)
+            return combined_dataset, result
+
+        self.statusBar().showMessage(f"Re-fitting co-added runs {label}…")
+        self._refit_coadded_worker = self._tasks.start(
+            _work,
+            on_finished=lambda payload, r=runs, m=model, key=member_key, rt=rep_type, lbl=label: (
+                self._on_refit_coadded_finished(payload, r, m, key, rt, lbl)
+            ),
+            on_error=self._on_refit_coadded_error,
+        )
+
+    def _on_refit_coadded_finished(self, payload, runs, model, member_key, rep_type, label) -> None:
+        """Record a successful co-added re-fit as a computed trend row."""
+        self._refit_coadded_worker = None
+        combined_dataset, result = payload
+        if result is None or not getattr(result, "success", False):
+            self.statusBar().showMessage(f"Co-added re-fit of {label} did not converge.")
+            self._log_panel.log(f"Co-added re-fit of runs {label} did not converge.")
+            return
+
+        meta = combined_dataset.metadata if isinstance(combined_dataset.metadata, dict) else {}
+        values = {p.name: float(p.value) for p in result.parameters}
+        values["chi2_r"] = float(result.reduced_chi_squared)
+        summary = {
+            "success": True,
+            "parameters": values,
+            "uncertainties": {k: float(v) for k, v in result.uncertainties.items()},
+            "chi_squared": float(result.chi_squared),
+            "reduced_chi_squared": float(result.reduced_chi_squared),
+            "run_label": label,
+            "field": _safe_float(meta.get("field")),
+            "temperature": _safe_float(meta.get("temperature")),
+            "combined_from": list(runs),
+        }
+        batch_id = self._refit_coadded_batch_id(model, runs)
+        self._add_results_series(
+            batch_id,
+            rep_type,
+            f"Re-fit co-added: {label}",
+            [member_key],
+            {member_key: summary},
+            extra={"combined_from": list(runs)},
+        )
+        self._refresh_trend_panel()
+        chi = float(result.reduced_chi_squared)
+        self.statusBar().showMessage(f"Recorded co-added re-fit of {label} (χ²ᵣ = {chi:.3f}).")
+        self._log_panel.log(f"Re-fit co-added runs {label}: χ²ᵣ = {chi:.3f}")
+
+    def _on_refit_coadded_error(self, message) -> None:
+        self._refit_coadded_worker = None
+        self.statusBar().showMessage(f"Co-added re-fit failed: {message}")
+        self._log_panel.log(f"Co-added re-fit failed: {message}")
+
+    def _refit_coadded_member_key(self, runs: list[int]) -> int:
+        """Deterministic synthetic member key for a co-added re-fit selection.
+
+        Far below any real run or browser-combined id, and stable across re-runs
+        of the same selection so the replaced series keeps the same member key.
+        """
+        digest = hashlib.sha1(",".join(map(str, runs)).encode("utf-8")).hexdigest()[:8]
+        return -(2_100_000_000 + int(digest, 16) % 100_000_000)
+
+    def _refit_coadded_batch_id(self, model, runs: list[int]) -> str:
+        """Deterministic ``refit-coadded-<digest>`` id from model + member set.
+
+        Re-running the same selection with the same model replaces its series
+        (mirrors :meth:`_spectral_moments_batch_id`).
+        """
+        import json
+
+        model_key = json.dumps(model.to_dict(), sort_keys=True, default=str)
+        logical = f"{model_key}::{','.join(map(str, runs))}"
+        digest = hashlib.sha1(logical.encode("utf-8")).hexdigest()[:12]
+        return f"refit-coadded-{digest}"
 
     def _on_single_model_fit_completed(self, parameter_name, x_key, fit) -> None:
         """Record a single-series model fit's per-range outputs as a series."""

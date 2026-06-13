@@ -191,6 +191,29 @@ def test_signed_subtract_separate_restores_all_sources(monkeypatch):
     assert combined not in panel._combined_signs
 
 
+def test_refit_coadded_emits_selected_runs():
+    panel = DataBrowserPanel()
+    for rn in (601, 602, 603):
+        panel.add_dataset(_dataset(rn, frames=1000, seed=rn))
+    panel.select_runs({601, 602, 603})
+    emitted: list[list[int]] = []
+    panel.refit_coadded_requested.connect(emitted.append)
+    panel._emit_refit_coadded()
+    assert emitted == [[601, 602, 603]]
+
+
+def test_refit_coadded_ignores_combined_rows(monkeypatch):
+    panel = DataBrowserPanel()
+    panel.add_dataset(_dataset(601, frames=1000, seed=1))
+    panel.add_dataset(_dataset(602, frames=1000, seed=2))
+    crn = panel.add_combined_dataset([601, 602], sign=1)
+    panel.select_runs({crn})
+    emitted: list[list[int]] = []
+    panel.refit_coadded_requested.connect(emitted.append)
+    panel._emit_refit_coadded()
+    assert emitted == []  # a single combined row is not a ≥2 regular selection
+
+
 def test_signed_subtract_restores_via_add_combined_dataset():
     """Mirrors the .asymp restore path (operation='subtract_signed')."""
     panel = DataBrowserPanel()
