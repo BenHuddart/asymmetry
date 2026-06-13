@@ -45,3 +45,14 @@ def test_clamps_to_valid_range(settings):
 def test_unparseable_value_falls_back_to_default(settings):
     settings.setValue(FIT_QUALITY_CONFIDENCE_SETTINGS_KEY, "not-a-number")
     assert fit_quality_confidence(settings) == pytest.approx(0.95)
+
+
+def test_non_finite_value_falls_back_to_default(settings):
+    # "nan"/"inf" parse as floats but must not propagate through the clamp
+    # (min/max pass NaN straight through, which would void the χ² verdict).
+    for bad in ("nan", "inf", "-inf"):
+        settings.setValue(FIT_QUALITY_CONFIDENCE_SETTINGS_KEY, bad)
+        assert fit_quality_confidence(settings) == pytest.approx(0.95)
+    # And a non-finite value passed to the setter is rejected, not stored.
+    assert set_fit_quality_confidence(float("nan"), settings) == pytest.approx(0.95)
+    assert fit_quality_confidence(settings) == pytest.approx(0.95)

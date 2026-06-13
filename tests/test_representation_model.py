@@ -105,7 +105,12 @@ def test_fit_slot_result_provenance_keys_round_trip():
         "ndof": 41,
     }
     slot = FitSlot(model={"component_names": ["Exponential"]}, result=result, provenance="single")
-    restored = FitSlot.from_dict(slot.to_dict())
+    # Round-trip through JSON (the .asymp on-disk encoding), not just dict(): this
+    # also proves the provenance values are JSON-serialisable, which dict() alone
+    # would not catch.
+    import json
+
+    restored = FitSlot.from_dict(json.loads(json.dumps(slot.to_dict())))
     for key in ("model_name", "fit_range", "timestamp", "provenance", "npar", "ndof"):
         assert restored.result[key] == result[key]
 

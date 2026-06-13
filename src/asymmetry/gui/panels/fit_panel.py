@@ -567,6 +567,24 @@ def _fit_quality_dict(result) -> dict | None:
         return None
 
 
+def _fit_range_provenance_text(min_spin, max_spin, unit_label) -> str | None:
+    """Format the fit range as a provenance string, or ``None`` if degenerate.
+
+    Shared by the Single and Batch tabs (identical fit-range widgets) so the
+    ``fit_range`` stamped onto persisted records has one formatting source.
+    Reads the spin values, decimals, and the domain unit label (µs/MHz);
+    returns ``None`` when the spinboxes are disabled or the range is empty.
+    """
+    if not min_spin.isEnabled():
+        return None
+    lo = float(min_spin.value())
+    hi = float(max_spin.value())
+    if not hi > lo:
+        return None
+    decimals = min_spin.decimals()
+    return f"{lo:.{decimals}f}–{hi:.{decimals}f} {unit_label.text()}"
+
+
 def _fit_success_html(result) -> str:
     """Return compact success HTML for the result label, with a χ² verdict chip."""
     npar = len(result.parameters.free_parameters)
@@ -1270,22 +1288,10 @@ class SingleFitTab(QWidget):
         )
 
     def current_fit_range_text(self) -> str | None:
-        """Return the active fit range as a provenance string, or ``None``.
-
-        Reads the fit-range spinboxes and the current domain's unit label (µs in
-        time domain, MHz in frequency), e.g. ``"0.100–10.000 µs"``. Used to stamp
-        ``fit_range`` onto persisted fit records; returns ``None`` when the range
-        is degenerate or the spinboxes are disabled.
-        """
-        if not self._fit_range_min_spin.isEnabled():
-            return None
-        lo = float(self._fit_range_min_spin.value())
-        hi = float(self._fit_range_max_spin.value())
-        if not hi > lo:
-            return None
-        decimals = self._fit_range_min_spin.decimals()
-        unit = self._fit_range_unit_label.text()
-        return f"{lo:.{decimals}f}–{hi:.{decimals}f} {unit}"
+        """Active fit range as a provenance string (µs/MHz), or ``None``."""
+        return _fit_range_provenance_text(
+            self._fit_range_min_spin, self._fit_range_max_spin, self._fit_range_unit_label
+        )
 
     def _wizard_context_signature(self) -> dict[str, object]:
         return {
@@ -2861,22 +2867,10 @@ class GlobalFitTab(QWidget):
         )
 
     def current_fit_range_text(self) -> str | None:
-        """Return the active fit range as a provenance string, or ``None``.
-
-        Reads the fit-range spinboxes and the current domain's unit label (µs in
-        time domain, MHz in frequency), e.g. ``"0.100–10.000 µs"``. Used to stamp
-        ``fit_range`` onto persisted fit records; returns ``None`` when the range
-        is degenerate or the spinboxes are disabled.
-        """
-        if not self._fit_range_min_spin.isEnabled():
-            return None
-        lo = float(self._fit_range_min_spin.value())
-        hi = float(self._fit_range_max_spin.value())
-        if not hi > lo:
-            return None
-        decimals = self._fit_range_min_spin.decimals()
-        unit = self._fit_range_unit_label.text()
-        return f"{lo:.{decimals}f}–{hi:.{decimals}f} {unit}"
+        """Active fit range as a provenance string (µs/MHz), or ``None``."""
+        return _fit_range_provenance_text(
+            self._fit_range_min_spin, self._fit_range_max_spin, self._fit_range_unit_label
+        )
 
     def _refresh_inherited_single_fit_defaults(self) -> None:
         """Apply single-fit seeds when every selected dataset shares one model."""

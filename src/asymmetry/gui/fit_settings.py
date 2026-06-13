@@ -7,6 +7,8 @@ rather than in a saved ``.asymp``. Kept Qt-side so the core stays headless.
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QSettings
 
 from asymmetry.core.fitting.result_summary import FIT_QUALITY_CONFIDENCE
@@ -33,12 +35,26 @@ def fit_quality_confidence(settings: QSettings | None = None) -> float:
         value = float(raw)
     except (TypeError, ValueError):
         value = FIT_QUALITY_CONFIDENCE
-    return min(max(value, _CONFIDENCE_MIN), _CONFIDENCE_MAX)
+    return _clamp_confidence(value)
 
 
 def set_fit_quality_confidence(value: float, settings: QSettings | None = None) -> float:
     """Persist *value* (clamped to [0.5, 0.999]) and return the stored figure."""
     settings = settings or QSettings()
-    clamped = min(max(float(value), _CONFIDENCE_MIN), _CONFIDENCE_MAX)
+    clamped = _clamp_confidence(value)
     settings.setValue(FIT_QUALITY_CONFIDENCE_SETTINGS_KEY, clamped)
     return clamped
+
+
+def _clamp_confidence(value: float) -> float:
+    """Clamp to [0.5, 0.999]; non-finite input (NaN/inf, e.g. a corrupt stored
+    string like ``"nan"``) falls back to the default rather than propagating —
+    ``min``/``max`` pass NaN straight through, which would silently void the χ²
+    verdict downstream."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return FIT_QUALITY_CONFIDENCE
+    if not math.isfinite(value):
+        return FIT_QUALITY_CONFIDENCE
+    return min(max(value, _CONFIDENCE_MIN), _CONFIDENCE_MAX)

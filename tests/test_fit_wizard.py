@@ -203,26 +203,30 @@ def test_fit_wizard_recommends_gbkt_for_broadened_kt_spectrum(
     assert recommendation.recommended_key == "gbkt_constant"
 
 
-#: Specialist parity components that must never appear as automatic wizard
-#: candidates: muonium/F–µ–F/dipolar forms need field or geometry context the
-#: deterministic spectrum fingerprint cannot supply, so they would only pollute
-#: recommendations. See docs/porting/wimda-fit-function-parity/.
-_SPECIALIST_PARITY_COMPONENTS = {
-    "MuoniumHighTF",
-    "MuoniumHighTFAniso",
-    "MuoniumLFRelax",
-    "DynamicFmuF",
-    "FmuF_Triangle",
-    "DipolarPairField",
-    "ProtonDipole",
-    "ElectronDipole",
-    "DipolarSpinJ",
+#: The ONLY components the wizard may use as automatic candidates. Anything
+#: outside this allowlist — every muonium/F–µ–F/dipolar specialist form, which
+#: needs field or geometry context the deterministic fingerprint cannot supply —
+#: must never leak into the portfolio. An allowlist (not a denylist) makes the
+#: guard leak-proof: a future _add() of any unlisted component fails the test.
+#: See docs/porting/wimda-fit-function-parity/.
+_ALLOWED_WIZARD_COMPONENTS = {
+    "Exponential",
+    "Constant",
+    "Gaussian",
+    "StretchedExponential",
+    "StaticGKT_ZF",
+    "Oscillatory",
+    # Selectively adopted parity components (Item 5):
+    "RischKehr",
+    "GaussianBroadenedKT",
+    "Bessel",
 }
 
 
-def test_specialist_parity_components_are_never_wizard_candidates() -> None:
-    """Across every fingerprint-hint combination, no specialist component leaks
-    into the candidate portfolio (only Bessel/GBKT/Risch-Kehr were adopted)."""
+def test_only_allowlisted_components_are_wizard_candidates() -> None:
+    """Across every fingerprint-hint combination, the candidate portfolio uses
+    only allowlisted components — no specialist parity form (muonium, F–µ–F,
+    dipolar) can leak in. Allowlist, so a new unlisted _add() fails here."""
     from itertools import product
 
     from asymmetry.core.fitting.fit_wizard import SpectrumFingerprint
@@ -247,8 +251,8 @@ def test_specialist_parity_components_are_never_wizard_candidates() -> None:
         )
         templates = build_candidate_templates(fp)
         used = {name for tpl in templates for name in tpl.model.component_names}
-        leaked = used & _SPECIALIST_PARITY_COMPONENTS
-        assert not leaked, f"specialist components leaked into candidates: {leaked}"
+        leaked = used - _ALLOWED_WIZARD_COMPONENTS
+        assert not leaked, f"non-allowlisted components leaked into candidates: {leaked}"
 
 
 def test_bound_hit_detection_ignores_infinite_bounds() -> None:
@@ -260,7 +264,7 @@ def test_bound_hit_detection_ignores_infinite_bounds() -> None:
     assert _bound_hit_names(params) == []
     # A value genuinely at the finite lower bound is still flagged.
     pinned = ParameterSet([Parameter("Gamma", 0.0, min=0.0, max=float("inf"))])
-    assert pinned and _bound_hit_names(pinned) == ["Gamma at lower bound"]
+    assert _bound_hit_names(pinned) == ["Gamma at lower bound"]
 
 
 def test_monotonic_low_frequency_spectrum_prefers_multi_rate_over_oscillation(
