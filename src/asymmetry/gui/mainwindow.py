@@ -23,10 +23,11 @@ import copy
 import hashlib
 import os
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QEvent, QObject, QSettings, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QEventLoop, QObject, QSettings, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QActionGroup, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -38,6 +39,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -155,6 +157,7 @@ from asymmetry.gui.styles.widgets import (
     build_segmented_cell_qss,
     build_segmented_container_qss,
 )
+from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.ui_manager import (
     UI_SCALE_OPTIONS,
     UI_SCALE_SETTINGS_KEY,
@@ -169,6 +172,11 @@ from asymmetry.gui.windows.simulate_dialog import SimulateDialog
 
 _MAX_RECENT_PROJECTS = 10
 _PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
+#: After the user cancels a bulk load, how long to wait for the worker to stop
+#: cooperatively (cancel is polled between files) before abandoning the nested
+#: event loop and leaving the worker to finish in the background. Keeps the
+#: window closable even when a single file read is wedged (e.g. a dead mount).
+_BULK_LOAD_ABANDON_GRACE_MS = 5000
 _COMPACT_MODE_SETTINGS_KEY = "ui/compact_mode"
 _UI_SCALE_SETTINGS_KEY = UI_SCALE_SETTINGS_KEY
 _UI_SCALE_OPTIONS = UI_SCALE_OPTIONS
@@ -432,9 +440,17 @@ class MainWindow(QMainWindow):
     * Fourier transform output (cached spectra are now saved when computed)
     """
 
+    #: Log messages produced off the GUI thread; auto-connection makes the
+    #: delivery queued, so background workers never touch the log widget.
+    _background_log = Signal(str)
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Asymmetry — μSR Data Analysis")
+
+        #: All background work goes through this runner (see gui/tasks.py);
+        #: closeEvent shuts it down so no live thread outlasts the window.
+        self._tasks = TaskRunner(self)
 
         self.compact_mode = False
 
@@ -488,6 +504,14 @@ class MainWindow(QMainWindow):
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
             RepresentationType.FREQ_MAXENT: {},
         }
+        #: (run, rep_type) whose recipe failed to recompute this session — not
+        #: retried on every view sync.
+        self._lazy_recompute_failures: set[tuple[int, RepresentationType]] = set()
+        #: (run, rep_type) restored from a recipe with only the transitional
+        #: legacy array snapshot cached: the recipe supersedes the snapshot,
+        #: but only once it recomputes successfully on first view (else we fall
+        #: back to the snapshot rather than show a blank plot).
+        self._pending_recipe_recompute: set[tuple[int, RepresentationType]] = set()
         self._maxent_state_by_run: dict[int, MaxEntState] = {}
         # The most recent full result + config per run, for spectrum/log export.
         self._maxent_result_by_run: dict[int, tuple] = {}
@@ -564,7 +588,14 @@ class MainWindow(QMainWindow):
         env_value = os.environ.get(_PERF_LOGGING_ENV_VAR)
         if env_value is not None:
             return _coerce_bool(env_value, default=False)
-        return _coerce_bool(self._settings.value(_PERF_LOGGING_SETTINGS_KEY), default=False)
+        if QThread.currentThread() is not self.thread():
+            # QSettings instances must not be shared across threads; timed
+            # code on a worker (e.g. _load_file) uses the last value the GUI
+            # thread read instead of touching self._settings.
+            return bool(getattr(self, "_perf_logging_cached", False))
+        value = _coerce_bool(self._settings.value(_PERF_LOGGING_SETTINGS_KEY), default=False)
+        self._perf_logging_cached = value
+        return value
 
     def _plot_decimation_is_enabled(self) -> bool:
         """Return whether plot display decimation is enabled."""
@@ -608,7 +639,13 @@ class MainWindow(QMainWindow):
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
         detail_parts = [f"{key}={value}" for key, value in fields.items() if value is not None]
         detail_text = f" ({', '.join(detail_parts)})" if detail_parts else ""
-        self._log_panel.log(f"PERF {event}: {elapsed_ms:.1f} ms{detail_text}")
+        message = f"PERF {event}: {elapsed_ms:.1f} ms{detail_text}"
+        if QThread.currentThread() is self.thread():
+            self._log_panel.log(message)
+        else:
+            # Timed code (e.g. _load_file) may run on a TaskRunner worker;
+            # the widget must only ever be touched from the GUI thread.
+            self._background_log.emit(message)
 
     # ── menus ──────────────────────────────────────────────────────────
 
@@ -1246,6 +1283,7 @@ class MainWindow(QMainWindow):
 
         # Bottom dock — log panel
         self._log_panel = LogPanel()
+        self._background_log.connect(self._log_panel.log)
         self._dock_log = QDockWidget("Log", self)
         self._dock_log.setWidget(self._log_panel)
         self._dock_log.setMinimumHeight(96)
@@ -2232,6 +2270,139 @@ class MainWindow(QMainWindow):
                 return f"{safe_stem}_logbook.tsv"
         return "logbook.tsv"
 
+    def _browser_batch(self):
+        """Batch-update context on the data browser (no-op for test stubs).
+
+        Adding datasets one by one rebuilds the browser table per add; wrap
+        any multi-add loop in this context so the table renders once.
+        """
+        batch = getattr(self._data_browser, "batch_updates", None)
+        return batch() if callable(batch) else nullcontext()
+
+    def _load_paths_with_progress(self, paths: list[str]) -> dict[str, object]:
+        """Read data files on a worker thread behind a cancellable progress dialog.
+
+        Returns ``{path: LoadResult | Exception}`` in *paths* order; on cancel
+        the mapping simply stops at the last completed file (already-loaded
+        results are kept). A nested event loop keeps this method synchronous
+        for its callers while the GUI stays painted and the Cancel button live.
+        File I/O is the only thing that runs off-thread — all dataset
+        bookkeeping stays with the caller on the GUI thread.
+        """
+        if not paths:
+            return {}
+        if getattr(self, "_bulk_load_active", False):
+            # The nested event loop below dispatches user input before the
+            # modal dialog becomes visible (minimumDuration), so a second
+            # File→Open / drop could re-enter here; refuse it.
+            self._log_panel.log("A file load is already in progress; ignoring the new request.")
+            return {}
+        self._bulk_load_active = True
+
+        dialog = QProgressDialog("Loading data files…", "Cancel", 0, len(paths), self)
+        dialog.setWindowTitle("Loading Data")
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        # Don't flash a dialog for loads that finish quickly.
+        dialog.setMinimumDuration(400)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+
+        def task(worker, paths=tuple(paths)):
+            results: dict[str, object] = {}
+            total = len(paths)
+            for index, path in enumerate(paths):
+                if worker.is_cancelled():
+                    # Return the partial results instead of raising: files
+                    # already read should still reach the browser.
+                    break
+                worker.progress.emit(index, total, Path(path).name)
+                try:
+                    results[path] = self._load_file(path)
+                except Exception as exc:
+                    results[path] = exc
+            return results
+
+        loop = QEventLoop()
+        outcome: dict[str, object] = {}
+        # Once we abandon a wedged load, late progress/finished callbacks must
+        # not touch the (closed) dialog or re-quit the loop.
+        abandoned = {"value": False}
+
+        def on_progress(current: int, total: int, name: str) -> None:
+            if abandoned["value"]:
+                return
+            dialog.setValue(current)
+            dialog.setLabelText(f"Loading {name} ({current + 1}/{total})…")
+
+        def on_finished(results: object) -> None:
+            if abandoned["value"]:
+                return
+            outcome["results"] = results
+            loop.quit()
+
+        def on_error(message: str) -> None:
+            if abandoned["value"]:
+                return
+            outcome["error"] = message
+            loop.quit()
+
+        worker = self._tasks.start(
+            task,
+            on_progress=on_progress,
+            on_finished=on_finished,
+            on_error=on_error,
+            on_cancelled=loop.quit,
+        )
+
+        def abandon_if_running() -> None:
+            # Cancel is polled only between files; a single wedged read (dead
+            # mount, corrupt file) never reaches the next poll, so the worker
+            # would never emit a terminal and loop.exec() would never return —
+            # leaving _bulk_load_active stuck and the window unclosable. After
+            # the grace period, give up on the nested loop and let the worker
+            # run on under the TaskRunner (shutdown() reaps it).
+            if loop.isRunning():
+                abandoned["value"] = True
+                self._log_panel.log(
+                    "File load did not stop promptly; abandoning it in the "
+                    "background so the window stays responsive."
+                )
+                loop.quit()
+
+        def request_cancel() -> None:
+            # A receiver-less callable runs in the EMITTER's thread — the GUI
+            # thread here — so the cancel flag is set immediately. Connecting
+            # the worker's bound method instead would QUEUE the call to the
+            # worker thread, whose event loop is blocked inside the task until
+            # it finishes: Cancel would never be delivered mid-load.
+            worker.cancel()
+            QTimer.singleShot(_BULK_LOAD_ABANDON_GRACE_MS, abandon_if_running)
+
+        # Lets closeEvent (which cannot see these locals) kick off the same
+        # cooperative-cancel-then-abandon escape while a load is in flight.
+        self._bulk_load_cancel = request_cancel
+        dialog.canceled.connect(request_cancel)
+        try:
+            loop.exec()
+        finally:
+            self._bulk_load_active = False
+            self._bulk_load_cancel = None
+        was_cancelled = dialog.wasCanceled()
+        dialog.close()
+        dialog.deleteLater()
+
+        if "error" in outcome:
+            self._log_panel.log(f"ERROR loading files: {outcome['error']}")
+            return {}
+        results = outcome.get("results")
+        if not isinstance(results, dict):
+            return {}
+        if was_cancelled and len(results) < len(paths):
+            self._log_panel.log(
+                f"File loading cancelled after {len(results)} of {len(paths)} file(s)."
+            )
+        return results
+
     def _load_files(self, paths: list[str]) -> None:
         """Load multiple data files."""
         started_at = time.perf_counter()
@@ -2244,8 +2415,11 @@ class MainWindow(QMainWindow):
         auto_grouping_attempts = 0
         auto_grouping_applied = 0
 
+        # Duplicate handling happens up-front so every prompt is answered
+        # before the background load starts — no modal dialogs mid-load.
+        paths_to_load: list[str] = []
+        overwrite_paths: set[str] = set()
         for path in paths:
-            should_overwrite_existing = False
             if self._is_source_file_loaded(path):
                 if not overwrite_existing_to_all:
                     overwrite_choice = self._prompt_overwrite_existing_dataset(path)
@@ -2254,10 +2428,23 @@ class MainWindow(QMainWindow):
                         continue
                     if overwrite_choice == QMessageBox.StandardButton.YesToAll:
                         overwrite_existing_to_all = True
-                should_overwrite_existing = True
+                overwrite_paths.add(path)
+            paths_to_load.append(path)
 
-            try:
-                loaded = self._load_file(path)
+        # File I/O runs on a worker thread; everything below stays on the
+        # GUI thread (dialog prompts, grouping, browser/plot updates).
+        loaded_by_path = self._load_paths_with_progress(paths_to_load)
+
+        with self._browser_batch():
+            for path in paths_to_load:
+                if path not in loaded_by_path:
+                    break  # load was cancelled before reaching this file
+
+                loaded = loaded_by_path[path]
+                if isinstance(loaded, Exception):
+                    self._log_panel.log(f"ERROR loading {path}: {loaded}")
+                    failed += 1
+                    continue
                 if loaded is None:
                     continue
 
@@ -2265,7 +2452,7 @@ class MainWindow(QMainWindow):
                 if not datasets:
                     continue
 
-                if should_overwrite_existing:
+                if path in overwrite_paths:
                     removed = self._remove_datasets_for_source_file(path)
                     self._log_panel.log(
                         f"Updated file {path} (replaced {removed} existing dataset(s))."
@@ -2316,9 +2503,6 @@ class MainWindow(QMainWindow):
                     continue
 
                 break
-            except Exception as e:
-                self._log_panel.log(f"ERROR loading {path}: {e}")
-                failed += 1
 
         # Select the last successfully loaded run in the browser: this drives
         # the standard selection pipeline (_on_dataset_selected), which stores
@@ -2539,6 +2723,10 @@ class MainWindow(QMainWindow):
     def _on_perf_logging_toggled(self, checked: bool) -> None:
         """Persist and report GUI performance logging state."""
         self._settings.setValue(_PERF_LOGGING_SETTINGS_KEY, bool(checked))
+        # Worker threads read this cached value (QSettings is not shared across
+        # threads); refresh it now so a load started right after the toggle
+        # logs (or stops logging) timings as the user just asked.
+        self._perf_logging_cached = bool(checked)
         state = "enabled" if checked else "disabled"
         self._log_panel.log(f"Performance logging {state}.")
         self.statusBar().showMessage(f"Performance logging {state}")
@@ -4650,6 +4838,11 @@ class MainWindow(QMainWindow):
         """Cache computed frequency spectra for one run-number context."""
         cache = self._frequency_cache(rep_type)
         cache[int(run_number)] = list(spectra)
+        # An explicit compute supersedes a remembered lazy-recompute failure.
+        failures = getattr(self, "_lazy_recompute_failures", None)
+        if failures:
+            resolved = rep_type or self._active_frequency_rep_type()
+            failures.discard((int(run_number), resolved))
 
     def _report_fourier_diagnostics(self, spectrum: MuonDataset) -> None:
         """Surface diamagnetic-fit and Burg diagnostics from a spectrum's metadata."""
@@ -4699,25 +4892,123 @@ class MainWindow(QMainWindow):
         representation.cache_datasets([spectrum])
 
     def _restore_frequency_representations(self, state: dict) -> None:
-        """Rebuild FFT spectra from recipes (authoritative over stored arrays).
+        """Load recipe state; spectra are recomputed lazily on first view.
 
-        Reads the v6 ``representations``/``batches`` into the project model,
-        recomputes each FrequencyFFT spectrum from its recipe using the loaded
-        runs, and refreshes the in-memory plot cache.  Runs that cannot be
+        Reads the v6 ``representations``/``batches`` into the project model.
+        Recipes are *not* recomputed here: a project with many runs used to
+        recompute every FFT before the window became responsive, almost all of
+        it for runs the user may never view this session.
+        :meth:`_ensure_frequency_spectra_for_run` rebuilds each spectrum from
+        its recipe the first time something needs it. Runs that cannot be
         recomputed keep whatever the legacy array fallback restored.
         """
         self._project_model = ProjectModel.from_project_state(state)
-        runs_by_number: dict[int, object] = {}
-        if hasattr(self._data_browser, "get_all_datasets"):
-            for dataset in self._data_browser.get_all_datasets():
-                if dataset.run is not None:
-                    runs_by_number[int(dataset.run_number)] = dataset.run
-        self._project_model.recompute_all(runs_by_number)
+        self._lazy_recompute_failures = set()
+        self._pending_recipe_recompute = set()
         for run_number, container in self._project_model.datasets.items():
             for rep_type in (RepresentationType.FREQ_FFT, RepresentationType.FREQ_MAXENT):
                 representation = container.get(rep_type)
-                if representation is not None and representation.primary is not None:
+                if representation is None:
+                    continue
+                if representation.primary is not None:
                     self._frequency_cache(rep_type)[int(run_number)] = [representation.primary]
+                elif representation.recompute_on_load and representation.recipe:
+                    # A recipe supersedes the transitional legacy array snapshot
+                    # (restored just before this) so the first view recomputes
+                    # against the freshly loaded, override-applied run — but
+                    # only once it recomputes successfully. Mark it pending and
+                    # KEEP the snapshot: a recipe that no longer reproduces
+                    # (file moved, grouping changed) then falls back to the
+                    # saved spectrum instead of leaving a blank plot, and an
+                    # unviewed run's snapshot still round-trips through save.
+                    self._pending_recipe_recompute.add((int(run_number), rep_type))
+
+    def _ensure_frequency_spectra_for_run(
+        self,
+        run_number: int | None,
+        rep_type: RepresentationType,
+    ) -> list:
+        """Return spectra for *run_number*, computing from its recipe on demand.
+
+        The lazy counterpart of the old recompute-everything-on-load: a cache
+        miss with a stored recipe recomputes just that run's spectrum (an FFT —
+        milliseconds). MaxEnt keeps its explicit-run-only contract
+        (``recompute_on_load`` is false), so a missing MaxEnt spectrum stays
+        missing until the user runs it. A recipe that fails to recompute is
+        logged and remembered so view syncs don't retry it forever; an
+        explicit recompute (Compute FFT) clears the marker via
+        :meth:`_store_frequency_spectra_for_run`.
+        """
+        if run_number is None:
+            return []
+        run_number = int(run_number)
+        cache = self._frequency_cache(rep_type)
+        cached = list(cache.get(run_number, []))
+        key = (run_number, rep_type)
+        pending = getattr(self, "_pending_recipe_recompute", None)
+        if pending is None:
+            pending = set()
+            self._pending_recipe_recompute = pending
+        failures = getattr(self, "_lazy_recompute_failures", None)
+        if failures is None:
+            failures = set()
+            self._lazy_recompute_failures = failures
+
+        # A cache hit short-circuits unless this run is still pending its
+        # one-time recipe recompute (where the cache holds only the legacy
+        # snapshot that the recipe should supersede).
+        if cached and key not in pending:
+            return cached
+        if key in failures:
+            # Recipe already failed this session; fall back to the snapshot if
+            # we kept one, else nothing.
+            return cached
+
+        container = self._project_model.datasets.get(run_number)
+        representation = container.get(rep_type) if container is not None else None
+        if representation is None or not representation.recompute_on_load:
+            pending.discard(key)
+            return cached
+        if representation.primary is None:
+            dataset = (
+                self._data_browser.get_dataset(run_number)
+                if hasattr(self._data_browser, "get_dataset")
+                else None
+            )
+            run = getattr(dataset, "run", None)
+            if run is None:
+                # Run not loaded (e.g. its file was skipped). Keep any legacy
+                # snapshot as the fallback and leave the recompute pending —
+                # a later load may make it computable. Don't mark a failure.
+                return cached
+            started_at = time.perf_counter()
+            try:
+                representation.ensure_computed(run)
+            except Exception as exc:  # noqa: BLE001 - a bad recipe must not break view sync
+                representation.invalidate()
+                pending.discard(key)
+                if cached:
+                    # The recipe no longer reproduces, but the saved snapshot
+                    # is still valid — fall back to it rather than blank out.
+                    self._log_panel.log(
+                        f"WARNING: saved {self._frequency_status_name(rep_type)} recipe for "
+                        f"run {run_number} no longer recomputes ({exc}); showing the stored "
+                        "spectrum. Recompute to refresh it."
+                    )
+                    return cached
+                failures.add(key)
+                self._log_panel.log(
+                    f"WARNING: could not recompute the saved "
+                    f"{self._frequency_status_name(rep_type)} spectrum for run "
+                    f"{run_number} from its recipe: {exc}"
+                )
+                return []
+            self._log_perf_event("lazy_spectrum_recompute", started_at, run=run_number)
+        if representation.primary is None:
+            return cached
+        pending.discard(key)
+        cache[run_number] = [representation.primary]
+        return [representation.primary]
 
     def _serialize_frequency_spectra_state(self) -> dict[str, list[dict[str, object]]]:
         """Return a serializable snapshot of cached Fourier spectra."""
@@ -4822,7 +5113,7 @@ class MainWindow(QMainWindow):
             return
 
         rep_type = self._active_frequency_rep_type()
-        spectra = list(self._frequency_cache(rep_type).get(int(run_number), []))
+        spectra = self._ensure_frequency_spectra_for_run(int(run_number), rep_type)
         if not spectra:
             self._frequency_plot_panel.clear()
             if preserved_x_limits is not None and preserved_y_limits is not None:
@@ -5043,7 +5334,7 @@ class MainWindow(QMainWindow):
         results_by_run: dict[int, dict] = {}
         skipped: list[int] = []
         for run_number in selected:
-            spectra = self._frequency_cache(rep_type).get(int(run_number), [])
+            spectra = self._ensure_frequency_spectra_for_run(int(run_number), rep_type)
             dataset = spectra[0] if spectra else None
             if dataset is None:
                 skipped.append(run_number)
@@ -8210,7 +8501,7 @@ class MainWindow(QMainWindow):
                 run_number = int(source.run_number)
             except (TypeError, ValueError):
                 continue
-            spectra = list(self._frequency_cache(rep_type).get(run_number, []))
+            spectra = self._ensure_frequency_spectra_for_run(run_number, rep_type)
             if not spectra:
                 missing_run_numbers.append(run_number)
                 continue
@@ -8397,6 +8688,16 @@ class MainWindow(QMainWindow):
 
     def _open_project_file(self, path: str) -> None:
         """Load and restore a project from *path*."""
+        if getattr(self, "_bulk_load_active", False):
+            # Restoring clears all state first, then prefetches data files via
+            # _load_paths_with_progress — which the in-progress bulk load's
+            # re-entrancy guard would refuse, leaving a wiped, run-less session
+            # labelled as the project. Refuse the open up front instead.
+            self.statusBar().showMessage(
+                "Finish or cancel the current file load before opening a project."
+            )
+            self._log_panel.log("Project open ignored: a file load is in progress.")
+            return
         try:
             state = load_project(path)
         except UnsupportedSchemaVersion as e:
@@ -8811,114 +9112,138 @@ class MainWindow(QMainWindow):
                     resolved_paths[rn] = candidate
 
         # ── load source files ──────────────────────────────────────────
-        loaded_file_cache: dict[str, object] = {}
+        # Prefetch every unique source file on a worker thread (progress
+        # dialog + cancel); the per-dataset loop below then resolves from
+        # this cache. Values are LoadResult or Exception — a cached failure
+        # is re-raised per referencing dataset for the same per-run warning
+        # the synchronous path produced, without re-reading the file.
+        unique_paths: list[str] = []
         for ds_info in datasets_info:
-            rn = ds_info.get("run_number")
-            source_file = ds_info.get("source_file", "")
-            if not source_file:
-                self._log_panel.log(f"WARNING: Run {rn} has no source file; skipping.")
-                continue
-
-            resolved = resolved_paths.get(rn)
-            if not resolved:
-                self._log_panel.log(f"WARNING: Source file not found: {source_file}; skipping.")
-                continue
-
-            try:
-                if resolved in loaded_file_cache:
-                    loaded_obj = loaded_file_cache[resolved]
-                else:
-                    loaded_obj = self._load_file(resolved)
-                    loaded_file_cache[resolved] = loaded_obj
-
-                if loaded_obj is None:
-                    continue
-
-                candidates = loaded_obj if isinstance(loaded_obj, list) else [loaded_obj]
-                dataset = None
-                for cand in candidates:
-                    if cand is None:
-                        continue
-                    try:
-                        if int(cand.run_number) == int(rn):
-                            dataset = cand
-                            break
-                    except (TypeError, ValueError):
-                        continue
-                if dataset is None and len(candidates) == 1:
-                    dataset = candidates[0]
-
-                # A period-mapped dataset is saved as {run_number: combined N,
-                # source_file: the multi-period file}, but a 3+-period file
-                # reloads as per-period siblings numbered by the loader's own
-                # scheme — none match N, so the entry was being silently
-                # dropped. Rebuild the combined dataset from the persisted
-                # period_mapping (combine_mapped_periods reproduces exactly what
-                # "Map periods…" built originally).
-                if dataset is None:
-                    overrides = ds_info.get("grouping_overrides")
-                    persisted_mapping = (
-                        overrides.get("period_mapping") if isinstance(overrides, dict) else None
-                    )
-                    period_candidates = [cand for cand in candidates if cand is not None]
-                    if persisted_mapping and len(period_candidates) >= 2:
-                        try:
-                            dataset = combine_mapped_periods(
-                                period_candidates,
-                                persisted_mapping,
-                                source_run_number=int(rn),
-                                source_file=resolved,
-                            )
-                        except (ValueError, TypeError) as exc:
-                            self._log_panel.log(
-                                f"WARNING: Run {rn} period mapping could not be rebuilt: {exc}"
-                            )
-
-                if dataset is None:
-                    self._log_panel.log(
-                        f"WARNING: Run {rn} not found in loaded file {source_file}; skipping."
-                    )
-                    continue
-                if int(dataset.run_number) in loaded_run_numbers:
-                    continue
-
-                # Apply saved metadata overrides without prompting.
-                for key, val in ds_info.get("metadata_overrides", {}).items():
-                    dataset.metadata[key] = val
-                    if dataset.run:
-                        dataset.run.metadata[key] = val
-
-                grouping_overrides = ds_info.get("grouping_overrides")
-                if isinstance(grouping_overrides, dict):
-                    self._apply_grouping_settings_to_dataset(dataset, grouping_overrides)
-
-                self._data_browser.add_dataset(dataset)
-                loaded_run_numbers.add(dataset.run_number)
-            except Exception as e:
-                self._log_panel.log(f"ERROR loading {source_file}: {e}")
-
-        # ── recreate combined datasets ─────────────────────────────────
-        # Map saved combined IDs to restored IDs so selection can be adjusted.
+            resolved = resolved_paths.get(ds_info.get("run_number"))
+            if resolved and resolved not in unique_paths:
+                unique_paths.append(resolved)
+        prefetched = self._load_paths_with_progress(unique_paths)
+        if len(prefetched) < len(unique_paths):
+            self._log_panel.log(
+                "WARNING: project loading was cancelled before all data files were "
+                f"read ({len(prefetched)} of {len(unique_paths)}). The project is "
+                "PARTIALLY loaded — saving it now would drop the missing runs."
+            )
+        loaded_file_cache: dict[str, object] = {
+            path: prefetched.get(path, RuntimeError("file load cancelled")) for path in unique_paths
+        }
         combined_id_map: dict[int, int] = {}
-        for combined_info in state.get("combined_datasets", []):
-            old_id = combined_info.get("combined_run_number")
-            src_runs = combined_info.get("source_run_numbers", [])
-            sign = -1 if combined_info.get("operation") == "subtract_reference" else 1
-            if all(rn in loaded_run_numbers for rn in src_runs):
-                new_id = self._data_browser.add_combined_dataset(src_runs, sign=sign)
-                if new_id is not None and old_id is not None:
-                    combined_id_map[int(old_id)] = new_id
-                elif new_id is None:
+        with self._browser_batch():
+            for ds_info in datasets_info:
+                rn = ds_info.get("run_number")
+                source_file = ds_info.get("source_file", "")
+                if not source_file:
+                    self._log_panel.log(f"WARNING: Run {rn} has no source file; skipping.")
+                    continue
+
+                resolved = resolved_paths.get(rn)
+                if not resolved:
+                    self._log_panel.log(f"WARNING: Source file not found: {source_file}; skipping.")
+                    continue
+
+                try:
+                    if resolved in loaded_file_cache:
+                        loaded_obj = loaded_file_cache[resolved]
+                    else:
+                        loaded_obj = self._load_file(resolved)
+                        loaded_file_cache[resolved] = loaded_obj
+                    if isinstance(loaded_obj, Exception):
+                        raise loaded_obj
+
+                    if loaded_obj is None:
+                        continue
+
+                    candidates = loaded_obj if isinstance(loaded_obj, list) else [loaded_obj]
+                    dataset = None
+                    for cand in candidates:
+                        if cand is None:
+                            continue
+                        try:
+                            if int(cand.run_number) == int(rn):
+                                dataset = cand
+                                break
+                        except (TypeError, ValueError):
+                            continue
+                    if dataset is None and len(candidates) == 1:
+                        dataset = candidates[0]
+
+                    # A period-mapped dataset is saved as {run_number: combined N,
+                    # source_file: the multi-period file}, but a 3+-period file
+                    # reloads as per-period siblings numbered by the loader's own
+                    # scheme — none match N, so the entry was being silently
+                    # dropped. Rebuild the combined dataset from the persisted
+                    # period_mapping (combine_mapped_periods reproduces exactly what
+                    # "Map periods…" built originally).
+                    if dataset is None:
+                        overrides = ds_info.get("grouping_overrides")
+                        persisted_mapping = (
+                            overrides.get("period_mapping") if isinstance(overrides, dict) else None
+                        )
+                        period_candidates = [cand for cand in candidates if cand is not None]
+                        if persisted_mapping and len(period_candidates) >= 2:
+                            try:
+                                dataset = combine_mapped_periods(
+                                    period_candidates,
+                                    persisted_mapping,
+                                    source_run_number=int(rn),
+                                    source_file=resolved,
+                                )
+                            except (ValueError, TypeError) as exc:
+                                self._log_panel.log(
+                                    f"WARNING: Run {rn} period mapping could not be rebuilt: {exc}"
+                                )
+
+                    if dataset is None:
+                        self._log_panel.log(
+                            f"WARNING: Run {rn} not found in loaded file {source_file}; skipping."
+                        )
+                        continue
+                    if int(dataset.run_number) in loaded_run_numbers:
+                        continue
+
+                    # Apply saved metadata overrides without prompting.
+                    for key, val in ds_info.get("metadata_overrides", {}).items():
+                        dataset.metadata[key] = val
+                        if dataset.run:
+                            dataset.run.metadata[key] = val
+
+                    grouping_overrides = ds_info.get("grouping_overrides")
+                    if isinstance(grouping_overrides, dict):
+                        self._apply_grouping_settings_to_dataset(dataset, grouping_overrides)
+
+                    self._data_browser.add_dataset(dataset)
+                    loaded_run_numbers.add(dataset.run_number)
+                except Exception as e:
+                    self._log_panel.log(f"ERROR loading {source_file}: {e}")
+
+            # ── recreate combined datasets ─────────────────────────────
+            # Map saved combined IDs to restored IDs so selection can be
+            # adjusted.
+            for combined_info in state.get("combined_datasets", []):
+                old_id = combined_info.get("combined_run_number")
+                src_runs = combined_info.get("source_run_numbers", [])
+                sign = -1 if combined_info.get("operation") == "subtract_reference" else 1
+                if all(rn in loaded_run_numbers for rn in src_runs):
+                    new_id = self._data_browser.add_combined_dataset(src_runs, sign=sign)
+                    if new_id is not None and old_id is not None:
+                        combined_id_map[int(old_id)] = new_id
+                    elif new_id is None:
+                        self._log_panel.log(
+                            f"WARNING: Could not recreate combined dataset {src_runs}; "
+                            "the source runs are no longer compatible "
+                            "(e.g. missing histograms)."
+                        )
+                else:
+                    missing = [rn for rn in src_runs if rn not in loaded_run_numbers]
                     self._log_panel.log(
-                        f"WARNING: Could not recreate combined dataset {src_runs}; "
-                        "the source runs are no longer compatible (e.g. missing histograms)."
+                        f"WARNING: Could not recreate combined dataset "
+                        f"{src_runs}; missing runs: {missing}"
                     )
-            else:
-                missing = [rn for rn in src_runs if rn not in loaded_run_numbers]
-                self._log_panel.log(
-                    f"WARNING: Could not recreate combined dataset "
-                    f"{src_runs}; missing runs: {missing}"
-                )
 
         # ── fix up browser state: remap old combined IDs ───────────────
         browser_state = dict(state.get("browser_state", {}))
@@ -9154,6 +9479,8 @@ class MainWindow(QMainWindow):
             RepresentationType.FREQ_FFT: self._frequency_spectra_by_run,
             RepresentationType.FREQ_MAXENT: {},
         }
+        self._lazy_recompute_failures = set()
+        self._pending_recipe_recompute = set()
         self._maxent_state_by_run = {}
         self._maxent_panel_state_by_run = {}
         self._fourier_group_phase_state_by_run = {}
@@ -9218,6 +9545,26 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Stop background work and save plot axis ranges before closing."""
+        # A bulk load's nested event loop is on the stack: destroying the
+        # window underneath it would leave the resumed frame touching dead
+        # widgets. Refuse this close, but kick off the same cooperative-cancel
+        # -then-abandon escape the Cancel button uses, so the load unwinds
+        # within the grace period and the next close attempt succeeds (rather
+        # than the window being stuck until the load happens to finish).
+        if getattr(self, "_bulk_load_active", False):
+            cancel = getattr(self, "_bulk_load_cancel", None)
+            if callable(cancel):
+                cancel()
+            self.statusBar().showMessage("Stopping file load — try closing again in a moment.")
+            event.ignore()
+            return
+        # All TaskRunner work (file loads, fits, …): cancel, quit and wait.
+        if getattr(self, "_tasks", None) is not None:
+            self._tasks.shutdown()
+        # Fit-panel worker threads (single / batch / count-domain fits).
+        fit_panel = getattr(self, "_fit_panel", None)
+        if fit_panel is not None and hasattr(fit_panel, "shutdown_workers"):
+            fit_panel.shutdown_workers()
         # The MaxEnt thread is parented to this window: letting the window be
         # destroyed while it runs aborts the process (QThread::~QThread calls
         # qFatal). Request cooperative cancellation and wait for the worker.

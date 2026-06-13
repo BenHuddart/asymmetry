@@ -6,6 +6,7 @@ import csv
 import json
 import sys
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import numpy as np
@@ -453,6 +454,13 @@ class DataBrowserPanel(QWidget):
         self._highlighted_runs: set[int] = set()
         #: Run numbers handed out for synthetic/degraded runs not yet added.
         self._reserved_run_numbers: set[int] = set()
+        #: Depth of nested batch_updates() blocks. While > 0, table rebuilds,
+        #: sorts and column auto-fits are deferred to one flush at exit —
+        #: without this, adding N datasets rebuilds the table N times (O(n²)).
+        self._batch_depth = 0
+        self._batch_rebuild_pending = False
+        self._batch_sort_pending = False
+        self._batch_resize_pending = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -510,6 +518,42 @@ class DataBrowserPanel(QWidget):
         apply_footer_hint(self._footer_hint)
         layout.addWidget(self._footer_hint)
         self.setMinimumWidth(250)
+
+    # ------------------------------------------------------------------
+    # Batched updates
+    # ------------------------------------------------------------------
+
+    @contextmanager
+    def batch_updates(self):
+        """Defer table rebuilds while adding or removing many datasets.
+
+        Inside the block, ``_rebuild_table``, ``_sort_table`` and
+        ``_resize_columns_to_content`` record that they were requested instead
+        of running; the outermost exit replays each at most once. Callers must
+        not read table *rows* inside the block (model state — ``_datasets``,
+        ``_display_order`` — is always current). Nesting is safe.
+        """
+        self._batch_depth += 1
+        try:
+            yield
+        finally:
+            self._batch_depth -= 1
+            if self._batch_depth == 0:
+                self._flush_batch_updates()
+
+    def _flush_batch_updates(self) -> None:
+        sort_pending = self._batch_sort_pending
+        rebuild_pending = self._batch_rebuild_pending
+        resize_pending = self._batch_resize_pending
+        self._batch_sort_pending = False
+        self._batch_rebuild_pending = False
+        self._batch_resize_pending = False
+        if sort_pending:
+            self._sort_table(rebuild=False)
+        if rebuild_pending or sort_pending:
+            self._rebuild_table()
+        if resize_pending:
+            self._resize_columns_to_content()
 
     # ------------------------------------------------------------------
     # Dataset and grouping CRUD
@@ -744,29 +788,38 @@ class DataBrowserPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _rebuild_table(self) -> None:
+        if self._batch_depth:
+            self._batch_rebuild_pending = True
+            return
+
         selected_keys = self._selected_keys()
 
         self._updating_table = True
-        self._table.setRowCount(0)
+        self._table.setUpdatesEnabled(False)
+        try:
+            self._table.setRowCount(0)
 
-        for entry in self._display_order:
-            if isinstance(entry, str):
-                self._add_group_header_row(entry)
-                group = self._groups.get(entry)
-                if group is None:
-                    continue
-                if not group.collapsed:
-                    for rn in group.member_run_numbers:
-                        if rn in self._datasets:
-                            self._add_dataset_row(self._datasets[rn], indent=True)
-            else:
-                dataset = self._datasets.get(entry)
-                if dataset is not None:
-                    self._add_dataset_row(dataset, indent=False)
+            for entry in self._display_order:
+                if isinstance(entry, str):
+                    self._add_group_header_row(entry)
+                    group = self._groups.get(entry)
+                    if group is None:
+                        continue
+                    if not group.collapsed:
+                        for rn in group.member_run_numbers:
+                            if rn in self._datasets:
+                                self._add_dataset_row(self._datasets[rn], indent=True)
+                else:
+                    dataset = self._datasets.get(entry)
+                    if dataset is not None:
+                        self._add_dataset_row(dataset, indent=False)
 
-        self._updating_table = False
-        self._apply_row_visibility()
-        self._restore_selection_by_keys(selected_keys)
+            self._updating_table = False
+            self._apply_row_visibility()
+            self._restore_selection_by_keys(selected_keys)
+        finally:
+            self._updating_table = False
+            self._table.setUpdatesEnabled(True)
 
     def _add_group_header_row(self, group_id: str) -> None:
         group = self._groups.get(group_id)
@@ -1070,6 +1123,9 @@ class DataBrowserPanel(QWidget):
         Stands down permanently once the user has dragged a column edge
         (_user_sized_columns), so their layout is never stomped by a load.
         """
+        if self._batch_depth:
+            self._batch_resize_pending = True
+            return
         if self._user_sized_columns:
             # The user owns the layout — but a brand-new extra section still
             # arrives at Qt's default width and needs its initial sizing.
@@ -2400,6 +2456,11 @@ class DataBrowserPanel(QWidget):
 
     def _sort_table(self, *, rebuild: bool = True) -> None:
         if self._current_sort_column < 0:
+            return
+        if self._batch_depth:
+            self._batch_sort_pending = True
+            if rebuild:
+                self._batch_rebuild_pending = True
             return
 
         reverse = self._current_sort_order == Qt.SortOrder.DescendingOrder
