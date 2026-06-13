@@ -375,7 +375,7 @@ QAbstractItemView::indicator:disabled {{
             self._dock_fit_parameters,
             self._dock_log,
             self._data_browser,
-            getattr(self._plot_panel, "_polarization_combo", None),
+            getattr(self._plot_panel, "_projection_bar", None),
             getattr(self._fit_parameters_panel, "_y_selector_table", None),
         ]
         for widget in widgets:

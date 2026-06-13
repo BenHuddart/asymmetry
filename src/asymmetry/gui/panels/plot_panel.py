@@ -76,6 +76,7 @@ from asymmetry.gui.styles.plots import (
     style_legend,
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
+from asymmetry.gui.widgets.projection_chip_bar import ProjectionChipBar
 from asymmetry.gui.widgets.rrf_controls import (
     install_rrf_controls,
     rrf_display_dataset,
@@ -167,6 +168,9 @@ class PlotPanel(QWidget):
     fit_range_changed = Signal(float, float)
     view_limits_changed = Signal(float, float, float, float)
     polarization_axis_changed = Signal(str)
+    #: Emitted with the projection label when a stacked subplot is clicked to
+    #: become the single-fit target (multi-subplot / ALL view only).
+    fit_target_projection_changed = Signal(str)
     overlay_toggled = Signal(bool)
     time_view_changed = Signal(str)
     # Payload dict for the status-bar cursor readout, or None to clear. Keys:
@@ -276,16 +280,8 @@ class PlotPanel(QWidget):
             self._sync_navigation_buttons()
             layout.addLayout(self._limit_toolbar)
 
-            self._polarization_label = QLabel("Polarization:")
-            self._polarization_label.setAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            )
-            self._polarization_label.hide()
-
-            self._polarization_combo = QComboBox()
-            self._polarization_combo.setMinimumWidth(90)
-            self._polarization_combo.currentIndexChanged.connect(self._on_polarization_axis_changed)
-            self._polarization_combo.hide()
+            self._projection_bar = ProjectionChipBar()
+            self._projection_bar.selection_changed.connect(self._on_projection_selection_changed)
 
             nav_row = QHBoxLayout()
             nav_row.setContentsMargins(4, 0, 4, 0)
@@ -298,8 +294,7 @@ class PlotPanel(QWidget):
             nav_row.addWidget(self._log_counts_checkbox)
             nav_row.addWidget(self._overlay_checkbox)
             nav_row.addStretch()
-            nav_row.addWidget(self._polarization_label)
-            nav_row.addWidget(self._polarization_combo)
+            nav_row.addWidget(self._projection_bar)
             nav_row.addSpacing(4)
 
             _nav_qss = build_nav_button_qss()
@@ -333,6 +328,14 @@ class PlotPanel(QWidget):
             self._current_datasets: list[MuonDataset] = []
             self._limits_initialized = False
             self._current_polarization_axis: str | None = None
+            # Ordered projection specs ({"label", "tint"}) and the per-label tint
+            # lookup used for frame-tinting subplots; driven by the chip bar.
+            self._projection_specs: list[dict] = []
+            self._tint_by_label: dict[str, str] = {}
+            self._selected_projection_labels: list[str] = []
+            # Which stacked subplot is the active single-fit target (multi-view).
+            self._fit_target_projection: str | None = None
+            self._fit_target_artists: list = []
             self._y_limits_by_polarization: dict[str, tuple[float, float]] = {}
             self._subplot_axes_by_polarization: dict[str, object] = {}
             self._vector_subplot_datasets: dict[str, list[MuonDataset]] = {}
@@ -2065,15 +2068,6 @@ class PlotPanel(QWidget):
         if hasattr(self, "_header_meta_label"):
             self._header_meta_label.setText(text or "")
 
-    def _axis_display_text(self, axis_key: str) -> str:
-        """Return UI label for canonical polarization keys."""
-        return {
-            "ALL": "All",
-            "P_x": "x",
-            "P_y": "y",
-            "P_z": "z",
-        }.get(str(axis_key), str(axis_key))
-
     def _axis_canonical_key(self, axis_text: str | None) -> str | None:
         """Normalize display/canonical axis text to canonical ``P_x`` form."""
         if axis_text is None:
@@ -2275,9 +2269,19 @@ class PlotPanel(QWidget):
         meta = self._fit_metadata.get(run_number)
         return meta if isinstance(meta, dict) else {}
 
+    def _active_y_axis(self) -> str | None:
+        """The axis whose y-limits the manual controls reflect and drive.
+
+        In the stacked multi-subplot view that is the selected (fit-target)
+        subplot; otherwise it is the single visible polarization axis.
+        """
+        if self._subplot_axes_by_polarization:
+            return self.fit_target_projection()
+        return self._current_polarization_axis
+
     def _cache_current_y_limits_for_axis(self) -> None:
-        """Store current y-limits under the active polarization axis, if any."""
-        axis = self._current_polarization_axis
+        """Store current y-limits under the active (focused) axis, if any."""
+        axis = self._active_y_axis()
         if axis is None or axis == "ALL":
             return
         y0 = float(self._y_min.value())
@@ -2286,47 +2290,65 @@ class PlotPanel(QWidget):
         self._y_limits_by_polarization[axis] = (lo, hi)
 
     def _restore_y_limits_for_axis(self, axis: str | None) -> None:
-        """Restore cached y-limits for the selected polarization axis."""
+        """Restore the y-limit controls to *axis*'s cached (or live) limits."""
         if axis is None or axis == "ALL":
             return
         limits = self._y_limits_by_polarization.get(axis)
+        if limits is None:
+            # No cached value yet — reflect the subplot's actual current limits.
+            ax = self._subplot_axes_by_polarization.get(axis)
+            if ax is not None and hasattr(ax, "get_ylim"):
+                try:
+                    limits = ax.get_ylim()
+                except Exception:
+                    limits = None
         if limits is None:
             return
         self._y_min.setValue(float(limits[0]))
         self._y_max.setValue(float(limits[1]))
 
-    def _on_polarization_axis_changed(self, _index: int) -> None:
-        """Emit polarization-axis changes from the plot header selector."""
-        axis = self._polarization_combo.currentData()
+    def _axis_for_selection(self, labels: list[str]) -> str | None:
+        """Map a chip selection onto the internal polarization-axis token.
+
+        One projection selected → that label (single-subplot mode); more than
+        one → the ``"ALL"`` sentinel (stacked-subplot mode); none → ``None``.
+        """
+        if len(labels) > 1:
+            return "ALL"
+        return labels[0] if labels else None
+
+    def _on_projection_selection_changed(self, labels: list[str]) -> None:
+        """Handle a projection chip-selection change from the header chip bar."""
+        self._selected_projection_labels = list(labels)
+        axis = self._axis_for_selection(list(labels))
         if axis is None:
-            axis = self._axis_canonical_key(self._polarization_combo.currentText())
-        if axis:
-            previous_axis = self._current_polarization_axis
-            if previous_axis != axis:
-                self._cache_current_y_limits_for_axis()
-                self._current_polarization_axis = str(axis)
-                self._restore_y_limits_for_axis(self._current_polarization_axis)
-                self._sync_y_controls_with_visible_axis()
-                self._update_y_limit_controls_for_axis(self._current_polarization_axis)
-                self._apply_limits()
-            self.polarization_axis_changed.emit(str(axis))
+            return
+        previous_axis = self._current_polarization_axis
+        if previous_axis != axis:
+            self._cache_current_y_limits_for_axis()
+            self._current_polarization_axis = str(axis)
+            self._restore_y_limits_for_axis(self._current_polarization_axis)
+            self._sync_y_controls_with_visible_axis()
+            self._update_y_limit_controls_for_axis(self._current_polarization_axis)
+            self._apply_limits()
+        self.polarization_axis_changed.emit(str(axis))
 
     def _update_y_limit_controls_for_axis(self, axis: str | None) -> None:
-        """Enable per-axis Y editing except when in vector ALL mode."""
-        disable_y_edit = bool(self._subplot_axes_by_polarization) and axis == "ALL"
+        """Keep the Y controls enabled, driving the focused (selected) subplot.
+
+        In the stacked view, manual Y now applies to the selected (fit-target)
+        subplot rather than being disabled; auto Y still rescales every
+        projection subplot.
+        """
+        in_subplots = bool(self._subplot_axes_by_polarization)
         manual_tooltip = (
-            "In All mode, Y limits are inherited from x, y, and z. "
-            "Select each polarization to set limits."
-            if disable_y_edit
+            "Y limits apply to the selected subplot — click another subplot to switch."
+            if in_subplots
             else ""
         )
-        auto_tooltip = (
-            "In All mode, Auto Y updates the visible x, y, and z polarization limits."
-            if disable_y_edit
-            else ""
-        )
-        self._y_min.setEnabled(not disable_y_edit)
-        self._y_max.setEnabled(not disable_y_edit)
+        auto_tooltip = "Auto Y rescales every projection subplot." if in_subplots else ""
+        self._y_min.setEnabled(True)
+        self._y_max.setEnabled(True)
         self._y_min.setToolTip(manual_tooltip)
         self._y_max.setToolTip(manual_tooltip)
         if hasattr(self, "_auto_y_btn"):
@@ -2345,11 +2367,14 @@ class PlotPanel(QWidget):
         return list(self._subplot_axes_by_polarization)
 
     def _sync_y_controls_with_visible_axis(self) -> None:
-        """Keep Y controls aligned with currently visible polarization context."""
+        """Align the Y controls with the focused (selected) subplot's limits."""
         if not self._subplot_axes_by_polarization:
             return
 
-        axis = self._current_polarization_axis
+        # The Y fields reflect the focused (fit-target) subplot, so a global
+        # auto-Y leaves them showing the selected projection's own range rather
+        # than a span across all of them.
+        axis = self._active_y_axis()
         if axis in self._subplot_axes_by_polarization:
             limits = self._y_limits_by_polarization.get(axis)
             if limits is not None:
@@ -2357,7 +2382,8 @@ class PlotPanel(QWidget):
                 self._y_max.setValue(float(limits[1]))
             return
 
-        # For ALL, show a global y-range spanning all visible subplot axes.
+        # No focused subplot (e.g. nothing selected yet): show a global y-range
+        # spanning all visible subplot axes.
         ranges: list[tuple[float, float]] = []
         for axis_key in self._all_mode_axes_order():
             limits = self._y_limits_by_polarization.get(axis_key)
@@ -2370,53 +2396,196 @@ class PlotPanel(QWidget):
         self._y_min.setValue(y_lo)
         self._y_max.setValue(y_hi)
 
-    def set_polarization_axes(
+    def set_projections(
         self,
-        axes: list[str],
-        current_axis: str | None = None,
+        projections: list[dict],
+        selected: list[str] | None = None,
     ) -> None:
-        """Show/update the polarization selector or hide it when unavailable."""
-        if not hasattr(self, "_polarization_combo"):
+        """Show/update the projection chip bar, or hide it when unavailable.
+
+        ``projections`` is an ordered list of ``{"label", "tint"?}`` dicts;
+        ``selected`` is the subset of labels to show as subplots (defaults to
+        all). The bar (and any multi-projection behaviour) is suppressed when
+        fewer than two projections exist.
+        """
+        if not hasattr(self, "_projection_bar"):
             return
 
-        cleaned = [str(a) for a in axes if str(a).strip()]
-        if not cleaned:
+        specs = [dict(p) for p in (projections or []) if p.get("label")]
+        if len(specs) < 2:
             self._cache_current_y_limits_for_axis()
             self._current_polarization_axis = None
+            self._projection_specs = []
+            self._tint_by_label = {}
+            self._selected_projection_labels = []
             self._vector_subplot_datasets = {}
-            self._polarization_combo.blockSignals(True)
-            self._polarization_combo.clear()
-            self._polarization_combo.blockSignals(False)
-            self._polarization_label.hide()
-            self._polarization_combo.hide()
+            self._projection_bar.set_projections([])
             self._update_y_limit_controls_for_axis(None)
             return
 
-        selected = str(current_axis) if current_axis in cleaned else cleaned[0]
+        self._projection_specs = specs
+        self._tint_by_label = {str(p["label"]): str(p["tint"]) for p in specs if p.get("tint")}
+        labels = [str(p["label"]) for p in specs]
+        wanted = set(selected) if selected else set(labels)
+        chosen = [lbl for lbl in labels if lbl in wanted] or list(labels)
+
+        self._projection_bar.set_projections(specs, chosen)
+        self._selected_projection_labels = self._projection_bar.selected_labels()
+
+        new_axis = self._axis_for_selection(self._selected_projection_labels)
         previous_axis = self._current_polarization_axis
-        if previous_axis != selected:
+        if previous_axis != new_axis:
             self._cache_current_y_limits_for_axis()
-
-        self._polarization_combo.blockSignals(True)
-        self._polarization_combo.clear()
-        for axis in cleaned:
-            self._polarization_combo.addItem(self._axis_display_text(axis), axis)
-        idx = self._polarization_combo.findData(selected)
-        if idx < 0:
-            idx = 0
-        self._polarization_combo.setCurrentIndex(idx)
-        self._polarization_combo.blockSignals(False)
-        self._polarization_label.show()
-        self._polarization_combo.show()
-        self._current_polarization_axis = selected
-
-        if previous_axis != selected:
-            self._restore_y_limits_for_axis(selected)
+        self._current_polarization_axis = new_axis
+        if previous_axis != new_axis:
+            self._restore_y_limits_for_axis(new_axis)
             self._sync_y_controls_with_visible_axis()
-            self._update_y_limit_controls_for_axis(selected)
+            self._update_y_limit_controls_for_axis(new_axis)
             self._apply_limits()
         else:
-            self._update_y_limit_controls_for_axis(selected)
+            self._update_y_limit_controls_for_axis(new_axis)
+
+    def selected_projection_labels(self) -> list[str]:
+        """Return the projection labels currently selected.
+
+        The chip bar is the source of truth once populated; the stored copy is
+        the fallback during project restore, before the bar has been rebuilt.
+        """
+        bar_selection = self._projection_bar.selected_labels()
+        return bar_selection or list(self._selected_projection_labels)
+
+    # ── stacked-subplot fit target (Step 4) ────────────────────────────────
+
+    def projection_tint(self, label: str | None) -> str | None:
+        """Return the frame/identity tint for a projection label, if any."""
+        if label is None:
+            return None
+        return self._tint_by_label.get(str(label))
+
+    def fit_target_projection(self) -> str | None:
+        """Return the projection whose subplot is the active single-fit target.
+
+        Only meaningful in the stacked multi-subplot view; ``None`` otherwise.
+        """
+        if self._fit_target_projection in self._subplot_axes_by_polarization:
+            return self._fit_target_projection
+        return None
+
+    def set_fit_target_projection(self, label: str | None, *, emit: bool = True) -> None:
+        """Mark *label*'s subplot as the single-fit target and redraw its box.
+
+        The fit target is also the focus for the manual Y-limit controls, so a
+        change caches the outgoing subplot's limits and surfaces the incoming
+        subplot's into the Y fields.
+        """
+        if label is not None and label not in self._subplot_axes_by_polarization:
+            return
+        changed = label != self._fit_target_projection
+        if not changed:
+            return  # no-op re-click: skip the tight-bbox recompute and redraw
+        in_subplots = bool(self._subplot_axes_by_polarization)
+        if in_subplots:
+            self._cache_current_y_limits_for_axis()  # caches the outgoing target
+        self._fit_target_projection = label
+        if in_subplots:
+            self._restore_y_limits_for_axis(label)
+            self._update_y_limit_controls_for_axis(self._current_polarization_axis)
+        self._refresh_fit_target_decoration()
+        if emit and label is not None:
+            self.fit_target_projection_changed.emit(str(label))
+
+    def _subplot_projection_at_event(self, event) -> str | None:
+        """Return the projection whose subplot axes contains the click event."""
+        inaxes = getattr(event, "inaxes", None)
+        if inaxes is None:
+            return None
+        for label, axis in self._subplot_axes_by_polarization.items():
+            if axis is inaxes:
+                return label
+        return None
+
+    def _default_fit_target(self) -> str | None:
+        """Pick a sensible default target: the active single axis, else the first."""
+        order = self._all_mode_axes_order()
+        if not order:
+            return None
+        axis = self._current_polarization_axis
+        if axis in order:
+            return axis
+        return order[0]
+
+    def _clear_fit_target_decoration(self) -> None:
+        for artist in self._fit_target_artists:
+            try:
+                artist.remove()
+            except Exception:
+                continue
+        self._fit_target_artists = []
+
+    def _refresh_fit_target_decoration(self) -> None:
+        """Draw a neutral focus ring + 'fit target' pill on the active subplot.
+
+        The ring/pill is *selection* state and is deliberately distinct from the
+        per-projection frame tint (which encodes projection identity).
+        """
+        if not self._has_mpl:
+            return
+        self._clear_fit_target_decoration()
+        target = self.fit_target_projection()
+        # Only decorate when there is a genuine choice (two or more subplots).
+        if target is None or len(self._subplot_axes_by_polarization) < 2:
+            self._canvas.draw_idle()
+            return
+
+        ax = self._subplot_axes_by_polarization[target]
+        # Decoration is best-effort chrome — a non-standard axis (e.g. a test
+        # double) must never break the click/selection path.
+        if not hasattr(ax, "get_position"):
+            self._canvas.draw_idle()
+            return
+
+        from matplotlib.patches import FancyBboxPatch
+
+        # Enclose the WHOLE subplot — tick labels and y-axis label included — by
+        # using the axes' tight bbox (display coords) rather than just the data
+        # area; fall back to the data-area position if no renderer is available.
+        pos = ax.get_position()
+        try:
+            renderer = self._figure.canvas.get_renderer()
+            tight = ax.get_tightbbox(renderer)
+            if tight is not None:
+                pos = tight.transformed(self._figure.transFigure.inverted())
+        except Exception:
+            pass
+        margin = 0.006  # small gap so the ring doesn't touch the labels
+        ring = FancyBboxPatch(
+            (pos.x0 - margin, pos.y0 - margin),
+            pos.width + 2 * margin,
+            pos.height + 2 * margin,
+            boxstyle="round,pad=0.002",
+            transform=self._figure.transFigure,
+            fill=False,
+            edgecolor=tokens.TEXT,
+            linewidth=1.6,
+            zorder=10,
+        )
+        self._figure.add_artist(ring)
+        self._fit_target_artists.append(ring)
+
+        pill = ax.text(
+            0.985,
+            0.94,
+            "fit target",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=8,
+            color=tokens.SURFACE,
+            zorder=11,
+            bbox={"boxstyle": "round,pad=0.25", "facecolor": tokens.TEXT, "edgecolor": "none"},
+        )
+        self._fit_target_artists.append(pill)
+        self._canvas.draw_idle()
 
     def _polarization_ylabel(self, axis_key: str | None) -> str:
         """Return y-axis label for the provided polarization component."""
@@ -2560,12 +2729,43 @@ class PlotPanel(QWidget):
             )
         return None, None, None, None
 
+    def _projection_subplot_order(
+        self, datasets_by_axis: dict[str, list[MuonDataset]]
+    ) -> list[str]:
+        """Return the subplot order for the projections that have datasets.
+
+        Prefers the declared projection order, falling back to the canonical
+        vector order and finally to the dict's own order.
+        """
+        spec_order = [str(p["label"]) for p in self._projection_specs]
+        order = [a for a in spec_order if datasets_by_axis.get(a)]
+        if not order:
+            order = [a for a in ("P_x", "P_y", "P_z") if datasets_by_axis.get(a)]
+        if not order:
+            order = [a for a in datasets_by_axis if datasets_by_axis.get(a)]
+        return order
+
+    def _apply_projection_frame_tint(self, ax, axis_key: str) -> None:
+        """Tint a subplot's left rail and y-label with the projection's colour.
+
+        This is *projection identity* (chip ↔ subplot), deliberately distinct
+        from the data trace colour, which encodes run identity in RG mode.
+        """
+        tint = self._tint_by_label.get(str(axis_key))
+        if not tint:
+            return
+        ax.yaxis.label.set_color(tint)
+        left = ax.spines.get("left") if hasattr(ax.spines, "get") else ax.spines["left"]
+        if left is not None:
+            left.set_color(tint)
+            left.set_linewidth(2.0)
+
     def plot_vector_subplots(self, datasets_by_axis: dict[str, list[MuonDataset]]) -> None:
-        """Render P_x/P_y/P_z as stacked subplots for vector ``ALL`` mode."""
+        """Render the selected projections as stacked subplots."""
         if not self._has_mpl:
             return
 
-        order = [axis for axis in ("P_x", "P_y", "P_z") if datasets_by_axis.get(axis)]
+        order = self._projection_subplot_order(datasets_by_axis)
         if not order:
             return
         self._set_canvas_minimum_height_for_axes(len(order))
@@ -2598,6 +2798,7 @@ class PlotPanel(QWidget):
             t, a, e, low = self._plot_datasets_on_axis(
                 ax, self._vector_subplot_datasets.get(axis_key, []), axis_key
             )
+            self._apply_projection_frame_tint(ax, axis_key)
             if axis_key in self._y_limits_by_polarization:
                 y0, y1 = self._y_limits_by_polarization[axis_key]
                 ax.set_ylim(y0, y1)
@@ -2657,6 +2858,13 @@ class PlotPanel(QWidget):
         self._apply_auto_limits_if_enabled()
         self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
 
+        # Auto-select a fit target so fitting is never dead-on-arrival; keep the
+        # prior target when it is still visible. Emit so the fit panel rebinds.
+        if self._fit_target_projection not in self._subplot_axes_by_polarization:
+            self.set_fit_target_projection(self._default_fit_target())
+        else:
+            self._refresh_fit_target_decoration()
+
     def plot_grouped_time_domain_subplots(self, datasets: list[MuonDataset]) -> None:
         """Render grouped time-domain traces as stacked subplots."""
         if not self._has_mpl or not datasets:
@@ -2674,10 +2882,8 @@ class PlotPanel(QWidget):
         self._current_dataset = datasets[-1]
         self._update_plot_header()
         self._current_polarization_axis = None
-        if hasattr(self, "_polarization_label"):
-            self._polarization_label.hide()
-        if hasattr(self, "_polarization_combo"):
-            self._polarization_combo.hide()
+        if hasattr(self, "_projection_bar"):
+            self._projection_bar.hide()
 
         shared_ax = None
         last_arrays = (None, None, None, None)
@@ -2785,9 +2991,8 @@ class PlotPanel(QWidget):
         self._current_dataset = datasets[-1]
         self._update_plot_header()
         self._current_polarization_axis = None
-        for label in ("_polarization_label", "_polarization_combo"):
-            if hasattr(self, label):
-                getattr(self, label).hide()
+        if hasattr(self, "_projection_bar"):
+            self._projection_bar.hide()
 
         n = len(datasets)
         gridspec = self._figure.add_gridspec(2 * n, 1, height_ratios=[3, 1] * n, hspace=0.45)
@@ -2868,9 +3073,8 @@ class PlotPanel(QWidget):
         self._current_dataset = datasets[-1]
         self._update_plot_header()
         self._current_polarization_axis = None
-        for label in ("_polarization_label", "_polarization_combo"):
-            if hasattr(self, label):
-                getattr(self, label).hide()
+        if hasattr(self, "_projection_bar"):
+            self._projection_bar.hide()
 
         gridspec = self._figure.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.3)
         ax_main = self._figure.add_subplot(gridspec[0])
@@ -3487,17 +3691,19 @@ class PlotPanel(QWidget):
             self._draw_fit_range_artists()
             self._syncing_limits_from_axes = True
             try:
+                focused_axis = self._active_y_axis()
                 for axis_key, axis_obj in self._subplot_axes_by_polarization.items():
                     axis_obj.set_xlim(x0, x1)
-                    if self._current_polarization_axis == axis_key:
+                    # Manual Y applies only to the focused (selected) subplot.
+                    if focused_axis == axis_key:
                         lo, hi = (y0, y1) if y0 <= y1 else (y1, y0)
                         self._y_limits_by_polarization[axis_key] = (lo, hi)
                     limits = self._y_limits_by_polarization.get(axis_key)
                     if limits is not None:
                         axis_obj.set_ylim(float(limits[0]), float(limits[1]))
-                    elif self._current_polarization_axis == "ALL":
-                        # Fallback for axes without cached limits yet.
-                        axis_obj.set_ylim(y0, y1)
+                    # A non-focused subplot with no cached limit keeps its own
+                    # (auto-scaled) y-range — manual Y never bleeds across
+                    # subplots.
             finally:
                 self._syncing_limits_from_axes = False
             self._canvas.draw()
@@ -4429,6 +4635,11 @@ class PlotPanel(QWidget):
         if ann_idx is not None:
             self._active_annotation_idx = ann_idx
             self._annotation_drag_started = False
+        elif self._subplot_axes_by_polarization:
+            # A plain click inside a stacked subplot makes it the fit target.
+            projection = self._subplot_projection_at_event(event)
+            if projection is not None:
+                self.set_fit_target_projection(projection)
 
     def _on_canvas_motion_notify(self, event) -> None:
         """Drag the active fit-range handle while the mouse moves."""
@@ -4642,6 +4853,13 @@ class PlotPanel(QWidget):
             except (TypeError, ValueError):
                 run_number = None
             axis_key = self._axis_key_for_dataset(self._current_dataset)
+        # In the stacked view the fit belongs to the SELECTED subplot, not the
+        # first projection that _current_dataset happens to point at — otherwise
+        # every fit would draw on the first subplot regardless of the target.
+        if self._subplot_axes_by_polarization:
+            target = self.fit_target_projection()
+            if target is not None:
+                axis_key = target
         self._fit_curve_run_number = run_number
 
         if run_number is not None:
@@ -4661,7 +4879,12 @@ class PlotPanel(QWidget):
 
         self._update_export_enabled()
 
-        if self._current_dataset is not None:
+        if self._subplot_axes_by_polarization and self._vector_subplot_datasets:
+            # Stacked multi-subplot view: re-render the subplots so the fit
+            # overlays the target projection's subplot (drawn per-axis from
+            # _fit_curves_by_key) without dropping the other projections.
+            self.plot_vector_subplots(self._vector_subplot_datasets)
+        elif self._current_dataset is not None:
             self.plot_dataset(self._current_dataset)
         else:
             self._ax.plot(t_fit, y_fit, "-", color=tokens.PLOT_FIT, linewidth=2, label=label)
@@ -4734,7 +4957,7 @@ class PlotPanel(QWidget):
             self._set_canvas_minimum_height_for_axes(1)
             self._set_navigation_mode("none")
             self._set_alpha_label(None)
-            self.set_polarization_axes([])
+            self.set_projections([])
             self._ax.clear()
             style_axes(self._ax)
             self._canvas.draw()
@@ -5917,6 +6140,7 @@ class PlotPanel(QWidget):
             "y_min": self._y_min.value() if self._has_mpl else -30.0,
             "y_max": self._y_max.value() if self._has_mpl else 30.0,
             "polarization_axis": self._current_polarization_axis,
+            "projection_selection": list(self._selected_projection_labels),
             "y_limits_by_polarization": {
                 axis: [float(lim[0]), float(lim[1])]
                 for axis, lim in self._y_limits_by_polarization.items()
@@ -6033,6 +6257,15 @@ class PlotPanel(QWidget):
 
         self._active_label_group_id = None
         self._current_polarization_axis = self._axis_canonical_key(state.get("polarization_axis"))
+        # Seed the selected subset so a restored stacked-subplot view reopens
+        # with the exact projections it was saved with (the chip bar is rebuilt
+        # later by _refresh_vector_axis_selector, which reads this).
+        raw_selection = state.get("projection_selection")
+        self._selected_projection_labels = (
+            [str(label) for label in raw_selection if label]
+            if isinstance(raw_selection, list)
+            else []
+        )
         self._y_limits_by_polarization = {}
         raw_y_limits_by_axis = state.get("y_limits_by_polarization", {})
         if isinstance(raw_y_limits_by_axis, dict):

@@ -24,6 +24,46 @@ from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.panels.plot_panel import PlotPanel, _FloatLimitField
 from asymmetry.gui.styles import tokens
 
+_PROJECTION_TINTS = {"P_x": "#534AB7", "P_y": "#BA7517", "P_z": "#0F6E56"}
+
+
+def _projection_specs(axes: list[str]) -> list[dict]:
+    """Build chip-bar specs from canonical axis labels (ignoring 'ALL')."""
+    return [{"label": a, "tint": _PROJECTION_TINTS.get(a, "#000000")} for a in axes if a != "ALL"]
+
+
+class _TintAxis:
+    """Minimal axis stub capturing frame-tint calls."""
+
+    def __init__(self) -> None:
+        self.label_color: str | None = None
+        self.spine_color: str | None = None
+        self.spine_lw: float | None = None
+        self.yaxis = SimpleNamespace(
+            label=SimpleNamespace(set_color=lambda c: setattr(self, "label_color", c))
+        )
+        spine = SimpleNamespace(
+            set_color=lambda c: setattr(self, "spine_color", c),
+            set_linewidth=lambda w: setattr(self, "spine_lw", w),
+        )
+        self.spines = {"left": spine}
+
+
+def _set_pol(panel: PlotPanel, axes: list[str], current: str | None) -> None:
+    """Drive the projection chip bar the way the old combo selector was driven.
+
+    ``current == "ALL"`` selects every projection (stacked subplots); a single
+    axis selects just that one.
+    """
+    specs = _projection_specs(axes)
+    if current == "ALL":
+        selected = [s["label"] for s in specs]
+    elif current:
+        selected = [current]
+    else:
+        selected = None
+    panel.set_projections(specs, selected)
+
 
 class _FakeAxis:
     def __init__(self) -> None:
@@ -907,38 +947,172 @@ class TestPlotPanel:
         assert panel.decimation_chip_text() is None
         assert panel._canvas.toolTip() == ""
 
-    def test_polarization_combo_uses_subscript_labels(self, panel: PlotPanel) -> None:
+    def test_projection_chip_bar_shows_each_projection(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_x")
-        labels = [
-            panel._polarization_combo.itemText(i) for i in range(panel._polarization_combo.count())
-        ]
+        _set_pol(panel, ["P_x", "P_y", "P_z"], "P_x")
+        assert list(panel._projection_bar._chips) == ["P_x", "P_y", "P_z"]
+        assert not panel._projection_bar.isHidden()
+        assert panel.selected_projection_labels() == ["P_x"]
 
-        assert labels == ["x", "y", "z"]
-
-    def test_polarization_combo_change_updates_current_axis_state(self, panel: PlotPanel) -> None:
+    def test_chip_toggle_updates_current_axis_state(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_z")
-        idx = panel._polarization_combo.findData("P_x")
-        assert idx >= 0
-        panel._polarization_combo.setCurrentIndex(idx)
-
+        _set_pol(panel, ["P_x", "P_y", "P_z"], "P_z")
+        assert panel.get_current_polarization_axis() == "P_z"
+        # Adding a second projection maps to the ALL (stacked) sentinel; dropping
+        # back to one selects that single axis.
+        panel._projection_bar._chips["P_x"].setChecked(True)
+        assert panel.get_current_polarization_axis() == "ALL"
+        panel._projection_bar._chips["P_z"].setChecked(False)
         assert panel.get_current_polarization_axis() == "P_x"
+        assert panel.selected_projection_labels() == ["P_x"]
 
-    def test_polarization_combo_supports_all_option(self, panel: PlotPanel) -> None:
+    def test_multiple_selected_projections_map_to_all(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
-        labels = [
-            panel._polarization_combo.itemText(i) for i in range(panel._polarization_combo.count())
-        ]
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "ALL")
+        assert panel.get_current_polarization_axis() == "ALL"
+        assert panel.selected_projection_labels() == ["P_x", "P_y", "P_z"]
 
-        assert labels[0] == "All"
+    def test_projection_subplot_order_follows_declared_order(self, panel: PlotPanel) -> None:
+        panel._projection_specs = _projection_specs(["P_x", "P_y", "P_z"])
+        # Only two projections carry datasets: order is the declared order,
+        # restricted to those present.
+        order = panel._projection_subplot_order({"P_z": [object()], "P_x": [object()]})
+        assert order == ["P_x", "P_z"]
+
+    def test_frame_tint_colours_label_and_left_spine(self, panel: PlotPanel) -> None:
+        panel._tint_by_label = {"P_x": "#534AB7"}
+        ax = _TintAxis()
+        panel._apply_projection_frame_tint(ax, "P_x")
+        assert ax.label_color == "#534AB7"
+        assert ax.spine_color == "#534AB7"
+        assert ax.spine_lw == 2.0
+
+    def test_frame_tint_is_noop_without_a_tint(self, panel: PlotPanel) -> None:
+        panel._tint_by_label = {}
+        ax = _TintAxis()
+        panel._apply_projection_frame_tint(ax, "P_x")
+        assert ax.label_color is None
+
+    def test_set_fit_target_projection_updates_state_and_emits(self, panel: PlotPanel) -> None:
+        panel._subplot_axes_by_polarization = {
+            "P_x": _FakeAxis(),
+            "P_y": _FakeAxis(),
+            "P_z": _FakeAxis(),
+        }
+        captured: list[str] = []
+        panel.fit_target_projection_changed.connect(captured.append)
+        panel.set_fit_target_projection("P_y")
+        assert panel.fit_target_projection() == "P_y"
+        assert captured == ["P_y"]
+        # Re-selecting the same target does not re-emit.
+        panel.set_fit_target_projection("P_y")
+        assert captured == ["P_y"]
+
+    def test_fit_target_is_none_outside_subplot_view(self, panel: PlotPanel) -> None:
+        panel._subplot_axes_by_polarization = {}
+        panel._fit_target_projection = "P_x"
+        assert panel.fit_target_projection() is None
+
+    def test_clicking_a_subplot_sets_it_as_fit_target(self, panel: PlotPanel) -> None:
+        ax_x, ax_z = _FakeAxis(), _FakeAxis()
+        panel._subplot_axes_by_polarization = {"P_x": ax_x, "P_z": ax_z}
+        assert panel._subplot_projection_at_event(SimpleNamespace(inaxes=ax_z)) == "P_z"
+        assert panel._subplot_projection_at_event(SimpleNamespace(inaxes=None)) is None
+
+    def test_default_fit_target_prefers_active_axis(self, panel: PlotPanel) -> None:
+        panel._subplot_axes_by_polarization = {"P_x": _FakeAxis(), "P_z": _FakeAxis()}
+        panel._current_polarization_axis = "P_z"
+        assert panel._default_fit_target() == "P_z"
+        # When the active axis is not among the subplots, fall back to the first.
+        panel._current_polarization_axis = "ALL"
+        assert panel._default_fit_target() == "P_x"
+
+    def test_plot_fit_preserves_stacked_subplots(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        t = np.linspace(0.0, 4.0, 5)
+        e = np.full_like(t, 0.01)
+        datasets_by_axis = {
+            axis: [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.zeros_like(t),
+                    error=e,
+                    metadata={"run_number": 9301},
+                )
+            ]
+            for axis in ("P_x", "P_y", "P_z")
+        }
+        panel._current_polarization_axis = "ALL"
+        panel.plot_vector_subplots(datasets_by_axis)
+        assert len(panel._subplot_axes_by_polarization) == 3
+
+        # Overlaying a fit must NOT collapse the stacked view to a single plot.
+        panel.plot_fit(t, np.zeros_like(t), label="Fit")
+        assert len(panel._subplot_axes_by_polarization) == 3
+
+    def test_plot_fit_keys_under_the_selected_subplot(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        t = np.linspace(0.0, 4.0, 5)
+        e = np.full_like(t, 0.01)
+        datasets_by_axis = {
+            axis: [
+                MuonDataset(
+                    time=t,
+                    asymmetry=np.zeros_like(t),
+                    error=e,
+                    metadata={"run_number": 9302},
+                )
+            ]
+            for axis in ("P_x", "P_y", "P_z")
+        }
+        panel._current_polarization_axis = "ALL"
+        panel.plot_vector_subplots(datasets_by_axis)
+        # Target the SECOND projection, not the first that _current_dataset points at.
+        panel.set_fit_target_projection("P_y", emit=False)
+
+        panel.plot_fit(t, np.zeros_like(t), label="Fit")
+
+        # The fit is keyed under the selected projection (P_y), not P_x.
+        assert (9302, "P_y") in panel._fit_curves_by_key
+        assert (9302, "P_x") not in panel._fit_curves_by_key
+
+    def test_active_y_axis_follows_fit_target_in_subplots(self, panel: PlotPanel) -> None:
+        panel._subplot_axes_by_polarization = {"P_x": _FakeAxis(), "P_z": _FakeAxis()}
+        panel._current_polarization_axis = "ALL"
+        panel.set_fit_target_projection("P_z")
+        assert panel._active_y_axis() == "P_z"
+        # Outside the stacked view, the focus is the single visible axis.
+        panel._subplot_axes_by_polarization = {}
+        panel._current_polarization_axis = "P_x"
+        assert panel._active_y_axis() == "P_x"
+
+    def test_switching_fit_target_swaps_cached_y_limits(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+        panel._subplot_axes_by_polarization = {"P_x": _FakeAxis(), "P_z": _FakeAxis()}
+        panel._current_polarization_axis = "ALL"
+        # Set a Y range while P_x is the target → it caches under P_x.
+        panel.set_fit_target_projection("P_x", emit=False)
+        panel._y_min.setValue(-0.2)
+        panel._y_max.setValue(0.4)
+        panel._cache_current_y_limits_for_axis()
+        # Switch target to P_z, give it its own range.
+        panel.set_fit_target_projection("P_z", emit=False)
+        panel._y_min.setValue(-1.0)
+        panel._y_max.setValue(1.0)
+        panel._cache_current_y_limits_for_axis()
+        # Back to P_x restores its cached range, not P_z's.
+        panel.set_fit_target_projection("P_x", emit=False)
+        assert panel._y_min.value() == pytest.approx(-0.2)
+        assert panel._y_max.value() == pytest.approx(0.4)
 
     def test_time_view_selector_supports_group_mode(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -1207,21 +1381,21 @@ class TestPlotPanel:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_x")
+        _set_pol(panel, ["P_x", "P_y", "P_z"], "P_x")
         panel._y_min.setValue(-0.1)
         panel._y_max.setValue(0.3)
         panel._apply_limits()
 
-        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_y")
+        _set_pol(panel, ["P_x", "P_y", "P_z"], "P_y")
         panel._y_min.setValue(-1.0)
         panel._y_max.setValue(1.0)
         panel._apply_limits()
 
-        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_x")
+        _set_pol(panel, ["P_x", "P_y", "P_z"], "P_x")
         assert panel._y_min.value() == pytest.approx(-0.1)
         assert panel._y_max.value() == pytest.approx(0.3)
 
-        panel.set_polarization_axes(["P_x", "P_y", "P_z"], "P_y")
+        _set_pol(panel, ["P_x", "P_y", "P_z"], "P_y")
         assert panel._y_min.value() == pytest.approx(-1.0)
         assert panel._y_max.value() == pytest.approx(1.0)
         # Check if plot was created (canvas should have drawn something)
@@ -1784,6 +1958,23 @@ class TestPlotPanel:
         restored.restore_state(state, dataset=None)
 
         assert restored._label_field_combo.currentData() == "temperature"
+
+    def test_projection_subset_persists_in_panel_state(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        # A 2-of-3 subset must survive save/restore rather than widening to all.
+        panel.set_projections(_projection_specs(["P_x", "P_y", "P_z"]), ["P_x", "P_z"])
+        assert panel.get_current_polarization_axis() == "ALL"
+        state = panel.get_state()
+        assert state["projection_selection"] == ["P_x", "P_z"]
+
+        restored = PlotPanel()
+        if not hasattr(restored, "_has_mpl") or not restored._has_mpl:
+            pytest.skip("matplotlib not available")
+        restored.restore_state(state, dataset=None)
+
+        assert restored.selected_projection_labels() == ["P_x", "P_z"]
 
     def test_overlay_selection_persists_in_panel_state(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -2423,13 +2614,13 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
-        monkeypatch.setattr(
-            "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
-        )
         monkeypatch.setattr("shutil.which", lambda _name: "gle")
         monkeypatch.setattr(
             "subprocess.run",
             lambda args, **kwargs: subprocess_calls.append((list(args), kwargs.get("cwd"))),
+        )
+        monkeypatch.setattr(
+            "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
         monkeypatch.setattr(
             panel,
@@ -2514,11 +2705,11 @@ class TestPlotPanel:
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
         monkeypatch.setattr(panel, "get_current_plot_export_data", lambda: [payload])
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
-        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
@@ -2571,11 +2762,11 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
-        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
@@ -2630,11 +2821,11 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
-        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
@@ -2689,11 +2880,11 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
-        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
@@ -2788,11 +2979,11 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
-        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
@@ -2837,7 +3028,7 @@ class TestPlotPanel:
         assert ax_py.ylim_calls[-1] == pytest.approx((-1.0, 1.0))
         assert ax_pz.ylim_calls[-1] == pytest.approx((-0.05, 0.2))
 
-    def test_all_mode_disables_y_controls_and_sets_tooltips(self, panel: PlotPanel) -> None:
+    def test_all_mode_y_controls_drive_selected_subplot(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
@@ -2846,19 +3037,22 @@ class TestPlotPanel:
             "P_y": _FakeAxis(),
             "P_z": _FakeAxis(),
         }
-        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "ALL")
 
-        assert not panel._y_min.isEnabled()
-        assert not panel._y_max.isEnabled()
-        assert panel._auto_y_btn.isEnabled()
-        assert "x, y, and z" in panel._y_min.toolTip()
-        assert "Auto Y updates" in panel._auto_y_btn.toolTip()
-        assert panel._y_min.toolTip() == panel._y_max.toolTip()
-
-        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "P_x")
+        # Manual Y stays enabled in the stacked view — it drives the selected
+        # (fit-target) subplot; auto Y still rescales every projection.
         assert panel._y_min.isEnabled()
         assert panel._y_max.isEnabled()
         assert panel._auto_y_btn.isEnabled()
+        assert "selected subplot" in panel._y_min.toolTip()
+        assert "every projection" in panel._auto_y_btn.toolTip()
+        assert panel._y_min.toolTip() == panel._y_max.toolTip()
+
+        # Single-axis view (no stacked subplots): plain Y controls, no tooltip.
+        panel._subplot_axes_by_polarization = {}
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "P_x")
+        assert panel._y_min.isEnabled()
+        assert panel._y_max.isEnabled()
         assert panel._y_min.toolTip() == ""
 
     def test_auto_y_in_all_mode_updates_each_polarization(self, panel: PlotPanel) -> None:
@@ -2896,7 +3090,7 @@ class TestPlotPanel:
 
         panel._current_polarization_axis = "ALL"
         panel.plot_vector_subplots(datasets_by_axis)
-        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "ALL")
         panel._x_min.setValue(0.0)
         panel._x_max.setValue(4.0)
 
@@ -2973,7 +3167,7 @@ class TestPlotPanel:
 
         panel._current_polarization_axis = "ALL"
         panel.plot_vector_subplots(initial)
-        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "ALL")
         panel._auto_y_btn.click()
 
         first_px_limits = panel._subplot_axes_by_polarization["P_x"].get_ylim()
@@ -3020,13 +3214,13 @@ class TestPlotPanel:
 
         panel._current_polarization_axis = "ALL"
         panel.plot_vector_subplots(datasets_by_axis)
-        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "ALL")
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "ALL")
 
         panel._x_min.setValue(1.5)
         panel._x_max.setValue(5.5)
         panel._apply_limits()
 
-        panel.set_polarization_axes(["ALL", "P_x", "P_y", "P_z"], "P_x")
+        _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "P_x")
         panel.plot_dataset(datasets_by_axis["P_x"][0])
 
         assert panel._x_min.value() == pytest.approx(1.5)
@@ -3153,11 +3347,11 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
-        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 
@@ -3232,11 +3426,11 @@ class TestPlotPanel:
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
             lambda *_a, **_k: (str(target_gle), "GLE files (*.gle)"),
         )
+        monkeypatch.setattr("shutil.which", lambda _name: "gle")
+        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(
             "importlib.import_module", lambda name: fake_glp if name == "gleplot" else None
         )
-        monkeypatch.setattr("shutil.which", lambda _name: "gle")
-        monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_export_result_dialog", lambda *args, **kwargs: None)
         monkeypatch.setattr(panel, "_show_gle_preview", lambda *args, **kwargs: None)
 

@@ -80,7 +80,7 @@ def test_single_fit_writes_representation_slot(mw, monkeypatch):
     mw._plot_workspace.set_active_view("fb_asymmetry")
     monkeypatch.setattr(
         mw._fit_panel,
-        "get_single_state",
+        "get_single_form_state",
         lambda: {
             "composite_model": {"component_names": ["Exponential"], "operators": []},
             "parameters": [{"name": "A", "value": 0.2}],
@@ -111,7 +111,7 @@ def test_single_fit_slot_targets_active_domain(mw, monkeypatch):
     mw._plot_workspace.set_active_view("groups")
     monkeypatch.setattr(
         mw._fit_panel,
-        "get_single_state",
+        "get_single_form_state",
         lambda: {
             "composite_model": {"component_names": ["Gaussian"], "operators": []},
             "parameters": [],
@@ -264,7 +264,7 @@ def test_add_compatible_single_fit_to_series(mw, monkeypatch):
     mw._on_dataset_selected(12)
     monkeypatch.setattr(
         mw._fit_panel,
-        "get_single_state",
+        "get_single_form_state",
         lambda: {"composite_model": model, "parameters": [], "result_html": ""},
     )
     mw._on_fit_completed(_result(), _CURVE, [])
@@ -279,7 +279,7 @@ def test_add_compatible_single_fit_to_series(mw, monkeypatch):
     mw._on_dataset_selected(13)
     monkeypatch.setattr(
         mw._fit_panel,
-        "get_single_state",
+        "get_single_form_state",
         lambda: {
             "composite_model": {"component_names": ["Gaussian"], "operators": []},
             "parameters": [],
@@ -314,7 +314,7 @@ def test_add_to_series_action_finds_and_adds_compatible_series(mw, monkeypatch):
     mw._on_dataset_selected(12)
     monkeypatch.setattr(
         mw._fit_panel,
-        "get_single_state",
+        "get_single_form_state",
         lambda: {"composite_model": model, "parameters": [], "result_html": ""},
     )
     mw._on_fit_completed(_result(), _CURVE, [])
@@ -349,7 +349,7 @@ def test_editing_member_model_diverges_and_excludes_from_trend(mw, monkeypatch):
     mw._on_dataset_selected(11)
     monkeypatch.setattr(
         mw._fit_panel,
-        "get_single_state",
+        "get_single_form_state",
         lambda: {
             "composite_model": {"component_names": ["Gaussian"], "operators": []},
             "parameters": [],
