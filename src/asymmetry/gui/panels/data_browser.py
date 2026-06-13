@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import sys
 import uuid
@@ -1860,38 +1861,49 @@ class DataBrowserPanel(QWidget):
             )
         return None
 
-    def export_logbook_tsv(self, path: str) -> int:
-        """Export all runs to tab-separated text using current columns/grouping.
+    def render_logbook_tsv(self) -> tuple[str, int]:
+        """Render the TSV logbook to a string, reading widget/grouping state.
 
-        This export includes rows hidden by filters or collapsed groups.
+        Returns ``(content, exported_rows)``. The render reads the table model
+        (columns, grouping, every dataset) so it must run on the GUI thread; the
+        caller writes ``content`` to disk (off-thread where it matters). The
+        export includes rows hidden by filters or collapsed groups.
         """
         headers = self._active_column_headers()
         sections = self._export_sections()
         exported_rows = 0
 
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, delimiter="\t", lineterminator="\n")
+        for section_index, (section_name, run_numbers) in enumerate(sections):
+            writer.writerow(self._group_header_values(len(headers), section_name))
+            writer.writerow(headers)
+
+            for run_number in run_numbers:
+                dataset = self._datasets.get(run_number)
+                if dataset is None:
+                    continue
+                writer.writerow(self._export_row_values(run_number, dataset))
+                exported_rows += 1
+
+            if section_index < len(sections) - 1:
+                writer.writerow([])
+
+        return buffer.getvalue(), exported_rows
+
+    def export_logbook_tsv(self, path: str) -> int:
+        """Render and write the TSV logbook to *path* (synchronous helper)."""
+        content, exported_rows = self.render_logbook_tsv()
         with open(path, "w", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
-            for section_index, (section_name, run_numbers) in enumerate(sections):
-                writer.writerow(self._group_header_values(len(headers), section_name))
-                writer.writerow(headers)
-
-                for run_number in run_numbers:
-                    dataset = self._datasets.get(run_number)
-                    if dataset is None:
-                        continue
-                    writer.writerow(self._export_row_values(run_number, dataset))
-                    exported_rows += 1
-
-                if section_index < len(sections) - 1:
-                    writer.writerow([])
-
+            handle.write(content)
         return exported_rows
 
-    def export_logbook_rtf(self, path: str) -> int:
-        """Export all runs to tab-separated RTF using current columns/grouping.
+    def render_logbook_rtf(self) -> tuple[str, int]:
+        """Render the RTF logbook to a string, reading widget/grouping state.
 
-        The export includes rows hidden in the table by filters or collapsed
-        groups so the file always reflects the full data browser contents.
+        Returns ``(content, exported_rows)``. Like :meth:`render_logbook_tsv`,
+        the render reads the table model and must run on the GUI thread; the
+        caller writes the bytes. Includes rows hidden by filters/collapsed groups.
         """
         headers = self._active_column_headers()
         sections = self._export_sections()
@@ -1899,32 +1911,34 @@ class DataBrowserPanel(QWidget):
         header_cells = [self._rtf_header_cell(header) for header in headers]
         header_line = self._rtf_tabbed_line(header_cells, preescaped=True)
 
+        parts: list[str] = [r"{\rtf1\ansi\deff0\n"]
+        for section_index, (section_name, run_numbers) in enumerate(sections):
+            group_header = self._group_header_values(len(headers), section_name)
+            group_cells = [self._rtf_escape(value) for value in group_header]
+            parts.append(self._rtf_tabbed_line(group_cells, preescaped=True))
+            parts.append("\n")
+            parts.append(header_line)
+            parts.append("\n")
+
+            for run_number in run_numbers:
+                dataset = self._datasets.get(run_number)
+                if dataset is None:
+                    continue
+                parts.append(self._rtf_tabbed_line(self._export_row_values(run_number, dataset)))
+                parts.append("\n")
+                exported_rows += 1
+
+            if section_index < len(sections) - 1:
+                parts.append(r"\par\n")
+
+        parts.append("}")
+        return "".join(parts), exported_rows
+
+    def export_logbook_rtf(self, path: str) -> int:
+        """Render and write the RTF logbook to *path* (synchronous helper)."""
+        content, exported_rows = self.render_logbook_rtf()
         with open(path, "w", newline="", encoding="utf-8") as handle:
-            handle.write(r"{\rtf1\ansi\deff0\n")
-
-            for section_index, (section_name, run_numbers) in enumerate(sections):
-                group_header = self._group_header_values(len(headers), section_name)
-                group_cells = [self._rtf_escape(value) for value in group_header]
-                handle.write(self._rtf_tabbed_line(group_cells, preescaped=True))
-                handle.write("\n")
-                handle.write(header_line)
-                handle.write("\n")
-
-                for run_number in run_numbers:
-                    dataset = self._datasets.get(run_number)
-                    if dataset is None:
-                        continue
-                    handle.write(
-                        self._rtf_tabbed_line(self._export_row_values(run_number, dataset))
-                    )
-                    handle.write("\n")
-                    exported_rows += 1
-
-                if section_index < len(sections) - 1:
-                    handle.write(r"\par\n")
-
-            handle.write("}")
-
+            handle.write(content)
         return exported_rows
 
     def _rtf_tabbed_line(self, values: list[str], *, preescaped: bool = False) -> str:

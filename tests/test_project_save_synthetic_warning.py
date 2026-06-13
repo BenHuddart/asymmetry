@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.simulate import build_builtin_template, reduce_run_to_dataset, simulate_run
 from asymmetry.gui.mainwindow import MainWindow
+from tests._qt_helpers import wait_for
 
 
 @pytest.fixture(scope="module")
@@ -101,4 +102,47 @@ def test_save_anyway_proceeds(win, qapp, tmp_path, monkeypatch) -> None:
         mw_module, "save_project", lambda *a, **k: saved.__setitem__("called", True)
     )
     win._write_project(str(tmp_path / "p.asymp"))
+    # The write now runs on the shared TaskRunner; wait for it to land.
+    wait_for(lambda: not win._project_save_active, qapp, timeout_s=5.0)
     assert saved["called"] is True
+    assert win._current_project_path == str(tmp_path / "p.asymp")
+
+
+def test_incomplete_load_save_cancelled(win, qapp, tmp_path, monkeypatch) -> None:
+    """A partially-loaded (cancelled) project hard-confirms; Cancel aborts."""
+    win._project_load_incomplete = True
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Cancel),
+    )
+    saved = {"called": False}
+    monkeypatch.setattr(
+        mw_module, "save_project", lambda *a, **k: saved.__setitem__("called", True)
+    )
+    win._write_project(str(tmp_path / "partial.asymp"))
+    assert saved["called"] is False
+
+
+def test_incomplete_load_save_anyway_proceeds(win, qapp, tmp_path, monkeypatch) -> None:
+    """A partially-loaded project still saves when the user confirms 'Save anyway'."""
+    win._project_load_incomplete = True
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Save),
+    )
+    saved = {"called": False}
+    monkeypatch.setattr(
+        mw_module, "save_project", lambda *a, **k: saved.__setitem__("called", True)
+    )
+    win._write_project(str(tmp_path / "partial.asymp"))
+    wait_for(lambda: not win._project_save_active, qapp, timeout_s=5.0)
+    assert saved["called"] is True
+
+
+def test_clear_all_state_resets_incomplete_flag(win, qapp) -> None:
+    """A fresh/cleared session is complete, so the guard does not fire."""
+    win._project_load_incomplete = True
+    win._clear_all_state()
+    assert win._project_load_incomplete is False

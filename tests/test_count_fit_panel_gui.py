@@ -70,11 +70,11 @@ def test_fb_count_fit_runs_and_recovers_alpha(qapp, fb_dataset):
 
 
 def test_count_fit_uses_separate_worker_handle(qapp, fb_dataset, monkeypatch):
-    """A count-domain fit owns its own worker handle, not the legacy _fit_worker.
+    """A count-domain fit owns its own worker handle, distinct from _fit_worker.
 
-    The legacy global/grouped cleanup is keyed on _fit_thread; if the count fit
-    shared _fit_worker, a stale legacy _cleanup_thread could deleteLater the
-    live count-fit worker and silently kill its Stop button.
+    Every fit now runs on the shared TaskRunner, but the count-domain and the
+    global/grouped paths keep SEPARATE live handles (_count_fit_worker vs
+    _fit_worker) so the shared Stop button cancels exactly the running fit.
     """
     import asymmetry.gui.panels.fit_panel as fit_panel_mod
     from asymmetry.core.fitting.engine import FitCancelledError
@@ -94,14 +94,9 @@ def test_count_fit_uses_separate_worker_handle(qapp, fb_dataset, monkeypatch):
     monkeypatch.setattr(fit_panel_mod, "fit_fb_alpha", blocking_fb)
 
     tab._run_count_domain_fit()
-    # The count fit owns its own handle; the legacy worker slot stays empty.
+    # The count fit owns its own handle; the global/grouped slot stays empty.
     assert tab._count_fit_worker is not None
     assert tab._fit_worker is None
-
-    # A stale legacy cleanup (no current _fit_thread) must not touch the count
-    # handle — this is the collision the separate attribute prevents.
-    tab._cleanup_thread()
-    assert tab._count_fit_worker is not None
 
     tab._on_stop_fit()
     assert tab.wait_for_fit()
