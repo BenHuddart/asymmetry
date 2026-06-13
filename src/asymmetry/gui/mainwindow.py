@@ -188,6 +188,9 @@ _VIEW_MODE_COUNT = 3
 _PERF_LOGGING_SETTINGS_KEY = "debug/perf_logging"
 _PERF_LOGGING_ENV_VAR = "ASYMMETRY_PERF_LOGGING"
 _PLOT_DECIMATION_SETTINGS_KEY = "plot/enable_decimation"
+#: Options → Advanced → "Rotating reference frame" — an app-level chrome
+#: preference (like the dock/visibility toggles), NOT per-project. Default off.
+_RRF_ADVANCED_SETTINGS_KEY = "ui/rrf_advanced"
 _MAXENT_WARN_PEAK_MATRIX_BYTES = 1 * 1024**3
 _MAXENT_WARN_TOTAL_MATRIX_BYTES = 8 * 1024**3
 
@@ -558,6 +561,11 @@ class MainWindow(QMainWindow):
         # until the first selection event runs the sync.
         self._sync_available_views()
 
+        # Apply the persisted Advanced RRF toggle to the plot panel now that it
+        # exists (the menu action's setChecked ran before the panel was built,
+        # so its toggled signal did not reach the panel).
+        self._apply_rrf_advanced_to_panels(self._rrf_advanced_is_enabled())
+
         # Check for SciPy availability and warn if using fallback
         from asymmetry.core.fitting.diffusion import is_scipy_available
 
@@ -587,6 +595,31 @@ class MainWindow(QMainWindow):
     def _plot_decimation_is_enabled(self) -> bool:
         """Return whether plot display decimation is enabled."""
         return _coerce_bool(self._settings.value(_PLOT_DECIMATION_SETTINGS_KEY), default=True)
+
+    def _rrf_advanced_is_enabled(self) -> bool:
+        """Return whether the Advanced rotating-reference-frame toggle is on."""
+        return _coerce_bool(self._settings.value(_RRF_ADVANCED_SETTINGS_KEY), default=False)
+
+    def _apply_rrf_advanced_to_panels(self, enabled: bool) -> None:
+        """Push the RRF feature flag to the time-domain plot panel."""
+        panel = getattr(self, "_plot_panel", None)
+        if panel is not None and hasattr(panel, "set_rrf_feature_enabled"):
+            panel.set_rrf_feature_enabled(enabled)
+
+    def _auto_enable_rrf_for_active_project(self) -> None:
+        """Auto-enable the Advanced RRF toggle when an opened project uses RRF.
+
+        If the restored project carries an active RRF frame but the app-level
+        toggle is off, turn it on so the user's configured rotating-frame
+        analysis is not silently hidden. ``setChecked`` fires the toggled
+        handler, which persists the preference and applies it to the panel.
+        """
+        action = getattr(self, "_rrf_advanced_action", None)
+        panel = getattr(self, "_plot_panel", None)
+        if action is None or action.isChecked() or panel is None:
+            return
+        if hasattr(panel, "rrf_has_active_parameters") and panel.rrf_has_active_parameters():
+            action.setChecked(True)
 
     def _perf_dataset_metrics(
         self, datasets: MuonDataset | list[MuonDataset] | None
@@ -733,6 +766,19 @@ class MainWindow(QMainWindow):
         self._plot_decimation_action.setChecked(self._plot_decimation_is_enabled())
         self._plot_decimation_action.toggled.connect(self._on_plot_decimation_toggled)
         options_menu.addAction("Fit quality confidence…", self._on_fit_quality_confidence)
+
+        # Options → Advanced: home for niche toggles that should not consume
+        # layout for the majority of users. Scoped to RRF for now.
+        advanced_menu = options_menu.addMenu("Advanced")
+        self._rrf_advanced_action = advanced_menu.addAction("Rotating reference frame")
+        self._rrf_advanced_action.setCheckable(True)
+        self._rrf_advanced_action.setToolTip(
+            "Show the rotating-reference-frame display controls on the time plot "
+            "and fit the FB asymmetry in the rotating frame. Advanced/niche; off "
+            "by default so it consumes no plot-panel space."
+        )
+        self._rrf_advanced_action.setChecked(self._rrf_advanced_is_enabled())
+        self._rrf_advanced_action.toggled.connect(self._on_rrf_advanced_toggled)
 
         # Setup
         setup_menu = mb.addMenu("&Setup")
@@ -1376,6 +1422,10 @@ class MainWindow(QMainWindow):
                 self._on_plot_polarization_axis_changed
             )
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
+        # Auto-couple the single composite fit to the plot's RRF display: when
+        # the rotating frame is active there, the fit runs in that frame.
+        if hasattr(self._fit_panel, "set_rrf_frequency_provider"):
+            self._fit_panel.set_rrf_frequency_provider(self._plot_panel.rrf_fit_frequency_mhz)
         if hasattr(self._fit_panel, "global_fit_started"):
             self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
@@ -2764,6 +2814,20 @@ class MainWindow(QMainWindow):
         state = "enabled" if enabled else "disabled"
         self._log_panel.log(f"Plot decimation {state}.")
         self.statusBar().showMessage(f"Plot decimation {state}")
+
+    def _on_rrf_advanced_toggled(self, checked: bool) -> None:
+        """Persist and apply the Advanced rotating-reference-frame toggle.
+
+        App-level chrome (QSettings), not per-project. Gates the entire RRF
+        surface: the plot controls and the rotating-frame fit. RRF *parameters*
+        continue to live in ``plot_state["rrf"]``.
+        """
+        enabled = bool(checked)
+        self._settings.setValue(_RRF_ADVANCED_SETTINGS_KEY, enabled)
+        self._apply_rrf_advanced_to_panels(enabled)
+        state = "enabled" if enabled else "disabled"
+        self._log_panel.log(f"Rotating reference frame {state}.")
+        self.statusBar().showMessage(f"Rotating reference frame {state}")
 
     def _on_fit_quality_confidence(self) -> None:
         """Prompt for and persist the χ² quality-band confidence level (percent).
@@ -9841,6 +9905,7 @@ class MainWindow(QMainWindow):
         if current_dataset is not None:
             self._current_dataset = current_dataset
         self._plot_panel.restore_state(plot_state, current_dataset)
+        self._auto_enable_rrf_for_active_project()
         self._frequency_plot_panel.restore_state(plot_state.get("frequency_plot_state", {}), None)
         self._restore_view_modes_state(state.get("view_modes_state"))
         if state.get("view_modes_state") is not None:

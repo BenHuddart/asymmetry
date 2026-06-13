@@ -64,6 +64,12 @@ class RRFControls(QWidget):
         self._panel = plot_panel
         self._active_view_token: str = "fb_asymmetry"
         self._current_unit = FieldUnit.MHZ
+        # RRF is advanced/niche functionality gated behind Options → Advanced →
+        # "Rotating reference frame" (an app-level QSettings preference, default
+        # off). Until the feature is enabled the controls are genuinely absent
+        # (zero layout footprint) and the display transform never applies, so
+        # the majority of users who never use RRF pay nothing for it.
+        self._feature_enabled: bool = False
 
         self._enable_check = QCheckBox("Rotating frame")
         self._enable_check.setToolTip(
@@ -143,8 +149,31 @@ class RRFControls(QWidget):
     # ── state ──────────────────────────────────────────────────────────────
 
     def is_active(self) -> bool:
-        """True when RRF display should transform the plotted curve."""
-        return bool(self._enable_check.isChecked()) and self.frequency_mhz() > 0.0
+        """True when RRF display should transform the plotted curve.
+
+        Gated by the Advanced feature toggle: when the feature is off the
+        controls are hidden, so a stale ``enabled`` flag (e.g. restored from a
+        project saved before the toggle existed) must not silently demodulate.
+        """
+        return (
+            self._feature_enabled
+            and bool(self._enable_check.isChecked())
+            and self.frequency_mhz() > 0.0
+        )
+
+    def feature_enabled(self) -> bool:
+        """Whether the Options → Advanced RRF toggle is on."""
+        return self._feature_enabled
+
+    def set_feature_enabled(self, enabled: bool) -> None:
+        """Enable/disable the whole RRF surface (the Advanced toggle).
+
+        When off the controls are removed from the layout (zero footprint) and
+        the display transform is inert; when on they reappear under the usual
+        view condition (the FB-asymmetry time view).
+        """
+        self._feature_enabled = bool(enabled)
+        self.refresh_visibility()
 
     def frequency_mhz(self) -> float:
         """Canonical frame frequency in MHz, whatever the display unit."""
@@ -248,8 +277,8 @@ class RRFControls(QWidget):
         return current_mode == "fb_asymmetry"
 
     def refresh_visibility(self) -> None:
-        """Show the controls only where the transform can apply (W16)."""
-        self.setVisible(self.applies_to_current_view())
+        """Show the controls only when the feature is on and the view fits (W16)."""
+        self.setVisible(self._feature_enabled and self.applies_to_current_view())
 
     # ── internals ──────────────────────────────────────────────────────────
 

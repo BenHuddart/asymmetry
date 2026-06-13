@@ -5574,6 +5574,47 @@ class PlotPanel(QWidget):
         """Export current main-plot view as GLE (with optional compiled output)."""
         self.export_plots_to_gle()
 
+    # ── rotating reference frame (Options → Advanced) ───────────────────
+
+    def set_rrf_feature_enabled(self, enabled: bool) -> None:
+        """Enable/disable the whole RRF surface (the Advanced toggle, app-level).
+
+        Forwards to the RRF controls (which appear/disappear under the usual
+        view condition) and redraws so the display reverts to or from the
+        rotating frame immediately.
+        """
+        controls = getattr(self, "_rrf_controls", None)
+        if controls is None:
+            return
+        controls.set_feature_enabled(bool(enabled))
+        self._redraw_current_view()
+
+    def rrf_has_active_parameters(self) -> bool:
+        """True when the RRF controls carry an active frame (enabled + ν₀ > 0).
+
+        Independent of the feature toggle: used on project open to decide
+        whether a stored RRF configuration should auto-enable the toggle so the
+        user's analysis is not silently hidden.
+        """
+        controls = getattr(self, "_rrf_controls", None)
+        if controls is None:
+            return False
+        return bool(controls._enable_check.isChecked()) and controls.frequency_mhz() > 0.0  # noqa: SLF001
+
+    def rrf_fit_frequency_mhz(self) -> float | None:
+        """Frame frequency ν₀ (MHz) when an RRF fit should be performed, else None.
+
+        The fit auto-couples to the plot's RRF controls: a single composite fit
+        runs in the rotating frame exactly when the RRF display is active (the
+        feature is on, the controls are enabled with ν₀ > 0, and the FB-asymmetry
+        time view is showing). The fit consumes raw data with this offset and
+        reports lab-frame frequencies (δν + ν₀).
+        """
+        controls = getattr(self, "_rrf_controls", None)
+        if controls is None or not controls.is_active() or not controls.applies_to_current_view():
+            return None
+        return controls.frequency_mhz()
+
     # ── project state helpers ──────────────────────────────────────────
 
     def get_state(self) -> dict:

@@ -123,6 +123,22 @@ time-view token via the post-#53 `set_time_view_modes` /
 from `run.metadata["field"]` (Gauss → display unit via the units helper) when
 enabled with no stored value.
 
+**Advanced-gate relocation (2026-06-13, feat/rrf-engine-pass).** RRF is
+niche; the shipped controls (always shown on the `fb_asymmetry` view) now sit
+behind **Options → Advanced → "Rotating reference frame"**, a checkable
+app-level QSettings preference (`ui/rrf_advanced`), default **off**. The
+widget gained a `_feature_enabled` flag: `refresh_visibility` and `is_active`
+both require it, so when off the controls are genuinely absent (zero layout —
+Qt layouts exclude hidden widgets) and the display transform is inert even if
+a restored project left `enabled=True`. The toggle gates BOTH the display
+controls and the RRF fit (§B). Edge case handled: opening a project whose
+`plot_state["rrf"]` carries active parameters while the toggle is off
+auto-enables it (`mainwindow._auto_enable_rrf_for_active_project`, keyed on
+`PlotPanel.rrf_has_active_parameters`) so configured analysis is never
+silently hidden. RRF *parameters* still persist in `plot_state["rrf"]`; only
+the chrome flag is app-level. Pinned by `tests/test_rrf_controls.py`
+(`TestFeatureGate`) and `tests/test_rrf_advanced_toggle_gui.py`.
+
 ### Display path
 
 Demodulation is applied in the plot draw paths (`plot_dataset`,
@@ -189,5 +205,8 @@ Deferred as follow-ons (recorded, not churned):
   quadrature pair; Mantid's exact-rotation path becomes available then).
 - RRF inside MaxEnt.
 - Fit-panel exposure of the offset wrapper (follow-on; needs fit-panel
-  surface).
+  surface). **Done (2026-06-13)** — the single composite fit auto-couples to
+  the plot's RRF ν₀ (§B/§C); the fit panel resolves `rrf_frequency_offsets`,
+  threads the dict to `FitEngine.fit`, shifts the seed/result lab↔δν so the
+  parameter table stays lab-frame, and annotates "frame: ν_RRF".
 - Automatic ν₀ tracking of a fitted line centre.
