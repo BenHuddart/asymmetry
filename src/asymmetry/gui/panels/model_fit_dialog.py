@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.fitting.fit_quality import assess_fit_quality
-from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.core.fitting.parameter_models import (
     PARAMETER_MODEL_COMPONENTS,
     ErrorMode,
@@ -40,6 +39,7 @@ from asymmetry.core.fitting.parameter_models import (
     validate_fit_windows,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style, configure_formula_label
 from asymmetry.gui.tasks import TaskRunner

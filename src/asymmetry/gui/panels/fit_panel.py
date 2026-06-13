@@ -83,7 +83,6 @@ from asymmetry.core.fitting.parameters import (
     split_parameter_name,
 )
 from asymmetry.core.fitting.result_summary import fit_result_summary
-from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.core.fitting.spectral import (
     append_frequency_field_derived_parameters,
     default_frequency_model,
@@ -95,6 +94,7 @@ from asymmetry.core.utils.constants import (
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     MUON_LIFETIME_US,
 )
+from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
 from asymmetry.gui.styles import tokens
